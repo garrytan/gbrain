@@ -679,6 +679,54 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(cgIdx).toBeLessThan(mIdx);
   });
 
+  test('derived-link reconciliation is atomic and ownership-safe on both engines', async () => {
+    const exercise = async (eng: BrainEngine) => {
+      for (const [slug, type] of [
+        ['companies/dlr-acme', 'company'],
+        ['people/dlr-alice', 'person'],
+        ['notes/dlr-other-origin', 'note'],
+      ] as const) {
+        await eng.putPage(slug, { type, title: slug, compiled_truth: `${slug} body`, timeline: '' });
+      }
+      const authored = {
+        from_slug: 'people/dlr-alice',
+        to_slug: 'companies/dlr-acme',
+        link_type: 'works_at',
+        context: 'key_people fixture',
+        link_source: 'frontmatter',
+        origin_slug: 'companies/dlr-acme',
+        origin_field: 'key_people',
+      };
+      await eng.reconcileDerivedLinks('companies/dlr-acme', [authored], { sourceId: 'default' });
+      await eng.reconcileDerivedLinks('notes/dlr-other-origin', [{
+        ...authored,
+        context: 'other origin fixture',
+        origin_slug: 'notes/dlr-other-origin',
+        origin_field: 'related_people',
+      }], { sourceId: 'default' });
+      await eng.addLink(
+        'people/dlr-alice', 'companies/dlr-acme', 'manual fixture',
+        'works_at', 'manual',
+      );
+      const result = await eng.reconcileDerivedLinks('companies/dlr-acme', [], { sourceId: 'default' });
+      const links = (await eng.getBacklinks('companies/dlr-acme', { sourceId: 'default' }))
+        .map(l => `${l.link_source}:${l.origin_slug ?? '-'}:${l.context}`)
+        .sort();
+      return { result, links };
+    };
+
+    const pg = await exercise(pgEngine);
+    const pglite = await exercise(pgliteEngine);
+    expect(pg).toEqual(pglite);
+    expect(pg).toEqual({
+      result: { created: 0, removed: 1 },
+      links: [
+        'frontmatter:notes/dlr-other-origin:other origin fixture',
+        'manual:-:manual fixture',
+      ],
+    });
+  });
+
   test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
     const seedSql = `
       INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)

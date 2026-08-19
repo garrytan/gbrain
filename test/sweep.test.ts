@@ -209,6 +209,57 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
       await engine.setConfig('auto_timeline', 'true');
     }
   });
+
+  test('rewriting a page removes stale markdown edges but preserves manual edges', async () => {
+    await seedPage('concepts/target-a', 'concept', 'Target A.');
+    await seedPage('concepts/target-b', 'concept', 'Target B.');
+    await seedPage(
+      'notes/rewrite-example',
+      'note',
+      'See [[concepts/target-a]] and [[concepts/target-b]].',
+    );
+
+    await runMaintenanceSweep(engine, {
+      sourceId: 'default',
+      capabilities: KEYLESS,
+    });
+    await engine.addLink(
+      'notes/rewrite-example',
+      'concepts/target-b',
+      'operator-curated relationship',
+      'related',
+      'manual',
+      undefined,
+      undefined,
+      { fromSourceId: 'default', toSourceId: 'default' },
+    );
+
+    await engine.executeRaw(
+      `UPDATE pages
+          SET compiled_truth = 'See [[concepts/target-a]].',
+              updated_at = NOW(),
+              links_extracted_at = NULL
+        WHERE source_id = 'default' AND slug = 'notes/rewrite-example'`,
+    );
+
+    await runMaintenanceSweep(engine, {
+      sourceId: 'default',
+      capabilities: KEYLESS,
+    });
+
+    const remaining = await engine.executeRaw<{ link_source: string; context: string }>(
+      `SELECT l.link_source, l.context
+         FROM links l
+         JOIN pages f ON f.id = l.from_page_id
+         JOIN pages t ON t.id = l.to_page_id
+        WHERE f.source_id = 'default' AND f.slug = 'notes/rewrite-example'
+          AND t.source_id = 'default' AND t.slug = 'concepts/target-b'
+        ORDER BY l.link_source`,
+    );
+    expect(remaining).toEqual([
+      { link_source: 'manual', context: 'operator-curated relationship' },
+    ]);
+  });
 });
 
 describe('runMaintenanceSweep — corpus ingest [CX-P0.1, CX-P0.5]', () => {

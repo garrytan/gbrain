@@ -328,15 +328,16 @@ async function runLinksTimelinePass(
     const fullContent = page.compiled_truth + '\n' + page.timeline;
 
     if (linksEnabled) {
-      // skipFrontmatter matches user-invoked `gbrain extract links`
-      // (frontmatter backfill stays a migration-orchestrator concern).
+      // Reconcile the complete page-owned partition. Frontmatter can author
+      // incoming edges, so omitting it here would make an exact reconciliation
+      // delete valid typed edges written by remote put_page.
       const extracted = await extractPageLinks(
         slug, fullContent, page.frontmatter, page.type, resolver,
-        { skipFrontmatter: true, globalBasename },
+        { globalBasename },
       );
-      if (extracted.candidates.length > 0) {
-        pageCandidates.push({ slug, candidates: extracted.candidates });
-      }
+      // Empty is meaningful: reconciliation must remove links that disappeared
+      // when the page was rewritten.
+      pageCandidates.push({ slug, candidates: extracted.candidates });
     }
 
     if (timelineEnabled) {
@@ -363,8 +364,9 @@ async function runLinksTimelinePass(
   // lookup keeps listAllPageRefs' visibility semantics (deleted_at IS NULL),
   // so resolveCandidateSources' F10 resolution is unchanged — it just sees
   // only the rows it can possibly use. Zero candidates ⇒ zero queries.
-  const linkBatch: LinkBatchInput[] = [];
-  if (pageCandidates.length > 0) {
+  const linksByPage = new Map<string, LinkBatchInput[]>();
+  for (const { slug } of pageCandidates) linksByPage.set(slug, []);
+  if (pageCandidates.some(({ candidates }) => candidates.length > 0)) {
     const needed = new Set<string>();
     for (const { slug, candidates } of pageCandidates) {
       needed.add(slug);
@@ -378,7 +380,7 @@ async function runLinksTimelinePass(
       for (const c of candidates) {
         const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources);
         if (!resolved) continue;
-        linkBatch.push({
+        linksByPage.get(slug)!.push({
           from_slug: resolved.fromSlug,
           to_slug: c.targetSlug,
           link_type: c.linkType,
@@ -396,8 +398,9 @@ async function runLinksTimelinePass(
 
   // Engine batch primitives self-retry; default auditSite labels apply
   // (BATCH_AUDIT_SITES is a closed enum owned by retry.ts).
-  if (linkBatch.length > 0) {
-    report.linksExtracted += await engine.addLinksBatch(linkBatch); // gbrain-allow-direct-insert: the sweep IS the extract path for workspace pages — remote put_page skips extraction by design [CX-P0.3]
+  for (const [slug, links] of linksByPage) {
+    const reconciled = await engine.reconcileDerivedLinks(slug, links, { sourceId });
+    report.linksExtracted += reconciled.created; // gbrain-allow-direct-insert: the sweep IS the extract path for workspace pages — remote put_page skips extraction by design [CX-P0.3]
   }
   if (tlBatch.length > 0) {
     report.timelineExtracted += await engine.addTimelineEntriesBatch(tlBatch); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]

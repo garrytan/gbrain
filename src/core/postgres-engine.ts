@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import type {
   BrainEngine,
   BatchOpts,
-  LinkBatchInput, TimelineBatchInput,
+  DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
@@ -40,6 +40,7 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
+import { runDerivedLinkReconciliation } from './derived-link-reconciliation.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -3307,6 +3308,15 @@ export class PostgresEngine implements BrainEngine {
   async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     if (links.length === 0) return 0;
     return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+  }
+
+  async reconcileDerivedLinks(
+    originSlug: string,
+    links: LinkBatchInput[],
+    opts: { sourceId: string },
+  ): Promise<DerivedLinkReconciliationResult> {
+    return this.batchRetry('addLinksBatch', undefined, () =>
+      runDerivedLinkReconciliation(this, originSlug, links, opts), links.length);
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {

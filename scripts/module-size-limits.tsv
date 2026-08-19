@@ -5,8 +5,8 @@
 # Columns: path	max_lines	policy	note
 src/commands/doctor.ts	4291	ratchet	peel target: containment sprint C8-C13; grown v0.46.x keyless not_configured state
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
-src/core/postgres-engine.ts	5837	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
-src/core/pglite-engine.ts	5881	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
+src/core/postgres-engine.ts	5847	ratchet	grown v0.46.23.0 putPage guard + derived-link reconciliation delegate
+src/core/pglite-engine.ts	5891	ratchet	grown v0.46.23.0 putPage guard/#4284 + derived-link reconciliation delegate
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4311	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
 src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
@@ -15,7 +15,7 @@ src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyc
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
 src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)
 src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: supersede scoping + edge-existence gate
-src/core/engine.ts	2351	ratchet	grown v0.46.23.0: putPage allowEmptyOverwrite contract (#4335)
+src/core/engine.ts	2373	ratchet	v0.46.23.0 putPage allowEmptyOverwrite + derived-link reconciliation contract
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy

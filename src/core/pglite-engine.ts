@@ -24,7 +24,7 @@ import { installProcessWatchdog } from './process-watchdog.ts';
 import type {
   BrainEngine,
   BatchOpts,
-  LinkBatchInput, TimelineBatchInput,
+  DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
@@ -88,6 +88,7 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
+import { runDerivedLinkReconciliation } from './derived-link-reconciliation.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
@@ -3595,6 +3596,15 @@ export class PGLiteEngine implements BrainEngine {
   async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     if (links.length === 0) return 0;
     return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+  }
+
+  async reconcileDerivedLinks(
+    originSlug: string,
+    links: LinkBatchInput[],
+    opts: { sourceId: string },
+  ): Promise<DerivedLinkReconciliationResult> {
+    return this.batchRetry('addLinksBatch', undefined, () =>
+      runDerivedLinkReconciliation(this, originSlug, links, opts), links.length);
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {

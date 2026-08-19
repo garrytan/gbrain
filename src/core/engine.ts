@@ -172,6 +172,14 @@ export interface LinkBatchInput {
   link_kind?: string;
 }
 
+/** Result of atomically reconciling one page's managed derived-link partition. */
+export interface DerivedLinkReconciliationResult {
+  /** Desired rows that did not already exist and were inserted. */
+  created: number;
+  /** Previously-derived rows no longer present in the page and deleted. */
+  removed: number;
+}
+
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
 export interface TimelineBatchInput {
   slug: string;
@@ -1233,6 +1241,20 @@ export interface BrainEngine {
    * Callers MUST NOT wrap externally; see {@link BatchOpts} retry contract.
    */
   addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number>;
+  /**
+   * Atomically make one page's managed derived links match `links` exactly.
+   *
+   * The origin is source-qualified and required. Markdown and
+   * wikilink-resolved rows are owned by the origin page's from-endpoint;
+   * frontmatter rows are owned by `origin_page_id`. Manual, mentions, custom
+   * provenance, and frontmatter rows authored by another page are preserved.
+   * Empty `links` intentionally clears the origin's managed partition.
+   */
+  reconcileDerivedLinks(
+    originSlug: string,
+    links: LinkBatchInput[],
+    opts: { sourceId: string },
+  ): Promise<DerivedLinkReconciliationResult>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific
    * (from, to, type) row is removed. If omitted, ALL link types between the pair
