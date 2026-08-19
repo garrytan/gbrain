@@ -34,7 +34,9 @@ export function applyTitleBoost(
   }
 }
 
-const EXACT_TITLE_LOOKUP_TYPES = new Set(['person', 'company', 'organization', 'entity']);
+const EXACT_TITLE_LOOKUP_TYPES = new Set([
+  'person', 'company', 'organization', 'entity', 'project', 'product',
+]);
 const preferredExactTitleLookups = new WeakSet<SearchResult>();
 
 /** Internal marker query used by evidence stamping and autocut preservation. */
@@ -43,9 +45,10 @@ export function isPreferredExactTitleLookup(result: SearchResult): boolean {
 }
 
 /**
- * Explicit canonical entity-type filters make a query a precision lookup.
+ * Explicit canonical named-page filters make a query a precision lookup.
  * Keep alias hits first, then full normalized title matches, then the blended
- * semantic/body order. Untyped and non-entity searches are identity returns.
+ * semantic/body order. Untyped and other page-type searches are identity
+ * returns.
  * A private WeakSet carries the ordering marker into evidence/autocut without
  * adding a staging field to the public SearchResult wire shape.
  */

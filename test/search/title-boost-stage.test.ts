@@ -79,7 +79,23 @@ describe('preferExactTitleForTypedEntityLookup', () => {
     expect(isPreferredExactTitleLookup(exact)).toBe(true);
   });
 
-  test('is an identity operation for untyped and non-entity searches', () => {
+  test('prefers exact titles for named project and product lookups', () => {
+    for (const type of ['project', 'product']) {
+      const exact = { ...mk(`${type}s/eywa`, 'Eywa', 0.2), type };
+      const bodyMention = { ...mk(`${type}s/other`, 'Other', 1), type };
+
+      const ordered = preferExactTitleForTypedEntityLookup(
+        [bodyMention, exact],
+        'Eywa',
+        [type],
+      );
+
+      expect(ordered.map(r => r.slug)).toEqual([`${type}s/eywa`, `${type}s/other`]);
+      expect(isPreferredExactTitleLookup(exact)).toBe(true);
+    }
+  });
+
+  test('is an identity operation for untyped and other page-type searches', () => {
     const results = [mk('notes/exact', 'Jordan Example', 0.1), mk('notes/body', 'Other', 1)];
 
     expect(preferExactTitleForTypedEntityLookup(results, 'Jordan Example', undefined)).toBe(results);

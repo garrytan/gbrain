@@ -113,6 +113,31 @@ async function seedTypedLookupCollision(): Promise<void> {
   ]);
 }
 
+async function seedTypedProjectLookupCollision(): Promise<void> {
+  await engine.putPage('projects/eywa', {
+    type: 'project',
+    title: 'Eywa',
+    compiled_truth: 'A canonical synthetic project page with unrelated body text.',
+  });
+  await engine.upsertChunks('projects/eywa', [{
+    chunk_index: 0,
+    chunk_text: 'A canonical synthetic project page with unrelated body text.',
+    chunk_source: 'compiled_truth',
+  }]);
+
+  await engine.putPage('projects/distractor', {
+    type: 'project',
+    title: 'Distractor Project',
+    compiled_truth: 'Eywa appears repeatedly in this synthetic relationship note.',
+  });
+  await engine.upsertChunks('projects/distractor', [{
+    chunk_index: 0,
+    chunk_text: 'Eywa appears repeatedly in this synthetic relationship note.',
+    chunk_source: 'compiled_truth',
+    embedding: basisEmbedding(0),
+  }]);
+}
+
 describe('searchTitles — D1 title candidate arm', () => {
   test('exact-title query retrieves a page whose title tokens are absent from its body', async () => {
     await seedTitleOnlyPage();
@@ -345,6 +370,23 @@ describe('hybridSearch wiring — title arm reaches the fused result set', () =>
       'people/morgan-example',
     ]));
     expect(results[0].slug).toBe('people/jordan-example');
+    expect(results[0].evidence).toBe('exact_title_match');
+  });
+
+  test('typed project lookup hard-prefers the exact-title page over a stronger body/vector distractor', async () => {
+    await seedTypedProjectLookupCollision();
+
+    const results = await hybridSearch(engine, 'Eywa', {
+      limit: 5,
+      types: ['project'],
+      queryEmbedFn: () => basisEmbedding(0),
+    });
+
+    expect(results.map(r => r.slug)).toEqual(expect.arrayContaining([
+      'projects/eywa',
+      'projects/distractor',
+    ]));
+    expect(results[0].slug).toBe('projects/eywa');
     expect(results[0].evidence).toBe('exact_title_match');
   });
 

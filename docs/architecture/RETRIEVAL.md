@@ -82,11 +82,11 @@ more than embedding proximity. Four layers, added after the incident in
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
   query that is a phrase from the title can't lose to a body chunk by luck.
-  An explicit canonical entity-type filter (`person`, `company`,
-  `organization`, `entity`) is a narrower lookup contract: a full normalized
-  title equality is placed ahead of blended body/vector matches after rerank.
-  Alias hits remain stronger, and untyped/non-entity searches keep their
-  existing semantic order.
+  An explicit canonical named-page filter (`person`, `company`,
+  `organization`, `entity`, `project`, or `product`) is a narrower lookup
+  contract: a full normalized title equality is placed ahead of blended
+  body/vector matches after rerank. Alias hits remain stronger, and untyped or
+  other page-type searches keep their existing semantic order.
 - **Alias hop** — free-text `aliases:` frontmatter is projected into a
   `page_aliases` table (separate from the `slug_aliases` wikilink redirect) and
   consulted at query time: a full normalized-query match injects/boosts the
