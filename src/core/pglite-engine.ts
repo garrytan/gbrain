@@ -86,7 +86,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
-import { validateSlug, contentHash, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
+import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
@@ -1655,11 +1655,33 @@ export class PGLiteEngine implements BrainEngine {
     return { slug: r.slug, id: Number(r.id) };
   }
 
-  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
+  async putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page> {
     slug = validateSlug(slug);
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
     const sourceId = opts?.sourceId ?? 'default';
+
+    // Data-loss guard (mirrors postgres-engine.ts): a page edit is a
+    // read-modify-write; if the read returned empty, the modify lands on
+    // nothing and this upsert would blank the body over real content. Only
+    // fires when the incoming body is itself blank. Deletes use deletePage; a
+    // deliberate clear passes allowEmptyOverwrite. See isBlankBody.
+    if (isBlankBody(page.compiled_truth) && !opts?.allowEmptyOverwrite) {
+      const { rows: prior } = await this.db.query<{ compiled_truth: string | null }>(
+        `SELECT compiled_truth FROM pages
+         WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL
+         LIMIT 1`,
+        [sourceId, slug],
+      );
+      if (prior[0] && !isBlankBody(prior[0].compiled_truth)) {
+        throw new Error(
+          `putPage: refusing to overwrite non-empty page '${slug}' ` +
+            `(${prior[0].compiled_truth!.length} chars) with an empty body — ` +
+            `likely a read-modify-write that read empty. Pass ` +
+            `{ allowEmptyOverwrite: true } to force, or deletePage to remove it.`,
+        );
+      }
+    }
 
     // v0.18.0 Step 5+: source_id is now in the INSERT column list so multi-
     // source callers land on the intended (source_id, slug) row. Omitting it

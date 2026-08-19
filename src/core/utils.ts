@@ -69,6 +69,23 @@ export function contentHash(page: PageInput): string {
 }
 
 /**
+ * True when a page body carries no real content (null/undefined/whitespace).
+ *
+ * A routine page edit is a read-modify-write: read the page, change it, put
+ * it back. If the read intermittently returns empty (a store/consistency
+ * hiccup, or a caller that assembled content from a failed read), the "edit"
+ * is applied to nothing and `putPage` persists a blank body OVER real content
+ * — `putPage`'s ON CONFLICT sets `compiled_truth = EXCLUDED.compiled_truth`
+ * unconditionally, so the page is silently destroyed. Observed in production:
+ * a live task/notes page wiped down to just its frontmatter, caught only
+ * because the agent re-read the page and rebuilt it by hand. `isBlankBody`
+ * is the predicate `putPage` uses to refuse that destructive overwrite.
+ */
+export function isBlankBody(body: string | null | undefined): boolean {
+  return body == null || body.trim() === '';
+}
+
+/**
  * Validate a `source_id` is safe for use as a filesystem path segment AND
  * as a SQL identifier value. Used by the per-source disk-layout code in
  * patterns.ts/synthesize.ts before any `join(brainDir, source_id, ...)`
