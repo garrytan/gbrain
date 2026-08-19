@@ -130,4 +130,27 @@ describe('cache HIT — token_budget provenance', () => {
     expect(hitMeta?.token_budget?.dropped).toBe(missDropped);
     expect(hitMeta?.token_budget?.kept).toBe(missMeta?.token_budget?.kept);
   });
+
+  test('typed requests bypass untyped cache rows', async () => {
+    const query = 'builder cache isolation';
+    let broadMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const broad = await hybridSearchCached(engine, query, {
+      limit: 10,
+      onMeta: (m) => { broadMeta = m; },
+    });
+    expect(broadMeta?.cache?.status).toBe('miss');
+    expect(new Set(broad.map(r => r.type)).size).toBeGreaterThan(1);
+    await awaitPendingSearchCacheWrites();
+
+    let typedMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const typed = await hybridSearchCached(engine, query, {
+      limit: 10,
+      types: ['company'],
+      onMeta: (m) => { typedMeta = m; },
+    });
+
+    expect(typedMeta?.cache?.status).toBe('disabled');
+    expect(typed.length).toBeGreaterThan(0);
+    expect(typed.every(r => r.type === 'company')).toBe(true);
+  });
 });

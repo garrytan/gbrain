@@ -31,6 +31,7 @@ import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
+import { assignOpArgValue } from './core/cli-op-args.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -1035,9 +1036,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false'
-            : def.type === 'number' ? Number(raw)
-            : raw;
+          assignOpArgValue(params, key, def, raw);
           continue;
         }
       }
@@ -1062,8 +1061,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // rehearsal request (the resurrected #2185 class the red team caught).
         params[key] = true;
       } else if (i + 1 < args.length) {
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        assignOpArgValue(params, key, paramDef, args[++i]);
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
