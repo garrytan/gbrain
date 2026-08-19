@@ -35,6 +35,16 @@ export const FACTS_ABSORB_REASONS = [
   'queue_shutdown',
   'embed_failure',
   'pipeline_error',
+  // Extraction-outcome codes (keyed-but-failing states; keyless-expected
+  // states deliberately write NO row — see backstop.ts
+  // surfaceExtractionFailure). Doctor's facts_extraction_health groups by
+  // split_part(summary,':',1), so new codes surface with zero schema change.
+  'chat_unavailable',
+  'refusal',
+  'content_filter',
+  'malformed_output',
+  'non_terminal_stop',
+  'truncated_output',
 ] as const;
 
 // v0.39.3.0 WARN-4 + CV13 — module-scoped flag so the first-occurrence
@@ -126,6 +136,20 @@ export function classifyFactsAbsorbError(err: unknown): FactsAbsorbReason {
   if (!err) return 'pipeline_error';
   const msg = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : '';
+
+  // Typed extraction failures carry their reason — map precisely instead of
+  // pattern-matching the message (a 401/invalid-model provider_error would
+  // otherwise fall through to the generic 'pipeline_error'). instanceof via
+  // name check: the class lives in extract.ts and this module must stay
+  // import-light; the name is stable and set in the constructor.
+  if (name === 'FactsExtractionError') {
+    const reason = (err as { reason?: string }).reason;
+    if (reason === 'provider_error') return 'gateway_error';
+    if (reason && (FACTS_ABSORB_REASONS as readonly string[]).includes(reason)) {
+      return reason as FactsAbsorbReason;
+    }
+    return 'pipeline_error';
+  }
 
   // Anthropic / OpenAI / Voyage all surface 4xx/5xx + timeouts in similar shapes.
   if (/timeout|timed?\s?out|ETIMEDOUT/i.test(msg)) return 'gateway_error';

@@ -51,7 +51,7 @@ import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
-import { resolveModel } from '../model-config.ts';
+import { resolveModel, resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
@@ -59,6 +59,8 @@ import { hasAnthropicKey } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
+import type { GBrainConfig } from '../config.ts';
+import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig } from './build-gateway-config.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
@@ -484,6 +486,26 @@ export function configureGateway(config: AIGatewayConfig): void {
 }
 
 /**
+ * Re-fold ONLY the provider-key env from the file plane + process env into the
+ * LIVE gateway config, leaving models/base_urls/chat-options untouched. For
+ * long-lived workers: a key added to ~/.gbrain/config.json reaches the gateway
+ * at the next job without clobbering the DB-plane-merged fields the worker's
+ * boot fold installed (a full configureGateway(buildGatewayConfig(loadConfig()))
+ * here would reset those to file-plane-only values). No-op before configure.
+ */
+export function refreshGatewayEnvFromFilePlane(): void {
+  if (!_config) return;
+  let cfg: GBrainConfig | null = null;
+  try {
+    cfg = loadConfig();
+  } catch {
+    cfg = null;
+  }
+  _config = { ..._config, env: mergedProviderEnv(cfg, process.env) };
+  _modelCache.clear();
+}
+
+/**
  * v0.31.12 — async re-stamp seam.
  *
  * After `engine.connect()` succeeds, callers (today: `src/cli.ts`)
@@ -504,19 +526,61 @@ export function configureGateway(config: AIGatewayConfig): void {
  */
 export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise<AIGatewayConfig> {
   const cfg = requireConfig();
+  // Refresh the OpenAI latest-model discovery cache BEFORE resolution so the
+  // key-aware tier defaults below see it. TTL-throttled (one fetch/24h),
+  // 3s-bounded, fail-open, disabled in test lanes via GBRAIN_MODEL_DISCOVERY
+  // — a connect never blocks on or breaks from discovery.
+  const { refreshLatestOpenAIModels } = await import('./openai-latest.ts');
+  // Discovery hits the same endpoint real native-openai calls use:
+  // OPENAI_BASE_URL via resolveNativeBaseUrl — the ENV PLANE, deliberately
+  // NOT cfg.base_urls.openai. Two reasons: (1) defaulting to api.openai.com
+  // when a custom endpoint is configured would send that endpoint's key to
+  // the official host; (2) base_urls can be DB-plane-merged from a mounted
+  // brain, and discovery fires automatically on connect — a hostile shared
+  // brain must never be able to point this process's bearer key at an
+  // attacker URL (native chat calls ignore base_urls for the same reason).
+  await refreshLatestOpenAIModels({
+    env: cfg.env ?? process.env,
+    baseUrl: resolveNativeBaseUrl('openai', cfg),
+  });
   // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
   // intentionally NOT re-resolved here — switching embedding models invalidates
   // the vector index. Out of scope per v0.31.12 plan ("Embedding tier knob").
-  const newExpansion = await resolveModel(engine, {
+  const expansionDetailed = await resolveModelDetailed(engine, {
     configKey: 'models.expansion',
     tier: 'utility',
     fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
   });
-  const newChat = await resolveModel(engine, {
+  const chatDetailed = await resolveModelDetailed(engine, {
     configKey: 'models.chat',
     tier: 'reasoning',
     fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
   });
+
+  // When no DB-plane override won (source = tier_default/fallback), consult
+  // the RAW file-plane config through the shared effective-model resolver.
+  // The gateway's own cfg can't be used for this: the boot fold stamps
+  // DEFAULT_CHAT_MODEL into it when config.json has no pin, so by now an
+  // explicit pin and a fabricated default are indistinguishable in `cfg`.
+  // resolveEffective*Model keeps a SERVABLE pin (its provider's key is
+  // present), warns once and falls to the key-aware tier default otherwise —
+  // an init-era `chat_model: openai:*` pin survives reconnect when the
+  // OpenAI key is live, and stops freezing provider choice when it isn't.
+  const needsFileCfg = (s: string) => s === 'tier_default' || s === 'fallback';
+  let fileCfg: GBrainConfig | null = null;
+  if (needsFileCfg(chatDetailed.source) || needsFileCfg(expansionDetailed.source)) {
+    try {
+      fileCfg = loadConfig();
+    } catch {
+      fileCfg = null;
+    }
+  }
+  const newChat = needsFileCfg(chatDetailed.source)
+    ? resolveEffectiveChatModel(fileCfg, cfg.env ?? process.env).model
+    : chatDetailed.model;
+  const newExpansion = needsFileCfg(expansionDetailed.source)
+    ? resolveEffectiveExpansionModel(fileCfg, cfg.env ?? process.env).model
+    : expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to

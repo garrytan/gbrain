@@ -1870,7 +1870,13 @@ export async function runExtractConversationFacts(
   // reporting an availability error (#2590).
   if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
-    console.error('Chat gateway unavailable. Configure an Anthropic or compatible chat model, or pass --dry-run to preview segmentation.');
+    console.error(
+      'Chat gateway unavailable. Set a provider key (OPENAI_API_KEY or ANTHROPIC_API_KEY — ' +
+      'extraction routes to whichever is present), or configure a model explicitly ' +
+      '(`gbrain config set facts.extraction_model <provider:model>`), or pass --dry-run to ' +
+      'preview segmentation. Keyless brains capture memory via agent-authored `## Facts` ' +
+      'fences and the `remember` verb instead.',
+    );
     process.exit(1);
   }
 

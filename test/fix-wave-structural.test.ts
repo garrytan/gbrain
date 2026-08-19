@@ -222,6 +222,54 @@ describe('v0.42.20.0 — background-work registry drains every sink before disco
     expect(drainIdx).toBeGreaterThan(nullIdx);
   });
 
+  test('#4284 in-loop close bound arms BEFORE close, stays ref\'d; watchdog covers the whole drain+close window', () => {
+    // Neither half of the #4284 defect is observable behaviorally in-suite:
+    // something always keeps the test runner's loop alive (ref'd vs unref'd
+    // never differs), and the armed breadcrumb is deadline-keyed
+    // once-per-process (a second same-deadline arm is invisible). Source pins
+    // hold what tests can't. Anchors are unique statement literals,
+    // comment-proof (eng-review D13.2 discipline): a bare `db.close(` also
+    // matches doc comments, the connect()-time scratch-probe close, and the
+    // timeout warn string — all positioned BEFORE the disconnect site.
+    const pglite = readFileSync('src/core/pglite-engine.ts', 'utf8');
+    const earlyReturnIdx = pglite.indexOf('if (!db && !lock) return;');
+    const armIdx = pglite.indexOf("label: 'pglite-disconnect-watchdog'");
+    const drainIdx = pglite.indexOf('await drainBackgroundWorkBeforeDisconnect()');
+    const timerArmIdx = pglite.indexOf('timer = setTimeout(() => resolve(true), timeoutMs)');
+    const closeIdx = pglite.indexOf('const closePromise = db.close()');
+    const releaseIdx = pglite.indexOf('await releaseLock(lock)');
+    const disposeIdx = pglite.indexOf('watchdog?.dispose()');
+    expect(earlyReturnIdx).toBeGreaterThan(-1);
+    expect(armIdx).toBeGreaterThan(-1);
+    expect(drainIdx).toBeGreaterThan(-1);
+    expect(timerArmIdx).toBeGreaterThan(-1);
+    expect(closeIdx).toBeGreaterThan(-1);
+    expect(releaseIdx).toBeGreaterThan(-1);
+    expect(disposeIdx).toBeGreaterThan(-1);
+    // A no-op / lock-only disconnect never arms a worker (eng-review E4).
+    expect(earlyReturnIdx).toBeLessThan(armIdx);
+    // The watchdog covers a drain-side wedge too (OV-7).
+    expect(armIdx).toBeLessThan(drainIdx);
+    // Arm-before-close: the in-loop timer exists before close() starts
+    // (#4284 reason 1 — a timer armed after close's synchronous prefix
+    // misses it entirely).
+    expect(drainIdx).toBeLessThan(timerArmIdx);
+    expect(timerArmIdx).toBeLessThan(closeIdx);
+    // Dispose AFTER releaseLock inside the nested finally: a releaseLock
+    // throw must never leak an armed worker that later SIGKILLs a process
+    // whose close already completed (OV2-4). The nested-finally shape itself
+    // isn't index-checkable, but dispose-after-release plus the drain sitting
+    // inside the same try (drainIdx > the try that ends in this finally) pin
+    // the covered window.
+    expect(releaseIdx).toBeLessThan(disposeIdx);
+    // No unref on the close-bound timer: in the ONE case the in-loop bound
+    // can catch (never-settling close, idle loop), an unref'd timer lets the
+    // process exit before the warn and the lock release fire. Scoped to the
+    // disconnect region so unrelated timers may unref freely.
+    const disconnectRegion = pglite.slice(earlyReturnIdx, disposeIdx + 500);
+    expect(disconnectRegion).not.toContain('.unref');
+  });
+
   test('cli-force-exit.ts daemon guard excludes "serve"', () => {
     const src = readFileSync('src/core/cli-force-exit.ts', 'utf8');
     expect(src).toMatch(/export function shouldForceExitAfterMain/);

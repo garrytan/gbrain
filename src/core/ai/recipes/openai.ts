@@ -25,19 +25,28 @@ export const openai: Recipe = {
       max_batch_tokens: 100_000,
     },
     expansion: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
-      cost_per_1m_tokens_usd: 0.15,
-      price_last_verified: '2026-04-20',
+      models: ['gpt-5.6-luna', 'gpt-4o-mini'],
+      cost_per_1m_tokens_usd: 1.00, // gpt-5.6-luna baseline
+      price_last_verified: '2026-08-17',
     },
     chat: {
-      models: ['gpt-5.2', 'gpt-4o-mini'],
+      // STATIC FALLBACK ONLY — the runtime default is discovered from the
+      // account's own /v1/models via src/core/ai/openai-latest.ts (ranked by
+      // the same tier grammar), so this list matters only before the first
+      // keyed connect or when discovery is disabled/offline. Order is not
+      // semantic (the ranker classifies by suffix); keep it current-ish at
+      // release time, not perfectly.
+      // gpt-5.2 stays listed: the cross-modal + takes-quality eval judge
+      // panels pin it for baseline reproducibility, and their recipe-
+      // consistency guards require panel models to be listed entry points.
+      models: ['gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.2', 'gpt-4o-mini'],
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
-      max_context_tokens: 200000,
-      cost_per_1m_input_usd: 1.25, // gpt-5.2 baseline
-      cost_per_1m_output_usd: 10.0,
-      price_last_verified: '2026-04-20',
+      max_context_tokens: 1_050_000, // gpt-5.6 family window (GA 2026-07-09)
+      cost_per_1m_input_usd: 2.50, // gpt-5.6-terra baseline (the reasoning-tier default)
+      cost_per_1m_output_usd: 15.0,
+      price_last_verified: '2026-08-17',
     },
   },
   setup_hint: 'Get an API key at https://platform.openai.com/api-keys, then `export OPENAI_API_KEY=...`',

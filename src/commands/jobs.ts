@@ -4,6 +4,7 @@
  */
 
 import type { BrainEngine } from '../core/engine.ts';
+import type { FactsBackstopResult } from '../core/facts/backstop.ts';
 // Leaf module (no flag surface of its own) — see that file for why this
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-types.ts';
@@ -46,16 +47,54 @@ export function resolveJobPull(data: Record<string, unknown>): boolean {
  * from DB-backed model config immediately before queued jobs enter gateway-backed
  * paths, so a stale process-level default cannot route new work to the wrong
  * provider.
+ *
+ * Three staleness tiers (documented in KEY_FILES's refreshGatewayForJob entry):
+ *   - DB-plane model config: re-resolved here (reconfigureGatewayWithEngine).
+ *   - FILE-plane config (`~/.gbrain/config.json` — incl. provider API keys):
+ *     re-folded here, so a key added to config.json reaches the worker at the
+ *     next job. NOTE `gbrain config set *_api_key` writes the DB plane, which
+ *     loadConfigWithEngine deliberately never merges for key fields — routing
+ *     those writes to the file plane is a filed TODO.
+ *   - True process env vars: fixed at worker start; need a restart.
  */
-async function refreshGatewayForJob(engine: BrainEngine): Promise<void> {
-  const { reconfigureGatewayWithEngine } = await import('../core/ai/gateway.ts');
+export async function refreshGatewayForJob(engine: BrainEngine): Promise<void> {
+  // Env-only refresh: a full configureGateway(buildGatewayConfig(loadConfig()))
+  // would clobber the DB-plane-merged fields the worker's boot fold installed
+  // (provider_base_urls, chat options, …) with file-plane-only values.
+  const { refreshGatewayEnvFromFilePlane, reconfigureGatewayWithEngine } = await import('../core/ai/gateway.ts');
+  refreshGatewayEnvFromFilePlane();
   await reconfigureGatewayWithEngine(engine);
+}
+
+/** Shared predicate: an inline result reporting execution-time unavailability. */
+export function factsAbsorbUnavailable(result: FactsBackstopResult): boolean {
+  return (
+    result.mode === 'inline' &&
+    (result.skipped === 'extraction_unavailable' || result.skipped_reason === 'chat_unavailable')
+  );
+}
+
+/**
+ * The facts-absorb retry decision (@internal exported for tests). A job that
+ * finds chat unavailable at EXECUTION in a KEYED worker is config drift — it
+ * must throw (retry/backoff → visible, re-runnable failure), never return
+ * success and silently consume the job. A KEYLESS worker executing a job
+ * enqueued by some other process is the steady expected state — completing
+ * as a calm skip (the execution-time gate already printed the keyless note)
+ * beats a retry loop that parks every page write as a failed job.
+ */
+export function factsAbsorbShouldRetry(
+  result: FactsBackstopResult,
+  classification: 'keyed' | 'keyless',
+): boolean {
+  return classification === 'keyed' && factsAbsorbUnavailable(result);
 }
 
 const GATEWAY_REFRESH_JOB_NAMES = new Set([
   'embed',
   'extract-conversation-facts',
   'enrich',
+  'facts-absorb',
   'contextual_reindex_per_chunk',
   'autopilot-cycle',
   'synthesize',
@@ -2339,8 +2378,10 @@ export async function registerBuiltinHandlers(
   // drain aborts it, so backstop.ts submits this job instead and the
   // long-lived worker does the LLM work here. Inline mode: errors throw,
   // so minion retry/backoff handles transient gateway failures and real
-  // failures stay visible in `gbrain jobs list --status failed`.
-  worker.register('facts-absorb', async (job) => {
+  // failures stay visible in `gbrain jobs list --status failed`. In the
+  // gateway-refresh set so the worker re-stamps model config (and re-folds
+  // file-plane keys) before every extraction job.
+  registerBuiltinJob(worker, engine, 'facts-absorb', async (job) => {
     const slug = typeof job.data.slug === 'string' ? job.data.slug : '';
     if (!slug) throw new Error('facts-absorb job requires data.slug');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : 'default';
@@ -2351,7 +2392,7 @@ export async function registerBuiltinHandlers(
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
       ? (job.data.source as typeof KNOWN_SOURCES[number])
       : 'mcp:put_page';
-    return await runFactsBackstop(
+    const result = await runFactsBackstop(
       {
         slug: page.slug,
         type: page.type,
@@ -2369,6 +2410,26 @@ export async function registerBuiltinHandlers(
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
     );
+    // Execution-time chat_unavailable in a KEYED worker is config drift —
+    // throw (typed) so minion retry/backoff parks it as a VISIBLE, re-runnable
+    // failure instead of consuming the job and silently losing the facts. A
+    // KEYLESS worker completes the job as a calm skip (its execution-time
+    // gate already printed the keyless note; a retry loop would turn every
+    // page write into failed-job noise). The retry conversion lives HERE, not
+    // in the shared pipeline — the same pipeline serves the extract_facts op,
+    // which must return its keyless envelope instead of throwing. The
+    // classification runs in the WORKER process: availability decisions
+    // belong to the process that executes (the submitting hook subprocess may
+    // have a deliberately neutered env).
+    if (factsAbsorbUnavailable(result)) {
+      const { classifyUnavailable } = await import('../core/facts/backstop.ts');
+      const jobModel = typeof job.data.model === 'string' && job.data.model ? job.data.model : undefined;
+      if (factsAbsorbShouldRetry(result, await classifyUnavailable(jobModel))) {
+        const { FactsExtractionError } = await import('../core/facts/extract.ts');
+        throw new FactsExtractionError('chat_unavailable', jobModel);
+      }
+    }
+    return result;
   });
 
   // Autopilot-cycle handler: delegates to runCycle. Shares the exact same
@@ -2473,12 +2534,32 @@ export async function registerBuiltinHandlers(
     const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
 
     // Allow callers to select phases via job data (e.g. skip embed for
-    // fast cycles). Validates against ALL_PHASES to prevent injection.
-    const { ALL_PHASES } = await import('../core/cycle.ts');
+    // fast cycles). Validates against ALL_PHASES to prevent injection, then
+    // normalizes per-source payloads to the freshness set (queue payloads
+    // are machine-authored; see normalizeQueuedSourcePhases in cycle.ts).
+    const { ALL_PHASES, normalizeQueuedSourcePhases } = await import('../core/cycle.ts');
     const validPhases = new Set(ALL_PHASES);
     const requestedPhases = Array.isArray(job.data.phases)
       ? (job.data.phases as string[]).filter(p => validPhases.has(p as any))
       : undefined;
+    const { phases: effectivePhases, rejected: phasesRejectedByNormalization } =
+      normalizeQueuedSourcePhases(requestedPhases as any, sourceId);
+    // An explicitly-empty phase list (arrived empty, or emptied by the
+    // normalization) is a no-op — NOT an implicit run. The reason string is
+    // honest about WHICH of the two happened.
+    if (effectivePhases !== undefined && effectivePhases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: {
+          reason: phasesRejectedByNormalization.length > 0
+            ? 'all_phases_rejected_by_normalization'
+            : 'empty_phase_list',
+          ...(sourceId ? { source_id: sourceId } : {}),
+          phases_rejected_by_normalization: phasesRejectedByNormalization,
+        },
+      };
+    }
 
     const pull = resolveJobPull(job.data);
 
@@ -2503,7 +2584,7 @@ export async function registerBuiltinHandlers(
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       ...(sourceId ? { sourceId } : {}),
-      ...(requestedPhases && requestedPhases.length > 0 ? { phases: requestedPhases as any } : {}),
+      ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
       yieldBetweenPhases: async () => {
         // Yield to the event loop so worker lock-renewal can fire.
         await new Promise<void>(r => setImmediate(r));
@@ -2514,26 +2595,34 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      // Surfaced so operators can see the queue-boundary normalization at
+      // work in job results (runCycle never sees rejected phases, so its
+      // excludedPhases skip-reporting cannot cover them).
+      ...(phasesRejectedByNormalization.length > 0
+        ? { phases_rejected_by_normalization: phasesRejectedByNormalization }
+        : {}),
     };
   });
 
-  // #2194 fix #3 / #2227 bug #3 — brain-wide maintenance. Runs the `global`
-  // cycle phases (embed, orphans, purge, resolve_symbol_edges, grade_takes,
-  // calibration_profile, synthesize_concepts, skillopt) ONCE per window instead
-  // of N times concurrently across per-source cycles (the 4→10GB RSS blowout).
+  // Brain-wide maintenance. Runs mixed + global phases ONCE per window instead
+  // of repeating cross-source transcript/reflection reads in every source.
   // No source_id → uses the legacy global cycle lock; stamps autopilot.last_global_at
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
-    const { runCycle, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY, ALL_PHASES } = await import('../core/cycle.ts');
+    const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
     const repoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
       : (await engine.getConfig('sync.repo_path')) ?? null;
 
-    const validPhases = new Set(ALL_PHASES);
+    // #4250: queued maintenance payloads are machine-authored too — intersect
+    // with MAINTENANCE_PHASES so a stale (or remote-submitted) payload can't
+    // run source-scoped phases through the global lane, symmetric with the
+    // per-source normalization in the autopilot-cycle handler.
+    const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
     const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => validPhases.has(p as never))
-      : GLOBAL_PHASES;
-    const phases = (requested.length > 0 ? requested : GLOBAL_PHASES) as typeof GLOBAL_PHASES;
+      ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
+      : MAINTENANCE_PHASES;
+    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
 
     const report = await runCycle(engine, {
       brainDir: repoPath,

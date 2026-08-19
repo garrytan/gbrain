@@ -22,6 +22,7 @@ import {
   checkPgliteScratchProbe,
   computeQueueHealthCheck,
   computeWedgedQueueCheck,
+  computeOrphanedPrivateQueueCheck,
   computeAutopilotFanoutConcurrencyCheck,
   checkSubagentHealth,
   checkBatchRetryHealth,
@@ -312,6 +313,7 @@ export async function doctorReportRemote(
 
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
   checks.push(await computeWedgedQueueCheck(engine));
+  checks.push(await computeOrphanedPrivateQueueCheck(engine));
 
   // #2194 fix #5 — warn when autopilot fan-out exceeds worker concurrency.
   checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));

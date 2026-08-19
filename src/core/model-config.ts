@@ -22,6 +22,11 @@
 
 import type { BrainEngine } from './engine.ts';
 import { splitProviderModelId } from './model-id.ts';
+import type { GBrainConfig } from './config.ts';
+import { loadConfig } from './config.ts';
+import { mergedProviderEnv } from './ai/provider-env.ts';
+import { RECIPES } from './ai/recipes/index.ts';
+import { latestOpenAITiers, rankOpenAIChatModels } from './ai/openai-latest.ts';
 
 export type ModelTier = 'utility' | 'reasoning' | 'deep' | 'subagent';
 
@@ -59,7 +64,11 @@ export const DEFAULT_ALIASES: Record<string, string> = {
   sonnet: 'anthropic:claude-sonnet-4-6',
   haiku:  'anthropic:claude-haiku-4-5-20251001',
   gemini: 'google:gemini-3-pro',
-  gpt:    'openai:gpt-5',
+  // `gpt` resolves DYNAMICALLY in resolveAlias (account-discovered OpenAI
+  // flagship, recipe-ranked static floor) — this entry keeps the alias
+  // enumerable but the value here is only the documentation floor; a pinned
+  // id would 404 within months (the previous 'openai:gpt-5' already did).
+  gpt:    'openai:gpt-5.6',
 };
 
 /**
@@ -77,6 +86,197 @@ export const TIER_DEFAULTS: Record<ModelTier, string> = {
   deep:      'anthropic:claude-opus-4-7',
   subagent:  'anthropic:claude-sonnet-4-6',
 };
+
+/**
+ * OpenAI static tier fallback — NO literal model pins. Derived from the
+ * openai recipe's chat list through the SAME ranking grammar latest-model
+ * discovery uses (openai-latest.ts), so there is exactly one place a human
+ * updates OpenAI entry points (the recipe) and one function that classifies
+ * them. The RUNTIME default overlays this with the account-discovered cache
+ * in resolveTierDefault below. Computed lazily + memoized: recipes are static
+ * data, so this is pure.
+ */
+let _openaiStaticTiers: Record<ModelTier, string> | null = null;
+export function openaiStaticTierFallback(): Record<ModelTier, string> {
+  if (!_openaiStaticTiers) {
+    const recipeModels = RECIPES.get('openai')?.touchpoints.chat?.models ?? [];
+    const ranked = rankOpenAIChatModels(recipeModels, () => true).tiers;
+    // A recipe list that defeats its own grammar would be a build bug; the
+    // Anthropic tier defaults are the never-null floor.
+    _openaiStaticTiers = ranked ?? { ...TIER_DEFAULTS };
+  }
+  return _openaiStaticTiers;
+}
+
+/**
+ * Key-aware tier defaults. The FIRST entry whose env key is present (merged
+ * env: config-file keys folded, env wins, empty strings dropped) supplies the
+ * tier default. Anthropic first preserves today's behavior byte-for-byte on
+ * every keyed install; OpenAI second makes an OPENAI_API_KEY-only install
+ * actually work (fact extraction, expansion, synthesis) instead of routing
+ * every default to a provider whose key is absent. No key at all →
+ * TIER_DEFAULTS unchanged (keyless installs degrade honestly downstream).
+ *
+ * OpenAI tiers are RESOLVED PER CALL, never pinned: the account-discovered
+ * latest (openai-latest.ts cache, refreshed at gateway connect) wins, the
+ * recipe-derived static ranking is the offline floor. The subagent tier runs
+ * without prompt caching on OpenAI → enforceSubagentCapable emits the
+ * degraded:no_caching cost warn.
+ *
+ * Adding a provider here needs a curated per-tier model choice — see the
+ * TODOS.md follow-up before extending.
+ */
+/** Account-discovered latest for a tier, else the recipe-ranked static floor. */
+function discoveredOrStaticOpenAITier(tier: ModelTier): string {
+  const discovered = latestOpenAITiers(tier);
+  return typeof discovered === 'string' ? discovered : openaiStaticTierFallback()[tier];
+}
+
+export const PROVIDER_TIER_DEFAULTS: ReadonlyArray<{
+  provider: 'anthropic' | 'openai';
+  envKey: string;
+  tiers: (tier: ModelTier) => string;
+}> = [
+  { provider: 'anthropic', envKey: 'ANTHROPIC_API_KEY', tiers: (tier) => TIER_DEFAULTS[tier] },
+  { provider: 'openai', envKey: 'OPENAI_API_KEY', tiers: discoveredOrStaticOpenAITier },
+];
+
+/** loadConfig, throw-safe (the hasAnthropicKey pattern): unreadable config = env-only. */
+function throwSafeLoadConfig(): GBrainConfig | null {
+  try {
+    return loadConfig();
+  } catch {
+    return null;
+  }
+}
+
+/** Drop ''/undefined entries (#1249) from an injected env. */
+function realEnv(env: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== undefined && v !== ''),
+  ) as Record<string, string>;
+}
+
+/**
+ * Resolve the default model for a tier, honoring which provider keys are
+ * actually present. When `env` is passed it is used EXCLUSIVELY (no config
+ * read — hermetic for tests and pre-merged callers); when omitted, the merged
+ * env is computed from the file-plane config + process.env.
+ */
+export function resolveTierDefault(
+  tier: ModelTier,
+  env?: Record<string, string | undefined>,
+): string {
+  const merged = env ? realEnv(env) : mergedProviderEnv(throwSafeLoadConfig(), process.env);
+  for (const entry of PROVIDER_TIER_DEFAULTS) {
+    if (merged[entry.envKey]) return entry.tiers(tier);
+  }
+  return TIER_DEFAULTS[tier];
+}
+
+/**
+ * True when `model`'s provider can serve CHAT and has every required auth
+ * env var present in `env` (per its recipe's auth_env.required). Bare model
+ * ids (no provider prefix) and unknown providers return false — an
+ * unverifiable pin is not a servable pin. A keyed but chat-less recipe
+ * (e.g. an embedding-only provider pinned as chat_model) is also not ready:
+ * every caller of this function resolves a chat-shaped tier, and honoring
+ * such a pin would install a model `isAvailable('chat')` rejects instead of
+ * falling back to the key-aware default. Recipes with no required keys
+ * (e.g. local Ollama) are always ready.
+ */
+export function providerKeyReady(model: string, env: Record<string, string>): boolean {
+  const { provider } = splitProviderModelId(model);
+  if (!provider) return false;
+  const recipe = RECIPES.get(provider.trim().toLowerCase());
+  if (!recipe) return false;
+  if (!recipe.touchpoints?.chat) return false;
+  const required = recipe.auth_env?.required ?? [];
+  if (required.length === 0) return true;
+  return required.every((k) => !!env[k]);
+}
+
+const _unservablePinWarningsEmitted = new Set<string>();
+
+export type EffectiveModelSource = 'env_model' | 'file_pin' | 'tier_default';
+
+/**
+ * Engine-free effective-model resolution for a chat-shaped tier. ONE shared
+ * function — `reconfigureGatewayWithEngine`'s fallback layer and
+ * `detectCapabilities`' extraction probe both call it, so runtime routing and
+ * the capability report cannot diverge by construction.
+ *
+ * Reads the RAW file-plane config — never gateway state, which stamps
+ * defaults at boot and makes an explicit pin indistinguishable from a
+ * fabricated one. Precedence: GBRAIN_MODEL env > servable file pin (its
+ * provider's keys are present) > key-aware tier default. An unservable pin
+ * (init-era pin whose key is gone, or a provider switch) falls through with
+ * one stderr warn per (pin, process) — availability-aware, never a hard fail.
+ */
+function resolveEffectiveModelForTier(
+  tier: ModelTier,
+  pin: string | undefined,
+  fileCfg: GBrainConfig | null,
+  env: Record<string, string | undefined>,
+): { model: string; source: EffectiveModelSource } {
+  const merged = mergedProviderEnv(fileCfg, env);
+  const envModel = merged.GBRAIN_MODEL?.trim();
+  if (envModel) {
+    // Same `gpt` discovery routing as the pin branch below and
+    // resolveAlias — GBRAIN_MODEL=gpt must not resolve differently
+    // depending on which resolver ran.
+    const model = envModel === 'gpt'
+      ? discoveredOrStaticOpenAITier('deep')
+      : DEFAULT_ALIASES[envModel] ?? envModel;
+    return { model, source: 'env_model' };
+  }
+  const rawPin = pin?.trim();
+  if (rawPin) {
+    // A bare `gpt` alias pin resolves through the same discovery path as
+    // resolveAlias('gpt') — the DEFAULT_ALIASES entry is only the
+    // documentation floor and would silently bypass the account-discovered
+    // flagship.
+    const fullPin = rawPin === 'gpt'
+      ? discoveredOrStaticOpenAITier('deep')
+      : DEFAULT_ALIASES[rawPin] ?? rawPin;
+    if (providerKeyReady(fullPin, merged)) return { model: fullPin, source: 'file_pin' };
+    if (!_unservablePinWarningsEmitted.has(fullPin)) {
+      _unservablePinWarningsEmitted.add(fullPin);
+      // Explicit tier→config-key map: an unmapped future caller mislabeling
+      // the warn would be a silent doc bug with a ternary.
+      const PIN_KEY_BY_TIER: Record<ModelTier, string> = {
+        utility: 'expansion_model', reasoning: 'chat_model', deep: 'chat_model', subagent: 'chat_model',
+      };
+      // A prefix-less pin is a DIFFERENT problem than a missing key — saying
+      // "no usable provider key" for `chat_model: "claude-sonnet-4-6"` sends
+      // the user hunting for a key problem they may not have.
+      const diagnosis = splitProviderModelId(fullPin).provider === null
+        ? `has no provider prefix, so its key can't be verified — prefix it (e.g. "anthropic:${fullPin}")`
+        : `has no usable provider key — set the provider's API key, update the pin`;
+      process.stderr.write(
+        `[models] configured ${PIN_KEY_BY_TIER[tier]} "${fullPin}" ${diagnosis}, ` +
+        `or remove it from ~/.gbrain/config.json. Falling back to the key-aware default.\n`,
+      );
+    }
+  }
+  return { model: resolveTierDefault(tier, merged), source: 'tier_default' };
+}
+
+/** Effective chat model (reasoning tier) from raw file config + env. */
+export function resolveEffectiveChatModel(
+  fileCfg: GBrainConfig | null,
+  env: Record<string, string | undefined> = process.env,
+): { model: string; source: EffectiveModelSource } {
+  return resolveEffectiveModelForTier('reasoning', fileCfg?.chat_model, fileCfg, env);
+}
+
+/** Effective expansion model (utility tier) from raw file config + env. */
+export function resolveEffectiveExpansionModel(
+  fileCfg: GBrainConfig | null,
+  env: Record<string, string | undefined> = process.env,
+): { model: string; source: EffectiveModelSource } {
+  return resolveEffectiveModelForTier('utility', fileCfg?.expansion_model, fileCfg, env);
+}
 
 /**
  * v0.31.12 subagent runtime enforcement (layer 2).
@@ -125,20 +325,35 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
   }
 }
 
+/** Which step of the resolution chain produced the model. */
+export type ResolveSource =
+  | 'cli_flag'
+  | 'config_key'
+  | 'deprecated_key'
+  | 'models_default'
+  | 'tier_config'
+  | 'env'
+  | 'tier_default'
+  | 'fallback';
+
 /**
- * Resolve a model name through the 6-tier precedence chain. Async because it
- * reads config from the engine. Pass `engine: null` for callsites that don't
- * have an engine (rare; usually CLI bootstrap before connect).
+ * Resolve a model name through the precedence chain, reporting WHICH step
+ * produced it. Async because it reads config from the engine. Pass
+ * `engine: null` for callsites that don't have an engine (rare; usually CLI
+ * bootstrap before connect). Step 7 (tier default) is key-aware: it routes
+ * through `resolveTierDefault`, so an install whose only key is
+ * OPENAI_API_KEY resolves tier defaults to OpenAI models instead of an
+ * unservable Anthropic default.
  */
-export async function resolveModel(
+export async function resolveModelDetailed(
   engine: BrainEngine | null,
   opts: ResolveModelOpts,
-): Promise<string> {
+): Promise<{ model: string; source: ResolveSource }> {
   const envVar = opts.envVar ?? 'GBRAIN_MODEL';
 
   // 1. CLI flag wins
   if (opts.cliFlag && opts.cliFlag.trim()) {
-    return await resolveAlias(engine, opts.cliFlag.trim());
+    return { model: await resolveAlias(engine, opts.cliFlag.trim()), source: 'cli_flag' };
   }
 
   if (engine) {
@@ -153,7 +368,7 @@ export async function resolveModel(
             emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey, /*ignored=*/ true);
           }
         }
-        return await resolveAlias(engine, v.trim());
+        return { model: await resolveAlias(engine, v.trim()), source: 'config_key' };
       }
     }
 
@@ -162,7 +377,7 @@ export async function resolveModel(
       const v = await engine.getConfig(opts.deprecatedConfigKey);
       if (v && v.trim()) {
         emitDeprecationWarning(opts.deprecatedConfigKey, opts.configKey ?? '<no replacement>', /*ignored=*/ false);
-        return await resolveAlias(engine, v.trim());
+        return { model: await resolveAlias(engine, v.trim()), source: 'deprecated_key' };
       }
     }
 
@@ -170,7 +385,7 @@ export async function resolveModel(
     const def = await engine.getConfig('models.default');
     if (def && def.trim()) {
       const resolved = await resolveAlias(engine, def.trim());
-      return enforceSubagentCapable(resolved, opts.tier, 'models.default');
+      return { model: enforceSubagentCapable(resolved, opts.tier, 'models.default'), source: 'models_default' };
     }
 
     // 5. Tier override (v0.31.12)
@@ -178,7 +393,7 @@ export async function resolveModel(
       const tierVal = await engine.getConfig(`models.tier.${opts.tier}`);
       if (tierVal && tierVal.trim()) {
         const resolved = await resolveAlias(engine, tierVal.trim());
-        return enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`);
+        return { model: enforceSubagentCapable(resolved, opts.tier, `models.tier.${opts.tier}`), source: 'tier_config' };
       }
     }
   }
@@ -187,17 +402,30 @@ export async function resolveModel(
   const env = process.env[envVar];
   if (env && env.trim()) {
     const resolved = await resolveAlias(engine, env.trim());
-    return enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`);
+    return { model: enforceSubagentCapable(resolved, opts.tier, `env:${envVar}`), source: 'env' };
   }
 
-  // 7. Tier default (v0.31.12 — when no override beats us, the tier's
-  //    canonical model wins over caller-supplied fallback)
+  // 7. Key-aware tier default — when no override beats us, the tier's
+  //    canonical model for the first env-ready provider wins over the
+  //    caller-supplied fallback.
   if (opts.tier && TIER_DEFAULTS[opts.tier]) {
-    return await resolveAlias(engine, TIER_DEFAULTS[opts.tier]);
+    const resolved = await resolveAlias(engine, resolveTierDefault(opts.tier));
+    return { model: enforceSubagentCapable(resolved, opts.tier, 'tier-default'), source: 'tier_default' };
   }
 
   // 8. Hardcoded fallback (caller-supplied)
-  return await resolveAlias(engine, opts.fallback);
+  return { model: await resolveAlias(engine, opts.fallback), source: 'fallback' };
+}
+
+/**
+ * Resolve a model name through the precedence chain. Thin wrapper over
+ * `resolveModelDetailed` for the ~30 callers that don't care which step won.
+ */
+export async function resolveModel(
+  engine: BrainEngine | null,
+  opts: ResolveModelOpts,
+): Promise<string> {
+  return (await resolveModelDetailed(engine, opts)).model;
 }
 
 /**
@@ -315,7 +543,9 @@ export async function resolveAlias(
     }
   }
   if (name in DEFAULT_ALIASES) {
-    const next = DEFAULT_ALIASES[name];
+    // `gpt` tracks the CURRENT OpenAI flagship (discovered from the account,
+    // recipe-ranked static floor) instead of a pinned id that goes stale.
+    const next = name === 'gpt' ? discoveredOrStaticOpenAITier('deep') : DEFAULT_ALIASES[name];
     if (next && next !== name) return await resolveAlias(engine, next, depth + 1);
   }
   return name;
@@ -325,4 +555,5 @@ export async function resolveAlias(
 export function _resetDeprecationWarningsForTest(): void {
   _deprecationWarningsEmitted.clear();
   _subagentTierWarningsEmitted.clear();
+  _unservablePinWarningsEmitted.clear();
 }
