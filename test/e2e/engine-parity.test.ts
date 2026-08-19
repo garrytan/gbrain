@@ -239,6 +239,65 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   }, 30_000);
 
+  test('#4246 revision predicates execute as SQL on every engine health and sampling seam', async () => {
+    const slug = 'notes/revision-sql-fragment-parity';
+    const body = 'Fresh revision SQL fragment parity body';
+    const embedding = basisEmbedding(1003);
+
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const before = await eng.getStats();
+      const beforeHealth = await eng.getHealth();
+      await eng.putPage(slug, {
+        type: 'note', title: 'Revision SQL Fragment Parity', compiled_truth: body,
+      });
+      await eng.upsertChunks(slug, [{
+        chunk_index: 0,
+        chunk_text: body,
+        chunk_source: 'compiled_truth',
+        embedding,
+        token_count: 6,
+      }]);
+
+      const after = await eng.getStats();
+      expect(after.embedded_count).toBe(before.embedded_count + 1);
+      const freshHealth = await eng.getHealth();
+      expect(freshHealth.embed_coverage).toBeGreaterThan(0);
+      expect(freshHealth.missing_embeddings).toBe(beforeHealth.missing_embeddings);
+
+      const freshChunk = (await eng.getChunks(slug))[0];
+      expect(freshChunk?.embedding_is_null).toBe(false);
+      expect(freshChunk?.embedding_is_stale).toBe(false);
+
+      const prefixRows = await eng.listPrefixSampledPages({
+        prefixes: ['notes/revision-sql-fragment-parity'],
+      });
+      expect(prefixRows).toHaveLength(1);
+      expect(prefixRows[0]?.representative_chunk_id).not.toBeNull();
+
+      const corpusRows = await eng.listCorpusSample({ n: after.page_count + 10, seed: 0.25 });
+      expect(corpusRows.find((row) => row.slug === slug)?.representative_chunk_id).not.toBeNull();
+
+      await eng.executeRaw(
+        `UPDATE content_chunks SET chunk_text = 'Changed revision SQL fragment parity body'
+          WHERE page_id = (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1)`,
+        [slug],
+      );
+      expect((await eng.getChunks(slug))[0]?.embedding_is_stale).toBe(true);
+      expect((await eng.getHealth()).missing_embeddings).toBe(beforeHealth.missing_embeddings + 1);
+
+      // Leave the shared parity fixture healthy for later tests.
+      await eng.upsertChunks(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Changed revision SQL fragment parity body',
+        chunk_source: 'compiled_truth',
+        embedding,
+        token_count: 7,
+      }]);
+      expect((await eng.getChunks(slug))[0]?.embedding_is_stale).toBe(false);
+      expect((await eng.getHealth()).missing_embeddings).toBe(beforeHealth.missing_embeddings);
+    }
+  }, 30_000);
+
   test('v0.46.15 searchVector escalation parity: a dense page cannot starve the page result on either engine', async () => {
     // One page with 120 chunks nearest the query + 8 sparse pages behind it.
     // Pre-fix, the 100-chunk inner pool was consumed entirely by the dense

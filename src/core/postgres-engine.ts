@@ -1774,7 +1774,7 @@ export class PostgresEngine implements BrainEngine {
           (
             SELECT cc.id FROM content_chunks cc
             WHERE cc.page_id = r.page_id
-              AND ${primaryEmbeddingFreshSql('cc')}
+              AND ${tx.unsafe(primaryEmbeddingFreshSql('cc'))}
             ORDER BY cc.chunk_index ASC
             LIMIT 1
           ) AS representative_chunk_id
@@ -1848,7 +1848,7 @@ export class PostgresEngine implements BrainEngine {
         (
           SELECT cc.id FROM content_chunks cc
           WHERE cc.page_id = s.page_id
-            AND ${primaryEmbeddingFreshSql('cc')}
+            AND ${tx.unsafe(primaryEmbeddingFreshSql('cc'))}
           ORDER BY cc.chunk_index ASC
           LIMIT 1
         ) AS representative_chunk_id
@@ -2946,7 +2946,7 @@ export class PostgresEngine implements BrainEngine {
                cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
                cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
                (cc.embedding IS NULL) AS embedding_is_null,
-               ${primaryEmbeddingStaleSql('cc')} AS embedding_is_stale
+               ${tx.unsafe(primaryEmbeddingStaleSql('cc'))} AS embedding_is_stale
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = ${slug} AND ${scope}
@@ -5100,7 +5100,7 @@ export class PostgresEngine implements BrainEngine {
         -- every vector without touching embedded_at, and this count must not
         -- report a dark column as embedded.
         (SELECT count(*) FROM content_chunks
-          WHERE ${primaryEmbeddingFreshSql('content_chunks')}) as embedded_count,
+          WHERE ${sql.unsafe(primaryEmbeddingFreshSql('content_chunks'))}) as embedded_count,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT tag) FROM tags) as tag_count,
         (SELECT count(*) FROM timeline_entries) as timeline_entry_count
@@ -5149,7 +5149,7 @@ export class PostgresEngine implements BrainEngine {
         (SELECT CASE
            WHEN count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')) = 0
            THEN 1.0
-           ELSE count(*) FILTER (WHERE ${primaryEmbeddingFreshSql('cc')}
+           ELSE count(*) FILTER (WHERE ${sql.unsafe(primaryEmbeddingFreshSql('cc'))}
                                    AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
               / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
          END
@@ -5164,7 +5164,7 @@ export class PostgresEngine implements BrainEngine {
         -- countStaleChunks, so the remediation can always converge this count.
         (SELECT count(*) FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE ${primaryEmbeddingStaleSql('cc')}
+          WHERE ${sql.unsafe(primaryEmbeddingStaleSql('cc'))}
             AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
         ) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,
