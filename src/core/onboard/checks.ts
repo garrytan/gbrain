@@ -16,6 +16,7 @@
 // when ctx threads — onboard surface threads explicitly per A26.
 
 import type { BrainEngine } from '../engine.ts';
+import { primaryEmbeddingStaleSql } from '../embedding-content-revision.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
 
@@ -48,15 +49,16 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
 /**
  * embed_staleness: count of chunks awaiting embedding.
  *
- * Backed by content_chunks_stale_idx partial index (v100) so the count
- * is cheap even on big brains.
+ * Backed by the NULL-vector and content-revision-mismatch partial indexes so
+ * the count stays cheap on large brains.
  */
 export async function checkEmbedStaleness(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
   const staleCount = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+    `SELECT COUNT(*) AS count FROM content_chunks
+      WHERE ${primaryEmbeddingStaleSql('content_chunks')}`,
   );
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';

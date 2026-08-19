@@ -950,7 +950,7 @@ export async function runPhaseSynthesize(
     }
 
     // CDX-8: deferred-embed closure. Oneshot children write chunks with
-    // `embedding IS NULL`; the global `embed` phase only runs on SOME
+    // missing embeddings; the global `embed` phase only runs on SOME
     // invocation shapes (autopilot per-source cycles run NON_GLOBAL_PHASES,
     // and `--phase synthesize` never reaches it), so close the freshness gap
     // HERE. Runs whenever this phase wrote pages REGARDLESS of the current

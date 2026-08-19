@@ -2272,7 +2272,7 @@ export async function buildChecks(
         // false-warn "Active column 'embedding' is 0.0% populated".
         const covRows = await engine.executeRaw<{ pct: number; total: number }>(
           `SELECT (
-             COUNT(*) FILTER (WHERE ${quoteIdentifier(activeCol)} IS NOT NULL)::float
+             COUNT(*) FILTER (WHERE ${activeCol === 'embedding' ? 'embedding IS NOT NULL AND embedded_content_revision = content_revision' : `${quoteIdentifier(activeCol)} IS NOT NULL`})::float
              / NULLIF(COUNT(*), 0) * 100
            )::float AS pct,
            COUNT(*)::int AS total

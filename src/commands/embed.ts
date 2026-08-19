@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
-import type { ChunkInput } from '../core/types.ts';
+import type { ChunkEmbeddingUpdate, ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
@@ -21,9 +21,10 @@ import {
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
-import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
+import { allContextualChunksSelected, wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
 import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
 import type { Page } from '../core/types.ts';
+import { primaryEmbeddingStaleSql } from '../core/embedding-content-revision.ts';
 
 /** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
 const FAILURE_SAMPLE_CAP = 10;
@@ -54,13 +55,55 @@ export async function restampIfDemotedToTitleTier(
   sourceId: string,
 ): Promise<void> {
   if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
-  await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
+  await engine.transaction(async (tx) => {
+    // Lock in writer order (page, then chunks) and re-check DB truth. Cursor
+    // pagination may split one page across several batches, so the final
+    // batch — not necessarily one containing every chunk — performs the
+    // demotion once no contextual chunk remains stale.
+    const lockedPage = await tx.executeRaw<{ id: number; contextual_retrieval_mode: string | null }>(
+      `SELECT id, contextual_retrieval_mode
+         FROM pages
+        WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL
+        FOR UPDATE`,
+      [slug, sourceId],
+    );
+    const pageId = lockedPage[0]?.id;
+    if (pageId == null || lockedPage[0]?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
+    const chunks = await tx.executeRaw<{ chunk_index: number; embedding_is_stale: boolean }>(
+      `SELECT chunk_index, ${primaryEmbeddingStaleSql('cc')} AS embedding_is_stale
+         FROM content_chunks cc
+        WHERE page_id = $1
+          AND chunk_source IS DISTINCT FROM 'fenced_code'
+        FOR UPDATE`,
+      [pageId],
+    );
+    if (chunks.length === 0 || chunks.some((chunk) => chunk.embedding_is_stale)) return;
+
+    await tx.updatePageContextualRetrievalState(
+      slug,
+      sourceId,
+      'title',
+      titleTierCorpusGeneration(),
+    );
+    // The mode transition deliberately bumped every contextual revision.
+    // These locked vectors were all freshly rebuilt with title-only wrappers,
+    // so atomically attest them to that new revision rather than scheduling a
+    // redundant second provider pass.
+    await tx.executeRaw(
+      `UPDATE content_chunks
+          SET embedded_content_revision = content_revision
+        WHERE page_id = $1
+          AND chunk_source IS DISTINCT FROM 'fenced_code'
+          AND embedding IS NOT NULL`,
+      [pageId],
+    );
+  });
 }
 
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
   all?: boolean;
-  /** Embed only stale chunks (missing embedding). */
+  /** Embed only stale chunks (missing or content-revision-mismatched embedding). */
   stale?: boolean;
   /** Embed specific pages by slug. */
   slugs?: string[];
@@ -794,12 +837,9 @@ async function embedPage(
     }
   }
 
-  // Embed chunks without embeddings. embedding_is_null is the stored-vector
-  // truth: a schema rebuild NULLs vectors without touching embedded_at, so
-  // keying on embedded_at alone silently no-ops ("all chunks already
-  // embedded") on a rebuild-darkened page. Older callers that selected chunks
-  // without the boolean fall back to embedded_at.
-  const toEmbed = chunks.filter(c => !c.embedded_at || c.embedding_is_null === true);
+  // Embed missing or content-stale chunks. The boolean is authoritative;
+  // older callers that did not select it fall back to embedded_at/NULL truth.
+  const toEmbed = chunks.filter(c => c.embedding_is_stale ?? (!c.embedded_at || c.embedding_is_null === true));
   result.total_chunks += chunks.length;
   result.skipped += chunks.length - toEmbed.length;
 
@@ -863,16 +903,21 @@ async function embedPage(
   // page is mixed — don't claim it's current. `embed --all` fully re-embeds
   // such a page and then stamps it. #3037: a partial failure leaves failed
   // chunks NULL, so don't stamp then either.
-  if (failed === 0 && toEmbed.length === chunks.length) {
-    // D9 honesty: no stamp when the gateway is unconfigured — a wrong
-    // signature is worse than none (NULL = unknown provenance).
-    const stampSig = currentEmbeddingSignature();
-    if (stampSig) {
-      await engine.setPageEmbeddingSignature(slug, { sourceId, signature: stampSig });
+  if (failed === 0) {
+    if (toEmbed.length === chunks.length) {
+      // D9 honesty: no stamp when the gateway is unconfigured — a wrong
+      // signature is worse than none (NULL = unknown provenance).
+      const stampSig = currentEmbeddingSignature();
+      if (stampSig) {
+        await engine.setPageEmbeddingSignature(slug, { sourceId, signature: stampSig });
+      }
     }
-    // #3507: a fully re-embedded per_chunk_synopsis page landed at the
-    // title tier — keep the stamped mode honest.
-    await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
+    if (allContextualChunksSelected(chunks, toEmbed)) {
+      // fenced_code is raw in every tier; preserving it does not make the
+      // contextual vectors mixed when all wrapper-eligible chunks moved to
+      // the title-only fallback.
+      await restampIfDemotedToTitleTier(engine, page, slug, page.source_id);
+    }
   }
   result.embedded += toEmbed.length - failed;
   if (failed > 0) {
@@ -938,7 +983,7 @@ async function embedAll(
   // Stale-only fast path: avoid the listPages + per-page getChunks
   // bomb that pulled every page row + every chunk's embedding column
   // (~76 MB on a 1.5K-page brain) only to client-side-filter for
-  // chunks where embedding IS NULL. The new path issues one SQL
+  // missing/content-stale chunks. The new path issues one SQL
   // pre-check + at most one slug-grouped SELECT excluding the
   // (always-null on stale rows) embedding column. On a 100%-embedded
   // brain (the autopilot common case) we exit after ~50 bytes wire.
@@ -1112,8 +1157,8 @@ async function embedAll(
 
 /**
  * Chunkless-page safety net for `embed --stale`. `listStaleChunks` /
- * `countStaleChunks` only ever look at `content_chunks` rows where
- * `embedding IS NULL` — a page written directly via `putPage` that never
+ * `countStaleChunks` only ever look at existing `content_chunks` rows — a
+ * page written directly via `putPage` that never
  * went through chunking (e.g. an enrichment-generated entity stub) has NO
  * chunk row at all, so it is invisible to that scan forever, even after
  * unlimited `embed --stale` runs.
@@ -1308,7 +1353,7 @@ async function healChunklessPages(
 /**
  * SQL-side stale path: replaces the listPages + per-page getChunks
  * walk with a count + slug-grouped SELECT. Preserves the existing
- * functional contract (every chunk where embedding IS NULL gets
+ * functional contract (every missing/content-revision-stale chunk gets
  * embedded; nothing else is touched) without paying egress on
  * already-embedded chunks.
  *
@@ -1317,11 +1362,9 @@ async function healChunklessPages(
  * function makes the read-bytes path explicit and keeps the --all
  * path verbatim from prior behavior.
  *
- * Staleness predicate: `embedding IS NULL`. We deliberately do NOT
- * use `embedded_at IS NULL` here — the bulk-import path can leave
- * embedded_at populated while embedding is NULL (see upsertChunks
- * consistency notes), and `embedding IS NULL` is the truth source
- * for "this chunk needs an embedding".
+ * Staleness predicate: missing vector OR content-revision mismatch. We
+ * deliberately do NOT use `embedded_at`: it is an audit timestamp, not
+ * content provenance, and can remain populated while a vector is absent.
  */
 async function embedAllStale(
   engine: BrainEngine,
@@ -1353,7 +1396,7 @@ async function embedAllStale(
   const overallStartedAt = Date.now();
 
   // D7: thread sourceId so source-scoped runs only count + visit
-  // that source's NULL embeddings.
+  // that source's missing or revision-stale embeddings.
   const sourceOpt = sourceId ? { sourceId } : undefined;
   const includeNullSig = !!staleOpts?.includeNullSignature;
 
@@ -1361,7 +1404,7 @@ async function embedAllStale(
   // short-circuit just below — a healthy brain pays one extra SELECT
   // count(*) and does no further work. Only when pages are actually found
   // do we pay for the keyset-paginated chunk sweep. Chunking here (before
-  // countStaleChunks) means any newly-written NULL-embedding chunks flow
+  // countStaleChunks) means any newly-written missing-vector chunks flow
   // into the SAME pass via the existing cursor.
   const chunklessCount = await engine.countChunklessPagesWithContent(sourceOpt);
   if (chunklessCount > 0) {
@@ -1379,8 +1422,8 @@ async function embedAllStale(
 
   // v0.41.31: re-embed pages whose embedding_signature drifted (model/dims
   // swap). dry-run must NOT mutate, so it counts signature-stale via the
-  // widened predicate; a live run NULLs them first so the existing
-  // NULL-embedding cursor (listStaleChunks) picks them up unchanged.
+  // widened predicate; a live run NULLs them first so the same
+  // revision-aware stale cursor (listStaleChunks) picks them up unchanged.
   if (!dryRun && signature) {
     const invalidated = await engine.invalidateStaleSignatureEmbeddings({
       signature,
@@ -1639,31 +1682,38 @@ async function embedAllStale(
             wrapChunkTextsForStoredMode(pageRow, stale),
             { abortSignal: effectiveSignal },
           );
-          // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
-          const staleIdxToEmbedding = new Map<number, Float32Array>();
-          for (let j = 0; j < stale.length; j++) {
-            const emb = embeddings[j];
-            if (emb) staleIdxToEmbedding.set(stale[j].chunk_index, emb);
-          }
-          // preserveCodeMetadata threads code-chunk metadata (#769) so the
-          // autopilot --stale path doesn't clobber language/symbol_name/etc
-          // to NULL on every cycle.
-          const merged: ChunkInput[] = existing.map(c => preserveCodeMetadata(c, {
-            chunk_index: c.chunk_index,
-            chunk_text: c.chunk_text,
-            chunk_source: c.chunk_source,
-            embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-            token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-          }));
-          await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
+          const updates: ChunkEmbeddingUpdate[] = stale.flatMap((chunk, index) => {
+            const embedding = embeddings[index];
+            return embedding ? [{
+              chunk_index: chunk.chunk_index,
+              chunk_text: chunk.chunk_text,
+              chunk_source: chunk.chunk_source,
+              expected_content_revision: chunk.content_revision,
+              embedding,
+              token_count: chunk.token_count ?? Math.ceil(chunk.chunk_text.length / 4),
+            }] : [];
+          });
+          // Compare-and-swap the exact stale snapshot. A concurrent sync may
+          // change text/title/context while the provider request is in
+          // flight; missed rows stay stale for the next pass instead of
+          // receiving old vectors stamped as current.
+          const written = await observed(pacer, () =>
+            engine.updateChunkEmbeddingsIfCurrent(slug, updates, { sourceId: keySourceId }),
+          );
+          const casMisses = updates.length - written.length;
+          const remaining = await observed(pacer, () => engine.executeRaw<{ stale: number }>(
+            `SELECT count(*) FILTER (WHERE ${primaryEmbeddingStaleSql('cc')})::int AS stale
+               FROM content_chunks cc
+              WHERE cc.page_id = $1`,
+            [stale[0]!.page_id],
+          ));
           // v0.41.31: stamp provenance after the page's chunks are embedded —
           // but only when EVERY chunk was stale (fully re-embedded this pass).
           // A partially-stale page keeps preserved chunks of unknown/old
           // provenance, so don't claim it's current. (After invalidate, a
           // signature-drifted page IS fully stale → this stamps it.)
           // #3037: not on partial failure — failed chunks stay NULL.
-          if (signature && failed === 0 && stale.length === existing.length) {
+          if (signature && failed === 0 && casMisses === 0 && Number(remaining[0]?.stale ?? 0) === 0) {
             await observed(pacer, () =>
               engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
             );
@@ -1674,15 +1724,24 @@ async function embedAllStale(
           // #3037: `failed === 0` is part of "fully re-embedded" — if the
           // per-chunk isolation left some chunks NULL, restamping would make
           // contextual_retrieval_mode lie again (the exact #3461 bug).
-          if (failed === 0 && stale.length === existing.length) {
+          if (failed === 0 && casMisses === 0) {
             await observed(pacer, () =>
               restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
             );
           }
-          result.embedded += stale.length - failed;
+          result.embedded += written.length;
           if (failed > 0) {
             recordFailure(result, failed, slug, firstError);
             serr(`\n  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${stale.length - failed}`);
+          }
+          if (casMisses > 0) {
+            recordFailure(
+              result,
+              casMisses,
+              slug,
+              new Error('content changed while embedding; stale vector write skipped'),
+            );
+            serr(`\n  ${slug}: ${casMisses} chunk(s) changed while embedding; left stale for the next pass`);
           }
         } catch (e: unknown) {
           // Budget/abort-fired cancellations are expected on the way out; don't

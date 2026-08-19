@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { getSessionContextState, upsertSessionContextState } from '../../src/core/context/session-state.ts';
+import { SemanticQueryCache } from '../../src/core/search/query-cache.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -149,6 +150,94 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
 
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
   });
+
+  test('#4246 content-revision staleness is identical on Postgres and PGLite', async () => {
+    const slug = 'notes/embedding-content-revision-parity';
+    const original = basisEmbedding(1001);
+    const refreshed = basisEmbedding(1002);
+
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const page = await eng.putPage(slug, {
+        type: 'note', title: 'Embedding content revision parity', compiled_truth: 'Original revision text',
+      });
+      await eng.upsertChunks(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Original revision text',
+        chunk_source: 'compiled_truth',
+        embedding: original,
+        token_count: 4,
+      }]);
+      expect(await eng.countStaleChunks()).toBe(0);
+      const cache = new SemanticQueryCache(eng);
+      const cacheMeta = {
+        sources_consulted: ['fixture'], intent: 'general', detail: 'medium',
+      } as unknown as Parameters<SemanticQueryCache['store']>[3];
+      await cache.store('revision parity', original, [{
+        page_id: page.id, slug, title: page.title, snippet: 'Original revision text', score: 1,
+      } as unknown as SearchResult], cacheMeta);
+      expect((await cache.lookup(original)).hit).toBe(true);
+
+      // Reproduce the historical/corrupt row: content changes while the
+      // prior vector survives. The DB trigger must catch every writer.
+      await eng.executeRaw(
+        `UPDATE content_chunks SET chunk_text = 'Changed revision text'
+          WHERE page_id = (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1)`,
+        [slug],
+      );
+      expect(await eng.countStaleChunks()).toBe(1);
+      expect((await eng.listStaleChunks({ batchSize: 10 })).map((row) => row.slug)).toContain(slug);
+      expect((await eng.searchVector(original, { limit: 20 })).map((row) => row.slug)).not.toContain(slug);
+      expect((await cache.lookup(original)).hit).toBe(false);
+
+      // A cached miss created while the vector is hidden must invalidate when
+      // a partial repair makes the chunk eligible again (no page-signature
+      // write is required for this content-only repair).
+      await cache.store('revision parity', original, [], cacheMeta);
+      expect((await cache.lookup(original)).hit).toBe(true);
+
+      const selected = (await eng.listStaleChunks({ batchSize: 10 }))[0]!;
+      await eng.executeRaw(
+        `UPDATE content_chunks SET chunk_text = 'Concurrent revision text'
+          WHERE page_id = $1 AND chunk_index = $2`,
+        [selected.page_id, selected.chunk_index],
+      );
+      expect(await eng.updateChunkEmbeddingsIfCurrent(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Changed revision text',
+        chunk_source: 'compiled_truth',
+        expected_content_revision: selected.content_revision,
+        embedding: refreshed,
+        token_count: 4,
+      }])).toEqual([]);
+      expect(await eng.countStaleChunks()).toBe(1);
+
+      const current = (await eng.listStaleChunks({ batchSize: 10 }))[0]!;
+      expect(await eng.updateChunkEmbeddingsIfCurrent(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Concurrent revision text',
+        chunk_source: 'compiled_truth',
+        expected_content_revision: current.content_revision,
+        embedding: refreshed,
+        token_count: 4,
+      }])).toEqual([0]);
+      expect(await eng.countStaleChunks()).toBe(0);
+      expect((await eng.searchVector(refreshed, { limit: 20 })).map((row) => row.slug)).toContain(slug);
+      expect((await cache.lookup(original)).hit).toBe(false);
+
+      await eng.updatePageContextualRetrievalState(slug, 'default', 'title', 'parity-generation');
+      await eng.upsertChunks(slug, [{
+        chunk_index: 0,
+        chunk_text: 'Concurrent revision text',
+        chunk_source: 'compiled_truth',
+        embedding: refreshed,
+        token_count: 4,
+      }]);
+      await eng.putPage(slug, {
+        type: 'note', title: 'Embedding input renamed', compiled_truth: 'Concurrent revision text',
+      });
+      expect(await eng.countStaleChunks()).toBe(1);
+    }
+  }, 30_000);
 
   test('v0.46.15 searchVector escalation parity: a dense page cannot starve the page result on either engine', async () => {
     // One page with 120 chunks nearest the query + 8 sparse pages behind it.

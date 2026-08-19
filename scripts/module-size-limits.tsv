@@ -5,8 +5,9 @@
 # Columns: path	max_lines	policy	note
 src/commands/doctor.ts	4291	ratchet	peel target: containment sprint C8-C13; grown v0.46.x keyless not_configured state
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
-src/core/postgres-engine.ts	5837	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
-src/core/pglite-engine.ts	5881	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
+src/core/postgres-engine.ts	5865	ratchet	grown v0.46.23.0 empty-overwrite guard + #4246 revision-aware reads/CAS repair
+src/core/pglite-engine.ts	5951	ratchet	grown v0.46.23.0 empty-overwrite guard + #4246 parity revision reads/CAS repair
+src/core/schema-embedded.ts	1731	ratchet	generated from src/schema.sql; #4246 content revision, cache purge, and contextual fan-out triggers
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4311	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
 src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
@@ -15,14 +16,14 @@ src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyc
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
 src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)
 src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: supersede scoping + edge-existence gate
-src/core/engine.ts	2351	ratchet	grown v0.46.23.0: putPage allowEmptyOverwrite contract (#4335)
+src/core/engine.ts	2362	ratchet	grown v0.46.23.0 allowEmptyOverwrite + #4246 typed CAS embedding contract
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
-src/commands/embed.ts	1963	ratchet
-src/core/types.ts	1879	ratchet	grown v0.46.22.0 phone wave: supersession rerank result fields (#4056)
+src/commands/embed.ts	2022	ratchet	#4246 CAS stale writes and atomic contextual-tier restamp
+src/core/types.ts	1898	ratchet	grown v0.46.22.0 supersession fields + #4246 revision/CAS update shapes
 src/commands/skillpack.ts	1360	ratchet
 src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices

@@ -53,7 +53,8 @@ async function seedEmbedded(slug: string, text: string, signature: string | null
   // Flip the chunk to a non-null vector sized to the actual column dim.
   await engine.executeRaw(
     `UPDATE content_chunks
-        SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector
+        SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector,
+            embedded_content_revision = content_revision
       WHERE page_id = (SELECT id FROM pages WHERE slug = $2 AND source_id = $3)`,
     [colDim, slug, sourceId ?? 'default'],
   );

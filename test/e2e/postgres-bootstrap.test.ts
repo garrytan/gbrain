@@ -176,9 +176,10 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
         WHERE n.nspname = 'public'
           AND p.proname IN ('bump_page_generation_fn','bump_page_generation_clock_fn',
                             'update_chunk_search_vector','update_page_search_vector',
-                            'notify_minion_job_change','auto_enable_rls')`,
+                            'notify_minion_job_change','auto_enable_rls',
+                            'bump_chunk_content_revision_fn','bump_contextual_embedding_revisions_fn')`,
     );
-    expect(rows.length).toBeGreaterThanOrEqual(5);
+    expect(rows.length).toBeGreaterThanOrEqual(7);
     for (const r of rows) {
       expect(JSON.stringify(r.proconfig ?? [])).toContain('search_path=');
     }

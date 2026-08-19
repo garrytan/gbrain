@@ -42,6 +42,7 @@ import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { hnswIndexExpected } from './vector-index.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
+import { primaryEmbeddingFreshSql, primaryEmbeddingStaleSql } from './embedding-content-revision.ts';
 
 // ============================================================================
 // Env-override safety gate (moved from retrieval-upgrade-planner.ts — this
@@ -859,7 +860,7 @@ export async function verifySearchRoundTrip(
       `SELECT cc.page_id, p.source_id, cc.chunk_text
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NOT NULL AND p.deleted_at IS NULL
+        WHERE ${primaryEmbeddingFreshSql('cc')} AND p.deleted_at IS NULL
           AND (cc.modality IS NULL OR cc.modality = 'text')
         ORDER BY cc.id DESC
         LIMIT $1`,
@@ -1071,6 +1072,20 @@ export async function applyEmbeddingMigration(
   }
 
   try {
+    // Count before any schema/invalidation step. Revision triggers may purge
+    // the source cache as soon as vectors become ineligible, before the
+    // explicit clear below; the result should still report the rows this
+    // migration caused to disappear.
+    let cacheRowsBefore = 0;
+    try {
+      const rows = await engine.executeRaw<{ count: number }>(
+        `SELECT count(*)::int AS count FROM query_cache`,
+      );
+      cacheRowsBefore = Number(rows[0]?.count ?? 0);
+    } catch {
+      // Old brains may not have the cache table yet.
+    }
+
     // 1. State marker FIRST — a crash after any later step is resumable.
     //    Same-target re-apply PRESERVES the original started_at (set-if-
     //    absent) so status/doctor report the migration's true age; a
@@ -1164,7 +1179,10 @@ export async function applyEmbeddingMigration(
     let cacheCleared = 0;
     try {
       const { SemanticQueryCache } = await import('./search/query-cache.ts');
-      cacheCleared = await new SemanticQueryCache(engine).clear({});
+      cacheCleared = Math.max(
+        cacheRowsBefore,
+        await new SemanticQueryCache(engine).clear({}),
+      );
     } catch {
       // Table may not exist on old brains; a miss here is harmless.
     }
@@ -1344,8 +1362,8 @@ export async function applyRerankerAction(
  *
  * Safety: this is only sound because `applyEmbeddingMigration` invalidated
  * (NULLed) every chunk that was NOT already in the target space. So "page has
- * zero NULL-embedding chunks" ⇒ "every chunk on this page was embedded in the
- * target space during this run". Pages with any remaining NULL chunk (a real
+ * zero stale chunks" ⇒ "every chunk on this page was embedded in the
+ * target space during this run". Pages with any remaining stale chunk (a real
  * embed failure) are deliberately left unstamped so the completion probe still
  * reports them.
  *
@@ -1364,7 +1382,7 @@ export async function reconcilePageSignatures(
         AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)
         AND NOT EXISTS (
           SELECT 1 FROM content_chunks c
-           WHERE c.page_id = p.id AND c.embedding IS NULL
+           WHERE c.page_id = p.id AND ${primaryEmbeddingStaleSql('c')}
         )
         AND NOT EXISTS (
           -- Model-truth conjunct: chunks carry the gateway-resolved

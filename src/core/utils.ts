@@ -333,13 +333,22 @@ export function tryParseEmbedding(value: unknown): Float32Array | null {
 }
 
 export function rowToChunk(row: Record<string, unknown>, includeEmbedding = false): Chunk {
+  // #4246: getChunksWithEmbeddings is used by engine migration. Never carry a
+  // preserved vector into a new brain when it represents an older chunk_text
+  // revision — the target upsert would otherwise stamp that stale vector as
+  // current. Rows from a pre-v133 projection have neither field and retain the
+  // legacy behavior; current rows with a NULL/mismatched stamp fail closed.
+  const revisionFieldsPresent = row.content_revision !== undefined;
+  const embeddingMatchesContent = !revisionFieldsPresent
+    || (row.embedded_content_revision != null
+      && String(row.embedded_content_revision) === String(row.content_revision));
   return {
     id: row.id as number,
     page_id: row.page_id as number,
     chunk_index: row.chunk_index as number,
     chunk_text: row.chunk_text as string,
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline' | 'fenced_code',
-    embedding: includeEmbedding ? parseEmbedding(row.embedding) : null,
+    embedding: includeEmbedding && embeddingMatchesContent ? parseEmbedding(row.embedding) : null,
     model: row.model as string,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
@@ -357,6 +366,7 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     // Only present when the SELECT included it (getChunks); undefined elsewhere
     // so callers can tell "not selected" from "vector present".
     ...(row.embedding_is_null !== undefined && { embedding_is_null: Boolean(row.embedding_is_null) }),
+    ...(row.embedding_is_stale !== undefined && { embedding_is_stale: Boolean(row.embedding_is_stale) }),
   };
 }
 

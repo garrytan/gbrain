@@ -26,6 +26,7 @@ import type { BrainEngine } from './engine.ts';
 import { parseSourceConfig, type SourceRow } from './sources-load.ts';
 import { isSourceUnchangedSinceSync } from './git-head.ts';
 import { resolveHoursEnv } from './env-number.ts';
+import { primaryEmbeddingFreshSql } from './embedding-content-revision.ts';
 
 export interface SourceMetrics {
   source_id: string;
@@ -360,7 +361,7 @@ async function chunkCountsBySource(engine: BrainEngine): Promise<Map<string, { t
   const rows = await engine.executeRaw<{ source_id: string; total: number; embedded: number }>(
     `SELECT p.source_id,
             COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE c.embedding IS NOT NULL)::int AS embedded
+            COUNT(*) FILTER (WHERE ${primaryEmbeddingFreshSql('c')})::int AS embedded
        FROM content_chunks c
        JOIN pages p ON p.id = c.page_id
       WHERE p.deleted_at IS NULL

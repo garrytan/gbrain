@@ -16,6 +16,9 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, doctorReportRemote, type Check } from '../src/commands/doctor.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 let engine: PGLiteEngine;
 
@@ -38,6 +41,39 @@ function findCheck(checks: Check[], name: string): Check | undefined {
 }
 
 describe('embedding_env_override check (buildChecks seam)', () => {
+  test('embedding-column coverage does not count a revision-mismatched primary vector', async () => {
+    const dims = await engine.executeRaw<{ dim: number }>(
+      `SELECT atttypmod AS dim FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'`,
+    );
+    await engine.putPage('doctor/revision-stale', {
+      type: 'note', title: 'Revision stale', compiled_truth: 'old body',
+    });
+    await engine.upsertChunks('doctor/revision-stale', [{
+      chunk_index: 0,
+      chunk_text: 'old body',
+      chunk_source: 'compiled_truth',
+      embedding: new Float32Array(Number(dims[0]!.dim)),
+      token_count: 2,
+    }]);
+    await engine.executeRaw(`UPDATE content_chunks SET chunk_text = 'new body'`);
+    await engine.setConfig('search_embedding_column', 'embedding');
+
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-doctor-revision-'));
+    mkdirSync(join(home, '.gbrain'));
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite' }));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const check = findCheck(await buildChecks(engine, []), 'embedding_column_registry');
+        expect(check).toBeDefined();
+        expect(check!.status).toBe('warn');
+        expect(check!.message).toContain("Active column 'embedding' is 0.0% populated");
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('env unset → ok', async () => {
     await withEnv(
       { GBRAIN_EMBEDDING_MODEL: undefined, GBRAIN_EMBEDDING_DIMENSIONS: undefined },

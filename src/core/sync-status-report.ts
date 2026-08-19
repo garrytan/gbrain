@@ -9,6 +9,7 @@ import { unacknowledgedSyncFailures } from './sync.ts';
 // lagFromContentMs is the remote/column comparator (buildSyncStatusReport
 // backs the get_status_snapshot MCP op — must NOT shell out to git).
 import { lagFromContentMs } from './source-health.ts';
+import { primaryEmbeddingStaleSql } from './embedding-content-revision.ts';
 
 /**
  * v0.40.3.0 — read-only per-source dashboard for `gbrain sources status`.
@@ -91,6 +92,9 @@ export async function buildSyncStatusReport(
   const cfg = loadConfig() ?? ({ engine: engine.kind } as Parameters<typeof resolveEmbeddingColumn>[1]);
   const resolved = resolveEmbeddingColumn(undefined, cfg);
   const embeddingColIdent = quoteIdentifier(resolved.name);
+  const unembeddedPredicate = resolved.name === 'embedding'
+    ? primaryEmbeddingStaleSql('cc')
+    : `cc.${embeddingColIdent} IS NULL`;
 
   const sourceIds = sources.map((s) => s.id);
   type SourceRow = {
@@ -149,7 +153,7 @@ export async function buildSyncStatusReport(
        LEFT JOIN (
          SELECT pg.source_id,
                 COUNT(*) AS chunks_total,
-                COUNT(*) FILTER (WHERE cc.${embeddingColIdent} IS NULL) AS chunks_unembedded
+                COUNT(*) FILTER (WHERE ${unembeddedPredicate}) AS chunks_unembedded
          FROM content_chunks cc
          JOIN pages pg ON pg.id = cc.page_id
          WHERE pg.deleted_at IS NULL

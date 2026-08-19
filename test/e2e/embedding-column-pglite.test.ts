@@ -85,11 +85,11 @@ beforeAll(async () => {
   // search orderings depend on which column the engine actually reads.
   const vecLit = (arr: number[]) => `[${arr.join(',')}]`;
   await (engine as any).db.query(
-    `UPDATE content_chunks SET embedding = $1::vector WHERE id = $2`,
+    `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision WHERE id = $2`,
     [vecLit(VEC1536_A), chunkIdA],
   );
   await (engine as any).db.query(
-    `UPDATE content_chunks SET embedding = $1::vector WHERE id = $2`,
+    `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision WHERE id = $2`,
     [vecLit(VEC1536_B), chunkIdB],
   );
   await (engine as any).db.query(

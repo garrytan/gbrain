@@ -104,7 +104,8 @@ describe('sumStaleChunkChars', () => {
     expect(dim).toBeGreaterThan(0);
     await engine.executeRaw(
       `UPDATE content_chunks
-          SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector
+          SET embedding = ('[' || array_to_string(array_fill(0.0::real, ARRAY[$1::int]), ',') || ']')::vector,
+              embedded_content_revision = content_revision
         WHERE page_id = (SELECT id FROM pages WHERE slug = 'done' AND source_id = 'default')`,
       [dim],
     );

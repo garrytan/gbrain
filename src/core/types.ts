@@ -602,44 +602,63 @@ export interface Chunk {
    * image search arm.
    */
   modality?: 'text' | 'image';
-  /**
-   * True when the stored vector is NULL. Cheap boolean (no vector egress) so
-   * non-embedding readers can tell "vector missing" apart from `embedded_at`,
-   * which a schema rebuild leaves stale. Present only on paths that select it
-   * (getChunks).
-   */
+  /** Literal stored-vector NULL truth, selected by getChunks. */
   embedding_is_null?: boolean;
+  /** Missing or content-revision-stale primary vector, selected by getChunks. */
+  embedding_is_stale?: boolean;
 }
 
 /**
  * Lightweight row shape returned by `BrainEngine.listStaleChunks()`.
- * Excludes the `embedding` column on purpose — only chunks needing
- * an embedding come back, and we don't ship the (always-null on stale
- * rows) embedding bytes over the wire. See `embed --stale` egress fix.
+ * Excludes the `embedding` column on purpose — only chunks needing a current
+ * embedding come back, and old vector bytes never cross the wire. See the
+ * `embed --stale` egress fix and #4246 content-revision predicate.
  */
 export interface StaleChunkRow {
   slug: string;
   chunk_index: number;
   chunk_text: string;
-  chunk_source: 'compiled_truth' | 'timeline';
+  chunk_source: ChunkInput['chunk_source'];
   model: string | null;
   token_count: number | null;
   /** v0.31.12: source_id so embed --stale can thread it through getChunks/upsertChunks. */
   source_id: string;
   /** v0.33.3: page_id for cursor pagination in listStaleChunks. */
   page_id: number;
+  /**
+   * #4246: optimistic-write token for the exact embedding input selected by
+   * the stale cursor.  Embed workers must present it when they write the
+   * resulting vector so a concurrent sync cannot attach an old vector to a
+   * newer chunk.
+   */
+  content_revision: number | string;
+}
+
+/**
+ * One primary-vector repair computed from a `StaleChunkRow` snapshot.
+ * `updateChunkEmbeddingsIfCurrent` applies it only while the chunk text,
+ * source class, and content revision still match that snapshot.
+ */
+export interface ChunkEmbeddingUpdate {
+  chunk_index: number;
+  chunk_text: string;
+  chunk_source: ChunkInput['chunk_source'];
+  expected_content_revision: number | string;
+  embedding: Float32Array;
+  model?: string;
+  token_count?: number;
 }
 
 /**
  * A page with non-empty `compiled_truth` and/or `timeline` (both are
  * chunked independently by the healer) but ZERO `content_chunks` rows,
  * returned by `listChunklessPagesWithContent`. `embed --stale` scans
- * `content_chunks` (embedding IS NULL) — a page written directly via
+ * existing `content_chunks` for missing or revision-stale vectors — a page written directly via
  * `putPage` that never went through the chunking step (e.g. an
  * enrichment-generated entity stub) has no chunk row to go stale, so it is
  * invisible to that scan forever. This is the safety-net detection: find
  * such pages so `embed --stale` can chunk them and fold the resulting
- * NULL-embedding chunks into the same run.
+ * missing-vector chunks into the same run.
  *
  * Quarantined and `embed_skip` pages are excluded by the underlying query
  * (`src/core/quarantine.ts` / `src/core/embed-skip.ts`) — both are

@@ -53,12 +53,18 @@ __setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } 
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
+  let engine: BrainEngine;
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
     if (overrides[method]) return overrides[method](...args);
+    if (method === 'updateChunkEmbeddingsIfCurrent') {
+      return Promise.resolve(args[1].map((row: any) => row.chunk_index));
+    }
+    if (method === 'executeRaw') return Promise.resolve([{ stale: 0 }]);
+    if (method === 'transaction') return args[0](engine);
     return Promise.resolve(null);
   };
-  const engine = new Proxy({} as any, {
+  engine = new Proxy({} as any, {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (overrides[prop]) return overrides[prop];
@@ -457,34 +463,27 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(totalEmbedCalls).toBe(0);
   });
 
-  test('N stale chunks across M pages: only stale slugs re-fetched, exact stale set embedded, non-stale chunks preserved', async () => {
+  test('N stale chunks across M pages: only the exact stale snapshots are CAS-updated', async () => {
     const { runEmbedCore } = await import('../src/commands/embed.ts');
     let listPagesCalled = false;
 
     // D5a: source_id + page_id required on StaleChunkRow.
     const stale = [
-      { slug: 'page-a', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 1 },
-      { slug: 'page-b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2 },
-      { slug: 'page-b', chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2 },
+      { slug: 'page-a', chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 1, content_revision: 1 },
+      { slug: 'page-b', chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2, content_revision: 2 },
+      { slug: 'page-b', chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth' as const, model: null, token_count: null, source_id: 'default', page_id: 2, content_revision: 3 },
     ];
-    // page-b has a FRESH chunk at index 0 that must be preserved through the upsert.
-    const fullChunks: Record<string, any[]> = {
-      'page-a': [
-        { chunk_index: 0, chunk_text: 'x', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
-      ],
-      'page-b': [
-        { chunk_index: 0, chunk_text: 'fresh', chunk_source: 'compiled_truth', embedded_at: '2026-01-01', token_count: 5 },
-        { chunk_index: 1, chunk_text: 'y', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
-        { chunk_index: 2, chunk_text: 'z', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
-      ],
-    };
-    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    let getChunksCalled = false;
+    const casCalls: Array<{ slug: string; updates: any[] }> = [];
     const engine = mockEngine({
       countStaleChunks: async () => 3,
       listStaleChunks: async () => stale,
       listPages: async () => { listPagesCalled = true; return []; },
-      getChunks: async (slug: string) => fullChunks[slug] || [],
-      upsertChunks: async (slug: string, chunks: any[]) => { upsertCalls.push({ slug, chunks }); },
+      getChunks: async () => { getChunksCalled = true; return []; },
+      updateChunkEmbeddingsIfCurrent: async (slug: string, updates: any[]) => {
+        casCalls.push({ slug, updates });
+        return updates.map((update) => update.chunk_index);
+      },
     });
 
     const result = await runEmbedCore(engine, { stale: true });
@@ -495,19 +494,15 @@ describe('runEmbedCore --stale egress fix (SQL-side filter)', () => {
     expect(totalEmbedCalls).toBe(2);
     expect(result.embedded).toBe(3);
     expect(result.pages_processed).toBe(2);
+    expect(getChunksCalled).toBe(false);
 
-    // page-b's upsert MUST include the fresh chunk (chunk_index=0) — otherwise
-    // it would be deleted by the upsertChunks != ALL filter. Critical regression check.
-    const pageBUpsert = upsertCalls.find(u => u.slug === 'page-b');
-    expect(pageBUpsert).toBeDefined();
-    const freshChunkInUpsert = pageBUpsert!.chunks.find((c: any) => c.chunk_index === 0);
-    expect(freshChunkInUpsert).toBeDefined();
-    // Fresh chunk has no `embedding` field (preserved via COALESCE in upsertChunks SQL).
-    expect(freshChunkInUpsert.embedding).toBeUndefined();
-    // Previously-stale chunks come through WITH a new embedding.
-    const staleChunkInUpsert = pageBUpsert!.chunks.find((c: any) => c.chunk_index === 1);
-    expect(staleChunkInUpsert.embedding).toBeDefined();
-    expect(staleChunkInUpsert.embedding).toBeInstanceOf(Float32Array);
+    // The narrow UPDATE never runs the replacement-style upsert, so page-b's
+    // fresh index 0 cannot be deleted or have metadata overwritten.
+    const pageBCas = casCalls.find((call) => call.slug === 'page-b');
+    expect(pageBCas).toBeDefined();
+    expect(pageBCas!.updates.map((update) => update.chunk_index)).toEqual([1, 2]);
+    expect(pageBCas!.updates.map((update) => update.expected_content_revision)).toEqual([2, 3]);
+    expect(pageBCas!.updates.every((update) => update.embedding instanceof Float32Array)).toBe(true);
   });
 
   test('--stale dry-run: counts stale via countStaleChunks (no listStaleChunks call), no embedBatch or upsertChunks', async () => {
@@ -910,7 +905,7 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
     };
   }
 
-  test('--stale (autopilot path) carries code metadata into upsertChunks', async () => {
+  test('--stale (autopilot path) uses a narrow CAS update that cannot clobber code metadata', async () => {
     const stale = [{
       slug: 'code-page',
       chunk_index: 0,
@@ -918,20 +913,39 @@ describe('runEmbed preserves code-chunk metadata across re-embed (regression for
       chunk_source: 'compiled_truth',
       model: null,
       token_count: 12,
+      content_revision: 1,
+      source_id: 'default',
+      page_id: 1,
     }];
-    let upsertChunkArgs: any[] | null = null;
+    let casUpdates: any[] | null = null;
     const engine = mockEngine({
       countStaleChunks: async () => 1,
       listStaleChunks: async () => stale,
       getChunks: async () => [fullCodeChunk],
-      upsertChunks: async (_slug: string, chunks: any[]) => { upsertChunkArgs = chunks; },
+      updateChunkEmbeddingsIfCurrent: async (_slug: string, updates: any[]) => {
+        casUpdates = updates;
+        return updates.map((update) => update.chunk_index);
+      },
     });
 
     await runEmbed(engine, ['--stale']);
 
-    expect(upsertChunkArgs).not.toBeNull();
-    expect(upsertChunkArgs!).toHaveLength(1);
-    expect(metadataOf(upsertChunkArgs![0])).toEqual(metadataOf(fullCodeChunk));
+    expect(casUpdates).not.toBeNull();
+    expect(casUpdates!).toHaveLength(1);
+    expect(casUpdates![0].chunk_text).toBe(fullCodeChunk.chunk_text);
+    expect(casUpdates![0].expected_content_revision).toBe(1);
+    // The engine CAS statement updates only vector provenance columns; it
+    // never round-trips (and therefore cannot NULL) code metadata.
+    expect(metadataOf(casUpdates![0])).toEqual({
+      language: undefined,
+      symbol_name: undefined,
+      symbol_type: undefined,
+      start_line: undefined,
+      end_line: undefined,
+      parent_symbol_path: undefined,
+      doc_comment: undefined,
+      symbol_name_qualified: undefined,
+    });
   });
 
   test('--all (full re-embed) carries code metadata into upsertChunks', async () => {
@@ -982,7 +996,7 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
     { slug: 'wrapped', chunk_index: 1, chunk_text: 'const x = 1;', chunk_source: 'fenced_code' as any, model: null, token_count: 1, source_id: 'default', page_id: 1 },
   ];
 
-  function wrappingHarness(mode: string | null) {
+function wrappingHarness(mode: string | null) {
     const seen: string[] = [];
     const restamps: any[][] = [];
     embedBatchBehavior = async (texts: string[]) => {
@@ -1002,6 +1016,16 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
       }),
       getChunks: async () => wrapChunks,
       upsertChunks: async () => {},
+      executeRaw: async (sql: string) => {
+        if (sql.includes('SELECT id, contextual_retrieval_mode')) {
+          return [{ id: 1, contextual_retrieval_mode: mode }];
+        }
+        if (sql.includes('SELECT chunk_index')) {
+          return wrapChunks.map((chunk) => ({ chunk_index: chunk.chunk_index, embedding_is_stale: false }));
+        }
+        if (sql.includes('count(*) FILTER')) return [{ stale: 0 }];
+        return [];
+      },
       updatePageContextualRetrievalState: async (...args: any[]) => { restamps.push(args); },
     });
     return { engine, seen, restamps };

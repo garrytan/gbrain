@@ -17,6 +17,7 @@
 // misattribute deltas to the wrong remediation.
 
 import type { BrainEngine } from './../engine.ts';
+import { primaryEmbeddingStaleSql } from './../embedding-content-revision.ts';
 
 export type MetricName =
   | 'orphan_count'
@@ -47,7 +48,8 @@ export async function captureMetric(
     switch (metric) {
       case 'stale_count': {
         const rows = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+          `SELECT COUNT(*) AS count FROM content_chunks
+            WHERE ${primaryEmbeddingStaleSql('content_chunks')}`,
         );
         return rows.length > 0 ? Number(rows[0].count) : 0;
       }

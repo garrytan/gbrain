@@ -302,6 +302,25 @@ describe('computeAllSourceMetrics', () => {
     expect(dflt.embed_coverage_pct).toBeCloseTo(33.3, 1);
   });
 
+  test('does not count a revision-mismatched vector as embedded', async () => {
+    await engine.putPage('stale', { type: 'note', title: 'stale', compiled_truth: 'old' });
+    await engine.upsertChunks('stale', [{
+      chunk_index: 0,
+      chunk_text: 'old',
+      chunk_source: 'compiled_truth',
+      token_count: 1,
+      embedding: new Float32Array(1536),
+    }]);
+    await engine.executeRaw(`UPDATE content_chunks SET chunk_text = 'new'`);
+
+    const sources = await loadAllSources(engine);
+    const dflt = (await computeAllSourceMetrics(engine, sources))
+      .find((m) => m.source_id === 'default')!;
+    expect(dflt.total_chunks).toBe(1);
+    expect(dflt.embedded_chunks).toBe(0);
+    expect(dflt.embed_coverage_pct).toBe(0);
+  });
+
   test('lag_seconds is null when last_sync_at is null', async () => {
     const sources = await loadAllSources(engine);
     const result = await computeAllSourceMetrics(engine, sources);

@@ -197,6 +197,39 @@ describe('buildSyncStatusReport against real PGLite (IRON RULE regression for Bl
     expect(b.embedding_coverage_pct).toBe(100);
   });
 
+  test('primary-column coverage treats a revision mismatch as unembedded', async () => {
+    const target = (await engine.executeRaw<{ id: number; chunk_text: string }>(
+      `SELECT cc.id, cc.chunk_text FROM content_chunks cc
+        JOIN pages p ON p.id = cc.page_id
+       WHERE p.source_id = 'source-b' AND p.deleted_at IS NULL
+       ORDER BY cc.id LIMIT 1`,
+    ))[0]!;
+    await engine.executeRaw(
+      `UPDATE content_chunks
+          SET chunk_text = chunk_text || ' changed'
+        WHERE id = $1`,
+      [target.id],
+    );
+    try {
+      const sources = await engine.executeRaw<{
+        id: string; name: string; local_path: string | null; config: Record<string, unknown>;
+      }>(`SELECT id, name, local_path, config FROM sources
+           WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`);
+      const report = await buildSyncStatusReport(engine, sources);
+      const b = report.sources.find((source) => source.source_id === 'source-b')!;
+      expect(b.chunks_unembedded).toBe(1);
+      expect(b.embedding_coverage_pct).toBe(75);
+    } finally {
+      await engine.executeRaw(
+        `UPDATE content_chunks
+            SET chunk_text = $1,
+                embedded_content_revision = content_revision + 1
+          WHERE id = $2`,
+        [target.chunk_text, target.id],
+      );
+    }
+  });
+
   test('v0.41.31: embed-backfill job state surfaced per source (TODO-2)', async () => {
     // Seed embed-backfill minion jobs for source-a: 2 queued + 1 active +
     // 1 completed. source-b has none → idle.

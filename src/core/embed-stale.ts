@@ -18,11 +18,12 @@
  */
 
 import type { BrainEngine } from './engine.ts';
-import type { Chunk, ChunkInput } from './types.ts';
+import type { Chunk, ChunkEmbeddingUpdate, ChunkInput, StaleChunkRow } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
+import { primaryEmbeddingStaleSql } from './embedding-content-revision.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -89,9 +90,9 @@ export interface EmbedStaleOpts {
   /**
    * v0.41.31: current embedding provenance signature (`<provider:model>:<dims>`).
    * When set, embeddings stamped under a DIFFERENT signature are invalidated
-   * (NULLed) at the start so they flow through the NULL cursor and get
+   * (NULLed) at the start so they flow through the stale cursor and get
    * re-embedded; each page's signature is stamped after its chunks land.
-   * Omit to keep the legacy `embedding IS NULL`-only behavior.
+   * Omit to keep content-only staleness behavior (missing or revision-drifted).
    */
   embeddingSignature?: string;
   /**
@@ -121,12 +122,12 @@ export interface EmbedStaleResult {
 }
 
 /**
- * Embed every stale chunk (embedding IS NULL) for a source.
+ * Embed every stale chunk (missing vector or content-revision drift) for a source.
  *
  * Re-entrancy contract: if interrupted, the next call resumes from the next
- * stale row. Idempotent — `embedding IS NULL` predicate naturally excludes
- * already-embedded chunks even without cursor persistence. The cursor is a
- * progress optimization, not a correctness mechanism.
+ * stale row. Idempotent — the engine predicate excludes freshly stamped
+ * chunks even without cursor persistence. The cursor is a progress
+ * optimization, not a correctness mechanism.
  *
  * Returns when:
  *   - every stale chunk has been embedded (`done: true`), OR
@@ -141,8 +142,8 @@ export interface EmbedStaleResult {
  */
 
 /**
- * #4216 phase-end closure: embed the NULL-embedding chunks of an EXPLICIT
- * page list (pages a synthesis phase just wrote with deferEmbeds).
+ * #4216 phase-end closure: embed the missing or revision-stale chunks of an
+ * EXPLICIT page list (pages a synthesis phase just wrote with deferEmbeds).
  * Deliberately NOT a source-wide sweep: no cursor walk over the backlog, no
  * global signature-invalidation pass (both belong to the budget-tracked
  * embed-backfill job) — the spend here is exactly the deferred cost of the
@@ -169,42 +170,47 @@ export async function embedStalePages(
       return result;
     }
     try {
-      const existing = await engine.getChunks(slug, { sourceId });
-      const staleIdx = new Set(
-        (await engine.executeRaw<{ chunk_index: number }>(
-          `SELECT cc.chunk_index
+      const stale = await engine.executeRaw<StaleChunkRow>(
+          `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                  cc.model, cc.token_count, cc.content_revision,
+                  p.source_id, cc.page_id
              FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-            WHERE p.slug = $1 AND p.source_id = $2 AND cc.embedding IS NULL
+            WHERE p.slug = $1 AND p.source_id = $2
+              AND ${primaryEmbeddingStaleSql('cc')}
             ORDER BY cc.chunk_index`,
           [slug, sourceId],
-        )).map(r => r.chunk_index),
       );
-      if (staleIdx.size === 0) continue;
-      const stale = existing.filter(c => staleIdx.has(c.chunk_index));
+      if (stale.length === 0) continue;
       const pageRow = await engine.getPage(slug, { sourceId });
       const embeddings = await embedFn(
         wrapChunkTextsForStoredMode(pageRow, stale),
         { abortSignal: opts.signal },
       );
-      const staleIdxToEmbedding = new Map<number, Float32Array>();
-      for (let j = 0; j < stale.length; j++) {
-        staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
-      }
-      const merged: ChunkInput[] = existing.map((c) => carryChunkMetadata(c, {
-        chunk_index: c.chunk_index,
-        chunk_text: c.chunk_text,
-        chunk_source: c.chunk_source,
-        embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-        token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-      }));
-      await engine.upsertChunks(slug, merged, { sourceId });
-      if (opts.embeddingSignature && stale.length === existing.length) {
+      const updates: ChunkEmbeddingUpdate[] = stale.flatMap((chunk, index) => {
+        const embedding = embeddings[index];
+        return embedding ? [{
+          chunk_index: chunk.chunk_index,
+          chunk_text: chunk.chunk_text,
+          chunk_source: chunk.chunk_source,
+          expected_content_revision: chunk.content_revision,
+          embedding,
+          token_count: chunk.token_count ?? Math.ceil(chunk.chunk_text.length / 4),
+        }] : [];
+      });
+      const written = await engine.updateChunkEmbeddingsIfCurrent(slug, updates, { sourceId });
+      const remaining = await engine.executeRaw<{ stale: number }>(
+        `SELECT count(*) FILTER (WHERE ${primaryEmbeddingStaleSql('cc')})::int AS stale
+           FROM content_chunks cc
+          WHERE cc.page_id = $1`,
+        [stale[0]!.page_id],
+      );
+      if (opts.embeddingSignature && Number(remaining[0]?.stale ?? 0) === 0) {
         await engine.setPageEmbeddingSignature(slug, { sourceId, signature: opts.embeddingSignature });
       }
-      if (stale.length === existing.length) {
+      if (written.length === stale.length) {
         await restampIfDemotedToTitleTier(engine, pageRow, slug, sourceId);
       }
-      result.embedded += stale.length;
+      result.embedded += written.length;
       result.pagesProcessed += 1;
     } catch (e) {
       if (opts.signal?.aborted) {
@@ -243,15 +249,16 @@ export async function embedStaleForSource(
     aborted: false,
   };
   const signature = opts.embeddingSignature;
+  let casMisses = 0;
 
   // v0.41.31: invalidate embeddings stamped under a prior model signature so
-  // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
+  // the stale cursor below re-embeds them. GRANDFATHER: NULL signature
   // untouched. Best-effort — a failure here must not abort the backfill.
   if (signature) {
     try {
       await engine.invalidateStaleSignatureEmbeddings({ signature, sourceId });
     } catch {
-      // Non-fatal: fall through to the NULL-only stale loop.
+      // Non-fatal: fall through to the content-revision stale loop.
     }
   }
 
@@ -270,7 +277,7 @@ export async function embedStaleForSource(
       }),
     );
     if (batch.length === 0) {
-      result.done = true;
+      result.done = casMisses === 0;
       return result;
     }
 
@@ -311,38 +318,44 @@ export async function embedStaleForSource(
           wrapChunkTextsForStoredMode(pageRow, stale),
           { abortSignal: signal },
         );
-        const existing = await observed(pacer, () =>
-          engine.getChunks(slug, { sourceId: keySourceId }),
+        const updates: ChunkEmbeddingUpdate[] = stale.flatMap((chunk, index) => {
+          const embedding = embeddings[index];
+          return embedding ? [{
+            chunk_index: chunk.chunk_index,
+            chunk_text: chunk.chunk_text,
+            chunk_source: chunk.chunk_source,
+            expected_content_revision: chunk.content_revision,
+            embedding,
+            token_count: chunk.token_count ?? Math.ceil(chunk.chunk_text.length / 4),
+          }] : [];
+        });
+        const written = await observed(pacer, () =>
+          engine.updateChunkEmbeddingsIfCurrent(slug, updates, { sourceId: keySourceId }),
         );
-        const staleIdxToEmbedding = new Map<number, Float32Array>();
-        for (let j = 0; j < stale.length; j++) {
-          staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);
-        }
-        const merged: ChunkInput[] = existing.map((c) => carryChunkMetadata(c, {
-          chunk_index: c.chunk_index,
-          chunk_text: c.chunk_text,
-          chunk_source: c.chunk_source,
-          embedding: staleIdxToEmbedding.get(c.chunk_index) ?? undefined,
-          token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
-        }));
-        await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
+        casMisses += stale.length - written.length;
+        const remaining = await observed(pacer, () => engine.executeRaw<{ stale: number }>(
+          `SELECT count(*) FILTER (WHERE ${primaryEmbeddingStaleSql('cc')})::int AS stale
+             FROM content_chunks cc
+            WHERE cc.page_id = $1`,
+          [stale[0]!.page_id],
+        ));
         // v0.41.31: stamp provenance only when EVERY chunk was stale (fully
         // re-embedded this pass) — a partially-stale page keeps preserved
         // chunks of unknown provenance, so don't claim current. After the
         // invalidate pass above, signature-drifted pages ARE fully stale.
-        if (signature && stale.length === existing.length) {
+        if (signature && Number(remaining[0]?.stale ?? 0) === 0) {
           await observed(pacer, () =>
             engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
           );
         }
         // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
         // title tier — keep the stamped mode honest (mixed pages stay as-is).
-        if (stale.length === existing.length) {
+        if (written.length === stale.length) {
           await observed(pacer, () =>
             restampIfDemotedToTitleTier(engine, pageRow, slug, keySourceId),
           );
         }
-        result.embedded += stale.length;
+        result.embedded += written.length;
         result.pagesProcessed += 1;
       } catch (e: unknown) {
         // Aborted mid-fetch is expected; treat as graceful exit.

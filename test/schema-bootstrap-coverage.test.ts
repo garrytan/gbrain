@@ -81,6 +81,11 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // not directly forward-referenced by an index but the bootstrap adds it
   // alongside embedding_image for the v39 contract.
   { kind: 'column', table: 'content_chunks', column: 'modality' },
+  // v133 (#4246) — forward-referenced by the stale-revision partial index.
+  // Both columns are bootstrapped with revision 1 so existing vectors are
+  // grandfathered without an upgrade-time corpus-wide re-embed.
+  { kind: 'column', table: 'content_chunks', column: 'content_revision' },
+  { kind: 'column', table: 'content_chunks', column: 'embedded_content_revision' },
   // v0.26.3 (v33) — forward-referenced by `CREATE INDEX idx_mcp_log_agent_time
   // ON mcp_request_log(agent_name, created_at DESC)`.
   { kind: 'column', table: 'mcp_request_log', column: 'agent_name' },
@@ -228,6 +233,14 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
 
+      DROP INDEX IF EXISTS content_chunks_stale_revision_idx;
+      DROP TRIGGER IF EXISTS bump_chunk_content_revision_trg ON content_chunks;
+      DROP FUNCTION IF EXISTS bump_chunk_content_revision_fn;
+      DROP TRIGGER IF EXISTS bump_contextual_embedding_revisions_trg ON pages;
+      DROP FUNCTION IF EXISTS bump_contextual_embedding_revisions_fn;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedded_content_revision;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS content_revision;
+
       DROP INDEX IF EXISTS idx_mcp_log_agent_time;
       DROP INDEX IF EXISTS idx_mcp_log_time_agent;
       ALTER TABLE mcp_request_log DROP COLUMN IF EXISTS agent_name;
@@ -357,6 +370,14 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       DROP INDEX IF EXISTS idx_chunks_embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding_image;
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS modality;
+
+      DROP INDEX IF EXISTS content_chunks_stale_revision_idx;
+      DROP TRIGGER IF EXISTS bump_chunk_content_revision_trg ON content_chunks;
+      DROP FUNCTION IF EXISTS bump_chunk_content_revision_fn;
+      DROP TRIGGER IF EXISTS bump_contextual_embedding_revisions_trg ON pages;
+      DROP FUNCTION IF EXISTS bump_contextual_embedding_revisions_fn;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedded_content_revision;
+      ALTER TABLE content_chunks DROP COLUMN IF EXISTS content_revision;
 
       DROP INDEX IF EXISTS pages_coalesce_date_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS effective_date;

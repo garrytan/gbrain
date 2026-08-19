@@ -356,15 +356,19 @@ export async function reembedPageWithContextualRetrieval(
       // ── PHASE 2: single DB transaction ───────────────────────────
       try {
         await args.engine.transaction(async (tx) => {
-          await tx.upsertChunks(args.pageSlug, phase1.embeddedChunks, {
-            sourceId: args.sourceId,
-          });
+          // Stamp the target wrapper contract first. The content-revision
+          // trigger invalidates vectors when mode/generation changes; the
+          // following upsert then stamps the newly computed vectors against
+          // that new revision in the same transaction.
           await tx.updatePageContextualRetrievalState(
             args.pageSlug,
             args.sourceId,
             attemptMode,
             corpus_generation,
           );
+          await tx.upsertChunks(args.pageSlug, phase1.embeddedChunks, {
+            sourceId: args.sourceId,
+          });
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);

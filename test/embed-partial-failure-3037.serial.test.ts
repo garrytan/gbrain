@@ -49,18 +49,25 @@ __setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } 
 
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
+  let engine: BrainEngine;
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
     if (overrides[method]) return overrides[method](...args);
+    if (method === 'updateChunkEmbeddingsIfCurrent') {
+      return Promise.resolve(args[1].map((row: any) => row.chunk_index));
+    }
+    if (method === 'executeRaw') return Promise.resolve([{ stale: 0 }]);
+    if (method === 'transaction') return args[0](engine);
     return Promise.resolve(null);
   };
-  return new Proxy({} as any, {
+  engine = new Proxy({} as any, {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (overrides[prop]) return overrides[prop];
       return track(prop);
     },
   });
+  return engine;
 }
 
 /** Permanent 400-shaped batch failure (e.g. one oversized chunk). */
@@ -102,22 +109,25 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
       slug: 'poisoned-page', chunk_index: c.chunk_index, chunk_text: c.chunk_text,
       chunk_source: c.chunk_source, model: null, token_count: 1, source_id: 'default', page_id: 1,
     }));
-    const upsertCalls: Array<{ slug: string; chunks: any[] }> = [];
+    const casCalls: Array<{ slug: string; updates: any[] }> = [];
     const engine = mockEngine({
       countStaleChunks: async () => 3,
       listStaleChunks: async () => stale,
       getChunks: async () => THREE_CHUNKS,
-      upsertChunks: async (slug: string, chunks: any[]) => { upsertCalls.push({ slug, chunks }); },
+      updateChunkEmbeddingsIfCurrent: async (slug: string, updates: any[]) => {
+        casCalls.push({ slug, updates });
+        return updates.map((update) => update.chunk_index);
+      },
     });
 
     const result = await runEmbedCore(engine, { stale: true });
 
-    // Pre-fix: the batch threw, upsertChunks never ran, embedded stayed 0.
-    expect(upsertCalls).toHaveLength(1);
-    const byIdx = new Map(upsertCalls[0].chunks.map((c: any) => [c.chunk_index, c]));
+    // Pre-fix: the batch threw, no vector write ran, embedded stayed 0.
+    expect(casCalls).toHaveLength(1);
+    const byIdx = new Map(casCalls[0].updates.map((c: any) => [c.chunk_index, c]));
     expect(byIdx.get(0)!.embedding).toBeInstanceOf(Float32Array);
     expect(byIdx.get(2)!.embedding).toBeInstanceOf(Float32Array);
-    expect(byIdx.get(1)!.embedding).toBeUndefined(); // bad chunk stays NULL (re-run picks it up)
+    expect(byIdx.has(1)).toBe(false); // bad chunk stays NULL (re-run picks it up)
     expect(result.embedded).toBe(2);
     expect(result.failures).toBe(1);
     expect(result.failure_samples).toHaveLength(1);

@@ -229,3 +229,18 @@ export function wrapChunkTextsForStoredMode(
   const prefix = buildContextualPrefix(page?.title ?? '', null);
   return chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source));
 }
+
+/**
+ * True when every chunk whose vector can contain a contextual wrapper is in
+ * the selected re-embed set. fenced_code vectors are raw under every mode, so
+ * preserving one must not prevent an honest per_chunk_synopsis → title stamp.
+ */
+export function allContextualChunksSelected(
+  allChunks: ReadonlyArray<{ chunk_index: number; chunk_source?: string | null }>,
+  selectedChunks: ReadonlyArray<{ chunk_index: number }>,
+): boolean {
+  const contextual = allChunks.filter((chunk) => chunk.chunk_source !== 'fenced_code');
+  if (contextual.length === 0) return false;
+  const selected = new Set(selectedChunks.map((chunk) => chunk.chunk_index));
+  return contextual.every((chunk) => selected.has(chunk.chunk_index));
+}

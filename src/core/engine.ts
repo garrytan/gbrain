@@ -1,6 +1,6 @@
 import type {
   Page, PageInput, PageFilters, GetPageOpts,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkEmbeddingUpdate, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -1029,14 +1029,25 @@ export interface BrainEngine {
    */
   getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Chunk[]>;
   /**
-   * Count chunks across the brain where embedding IS NULL.
+   * Compare-and-swap primary-vector repairs produced from stale-cursor rows.
+   * Returns the chunk indexes actually written. A missing index means its
+   * embedding input changed while the provider request was in flight, so the
+   * caller must leave it stale for the next pass rather than bless old bytes.
+   */
+  updateChunkEmbeddingsIfCurrent(
+    slug: string,
+    updates: ChunkEmbeddingUpdate[],
+    opts?: { sourceId?: string } & BatchOpts,
+  ): Promise<number[]>;
+  /**
+   * Count chunks where embedding is NULL or stamped against an older chunk-text revision.
    * Pre-flight short-circuit for `embed --stale` so a 100%-embedded brain
    * does no further work after a single SELECT count(*) (~50 bytes wire).
    *
    * `opts.sourceId` scopes the count to a single source. When omitted,
    * counts across every source in the brain. Operators running
    * `gbrain embed --stale --source media-corpus` expect only that
-   * source's NULLs touched; the caller threads `sourceId` here.
+   * source's stale rows touched; the caller threads `sourceId` here.
    *
    * `includeNullSignature` (only meaningful with `signature`, #3391): also
    * count embedded chunks whose page has NO recorded signature (v108
@@ -1056,7 +1067,7 @@ export interface BrainEngine {
    * whose page `embedding_signature` is set AND differs from the current
    * model signature (a model/dims swap). NULL signature is GRANDFATHERED
    * (never counted) so the post-migration corpus isn't flagged en masse.
-   * Omit `signature` for the legacy `embedding IS NULL`-only count.
+   * Omit `signature` for content-only staleness.
    * `includeNullSignature` lifts the grandfather clause (#3391) — see
    * countStaleChunks.
    */
@@ -1072,7 +1083,7 @@ export interface BrainEngine {
    * `embedding_signature` is set AND differs from `signature` — i.e. pages
    * embedded under a now-stale model. Returns the chunk count invalidated.
    * The embed-stale loop calls this BEFORE listStaleChunks so signature-
-   * drift pages flow through the existing NULL-embedding cursor (keeps
+   * drift pages flow through the same revision-aware stale cursor (keeps
    * listStaleChunks's keyset pagination untouched). GRANDFATHER: NULL
    * signature is never invalidated. `sourceId` scopes the sweep.
    *
@@ -1085,10 +1096,9 @@ export interface BrainEngine {
    */
   invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number>;
   /**
-   * Return every chunk where embedding IS NULL, with the metadata needed
-   * to call embedBatch + upsertChunks. The `embedding` column is omitted
-   * by design — stale rows have NULL embeddings, so shipping them wastes
-   * wire bytes for no gain. Caller groups by slug, embeds, and re-upserts.
+   * Return every chunk whose embedding is missing or content-revision stale,
+   * with the metadata needed to call embedBatch + upsertChunks. The old
+   * vector is omitted by design. Caller groups by slug, embeds, and re-upserts.
    *
    * v0.33.3: cursor-paginated — yields up to `batchSize` rows per call
    * (default 2000) to stay within Supabase's statement_timeout. Pass the
@@ -1108,7 +1118,7 @@ export interface BrainEngine {
     // v0.41.18.0 (A13, codex #9): pagination order. Default 'page_id'
     // (legacy stable cursor). 'updated_desc' joins pages and orders by
     // p.updated_at DESC NULLS LAST, p.id, cc.chunk_index — backed by
-    // idx_pages_updated_at_desc + content_chunks_stale_idx partial.
+    // idx_pages_updated_at_desc plus the missing/mismatch partial indexes.
     orderBy?: 'page_id' | 'updated_desc';
     // For 'updated_desc' cursor: previous row's updated_at, page_id, chunk_index.
     // ISO-8601 string for cross-engine compatibility (postgres.js + PGLite
@@ -1120,7 +1130,7 @@ export interface BrainEngine {
    * Pre-flight count for the chunkless-page safety net: pages with
    * non-empty `compiled_truth` AND/OR non-empty `timeline` — both are
    * chunked independently by the healer — and ZERO `content_chunks` rows.
-   * `embed --stale` only scans `content_chunks` (embedding IS NULL) — a
+   * `embed --stale` only scans existing `content_chunks` rows — a
    * page written directly via `putPage` that never got chunked has no
    * chunk row to find, so it stays invisible to that scan forever.
    * `opts.sourceId` scopes the count to a single source, matching
@@ -2169,7 +2179,8 @@ export interface BrainEngine {
   runMigration(version: number, sql: string): Promise<void>;
   // Deliberately scalar-only (no sourceIds[] widening): engine-internal with
   // zero remote-reachable callers (verified #2555 review), so the federated
-  // read-scope contract doesn't apply. Widen only if an op ever exposes it.
+  // read-scope contract doesn't apply. Content-stale vectors return as NULL so
+  // engine migration cannot bless them in a target brain.
   getChunksWithEmbeddings(slug: string, opts?: { sourceId?: string }): Promise<Chunk[]>;
 
   // Raw SQL (for Minions job queue and other internal modules)

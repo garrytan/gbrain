@@ -55,7 +55,7 @@ import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
-  Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
+  Chunk, ChunkInput, ChunkEmbeddingUpdate, StaleChunkRow, StalePageRow, ChunklessPageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
   TimelineEntry, TimelineInput, TimelineOpts,
@@ -90,6 +90,7 @@ import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './o
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { CHUNK_CONTENT_REVISION_BOOTSTRAP_SQL, CONTENT_AWARE_EMBEDDING_UPSERT_ASSIGNMENTS, primaryEmbeddingFreshSql, primaryEmbeddingStaleSql } from './embedding-content-revision.ts';
 import * as factsImpl from './postgres-engine/facts.ts';
 import type { PgFactsDeps } from './postgres-engine/facts.ts';
 import * as takesImpl from './postgres-engine/takes.ts';
@@ -546,6 +547,8 @@ export class PostgresEngine implements BrainEngine {
       language_exists: boolean;
       search_vector_exists: boolean;
       embedding_image_exists: boolean;
+      content_revision_exists: boolean;
+      embedded_content_revision_exists: boolean;
       mcp_log_exists: boolean;
       agent_name_exists: boolean;
       subagent_messages_exists: boolean;
@@ -590,6 +593,10 @@ export class PostgresEngine implements BrainEngine {
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'search_vector') AS search_vector_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'embedding_image') AS embedding_image_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'content_revision') AS content_revision_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'content_chunks' AND column_name = 'embedded_content_revision') AS embedded_content_revision_exists,
         EXISTS (SELECT 1 FROM information_schema.tables
                 WHERE table_schema = current_schema() AND table_name = 'mcp_request_log') AS mcp_log_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
@@ -680,6 +687,12 @@ export class PostgresEngine implements BrainEngine {
     // references embedding_image. Use embedding_image_exists as the proxy for
     // both v39 columns; modality is added in the same migration.
     const needsChunksEmbeddingImage = probe.chunks_exists && !probe.embedding_image_exists;
+    // #4246: the schema blob's stale-revision partial index references both
+    // columns before numbered migrations run, so pre-v133 brains need them
+    // bootstrapped first. DEFAULT 1 grandfathers existing vectors without a
+    // corpus-wide re-embed; the embedded-revision default is then removed.
+    const needsChunkContentRevision = probe.chunks_exists
+      && (!probe.content_revision_exists || !probe.embedded_content_revision_exists);
     // v0.29.1 (v40 + v41): pages_coalesce_date_idx expression index in SCHEMA_SQL
     // references effective_date. Use effective_date_exists as the proxy for the
     // five v40 + v41 pages columns (emotional_weight, effective_date,
@@ -785,7 +798,7 @@ export class PostgresEngine implements BrainEngine {
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
-        && !needsChunksEmbeddingImage && !needsPagesRecency
+        && !needsChunksEmbeddingImage && !needsChunkContentRevision && !needsPagesRecency
         && !needsIngestLogSourceId && !needsFilesBootstrap
         && !needsOauthClientsBootstrap && !needsOauthClientsSurface
         && !needsSourcesArchive
@@ -854,6 +867,10 @@ export class PostgresEngine implements BrainEngine {
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS symbol_name_qualified TEXT;
         ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS search_vector TSVECTOR;
       `);
+    }
+
+    if (needsChunkContentRevision) {
+      await conn.unsafe(CHUNK_CONTENT_REVISION_BOOTSTRAP_SQL);
     }
 
     if (needsPagesDeletedAt) {
@@ -1756,7 +1773,8 @@ export class PostgresEngine implements BrainEngine {
           r.*,
           (
             SELECT cc.id FROM content_chunks cc
-            WHERE cc.page_id = r.page_id AND cc.embedding IS NOT NULL
+            WHERE cc.page_id = r.page_id
+              AND ${primaryEmbeddingFreshSql('cc')}
             ORDER BY cc.chunk_index ASC
             LIMIT 1
           ) AS representative_chunk_id
@@ -1829,7 +1847,8 @@ export class PostgresEngine implements BrainEngine {
         s.*,
         (
           SELECT cc.id FROM content_chunks cc
-          WHERE cc.page_id = s.page_id AND cc.embedding IS NOT NULL
+          WHERE cc.page_id = s.page_id
+            AND ${primaryEmbeddingFreshSql('cc')}
           ORDER BY cc.chunk_index ASC
           LIMIT 1
         ) AS representative_chunk_id
@@ -2458,6 +2477,11 @@ export class PostgresEngine implements BrainEngine {
     // in Voyage multimodal-3 space — no modality filter; the column itself
     // is the discriminator (rows without embedding_multimodal aren't searched).
     const { col, castSql } = buildVectorCastFragment(resolvedCol);
+    // #4246: the content revision tracks the primary text embedding only.
+    // Image/unified columns have independent provenance and stay unchanged.
+    const contentRevisionFilter = resolvedCol.name === 'embedding'
+      ? `AND ${primaryEmbeddingFreshSql('cc')}`
+      : '';
     let modalityFilter: string;
     if (resolvedCol.name === 'embedding_image') {
       modalityFilter = `AND cc.modality = 'image'`;
@@ -2482,7 +2506,7 @@ export class PostgresEngine implements BrainEngine {
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         JOIN sources s ON s.id = p.source_id
-        WHERE cc.${col} IS NOT NULL ${modalityFilter}
+        WHERE cc.${col} IS NOT NULL ${contentRevisionFilter} ${modalityFilter}
           ${detailLow ? `AND cc.chunk_source = 'compiled_truth'` : ''}
           ${typeClause}
           ${typesClause}
@@ -2581,10 +2605,13 @@ export class PostgresEngine implements BrainEngine {
       throw new EmbeddingColumnNotRegisteredError(column, []);
     }
     const quotedCol = quoteIdentifier(column);
+    const contentRevisionClause = column === 'embedding'
+      ? `AND ${primaryEmbeddingFreshSql('content_chunks')}`
+      : '';
     const sql = this.sql;
     const rawQuery = `
       SELECT id, ${quotedCol} AS embedding FROM content_chunks
-      WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL
+      WHERE id = ANY($1::int[]) AND ${quotedCol} IS NOT NULL ${contentRevisionClause}
     `;
     const rows = await sql.unsafe(rawQuery, [ids] as Parameters<typeof sql.unsafe>[1]);
     const result = new Map<number, Float32Array>();
@@ -2678,6 +2705,87 @@ export class PostgresEngine implements BrainEngine {
     return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
   }
 
+  async updateChunkEmbeddingsIfCurrent(
+    slug: string,
+    updates: ChunkEmbeddingUpdate[],
+    opts?: { sourceId?: string } & BatchOpts,
+  ): Promise<number[]> {
+    if (updates.length === 0) return [];
+    return this.batchRetry(
+      opts?.auditSite ?? 'upsertChunks',
+      opts?.signal,
+      () => this._updateChunkEmbeddingsIfCurrentOnce(slug, updates, opts),
+      updates.length,
+    );
+  }
+
+  private async _updateChunkEmbeddingsIfCurrentOnce(
+    slug: string,
+    updates: ChunkEmbeddingUpdate[],
+    opts?: { sourceId?: string },
+  ): Promise<number[]> {
+    slug = validateSlug(slug);
+    const sourceId = opts?.sourceId ?? 'default';
+    const pages = await this.sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
+    if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
+    const pageId = pages[0].id as number;
+    const resolvedModel = await this.resolvePrimaryEmbeddingModel();
+
+    const params: unknown[] = [];
+    const bind = (value: unknown): string => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    const rows = updates.map((update) => {
+      const embedding = `[${Array.from(update.embedding).join(',')}]`;
+      return `(${bind(update.chunk_index)}::int,
+               ${bind(String(update.expected_content_revision))}::bigint,
+               ${bind(update.chunk_text)}::text,
+               ${bind(update.chunk_source)}::text,
+               ${bind(embedding)}::vector,
+               ${bind(update.model ?? resolvedModel)}::text,
+               ${bind(update.token_count ?? null)}::int)`;
+    });
+    params.push(pageId);
+    const pageParam = `$${params.length}`;
+    const written = await this.sql.unsafe(
+      `UPDATE content_chunks cc
+          SET embedding = candidate.embedding,
+              model = candidate.model,
+              token_count = COALESCE(candidate.token_count, cc.token_count),
+              embedded_at = now(),
+              embedded_content_revision = cc.content_revision
+         FROM (VALUES ${rows.join(', ')}) AS candidate(
+                chunk_index, expected_content_revision, chunk_text,
+                chunk_source, embedding, model, token_count
+              )
+        WHERE cc.page_id = ${pageParam}
+          AND cc.chunk_index = candidate.chunk_index
+          AND cc.content_revision = candidate.expected_content_revision
+          AND cc.chunk_text = candidate.chunk_text
+          AND cc.chunk_source = candidate.chunk_source
+        RETURNING cc.chunk_index`,
+      params as Parameters<typeof this.sql.unsafe>[1],
+    );
+    return (written as unknown as Array<{ chunk_index: number }>).map((row) => Number(row.chunk_index));
+  }
+
+  private async resolvePrimaryEmbeddingModel(): Promise<string> {
+    let resolvedModel: string | null = null;
+    try {
+      const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
+      resolvedModel = gw.getEmbeddingModel();
+    } catch {
+      try {
+        const cfg = await this.sql`SELECT value FROM config WHERE key = 'embedding_model'`;
+        resolvedModel = (cfg[0]?.value as string | undefined) ?? null;
+      } catch {
+        // Config may not exist during early bootstrap; use the compile-time fallback.
+      }
+    }
+    return resolvedModel || DEFAULT_EMBEDDING_MODEL;
+  }
+
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string }): Promise<void> {
     // Normalize the same way putPage does — pages.slug is stored lowercased,
     // so a raw mixed-case slug here would miss the row it just wrote (#430).
@@ -2710,7 +2818,7 @@ export class PostgresEngine implements BrainEngine {
     // scope metadata through upserts.
     // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
     // list. Image chunks pass embedding=null + embedding_image=Float32Array.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, embedded_content_revision, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
     const rows: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -2732,21 +2840,7 @@ export class PostgresEngine implements BrainEngine {
     // current by init / migrate / retrieval-upgrade), which names the model
     // that actually produced this brain's vectors. The compile-time default
     // is the LAST resort (fresh brain whose config row doesn't exist yet).
-    let resolvedModel: string | null = null;
-    try {
-      // Keep the gateway lazy so module-load failure remains inside this soft
-      // fallback boundary; eager evaluation would bypass the config-row fallback.
-      const gw = await import('./ai/gateway.ts'); // engine-dynamic-import-ok
-      resolvedModel = gw.getEmbeddingModel();
-    } catch {
-      try {
-        const cfg = await sql`SELECT value FROM config WHERE key = 'embedding_model'`;
-        resolvedModel = (cfg[0]?.value as string | undefined) ?? null;
-      } catch {
-        // config table unreadable — fall through to the compile-time default.
-      }
-    }
-    if (!resolvedModel) resolvedModel = DEFAULT_EMBEDDING_MODEL;
+    const resolvedModel = await this.resolvePrimaryEmbeddingModel();
 
     for (const chunk of chunks) {
       const embeddingStr = chunk.embedding
@@ -2762,11 +2856,12 @@ export class PostgresEngine implements BrainEngine {
 
       const embeddingPh = embeddingStr ? `$${paramIdx++}::vector` : 'NULL';
       const embeddedAtPh = embeddingStr ? 'now()' : 'NULL';
+      const embeddedRevisionPh = embeddingStr ? '1' : 'NULL';
       const embeddingImagePh = embeddingImageStr ? `$${paramIdx++}::vector` : 'NULL';
 
       rows.push(
         `($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
-        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ` +
+        `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ${embeddedRevisionPh}, ` +
         `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}, ${embeddingImagePh})`,
@@ -2785,13 +2880,10 @@ export class PostgresEngine implements BrainEngine {
       );
     }
 
-    // Single statement upsert: preserves existing embeddings via COALESCE when new value is NULL.
-    // CONSISTENCY: when chunk_text changes and no new embedding is supplied, BOTH embedding AND
-    // embedded_at must reset to NULL so 'embed --stale' correctly picks up the row for re-embedding.
-    // Without this, embedded_at lies (says "embedded" while embedding=NULL), and any staleness
-    // predicate on embedded_at would silently skip the row. This is why the egress fix predicates
-    // on 'embedding IS NULL' rather than `embedded_at IS NULL` — and it's why we now keep both
-    // columns honest at write time.
+    // Single-statement upsert: a winning vector is stamped against its exact
+    // content revision. A changed input without a new vector clears vector,
+    // timestamp, and stamp so every stale/read surface fails closed; embedded_at
+    // remains audit time, never the freshness predicate.
     //
     // v0.40.3.0 D24 NULL→non-NULL race fix (TODOS.md v0.35.x item).
     // Two writers racing on the same chunk (e.g., autopilot sync + manual
@@ -2820,31 +2912,8 @@ export class PostgresEngine implements BrainEngine {
        ON CONFLICT (page_id, chunk_index) DO UPDATE SET
          chunk_text = EXCLUDED.chunk_text,
          chunk_source = EXCLUDED.chunk_source,
-         embedding = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding
-           WHEN content_chunks.embedding IS NULL THEN EXCLUDED.embedding
-           WHEN EXCLUDED.embedded_at IS NOT NULL
-                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
-                THEN EXCLUDED.embedding
-           ELSE content_chunks.embedding
-         END,
-         model = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.model
-           WHEN content_chunks.embedding IS NULL THEN EXCLUDED.model
-           WHEN EXCLUDED.embedded_at IS NOT NULL
-                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
-                THEN EXCLUDED.model
-           ELSE content_chunks.model
-         END,
+         ${CONTENT_AWARE_EMBEDDING_UPSERT_ASSIGNMENTS},
          token_count = EXCLUDED.token_count,
-         embedded_at = CASE
-           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text AND EXCLUDED.embedding IS NULL THEN NULL
-           WHEN content_chunks.embedding IS NULL AND EXCLUDED.embedding IS NOT NULL THEN EXCLUDED.embedded_at
-           WHEN EXCLUDED.embedded_at IS NOT NULL
-                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
-                THEN EXCLUDED.embedded_at
-           ELSE content_chunks.embedded_at
-         END,
          language = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.language ELSE COALESCE(EXCLUDED.language, content_chunks.language) END,
          symbol_name = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_name ELSE COALESCE(EXCLUDED.symbol_name, content_chunks.symbol_name) END,
          symbol_type = CASE WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.symbol_type ELSE COALESCE(EXCLUDED.symbol_type, content_chunks.symbol_type) END,
@@ -2870,14 +2939,14 @@ export class PostgresEngine implements BrainEngine {
       // #2544: explicit non-vector column list — rowToChunk discards
       // embeddings at this call site (includeEmbedding defaults false), so
       // `cc.*` shipped every vector over the wire only to be thrown away.
-      // embedding_is_null: boolean truth of the stored vector (a schema
-      // rebuild NULLs vectors without touching embedded_at).
+      // Cheap vector-state booleans; never SELECT the vector itself — #1738.
       const rows = await tx`
         SELECT cc.id, cc.page_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
                cc.model, cc.token_count, cc.embedded_at, cc.language,
                cc.symbol_name, cc.symbol_type, cc.start_line, cc.end_line,
                cc.parent_symbol_path, cc.doc_comment, cc.symbol_name_qualified, cc.modality,
-               (cc.embedding IS NULL) AS embedding_is_null
+               (cc.embedding IS NULL) AS embedding_is_null,
+               ${primaryEmbeddingStaleSql('cc')} AS embedding_is_stale
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = ${slug} AND ${scope}
@@ -2890,7 +2959,7 @@ export class PostgresEngine implements BrainEngine {
   /**
    * Build the stale-chunk WHERE clause + positional params for sql.unsafe.
    * embed_skip always excluded. `signature` widens "stale" to include
-   * embedding_signature drift (NULL grandfathered). `includeNullSignature`
+   * content-revision drift plus embedding_signature drift (NULL grandfathered). `includeNullSignature`
    * (#3391) lifts the grandfather clause so pre-stamp pages count as stale
    * too (provider-migration paths). Shared by countStaleChunks +
    * sumStaleChunkChars (parity with the PGLite sibling).
@@ -2902,11 +2971,11 @@ export class PostgresEngine implements BrainEngine {
       params.push(opts.signature);
       conds.push(
         opts.includeNullSignature
-          ? `(cc.embedding IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> $${params.length})`
-          : `(cc.embedding IS NULL OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`,
+          ? `(${primaryEmbeddingStaleSql('cc')} OR p.embedding_signature IS NULL OR p.embedding_signature <> $${params.length})`
+          : `(${primaryEmbeddingStaleSql('cc')} OR (p.embedding_signature IS NOT NULL AND p.embedding_signature <> $${params.length}))`,
       );
     } else {
-      conds.push(`cc.embedding IS NULL`);
+      conds.push(primaryEmbeddingStaleSql('cc'));
     }
     conds.push(`NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
     if (opts?.sourceId !== undefined) {
@@ -2961,8 +3030,8 @@ export class PostgresEngine implements BrainEngine {
     // NULL embeddings whose page signature is set AND differs from current.
     // GRANDFATHER: NULL signature untouched — UNLESS includeNullSignature
     // (#3391): provider migrations must not leave pre-stamp pages in the old
-    // embedding space. Feeds the NULL-embedding cursor so listStaleChunks
-    // stays unchanged. RETURNING → row count.
+    // embedding space. Feeds the stale cursor; the content stamp is cleared
+    // with the vector. RETURNING → row count.
     const params: unknown[] = [opts.signature];
     let srcClause = '';
     if (opts.sourceId !== undefined) {
@@ -2975,7 +3044,7 @@ export class PostgresEngine implements BrainEngine {
           AND p.embedding_signature <> $1`;
     const rows = await this.sql.unsafe(
       `UPDATE content_chunks cc
-          SET embedding = NULL, embedded_at = NULL
+          SET embedding = NULL, embedded_at = NULL, embedded_content_revision = NULL
          FROM pages p
         WHERE cc.page_id = p.id
           AND cc.embedding IS NOT NULL
@@ -3007,92 +3076,62 @@ export class PostgresEngine implements BrainEngine {
       if (orderBy === 'updated_desc') {
         const afterUpdated = opts?.afterUpdatedAt ?? null;
         const isFirstPage = afterUpdated === null && afterPid === 0;
-        if (opts?.sourceId === undefined) {
-          const rows = isFirstPage ? await tx`
-            SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                   cc.model, cc.token_count, p.source_id, cc.page_id,
-                   p.updated_at
-            FROM content_chunks cc
-            JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
-              AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-            ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
-            LIMIT ${limit}
-          ` : await tx`
-            SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                   cc.model, cc.token_count, p.source_id, cc.page_id,
-                   p.updated_at
-            FROM content_chunks cc
-            JOIN pages p ON p.id = cc.page_id
-            WHERE cc.embedding IS NULL
-              AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-              AND (
-                p.updated_at < ${afterUpdated}::timestamptz
-                OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id > ${afterPid})
-                OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id = ${afterPid} AND cc.chunk_index > ${afterIdx})
-              )
-            ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
-            LIMIT ${limit}
-          `;
-          return rows as unknown as StaleChunkRow[];
+        const params: unknown[] = [];
+        let sourceClause = '';
+        if (opts?.sourceId !== undefined) {
+          params.push(opts.sourceId);
+          sourceClause = ` AND p.source_id = $${params.length}`;
         }
-        const rows = isFirstPage ? await tx`
-          SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                 cc.model, cc.token_count, p.source_id, cc.page_id,
-                 p.updated_at
-          FROM content_chunks cc
-          JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
-            AND p.source_id = ${opts.sourceId}
-            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-          ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
-          LIMIT ${limit}
-        ` : await tx`
-          SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                 cc.model, cc.token_count, p.source_id, cc.page_id,
-                 p.updated_at
-          FROM content_chunks cc
-          JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
-            AND p.source_id = ${opts.sourceId}
-            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-            AND (
-              p.updated_at < ${afterUpdated}::timestamptz
-              OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id > ${afterPid})
-              OR (p.updated_at = ${afterUpdated}::timestamptz AND p.id = ${afterPid} AND cc.chunk_index > ${afterIdx})
-            )
-          ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
-          LIMIT ${limit}
-        `;
+        let cursorClause = '';
+        if (!isFirstPage) {
+          params.push(afterUpdated, afterPid, afterIdx);
+          const dateIdx = params.length - 2;
+          const pageIdx = params.length - 1;
+          const chunkIdx = params.length;
+          cursorClause = ` AND (
+            p.updated_at < $${dateIdx}::timestamptz
+            OR (p.updated_at = $${dateIdx}::timestamptz AND p.id > $${pageIdx})
+            OR (p.updated_at = $${dateIdx}::timestamptz AND p.id = $${pageIdx} AND cc.chunk_index > $${chunkIdx})
+          )`;
+        }
+        params.push(limit);
+        const rows = await tx.unsafe(
+          `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                  cc.model, cc.token_count, cc.content_revision, p.source_id, cc.page_id,
+                  p.updated_at
+             FROM content_chunks cc
+             JOIN pages p ON p.id = cc.page_id
+            WHERE ${primaryEmbeddingStaleSql('cc')}${sourceClause}
+              AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')${cursorClause}
+            ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
+            LIMIT $${params.length}`,
+          params as Parameters<typeof tx.unsafe>[1],
+        );
         return rows as unknown as StaleChunkRow[];
       }
       // orderBy === 'page_id' — legacy stable cursor.
-      if (opts?.sourceId === undefined) {
-        const rows = await tx`
-          SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-                 cc.model, cc.token_count, p.source_id, cc.page_id
-          FROM content_chunks cc
-          JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
-            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-            AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
-          ORDER BY cc.page_id, cc.chunk_index
-          LIMIT ${limit}
-        `;
-        return rows as unknown as StaleChunkRow[];
+      const params: unknown[] = [];
+      let sourceClause = '';
+      if (opts?.sourceId !== undefined) {
+        params.push(opts.sourceId);
+        sourceClause = ` AND p.source_id = $${params.length}`;
       }
-      const rows = await tx`
-        SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
-               cc.model, cc.token_count, p.source_id, cc.page_id
-        FROM content_chunks cc
-        JOIN pages p ON p.id = cc.page_id
-        WHERE cc.embedding IS NULL
-          AND p.source_id = ${opts.sourceId}
-          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-          AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
-        ORDER BY cc.page_id, cc.chunk_index
-        LIMIT ${limit}
-      `;
+      params.push(afterPid, afterIdx, limit);
+      const pageIdx = params.length - 2;
+      const chunkIdx = params.length - 1;
+      const limitIdx = params.length;
+      const rows = await tx.unsafe(
+        `SELECT p.slug, cc.chunk_index, cc.chunk_text, cc.chunk_source,
+                cc.model, cc.token_count, cc.content_revision, p.source_id, cc.page_id
+           FROM content_chunks cc
+           JOIN pages p ON p.id = cc.page_id
+          WHERE ${primaryEmbeddingStaleSql('cc')}${sourceClause}
+            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+            AND (cc.page_id, cc.chunk_index) > ($${pageIdx}, $${chunkIdx})
+          ORDER BY cc.page_id, cc.chunk_index
+          LIMIT $${limitIdx}`,
+        params as Parameters<typeof tx.unsafe>[1],
+      );
       return rows as unknown as StaleChunkRow[];
     });
   }
@@ -5060,7 +5099,8 @@ export class PostgresEngine implements BrainEngine {
         -- Keyed on the stored VECTOR, not embedded_at: a schema rebuild NULLs
         -- every vector without touching embedded_at, and this count must not
         -- report a dark column as embedded.
-        (SELECT count(*) FROM content_chunks WHERE embedding IS NOT NULL) as embedded_count,
+        (SELECT count(*) FROM content_chunks
+          WHERE ${primaryEmbeddingFreshSql('content_chunks')}) as embedded_count,
         (SELECT count(*) FROM links) as link_count,
         (SELECT count(DISTINCT tag) FROM tags) as tag_count,
         (SELECT count(*) FROM timeline_entries) as timeline_entry_count
@@ -5109,7 +5149,7 @@ export class PostgresEngine implements BrainEngine {
         (SELECT CASE
            WHEN count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')) = 0
            THEN 1.0
-           ELSE count(*) FILTER (WHERE cc.embedding IS NOT NULL
+           ELSE count(*) FILTER (WHERE ${primaryEmbeddingFreshSql('cc')}
                                    AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
               / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
          END
@@ -5120,23 +5160,11 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
         ) as dead_links,
-        -- missing_embeddings uses the same predicate as the thing that
-        -- resolves it: buildStaleChunkWhere / countStaleChunks, i.e. what
-        -- 'embed --stale' actually processes. Two divergences existed:
-        --   1. embedded_at vs embedding. upsertChunks resets BOTH to NULL
-        --      when chunk_text changes, but the stale-chunk predicate keys
-        --      on 'embedding IS NULL' deliberately (see the CONSISTENCY note
-        --      on that upsert) because embedded_at can be non-NULL while
-        --      embedding is NULL. Health should agree with the embedder.
-        --   2. embed_skip pages were counted here but excluded there, so
-        --      chunks the author opted out of read as permanently "missing"
-        --      and the count could never reach zero.
-        -- Effect of the mismatch: computeRecommendations emits an embed.stale
-        -- step from a number that 'embed --stale' reports as 0, so the step
-        -- cannot move it and 'doctor --remediate' re-plans it every pass.
+        -- Same revision-aware predicate and embed_skip exclusion as
+        -- countStaleChunks, so the remediation can always converge this count.
         (SELECT count(*) FROM content_chunks cc
            JOIN pages p ON p.id = cc.page_id
-          WHERE cc.embedding IS NULL
+          WHERE ${primaryEmbeddingStaleSql('cc')}
             AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
         ) as missing_embeddings,
         (SELECT count(*) FROM links) as link_count,

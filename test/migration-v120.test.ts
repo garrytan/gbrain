@@ -31,9 +31,10 @@ describe('migration v120 — search_path hardening', () => {
       `SELECT p.proname, p.proconfig
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'public'
-          AND p.proname IN ('bump_page_generation_fn','bump_page_generation_clock_fn','update_page_search_vector')`,
+          AND p.proname IN ('bump_page_generation_fn','bump_page_generation_clock_fn','update_page_search_vector',
+                            'bump_chunk_content_revision_fn','bump_contextual_embedding_revisions_fn')`,
     );
-    expect(rows.length).toBe(3);
+    expect(rows.length).toBe(5);
     for (const r of rows) {
       // proconfig is a text[] like {search_path=pg_catalog, public}; coerce to a
       // string so the assertion is robust to driver array shape.

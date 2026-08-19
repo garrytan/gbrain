@@ -80,11 +80,11 @@ beforeAll(async () => {
   const v1024b = new Array(1024).fill(0).map(() => 0.6).join(',');
 
   await (engine as any).db.query(
-    `UPDATE content_chunks SET embedding = $1::vector WHERE id = $2`,
+    `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision WHERE id = $2`,
     [`[${v1536a}]`, chunkId],
   );
   await (engine as any).db.query(
-    `UPDATE content_chunks SET embedding = $1::vector WHERE id = $2`,
+    `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision WHERE id = $2`,
     [`[${v1536b}]`, chunkId2],
   );
   await (engine as any).db.query(

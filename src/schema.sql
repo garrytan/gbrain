@@ -298,11 +298,17 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   page_id               INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   chunk_index           INTEGER NOT NULL,
   chunk_text            TEXT    NOT NULL,
+  -- #4246: embedding-input revision. Triggers bump it for chunk text/source
+  -- and contextual page-input changes; generic metadata stays fresh.
+  content_revision      BIGINT  NOT NULL DEFAULT 1,
   chunk_source          TEXT    NOT NULL DEFAULT 'compiled_truth',
   embedding             vector(1536),
   model                 TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
   token_count           INTEGER,
   embedded_at           TIMESTAMPTZ,
+  -- Revision of the exact primary embedding input represented by embedding.
+  -- NULL means the vector has no trustworthy stamp and is therefore stale.
+  embedded_content_revision BIGINT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
   -- Powers `query --lang`, `code-def <symbol>`, and `code-refs <symbol>`.
@@ -350,6 +356,240 @@ CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
 -- uses idx_pages_updated_at_desc; inner partial uses this index.
 CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
   ON content_chunks(page_id, chunk_index) WHERE embedding IS NULL;
+-- #4246: non-NULL vectors whose content stamp no longer matches. Kept as a
+-- second partial index so the existing NULL-vector fast path remains cheap.
+CREATE INDEX IF NOT EXISTS content_chunks_stale_revision_idx
+  ON content_chunks(page_id, chunk_index)
+  WHERE embedding IS NOT NULL
+    AND embedded_content_revision IS DISTINCT FROM content_revision;
+
+-- Bump whenever the chunk-local embedding input changes. chunk_source is
+-- semantic because fenced_code bypasses contextual wrappers; page_id moves
+-- change the title/context owner. Every writer, including direct SQL, passes
+-- through this trigger.
+CREATE OR REPLACE FUNCTION bump_chunk_content_revision_fn() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  IF OLD.chunk_text IS DISTINCT FROM NEW.chunk_text
+     OR OLD.chunk_source IS DISTINCT FROM NEW.chunk_source
+     OR OLD.page_id IS DISTINCT FROM NEW.page_id
+  THEN
+    NEW.content_revision := OLD.content_revision + 1;
+  END IF;
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_chunk_content_revision_trg ON content_chunks;
+CREATE TRIGGER bump_chunk_content_revision_trg
+  BEFORE UPDATE OF chunk_text, chunk_source, page_id ON content_chunks
+  FOR EACH ROW EXECUTE FUNCTION bump_chunk_content_revision_fn();
+
+-- Chunk membership and text/source updates have two page-wide effects:
+--   1. query-cache snapshots must see the parent page generation move;
+--   2. per_chunk_synopsis vectors depend on the full non-image chunk corpus,
+--      so every unchanged non-code sibling becomes stale.
+-- Statement-level transition tables dedupe each affected page and avoid the
+-- O(chunks^2) row-trigger shape during bulk upserts/deletes.
+CREATE OR REPLACE FUNCTION propagate_chunk_insert_embedding_inputs_fn() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM new_chunks) THEN RETURN NULL; END IF;
+
+  -- Layer-2 cache validation only knows pages already present in a cached
+  -- result. A newly inserted/eligible chunk can change top-k while its page
+  -- is absent from that result, so generation bumps alone are insufficient.
+  DELETE FROM public.query_cache qc
+    USING public.pages p, (SELECT DISTINCT page_id FROM new_chunks) affected
+   WHERE p.id = affected.page_id
+     AND qc.source_id = p.source_id;
+
+  UPDATE public.content_chunks cc
+     SET content_revision = cc.content_revision + 1
+    FROM (
+      SELECT DISTINCT nc.page_id
+        FROM new_chunks nc
+        JOIN public.pages p ON p.id = nc.page_id
+       WHERE p.contextual_retrieval_mode = 'per_chunk_synopsis'
+         AND nc.chunk_source IS DISTINCT FROM 'image_asset'
+    ) affected
+   WHERE cc.page_id = affected.page_id
+     AND cc.chunk_source IS DISTINCT FROM 'fenced_code'
+     AND NOT EXISTS (SELECT 1 FROM new_chunks nc WHERE nc.id = cc.id);
+
+  UPDATE public.pages p
+     SET generation = p.generation + 1
+    FROM (SELECT DISTINCT page_id FROM new_chunks) affected
+   WHERE p.id = affected.page_id;
+  RETURN NULL;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS propagate_chunk_insert_embedding_inputs_trg ON content_chunks;
+CREATE TRIGGER propagate_chunk_insert_embedding_inputs_trg
+  AFTER INSERT ON content_chunks
+  REFERENCING NEW TABLE AS new_chunks
+  FOR EACH STATEMENT EXECUTE FUNCTION propagate_chunk_insert_embedding_inputs_fn();
+
+CREATE OR REPLACE FUNCTION propagate_chunk_delete_embedding_inputs_fn() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM old_chunks) THEN RETURN NULL; END IF;
+
+  DELETE FROM public.query_cache qc
+    USING public.pages p, (SELECT DISTINCT page_id FROM old_chunks) affected
+   WHERE p.id = affected.page_id
+     AND qc.source_id = p.source_id;
+
+  UPDATE public.content_chunks cc
+     SET content_revision = cc.content_revision + 1
+    FROM (
+      SELECT DISTINCT oc.page_id
+        FROM old_chunks oc
+        JOIN public.pages p ON p.id = oc.page_id
+       WHERE p.contextual_retrieval_mode = 'per_chunk_synopsis'
+         AND oc.chunk_source IS DISTINCT FROM 'image_asset'
+    ) affected
+   WHERE cc.page_id = affected.page_id
+     AND cc.chunk_source IS DISTINCT FROM 'fenced_code';
+
+  UPDATE public.pages p
+     SET generation = p.generation + 1
+    FROM (SELECT DISTINCT page_id FROM old_chunks) affected
+   WHERE p.id = affected.page_id;
+  RETURN NULL;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS propagate_chunk_delete_embedding_inputs_trg ON content_chunks;
+CREATE TRIGGER propagate_chunk_delete_embedding_inputs_trg
+  AFTER DELETE ON content_chunks
+  REFERENCING OLD TABLE AS old_chunks
+  FOR EACH STATEMENT EXECUTE FUNCTION propagate_chunk_delete_embedding_inputs_fn();
+
+CREATE OR REPLACE FUNCTION propagate_chunk_update_embedding_inputs_fn() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM old_chunks oc JOIN new_chunks nc USING (id)
+     WHERE oc.chunk_text IS DISTINCT FROM nc.chunk_text
+        OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+        OR oc.page_id IS DISTINCT FROM nc.page_id
+        OR oc.embedding IS DISTINCT FROM nc.embedding
+        OR ((oc.embedding IS NOT NULL AND oc.embedded_content_revision = oc.content_revision)
+          IS DISTINCT FROM
+            (nc.embedding IS NOT NULL AND nc.embedded_content_revision = nc.content_revision))
+  ) THEN RETURN NULL; END IF;
+
+  DELETE FROM public.query_cache qc
+    USING public.pages p,
+          (
+            WITH changed_rows AS (
+              SELECT oc.page_id AS old_page_id, nc.page_id AS new_page_id
+                FROM old_chunks oc JOIN new_chunks nc USING (id)
+               WHERE oc.chunk_text IS DISTINCT FROM nc.chunk_text
+                  OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+                  OR oc.page_id IS DISTINCT FROM nc.page_id
+                  OR oc.embedding IS DISTINCT FROM nc.embedding
+                  OR ((oc.embedding IS NOT NULL AND oc.embedded_content_revision = oc.content_revision)
+                    IS DISTINCT FROM
+                      (nc.embedding IS NOT NULL AND nc.embedded_content_revision = nc.content_revision))
+            )
+            SELECT old_page_id AS page_id FROM changed_rows
+            UNION SELECT new_page_id FROM changed_rows
+          ) affected
+   WHERE p.id = affected.page_id
+     AND qc.source_id = p.source_id;
+
+  UPDATE public.content_chunks cc
+     SET content_revision = cc.content_revision + 1
+    FROM (
+      SELECT DISTINCT changed.page_id
+        FROM (
+          SELECT oc.page_id
+            FROM old_chunks oc JOIN new_chunks nc USING (id)
+           WHERE (oc.chunk_text IS DISTINCT FROM nc.chunk_text
+              OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+              OR oc.page_id IS DISTINCT FROM nc.page_id)
+             AND oc.chunk_source IS DISTINCT FROM 'image_asset'
+          UNION
+          SELECT nc.page_id
+            FROM old_chunks oc JOIN new_chunks nc USING (id)
+           WHERE (oc.chunk_text IS DISTINCT FROM nc.chunk_text
+              OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+              OR oc.page_id IS DISTINCT FROM nc.page_id)
+             AND nc.chunk_source IS DISTINCT FROM 'image_asset'
+        ) changed
+        JOIN public.pages p ON p.id = changed.page_id
+       WHERE p.contextual_retrieval_mode = 'per_chunk_synopsis'
+    ) affected
+   WHERE cc.page_id = affected.page_id
+     AND cc.chunk_source IS DISTINCT FROM 'fenced_code'
+     AND NOT EXISTS (
+       SELECT 1 FROM old_chunks oc JOIN new_chunks nc USING (id)
+        WHERE nc.id = cc.id
+          AND (oc.chunk_text IS DISTINCT FROM nc.chunk_text
+            OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+            OR oc.page_id IS DISTINCT FROM nc.page_id)
+     );
+
+  UPDATE public.pages p SET generation = p.generation + 1
+    FROM (
+      WITH changed_rows AS (
+        SELECT oc.page_id AS old_page_id, nc.page_id AS new_page_id
+          FROM old_chunks oc JOIN new_chunks nc USING (id)
+         WHERE oc.chunk_text IS DISTINCT FROM nc.chunk_text
+            OR oc.chunk_source IS DISTINCT FROM nc.chunk_source
+            OR oc.page_id IS DISTINCT FROM nc.page_id
+            OR oc.embedding IS DISTINCT FROM nc.embedding
+            OR ((oc.embedding IS NOT NULL AND oc.embedded_content_revision = oc.content_revision)
+              IS DISTINCT FROM
+                (nc.embedding IS NOT NULL AND nc.embedded_content_revision = nc.content_revision))
+      )
+      SELECT old_page_id AS page_id FROM changed_rows
+      UNION SELECT new_page_id FROM changed_rows
+    ) affected
+   WHERE p.id = affected.page_id;
+  RETURN NULL;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS propagate_chunk_update_embedding_inputs_trg ON content_chunks;
+CREATE TRIGGER propagate_chunk_update_embedding_inputs_trg
+  AFTER UPDATE ON content_chunks
+  REFERENCING OLD TABLE AS old_chunks NEW TABLE AS new_chunks
+  FOR EACH STATEMENT EXECUTE FUNCTION propagate_chunk_update_embedding_inputs_fn();
+
+-- Contextual retrieval widens the embedding input beyond chunk_text. A title
+-- rename matters only when the stored mode wraps titles; per-chunk synopsis
+-- mode also derives every synopsis from the page's full chunk corpus. A mode
+-- or corpus-generation transition changes the wrapper contract itself.
+-- Generic frontmatter and page metadata remain outside this narrow trigger.
+CREATE OR REPLACE FUNCTION bump_contextual_embedding_revisions_fn() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+  IF (
+       OLD.contextual_retrieval_mode IS DISTINCT FROM NEW.contextual_retrieval_mode
+       OR OLD.corpus_generation IS DISTINCT FROM NEW.corpus_generation
+     )
+     OR (
+       OLD.title IS DISTINCT FROM NEW.title
+       AND COALESCE(OLD.contextual_retrieval_mode, 'none') <> 'none'
+     )
+     OR (
+       (OLD.compiled_truth IS DISTINCT FROM NEW.compiled_truth
+        OR OLD.timeline IS DISTINCT FROM NEW.timeline)
+       AND OLD.contextual_retrieval_mode = 'per_chunk_synopsis'
+     )
+  THEN
+    UPDATE public.content_chunks
+       SET content_revision = content_revision + 1
+     WHERE page_id = OLD.id
+       AND chunk_source IS DISTINCT FROM 'fenced_code';
+  END IF;
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_contextual_embedding_revisions_trg ON pages;
+CREATE TRIGGER bump_contextual_embedding_revisions_trg
+  AFTER UPDATE OF title, compiled_truth, timeline, contextual_retrieval_mode, corpus_generation ON pages
+  FOR EACH ROW EXECUTE FUNCTION bump_contextual_embedding_revisions_fn();
 
 -- v0.20.0 Cathedral II: chunk-grain FTS trigger.
 -- Weight 'A' on doc_comment + symbol_name_qualified; weight 'B' on chunk_text.

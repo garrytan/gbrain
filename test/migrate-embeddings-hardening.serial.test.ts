@@ -805,7 +805,10 @@ describe('independent dim-pinned repair + same-width guards', () => {
         { chunk_index: 0, chunk_text: 'resume width guard chunk', chunk_source: 'compiled_truth', token_count: 4 },
       ]);
       const vec = '[' + new Array(ZE_TARGET_EMBEDDING_DIM).fill(0.002).join(',') + ']';
-      await e3.executeRaw(`UPDATE content_chunks SET embedding = $1::vector`, [vec]);
+      await e3.executeRaw(
+        `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision`,
+        [vec],
+      );
       await e3.setConfig(KEY_REQUESTED, 'true');
       const resumed = await resumeRetrievalUpgrade(e3);
       expect(resumed.status).toBe('applied');
@@ -944,12 +947,12 @@ describe('smoke-check miss + heartbeat resilience', () => {
       const far = new Array(TO_DIMS).fill(0);
       far[0] = 1; // near-orthogonal to q (q[0] = 0.001)
       await engine.executeRaw(
-        `UPDATE content_chunks SET embedding = $1::vector
+        `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision
           WHERE page_id IN (SELECT id FROM pages WHERE slug LIKE 'srm-decoy-%')`,
         ['[' + q.join(',') + ']'],
       );
       await engine.executeRaw(
-        `UPDATE content_chunks SET embedding = $1::vector
+        `UPDATE content_chunks SET embedding = $1::vector, embedded_content_revision = content_revision
           WHERE page_id IN (SELECT id FROM pages WHERE slug = 'srm-victim')`,
         ['[' + far.join(',') + ']'],
       );
