@@ -16,10 +16,12 @@
  * shipped reflex).
  *
  * Privacy: `summary` runs through safeSynopsis (the get_page fence boundary);
- * facts respect visibility for remote callers (world-only).
+ * fact-derived threads/counts respect visibility for remote callers
+ * (world-only), and structured/timeline threads require an explicit world
+ * marker before they cross the remote boundary.
  */
 
-import type { BrainEngine, FactRow } from '../engine.ts';
+import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
@@ -30,7 +32,8 @@ const EDGE_CAP = 10;
 const OPEN_THREADS_CAP = 3;
 const OPEN_THREAD_TIMELINE_WINDOW_DAYS = 90;
 const SUGGESTION_CAP = 3;
-const FACT_FETCH_CAP = 100;
+const OPEN_THREAD_MARKER = '[open-thread] ';
+const OPEN_THREAD_WORLD_MARKER = '[open-thread:world] ';
 
 export interface EntityCardEdge {
   type: string;
@@ -56,12 +59,12 @@ export interface EntityCard {
     last_retrieved_at: string | null;
     last_timeline_date: string | null;
   };
-  /** Best-effort in v1: active commitment-kind facts + recent timeline entries. */
+  /** Explicitly-open structured entries or marked facts/timeline entries. */
   open_threads: EntityOpenThread[];
   /** Top typed edges, mentions excluded, out-edges first. */
   edges: EntityCardEdge[];
   backlink_count: number;
-  /** Active facts about this entity (capped count; visibility-filtered for remote). */
+  /** Exact active-fact count, visibility-filtered for remote callers. */
   active_fact_count: number;
 }
 
@@ -89,6 +92,11 @@ interface CardPageRow {
   compiled_truth: string | null;
   updated_at: Date | string | null;
   last_retrieved_at: Date | string | null;
+}
+
+interface MarkedCommitmentRow {
+  fact: string;
+  valid_from: Date | string | null;
 }
 
 /** Resolution arm rank: lower = higher confidence (frozen precedence ladder). */
@@ -204,7 +212,6 @@ async function assembleCard(
   remote: boolean,
 ): Promise<EntityCard> {
   const pageSlug = row.slug;
-  const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
 
   // Parallel depth-1 reads — every arm individually fail-soft so a partial
   // brain (no aliases, no timeline) still returns a card.
@@ -217,7 +224,8 @@ async function assembleCard(
   // mentions excluded (matching the backlink-count convention). Outgoing edges
   // (getLinks) are the entity's OWN declared links — from-side scoped — so they
   // stay as-is.
-  const [aka, outLinks, inEdges, backlinkCount, timeline, facts] = await Promise.all([
+  const visibleFactClause = remote ? `AND visibility = 'world'` : '';
+  const [aka, outLinks, inEdges, backlinkCount, timeline, markedCommitments, activeFactCount] = await Promise.all([
     engine
       .executeRaw<{ alias_norm: string }>(
         `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 ORDER BY alias_norm`,
@@ -251,12 +259,29 @@ async function assembleCard(
       .catch(() => 0),
     engine.getTimeline(pageSlug, { limit: 5, sourceId }).catch(() => []),
     engine
-      .listFactsByEntity(sourceId, pageSlug, {
-        activeOnly: true,
-        limit: FACT_FETCH_CAP,
-        ...(visibility ? { visibility } : {}),
-      })
-      .catch(() => [] as FactRow[]),
+      .executeRaw<MarkedCommitmentRow>(
+        `SELECT fact, valid_from
+           FROM facts
+          WHERE source_id = $1 AND entity_slug = $2
+            AND expired_at IS NULL AND kind = 'commitment'
+            ${visibleFactClause}
+            AND (fact LIKE '${OPEN_THREAD_MARKER}%' OR fact LIKE '${OPEN_THREAD_WORLD_MARKER}%')
+          ORDER BY valid_from DESC, id DESC
+          LIMIT $3`,
+        [sourceId, pageSlug, OPEN_THREADS_CAP],
+      )
+      .catch(() => [] as MarkedCommitmentRow[]),
+    engine
+      .executeRaw<{ n: string | number }>(
+        `SELECT COUNT(*) AS n
+           FROM facts
+          WHERE source_id = $1 AND entity_slug = $2
+            AND expired_at IS NULL
+            ${visibleFactClause}`,
+        [sourceId, pageSlug],
+      )
+      .then(rs => Number(rs[0]?.n ?? 0))
+      .catch(() => 0),
   ]);
 
   const edges: EntityCardEdge[] = [];
@@ -272,20 +297,29 @@ async function assembleCard(
     }
   }
 
-  // Open threads (best-effort v1): active commitments first, then recent
-  // timeline entries inside the window, capped together.
-  const openThreads: EntityOpenThread[] = [];
-  for (const f of facts) {
-    if (f.kind !== 'commitment') continue;
-    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
+  // Open threads fail closed. A commitment or recent event does not imply
+  // unresolved work: the card admits only an explicit structured
+  // frontmatter entry or the exact marker documented by MEMORY_VERBS v1.
+  // Remote callers additionally need an explicit world signal unless the
+  // underlying fact row already passed the world-visibility predicate above.
+  const openThreads = structuredOpenThreads(row.frontmatter, remote);
+  for (const f of markedCommitments) {
     if (openThreads.length >= OPEN_THREADS_CAP) break;
+    const text = stripOpenThreadMarker(f.fact, { remote, factVisibilityScoped: true });
+    if (!text) continue;
+    openThreads.push({ kind: 'commitment', text, date: toIso(f.valid_from) });
   }
   if (openThreads.length < OPEN_THREADS_CAP) {
     const cutoff = Date.now() - OPEN_THREAD_TIMELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
     for (const t of timeline) {
-      const ts = Date.parse(t.date);
+      // Both engines type this as string, but PGLite can return a Date object
+      // at runtime for a DATE column. Normalize at the public-card boundary.
+      const date = toIso(t.date);
+      const ts = date === null ? NaN : Date.parse(date);
       if (!Number.isFinite(ts) || ts < cutoff) continue;
-      openThreads.push({ kind: 'recent_event', text: t.summary, date: t.date });
+      const text = stripOpenThreadMarker(t.summary, { remote, factVisibilityScoped: false });
+      if (!text) continue;
+      openThreads.push({ kind: 'recent_event', text, date });
       if (openThreads.length >= OPEN_THREADS_CAP) break;
     }
   }
@@ -299,13 +333,62 @@ async function assembleCard(
     last_touched: {
       updated_at: toIso(row.updated_at),
       last_retrieved_at: toIso(row.last_retrieved_at),
-      last_timeline_date: timeline.length ? timeline[0].date : null,
+      last_timeline_date: timeline.length ? toIso(timeline[0].date) : null,
     },
     open_threads: openThreads,
     edges,
     backlink_count: backlinkCount,
-    active_fact_count: facts.length,
+    active_fact_count: activeFactCount,
   };
+}
+
+/**
+ * Structured open-thread evidence lives under frontmatter.open_threads.
+ * Object rows must say status:'open' (or open:true); remote callers only see
+ * rows explicitly marked visibility:'world'. Other shapes fail closed.
+ */
+function structuredOpenThreads(
+  frontmatter: Record<string, unknown> | null,
+  remote: boolean,
+): EntityOpenThread[] {
+  const raw = frontmatter?.open_threads;
+  if (!Array.isArray(raw)) return [];
+
+  const out: EntityOpenThread[] = [];
+  for (const item of raw) {
+    if (out.length >= OPEN_THREADS_CAP) break;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+
+    const entry = item as Record<string, unknown>;
+    const explicitlyOpen = entry.status === 'open'
+      ? entry.open !== false
+      : entry.status === undefined && entry.open === true;
+    if (!explicitlyOpen) continue;
+    if (remote && entry.visibility !== 'world') continue;
+
+    const text = typeof entry.text === 'string' ? entry.text.trim() : '';
+    if (!text) continue;
+    if (entry.kind !== undefined && entry.kind !== 'commitment' && entry.kind !== 'recent_event') continue;
+    const kind = entry.kind === 'recent_event' ? 'recent_event' : 'commitment';
+    const date = typeof entry.date === 'string' && Number.isFinite(Date.parse(entry.date))
+      ? entry.date
+      : null;
+    out.push({ kind, text, date });
+  }
+  return out;
+}
+
+/** Exact, prefix-only marker parser. Marker syntax never rides the response. */
+function stripOpenThreadMarker(
+  value: string,
+  opts: { remote: boolean; factVisibilityScoped: boolean },
+): string | null {
+  const world = value.startsWith(OPEN_THREAD_WORLD_MARKER);
+  const local = value.startsWith(OPEN_THREAD_MARKER);
+  if (!world && !local) return null;
+  if (opts.remote && !opts.factVisibilityScoped && !world) return null;
+  const text = value.slice(world ? OPEN_THREAD_WORLD_MARKER.length : OPEN_THREAD_MARKER.length).trim();
+  return text || null;
 }
 
 /**

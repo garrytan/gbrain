@@ -522,6 +522,8 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
           },
           open_threads: {
             type: 'array',
+            description:
+              'Explicit unresolved items only: structured open-thread evidence or an exact marker; never inferred from commitment/event kind alone.',
             items: {
               type: 'object',
               required: ['kind', 'text', 'date'],
@@ -546,7 +548,10 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
             },
           },
           backlink_count: { type: 'integer' },
-          active_fact_count: { type: 'integer' },
+          active_fact_count: {
+            type: 'integer',
+            description: 'Exact active fact count visible to this caller (world-only for remote callers).',
+          },
         },
       },
       suggestions: {

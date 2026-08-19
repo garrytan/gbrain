@@ -294,6 +294,191 @@ describe('entity — card, arms, zero LLM', () => {
     expect(body.found).toBe(true);
     expect(JSON.stringify(body.card.open_threads)).not.toContain('PRIVATE-SENTINEL');
   });
+
+  it('open_threads fail closed: ordinary commitments and recent events are not presented as unresolved', async () => {
+    await seedEntityPage('people/thread-truth-test', 'Thread Truth Test Person');
+    await engine.insertFact(
+      {
+        fact: 'Agreed to attend the completed planning session',
+        kind: 'commitment',
+        entity_slug: 'people/thread-truth-test',
+        visibility: 'world',
+        source: 'conformance-seed',
+      },
+      { source_id: 'default' },
+    );
+    await engine.addTimelineEntry(
+      'people/thread-truth-test',
+      {
+        date: new Date().toISOString(),
+        source: 'conformance-seed',
+        summary: 'Met for the completed planning session',
+      },
+      { sourceId: 'default' },
+    );
+
+    const { body } = await callRemote('entity', { name: 'people/thread-truth-test' });
+    expect(body.found).toBe(true);
+    expect(body.card.open_threads).toEqual([]);
+  });
+
+  it('open_threads admit only explicit structured entries or the exact marker, without exposing marker syntax', async () => {
+    await engine.putPage('people/explicit-thread-test', {
+      type: 'person',
+      title: 'Explicit Thread Test Person',
+      compiled_truth: '# Explicit Thread Test Person\n\nA synthetic test entity.',
+      frontmatter: {
+        type: 'person',
+        title: 'Explicit Thread Test Person',
+        open_threads: [
+          {
+            text: 'Send the requested example',
+            status: 'open',
+            visibility: 'world',
+            kind: 'commitment',
+            date: '2026-08-20',
+          },
+          {
+            text: 'This resolved entry must stay hidden',
+            status: 'resolved',
+            visibility: 'world',
+          },
+          {
+            text: 'PRIVATE-STRUCTURED-SENTINEL',
+            status: 'open',
+            visibility: 'private',
+          },
+          {
+            text: 'CONFLICTING-STATUS-SENTINEL',
+            status: 'resolved',
+            open: true,
+            visibility: 'world',
+          },
+          {
+            text: 'INVALID-KIND-SENTINEL',
+            status: 'open',
+            visibility: 'world',
+            kind: 'anything',
+          },
+          'STRING-SHAPE-SENTINEL',
+        ],
+      },
+    }, { sourceId: 'default' });
+    await engine.insertFact(
+      {
+        fact: '[open-thread] Confirm the review date',
+        kind: 'commitment',
+        entity_slug: 'people/explicit-thread-test',
+        visibility: 'world',
+        source: 'conformance-seed',
+      },
+      { source_id: 'default' },
+    );
+    await engine.addTimelineEntry(
+      'people/explicit-thread-test',
+      {
+        date: new Date().toISOString(),
+        source: 'conformance-seed',
+        summary: '[open-thread:world] Awaiting the requested document',
+      },
+      { sourceId: 'default' },
+    );
+
+    const { body } = await callRemote('entity', { name: 'people/explicit-thread-test' });
+    expect(body.found).toBe(true);
+    expect(body.card.open_threads.map((t: { text: string }) => t.text)).toEqual([
+      'Send the requested example',
+      'Confirm the review date',
+      'Awaiting the requested document',
+    ]);
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('[open-thread');
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('resolved entry');
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('PRIVATE-STRUCTURED-SENTINEL');
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('CONFLICTING-STATUS-SENTINEL');
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('INVALID-KIND-SENTINEL');
+    expect(JSON.stringify(body.card.open_threads)).not.toContain('STRING-SHAPE-SENTINEL');
+  });
+
+  it('open_threads keeps the public cap when structured evidence already fills it', async () => {
+    const slug = 'people/thread-cap-test';
+    await engine.putPage(slug, {
+      type: 'person',
+      title: 'Thread Cap Test Person',
+      compiled_truth: '# Thread Cap Test Person\n\nSynthetic cap fixture.',
+      frontmatter: {
+        type: 'person',
+        title: 'Thread Cap Test Person',
+        open_threads: ['one', 'two', 'three'].map((text) => ({
+          text,
+          status: 'open',
+          visibility: 'world',
+        })),
+      },
+    }, { sourceId: 'default' });
+    await engine.insertFact(
+      {
+        fact: '[open-thread] fourth must not escape the cap',
+        kind: 'commitment',
+        entity_slug: slug,
+        visibility: 'world',
+        source: 'conformance-seed',
+      },
+      { source_id: 'default' },
+    );
+
+    const { body } = await callRemote('entity', { name: slug });
+    expect(body.card.open_threads.map((t: { text: string }) => t.text)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('active_fact_count is exact beyond the fetch cap, source-scoped, and visibility-scoped', async () => {
+    await seedEntityPage('people/count-truth-test', 'Count Truth Test Person');
+    await engine.executeRaw(
+      `INSERT INTO facts
+         (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+       SELECT 'default', 'people/count-truth-test', 'world fact ' || gs::text,
+              'fact', 'world', 'medium', NOW(), 'conformance-seed', 1.0, NOW()
+         FROM generate_series(1, 125) gs`,
+      [],
+    );
+    await engine.insertFact(
+      {
+        fact: '[open-thread] PRIVATE-COUNT-SENTINEL',
+        kind: 'commitment',
+        entity_slug: 'people/count-truth-test',
+        visibility: 'private',
+        source: 'conformance-seed',
+      },
+      { source_id: 'default' },
+    );
+
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('other', 'other-tenant', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [],
+    );
+    await engine.insertFact(
+      {
+        fact: '[open-thread] FOREIGN-SOURCE-SENTINEL',
+        kind: 'commitment',
+        entity_slug: 'people/count-truth-test',
+        visibility: 'world',
+        source: 'conformance-seed',
+      },
+      { source_id: 'other' },
+    );
+
+    const remote = await callRemote('entity', { name: 'people/count-truth-test' });
+    expect(remote.body.card.active_fact_count).toBe(125);
+    expect(JSON.stringify(remote.body.card.open_threads)).not.toContain('PRIVATE-COUNT-SENTINEL');
+    expect(JSON.stringify(remote.body.card.open_threads)).not.toContain('FOREIGN-SOURCE-SENTINEL');
+
+    const local = await operationsByName.entity.handler(localCtx(), { name: 'people/count-truth-test' });
+    expect((local as { card: { active_fact_count: number } }).card.active_fact_count).toBe(126);
+    expect(JSON.stringify((local as { card: { open_threads: unknown[] } }).card.open_threads))
+      .toContain('PRIVATE-COUNT-SENTINEL');
+    expect(JSON.stringify((local as { card: { open_threads: unknown[] } }).card.open_threads))
+      .not.toContain('FOREIGN-SOURCE-SENTINEL');
+  });
 });
 
 describe('synthesize — marked expensive + unavailable conversion [c10]', () => {

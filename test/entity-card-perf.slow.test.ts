@@ -57,6 +57,9 @@ const FACTS = 40_000;
 const WARMUP = 20;
 const MEASURED = 200;
 const TARGET_ENTITIES = 50; // pages the measured calls rotate over
+// Deliberately above the old entity-card payload cap (100): the latency gate
+// also proves active_fact_count stays exact without loading every fact row.
+const TARGET_FACTS_PER_ENTITY = 125;
 
 const P99_BUDGET_MS = 100 * (Number(process.env.GBRAIN_PERF_BUDGET_MULTIPLIER) || 1);
 // v0.45.7 boundary verbs — MEMORY_VERBS_v1.md promises "zero-LLM, sub-second"
@@ -139,12 +142,12 @@ beforeAll(async () => {
     );
   }
 
-  // Facts: bulk noise across fillers + 20 active facts per target entity.
+  // Facts: bulk noise across fillers + >100 active facts per target entity.
   await db.query(
     `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
      SELECT 'default', 'filler/page-' || ((gs % ${PAGES}) + 1)::text,
             'noise fact ' || gs::text, 'fact', 'world', 'medium', NOW(), 'perf-seed', 1.0, NOW()
-     FROM generate_series(1, ${FACTS - TARGET_ENTITIES * 20}) gs`,
+     FROM generate_series(1, ${FACTS - TARGET_ENTITIES * TARGET_FACTS_PER_ENTITY}) gs`,
   );
   await db.query(
     `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
@@ -152,7 +155,8 @@ beforeAll(async () => {
             'target fact ' || g::text || ' about person ' || t::text,
             CASE WHEN g % 5 = 0 THEN 'commitment' ELSE 'fact' END,
             'world', 'medium', NOW(), 'perf-seed', 1.0, NOW()
-     FROM generate_series(0, ${TARGET_ENTITIES - 1}) t, generate_series(1, 20) g`,
+     FROM generate_series(0, ${TARGET_ENTITIES - 1}) t,
+          generate_series(1, ${TARGET_FACTS_PER_ENTITY}) g`,
   );
 }, 300_000);
 
@@ -175,6 +179,16 @@ describe('entity card p99 latency gate', () => {
     for (let i = 0; i < WARMUP; i++) {
       await buildEntityCard(engine, 'default', names[i % names.length], { remote: true });
     }
+
+    const exactCountProbe = await buildEntityCard(
+      engine,
+      'default',
+      'people/target-person-0',
+      { remote: true },
+    );
+    expect(exactCountProbe.card?.active_fact_count).toBe(TARGET_FACTS_PER_ENTITY);
+    // Commitment kind alone is not evidence that work remains unresolved.
+    expect(exactCountProbe.card?.open_threads).toEqual([]);
 
     const samples: number[] = [];
     for (let i = 0; i < MEASURED; i++) {

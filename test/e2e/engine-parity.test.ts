@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { getSessionContextState, upsertSessionContextState } from '../../src/core/context/session-state.ts';
+import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -148,6 +149,82 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteResults = await pgliteEngine.searchVector(queryVec, { limit: 5 });
 
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
+  });
+
+  test('entity card exact-count and explicit-open-thread semantics match across engines', async () => {
+    const slug = 'people/entity-card-parity';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putPage(slug, {
+        type: 'person',
+        title: 'Entity Card Parity Person',
+        compiled_truth: '# Entity Card Parity Person\n\nSynthetic parity fixture.',
+        frontmatter: {
+          type: 'person',
+          title: 'Entity Card Parity Person',
+          open_threads: [{
+            text: 'Send the parity example',
+            status: 'open',
+            visibility: 'world',
+          }],
+        },
+      }, { sourceId: 'default' });
+      await eng.executeRaw(
+        `INSERT INTO facts
+           (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+         SELECT 'default', 'people/entity-card-parity', 'ordinary fact ' || gs::text,
+                'fact', 'world', 'medium', NOW(), 'parity-seed', 1.0, NOW()
+           FROM generate_series(1, 105) gs`,
+      );
+      await eng.insertFact(
+        {
+          fact: '[open-thread] Confirm the parity review',
+          kind: 'commitment',
+          entity_slug: slug,
+          visibility: 'world',
+          source: 'parity-seed',
+        },
+        { source_id: 'default' },
+      );
+      await eng.insertFact(
+        {
+          fact: '[open-thread] PRIVATE-PARITY-SENTINEL',
+          kind: 'commitment',
+          entity_slug: slug,
+          visibility: 'private',
+          source: 'parity-seed',
+        },
+        { source_id: 'default' },
+      );
+      await eng.addTimelineEntry(
+        slug,
+        { date: new Date().toISOString(), source: 'parity-seed', summary: 'Ordinary completed event' },
+        { sourceId: 'default' },
+      );
+      await eng.addTimelineEntry(
+        slug,
+        { date: new Date().toISOString(), source: 'parity-seed', summary: '[open-thread:world] Awaiting parity input' },
+        { sourceId: 'default' },
+      );
+    }
+
+    const pg = await buildEntityCard(pgEngine, 'default', slug, { remote: true });
+    const lite = await buildEntityCard(pgliteEngine, 'default', slug, { remote: true });
+    for (const result of [pg, lite]) {
+      expect(result.card?.active_fact_count).toBe(106);
+      expect(result.card?.open_threads.map((t) => t.text)).toEqual([
+        'Send the parity example',
+        'Confirm the parity review',
+        'Awaiting parity input',
+      ]);
+      expect(JSON.stringify(result.card?.open_threads)).not.toContain('PRIVATE-PARITY-SENTINEL');
+      expect(JSON.stringify(result.card?.open_threads)).not.toContain('Ordinary completed event');
+      for (const thread of result.card?.open_threads ?? []) {
+        expect(thread.date === null || typeof thread.date === 'string').toBe(true);
+      }
+    }
+    expect(pg.card?.active_fact_count).toBe(lite.card?.active_fact_count);
+    expect(pg.card?.open_threads.map(({ kind, text }) => ({ kind, text })))
+      .toEqual(lite.card?.open_threads.map(({ kind, text }) => ({ kind, text })));
   });
 
   test('v0.46.15 searchVector escalation parity: a dense page cannot starve the page result on either engine', async () => {

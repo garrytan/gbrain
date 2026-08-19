@@ -4740,8 +4740,19 @@ backlink_count, active_fact_count }`.
 
 - `summary` passes the same privacy fences as `get_page` (takes + private
   facts stripped); remote callers never see private facts in the card.
-- `open_threads` (best-effort in v1): active commitment-kind facts + timeline
-  entries from the last 90 days, capped at 3.
+- `open_threads` is fail-closed and capped at 3. A commitment or recent event
+  is **not** automatically unresolved. Entries require either:
+  - structured `frontmatter.open_threads[]` evidence (`text` plus
+    `status: "open"` or `open: true`; remote callers additionally require
+    `visibility: "world"`), or
+  - an exact `[open-thread] ` prefix on a commitment fact or timeline summary.
+    Fact visibility remains authoritative. Timeline entries are local-only
+    unless they use the exact `[open-thread:world] ` prefix.
+  Marker prefixes are stripped from the response. Unmarked facts/events and
+  structured entries marked resolved are omitted.
+- `active_fact_count` is the exact count of active facts visible to the caller
+  (world-only for remote callers), not the number of rows fetched to assemble
+  the card.
 - `edges`: top ~10 typed edges, mentions excluded, out-edges first.
 - The p99 < 100ms promise is op-layer latency (transport excluded), CI-gated
   on a 20K-page corpus. 200K validation recipe below.
