@@ -14,7 +14,7 @@
  *   try { ... } finally { await releaseLock(lock); }
  */
 
-import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync, renameSync, readlinkSync } from 'fs';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, statSync, renameSync, readlinkSync, type Stats } from 'fs';
 import { join } from 'path';
 import { execFileSync } from 'node:child_process';
 import { parseGlobalFlags } from './cli-options.ts';
@@ -343,6 +343,16 @@ function breakStaleClaim(claimDir: string): boolean {
  * re-confirm it is still unparseable instead).
  */
 function tryReapLockDir(lockDir: string, victimToken: string | null): boolean {
+  // Capture the victim directory's identity before we claim the reap. If the
+  // directory is replaced (same path, different inode) while we hold the
+  // claim, an ENOENT read would no longer describe the lock we classified.
+  let victimDirStat: Stats;
+  try {
+    victimDirStat = statSync(lockDir);
+  } catch {
+    return false; // vanished before we could claim it
+  }
+
   const claimDir = `${lockDir}.reap-claim`;
   const claim = (): boolean => {
     try {
@@ -373,7 +383,20 @@ function tryReapLockDir(lockDir: string, victimToken: string | null): boolean {
       try {
         JSON.parse(readFileSync(join(lockDir, LOCK_FILE), 'utf-8'));
         return false; // became parseable — not the corrupt lock we classified
-      } catch { /* still corrupt — proceed */ }
+      } catch (err) {
+        // ENOENT can mean "still corrupt" OR "the lockDir was replaced by a
+        // new holder that hasn't written its file yet". Reap only if the
+        // directory inode is unchanged, i.e. it is the same directory we
+        // classified as corrupt.
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          try {
+            if (statSync(lockDir).ino !== victimDirStat.ino) return false;
+          } catch {
+            return false; // gone
+          }
+        }
+        /* any other read/parse error = still corrupt — proceed */
+      }
     }
     try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     return true;
