@@ -77,6 +77,13 @@ export interface CrossModalBatchSummary {
 export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<void> {
   ensureProbeGatewayConfigured();
   const { runEvalLongMemEval } = await import('../../commands/eval-longmemeval.ts');
+  // LongMemEval has two independent chat lanes: answer generation and the
+  // trajectory claim extractor. Its generic CLI defaults intentionally target
+  // the benchmark's historical Sonnet/Haiku pair, but a nightly installation
+  // probe must exercise the provider this installation actually configured.
+  // Route BOTH lanes explicitly; otherwise a MiniMax/OpenAI-only installation
+  // still fails in the hidden extractor with "Anthropic chat requires...".
+  const probeModel = loadConfig()?.chat_model;
   // Match the production max-recall posture while honoring the installation's
   // explicit lack of a reranker credential. Without --no-reranker the
   // ephemeral benchmark brain falls back to tokenmax's ZeroEntropy default,
@@ -87,7 +94,8 @@ export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promis
     '--mode', 'tokenmax',
     '--no-reranker',
     '--by-type',
-  ]);
+    ...(probeModel ? ['--model', probeModel] : []),
+  ], probeModel ? { extractorModel: probeModel } : {});
 }
 
 /**

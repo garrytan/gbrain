@@ -121,6 +121,8 @@ describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () 
     expect(source).toContain(`'--mode', 'tokenmax'`);
     expect(source).toContain(`'--no-reranker'`);
     expect(source).toContain(`'--by-type'`);
+    expect(source).toContain(`'--model', probeModel`);
+    expect(source).toContain(`{ extractorModel: probeModel }`);
     expect(source).toContain(`ensureProbeGatewayConfigured()`);
     expect(source).toContain(`requireConfig()`);
   });
