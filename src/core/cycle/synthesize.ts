@@ -58,12 +58,13 @@ import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
+import { writeSummaryPage } from './synthesize-summary.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7);
 // patterns.ts and the __testing surface import from here unchanged.
 export { runSubagentsInline, runDrainRenewalTick };
 import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
-import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
+import { serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
 import { safeSplitIndex } from '../text-safe.ts';
@@ -2464,9 +2465,12 @@ function findLegacyCompletion(
 // ── Dream-provenance DB stamp (#2569) ────────────────────────────────
 
 /**
- * Persist the dream-output identity marker (`dream_generated: true` +
- * `dream_cycle_date`) into the `pages.frontmatter` JSONB row for every page
- * a synthesize child wrote. Render-time `frontmatterOverrides` alone only
+ * Persist the dream-output identity marker plus its first-cycle provenance
+ * into the `pages.frontmatter` JSONB row for every page a synthesize child
+ * wrote. `dream_cycle_date` remains the compatible query key and
+ * `dream_created_cycle_date` makes its immutable meaning explicit. Reruns
+ * preserve the first non-empty value instead of dating old content as new.
+ * Render-time `frontmatterOverrides` alone only
  * reach the markdown FILE — the DB row stayed unstamped, so DB consumers
  * couldn't enumerate generated pages and a later put_page write-through
  * (which re-renders from the DB row) silently erased the marker.
@@ -2488,9 +2492,18 @@ async function stampDreamProvenance(
       await executeRawJsonb(
         engine,
         `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $3::jsonb
+            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
+                              || $4::jsonb
+                              || jsonb_build_object(
+                                   'dream_cycle_date',
+                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''),
+                                            NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
+                                   'dream_created_cycle_date',
+                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''),
+                                            NULLIF(frontmatter->>'dream_cycle_date', ''), $3)
+                                 )
           WHERE slug = $1 AND source_id = $2`,
-        [slug, source_id],
+        [slug, source_id, cycleDate],
         // #1978 raw-source persistence: record the transcript path the
         // synthesis was derived from, so `gbrain doctor` (raw_provenance
         // check) can verify every generated page carries a raw trace.
@@ -2552,94 +2565,27 @@ async function reverseWriteRefs(
  * `serializeMarkdown` does not embed the page slug in the body.
  */
 export function renderPageToMarkdown(page: Page, tags: string[]): string {
-  // v0.38 DRY: the dream-output identity stamp (dream_generated +
-  // dream_cycle_date) is the ONLY thing that differs from the v0.38
+  // v0.38 DRY: the dream-output identity stamp is the ONLY thing that differs
+  // from the v0.38
   // put_page write-through renderer. Both call the shared
   // serializePageToMarkdown helper in markdown.ts; this wrapper passes
-  // the dream-specific overrides. Future markdown-shape changes happen
-  // in one place.
+  // the dream-specific overrides. Preserve the DB-stamped first cycle date;
+  // falling back to today() is only for legacy callers rendering an unstamped
+  // page for the first time. Future markdown-shape changes happen in one place.
+  const createdCycleDate = page.frontmatter?.dream_created_cycle_date;
+  const legacyCycleDate = page.frontmatter?.dream_cycle_date;
+  const stableCycleDate = typeof createdCycleDate === 'string' && createdCycleDate
+    ? createdCycleDate
+    : typeof legacyCycleDate === 'string' && legacyCycleDate
+      ? legacyCycleDate
+      : today();
   return serializePageToMarkdown(page, tags, {
     frontmatterOverrides: {
       dream_generated: true,
-      dream_cycle_date: today(),
+      dream_cycle_date: stableCycleDate,
+      dream_created_cycle_date: stableCycleDate,
     },
   });
-}
-
-// ── Summary index page ───────────────────────────────────────────────
-
-async function writeSummaryPage(
-  engine: BrainEngine,
-  brainDir: string,
-  summarySlug: string,
-  summaryDate: string,
-  writtenSlugs: string[],
-  childOutcomes: Array<{ jobId: number; status: string }>,
-  sourceId = 'default',
-): Promise<void> {
-  const completed = childOutcomes.filter(c => c.status === 'completed').length;
-  const failed = childOutcomes.length - completed;
-
-  const lines: string[] = [];
-  lines.push(`# Dream cycle ${summaryDate}`);
-  lines.push('');
-  lines.push(`**Children:** ${completed} completed, ${failed} failed/timeout.`);
-  lines.push(`**Pages written:** ${writtenSlugs.length}.`);
-  lines.push('');
-  if (writtenSlugs.length > 0) {
-    lines.push('## Pages');
-    lines.push('');
-    for (const s of writtenSlugs) {
-      lines.push(`- [[${s}]]`);
-    }
-    lines.push('');
-  }
-
-  const body = lines.join('\n');
-  // Stamp the dream-output identity marker into the summary's frontmatter.
-  // parseMarkdown below round-trips it into the DB-stored frontmatter, so the
-  // marker survives any later reverse-render of the summary page.
-  const fullMarkdown = serializeMarkdown(
-    {
-      dream_generated: true,
-      dream_cycle_date: summaryDate,
-      // #1978: deterministic index page — no source document of its own;
-      // raw traces live on the listed pages. Explicit exemption keeps the
-      // doctor raw_provenance check quiet.
-      raw_trace_exempt: true,
-      raw_trace_exempt_reason: 'deterministic dream-cycle index; raw traces live on listed pages',
-    } as Record<string, unknown>,
-    body,
-    '',
-    { type: 'note' as string, title: `Dream cycle ${summaryDate}`, tags: ['dream-cycle'] },
-  );
-
-  // Direct engine.putPage — orchestrator write, no subagent context, no
-  // allow-list check (server-side viaSubagent=false). The summary slug is
-  // pre-validated against SUMMARY_SLUG_RE in the caller.
-  // Importing put_page via operations.ts would re-run namespace logic
-  // unnecessarily; we go straight to the engine.
-  const { parseMarkdown } = await import('../markdown.ts');
-  const parsed = parseMarkdown(fullMarkdown);
-  // #1586: summary lands in the cycle's resolved source too — otherwise the
-  // children live in the named source while the index drifts to 'default'.
-  await engine.putPage(summarySlug, {
-    type: parsed.type,
-    title: parsed.title,
-    compiled_truth: parsed.compiled_truth,
-    timeline: parsed.timeline,
-    frontmatter: parsed.frontmatter,
-  }, { sourceId });
-
-  // Also write to disk (orchestrator dual-write).
-  try {
-    const filePath = join(brainDir, `${summarySlug}.md`);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, fullMarkdown, 'utf8');
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[dream] summary file-write failed: ${msg}\n`);
-  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -2697,6 +2643,7 @@ export const __testing = {
   buildSynthesisPrompt,
   stampDreamProvenance,
   reverseWriteRefs,
+  writeSummaryPage,
   runSubagentsInline,
   loadSynthConfig,
 };

@@ -20,7 +20,7 @@ src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
-src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
+src/core/cycle/synthesize.ts	2649	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + summary-page peel
 src/commands/embed.ts	1963	ratchet
 src/core/types.ts	1863	ratchet
 src/commands/skillpack.ts	1360	ratchet
