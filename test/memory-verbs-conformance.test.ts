@@ -101,12 +101,21 @@ async function callRemote(name: string, params: Record<string, unknown>) {
   return { isError: res.isError === true, body: JSON.parse(res.content[0].text) };
 }
 
-async function seedEntityPage(slug: string, title: string, body = 'A synthetic test entity.') {
+async function seedPage(
+  slug: string,
+  title: string,
+  type: string,
+  body = 'Synthetic test content.',
+) {
   const put = operationsByName['put_page'];
   await put.handler(localCtx(), {
     slug,
-    content: `---\ntitle: ${title}\ntype: person\n---\n\n# ${title}\n\n${body}\n`,
+    content: `---\ntitle: ${title}\ntype: ${type}\n---\n\n# ${title}\n\n${body}\n`,
   });
+}
+
+async function seedEntityPage(slug: string, title: string, body = 'A synthetic test entity.') {
+  await seedPage(slug, title, 'person', body);
 }
 
 describe('recall — G1B superset + budget packing', () => {
@@ -219,6 +228,66 @@ describe('remember — contract behavior', () => {
 });
 
 describe('entity — card, arms, zero LLM', () => {
+  it('prefers an entity page when a newer conversation has the same exact title', async () => {
+    await seedEntityPage('people/jordan-example', 'Jordan Example');
+    await seedPage(
+      'conversations/jordan-example-session',
+      'Jordan Example',
+      'conversation',
+      'A newer conversation transcript with the same title.',
+    );
+    await engine.executeRaw(
+      `UPDATE pages
+          SET updated_at = CASE slug
+            WHEN 'people/jordan-example' THEN '2026-01-01T00:00:00Z'::timestamptz
+            ELSE '2026-02-01T00:00:00Z'::timestamptz
+          END
+        WHERE source_id = 'default'
+          AND slug IN ('people/jordan-example', 'conversations/jordan-example-session')`,
+    );
+
+    const { isError, body } = await callRemote('entity', { name: 'Jordan Example' });
+    expect(isError).toBe(false);
+    expect(body.card.entity.slug).toBe('people/jordan-example');
+    expect(body.suggestions).toContainEqual(expect.objectContaining({
+      slug: 'conversations/jordan-example-session',
+    }));
+  });
+
+  it('keeps an explicit namespaced slug above an entity-shaped exact-title collision', async () => {
+    await seedPage('notes/exact-target', 'Operational Runbook', 'note');
+    await seedEntityPage('people/slug-shaped-title', 'notes/exact-target');
+    await engine.executeRaw(
+      `UPDATE pages
+          SET updated_at = CASE slug
+            WHEN 'notes/exact-target' THEN '2026-01-01T00:00:00Z'::timestamptz
+            ELSE '2026-02-01T00:00:00Z'::timestamptz
+          END
+        WHERE source_id = 'default'
+          AND slug IN ('notes/exact-target', 'people/slug-shaped-title')`,
+    );
+
+    const { body } = await callRemote('entity', { name: 'notes/exact-target' });
+    expect(body.card.entity.slug).toBe('notes/exact-target');
+  });
+
+  it('keeps an explicit alias above entity-type preference', async () => {
+    await seedEntityPage('people/alias-title-collision', 'Jordan Alias');
+    await seedPage('notes/alias-target', 'Archived Context', 'note');
+    await engine.setPageAliases('notes/alias-target', 'default', ['jordan alias']);
+
+    const { body } = await callRemote('entity', { name: 'Jordan Alias' });
+    expect(body.card.entity.slug).toBe('notes/alias-target');
+  });
+
+  it('retains a non-entity exact-title page as the fallback when no entity page exists', async () => {
+    await seedPage('notes/release-checklist', 'Release Checklist', 'note');
+
+    const { body } = await callRemote('entity', { name: 'Release Checklist' });
+    expect(body.found).toBe(true);
+    expect(body.card.entity.slug).toBe('notes/release-checklist');
+  });
+
   it('resolves an exact namespaced slug to a schema-valid card with the chat gateway rigged to throw', async () => {
     __setChatTransportForTests(() => {
       throw new Error('entity must NEVER call the chat LLM');
