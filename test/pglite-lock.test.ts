@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { acquireLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
@@ -365,4 +366,179 @@ describe('pglite-lock reap classification (WAL-repair wave)', () => {
       rmSync(parent, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('pglite-lock PID-reuse detection', () => {
+  // The wedge this covers: a gbrain holder dies, the OS recycles its PID into
+  // an unrelated process (docker-proxy, a shell, ...), and kill(pid, 0) keeps
+  // saying "alive" — so the stale lock was never reaped and every acquirer
+  // timed out until manual cleanup.
+  const canProbe = process.platform !== 'win32'; // ps + sleep/bash available
+  const isLinux = process.platform === 'linux';
+
+  function currentBootId(): string | null {
+    try { return readFileSync('/proc/sys/kernel/random/boot_id', 'utf-8').trim() || null; }
+    catch { return null; }
+  }
+
+  function currentPidNs(): string | null {
+    try { return readlinkSync('/proc/self/ns/pid'); } catch { return null; }
+  }
+
+  function writeHolderAt(dataDir: string, pid: number, command: string, opts?: { subcommand?: string; bootId?: string | null; pidNs?: string | null }) {
+    const lockDir = join(dataDir, '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    const now = Date.now();
+    writeFileSync(join(lockDir, 'lock'), JSON.stringify({
+      pid,
+      acquired_at: now - 60_000,
+      refreshed_at: now - 60_000,
+      command,
+      boot_id: opts?.bootId === undefined ? currentBootId() : opts.bootId,
+      pid_ns: opts?.pidNs === undefined ? currentPidNs() : opts.pidNs,
+      ...(opts?.subcommand === undefined ? {} : { subcommand: opts.subcommand }),
+    }));
+  }
+
+  /**
+   * Wait until the spawned child has exec'd into its target program. Between
+   * spawn and exec, the child's command line still shows the PARENT's argv —
+   * which under the repo test runner contains "gbrain" (the checkout path) and
+   * would spoof the reuse check. Poll via `ps` until the real args are in place.
+   */
+  async function waitForExec(pid: number, pattern: RegExp): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        const args = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+          encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 1000,
+        }).trim();
+        if (args.length > 0 && pattern.test(args)) return;
+      } catch { /* not exec'd yet — retry */ }
+      await new Promise(r => setTimeout(r, 25));
+    }
+    throw new Error(`child ${pid} never exec'd into ${pattern}`);
+  }
+
+  test.skipIf(!canProbe)('reaps a lock whose PID was recycled by an unrelated program', async () => {
+    // `sleep` is a live process that is provably NOT the gbrain holder.
+    const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(squatter.pid, /sleep/);
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve' });
+
+      const lock = await acquireLock(TEST_DIR, { timeoutMs: 5000 });
+      try {
+        expect(lock.acquired).toBe(true);
+        expect(lock.reaped).toBe(true);
+      } finally {
+        await releaseLock(lock);
+      }
+    } finally {
+      squatter.kill();
+    }
+  }, 15_000);
+
+  test.skipIf(!canProbe)('does NOT reap a live process whose cmdline identifies it as gbrain', async () => {
+    // exec -a spoofs argv[0] so the process args carry the gbrain marker,
+    // simulating a real live holder without running gbrain itself.
+    const holder = Bun.spawn(['bash', '-c', 'exec -a gbrain-fake-holder sleep 60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(holder.pid, /gbrain-fake-holder/);
+      writeHolderAt(TEST_DIR, holder.pid, 'gbrain-fake-holder embed', { subcommand: 'embed' });
+
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
+      // Live holder's lock was never stolen.
+      expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+    } finally {
+      holder.kill();
+    }
+  }, 15_000);
+
+  test.skipIf(!isLinux)('does NOT reap on cmdline evidence when the lock belongs to another PID namespace', async () => {
+    // #2840 class: a holder in another container shares the data dir; its
+    // recorded PID maps to an unrelated process in OUR namespace. The pid_ns
+    // mismatch must veto the reap even though the cmdline clearly differs.
+    const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(squatter.pid, /sleep/);
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve', pidNs: 'pid:[1]' });
+
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
+      expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+    } finally {
+      squatter.kill();
+    }
+  }, 15_000);
+
+  test.skipIf(!isLinux)('never cmdline-reaps a LEGACY lock without namespace markers (fail-safe)', async () => {
+    // Pre-marker locks carry no pid_ns: their recorded PID may belong to a
+    // different namespace, so a cmdline mismatch proves nothing. ESRCH reaps
+    // still apply; cmdline reaps must not.
+    const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(squatter.pid, /sleep/);
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve', pidNs: null, bootId: null });
+
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
+      expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+    } finally {
+      squatter.kill();
+    }
+  }, 15_000);
+
+  test.skipIf(!isLinux)('never cmdline-reaps when boot_id is missing even if pid_ns matches (cross-host guard)', async () => {
+    // pid_ns inode numbers can collide across hosts sharing a data dir, so on
+    // Linux BOTH markers must be present and matching before cmdline evidence
+    // is trusted.
+    const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(squatter.pid, /sleep/);
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve', bootId: null });
+
+      await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/already open through `gbrain serve`/);
+      expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+    } finally {
+      squatter.kill();
+    }
+  }, 15_000);
+
+  test('a lock held by THIS process is never classified as recycled', async () => {
+    // Same-process re-acquire: the recorded PID is our own, so the cmdline
+    // check must stand down even though `bun test` has no gbrain marker.
+    writeHolderAt(TEST_DIR, process.pid, 'test holder');
+
+    await expect(acquireLock(TEST_DIR, { timeoutMs: 1200 })).rejects.toThrow(/Timed out/);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(true);
+  });
+
+  test.skipIf(!canProbe)('concurrent reapers: exactly one reaps, the other never deletes the winner\u2019s fresh lock', async () => {
+    // Race regression: two acquirers classify the same recycled-PID victim.
+    // Without the atomic rename-aside claim, the slower reaper's rmSync can
+    // delete the faster one's freshly installed lock — two writers, one dir.
+    const squatter = Bun.spawn(['sleep', '60'], { stdout: 'ignore', stderr: 'ignore' });
+    try {
+      await waitForExec(squatter.pid, /sleep/);
+      writeHolderAt(TEST_DIR, squatter.pid, '/home/user/.bun/bin/gbrain serve --http', { subcommand: 'serve' });
+
+      const results = await Promise.allSettled([
+        acquireLock(TEST_DIR, { timeoutMs: 5000 }),
+        acquireLock(TEST_DIR, { timeoutMs: 5000 }),
+      ]);
+      const fulfilled = results.filter(r => r.status === 'fulfilled');
+      const rejected = results.filter(r => r.status === 'rejected');
+      // Exactly one reaps + acquires; the loser must time out against the
+      // winner's live lock — never delete it.
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      const lockFile = join(TEST_DIR, '.gbrain-lock', 'lock');
+      expect(existsSync(lockFile)).toBe(true);
+      const onDisk = JSON.parse(readFileSync(lockFile, 'utf-8'));
+      expect(onDisk.pid).toBe(process.pid); // the winner's lock survived intact
+
+      await releaseLock((fulfilled[0] as PromiseFulfilledResult<LockHandle>).value);
+    } finally {
+      squatter.kill();
+    }
+  }, 15_000);
 });
