@@ -30,11 +30,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   configureGateway,
-  effectiveQueryInstruct,
   embed,
   embedQuery,
   resetGateway,
 } from '../src/core/ai/gateway.ts';
+import { effectiveQueryInstruct } from '../src/core/embedding.ts';
 
 const EN_DEFAULT_TASK =
   'Given a web search query, retrieve relevant passages that answer the query';
@@ -142,9 +142,11 @@ describe('scoping — non-qwen3 models never see the template', () => {
     expect(body().input_type).toBe('query');
   });
 
-  test('qwen3-lookalike prefix without the family separator does not match', async () => {
+  test('qwen3 lookalike outside the shared family match does not match', async () => {
+    // `qwen3-embedding-<x>` IS the family (hyphenated hub form, matched by
+    // dims.ts' isQwen3EmbeddingModel); a truncated lookalike is not.
     configureGateway({
-      embedding_model: 'ollama:qwen3-embedding-custom',
+      embedding_model: 'ollama:qwen3-embed-custom',
       embedding_dimensions: 768,
       env: {},
     });
@@ -196,6 +198,9 @@ describe('effectiveQueryInstruct — the cache-key feed', () => {
     expect(effectiveQueryInstruct()).toBe(EN_DEFAULT_TASK); // global default model
     expect(effectiveQueryInstruct('ollama:zembed-1')).toBeUndefined();
     expect(effectiveQueryInstruct('openai:text-embedding-3-large')).toBeUndefined();
+    // Family match is shared with dims.ts (isQwen3EmbeddingModel): the cased
+    // hub form gets the template exactly where it gets Matryoshka dims.
+    expect(effectiveQueryInstruct('openrouter:Qwen/Qwen3-Embedding-8B')).toBe(EN_DEFAULT_TASK);
   });
 
   test('reflects override and kill switch', () => {

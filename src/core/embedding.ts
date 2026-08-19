@@ -13,6 +13,7 @@ import {
   getEmbeddingDimensions as gatewayGetDims,
 } from './ai/gateway.ts';
 import { lookupEmbeddingPrice } from './embedding-pricing.ts';
+import { queryInstructFor } from './ai/query-instruct.ts';
 
 // v0.27.1: re-export multimodal embedding so callers can pull both text and
 // image embedding APIs from `src/core/embedding`. import-image-file consumes
@@ -22,9 +23,6 @@ import { lookupEmbeddingPrice } from './embedding-pricing.ts';
 // variants) for hybridSearch routing image-intent queries to the multimodal
 // column. embedMultimodalSafe is the partial-failure variant Phase 3 reindex
 // uses to make forward progress on transient batch failures.
-// v=15: the effective query-side instruction (qwen3-embedding Instruct
-// template) — hybridSearch folds it into the query-cache knobs hash.
-export { effectiveQueryInstruct } from './ai/gateway.ts';
 export {
   embedMultimodal,
   embedMultimodalSafe,
@@ -114,6 +112,23 @@ export async function embedBatch(
     options.onBatchComplete?.(results.length, texts.length);
   }
   return results;
+}
+
+/**
+ * The effective query-side instruction sentence (qwen3-embedding Instruct
+ * template, ai/query-instruct.ts) for a 'provider:model' string — the
+ * globally configured embedding model when omitted; undefined when the
+ * model takes no text template or it is disabled. hybridSearch folds it into
+ * the query-cache knobs hash (`qi=`). Never throws: callers may run before
+ * configureGateway() (eval replay, telemetry) — an unresolvable model just
+ * means "no template".
+ */
+export function effectiveQueryInstruct(modelString?: string): string | undefined {
+  try {
+    return queryInstructFor(modelString ?? gatewayGetModel());
+  } catch {
+    return undefined;
+  }
 }
 
 /** Currently-configured embedding model (short form without provider prefix). */

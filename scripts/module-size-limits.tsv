@@ -9,12 +9,12 @@ src/core/postgres-engine.ts	5816	ratchet	peel target: containment sprint C15; gr
 src/core/pglite-engine.ts	5744	ratchet	peel target: containment sprint C15; grown v0.46.11.0 five-issue wave + retrieval wave
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4300	ratchet	peel target: containment sprint C13-C14; grown v0.46.11.0 five-issue wave
-src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
+src/core/ai/gateway.ts	4429	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring + query-instruct import (seam itself lives in query-instruct.ts)
 src/cli.ts	3482	ratchet	watchlist; merged unions: cathedral-5 compile-context wiring + gap-closure thin-client routing + cathedral-6 register guards + sources self-help
 src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
 src/commands/serve-http.ts	2978	ratchet	grown cathedral-6 multi-agent wave (admin register route composes registerScopedClient in one tx under the name advisory lock; ttl validation + brain_too_old preflight) + chennai no-grant federated scope
 src/commands/jobs.ts	3015	ratchet	merged: v0.46.20.0 queue-boundary phase normalization + facts-absorb refresh/retry conversion
-src/core/search/hybrid.ts	2500	ratchet
+src/core/search/hybrid.ts	2501	ratchet	query-instruct qi= knobs-ctx line (seam itself lives in query-instruct.ts)
 src/core/engine.ts	2345	ratchet
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet

@@ -177,6 +177,20 @@ const QWEN3_EMBEDDING_NATIVE_DIMS: Record<string, number> = {
 };
 
 /**
+ * Qwen3-Embedding family match (Ollama colon-tag form `qwen3-embedding:4b`,
+ * hyphenated hub form `qwen/qwen3-embedding-8b` — org prefix stripped, folded
+ * through modelMatchKey). Shared by the Matryoshka `dimensions` branch below
+ * and the query-side Instruct template (query-instruct.ts) so the two stay in
+ * lockstep: a model that gets this family's dims handling also gets its
+ * query template, and vice versa.
+ */
+export function isQwen3EmbeddingModel(modelId: string): boolean {
+  const key = modelMatchKey(modelId);
+  const bare = key.includes('/') ? key.split('/').pop()! : key;
+  return bare === 'qwen3-embedding' || bare.startsWith('qwen3-embedding:') || bare.startsWith('qwen3-embedding-');
+}
+
+/**
  * Build the providerOptions blob for embedMany() that pins output dimensions.
  *
  * Matryoshka providers (OpenAI text-embedding-3, Gemini embedding-001) can be
@@ -352,7 +366,7 @@ export function dimsProviderOptions(
       // hyphenated hub form used by OpenRouter/HF-style routers
       // (`qwen/qwen3-embedding-8b` — org prefix stripped to
       // `qwen3-embedding-8b` above). Match both.
-      if (bareModelId === 'qwen3-embedding' || bareModelId.startsWith('qwen3-embedding:') || bareModelId.startsWith('qwen3-embedding-')) {
+      if (isQwen3EmbeddingModel(bareModelId)) {
         // Only send `dimensions` when it actually differs from the model's
         // native width. Fixed-dim OpenAI-compatible backends serving this
         // family (e.g. vLLM) reject the parameter outright with HTTP 400
