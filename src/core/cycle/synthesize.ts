@@ -60,6 +60,7 @@ import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } f
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 import { writeSummaryPage } from './synthesize-summary.ts';
 import { stampDreamProvenance } from './dream-provenance.ts';
+import { resolveCycleDate, utcDate } from './cycle-date.ts';
 
 // Re-export the peeled drain while preserving the existing import surface.
 export { runSubagentsInline, runDrainRenewalTick };
@@ -306,6 +307,8 @@ export interface SynthesizePhaseOpts {
   date?: string;
   from?: string;
   to?: string;
+  /** Clock seam for deterministic cycle-date bucketing. */
+  now?: () => Date;
   /** #4168 sibling: absolute wall-clock deadline (epoch ms) of the enclosing
    *  minion job. When set, child-subagent timeout_ms/wait are clamped via the
    *  clampSubagentBudgets template so a child submitted late in the cycle
@@ -361,6 +364,7 @@ export async function runPhaseSynthesize(
   }
   try {
     const config = await loadSynthConfig(engine);
+    const summaryDate = await resolveCycleDate(engine, { explicitDate: opts.date, now: opts.now });
 
     // #4168 sibling: clamp the child-subagent budgets to the REAL remaining
     // job time (patterns.ts clampSubagentBudgets template). Pre-fix,
@@ -929,8 +933,6 @@ export async function runPhaseSynthesize(
     // source (children write there via SubagentHandlerData.source_id;
     // cycleSourceId is hoisted above the fan-out for the daily cap).
     const writtenRefs = await collectChildPutPageSlugs(engine, childIds, chunkInfo, cycleSourceId, jobRawSource);
-
-    const summaryDate = opts.date ?? today();
 
     // #2569: persist the dream-output identity marker into the DB frontmatter
     // of every child-written page BEFORE reverse-rendering, so generated pages
@@ -2264,7 +2266,7 @@ function buildSynthesisPrompt(
   linkManifestBlock = '',
   allowedSlugPrefixes: string[] = [],
 ): string {
-  const dateHint = t.inferredDate ?? today();
+  const dateHint = t.inferredDate ?? utcDate();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
   const isChunked = chunkTotal > 1;
   const hashSuffix = isChunked
@@ -2512,7 +2514,7 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
   // put_page write-through renderer. Both call the shared
   // serializePageToMarkdown helper in markdown.ts; this wrapper passes
   // the dream-specific overrides. Preserve the DB-stamped first cycle date;
-  // falling back to today() is only for legacy callers rendering an unstamped
+  // falling back to utcDate() is only for legacy callers rendering an unstamped
   // page for the first time. Future markdown-shape changes happen in one place.
   const createdCycleDate = page.frontmatter?.dream_created_cycle_date;
   const legacyCycleDate = page.frontmatter?.dream_cycle_date;
@@ -2520,7 +2522,7 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
     ? createdCycleDate
     : typeof legacyCycleDate === 'string' && legacyCycleDate
       ? legacyCycleDate
-      : today();
+      : utcDate();
   return serializePageToMarkdown(page, tags, {
     frontmatterOverrides: {
       dream_generated: true,
@@ -2541,10 +2543,6 @@ function loadAdHocTranscript(
   const { readSingleTranscript } = require('./transcript-discovery.ts') as typeof import('./transcript-discovery.ts');
   const t = readSingleTranscript(filePath, { minChars, excludePatterns, bypassGuard });
   return t ? [t] : [];
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {

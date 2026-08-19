@@ -99,7 +99,7 @@ test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1
 test/dream-cli-flags.test.ts	--drain wiring	4	readFileSync
 test/dream-cli-flags.test.ts	--once wiring (issue #2860)	5	readFileSync
 test/dream-cli-flags.test.ts	--source / --source-id wiring (v0.41.13)	9	readFileSync
-test/dream-cli-flags.test.ts	dream CLI flag wiring	9	readFileSync
+test/dream-cli-flags.test.ts	dream CLI flag wiring	10	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	4	readFileSync
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync

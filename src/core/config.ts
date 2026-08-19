@@ -1129,6 +1129,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'emotional_weight.high_tags',
   'emotional_weight.user_holder',
   // Cycle phase config
+  'cycle.timezone',
   'cycle.grade_takes.write_gstack_learnings',
   // Content sanity (v0.41)
   'content_sanity.bytes_warn',
