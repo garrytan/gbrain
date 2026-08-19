@@ -44,7 +44,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 19 (…; 15→16 detail fold #3515; 16→17 degradation stamp; 17→18 autocut weak-top floor #1863; 18→19 autocut minKeep floor #3621)', () => {
+  test('version is 20 (…; 17→18 autocut weak-top floor; 18→19 autocut minKeep floor; 19→20 type-filter isolation)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -77,7 +77,8 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // degraded[]/retrieved_count; pre-stamp rows must not claim clean.
     // #3621: 18→19 ack= (autocut minKeep floor) — the floor changes how many
     // rows survive the cut, so writes and lookups must agree on it.
-    expect(KNOBS_HASH_VERSION).toBe(19);
+    // Typed lookup fix: 19→20 types= SQL candidate/ranking isolation.
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

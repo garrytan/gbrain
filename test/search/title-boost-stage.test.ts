@@ -5,7 +5,12 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { applyTitleBoost, DEFAULT_TITLE_BOOST } from '../../src/core/search/hybrid.ts';
+import {
+  applyTitleBoost,
+  DEFAULT_TITLE_BOOST,
+  isPreferredExactTitleLookup,
+  preferExactTitleForTypedEntityLookup,
+} from '../../src/core/search/title-ranking.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 
 function mk(slug: string, title: string, score: number): SearchResult {
@@ -52,5 +57,33 @@ describe('applyTitleBoost', () => {
     const r = mk('projects/mingtang', 'Greek Amphitheater', 0.8);
     applyTitleBoost([r], '', DEFAULT_TITLE_BOOST);
     expect(r.score).toBe(0.8);
+  });
+});
+
+describe('preferExactTitleForTypedEntityLookup', () => {
+  test('keeps an explicit alias above a competing exact title', () => {
+    const exact = { ...mk('people/exact', 'Jordan Example', 0.2), type: 'person' };
+    const alias = {
+      ...mk('people/alias', 'Jordan Alias Target', 0.1),
+      type: 'person',
+      alias_hit: true,
+    };
+
+    const ordered = preferExactTitleForTypedEntityLookup(
+      [exact, alias],
+      'Jordan Example',
+      ['person'],
+    );
+
+    expect(ordered.map(r => r.slug)).toEqual(['people/alias', 'people/exact']);
+    expect(isPreferredExactTitleLookup(exact)).toBe(true);
+  });
+
+  test('is an identity operation for untyped and non-entity searches', () => {
+    const results = [mk('notes/exact', 'Jordan Example', 0.1), mk('notes/body', 'Other', 1)];
+
+    expect(preferExactTitleForTypedEntityLookup(results, 'Jordan Example', undefined)).toBe(results);
+    expect(preferExactTitleForTypedEntityLookup(results, 'Jordan Example', ['note'])).toBe(results);
+    expect(results.map(r => r.slug)).toEqual(['notes/exact', 'notes/body']);
   });
 });

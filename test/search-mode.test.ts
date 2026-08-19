@@ -381,6 +381,19 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     expect(a).not.toBe(b);
   });
 
+  test('explicit type filters partition cache rows and normalize filter order', () => {
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const untyped = knobsHash(knobs);
+    const person = knobsHash(knobs, { types: ['person'] });
+    const company = knobsHash(knobs, { types: ['company'] });
+    const mixedA = knobsHash(knobs, { types: ['person', 'company'] });
+    const mixedB = knobsHash(knobs, { types: ['company', 'person'] });
+
+    expect(person).not.toBe(untyped);
+    expect(person).not.toBe(company);
+    expect(mixedA).toBe(mixedB);
+  });
+
   test('hash is short (16 hex chars) and stable shape', () => {
     const h = knobsHash(resolveSearchMode({ mode: 'balanced' }));
     expect(h).toMatch(/^[0-9a-f]{16}$/);
@@ -433,7 +446,9 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // detail=low write must not be served to a detail=medium lookup.
     // v0.46.15 (#1863): bumped 17→18 to fold the autocut weak-top floor (acm=).
     // #3621: bumped 18→19 to fold the autocut minKeep floor (ack=).
-    expect(KNOBS_HASH_VERSION).toBe(19);
+    // v=20 isolates explicit page-type filters (and invalidates pre-preference
+    // cached rankings for typed exact-title lookups).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -452,7 +467,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // carry degraded[]/retrieved_count; pre-stamp rows must not claim clean.
     // v0.46.15 (#1863): 17→18 — autocut weak-top floor folds in (acm=).
     // #3621: 18→19 — autocut minKeep floor folds in (ack=).
-    expect(KNOBS_HASH_VERSION).toBe(19);
+    // Typed lookup fix: 19→20 — SQL page types fold in (types=).
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -617,8 +633,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 19 (16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→19 autocut minKeep floor #3621)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(19);
+  test('KNOBS_HASH_VERSION is 20 (17→18 autocut weak-top floor; 18→19 autocut minKeep floor; 19→20 type-filter isolation)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

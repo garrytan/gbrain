@@ -15,7 +15,8 @@
  *
  * Evidence precedence (strongest signal wins):
  *   alias_hit          — query exactly matched the page's declared chosen name
- *   exact_title_match  — query is a phrase in the page title (title boost fired)
+ *   exact_title_match  — typed lookup exactly matched the full page title, or
+ *                        the query is a phrase in the page title (boost fired)
  *   high_vector_match  — base (pre-boost) score >= HIGH_MATCH_FLOOR
  *   keyword_exact      — surfaced with a solid score but no title/alias/vector tag
  *   weak_semantic      — everything else (low-confidence tail)
@@ -27,6 +28,7 @@
  */
 
 import type { SearchResult } from '../types.ts';
+import { isPreferredExactTitleLookup } from './title-ranking.ts';
 
 export type Evidence =
   | 'alias_hit'
@@ -66,7 +68,7 @@ export interface EvidenceOpts {
 
 export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evidence {
   if (r.alias_hit) return 'alias_hit';
-  if (r.title_match_boost && r.title_match_boost > 1.0) return 'exact_title_match';
+  if (isPreferredExactTitleLookup(r) || (r.title_match_boost && r.title_match_boost > 1.0)) return 'exact_title_match';
   const floor = typeof opts.cosineFloor === 'number' ? opts.cosineFloor : DEFAULT_HIGH_COSINE_FLOOR;
   if (typeof r.cosine === 'number' && Number.isFinite(r.cosine) && r.cosine >= floor) {
     return 'high_vector_match';
