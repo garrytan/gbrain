@@ -249,4 +249,115 @@ describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', 
     expect(fm.dream_generated).toBe(true);
     expect(fm.raw_source).toBe('/transcripts/2026-07-17-standup.md');
   });
+
+  test('sets created from a date-prefixed raw source, not the later dream run date', async () => {
+    // A conflicting dated slug proves source evidence wins over generated
+    // naming hints; the cycle date is later than both.
+    const slug = 'wiki/originals/ideas/2026-08-19-source-dated-idea-abc123';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Source-dated idea',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await stampDreamProvenance(
+      engine as any,
+      [{
+        slug,
+        source_id: 'default',
+        raw_source: '/transcripts/2026-07-17-standup.md',
+      }],
+      '2026-08-20',
+    );
+
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows[0].fm.created).toBe('2026-07-17');
+    expect(rows[0].fm.created).not.toBe('2026-08-20');
+    const page = await engine.getPage(slug);
+    expect(page).not.toBeNull();
+    expect(renderPageToMarkdown(page!, [])).toMatch(/created:\s*['"]?2026-07-17/);
+  });
+
+  test('preserves an existing created value instead of replacing it from provenance', async () => {
+    const slug = 'wiki/personal/reflections/2026-07-17-existing-created-def456';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Existing creation metadata',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: { created: '2026-06-25' },
+    });
+
+    await stampDreamProvenance(
+      engine as any,
+      [{
+        slug,
+        source_id: 'default',
+        raw_source: '/transcripts/2026-07-17-standup.md',
+      }],
+      '2026-08-20',
+    );
+
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows[0].fm.created).toBe('2026-06-25');
+  });
+
+  test('falls back to a stable dated slug when raw-source evidence is unavailable', async () => {
+    const slug = 'wiki/originals/ideas/2026-07-04-dated-slug-evidence-fed789';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Dated slug evidence',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await stampDreamProvenance(
+      engine as any,
+      [{ slug, source_id: 'default' }],
+      '2026-08-20',
+    );
+
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows[0].fm.created).toBe('2026-07-04');
+  });
+
+  test('does not mislabel an undated source with the maintenance cycle date', async () => {
+    const slug = 'wiki/personal/reflections/2026-08-20-undated-source-abc999';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Undated source',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    await stampDreamProvenance(
+      engine as any,
+      [{
+        slug,
+        source_id: 'default',
+        raw_source: '/archive/2026-07-01/claude-session-without-date.md',
+      }],
+      '2026-08-20',
+    );
+
+    const rows = await engine.executeRaw<{ fm: Record<string, unknown> }>(
+      `SELECT frontmatter AS fm FROM pages WHERE slug = $1`,
+      [slug],
+    );
+    expect(rows[0].fm.created).toBeUndefined();
+    expect(rows[0].fm.dream_cycle_date).toBe('2026-08-20');
+  });
 });

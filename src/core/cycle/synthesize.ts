@@ -59,9 +59,9 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 import { writeSummaryPage } from './synthesize-summary.ts';
+import { stampDreamProvenance } from './dream-provenance.ts';
 
-// Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7);
-// patterns.ts and the __testing surface import from here unchanged.
+// Re-export the peeled drain while preserving the existing import surface.
 export { runSubagentsInline, runDrainRenewalTick };
 import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -2460,64 +2460,6 @@ function findLegacyCompletion(
     if (seen.size === n) return 'chunked';
   }
   return null;
-}
-
-// ── Dream-provenance DB stamp (#2569) ────────────────────────────────
-
-/**
- * Persist the dream-output identity marker plus its first-cycle provenance
- * into the `pages.frontmatter` JSONB row for every page a synthesize child
- * wrote. `dream_cycle_date` remains the compatible query key and
- * `dream_created_cycle_date` makes its immutable meaning explicit. Reruns
- * preserve the first non-empty value instead of dating old content as new.
- * Render-time `frontmatterOverrides` alone only
- * reach the markdown FILE — the DB row stayed unstamped, so DB consumers
- * couldn't enumerate generated pages and a later put_page write-through
- * (which re-renders from the DB row) silently erased the marker.
- *
- * Plain UPDATE through executeRawJsonb (raw object bound to $3::jsonb —
- * never JSON.stringify into a ::jsonb cast; engine-parity safe, no new
- * engine method). Best-effort per row: a stamp failure never kills the
- * phase (the render-time override still covers the file).
- */
-async function stampDreamProvenance(
-  engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
-  cycleDate: string,
-): Promise<void> {
-  if (refs.length === 0) return;
-  const { executeRawJsonb } = await import('../sql-query.ts');
-  for (const { slug, source_id, raw_source } of refs) {
-    try {
-      await executeRawJsonb(
-        engine,
-        `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
-                              || $4::jsonb
-                              || jsonb_build_object(
-                                   'dream_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''),
-                                            NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
-                                   'dream_created_cycle_date',
-                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''),
-                                            NULLIF(frontmatter->>'dream_cycle_date', ''), $3)
-                                 )
-          WHERE slug = $1 AND source_id = $2`,
-        [slug, source_id, cycleDate],
-        // #1978 raw-source persistence: record the transcript path the
-        // synthesis was derived from, so `gbrain doctor` (raw_provenance
-        // check) can verify every generated page carries a raw trace.
-        [{
-          dream_generated: true,
-          dream_cycle_date: cycleDate,
-          ...(raw_source ? { raw_source } : {}),
-        }],
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`[dream] provenance stamp ${slug}@${source_id} failed: ${msg}\n`);
-    }
-  }
 }
 
 // ── Reverse-write DB rows → markdown files ───────────────────────────
