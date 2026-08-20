@@ -24,7 +24,7 @@ import { installProcessWatchdog } from './process-watchdog.ts';
 import type {
   BrainEngine,
   BatchOpts,
-  DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
+  DerivedLinkReconciliationOpts, DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
@@ -1781,7 +1781,7 @@ export class PGLiteEngine implements BrainEngine {
    */
   async resolveSlugsByPaths(
     paths: string[],
-    opts: { sourceId: string },
+    opts: DerivedLinkReconciliationOpts,
   ): Promise<Map<string, string>> {
     if (paths.length === 0) return new Map();
     if (paths.length > DELETE_BATCH_SIZE) {

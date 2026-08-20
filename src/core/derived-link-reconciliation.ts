@@ -1,5 +1,6 @@
 /**
- * Exact, source-scoped reconciliation for links derived from one page.
+ * Exact, source- and provenance-scoped reconciliation for links derived from
+ * one page.
  *
  * This is the destructive half of link extraction: addLinksBatch is
  * deliberately additive, while a page rewrite needs removed references to
@@ -9,32 +10,53 @@
 
 import type {
   BrainEngine,
+  DerivedLinkReconciliationOpts,
   DerivedLinkReconciliationResult,
   LinkBatchInput,
+  ManagedDerivedLinkSource,
 } from './engine.ts';
 import { buildLinkRows, type LinkRow } from './batch-rows.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { validateSlug } from './utils.ts';
 
-const MANAGED_DERIVED_SOURCES = new Set([
+const ALL_MANAGED_DERIVED_SOURCES: readonly ManagedDerivedLinkSource[] = [
   'markdown',
   'frontmatter',
   'wikilink-resolved',
-]);
+];
+const MANAGED_DERIVED_SOURCES = new Set<string>(ALL_MANAGED_DERIVED_SOURCES);
 
 function normalizedRows(
   originSlugRaw: string,
-  sourceId: string,
   links: LinkBatchInput[],
-): { originSlug: string; rows: LinkRow[] } {
+  opts: DerivedLinkReconciliationOpts,
+): { originSlug: string; rows: LinkRow[]; managedSources: ManagedDerivedLinkSource[] } {
+  const sourceId = opts.sourceId;
   assertValidSourceId(sourceId);
   const originSlug = validateSlug(originSlugRaw);
+  const managedSources = opts.linkSources
+    ? [...new Set(opts.linkSources)]
+    : [...ALL_MANAGED_DERIVED_SOURCES];
+  if (managedSources.length === 0) {
+    throw new Error('reconcileDerivedLinks requires at least one managed link-source partition');
+  }
+  for (const source of managedSources) {
+    if (!MANAGED_DERIVED_SOURCES.has(source)) {
+      throw new Error(`reconcileDerivedLinks does not manage provenance ${JSON.stringify(source)}`);
+    }
+  }
+  const selectedSources = new Set<string>(managedSources);
   const normalized = links.map((link): LinkBatchInput => {
     const linkSource = link.link_source || 'markdown';
     if (!MANAGED_DERIVED_SOURCES.has(linkSource)) {
       throw new Error(
         `reconcileDerivedLinks only accepts managed derived provenance; got ${JSON.stringify(linkSource)}`,
+      );
+    }
+    if (!selectedSources.has(linkSource)) {
+      throw new Error(
+        `desired link provenance ${JSON.stringify(linkSource)} is outside the declared reconciliation scope`,
       );
     }
 
@@ -72,7 +94,7 @@ function normalizedRows(
       origin_source_id: originSourceId,
     };
   });
-  return { originSlug, rows: buildLinkRows(normalized) };
+  return { originSlug, rows: buildLinkRows(normalized), managedSources };
 }
 
 const DESIRED_RECORDSET = `
@@ -100,9 +122,9 @@ export async function runDerivedLinkReconciliation(
   engine: BrainEngine,
   originSlugRaw: string,
   links: LinkBatchInput[],
-  opts: { sourceId: string },
+  opts: DerivedLinkReconciliationOpts,
 ): Promise<DerivedLinkReconciliationResult> {
-  const { originSlug, rows } = normalizedRows(originSlugRaw, opts.sourceId, links);
+  const { originSlug, rows, managedSources } = normalizedRows(originSlugRaw, links, opts);
 
   return engine.transaction(async (tx) => {
     const inserted = await executeRawJsonb<{ one: number }>(
@@ -153,9 +175,13 @@ export async function runDerivedLinkReconciliation(
              origin_slug text, origin_field text, from_source_id text, to_source_id text,
              origin_source_id text, link_kind text
            )
-       ), resolved AS (${RESOLVED_DESIRED})
+       ), resolved AS (${RESOLVED_DESIRED}),
+          managed_sources AS (
+         SELECT jsonb_array_elements_text(($3::jsonb)->'managed_sources') AS link_source
+       )
        DELETE FROM links l
-        WHERE (
+        WHERE l.link_source IN (SELECT link_source FROM managed_sources)
+          AND (
           (l.link_source IN ('markdown', 'wikilink-resolved')
             AND l.from_page_id = (
               SELECT id FROM pages WHERE slug = $1 AND source_id = $2
@@ -176,7 +202,7 @@ export async function runDerivedLinkReconciliation(
           )
        RETURNING 1 AS one`,
       [originSlug, opts.sourceId],
-      [{ rows }],
+      [{ rows, managed_sources: managedSources }],
     );
 
     return { created: inserted.length, removed: removed.length };

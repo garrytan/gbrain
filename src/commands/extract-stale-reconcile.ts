@@ -5,12 +5,13 @@
  * across generic addLinksBatch chunks would either remain additive or let a
  * later reconciliation slice delete rows inserted by an earlier slice.
  */
-import type { BrainEngine, LinkBatchInput } from '../core/engine.ts';
+import type { BrainEngine, LinkBatchInput, ManagedDerivedLinkSource } from '../core/engine.ts';
 
 export interface StalePageLinkSet {
   originSlug: string;
   sourceId: string;
   links: LinkBatchInput[];
+  linkSources?: readonly ManagedDerivedLinkSource[];
 }
 
 export async function reconcileStalePageLinks(
@@ -23,7 +24,7 @@ export async function reconcileStalePageLinks(
     const result = await engine.reconcileDerivedLinks(
       desired.originSlug,
       desired.links,
-      { sourceId: desired.sourceId },
+      { sourceId: desired.sourceId, linkSources: desired.linkSources },
     );
     created += result.created;
     removed += result.removed;

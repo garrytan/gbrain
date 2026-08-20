@@ -1867,7 +1867,15 @@ export async function extractStaleFromDB(
       // disappeared from this page. addLinksBatch is intentionally additive;
       // the source-owned reconciliation primitive is the only safe destructive
       // path because it cannot sweep manual/mentions/other-origin edges.
-      linkRowsByPage.push({ originSlug: page.slug, sourceId: page.source_id, links: pageLinkRows });
+      linkRowsByPage.push({
+        originSlug: page.slug,
+        sourceId: page.source_id,
+        links: pageLinkRows,
+        // Exactness applies only to partitions this invocation extracted.
+        // Without --include-frontmatter, preserve frontmatter edges rather
+        // than treating an intentionally omitted set as an empty desired set.
+        linkSources: includeFrontmatter ? undefined : ['markdown', 'wikilink-resolved'],
+      });
       for (const entry of parseTimelineEntries(fullContent)) {
         timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }

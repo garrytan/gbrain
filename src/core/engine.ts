@@ -180,6 +180,14 @@ export interface DerivedLinkReconciliationResult {
   removed: number;
 }
 
+export type ManagedDerivedLinkSource = 'markdown' | 'wikilink-resolved' | 'frontmatter';
+
+export interface DerivedLinkReconciliationOpts {
+  sourceId: string;
+  /** Managed provenance partitions represented completely by `links`. Default: all. */
+  linkSources?: readonly ManagedDerivedLinkSource[];
+}
+
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
 export interface TimelineBatchInput {
   slug: string;
@@ -1242,18 +1250,19 @@ export interface BrainEngine {
    */
   addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number>;
   /**
-   * Atomically make one page's managed derived links match `links` exactly.
+   * Atomically make one page's selected managed derived-link partitions match
+   * `links` exactly.
    *
    * The origin is source-qualified and required. Markdown and
    * wikilink-resolved rows are owned by the origin page's from-endpoint;
    * frontmatter rows are owned by `origin_page_id`. Manual, mentions, custom
    * provenance, and frontmatter rows authored by another page are preserved.
-   * Empty `links` intentionally clears the origin's managed partition.
+   * Empty `links` intentionally clears only the selected managed partitions.
    */
   reconcileDerivedLinks(
     originSlug: string,
     links: LinkBatchInput[],
-    opts: { sourceId: string },
+    opts: DerivedLinkReconciliationOpts,
   ): Promise<DerivedLinkReconciliationResult>;
   /**
    * Remove links from `from` to `to`. If linkType is provided, only that specific

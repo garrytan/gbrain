@@ -197,6 +197,43 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('default stale extraction preserves the frontmatter partition it did not extract', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', 'No body links.'));
+    await engine.reconcileDerivedLinks('companies/acme', [
+      {
+        from_slug: 'people/alice',
+        to_slug: 'companies/acme',
+        link_type: 'works_at',
+        context: 'frontmatter.key_people: Alice',
+        link_source: 'frontmatter',
+        origin_slug: 'companies/acme',
+        origin_field: 'key_people',
+      },
+      {
+        from_slug: 'companies/acme',
+        to_slug: 'people/alice',
+        link_type: 'related',
+        context: 'obsolete body link',
+        link_source: 'markdown',
+      },
+    ], { sourceId: 'default' });
+
+    // --include-frontmatter is deliberately absent. This run owns only the
+    // markdown + wikilink-resolved partitions, so an empty body desired set
+    // must not be mistaken for an empty frontmatter desired set.
+    await runExtract(engine, ['--stale']);
+
+    expect(await engine.getLinks('companies/acme')).toEqual([]);
+    expect(await engine.getBacklinks('companies/acme')).toEqual([
+      expect.objectContaining({
+        from_slug: 'people/alice',
+        link_source: 'frontmatter',
+        origin_slug: 'companies/acme',
+      }),
+    ]);
+  });
+
   test('CRITICAL (#1768): microsecond updated_at clears after --stale (no permanent lag)', async () => {
     // Repro of #1768: extractStaleFromDB used to stamp page.updated_at.toISOString()
     // (a JS Date, millisecond-truncated). The DB updated_at keeps microseconds, so

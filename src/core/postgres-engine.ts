@@ -2,7 +2,7 @@ import postgres from 'postgres';
 import type {
   BrainEngine,
   BatchOpts,
-  DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
+  DerivedLinkReconciliationOpts, DerivedLinkReconciliationResult, LinkBatchInput, TimelineBatchInput,
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
@@ -1393,7 +1393,7 @@ export class PostgresEngine implements BrainEngine {
    */
   async resolveSlugsByPaths(
     paths: string[],
-    opts: { sourceId: string },
+    opts: DerivedLinkReconciliationOpts,
   ): Promise<Map<string, string>> {
     if (paths.length === 0) return new Map();
     if (paths.length > DELETE_BATCH_SIZE) {
