@@ -3272,8 +3272,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       `keeps failing in your environment (RLS denying DELETE, an FK RESTRICT — anywhere ` +
       `UPDATE still works), remove the stale row yourself: 'gbrain delete <stale-slug>' ` +
       `with the stale slug named above (the reconcile only names rows whose backing file ` +
-      `is gone from the working tree — never a live page) — the reconcile then finds ` +
-      `nothing left to delete and the sentinel clears on the next run.`;
+      `is gone from the working tree — never a live page). A sentinel reading 'stale row ?' ` +
+      `names nothing on purpose: that run could not prove ANY row stale, usually because a ` +
+      `tracked file could not be read — fix or remove that file instead of deleting a page. ` +
+      `The reconcile then finds nothing left to delete and the sentinel clears on the next run.`;
     if (gate.sentinelBlocked && failedFiles.some(f => f.path === '<head>')) {
       serr(
         `\nSync blocked: repository history changed during sync (force-push / reset).\n` +
@@ -3743,8 +3745,10 @@ async function performFullSync(
           `${fullRenameRows.map(f => `  ${f.path}: ${f.error}`).join('\n')}\n\n` +
           `If the delete keeps failing in your environment, remove the stale row ` +
           `yourself: 'gbrain delete <stale-slug>' with the stale slug named above ` +
-          `(only rows whose backing file is gone are ever named — never a live page) — ` +
-          `the sentinel then clears on the next sync.`,
+          `(only rows whose backing file is gone are ever named — never a live page). ` +
+          `A sentinel reading 'stale row ?' names nothing on purpose: that run could not ` +
+          `prove ANY row stale — fix the unreadable tracked file it reports instead. ` +
+          `The sentinel then clears on the next sync.`,
         );
       } else {
         serr(`\nFull sync blocked: repository history changed during sync.\n${codeBreakdown}`);
