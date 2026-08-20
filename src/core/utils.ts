@@ -64,6 +64,24 @@ export function contentHash(page: PageInput): string {
       compiled_truth: page.compiled_truth,
       timeline: page.timeline || '',
       frontmatter: page.frontmatter || {},
+      tags: (page.tags || []).sort(),
+    }))
+    .digest('hex');
+}
+
+/**
+ * Backward-compatible content hash that omits `tags`. Used during a
+ * transition window so pages written by the old formula (without tags)
+ * are still recognised as unchanged while the DB is being rehashed.
+ */
+export function contentHashLegacy(page: PageInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      title: page.title,
+      type: page.type,
+      compiled_truth: page.compiled_truth,
+      timeline: page.timeline || '',
+      frontmatter: page.frontmatter || {},
     }))
     .digest('hex');
 }
