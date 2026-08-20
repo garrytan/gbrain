@@ -202,7 +202,7 @@ export interface HookIo {
    * Feedback-loop attribution channel. Default 'claude-code'; other
    * adapters pass their host explicitly.
    */
-  harness?: 'claude-code' | 'codex' | 'opencode' | 'traecli';
+  harness?: 'claude-code' | 'codex' | 'opencode' | 'traecli' | 'traecode' | 'traecode-cn';
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -214,8 +214,11 @@ Events (wired into .claude/settings.local.json by gbrain bootstrap):
                   push status, hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
                   running 'gbrain serve' over IPC, print additionalContext JSON
-                  (--harness <claude-code|codex|opencode|traecli> sets the feedback-loop channel;
-                  default claude-code, unknown values fall back to the default)
+                  (--harness <claude-code|codex|opencode|traecli|traecode|traecode-cn> sets the
+                  feedback-loop channel; default claude-code, unknown values fall
+                  back to the default. traecode/traecode-cn are the Trae desktop
+                  apps: prompt-only window, transcript_path is ignored until the
+                  desktop transcript format is spec-verified)
   stop            append to the per-session live buffer
   session-end     ingest the session transcript into the dream corpus
                   (secret-scanned), prune old corpus files, push the workspace
@@ -240,7 +243,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
   const harnessIdx = args.indexOf('--harness');
   if (harnessIdx >= 0 && !io.harness) {
     const v = args[harnessIdx + 1];
-    if (v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'traecli') io = { ...io, harness: v };
+    if (v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'traecli' || v === 'traecode' || v === 'traecode-cn') io = { ...io, harness: v };
   }
   if (!event || !['session-start', 'user-prompt', 'stop', 'session-end', 'compact'].includes(event)) {
     process.stderr.write(USAGE + '\n');
@@ -1021,7 +1024,12 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // path aborts the event (heartbeat + empty stdout), never "best effort".
     let turns: WindowTurn[] = [];
     let priorContextText: string | undefined;
-    if (j.transcript_path !== undefined && j.transcript_path !== null) {
+    // Trae desktop (traecode / traecode-cn): transcript location and format are
+    // not yet spec-verified, so the transcript_path is deliberately ignored —
+    // the prompt-only window below keeps injection alive (fail-open) instead of
+    // aborting on a confinement root we can't vouch for.
+    const isTraeDesktop = io.harness === 'traecode' || io.harness === 'traecode-cn';
+    if (j.transcript_path !== undefined && j.transcript_path !== null && !isTraeDesktop) {
       const isTraeCli = io.harness === 'traecli';
       const conf = isTraeCli
         ? confineTraeCliTranscriptPath(j.transcript_path, {
