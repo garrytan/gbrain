@@ -82,7 +82,10 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
     expect(call.page.content_hash).toBeNull();
     // ...while legitimately-populated fields pass through untouched.
     expect(call.page.title).toBe('a title');
-    expect(call.opts).toEqual({ sourceId: 'default' });
+    // Verbatim copy: the source row is authoritative, so the copy carries
+    // putPage's empty-overwrite escape hatch (a legitimately blank body must
+    // land over a drifted non-empty target row on re-run).
+    expect(call.opts).toEqual({ sourceId: 'default', allowEmptyOverwrite: true });
   });
 
   test('already-null / already-populated fields are left as-is (no double-mapping)', async () => {

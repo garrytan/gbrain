@@ -621,6 +621,126 @@ export async function runPostFusionStages(
   } catch {
     // Non-fatal; preserves the per-stage contract.
   }
+
+  // supersession stage — runs LAST so the penalty applies to the fully-boosted
+  // score. Down-ranks results whose page is the target of a `supersedes` link
+  // (a newer/canon page supersedes it) and stamps `superseded`/`superseded_by`
+  // for --explain, the contradiction probe, and agent renderers. The page-level
+  // analogue of the superseded_by/expired_at awareness recall.ts applies to
+  // facts. Fail-open per the per-stage contract: a brain with no `supersedes`
+  // edges (or a pre-links schema) finds 0 rows / throws and no-ops.
+  try {
+    await applySupersedeDownrank(results, engine);
+  } catch {
+    // Non-fatal; preserves the per-stage contract.
+  }
+}
+
+/**
+ * Memoized per-engine gate for the supersession stage. Most brains carry zero
+ * `supersedes` edges, so the downrank lookup would be a wasted roundtrip on
+ * every search. One existence probe per engine per TTL answers "any edges at
+ * all?"; false skips the stage entirely. A fresh edge minted inside the TTL
+ * window is invisible for up to ~5 minutes — an acceptable delay for a
+ * ranking hint (the downrank applies on the next probe refresh). Fail-open: a
+ * probe error must never kill search — the stage runs and its own catch
+ * no-ops on the same underlying failure (e.g. pre-links schema).
+ */
+const SUPERSEDE_PROBE_TTL_MS = 5 * 60 * 1000;
+let supersedeEdgeProbe = new WeakMap<
+  import('../engine.ts').BrainEngine,
+  { at: number; exists: boolean }
+>();
+
+/** Test seam: drop memoized supersede-edge probes (WeakMap has no clear()). */
+export function _resetSupersedeProbeForTests(): void {
+  supersedeEdgeProbe = new WeakMap();
+}
+
+async function hasAnySupersedeEdges(
+  engine: import('../engine.ts').BrainEngine,
+): Promise<boolean> {
+  const cached = supersedeEdgeProbe.get(engine);
+  if (cached && Date.now() - cached.at < SUPERSEDE_PROBE_TTL_MS) return cached.exists;
+  try {
+    const rows = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM links WHERE link_type = 'supersedes' LIMIT 1`,
+    );
+    const exists = rows.length > 0;
+    supersedeEdgeProbe.set(engine, { at: Date.now(), exists });
+    return exists;
+  } catch {
+    // Fail-open; not cached so a transient error doesn't pin the gate open.
+    return true;
+  }
+}
+
+/**
+ * Down-rank results whose page is superseded by a newer/canon page, and stamp
+ * the SUPERSEDED annotation.
+ *
+ * A page X is "superseded" when it is the `to_page_id` of a `supersedes` link
+ * (`A supersedes B` → from=A canon, to=B stale). This is the page-level
+ * analogue of the `superseded_by`/`expired_at` awareness recall.ts already
+ * applies to the facts table. Stamps `superseded=true`, `superseded_by` (the
+ * superseding page's slug), and multiplies score by SUPERSEDE_PENALTY so
+ * current canon out-scores stale material without hiding it — the flag lets
+ * callers still surface it, and it is authoritative even in reranked modes
+ * where the cross-encoder owns the final head order.
+ *
+ * Single index-hit query bounded by top-K (links.to_page_id is indexed;
+ * `supersedes` edges are sparse). Lookup is by page_id array, but supersession
+ * is WITHIN-SOURCE only (matches relational-recall's contract): a cross-source
+ * `supersedes` edge neither downranks nor leaks the superseding slug across
+ * the source boundary, and a soft-deleted superseder no longer counts.
+ * Fail-soft: a brain with no `supersedes` edges (or a pre-links schema)
+ * returns 0 rows / throws and the stage no-ops (matches
+ * applyAliasResolvedBoost's pre-v104 guard).
+ */
+export const SUPERSEDE_PENALTY = 0.5;
+
+export async function applySupersedeDownrank(
+  results: SearchResult[],
+  engine: import('../engine.ts').BrainEngine,
+): Promise<void> {
+  if (results.length === 0) return;
+  const pageIds = Array.from(
+    new Set(results.map(r => r.page_id).filter((id): id is number => typeof id === 'number')),
+  );
+  if (pageIds.length === 0) return;
+  if (!(await hasAnySupersedeEdges(engine))) return;
+  let rows: Array<{ to_page_id: number; by_slug: string }> = [];
+  try {
+    rows = await engine.executeRaw<{ to_page_id: number; by_slug: string }>(
+      `SELECT DISTINCT l.to_page_id, pf.slug AS by_slug
+         FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE l.link_type = 'supersedes'
+          AND pf.deleted_at IS NULL
+          AND pf.source_id = pt.source_id
+          AND l.to_page_id = ANY($1::bigint[])`,
+      [pageIds],
+    );
+  } catch {
+    // Pre-links schema or SQL miss; no-op.
+    return;
+  }
+  if (rows.length === 0) return;
+  const supersededBy = new Map<number, string>();
+  for (const row of rows) {
+    const id = Number(row.to_page_id);
+    if (!supersededBy.has(id)) supersededBy.set(id, row.by_slug);
+  }
+  for (const r of results) {
+    const by = supersededBy.get(r.page_id);
+    if (by !== undefined) {
+      r.score *= SUPERSEDE_PENALTY;
+      r.superseded = true;
+      r.superseded_by = by;
+      r.supersede_penalty = SUPERSEDE_PENALTY;
+    }
+  }
 }
 
 /**
@@ -1903,16 +2023,25 @@ export async function hybridSearch(
   // returned set (mode.ts D4: top_n_in = searchLimit), so there is no un-scored
   // tail to wrongly drop; applyAutocut additionally no-ops when <2 items carry
   // a finite rerank_score (covers the fail-open reranker path, where
-  // applyReranker returns RRF order with no scores). minKeep is the fixed
-  // never-empty failsafe (1); jumpRatio comes from the resolved mode.
+  // applyReranker returns RRF order with no scores). jumpRatio + minKeep come
+  // from the resolved mode (config `search.autocut_jump` /
+  // `search.autocut_min_keep` > bundle); minKeep stays the never-empty
+  // failsafe (default 1 — raising it floors the cut for operators whose
+  // reranker score curves decay without a dramatic cliff).
   let autocutDecision: AutocutDecision | undefined;
   if (resolvedMode.autocut && offset === 0) {
     const r = applyAutocut(
       returnPool,
       (x) => x.rerank_score,
       // v0.46.15 (#1863): minTopScore is the weak-top floor — below it the
-      // cliff signal is untrustworthy and autocut no-ops.
-      { enabled: true, jumpRatio: resolvedMode.autocut_jump, minKeep: 1, minTopScore: resolvedMode.autocut_min_top },
+      // cliff signal is untrustworthy and autocut no-ops. #3621: minKeep is
+      // now the configured floor instead of the hardcoded 1.
+      {
+        enabled: true,
+        jumpRatio: resolvedMode.autocut_jump,
+        minKeep: resolvedMode.autocut_min_keep,
+        minTopScore: resolvedMode.autocut_min_top,
+      },
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).

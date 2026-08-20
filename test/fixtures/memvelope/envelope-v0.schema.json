@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://memvelope.com/schema/envelope-v0.schema.json",
+  "title": "Memvelope Envelope v0",
+  "description": "A lossless, provider-neutral archive of AI conversations, and a pure function of the source export. Layer 1 of the Memvelope standard.",
+  "type": "object",
+  "required": [
+    "memvelope",
+    "meta",
+    "conversations"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "memvelope": {
+      "const": "envelope-v0",
+      "description": "Format + version tag; identifies the file. The reference serializer emits it first for human scanability, but key order is normative only through the canonical serialization profile; readers locate this field by name, never by position."
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "source_provider",
+        "conversation_count",
+        "message_count"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "source_provider": {
+          "type": "string",
+          "description": "Lowercase registered token for the source provider. Registered values: \"chatgpt\", \"claude\". New tokens are registered by PR against SPEC.md."
+        },
+        "source_export_date": {
+          "type": "string",
+          "anyOf": [
+            {
+              "format": "date"
+            },
+            {
+              "format": "date-time"
+            }
+          ],
+          "description": "ISO 8601 date (YYYY-MM-DD) or datetime the source export was produced; date-only when the export states only a date. Present only when the export itself states one; omitted (not null) otherwise."
+        },
+        "conversation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "conversations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "created_at",
+          "updated_at",
+          "messages"
+        ],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The source conversation id copied verbatim, or null if the export didn't provide one. Converters must not synthesize ids. Ids should be unique within an envelope; consumers must tolerate null and duplicates."
+          },
+          "title": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "role",
+                "ts",
+                "text"
+              ],
+              "additionalProperties": true,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Conversation-positional id (m1, m2, ...), stable within this envelope and meaningful only within its conversation."
+                },
+                "role": {
+                  "enum": [
+                    "user",
+                    "assistant"
+                  ],
+                  "description": "Only real conversation turns. Tool/system/thinking content is excluded."
+                },
+                "ts": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "date-time",
+                  "description": "Original timestamp from the export, or null if absent."
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Message prose after the normative trim-and-join extraction rules."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

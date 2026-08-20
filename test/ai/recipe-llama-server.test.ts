@@ -38,6 +38,16 @@ describe('recipe: llama-server', () => {
     expect(r.touchpoints.embedding!.default_dims).toBe(0);
   });
 
+  test('chat touchpoint declares tool calling and native prefix caching', () => {
+    const r = getRecipe('llama-server')!;
+    const chat = r.touchpoints.chat;
+    expect(chat).toBeDefined();
+    expect(chat!.models).toEqual([]);
+    expect(chat!.supports_tools).toBe(true);
+    expect(chat!.supports_subagent_loop).toBe(true);
+    expect(chat!.supports_prompt_cache).toBe(true);
+  });
+
   test('declares a probe function', () => {
     const r = getRecipe('llama-server')!;
     expect(typeof r.probe).toBe('function');

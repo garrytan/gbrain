@@ -37,7 +37,7 @@ test/check-bootstrap-guards.test.ts	check-grok-pin.sh	10	readFileSync
 test/check-bootstrap-guards.test.ts	verify + workflow wiring	6	readFileSync
 test/check-update.test.ts	check-update CLI	3	bun-file
 test/child-worker-supervisor.test.ts	issue #1801 — restartCurrentChild + killChild liveness fix	3	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	7	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	11	readFileSync
@@ -68,12 +68,13 @@ test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: orchestrator dispatch wires the 
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: pre-existing 17 core phases always run	3	readFileSync
 test/cycle-patterns-deadline-budget.test.ts	deadline plumbing wiring (structural)	7	readFileSync
 test/cycle-patterns.test.ts	patterns phase wiring	9	readFileSync
-test/cycle-patterns.test.ts	patterns scope filter	6	readFileSync
+test/cycle-patterns.test.ts	patterns scope filter	7	readFileSync
 test/cycle-phase-deadline-drift.test.ts	propose_takes deadline < job timeout (#4168)	4	readFileSync
 test/cycle/cycle-lock-ttl.test.ts	cycle lock TTL (T2 regression pin)	1	readFileSync
 test/destructive-guard.test.ts	FK-RESTRICT lifecycle (clientsReferencingSource + purge skip)	9	readFileSync
 test/destructive-guard.test.ts	assessDestructiveImpact	5	readFileSync
 test/destructive-guard.test.ts	formatters (display helpers)	4	readFileSync
+test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment	1	readFileSync
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-bearing render strings	5	doctor-source-helper
@@ -186,6 +187,7 @@ test/scripts/classify-tests.test.ts	classify-tests detectors	18	bun-file,doctor-
 test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
+test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync

@@ -77,7 +77,11 @@ export interface FileDiagnostics {
 }
 
 export interface ParseSessionsOpts {
-  /** Per-format byte budget; adapters REJECT (not truncate) monolithic JSON over budget. */
+  /**
+   * Per-format byte budget. Most adapters REJECT a monolithic file over budget
+   * rather than truncating it; codex instead degrades to a bounded head+tail
+   * read, so an over-budget rollout still imports.
+   */
   maxBytes?: number;
 }
 

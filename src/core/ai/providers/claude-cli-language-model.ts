@@ -68,12 +68,85 @@ interface ClaudeJsonResult {
   stop_reason: string | null;
   session_id: string;
   num_turns: number;
+  /** HTTP status of the underlying API failure (e.g. 429 on a spend/rate limit). */
+  api_error_status?: number;
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
+}
+
+/**
+ * Typed failure for a `claude --print` run that reported an error. Carries the
+ * API HTTP status (`apiErrorStatus`, e.g. 429 on a spend/rate limit) and the
+ * subprocess exit code so callers can branch on the failure class instead of
+ * regexing a raw stderr/stdout blob.
+ */
+export class ClaudeCliProcessError extends Error {
+  readonly apiErrorStatus: number | undefined;
+  readonly exitCode: number | undefined;
+
+  constructor(message: string, opts: { apiErrorStatus?: number; exitCode?: number } = {}) {
+    super(message);
+    this.name = 'ClaudeCliProcessError';
+    this.apiErrorStatus = opts.apiErrorStatus;
+    this.exitCode = opts.exitCode;
+  }
+}
+
+type EnvelopeParse =
+  | { ok: true; envelope: ClaudeJsonResult }
+  | { ok: false; reason: 'not-json'; error: unknown }
+  | { ok: false; reason: 'no-result-event' };
+
+/**
+ * Unwrap `--output-format json` stdout into the result envelope. Tolerates both
+ * output shapes: the bare result object, and the verbose-mode event ARRAY —
+ * with `"verbose": true` in ~/.claude/settings.json the CLI emits
+ * [{type:"system",subtype:"init",...}, ..., {type:"result",...}] instead of the
+ * bare object, and there is no CLI flag to force it off (no --no-verbose;
+ * --settings '{}' merges, does not replace). Verified on CLI 2.1.145.
+ */
+function parseResultEnvelope(stdout: string): EnvelopeParse {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (error) {
+    return { ok: false, reason: 'not-json', error };
+  }
+  if (Array.isArray(parsed)) {
+    const resultEvent = parsed.find(
+      (ev): ev is ClaudeJsonResult =>
+        !!ev && typeof ev === 'object' && (ev as { type?: unknown }).type === 'result',
+    );
+    if (!resultEvent) {
+      return { ok: false, reason: 'no-result-event' };
+    }
+    parsed = resultEvent;
+  }
+  // JSON.parse accepts bare primitives (null / numbers / strings); none of
+  // them is a result envelope, and letting one through would make the
+  // envelope field reads throw inside the subprocess close callback.
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, reason: 'not-json', error: new Error('top-level JSON value is not an object') };
+  }
+  return { ok: true, envelope: parsed as ClaudeJsonResult };
+}
+
+/**
+ * Build the ClaudeCliProcessError for an error-reporting result envelope,
+ * surfacing `api_error_status` + the human-readable `result` message instead of
+ * an opaque blob.
+ */
+function envelopeError(envelope: ClaudeJsonResult, exitCode: number | undefined): ClaudeCliProcessError {
+  const status = typeof envelope.api_error_status === 'number' ? envelope.api_error_status : undefined;
+  const detail = envelope.result || envelope.subtype;
+  const message = status !== undefined
+    ? `claude-cli API error ${status}: ${detail}`
+    : `claude-cli reported error: ${detail}`;
+  return new ClaudeCliProcessError(message, { apiErrorStatus: status, exitCode });
 }
 
 /**
@@ -269,37 +342,45 @@ function runClaude(
     child.on('close', code => {
       if (signal) signal.removeEventListener('abort', onAbort);
       if (code !== 0) {
-        reject(new Error(`claude-cli exited ${code}: ${stderr.trim() || stdout.trim()}`));
-        return;
-      }
-      try {
-        let parsed = JSON.parse(stdout) as unknown;
-        // Compat: when the user has `"verbose": true` in ~/.claude/settings.json,
-        // `--print --output-format json` emits an ARRAY of events
-        // ([{type:"system",subtype:"init",...}, ..., {type:"result",...}])
-        // instead of the bare result object. There is no CLI flag to force it
-        // off (no --no-verbose; --settings '{}' merges, does not replace), so
-        // tolerate both shapes and pick the result event. Verified on CLI 2.1.145.
-        if (Array.isArray(parsed)) {
-          const resultEvent = parsed.find(
-            (ev): ev is ClaudeJsonResult =>
-              !!ev && typeof ev === 'object' && (ev as { type?: unknown }).type === 'result',
-          );
-          if (!resultEvent) {
-            reject(new Error(`claude-cli JSON event array had no "result" event\n--- raw ---\n${stdout.slice(0, 500)}`));
-            return;
-          }
-          parsed = resultEvent;
-        }
-        const envelope = parsed as ClaudeJsonResult;
-        if (envelope.is_error) {
-          reject(new Error(`claude-cli reported error: ${envelope.result || envelope.subtype}`));
+        // Even on a non-zero exit the CLI writes a formatted result envelope
+        // to stdout (e.g. an API 429 arrives as {is_error:true,
+        // api_error_status:429, result:"<human-readable message>", ...}).
+        // Surface that as a typed error instead of burying the status inside
+        // a raw blob. Only an error-reporting envelope qualifies: a SUCCESS
+        // envelope followed by a non-zero exit is a process failure whose
+        // reason lives in stderr, so it falls through to the blob fallback
+        // (as does any stdout without a parseable envelope).
+        const attempt = parseResultEnvelope(stdout);
+        if (attempt.ok && attempt.envelope.type === 'result' && attempt.envelope.is_error === true) {
+          reject(envelopeError(attempt.envelope, code ?? undefined));
           return;
         }
-        resolve(envelope);
-      } catch (e) {
-        reject(new Error(`claude-cli output not JSON: ${e instanceof Error ? e.message : String(e)}\n--- raw ---\n${stdout.slice(0, 500)}`));
+        // The blob goes AFTER the `--- raw ---` marker: it can carry
+        // model/page-derived text, and classifyGlobalLlmError's phrase
+        // regexes only scan text before the marker (an auth-looking essay in
+        // stdout must never read as a whole-run auth outage).
+        reject(new ClaudeCliProcessError(
+          `claude-cli exited ${code}\n--- raw ---\n${stderr.trim() || stdout.trim()}`,
+          { exitCode: code ?? undefined },
+        ));
+        return;
       }
+      const attempt = parseResultEnvelope(stdout);
+      if (!attempt.ok) {
+        if (attempt.reason === 'no-result-event') {
+          reject(new Error(`claude-cli JSON event array had no "result" event\n--- raw ---\n${stdout.slice(0, 500)}`));
+          return;
+        }
+        const e = attempt.error;
+        reject(new Error(`claude-cli output not JSON: ${e instanceof Error ? e.message : String(e)}\n--- raw ---\n${stdout.slice(0, 500)}`));
+        return;
+      }
+      const envelope = attempt.envelope;
+      if (envelope.is_error) {
+        reject(envelopeError(envelope, 0));
+        return;
+      }
+      resolve(envelope);
     });
 
     // stdin error handler: if the binary does not exist (ENOENT) or the child

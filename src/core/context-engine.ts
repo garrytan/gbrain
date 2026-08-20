@@ -5,7 +5,7 @@
  * structured temporal, spatial, and operational context into the system prompt.
  *
  * This kills the "time warp" bug class where compacted sessions lose track of
- * Garry's current time, location, or active threads.
+ * the user's current time, location, or active threads.
  *
  * Architecture: delegates compaction to the legacy runtime. Only owns
  * `systemPromptAddition` injection during `assemble()`. Zero LLM calls.
@@ -242,8 +242,6 @@ const AIRPORT_TZ: Record<string, string> = {
   LIS: 'Europe/Lisbon', BCN: 'Europe/Madrid',
 };
 
-const DEFAULT_TZ = 'US/Pacific';
-const DEFAULT_HOME = 'San Francisco';
 /**
  * Sentinel `tz` value emitted when an active flight points to an airport not in
  * AIRPORT_TZ. Pre-v0.32.5 this branch silently fell back to US/Pacific and
@@ -256,18 +254,25 @@ const UNKNOWN_TZ = 'UNKNOWN';
 
 // ── Types ───────────────────────────────────────────────────────────────
 
+interface LocationState {
+  city?: string;
+  state?: string;
+  province?: string;
+  country?: string;
+  timezone?: string;
+  source?: string;
+  note?: string;
+}
+
 interface HeartbeatState {
+  userAwake?: boolean;
+  userAwokeAt?: string | null;
+  /** @deprecated Use userAwake. Kept for existing heartbeat-state files. */
   garryAwake?: boolean;
+  /** @deprecated Use userAwokeAt. Kept for existing heartbeat-state files. */
   garryAwokeAt?: string | null;
-  currentLocation?: {
-    city?: string;
-    state?: string;
-    province?: string;
-    country?: string;
-    timezone?: string;
-    source?: string;
-    note?: string;
-  };
+  currentLocation?: LocationState;
+  homeLocation?: LocationState;
   lastChecks?: Record<string, string>;
   blockers?: Record<string, string>;
 }
@@ -314,12 +319,16 @@ interface LiveContext {
   /** Day-of-week. NULL when timezone is unknown (same reason as `now`). */
   dayOfWeek: string | null;
   homeTime: string | null;
+  homeLocation: {
+    city: string;
+    tz: string;
+  } | null;
   location: {
     city: string;
     tz: string;
     source: string;
   };
-  /** Whether the user has flagged themselves awake (heartbeat.garryAwake). */
+  /** Whether the user has flagged themselves awake (heartbeat.userAwake). */
   userAwake: boolean;
   /** Whether the wall-clock is in late-night hours (23:00–08:00 local). FALSE when timezone is unknown. */
   wallClockQuietHours: boolean;
@@ -360,15 +369,54 @@ function getTimeInTz(tz: string): { iso: string; dayOfWeek: string; hour: number
   return { iso, dayOfWeek, hour: localH };
 }
 
+function locationName(location: LocationState, fallback: string): string {
+  return location.city ?? location.state ?? location.province ?? location.country ?? fallback;
+}
+
+/**
+ * Heartbeat timezones are user-edited JSON: a typo'd IANA id ('Amrica/…') must
+ * degrade to the UNKNOWN_TZ warning path, not throw RangeError out of
+ * getTimeInTz mid-assemble().
+ */
+function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveHomeLocation(hb: HeartbeatState | null): { city: string; tz: string } | null {
+  if (!hb?.homeLocation?.timezone) return null;
+  const tz = hb.homeLocation.timezone;
+  return {
+    city: locationName(hb.homeLocation, 'Home'),
+    tz: isValidTimezone(tz) ? tz : UNKNOWN_TZ,
+  };
+}
+
 function resolveLocation(
   hb: HeartbeatState | null,
   flights: FlightData | null,
 ): { city: string; tz: string; source: string } {
   if (hb?.currentLocation?.timezone) {
+    const tz = hb.currentLocation.timezone;
+    const source = hb.currentLocation.source ?? 'heartbeat';
+    if (!isValidTimezone(tz)) {
+      // Configured-but-invalid is NOT unconfigured: never fall through to
+      // flights/home (a wrong-but-confident time is the bug class this
+      // engine prevents). Name the bad zone so the warning is actionable.
+      return {
+        city: locationName(hb.currentLocation, 'Current location'),
+        tz: UNKNOWN_TZ,
+        source: `${source}:tz-invalid:${sanitizeForPrompt(tz, 50)}`,
+      };
+    }
     return {
-      city: hb.currentLocation.city ?? DEFAULT_HOME,
-      tz: hb.currentLocation.timezone,
-      source: hb.currentLocation.source ?? 'heartbeat',
+      city: locationName(hb.currentLocation, 'Current location'),
+      tz,
+      source,
     };
   }
 
@@ -384,7 +432,7 @@ function resolveLocation(
     // failure class this engine exists to prevent. Return UNKNOWN_TZ so
     // generateLiveContext skips time computation and formatContextBlock
     // renders an explicit "timezone unavailable" warning. Pre-v0.32.5 this
-    // path returned tz: DEFAULT_TZ with a "tz-unknown" sticker in source,
+    // path returned a concrete fallback timezone with a "tz-unknown" sticker in source,
     // which was cosmetic — the engine still injected a wrong concrete time.
     return {
       city: hb?.currentLocation?.city ?? active.destination,
@@ -393,7 +441,35 @@ function resolveLocation(
     };
   }
 
-  return { city: DEFAULT_HOME, tz: DEFAULT_TZ, source: 'default' };
+  const home = resolveHomeLocation(hb);
+  // A home with an invalid configured tz degrades to the warning path with a
+  // source label that names the cause, not a misleading 'unconfigured'.
+  if (home) return { ...home, source: home.tz === UNKNOWN_TZ ? 'home:tz-invalid' : 'home' };
+
+  // No configured location and no active travel signal. Refuse to guess a
+  // city/timezone: a wrong-but-confident default is worse than an explicit gap.
+  return { city: 'Unknown', tz: UNKNOWN_TZ, source: 'unconfigured' };
+}
+
+function formatShortTimeInTz(tz: string): string | null {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric', minute: '2-digit', hour12: true, weekday: 'short',
+      timeZoneName: 'short',
+    }).format(new Date());
+  } catch {
+    return null;
+  }
+}
+
+function sameTimezone(a: string, b: string): boolean {
+  try {
+    const canonical = (tz: string) => new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+    return canonical(a) === canonical(b);
+  } catch {
+    return a === b;
+  }
 }
 
 /** Parse a calendar event time string into a Date. Handles ISO and date-only formats. */
@@ -502,11 +578,11 @@ function generateLiveContext(workspaceDir: string): LiveContext {
   const calendarCache = loadJsonFile<CalendarCache>(join(workspaceDir, 'memory', 'calendar-cache.json'));
 
   const location = resolveLocation(hb, flights);
+  const homeLocation = resolveHomeLocation(hb);
   const nowMs = Date.now();
 
-  // Short-circuit time computation when timezone is unknown (active flight to
-  // an unmapped airport). Pre-v0.32.5 the engine fell back to US/Pacific and
-  // injected a confidently-wrong local time. Now: no concrete time emitted;
+  // Short-circuit time computation when timezone is unknown (missing config or
+  // an active flight to an unmapped airport). Never emit a guessed local time;
   // formatContextBlock renders an explicit warning instead.
   const tzKnown = location.tz !== UNKNOWN_TZ;
   const time = tzKnown ? getTimeInTz(location.tz) : null;
@@ -515,22 +591,18 @@ function generateLiveContext(workspaceDir: string): LiveContext {
   // can decide their own policy. Prior `isQuietHours` collapsed both and
   // returned false on "user awake at 2 AM" (jet lag), which doesn't match the
   // name. Kept derived `quietHoursActive` for the existing format-block use.
-  const userAwake = hb?.garryAwake ?? true;
+  const userAwake = hb?.userAwake ?? hb?.garryAwake ?? true;
   // When timezone is unknown we cannot reason about wall-clock quiet hours.
   // Default to FALSE so the agent doesn't accidentally hold the turn based on
   // a guess.
   const wallClockQuietHours = time ? (time.hour >= 23 || time.hour < 8) : false;
   const quietHoursActive = !userAwake && wallClockQuietHours;
 
-  // Home time when traveling
-  let homeTime: string | null = null;
-  if (location.tz !== DEFAULT_TZ && location.tz !== 'US/Pacific' && location.tz !== 'America/Los_Angeles') {
-    const ptFmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: DEFAULT_TZ,
-      hour: 'numeric', minute: '2-digit', hour12: true, weekday: 'short',
-    });
-    homeTime = ptFmt.format(new Date()) + ' PT';
-  }
+  // Home time is meaningful only when the user explicitly configured a home
+  // timezone and is currently elsewhere. Never infer a home from defaults.
+  const homeTime = tzKnown && homeLocation && !sameTimezone(location.tz, homeLocation.tz)
+    ? formatShortTimeInTz(homeLocation.tz)
+    : null;
 
   // Active travel
   const activeFlight = flights?.flights?.find(f => f.status === 'active');
@@ -549,6 +621,7 @@ function generateLiveContext(workspaceDir: string): LiveContext {
     timezone: location.tz,
     dayOfWeek: time?.dayOfWeek ?? null,
     homeTime,
+    homeLocation,
     location,
     userAwake,
     wallClockQuietHours,
@@ -589,16 +662,16 @@ function formatContextBlock(ctx: LiveContext): string {
     lines.push(`- **Time:** ${ctx.now} (${ctx.timezone})`);
     lines.push(`- **Day:** ${ctx.dayOfWeek}`);
   } else {
-    // Active flight to an unmapped airport. Refuse to emit a guessed local
-    // time — the LLM should see the gap explicitly.
+    // Missing location config or an active flight to an unmapped airport.
+    // Refuse to emit a guessed local time — the LLM should see the gap.
     lines.push(`- **Timezone:** unknown (${ctx.location.source})`);
     lines.push(`- ⚠️ Local time NOT computed — verify timezone before time-sensitive actions`);
   }
 
   lines.push(`- **Location:** ${ctx.location.city} (source: ${ctx.location.source})`);
 
-  if (ctx.homeTime) {
-    lines.push(`- **Home (SF):** ${ctx.homeTime}`);
+  if (ctx.homeTime && ctx.homeLocation) {
+    lines.push(`- **Home (${ctx.homeLocation.city}):** ${ctx.homeTime}`);
   }
   if (ctx.activeTravel) {
     lines.push(`- **Active travel:** ${ctx.activeTravel}`);

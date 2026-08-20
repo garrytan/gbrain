@@ -153,6 +153,76 @@ describe('cross-harness round-trip', () => {
   });
 });
 
+describe('--max-bytes reaches the adapters', () => {
+  // Pins the WIRING, not the adapter. ingest.ts used to call
+  // adapter.parse(path) with no opts at all, so maxBytes could never arrive
+  // from the import lane — and an adapter-level test cannot see that, because
+  // it calls codexAdapter.parse() directly. Revert the ingest.ts threading and
+  // this test is the only thing in the suite that fails.
+  test('a rollout over the budget drops mid-file turns but keeps head identity and the tail', async () => {
+    const p = join(tmp, 'oversized-rollout.jsonl');
+    const line = (payload: Record<string, unknown>, ts: string) =>
+      JSON.stringify({ type: 'event_msg', timestamp: ts, payload });
+    const filler = JSON.stringify({
+      type: 'response_item',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      payload: { type: 'reasoning', content: 'x'.repeat(4000) },
+    });
+    const lines = [
+      JSON.stringify({
+        type: 'session_meta',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        payload: { session_id: 'wired-sess-1', cwd: '/w', cli_version: '1.2.3' },
+      }),
+      // Past the 16KB head window (budget/4) and far from the tail, so a
+      // correctly-budgeted read MUST drop it. Without the ingest→adapter
+      // wiring the whole 1.6MB file is read and this turn survives — which is
+      // exactly what makes this test pin the wiring rather than the adapter.
+      ...Array(8).fill(filler),
+      line({ type: 'user_message', message: 'MIDDLE_TURN_MUST_BE_DROPPED' }, '2026-01-01T00:01:00.000Z'),
+      ...Array(400).fill(filler),
+      line({ type: 'user_message', message: 'NEWEST_TURN_SURVIVES' }, '2026-01-01T00:09:00.000Z'),
+    ];
+    writeFileSync(p, lines.join('\n') + '\n');
+
+    const r = await runTranscriptsIngest(engine, baseOpts([p], { maxBytes: 64 * 1024 }));
+    expect(r.erroredFiles).toBe(0);
+    expect(r.sessionsImported).toBe(1);
+
+    const pages = await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 });
+    expect(pages).toHaveLength(1);
+    const page = await engine.getPage(pages[0].slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    expect(page!.compiled_truth).toContain('NEWEST_TURN_SURVIVES');
+    expect(page!.compiled_truth).not.toContain('MIDDLE_TURN_MUST_BE_DROPPED');
+  });
+
+  // A truncated read leaves seam partials in skippedLines, which freezes the
+  // since:last watermark. Pre-existing behaviour (the old throw froze it too),
+  // pinned here so a future change to seam accounting is a deliberate one.
+  test('a truncated read is never a clean scan', async () => {
+    const p = join(tmp, 'oversized-rollout-2.jsonl');
+    const meta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { session_id: 'wired-sess-2', cwd: '/w' },
+    });
+    const filler = JSON.stringify({
+      type: 'response_item',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      payload: { type: 'reasoning', content: 'y'.repeat(4000) },
+    });
+    const newest = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-01-01T00:09:00.000Z',
+      payload: { type: 'user_message', message: 'tail turn' },
+    });
+    writeFileSync(p, [meta, ...Array(400).fill(filler), newest].join('\n') + '\n');
+    const r = await runTranscriptsIngest(engine, baseOpts([p], { maxBytes: 64 * 1024 }));
+    expect(r.cleanScan).toBe(false);
+  });
+});
+
 describe('dry-run', () => {
   test('writes NOTHING — no pages, no raw data — and never advances watermarks', async () => {
     const r = await runTranscriptsIngest(engine, baseOpts([CODEX_FIXTURE], { dryRun: true }));

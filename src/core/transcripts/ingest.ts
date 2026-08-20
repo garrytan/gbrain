@@ -94,6 +94,8 @@ export interface IngestFileOutcome {
   sessions: IngestSessionOutcome[];
   skippedLines: number;
   drift: boolean;
+  /** Adapter degraded to a bounded read (e.g. codex head+tail) — part of the file was never scanned. */
+  truncated: boolean;
   error?: string;
 }
 
@@ -108,6 +110,8 @@ export interface TranscriptsIngestResult {
   imperatives: number;
   partsDeleted: number;
   driftFiles: number;
+  /** Files whose adapter reported a truncated (partially-unscanned) read. */
+  truncatedFiles: number;
   erroredFiles: number;
   /** EVERY slug the run touched — imported AND hash-skipped (--facts targets all). */
   slugsTouched: string[];
@@ -158,6 +162,7 @@ export async function runTranscriptsIngest(
     imperatives: 0,
     partsDeleted: 0,
     driftFiles: 0,
+    truncatedFiles: 0,
     erroredFiles: 0,
     slugsTouched: [],
     cleanScan: true,
@@ -181,6 +186,7 @@ export async function runTranscriptsIngest(
       sessions: [],
       skippedLines: 0,
       drift: false,
+      truncated: false,
     };
     result.files.push(fileOutcome);
 
@@ -400,6 +406,14 @@ export async function runTranscriptsIngest(
           // file read mid-write, corruption) — freeze the watermark so a
           // later repair with an older timestamp is still picked up.
           // Re-scans stay cheap via content-hash skip.
+          result.cleanScan = false;
+        }
+        if (diag.truncated) {
+          // A bounded read (codex head+tail over an over-budget rollout)
+          // skipped a window of the file — advancing the since-watermark
+          // over that unscanned window would drop its sessions permanently.
+          fileOutcome.truncated = true;
+          result.truncatedFiles++;
           result.cleanScan = false;
         }
       }

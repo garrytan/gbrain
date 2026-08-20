@@ -614,19 +614,27 @@ async function runPipelineWithBody(
 
   // Phase 3: look up source.local_path once for the fence path. Null
   // means thin-client / no FS — fall through to legacy DB-only for
-  // every fact.
-  const localPath = await lookupSourceLocalPath(ctx.engine, ctx.sourceId);
+  // every fact. The `sync.write_through` opt-out takes the same DB-only
+  // route (no fence file, no stub page, no commit) without the
+  // thin-client warning — the operator chose it.
+  const { isWriteThroughDisabled } = await import('../write-through.ts');
+  const writeThroughDisabled = await isWriteThroughDisabled(ctx.engine);
+  const localPath = writeThroughDisabled
+    ? null
+    : await lookupSourceLocalPath(ctx.engine, ctx.sourceId);
 
   // Phase 4: legacy DB-only fallback for unparented + thin-client.
   // Single-row engine.insertFact preserves the v0.31 semantics for
   // these structurally-unfenceable cases.
   const legacyBucket: SurvivedFact[] = [];
   if (localPath === null) {
-    warnOnce(
-      'facts:thin-client-fallback',
-      '[facts] sources.local_path unset for source_id=' + ctx.sourceId +
-      ' — falling through to DB-only inserts. Configure local_path via `gbrain sources update` to enable system-of-record fence writes.',
-    );
+    if (!writeThroughDisabled) {
+      warnOnce(
+        'facts:thin-client-fallback',
+        '[facts] sources.local_path unset for source_id=' + ctx.sourceId +
+        ' — falling through to DB-only inserts. Configure local_path via `gbrain sources update` to enable system-of-record fence writes.',
+      );
+    }
     for (const s of survived) legacyBucket.push(s);
   } else {
     for (const s of unparented) legacyBucket.push(s);
@@ -717,12 +725,32 @@ async function runPipelineWithBody(
       continue;
     }
     if (result.legacyFallback) {
-      // Defensive: writeFactsToFence sees localPath as null. We
-      // checked above so this shouldn't fire — log loud + skip.
+      // writeFactsToFence saw the brain as DB-only even though phase 3
+      // didn't (null-localPath echo, or the write_through flag flipped
+      // mid-pipeline across the config-cache TTL). Route the group to the
+      // legacy DB-only path — never drop facts.
       warnOnce(
         'facts:fence-write-unexpected-fallback',
-        `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — investigation needed.`,
+        `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — routing to DB-only inserts.`,
       );
+      for (const { f } of group) {
+        const newFact: NewFact = {
+          fact: f.fact,
+          kind: f.kind,
+          entity_slug: slug,
+          visibility,
+          notability: f.notability,
+          source: f.source,
+          source_session: f.source_session ?? null,
+          confidence: f.confidence,
+          embedding: f.embedding ?? null,
+        };
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
+        fact_ids.push(legacyResult.id);
+        if (legacyResult.status === 'inserted') inserted += 1;
+        else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;
+        else superseded += 1;
+      }
       continue;
     }
 

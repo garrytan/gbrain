@@ -297,6 +297,28 @@ export function flushThenExit(code: number, opts: FlushThenExitOpts = {}): void 
   }
 }
 
+/**
+ * Deliver a one-shot command's stdout payload FULLY before the exit seam runs.
+ *
+ * process.stdout.write queues pipe writes in a native writer that only pushes
+ * to the fd while the process stays alive (see FLUSH_GRACE_PIPE_MS), so a
+ * payload larger than the kernel pipe buffer (64KiB) piped to a reader that
+ * drains slower than the exit grace loses its tail with exit 0 (#3423) — and
+ * the tail is exactly where a verify-read's fresh edit lives. Bun.write on
+ * Bun.stdout resolves only after the fd accepted every byte, so awaiting it
+ * here makes the exit safe at any reader pace; backpressure from a slow
+ * reader blocks like any well-behaved pipe writer instead of truncating.
+ * EPIPE (reader closed early, e.g. `| head`) is swallowed — partial delivery
+ * to a gone reader is not an op failure.
+ */
+export async function writeStdoutFinal(output: string): Promise<void> {
+  try {
+    await Bun.write(Bun.stdout, output);
+  } catch {
+    // EPIPE / closed reader — the operation itself already succeeded.
+  }
+}
+
 export interface FinishCliTeardownOpts {
   /** Engine to disconnect. A disconnect throw is warned + swallowed (D3). */
   engine: { disconnect(): Promise<void> };

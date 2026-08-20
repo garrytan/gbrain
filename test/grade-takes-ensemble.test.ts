@@ -388,3 +388,90 @@ describe('runPhaseGradeTakes ensemble — auto-apply rules', () => {
     expect(insert!.params[2]).toBe('claude-sonnet-4-6'); // single-judge model id
   });
 });
+
+// ─── #3044: global errors inside ensemble judges must halt, not vanish ──
+// Promise.allSettled flattens rejections into null verdicts, so pre-fix a
+// revoked key or exhausted spend limit inside an ensemble judge left only a
+// "(failed)" note in the reasoning string and the phase completed 'ok'.
+
+describe('runPhaseGradeTakes ensemble — global-error halt (#3044)', () => {
+  test('auth rejection from an ensemble judge halts the take loop (warn: primary judge succeeded)', async () => {
+    const takes = [
+      buildTake({ id: 1, sinceDate: '2023-01-01' }),
+      buildTake({ id: 2, sinceDate: '2023-01-01' }),
+    ];
+    const { engine, captured } = buildMockEngine({ takes });
+    let primaryCalls = 0;
+    const judge: JudgeFn = async () => {
+      primaryCalls++;
+      return { verdict: 'correct', confidence: 0.75, reasoning: 'borderline' };
+    };
+    const failingEnsemble: JudgeFn = async () => {
+      throw Object.assign(new Error('invalid x-api-key'), { status: 401 });
+    };
+    const result = await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      useEnsemble: true,
+      ensembleJudges: [
+        { modelId: 'a', fn: failingEnsemble },
+        { modelId: 'b', fn: failingEnsemble },
+        { modelId: 'c', fn: failingEnsemble },
+      ],
+    });
+
+    // Halted on take 1 — take 2 never reached the primary judge.
+    expect(primaryCalls).toBe(1);
+    const details = result.details as Record<string, unknown>;
+    expect(details.takes_scanned).toBe(1);
+    expect(details.aborted_global_error).toBe('auth');
+    // Halted BEFORE the cache write for the ensemble verdict.
+    expect(details.verdicts_written).toBe(0);
+    expect(captured.filter(c => c.sql.includes('INSERT INTO take_grade_cache'))).toHaveLength(0);
+    // The primary judge succeeded, so this is a partial run, not a total
+    // failure: 'warn', not 'fail'.
+    expect(details.judge_calls_succeeded).toBe(1);
+    expect(result.status).toBe('warn');
+    expect(result.summary).toContain('aborted on auth error after 1 take(s)');
+    expect((details.warnings as string[]).some(w => w.includes('ensemble judge a failed on take 1'))).toBe(true);
+  });
+
+  test('rate-limited ensemble rejections feed the streak: halt on the 3rd consecutive take', async () => {
+    const takes = [
+      buildTake({ id: 1, sinceDate: '2023-01-01' }),
+      buildTake({ id: 2, sinceDate: '2023-01-01' }),
+      buildTake({ id: 3, sinceDate: '2023-01-01' }),
+      buildTake({ id: 4, sinceDate: '2023-01-01' }),
+    ];
+    const { engine } = buildMockEngine({ takes });
+    let primaryCalls = 0;
+    const judge: JudgeFn = async () => {
+      primaryCalls++;
+      return { verdict: 'correct', confidence: 0.75, reasoning: 'borderline' };
+    };
+    const okEnsemble: JudgeFn = async () => ({ verdict: 'correct', confidence: 0.9, reasoning: '' });
+    const rateLimitedEnsemble: JudgeFn = async () => {
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    };
+    const result = await runPhaseGradeTakes(buildCtx(engine), {
+      judge,
+      useEnsemble: true,
+      ensembleJudges: [
+        { modelId: 'a', fn: rateLimitedEnsemble },
+        { modelId: 'b', fn: okEnsemble },
+        { modelId: 'c', fn: okEnsemble },
+      ],
+    });
+
+    // Takes 1-2: one rate-limited rejection each (streak 1, 2) — warned,
+    // processed with a 2/3 ensemble. Take 3: streak hits 3 → halt. Take 4
+    // never reached.
+    expect(primaryCalls).toBe(3);
+    const details = result.details as Record<string, unknown>;
+    expect(details.takes_scanned).toBe(3);
+    expect(details.aborted_global_error).toBe('rate_limit');
+    expect(details.verdicts_written).toBe(2); // takes 1-2 banked before the halt
+    expect(result.status).toBe('warn');
+    expect(result.summary).toContain('aborted on rate_limit error after 3 take(s)');
+    expect((details.warnings as string[]).some(w => w.includes('3 consecutive rate_limit errors'))).toBe(true);
+  });
+});

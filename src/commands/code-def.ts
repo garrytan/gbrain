@@ -27,30 +27,36 @@ export interface CodeDefResult {
   snippet: string;
 }
 
+// v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
+// trigger) are first-class definitions in the SQL sense. The chunker's
+// normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
+// kinds here is what makes `gbrain code-def users` work against SQL.
+// Method-level + member definitions. normalizeSymbolType only canonicalizes
+// some node types; the rest fall through `type.replace(/_/g, ' ')`, so
+// tree-sitter's method_declaration → 'method declaration', struct_specifier →
+// 'struct specifier', protocol_declaration → 'protocol declaration', etc.
+// Without these, code-def is blind to every method, constructor, field, C
+// struct, and Swift protocol — which is most of an OO codebase. The plain
+// 'struct' entry above never matched for the same reason (C emits the
+// 'struct specifier' fallback form).
+export const DEF_TYPES = [
+  'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
+  'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
+  'method declaration', 'method definition', 'constructor declaration',
+  'field declaration', 'field definition', 'struct specifier', 'protocol declaration',
+  // Dart: normalizeSymbolType has no rule for these four, so they arrive as
+  // the node type with underscores replaced. class_definition/enum_declaration/
+  // type_alias/function_signature already normalize into the list above.
+  'mixin declaration', 'extension declaration',
+  'getter signature', 'setter signature',
+];
+
 export async function findCodeDef(
   engine: BrainEngine,
   symbol: string,
   opts: { limit?: number; language?: string } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
-  // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
-  // trigger) are first-class definitions in the SQL sense. The chunker's
-  // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
-  // kinds here is what makes `gbrain code-def users` work against SQL.
-  // Method-level + member definitions. normalizeSymbolType only canonicalizes
-  // some node types; the rest fall through `type.replace(/_/g, ' ')`, so
-  // tree-sitter's method_declaration → 'method declaration', struct_specifier →
-  // 'struct specifier', protocol_declaration → 'protocol declaration', etc.
-  // Without these, code-def is blind to every method, constructor, field, C
-  // struct, and Swift protocol — which is most of an OO codebase. The plain
-  // 'struct' entry above never matched for the same reason (C emits the
-  // 'struct specifier' fallback form).
-  const DEF_TYPES = [
-    'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
-    'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
-    'method declaration', 'method definition', 'constructor declaration',
-    'field declaration', 'field definition', 'struct specifier', 'protocol declaration',
-  ];
   const params: unknown[] = [symbol, limit];
   let whereLang = '';
   if (opts.language) {

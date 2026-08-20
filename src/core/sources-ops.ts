@@ -155,6 +155,25 @@ export interface AddSourceOpts {
    * runs). Does NOT auto-`git init` anything — see `addSource` docstring.
    */
   force?: boolean;
+  /**
+   * v0.46: register a github-kind source (issues/PR sync). When set, the
+   * row is inserted with kind=github config and a managed local_path, and
+   * no git validation or clone happens. See src/core/github-source.ts.
+   */
+  github?: {
+    tokenEnv: string;
+    handle: string;
+    scope: 'auto' | 'repos';
+    repos: string[];
+    dir: string;
+    involvement: boolean;
+    /** GitHub App id; with appPemPath the sync mints installation tokens itself. */
+    appId?: number;
+    /** Path to the app's private key PEM. */
+    appPemPath?: string;
+    /** Installation id; optional, first installation is used when absent. */
+    appInstallId?: number;
+  };
 }
 
 export interface RemoveSourceOpts {
@@ -471,6 +490,44 @@ export async function addSource(
         e,
       );
     }
+  } else if (opts.github) {
+    // ── Path C: --kind github (v0.46) ─────────────────────────────────────
+    // API-backed source: no git repo, no clone. The managed dir is created
+    // here so `sources status` and webhook repo matching work immediately;
+    // the materializer populates it on first sync.
+    const finalPath = opts.github.dir;
+    mkdirSync(finalPath, { recursive: true });
+    const config: Record<string, unknown> = {
+      kind: 'github',
+      gh_token_env: opts.github.tokenEnv,
+      gh_handle: opts.github.handle,
+      gh_scope: opts.github.scope,
+      gh_repos: opts.github.repos.join(','),
+      gh_involvement: opts.github.involvement,
+      // Ownership marker: the dir is gbrain-managed only when it is the
+      // default clone location. A custom --dir points at user-owned
+      // storage and must never be deleted by purge.
+      gh_managed: finalPath === defaultCloneDir(`${opts.id}-github`),
+      // v0.46: a github-kind mirror is a first-class citizen of unqualified
+      // reads (search/query/get_page without an explicit source_id). The
+      // federated widening in localFederatedSourceIds spans sources with
+      // config.federated=true — without this default, a fresh mirror is
+      // invisible to search. Explicit --no-federated opts out.
+      federated: opts.federated ?? true,
+    };
+    if (opts.github.appId !== undefined && opts.github.appPemPath !== undefined) {
+      config.gh_app_id = opts.github.appId;
+      config.gh_app_pem_path = opts.github.appPemPath;
+      if (opts.github.appInstallId !== undefined) {
+        config.gh_app_install_id = opts.github.appInstallId;
+      }
+    }
+    const displayName = opts.name ?? opts.id;
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+           VALUES ($1, $2, $3, $4::text::jsonb)`,
+      [opts.id, displayName, finalPath, JSON.stringify(config)],
+    );
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
@@ -719,12 +776,16 @@ export async function removeSource(
 
   // Decide whether we own the clone dir before removing the row.
   const remoteUrl = getRemoteUrl(src.config);
+  const ghCfg = (typeof src.config === 'string' ? JSON.parse(src.config) : (src.config ?? {})) as Record<string, unknown>;
+  // v0.46: github-kind mirrors at the default clone location are owned by
+  // gbrain (gh_managed marker) and get the same cleanup as --url clones.
+  const ghManaged = ghCfg.kind === 'github' && ghCfg.gh_managed === true;
   const cloneRoot = gbrainPath('clones');
   let cloneRemoved = false;
   if (
     !opts.keepStorage &&
     src.local_path &&
-    remoteUrl && // only auto-clean when this was a --url-managed clone
+    (remoteUrl || ghManaged) && // only auto-clean when gbrain managed the dir
     isPathContained(src.local_path, cloneRoot)
   ) {
     try {
@@ -784,8 +845,12 @@ export async function getSourceStatus(
   const archived = archivedRows[0]?.archived === true;
 
   const remoteUrl = getRemoteUrl(src.config);
+  const sourceConfig =
+    typeof src.config === 'string'
+      ? (JSON.parse(src.config) as Record<string, unknown>)
+      : ((src.config ?? {}) as Record<string, unknown>);
   let cloneState: SourceStatus['clone_state'] = 'not-applicable';
-  if (src.local_path) {
+  if (src.local_path && sourceConfig.kind !== 'github') {
     cloneState = validateRepoState(src.local_path, remoteUrl ?? undefined);
   }
 

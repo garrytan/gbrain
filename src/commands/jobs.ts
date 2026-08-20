@@ -2053,11 +2053,23 @@ export async function registerBuiltinHandlers(
     // standalone handler dropped it. Callers that want inline extract can
     // pass { noExtract: false } in job params explicitly.
     const noExtract = job.data.noExtract !== false;
+    // v0.46: github-kind single-item refresh (webhook path). The payload
+    // carries {repo, number, kind} and sync refreshes exactly that item.
+    const githubItem =
+      job.data.github_item && typeof job.data.github_item === 'object'
+        ? {
+            repo: String((job.data.github_item as Record<string, unknown>).repo),
+            number: Number((job.data.github_item as Record<string, unknown>).number),
+            kind: (job.data.github_item as Record<string, unknown>).kind === 'pr' ? 'pr' as const : 'issue' as const,
+            deleted: (job.data.github_item as Record<string, unknown>).deleted === true,
+          }
+        : undefined;
     let result;
     try {
       result = await performSync(engine, {
         repoPath, sourceId, noPull, noEmbed, noExtract,
         concurrency: concurrencyOverride,
+        ...(githubItem ? { githubItem } : {}),
       });
     } catch (err) {
       // v0.42.x (#1794, Part B): single-flight backpressure. A concurrent

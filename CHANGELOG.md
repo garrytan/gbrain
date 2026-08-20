@@ -2,8 +2,115 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.46.22.0] - 2026-08-18
+## [0.46.23.0] - 2026-08-19
 
+**A 23-contribution community wave, plus an end to silently lost pages.**
+If your agent ever "saved" a page and a re-read came back without the change,
+or a page you were editing came back blanked, this release closes both halves
+of that story: large piped reads no longer lose their tail on process exit,
+and the store itself now refuses to overwrite a page's real content with an
+empty body. Beyond that, the wave spans dream-pipeline correctness, budget
+and pricing coverage, search and link quality, transcript and reindex
+resilience, provider error surfacing, and a set of long-tail adoptions from
+older PRs — including a new GitHub source kind that puts issues and PRs in
+the brain.
+
+### Added
+- `putPage` refuses to overwrite a non-empty page body with a blank one.
+  A page edit is a read-modify-write; when the read comes back empty for any
+  reason, the write used to blank the page silently. It now fails loudly with
+  a clear error instead. Genuinely new empty pages still save, file-sourced
+  syncs of a deliberately emptied file still clear, and a deliberate clear
+  passes `allow_empty` / `allowEmptyOverwrite: true`. Contributed by
+  @JamisonMercurio.
+- GitHub is now a source kind: `gbrain sources add --kind github` mirrors
+  issues and PRs into the brain, with webhook refresh, a demo fixture, and
+  a guide at `docs/guides/github-source.md`. Contributed by @veltri-23.
+- Superseded pages are down-ranked and flagged `SUPERSEDED` in rerank
+  results, so a stale answer no longer outranks the page that replaced it.
+  Contributed by @rspinabellaagent.
+- `search.autocut_min_keep` is wired end to end — the documented autocut
+  floor was declared but never read, so raising it did nothing. It now flows
+  through the mode bundles, the resolver, and the cache key. Contributed by
+  @paul-0320.
+- `sync.write_through` opt-out flag for DB-only brains: set it to `false`
+  and page writes stay in the database instead of dual-writing to disk.
+  Contributed by @DanCanadian.
+- A standalone exporter writes conversation pages back to envelope-v0,
+  closing the round trip. Contributed by @SeanGearin.
+- Dart code intelligence: the bundled grammar now matches the pinned
+  tree-sitter runtime (ABI 15) and Dart files produce a call graph.
+  Contributed by @Jey2311.
+- llama-server declares chat prompt caching, so local deployments get the
+  same cache accounting as hosted providers. Contributed by
+  @erionjuniordeandrade-a11y.
+- Canonical pricing rows for GLM-5.2 (Z.ai) — contributed by @SomeUserName1 —
+  and static rates for router-prefixed OpenRouter ids, which previously fell
+  through to a no-pricing refusal. Contributed by @kweiner.
+
+### Changed
+- Concept synthesis gets budget priority and falls back to labels instead of
+  dropping work when the budget runs short. Contributed by @calebhicks.
+- LLM cycle phases (propose, grade, atom extraction, and concept synthesis)
+  halt on global billing, auth, and rate-limit errors instead of swallowing
+  them per page, so one bad credential fails loudly once rather than quietly
+  on every page — and a global outage no longer counts against per-page
+  failure budgets or overwrites concept pages with fallback stubs.
+  Contributed by @Masashi-Ono0611.
+- The claude-cli provider surfaces `api_error_status` as a typed error rather
+  than a raw exit blob. Contributed by @Masashi-Ono0611.
+- `dream extract-atoms` failure details name the provider and model that
+  failed. Contributed by @proprieties.
+- Reserve failures caused by missing pricing are recorded in the budget audit
+  trail instead of vanishing. Contributed by @herove.
+
+### Fixed
+- Piped CLI output larger than 64KiB no longer truncates with exit 0 when the
+  reader drains slowly (#3423). This was the root cause of agents reporting
+  that saves "didn't stick": a verify-read of a big page lost its tail, which
+  is exactly where the fresh edit lives, and feeding that truncated read back
+  through an edit could shrink or blank the page. Output delivery is now
+  awaited to the last byte before exit — `get_page`, `gbrain call`, and
+  `--tools-json` all return complete payloads at any reader pace.
+- claude-cli auth and configuration failures (401/403/400) now classify as
+  configuration errors instead of retryable transients, so callers stop
+  re-billing a revoked credential.
+- An invalid configured timezone degrades to "unknown" instead of breaking
+  context assembly on every turn.
+- Pattern excerpts split UTF-16 surrogate pairs, which could make Postgres
+  reject the subagent job payload; excerpts now use the shared UTF-16-safe
+  truncator. Contributed by @calebhicks.
+- Reindex repairs are scoped and advance past failures instead of stalling on
+  the first one; `reindex --type` reaches the flag registry. Contributed by
+  @calebhicks.
+- Oversized codex rollouts import instead of throwing, and `--max-bytes`
+  reaches the transcript adapters; a truncated scan never advances the
+  ingest watermark over unscanned content. Contributed by @mweber82.
+- Malformed extractor output is retried once with an explicit JSON-only
+  reminder before the turn's facts are given up on. Contributed by @herove.
+- Fence writes are committed durably. Contributed by @herove.
+- Reflex telemetry writes register before the CLI drain, so they are no
+  longer lost at shutdown. Contributed by @monkeygold.
+- International home locations are supported in context resolution.
+  Contributed by @arisgysel-design.
+- Relative markdown links resolve against the linking page's directory
+  instead of the brain root. Contributed by @alexey-metaengage.
+
+To take advantage of v0.46.23.0:
+- `gbrain upgrade` (or reinstall the binary).
+- If your agent harness ever reported pages that "didn't save" or reads that
+  came back incomplete on large pages, upgrading is the fix: reads deliver
+  fully, and the store refuses a blank body over real content (a deliberate
+  clear passes `allow_empty` on the `put_page` op).
+- **Search cache cold-miss:** the knobs hash moves 18 → 19 to fold the
+  autocut floor into the cache key. Existing `query_cache` rows become
+  unreachable on first re-query and refill within `cache.ttl_seconds`. No
+  action needed.
+- To mirror a GitHub repo's issues and PRs into your brain, see
+  `docs/guides/github-source.md`.
+- DB-only brains can now skip disk dual-writes with
+  `gbrain config set sync.write_through false`.
+## [0.46.22.0] - 2026-08-18
 **A wedged database shutdown can now die fast and loud instead of hanging
 forever.** Issue #4284 (analysis and measurements by @cheRoma — thank you)
 proved that the time-bound around the embedded database's close could never

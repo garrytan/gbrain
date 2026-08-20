@@ -7,7 +7,7 @@
  * parseClaudeSessionFile must never change it.
  */
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -262,6 +262,54 @@ describe('claudeCodeAdapter', () => {
 // ── Codex adapter [structural turn selection, never preamble heuristics] ────
 
 describe('codexAdapter', () => {
+  // Regression: an oversized rollout used to throw and contribute NOTHING.
+  // It now degrades to a bounded head+tail read like the claude-code adapter.
+  // HEAD is load-bearing: `session_meta` — session_id, cwd, provenance — is the
+  // FIRST record of a rollout, so a tail-only read imports turns that cannot be
+  // attributed to a session.
+  test('oversized rollout degrades to head+tail instead of throwing, keeping session_meta', async () => {
+    const p = join(tdir(), 'huge-rollout.jsonl');
+    const meta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { session_id: 'sess-head-1', cwd: '/w', cli_version: '1.2.3' },
+    });
+    const filler = JSON.stringify({
+      type: 'response_item',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      payload: { type: 'reasoning', content: 'x'.repeat(4000) },
+    });
+    const newest = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-01-01T00:09:00.000Z',
+      payload: { type: 'user_message', message: 'the newest turn' },
+    });
+    writeFileSync(p, [meta, ...Array(400).fill(filler), newest].join('\n') + '\n');
+
+    const { sessions, diag } = await drain(codexAdapter.parse(p, { maxBytes: 64 * 1024 }));
+    expect(sessions).toHaveLength(1);
+    // Identity came from the HEAD window...
+    expect(sessions[0].meta.sessionId).toBe('sess-head-1');
+    expect(sessions[0].meta.cwd).toBe('/w');
+    // ...and the newest turn from the TAIL window.
+    expect(sessions[0].messages.at(-1)?.text).toBe('the newest turn');
+    // Honest accounting: a partial read must say so, and must read less than
+    // the file. A `truncated: false` here would be the false-green this
+    // replaces.
+    expect(diag.truncated).toBe(true);
+    expect(diag.bytesRead).toBeLessThan(statSync(p).size);
+    // The head/tail seam leaves a partial line on each side; both must be
+    // counted, not silently swallowed. Untested, this is where a "clean"
+    // truncated read could quietly appear.
+    expect(diag.skippedLines).toBeGreaterThanOrEqual(2);
+  });
+
+  test('a rollout within budget is read whole and not marked truncated', async () => {
+    const { diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
+    expect(diag.truncated).toBe(false);
+    expect(diag.bytesRead).toBe(statSync(CODEX_FIXTURE).size);
+  });
+
   test('user turns from event_msg, assistant from output_text; injected preambles never leak', async () => {
     const { sessions, diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
     expect(sessions).toHaveLength(1);

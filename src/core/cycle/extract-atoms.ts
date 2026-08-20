@@ -54,6 +54,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
@@ -640,6 +641,11 @@ export async function runPhaseExtractAtoms(
   // ── gbrain#4148 helpers ────────────────────────────────────────────
   let malformedOutputs = 0;
   const tombstonedForFailures: string[] = [];
+  // #3044 adoption: shared halt policy — auth/billing halt on the first hit,
+  // a rate_limit streak halts after 3 consecutive failures, a successful
+  // chat call resets the streak.
+  const llmHalt = createGlobalLlmHaltTracker();
+  let abortedGlobalError: GlobalLlmErrorClass | null = null;
 
   /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
   async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
@@ -706,6 +712,7 @@ export async function runPhaseExtractAtoms(
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
+      llmHalt.reset();
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
@@ -840,7 +847,20 @@ export async function runPhaseExtractAtoms(
       // ever tombstones — an unknown error class must never permanently
       // suppress a page's atoms.
       const message = err instanceof Error ? err.message : String(err);
-      const transient = TRANSIENT_EXTRACT_ERROR_RE.test(message);
+      // #3044: a whole-run LLM outage halts the phase. No
+      // recordPageFailureCount here — a global outage says nothing about the
+      // content, so it must not pre-charge the per-page tombstone counter.
+      const decision = llmHalt.observe(err);
+      if (decision !== 'continue') {
+        abortedGlobalError = haltedClassOf(decision);
+        failures.push({
+          source: originLabel,
+          error: `aborting phase: ${llmHalt.note()} (${message})`,
+        });
+        break;
+      }
+      const transient =
+        llmHalt.lastClass() === 'rate_limit' || TRANSIENT_EXTRACT_ERROR_RE.test(message);
       if (!transient) await recordPageFailureCount(item);
       failures.push({
         source: originLabel,
@@ -914,6 +934,7 @@ export async function runPhaseExtractAtoms(
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
       failures,
+      ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       malformed_outputs: malformedOutputs,
       tombstoned_for_failures: tombstonedForFailures,
       estimated_spend_usd: estimatedSpendUsd,

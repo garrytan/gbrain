@@ -16,8 +16,11 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, createHmac } from 'crypto';
 import { safeHexEqual } from '../core/timing-safe.ts';
+import { isValidRepoName } from '../core/github-source.ts';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -57,6 +60,89 @@ import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
+/**
+ * v0.46: normalize the per-event GitHub webhook payload shape into
+ * {repo, number, kind}. Events differ: issues/issue_comment/label/
+ * assignee/milestone carry a top-level `issue` (PRs appear there too,
+ * flagged by `issue.pull_request`), pull_request/review events carry
+ * top-level `pull_request`, and check events nest the linked PRs under
+ * check_run/check_suite/workflow_run. Returns null when the payload
+ * carries no item reference (ping, branch, non-PR checks).
+ */
+export function extractGitHubItemRef(parsed: Record<string, unknown>): { repo: string; number: number; kind: 'issue' | 'pr' } | null {
+  const repoObj = parsed.repository as { full_name?: string } | undefined;
+  const repo = repoObj?.full_name ?? '';
+  const issueObj = parsed.issue as { number?: number; pull_request?: unknown } | undefined;
+  const prObj = parsed.pull_request as { number?: number } | undefined;
+  const checkRun = parsed.check_run as { pull_requests?: Array<{ number?: number }> } | undefined;
+  const checkSuite = parsed.check_suite as { pull_requests?: Array<{ number?: number }> } | undefined;
+  const workflowRun = parsed.workflow_run as { pull_requests?: Array<{ number?: number }> } | undefined;
+  const nestedPrNumber =
+    checkRun?.pull_requests?.[0]?.number ??
+    checkSuite?.pull_requests?.[0]?.number ??
+    workflowRun?.pull_requests?.[0]?.number;
+  const number = prObj?.number ?? issueObj?.number ?? nestedPrNumber;
+  if (typeof number !== 'number' || !isValidRepoName(repo)) return null;
+  const kind = prObj !== undefined || issueObj?.pull_request !== undefined || nestedPrNumber !== undefined ? 'pr' : 'issue';
+  return { repo, number, kind };
+}
+
+/**
+ * True when a github-kind source covers `fullName`: explicit gh_repos list
+ * for scope=repos, the last-discovered state file for scope=auto (accept
+ * when no state exists yet — the sync engine re-checks scope). Repo names
+ * are case-insensitive on GitHub, so matching folds case on both sides
+ * (config and legacy state files may carry canonical-case entries).
+ */
+export function githubKindCoversRepo(
+  cfg: Record<string, unknown>,
+  localPath: string | null,
+  fullName: string,
+): boolean {
+  const repo = fullName.toLowerCase();
+  if (cfg.gh_scope === 'repos') {
+    const repos = typeof cfg.gh_repos === 'string' ? cfg.gh_repos.split(',').map((s) => s.trim().toLowerCase()) : [];
+    return repos.includes(repo);
+  }
+  if (localPath) {
+    try {
+      const state = JSON.parse(readFileSync(join(localPath, '.github-source.json'), 'utf-8')) as {
+        repos?: unknown[];
+      };
+      if (Array.isArray(state.repos)) {
+        return state.repos.some((r) => typeof r === 'string' && r.toLowerCase() === repo);
+      }
+    } catch {
+      /* no state yet */
+    }
+  }
+  return true;
+}
+
+/**
+ * Partition signature-verified webhook sources for an item event. Only a
+ * github-kind source can service a github_item refresh — the sync core
+ * rejects github_item on any other kind, so enqueueing for a legacy
+ * github_repo push source would only mint a dead job. Legacy matches are
+ * reported so the handler can ACK-and-ignore them instead.
+ */
+export function selectGitHubItemSources<Row extends { local_path: string | null; config: unknown }>(
+  rows: Row[],
+  repo: string,
+  verify: (cfg: Record<string, unknown>) => boolean,
+): { verified: Row[]; legacyMatched: boolean } {
+  const verified: Row[] = [];
+  let legacyMatched = false;
+  for (const row of rows) {
+    const cfg = (typeof row.config === 'string' ? JSON.parse(row.config) : (row.config ?? {})) as Record<string, unknown>;
+    if (cfg.kind === 'github' && githubKindCoversRepo(cfg, row.local_path, repo) && verify(cfg)) {
+      verified.push(row);
+      continue;
+    }
+    if (cfg.github_repo === repo && verify(cfg)) legacyMatched = true;
+  }
+  return { verified, legacyMatched };
+}
 import {
   registerScopedClient,
   preflightOauthClientColumns,
@@ -2814,6 +2900,111 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'rate_limit_exceeded', message: 'too many GitHub webhook requests' },
   });
 
+  /**
+   * v0.46: issue/PR event handling for github-kind sources. The payload
+   * names a single item (repo + number); we verify the per-source HMAC and
+   * submit a targeted `sync` job with github_item so exactly that item is
+   * refreshed. Out-of-scope repos are rejected at queue time by the sync
+   * engine's own scope check.
+   */
+  async function handleGitHubItemEvent(
+    engine: BrainEngine,
+    parsed: Record<string, unknown>,
+    sigHeader: string,
+    payload: Buffer,
+    res: Response,
+    eventName: string,
+  ): Promise<void> {
+    const ref = extractGitHubItemRef(parsed);
+    if (ref === null) {
+      // Not an item-bearing payload (e.g. check events without a linked PR,
+      // ping, branch protection). Acknowledge so GitHub does not retry.
+      res.status(202).json({ status: 'ignored', reason: 'no_item_ref' });
+      return;
+    }
+
+    // Collect ALL candidate sources: exact github_repo matches (legacy
+    // webhook config) and github-kind sources with a webhook secret, then
+    // verify HMAC per candidate. Only github-kind sources may enqueue a
+    // github_item refresh; two verifying github-kind sources mean ambiguous
+    // configuration and must not pick silently.
+    let source: { id: string; local_path: string | null; config: unknown } | null = null;
+    try {
+      const rows = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
+        `SELECT id, local_path, config FROM sources
+           WHERE archived = false
+             AND ((config->>'github_repo' = $1)
+               OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))`,
+        [ref.repo],
+      );
+      const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
+        verifyWebhookSig(cfg, sigHeader, payload),
+      );
+      if (verified.length > 1) {
+        res.status(500).json({
+          error: 'ambiguous_webhook',
+          message: `multiple sources verified the signature for ${ref.repo}; configure one webhook secret per source`,
+          sources: verified.map((v) => v.id),
+        });
+        return;
+      }
+      if (verified.length === 0 && legacyMatched) {
+        // A legacy push-webhook source verified the signature but cannot
+        // service item events — ACK so GitHub doesn't retry, exactly like
+        // the pre-item-flow non-push behavior.
+        res.status(202).json({ status: 'ignored', reason: `event=${eventName}` });
+        return;
+      }
+      source = verified[0] ?? null;
+    } catch (err) {
+      console.error('webhook: github-kind source lookup error:', err);
+      res.status(500).json({ error: 'lookup_failed' });
+      return;
+    }
+    if (!source) {
+      res.status(404).json({ error: 'unknown_repo', repo: ref.repo });
+      return;
+    }
+
+    try {
+      const queue = new MinionQueue(engine);
+      const job = await queue.add(
+        'sync',
+        {
+          sourceId: source.id,
+          noExtract: false,
+          github_item: {
+            repo: ref.repo,
+            number: ref.number,
+            kind: ref.kind,
+            ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
+          },
+          embed_reason: 'webhook',
+        },
+        {
+          priority: -10,
+          idempotency_key: `webhook:item:${source.id}:${ref.repo}:${ref.number}:${Math.floor(Date.now() / 30_000)}`,
+          maxWaiting: 1,
+        },
+      );
+      res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('webhook: item queue submission error:', msg);
+      res.status(500).json({ error: 'queue_submission_failed', message: msg });
+    }
+  }
+
+  function verifyWebhookSig(cfg: Record<string, unknown>, sigHeader: string, payload: Buffer): boolean {
+    const secret = cfg.webhook_secret;
+    if (typeof secret !== 'string' || secret === '') return false;
+    // Strict hex shape first: a malformed 64-char signature would make
+    // safeHexEqual throw (500 instead of 401).
+    if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) return false;
+    const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
+    return safeHexEqual(sigHeader.slice('sha256='.length), computedHex);
+  }
+
   app.post(
     '/webhooks/github',
     githubWebhookLimiter,
@@ -2828,10 +3019,25 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
 
       // D5: filter by event header. GitHub fires webhooks for every event
-      // type. Anything other than 'push' is acknowledged with 202 + reason
-      // so GitHub doesn't retry — but no source lookup or job submission.
+      // type. Anything not in the handled set is acknowledged with 202 +
+      // reason so GitHub doesn't retry — but no source lookup or job
+      // submission. Push events drive git-source sync (below). Issue/PR
+      // events drive github-kind single-item refresh (itemFlow).
       const event = req.header('X-GitHub-Event') ?? '';
-      if (event !== 'push') {
+      const GH_ITEM_EVENTS = new Set([
+        'issues',
+        'pull_request',
+        'issue_comment',
+        'pull_request_review',
+        'pull_request_review_comment',
+        'label',
+        'assignee',
+        'milestone',
+        'check_run',
+        'check_suite',
+        'workflow_run',
+      ]);
+      if (event !== 'push' && !GH_ITEM_EVENTS.has(event)) {
         res.status(202).json({ status: 'ignored', reason: `event=${event || '(missing)'}` });
         return;
       }
@@ -2842,7 +3048,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
 
-      let parsed: { repository?: { full_name?: string }; ref?: string };
+      let parsed: Record<string, unknown>;
       try {
         parsed = JSON.parse(payload.toString('utf8'));
       } catch {
@@ -2850,8 +3056,17 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return;
       }
 
-      const fullName = parsed.repository?.full_name;
-      const ref = parsed.ref;
+      // GitHub-kind item refresh path (v0.46): issues / pull_request /
+      // comment / review / label / assignee / milestone / check events
+      // refresh exactly the item that changed.
+      if (GH_ITEM_EVENTS.has(event)) {
+        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res, event);
+        return;
+      }
+
+      const pushParsed = parsed as { repository?: { full_name?: string }; ref?: string };
+      const fullName = pushParsed.repository?.full_name;
+      const ref = pushParsed.ref;
       if (!fullName || !ref) {
         res.status(400).json({ error: 'missing_fields', message: 'repository.full_name and ref are required' });
         return;
@@ -2904,12 +3119,13 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // safeHexEqual because Buffer.from('sha256=...', 'hex') silently
       // truncates at the first non-hex char (the 's'), leaving both
       // operands as 0-byte buffers and making every signature "match".
-      // Pinned by test/sources-webhook.test.ts tamper assertions.
+      // Strict hex shape first: a malformed 64-char signature would make
+      // safeHexEqual throw (500 instead of 401), codex LOW.
       const { createHmac } = await import('node:crypto');
       const computedHex = createHmac('sha256', secret).update(payload).digest('hex');
       const prefix = 'sha256=';
-      if (!sigHeader.startsWith(prefix)) {
-        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256= prefix' });
+      if (!/^sha256=[0-9a-f]{64}$/.test(sigHeader)) {
+        res.status(401).json({ error: 'signature_mismatch', message: 'expected sha256=<64 hex> signature' });
         return;
       }
       if (!safeHexEqual(sigHeader.slice(prefix.length), computedHex)) {

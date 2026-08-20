@@ -304,6 +304,10 @@ export async function extractFactsFromTurnWithOutcome(
       : ''
   }`;
   let result: ChatResult;
+  // The cap the last call was actually sent at. When the truncation retry
+  // escalates to maxTokens*2, the malformed-output retry below must re-send
+  // at the escalated cap — re-sending at 1x would just re-truncate.
+  let effectiveMaxTokens = maxTokens;
   try {
     result = await chat({
       model,
@@ -321,11 +325,12 @@ export async function extractFactsFromTurnWithOutcome(
         `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
         `(model=${model}); retrying once at ${maxTokens * 2}\n`,
       );
+      effectiveMaxTokens = maxTokens * 2;
       result = await chat({
         model,
         system: EXTRACTOR_SYSTEM,
         messages: [{ role: 'user', content: userContent }],
-        maxTokens: maxTokens * 2,
+        maxTokens: effectiveMaxTokens,
         abortSignal: input.abortSignal,
       });
       if (result.stopReason === 'length') {
@@ -352,10 +357,43 @@ export async function extractFactsFromTurnWithOutcome(
     return { ok: false, reason: 'non_terminal_stop', model };
   }
 
-  const parsedShape = parseExtractorJsonDetailed(result.text);
+  let parsedShape = parseExtractorJsonDetailed(result.text);
   if (!parsedShape ||
       (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
-    return { ok: false, reason: 'malformed_output', model };
+    process.stderr.write(
+      `[facts-extract] WARN: extractor returned malformed output (model=${model}); ` +
+      'retrying once with an explicit JSON-only reminder\n',
+    );
+    try {
+      result = await chat({
+        model,
+        system: `${EXTRACTOR_SYSTEM}\nThe previous attempt returned invalid JSON or an invalid facts schema. ` +
+          'Return exactly one valid JSON object and no prose.',
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: effectiveMaxTokens,
+        abortSignal: input.abortSignal,
+      });
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      return { ok: false, reason: 'provider_error', model, error: err };
+    }
+
+    if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal', model };
+    if (result.stopReason === 'content_filter') {
+      return { ok: false, reason: 'content_filter', model };
+    }
+    if (result.stopReason === 'length') {
+      return { ok: false, reason: 'truncated_output', model };
+    }
+    if (result.stopReason !== 'end') {
+      return { ok: false, reason: 'non_terminal_stop', model };
+    }
+
+    parsedShape = parseExtractorJsonDetailed(result.text);
+    if (!parsedShape ||
+        (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
+      return { ok: false, reason: 'malformed_output', model };
+    }
   }
   if (parsedShape.invalidCandidates > 0) {
     process.stderr.write(

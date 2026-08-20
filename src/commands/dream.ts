@@ -492,6 +492,17 @@ function printHuman(report: CycleReport) {
       p.status === 'skipped' ? '-' : '✗';
     const line = `  ${icon} ${p.phase.padEnd(10)}  ${p.summary}`;
     console.log(line);
+    const details = p.details as Record<string, unknown> | undefined;
+    const failures = Array.isArray(details?.failures) ? details.failures : [];
+    if (failures.length > 0) {
+      for (const f of failures) {
+        // sync failures carry `source`; synthesize_concepts failures carry
+        // `concept` — name whichever is present so a concept-synthesis
+        // failure isn't printed as an anonymous '?'.
+        const { source, concept, error } = f as { source?: string; concept?: string; error?: string };
+        console.log(`      ✗ ${source ?? concept ?? '?'}: ${error ?? 'unknown error'}`);
+      }
+    }
     if (p.error) {
       const hint = p.error.hint ? ` (${p.error.hint})` : '';
       console.log(`      [${p.error.class}/${p.error.code}] ${p.error.message}${hint}`);

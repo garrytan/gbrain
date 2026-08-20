@@ -10,6 +10,7 @@ import {
   logTurnContextDeliveryFireAndForget,
   awaitPendingVolunteerEventWrites,
   _resetPendingVolunteerEventWritesForTests,
+  _peekPendingVolunteerEventWritesForTests,
 } from '../src/core/context/volunteer-events.ts';
 import { logDeliveredReflexPointers, type ReflexPointer } from '../src/core/context/retrieval-reflex.ts';
 import type { VolunteeredPage } from '../src/core/context/volunteer.ts';
@@ -106,6 +107,20 @@ describe('logTurnContextDeliveryFireAndForget — the shipped serve wiring', () 
 });
 
 describe('logDeliveredReflexPointers — ambient reflex channel', () => {
+  test('registers its write before returning so an immediate CLI drain cannot miss it', async () => {
+    const engine = {
+      executeRaw: async () => {
+        await Promise.resolve();
+        return [];
+      },
+    } as unknown as BrainEngine;
+
+    logDeliveredReflexPointers(engine, [POINTER]);
+
+    expect(_peekPendingVolunteerEventWritesForTests()).toBe(1);
+    expect(await awaitPendingVolunteerEventWrites(2_000)).toEqual({ unfinished: 0 });
+  });
+
   test('logs under the reflex channel with the shared rationale template', async () => {
     const captured: CapturedInsert[] = [];
     logDeliveredReflexPointers(stubEngine(captured), [POINTER]);

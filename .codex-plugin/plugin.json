@@ -1,7 +1,7 @@
 {
   "name": "gbrain",
-  "version": "0.46.22.0",
-  "description": "Personal knowledge brain for your coding agent \u2014 hybrid search, synthesis, graph traversal, and durable cross-session memory over Postgres/PGLite with pgvector, plus a curated brain-first skill set.",
+  "version": "0.46.23.0",
+  "description": "Personal knowledge brain for your coding agent — hybrid search, synthesis, graph traversal, and durable cross-session memory over Postgres/PGLite with pgvector, plus a curated brain-first skill set.",
   "author": {
     "name": "Garry Tan",
     "url": "https://github.com/garrytan"
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "GBrain",
     "shortDescription": "Give your agent a persistent brain: search, synthesis, memory",
-    "longDescription": "GBrain wires a personal knowledge brain into every session: hybrid keyword+vector search, entity graph traversal, synthesis, and memory your agent writes itself \u2014 served on the starter MCP surface (the seven memory verbs plus the daily-driver brain ops). Bundles the curated brain-first skill set: setup (walks install + gbrain init), cold-start day-one brain filling, ingest, query, briefing, upgrade, and more. Requires the gbrain CLI (bun install -g github:garrytan/gbrain#latest-stable) and a brain (gbrain init); the bundled setup skill walks the rest. Unix (macOS/Linux) only.",
+    "longDescription": "GBrain wires a personal knowledge brain into every session: hybrid keyword+vector search, entity graph traversal, synthesis, and memory your agent writes itself — served on the starter MCP surface (the seven memory verbs plus the daily-driver brain ops). Bundles the curated brain-first skill set: setup (walks install + gbrain init), cold-start day-one brain filling, ingest, query, briefing, upgrade, and more. Requires the gbrain CLI (bun install -g github:garrytan/gbrain#latest-stable) and a brain (gbrain init); the bundled setup skill walks the rest. Unix (macOS/Linux) only.",
     "developerName": "Garry Tan",
     "category": "Productivity",
     "capabilities": [

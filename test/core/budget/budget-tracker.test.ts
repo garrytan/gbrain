@@ -135,7 +135,15 @@ describe('BudgetTracker.reserve', () => {
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
     expect((caught as BudgetExhausted).modelId).toBe('mystery:some-unreleased-model');
-    expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
+    expect((caught as Error).message).toMatch(/model-pricing\.ts/);
+    const audit = readAudit();
+    expect(audit).toContainEqual(expect.objectContaining({
+      event: 'reserve_no_pricing',
+      kind: 'chat',
+      model: 'mystery:some-unreleased-model',
+      reason: 'no_pricing',
+      schema_version: 1,
+    }));
   });
 
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
@@ -168,6 +176,33 @@ describe('BudgetTracker.reserve', () => {
         kind: 'chat',
       }),
     ).not.toThrow();
+  });
+
+  test('#2504: canonical-priced non-Anthropic chat models reserve under a cap', () => {
+    // These models live only in CANONICAL_PRICING, not in the bare-keyed
+    // ANTHROPIC_PRICING view. A capped BudgetTracker must still price them
+    // instead of TX2 hard-failing no_pricing.
+    for (const modelId of [
+      'deepseek:deepseek-chat',
+      'openai:gpt-5.2',
+      'google:gemini-2.0-flash',
+    ]) {
+      const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({
+          modelId,
+          estimatedInputTokens: 1_000,
+          maxOutputTokens: 1_000,
+          kind: 'chat',
+        }),
+      ).not.toThrow();
+    }
+    const audit = readAudit();
+    expect(audit.filter((e) => e.event === 'reserve').map((e) => e.model)).toEqual([
+      'deepseek:deepseek-chat',
+      'openai:gpt-5.2',
+      'google:gemini-2.0-flash',
+    ]);
   });
 
   test('no cap + unknown pricing: warns once per process, no throw', () => {

@@ -1341,3 +1341,41 @@ describeBoth('Engine parity — unscoped getPage multi-source tiebreak', () => {
     }
   });
 });
+
+describeBoth('Engine parity — putPage empty-overwrite guard', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('both engines refuse a blank body over a non-empty one; allowEmptyOverwrite clears on both', async () => {
+    const slug = 'guard/parity-empty-overwrite';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putPage(slug, {
+        type: 'note', title: 'guarded', compiled_truth: 'real content', timeline: '',
+      });
+      await expect(
+        eng.putPage(slug, { type: 'note', title: 'guarded', compiled_truth: '', timeline: '' }),
+      ).rejects.toThrow(/refusing to overwrite non-empty page/);
+      // Rejected write left the row intact.
+      expect((await eng.getPage(slug))!.compiled_truth).toBe('real content');
+      // The escape hatch clears on both engines identically.
+      await eng.putPage(
+        slug,
+        { type: 'note', title: 'guarded', compiled_truth: '', timeline: '' },
+        { allowEmptyOverwrite: true },
+      );
+      expect(((await eng.getPage(slug))!.compiled_truth ?? '').trim()).toBe('');
+    }
+  });
+});

@@ -30,6 +30,10 @@ import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import type { EntityCandidate } from './entity-salience.ts';
+import { reflexPointerRationale } from './reflex-rationale.ts';
+import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
+
+export { reflexPointerRationale } from './reflex-rationale.ts';
 
 /** Default cap on pointers injected per turn (config: retrieval_reflex_max_pointers). */
 export const DEFAULT_MAX_POINTERS = 3;
@@ -538,29 +542,19 @@ export function renderPointerBlock(pointers: ReflexPointer[]): string {
  * precision toward zero (corrupting the exact stats users tune
  * min_confidence with).
  */
-/**
- * Canonical rationale template for a delivered reflex pointer — shared by the
- * ambient-channel logger below AND the hook lane's delivery logger
- * (volunteer-events.ts:logTurnContextDeliveryFireAndForget) so the two
- * channels' rationale strings can never drift.
- */
-export function reflexPointerRationale(p: ReflexPointer): string {
-  return `${p.arm} match "${p.display}"`;
-}
-
 export function logDeliveredReflexPointers(engine: BrainEngine, pointers: ReflexPointer[]): void {
   if (!pointers.length) return;
-  void import('./volunteer-events.ts')
-    .then(({ logVolunteerEventsFireAndForget, volunteerEventRowsFrom }) => {
-      logVolunteerEventsFireAndForget(
-        engine,
-        volunteerEventRowsFrom(
-          pointers.map((p) => ({ ...p, rationale: reflexPointerRationale(p) })),
-          { channel: 'reflex' },
-        ),
-      );
-    })
-    .catch(() => {
-      /* telemetry only */
-    });
+  // Register work synchronously. A dynamic import here creates a late-
+  // registration race: callers can drain the sink before the import resolves.
+  try {
+    logVolunteerEventsFireAndForget(
+      engine,
+      volunteerEventRowsFrom(
+        pointers.map((p) => ({ ...p, rationale: reflexPointerRationale(p) })),
+        { channel: 'reflex' },
+      ),
+    );
+  } catch {
+    /* telemetry only */
+  }
 }

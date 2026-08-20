@@ -183,7 +183,9 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
  *
  * Strategy:
  *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
- *     are bare claude-* ids). Fall back to the provider-prefixed key.
+ *     are bare claude-* ids), then the canonical paid-cloud chat table
+ *     for provider-prefixed OpenAI/Google/DeepSeek/Together ids, then the
+ *     explicit zero-cost local provider set.
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
@@ -331,8 +333,23 @@ export class BudgetTracker {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
+        const pricingFile = estimate.kind === 'chat' ? 'model-pricing.ts' : 'embedding-pricing.ts';
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${estimate.kind === 'embed' || estimate.kind === 'rerank' ? 'embedding-pricing.ts' : 'anthropic-pricing.ts'} or drop --max-cost.`;
+          `Add it to src/core/${pricingFile} or drop --max-cost.`;
+        appendAuditLine(this.auditPath, {
+          schema_version: 1,
+          ts: new Date().toISOString(),
+          event: 'reserve_no_pricing',
+          label: this.opts.label,
+          kind: estimate.kind,
+          model: estimate.modelId,
+          sub_label: estimate.label,
+          estimated_input_tokens: estimate.estimatedInputTokens,
+          max_output_tokens: estimate.maxOutputTokens,
+          cumulative_cost_usd: this.cumulativeUsd,
+          max_cost_usd: this.opts.maxCostUsd,
+          reason: 'no_pricing',
+        });
         this.fireExhausted();
         throw new BudgetExhausted(msg, {
           reason: 'no_pricing',

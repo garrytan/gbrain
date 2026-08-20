@@ -2,6 +2,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { bigintToStringReplacer } from '../cli.ts';
+import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 
 /**
  * `gbrain call <tool> <json>` — trusted local op-dispatch surface.
@@ -12,7 +13,12 @@ import { bigintToStringReplacer } from '../cli.ts';
  * > brain default > 'default'). Without --source, the chain still resolves —
  * env / dotfile / path-match all work.
  */
-export async function runCall(engine: BrainEngine, args: string[]) {
+export async function runCall(
+  engine: BrainEngine,
+  args: string[],
+  // Test seam — production always uses the awaited-delivery writer (#3423).
+  out: (payload: string) => Promise<void> = writeStdoutFinal,
+) {
   // Parse --source <id> from anywhere in args (must come before tool/json
   // tokens to keep the existing `gbrain call <tool> <json>` shape readable,
   // but the parser is positional-tolerant for ergonomics).
@@ -53,5 +59,7 @@ export async function runCall(engine: BrainEngine, args: string[]) {
   // `gbrain call` bypasses cli.ts's op-output normalizer entirely, so this
   // exit needs its own bigint-safe replacer — any op returning an int8 column
   // (BIGSERIAL id) would otherwise crash plain JSON.stringify (#2450).
-  console.log(JSON.stringify(result, bigintToStringReplacer, 2));
+  // Awaited delivery (#3423): a >64KiB payload piped to a slow reader loses
+  // its tail to the exit grace under queued stdout writes.
+  await out(JSON.stringify(result, bigintToStringReplacer, 2) + '\n');
 }

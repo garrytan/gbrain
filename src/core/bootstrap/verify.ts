@@ -587,6 +587,19 @@ async function runRoundtrip(
       checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
     } else if (existsSync(expectedFile)) {
       checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
+    } else if (wt?.skipped === 'disabled_by_config') {
+      // DB-only by operator choice (`sync.write_through=false`), not a broken
+      // install: the DB write landed, so WARN and keep the remaining
+      // roundtrip-family checks — sweep/graph/search/magic-moment all run off
+      // the DB row and still prove the memory loop.
+      checks.push({
+        id: 'roundtrip',
+        ok: true,
+        warn: true,
+        detail:
+          `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
+          `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
+      });
     } else {
       // [G1] A green verify with an empty repo is impossible: name the
       // write-through problem explicitly.

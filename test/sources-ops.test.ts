@@ -1107,3 +1107,51 @@ describe('isPathContained', () => {
     expect(isPathContained(join(SANDBOX, 'never'), SANDBOX)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v0.46 github-kind source registration (Path C in addSource): a fresh mirror
+// is federated by default so unqualified search/query span it, unless the
+// caller explicitly passes federated:false.
+// ---------------------------------------------------------------------------
+
+describe('addSource github kind', () => {
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  async function addGithubSource(federated?: boolean | null) {
+    const ghDir = join(CLONE_ROOT, 'ghsrc-github');
+    await addSource(engine, {
+      id: 'ghsrc',
+      ...(federated !== undefined ? { federated } : {}),
+      github: {
+        tokenEnv: 'GH_TOKEN',
+        handle: 'example-handle',
+        scope: 'repos',
+        repos: ['example/repo'],
+        dir: ghDir,
+        involvement: false,
+      },
+    });
+    const rows = await engine.executeRaw<{ config: unknown }>(
+      `SELECT config FROM sources WHERE id = 'ghsrc'`,
+    );
+    return rows[0]?.config as Record<string, unknown>;
+  }
+
+  test('defaults to federated:true (searchable alongside the vault)', async () => {
+    const config = await addGithubSource();
+    expect(config.federated).toBe(true);
+  });
+
+  test('explicit federated:false opts out of unqualified reads', async () => {
+    const config = await addGithubSource(false);
+    expect(config.federated).toBe(false);
+  });
+
+  test('github mirror is not reported as a broken git clone', async () => {
+    await addGithubSource();
+    const status = await getSourceStatus(engine, 'ghsrc');
+    expect(status.clone_state).toBe('not-applicable');
+  });
+});

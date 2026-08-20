@@ -300,6 +300,11 @@ export interface SyncOpts {
    * pre-v0.17 global-config path unchanged.
    */
   sourceId?: string;
+  /**
+   * github source kind: refresh exactly one item (webhook path).
+   * When set, sync skips the sweep and re-fetches this single issue/PR.
+   */
+  githubItem?: { repo: string; number: number; kind: 'issue' | 'pr'; deleted?: boolean };
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
   /**
@@ -591,6 +596,40 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     syncActivePack = { page_types: resolved.manifest.page_types };
   } catch {
     syncActivePack = undefined;
+  }
+
+  // v0.46: github source kind. A source registered with kind=github is
+  // API-backed, not git-backed: the sync engine materializes issues/PRs
+  // into the managed dir and hands off to the standard import pipeline.
+  // Everything below (git anchors, diff, reconcile) is git-specific and
+  // does not apply. Also handles opts.githubItem (webhook single-item
+  // refresh) when the source is github-kind.
+  if (opts.sourceId || opts.githubItem) {
+    const srcId = opts.sourceId ?? 'default';
+    const cfgRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+      `SELECT local_path, config FROM sources WHERE id = $1`,
+      [srcId],
+    );
+    if (cfgRows.length > 0) {
+      const rawCfg = typeof cfgRows[0].config === 'string'
+        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
+        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+      if (rawCfg.kind === 'github') {
+        serr(`[gbrain phase] sync.github_materialize`);
+        const { parseGitHubSourceConfig, runGitHubSync } = await import('../core/github-source.ts');
+        const { defaultCloneDir } = await import('../core/sources-ops.ts');
+        const fallbackDir = cfgRows[0].local_path ?? defaultCloneDir(`${srcId}-github`);
+        const cfg = parseGitHubSourceConfig(rawCfg, fallbackDir);
+        return await runGitHubSync(engine, srcId, cfg, opts);
+      }
+      if (opts.githubItem) {
+        throw new Error(
+          `github_item refresh requires a github-kind source, but "${srcId}" is not github-kind.`,
+        );
+      }
+    } else if (opts.githubItem) {
+      throw new Error(`github_item refresh requires a github-kind source; source "${srcId}" not found.`);
+    }
   }
 
   // v0.28: source-aware re-clone branch. When the source has a remote_url

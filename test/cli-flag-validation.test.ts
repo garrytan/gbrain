@@ -107,6 +107,14 @@ describe('#2185 acceptance — real usage stays legal', () => {
     expect(validateCommandFlags('sync', ['--full'])).toBeNull();
   });
 
+  test('scope flags require direct consumption on upgrade surfaces', () => {
+    expect(validateCommandFlags('reindex', ['--markdown', '--type', 'atom'])).toBeNull();
+    expect(validateCommandFlags('upgrade', ['--type', 'atom'])).toBe('--type');
+    expect(validateCommandFlags('post-upgrade', ['--type', 'atom'])).toBe('--type');
+    expect(validateCommandFlags('upgrade', ['--aliases'])).toBe('--aliases');
+    expect(validateCommandFlags('post-upgrade', ['--aliases'])).toBe('--aliases');
+  });
+
   test('sources push accepts --message/--allow-unverified-remote (registry-regen regression)', () => {
     // A stale committed registry rejected these post-merge flags until
     // `bun run build:flag-registry` was re-run — pin the accepted form.

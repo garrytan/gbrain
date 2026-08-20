@@ -1027,6 +1027,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync',
   'sync.repo_path',
   'sync.last_commit',
+  // Opt-out for the put_page/capture disk write-through (write-through.ts):
+  // 'false' makes every page write DB-only. For brains whose host repo is a
+  // shared working tree where stray root-level .md artifacts are unwanted.
+  'sync.write_through',
   // Gateway-native subagent loop toggle (routes subagent jobs through the
   // provider-agnostic gateway.toolLoop for non-Anthropic providers). The
   // subagent handler's error message tells users to `config set` this, so it

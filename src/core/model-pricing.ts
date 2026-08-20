@@ -112,6 +112,33 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // DeepSeek v4 (verified 2026-07-27 at api-docs.deepseek.com): cache-miss rates.
   'deepseek:deepseek-v4-flash':           { input:  0.14, output:  0.28 },
   'deepseek:deepseek-v4-pro':             { input:  0.435, output: 0.87 },
+  // ── Z.ai / GLM (via LiteLLM proxy) ───────────────────────────────────
+  // GLM-5.2 from Z.ai: $1.40/M input, $4.40/M output (verified 2026-08-16
+  // against OpenRouter provider listings — z.ai's own direct rates).
+  'litellm:z-ai/glm-5.2':                 { input: 1.40, output: 4.40 },
+
+  // ── OpenRouter (router-prefixed, own catalogue rate) ────────────────────
+  // Static entries pulled from OpenRouter's published `/api/v1/models`
+  // catalogue (verified 2026-08-17), NOT aliased to the inner vendor's
+  // direct rate — a router bills its own spread, and canonicalLookup's
+  // nested-id miss (see doc comment below) exists precisely to stop a
+  // router-prefixed id from silently matching the vendor's key instead.
+  // These are exact-key entries for the router id itself, so that miss
+  // path is untouched; only ids listed here resolve, everything else still
+  // returns undefined and the caller's no-pricing refusal still applies.
+  //
+  // Scoped to the three models this fork's OpenRouter fallback tier
+  // actually routes through (model-fallback-probe.ts's FALLBACK map) —
+  // add more entries here as needed rather than fetching the catalogue
+  // live; see PR discussion on gbrain#3848 for why a dynamic fetch/cache
+  // didn't merge (default-on network behavior, new pricing-source surface).
+  //
+  // deepseek/deepseek-v4-flash-0731 matches deepseek:deepseek-v4-flash
+  // above to the cent — OpenRouter passing DeepSeek through at vendor
+  // rate, not a coincidence worth losing to an alias shortcut.
+  'openrouter:deepseek/deepseek-v4-flash-0731': { input: 0.14,  output: 0.28 },
+  'openrouter:qwen/qwen3.7-flash':              { input: 0.03,  output: 0.13 },
+  'openrouter:qwen/qwen3.6-plus':               { input: 0.325, output: 1.95 },
 };
 
 /**

@@ -454,7 +454,10 @@ export async function runExtractFacts(
         }
       } catch (err) {
         // Embedding failure is non-fatal — facts still get inserted, just
-        // without embeddings. Cycle phase status stays 'ok'.
+        // without embeddings. The warning is NOT swallowed (#3044): the cycle
+        // wrapper folds result.warnings into a 'warn' phase status with a
+        // warning count, so a billing/auth/rate-limit embed failure surfaces
+        // in the cycle report instead of hiding behind a green 'ok'.
         result.warnings.push(
           `${slug}: extract_facts batch embed failed: ${err instanceof Error ? err.message : String(err)}`,
         );

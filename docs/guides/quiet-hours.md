@@ -67,12 +67,23 @@ the agent's operational state:
 
 ```json
 {
+  "userAwake": true,
   "currentLocation": {
-    "timezone": "US/Pacific",
-    "city": "San Francisco"
+    "timezone": "Europe/Zurich",
+    "city": "Basel",
+    "source": "user-confirmed"
+  },
+  "homeLocation": {
+    "timezone": "Europe/Zurich",
+    "city": "Basel"
   }
 }
 ```
+
+`homeLocation` is optional. The context engine shows a separate home clock only
+when an explicit home timezone differs from the current timezone. It never
+guesses a home city or timezone. Existing `garryAwake` state remains readable
+for migration compatibility; new producers should write `userAwake`.
 
 **Update the timezone when:**
 - Calendar shows the user flying somewhere (check for airline/hotel events)
