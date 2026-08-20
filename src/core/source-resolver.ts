@@ -229,8 +229,21 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
       `SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default'`,
     );
   }
-  if (rows.length === 1) return rows[0].id;
-  return null;
+  if (rows.length !== 1) return null;
+
+  // The sole-source tier is a rescue for an empty seeded default. Once the
+  // default contains live pages it is established operator state and must not
+  // be silently bypassed merely because a side source was later registered.
+  try {
+    const defaultPages = await engine.executeRaw<{ n: string | number }>(
+      `SELECT COUNT(*) AS n FROM pages WHERE source_id = 'default' AND deleted_at IS NULL`,
+    );
+    if (Number(defaultPages[0]?.n ?? 0) > 0) return null;
+  } catch {
+    // A failed establishment check must not route writes away from default.
+    return null;
+  }
+  return rows[0].id;
 }
 
 /**
