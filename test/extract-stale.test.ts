@@ -178,6 +178,25 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('re-extraction removes managed links deleted from the source page', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) advises [Acme](companies/acme).'));
+    await runExtract(engine, ['--stale']);
+    expect((await engine.getLinks('companies/acme')).some(l => l.to_slug === 'people/alice')).toBe(true);
+
+    await engine.executeRaw(
+      `UPDATE pages
+          SET compiled_truth = 'The obsolete relationship was removed.',
+              links_extracted_at = now() - interval '2 hours',
+              updated_at = now() - interval '1 hour'
+        WHERE slug = 'companies/acme'`,
+    );
+    await runExtract(engine, ['--stale']);
+
+    expect((await engine.getLinks('companies/acme')).some(l => l.to_slug === 'people/alice')).toBe(false);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
+  });
+
   test('CRITICAL (#1768): microsecond updated_at clears after --stale (no permanent lag)', async () => {
     // Repro of #1768: extractStaleFromDB used to stamp page.updated_at.toISOString()
     // (a JS Date, millisecond-truncated). The DB updated_at keeps microseconds, so
@@ -238,22 +257,22 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
-  test('CDX-4 (D2): a link-flush throw aborts the sweep and leaves pages UNSTAMPED', async () => {
+  test('CDX-4 (D2): a link-reconciliation throw aborts the sweep and leaves pages UNSTAMPED', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', '[Alice](people/alice) founded [Acme](companies/acme).'));
 
-    // Make the link flush throw mid-sweep. The --stale path flushes
+    // Make source-owned reconciliation throw mid-sweep. The --stale path writes
     // NON-swallowing (no try/catch), so the throw must propagate AND no page in
     // the batch may be stamped (stamp runs only AFTER a successful flush).
-    const origBatch = engine.addLinksBatch.bind(engine);
+    const origReconcile = engine.reconcileDerivedLinks.bind(engine);
     let threw = false;
-    (engine as unknown as { addLinksBatch: unknown }).addLinksBatch = async () => { throw new Error('__flush_boom__'); };
+    (engine as unknown as { reconcileDerivedLinks: unknown }).reconcileDerivedLinks = async () => { throw new Error('__flush_boom__'); };
     try {
       await runExtract(engine, ['--stale']);
     } catch (e) {
       if ((e as Error).message === '__flush_boom__') threw = true; else throw e;
     } finally {
-      (engine as unknown as { addLinksBatch: unknown }).addLinksBatch = origBatch;
+      (engine as unknown as { reconcileDerivedLinks: unknown }).reconcileDerivedLinks = origReconcile;
     }
     expect(threw).toBe(true);
     // Pages whose edges were lost are NOT stamped fresh — they stay stale.

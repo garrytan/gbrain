@@ -105,6 +105,7 @@ async function runStaleExtraction(
     message: `Processed ${result.pagesProcessed} stale page(s); ${result.staleRemaining} remain.`,
     details: {
       links_created: result.linksCreated,
+      links_removed: result.linksRemoved,
       timeline_created: result.timelineCreated,
       pages_processed: result.pagesProcessed,
       stale_remaining: result.staleRemaining,

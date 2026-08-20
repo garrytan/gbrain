@@ -63,6 +63,7 @@ import { createHash } from 'crypto';
 import { runSlidingPool } from '../core/worker-pool.ts';
 import { isAborted } from '../core/abort-check.ts';
 import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.ts';
+import { reconcileStalePageLinks, type StalePageLinkSet } from './extract-stale-reconcile.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -1765,13 +1766,10 @@ async function extractTimelineFromDB(
  * DB-source (works on checkout-less Postgres/Supabase brains). Mirrors
  * embedAllStale's count → keyset-list → flush → stamp shape.
  *
- * Crash-safety + CDX-4: per keyset batch we extract ALL links+timeline, flush
- * them (NON-swallowing — a flush throw propagates and aborts the sweep), THEN
- * stamp the batch's pages. A page is never stamped fresh with lost edges; a
- * crash mid-sweep leaves the unflushed/unstamped pages stale and they
- * re-extract next run (addLinksBatch ON CONFLICT DO NOTHING + timeline dedup
- * make re-extraction idempotent). EVERY processed page is stamped, including
- * zero-link pages — they WERE processed.
+ * Crash-safety + CDX-4: reconcile complete source-owned link sets and flush
+ * timeline rows before stamping the keyset batch. A throw leaves pages stale;
+ * replay is idempotent. Every processed page is stamped, including pages with
+ * an empty desired link set (which removes obsolete managed edges).
  */
 export async function extractStaleFromDB(
   engine: BrainEngine,
@@ -1782,10 +1780,9 @@ export async function extractStaleFromDB(
     sourceIdFilter?: string;
     catchUp: boolean;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number }> {
+): Promise<{ linksCreated: number; linksRemoved: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
-
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
   const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
   if (dryRun) {
@@ -1794,11 +1791,11 @@ export async function extractStaleFromDB(
     } else {
       console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
     }
-    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
   }
   if (totalStale === 0) {
     if (!jsonMode) console.log('No stale pages — extraction is up to date.');
-    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the
@@ -1832,7 +1829,7 @@ export async function extractStaleFromDB(
 
   const startMs = Date.now();
   let afterPageId = 0;
-  let linksCreated = 0, timelineCreated = 0, pagesProcessed = 0;
+  let linksCreated = 0, linksRemoved = 0, timelineCreated = 0, pagesProcessed = 0;
   let budgetHit = false;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
@@ -1845,11 +1842,12 @@ export async function extractStaleFromDB(
     });
     if (rows.length === 0) break;
 
-    const linkRows: LinkBatchInput[] = [];
+    const linkRowsByPage: StalePageLinkSet[] = [];
     const timelineRows: TimelineBatchInput[] = [];
     const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
 
     for (const page of rows) {
+      const pageLinkRows: LinkBatchInput[] = [];
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, resolver,
@@ -1858,13 +1856,18 @@ export async function extractStaleFromDB(
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
         if (!r) { skippedMissingTarget++; continue; }
-        linkRows.push({
+        pageLinkRows.push({
           from_slug: r.fromSlug, to_slug: c.targetSlug, link_type: c.linkType,
           context: c.context, link_source: c.linkSource, origin_slug: c.originSlug,
           origin_field: c.originField, from_source_id: r.fromSourceId,
           to_source_id: r.toSourceId, origin_source_id: page.source_id,
         });
       }
+      // Preserve the empty desired set: it is what removes managed links that
+      // disappeared from this page. addLinksBatch is intentionally additive;
+      // the source-owned reconciliation primitive is the only safe destructive
+      // path because it cannot sweep manual/mentions/other-origin edges.
+      linkRowsByPage.push({ originSlug: page.slug, sourceId: page.source_id, links: pageLinkRows });
       for (const entry of parseTimelineEntries(fullContent)) {
         timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
@@ -1892,13 +1895,10 @@ export async function extractStaleFromDB(
       processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
     }
 
-    // Flush NON-swallowing (CDX-4): a throw here propagates out of the sweep so
-    // the batch's pages stay unstamped and re-extract next run. addLinksBatch is
-    // ON CONFLICT DO NOTHING + timeline dedups, so partial-chunk writes are
-    // idempotent on re-extraction.
-    for (let i = 0; i < linkRows.length; i += BATCH_SIZE) {
-      linksCreated += await engine.addLinksBatch(linkRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }); // gbrain-allow-direct-insert: gbrain extract --stale — canonical link reconciliation from markdown body
-    }
+    // Complete per-origin sets only; throws keep the watermark stale.
+    const reconciled = await reconcileStalePageLinks(engine, linkRowsByPage);
+    linksCreated += reconciled.created; // gbrain-allow-direct-insert: source-owned exact reconciliation is the canonical stale extraction write path
+    linksRemoved += reconciled.removed;
     for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
       timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
     }
@@ -1917,7 +1917,7 @@ export async function extractStaleFromDB(
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
 
   if (!jsonMode) {
-    console.log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    console.log(`Extract --stale: ${linksCreated} link(s) added, ${linksRemoved} stale managed link(s) removed + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -1926,12 +1926,12 @@ export async function extractStaleFromDB(
     }
   } else {
     process.stdout.write(JSON.stringify({
-      action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
+      action: 'extract_stale_done', links_created: linksCreated, links_removed: linksRemoved, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget,
     }) + '\n');
   }
-  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget };
+  return { linksCreated, linksRemoved, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget };
 }
 
 /**

@@ -1,0 +1,32 @@
+/**
+ * Exact link reconciliation for one keyset batch of `gbrain extract --stale`.
+ *
+ * Each origin's complete desired set must stay intact. Splitting one origin
+ * across generic addLinksBatch chunks would either remain additive or let a
+ * later reconciliation slice delete rows inserted by an earlier slice.
+ */
+import type { BrainEngine, LinkBatchInput } from '../core/engine.ts';
+
+export interface StalePageLinkSet {
+  originSlug: string;
+  sourceId: string;
+  links: LinkBatchInput[];
+}
+
+export async function reconcileStalePageLinks(
+  engine: BrainEngine,
+  desiredByPage: StalePageLinkSet[],
+): Promise<{ created: number; removed: number }> {
+  let created = 0;
+  let removed = 0;
+  for (const desired of desiredByPage) {
+    const result = await engine.reconcileDerivedLinks(
+      desired.originSlug,
+      desired.links,
+      { sourceId: desired.sourceId },
+    );
+    created += result.created;
+    removed += result.removed;
+  }
+  return { created, removed };
+}
