@@ -663,11 +663,22 @@ async function activeSlugsBySourcePath(
  * absorbs the awkward index states: an unmerged path (no stage-0 blob →
  * cat-file throws) and an undecodable filename (utf-8 replacement mangles
  * the name → both reads miss) both land on `complete = false`, not on a
- * delete. Deliberately BROADER than the sync scope: every tracked file
+ * delete. Deliberately BROADER than the sync scope: every working-tree file
  * counts (submodule interiors never appear — ls-files lists the gitlink
  * only, and the walker never imports them — and scope/exclude-filtered
  * files still register). Over-inclusion can only delay a cleanup, never
  * delete a live page.
+ *
+ * Post-review fix: the listing MUST match `collectSyncableFiles`' git-aware
+ * fast path (`git ls-files --cached --others --exclude-standard`, tracked
+ * PLUS untracked-not-ignored — see `gitListSyncableFiles` in import.ts), not
+ * a bare `git ls-files` (tracked only). A file added to the working tree but
+ * not yet `git add`-ed still gets imported by `collectSyncableFiles`, so a
+ * plain tracked-only listing here would treat its slug as absent from the
+ * index and reconcile could hard-delete the LIVE page that import just
+ * created. `--exclude-standard` keeps `.gitignore`d files out of the index
+ * exactly as it keeps them out of import, so the two enumerations stay in
+ * lockstep.
  *
  * Built at most once per sync run, and only when a fallback rename actually
  * has reconcile candidates. Throws on git ls-files failure: the caller's
@@ -688,7 +699,11 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
   const slugs = new Set<string>();
   let complete = true;
   const addSlug = (slug: string): void => { slugs.add(slug); };
-  const listing = gitRawOutput(gitContextRoot, ['ls-files', '-z']);
+  // --cached --others --exclude-standard mirrors gitListSyncableFiles (see
+  // docstring above): tracked-only would miss an unstaged new file that
+  // collectSyncableFiles already imported, misclassifying its live page as
+  // stale.
+  const listing = gitRawOutput(gitContextRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
   for (const rel of listing.split('\u0000')) {
     if (!rel) continue;
     const slug = resolveSlugForPath(rel);
@@ -2710,6 +2725,19 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
               // than one, and the rename is checkpointed after this loop, so
               // a survivor would never be retried (#3479 review, the ORDER BY
               // finding).
+              //
+              // Post-review note: the `slugLiveness(s)` verdict above and this
+              // `deletePage` are not one atomic operation — `deletePage` takes
+              // only `slug`, not a row id or updated_at, so it can't express
+              // "delete iff still the row I just proved stale". Under
+              // `performSync`'s per-source writer lock this window is closed
+              // for every normal caller (no other sync/import for this source
+              // can run concurrently); it only opens for a write that bypasses
+              // the lock entirely (e.g. a direct `put_page` racing this run).
+              // Closing it for real needs a conditional DELETE (id/source_path/
+              // updated_at) added to `BrainEngine.deletePage` on both engines —
+              // out of scope for this fix; tracked as a known gap rather than
+              // silently assumed safe.
               for (const s of staleSlugs) {
                 staleSlug = s;
                 await engine.deletePage(s, renameOpts);

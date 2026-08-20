@@ -823,6 +823,67 @@ describe('#3583 review: frontmatter-fallback (CJK-wave) live rows survive the re
   });
 });
 
+// Post-review fix: trackedSlugIndex must enumerate the SAME set of files as
+// collectSyncableFiles (tracked + untracked-not-ignored via
+// `git ls-files --cached --others --exclude-standard`), not tracked-only
+// (`git ls-files`). Before the fix, a fallback-regime file that was on disk
+// and already imported by full sync — but never `git add`-ed — had a slug
+// full sync knew about and trackedSlugIndex did not. Any rename reconcile
+// running afterward would treat the missing index entry as proof of
+// staleness and hard-delete the file's LIVE page.
+describe('#3583 follow-up: an untracked (unstaged) fallback-regime file survives the reconcile', () => {
+  async function setupUntrackedExoticScenario(): Promise<string> {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({
+      'people/alpha.md': personMd('Alpha', 'Alpha is a person.'),
+    });
+
+    // Write the frontmatter-fallback file WITHOUT staging or committing it.
+    // `collectSyncableFiles`'s git-aware fast path (`--cached --others
+    // --exclude-standard`) still imports it; a bare `git ls-files` would not
+    // list it at all.
+    writeFileSync(join(repo, '\u{1F389}.md'), exoticMd);
+
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    const party = await engine.getPage('party-notes');
+    expect(party).not.toBeNull();
+    expect(party!.compiled_truth).toContain('Party notes live here.');
+
+    // Same stale-bookkeeping shape as setupExoticScenario: force the LIVE
+    // party-notes row onto the upcoming rename's `from` path so the
+    // reconcile treats it as a candidate.
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+       WHERE source_id = 'default' AND slug = 'party-notes'`,
+    );
+    await engine.putPage('people/beta', {
+      type: 'person', title: 'Beta (stale)', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+    return repo;
+  }
+
+  test('an unstaged emoji-filename file that collectSyncableFiles already imported is not misclassified as stale', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = await setupUntrackedExoticScenario();
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(result.status).toBe('synced');
+
+    // The emoji file is real, on disk, still deriving to party-notes — it
+    // was simply never `git add`-ed. It must survive the reconcile.
+    const party = await engine.getPage('party-notes');
+    expect(party).not.toBeNull();
+    expect(party!.compiled_truth).toContain('Party notes live here.');
+
+    // The rename itself still converged.
+    const beta = await engine.getPage('people/beta');
+    expect(beta).not.toBeNull();
+    expect(beta!.compiled_truth).toContain('Alpha is a person.');
+  });
+});
+
 // Scope note: "persistent state" here means the BRAIN's state (DB rows,
 // checkpoints, the failure ledger). The internal `git pull` a preview runs
 // without --no-pull mutates the operator's REPO and is longstanding
