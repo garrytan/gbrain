@@ -2,6 +2,57 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.24.0] - 2026-08-20
+
+**`gbrain sync` now works while your agent's brain is live.** On a PGLite
+brain, a running `gbrain serve` (the MCP server your agent harness spawns)
+owns the database's single-writer connection, and a sync used to require
+stopping the serve — killing your agent's memory to feed it. Sync now
+delegates the run to the serve process over its local IPC socket: the lock
+owner does the work, the CLI streams progress, and your agent stays up the
+whole time.
+
+### Added
+- Serve-delegated sync: `gbrain sync` under a live `gbrain serve` runs inside
+  the serve process (secret-gated `sync_start`/`sync_status`/`sync_abort`
+  kinds on the existing resolve-IPC socket; never raw SQL). The CLI prints a
+  delegation banner with the job id, polls progress (phases, banked-file
+  counts), and prints the same result a direct sync would. Ctrl-C aborts to a
+  durable checkpoint the next sync resumes from; a second Ctrl-C exits
+  without waiting.
+- Embeds under delegation are always deferred and drained by the serve's idle
+  maintenance sweep afterwards (the serve's environment/API keys apply);
+  `--no-embed` also suppresses the drain. The inline embed cost gate is never
+  silently bypassed.
+- Bounded by construction: the client always sends its resolved hard deadline
+  (interactive default 3600s) so a job whose client died still ends;
+  `--no-hard-deadline` is the only unbounded encoding. A serve shutdown
+  mid-sync aborts the job and waits a bounded settle
+  (`GBRAIN_SERVE_SYNC_SETTLE_MS`, default 3000ms) for the checkpoint flush
+  before disconnecting.
+- Safety posture: unsupported sync flags (`--repo`, `--all`, `--watch`,
+  `--exclude`, `--workers`, `--json`, …) refuse BY NAME under delegation
+  (default-deny — a silently dropped flag would perform the wrong sync), with
+  three remediations in every message. Opt-outs: `--no-delegate` /
+  `GBRAIN_SYNC_NO_DELEGATE=1` (client) and `GBRAIN_SERVE_SYNC_IPC=0` (serve).
+  `serve --http` exposes no IPC and keeps the stop-the-serve behavior.
+
+### Changed
+- The `LiveServeLockError` message now says sync runs through the live serve
+  automatically; stopping the serve remains the remedy for OTHER CLI write
+  commands.
+- `docs/architecture/serve-sync-concurrency.md` rewritten around delegation
+  (limits table, crash/resume notes, unchanged hang-triage recipes).
+
+To take advantage of v0.46.24.0:
+- `gbrain upgrade` (or reinstall the binary), then restart any running
+  `gbrain serve` so it registers the sync IPC kinds — a serve from an older
+  version answers with a typed "restart the serve" refusal instead of
+  delegating.
+- If a serve dies mid-delegated-sync, re-run `gbrain sync` to resume from the
+  checkpoint; a dead-PID sync lock younger than 60s can be cleared with
+  `gbrain sync --force-break-lock`.
+
 ## [0.46.23.0] - 2026-08-19
 
 **A 23-contribution community wave, plus an end to silently lost pages.**

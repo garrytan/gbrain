@@ -139,7 +139,7 @@ describe('pglite-lock #2058 heartbeat + steal-grace', () => {
 
     const startedAt = Date.now();
     await expect(acquireLock(TEST_DIR, { timeoutMs: 5_000 })).rejects.toThrow(
-      /already open through `gbrain serve`.*Stop `gbrain serve`, then retry this CLI command.*use its MCP tools instead.*will not remove/s,
+      /already open through `gbrain serve`.*`gbrain sync` runs through the live serve automatically.*stop `gbrain serve` and retry.*use its MCP tools instead.*will not remove/s,
     );
 
     expect(Date.now() - startedAt).toBeLessThan(1_000);

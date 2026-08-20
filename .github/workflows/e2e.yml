@@ -174,6 +174,15 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Run serve-delegated sync suite
+        # Serve-delegated sync (PGLite): a real `gbrain serve` owns the
+        # single-writer lock while real `gbrain sync` subprocesses delegate
+        # through its IPC socket, get SIGKILLed mid-run, and resume. Own
+        # invocation line, and deliberately NO DATABASE_URL — the suite is
+        # PGLite-only (env DATABASE_URL is a live gbrain config source and
+        # would flip the sandboxed brain to Postgres; the file also
+        # self-strips). Named files only, no glob.
+        run: bun test --timeout=240000 test/e2e/sync-delegation-under-serve.serial.test.ts
 
   tier2:
     name: Tier 2 (LLM Skills)

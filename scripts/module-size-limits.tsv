@@ -8,9 +8,9 @@ src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
 src/core/postgres-engine.ts	5839	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335) + semantic takes retrieval PR (2 lines)
 src/core/pglite-engine.ts	5883	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335) + semantic takes retrieval PR (2 lines)
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
-src/commands/sync.ts	4311	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
+src/commands/sync.ts	4327	ratchet	grown v0.46.24.0 serve-delegated sync: onProgress seam + help text
 src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
-src/cli.ts	3486	ratchet	grown v0.46.23.0: awaited stdout delivery (#3423)
+src/cli.ts	3499	ratchet	grown v0.46.24.0: serve-delegated sync preflight hook
 src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
 src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)

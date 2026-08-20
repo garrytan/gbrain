@@ -28,6 +28,15 @@
  * request (`{ok:true, block:null}`, no echo) and the client degrades to a
  * typed { degraded: 'stale_serve' } instead of trusting the empty block.
  *
+ *   sync_start / sync_status / sync_abort (secret-gated, protocol:2):
+ *     serve-delegated sync — a `gbrain sync` CLI that finds a live serve
+ *     holding the PGLite lock delegates the run through these kinds instead
+ *     of failing on LiveServeLockError. Wire shapes + option validation live
+ *     in sync-ipc.ts; execution lives in serve-sync-runner.ts. Start+poll
+ *     (never a held-open connection): every request stays one line / one
+ *     response, and an old serve answers `unknown_kind:sync_start` so the
+ *     client degrades to the documented stop-the-serve refusal.
+ *
  * Local-only (unix socket in a 0700 dir on the brain's data dir, socket mode
  * 0600 set before readiness is announced) — no network surface.
  */
@@ -48,6 +57,14 @@ import type { EntityCandidate } from './entity-salience.ts';
 import type { WindowTurn } from './entity-salience.ts';
 import type { PointerBlock } from './retrieval-reflex.ts';
 import type { TurnContextResult } from './turn-context.ts';
+import type {
+  SyncAbortRequest,
+  SyncAbortResponse,
+  SyncStartRequest,
+  SyncStartResponse,
+  SyncStatusRequest,
+  SyncStatusResponse,
+} from './sync-ipc.ts';
 
 const SOCK_NAME = '.gbrain-resolve.sock';
 const SECRET_NAME = '.gbrain-ipc-secret';
@@ -69,6 +86,15 @@ export const CONTEXT_PACK_CLIENT_TIMEOUT_MS = 1000;
 /** Assembler deadline. Backstop = +200; client 1000 leaves a real transport
  * margin (adversarial review: 800+200 == client timeout was zero margin). */
 export const CONTEXT_PACK_SERVER_BUDGET_MS = 600;
+/**
+ * Delegated-sync kinds are O(1) in-memory registrations/reads — no assembly
+ * work, so no server-side budget race. start is a touch wider: its handler
+ * validates options and registers the job before answering, and a serve loop
+ * mid-import can sit on a long WASM statement before dispatching.
+ */
+export const SYNC_START_CLIENT_TIMEOUT_MS = 1500;
+export const SYNC_STATUS_CLIENT_TIMEOUT_MS = 1000;
+export const SYNC_ABORT_CLIENT_TIMEOUT_MS = 1000;
 const MAX_MSG_BYTES = 256 * 1024;
 
 /** Marker the client returns when no server is reachable (vs. a real null result). */
@@ -169,7 +195,13 @@ export interface ContextPackRequest {
   manifestOnly?: boolean;
 }
 
-export type IpcRequest = ResolveRequest | TurnContextRequest | ContextPackRequest;
+export type IpcRequest =
+  | ResolveRequest
+  | TurnContextRequest
+  | ContextPackRequest
+  | SyncStartRequest
+  | SyncStatusRequest
+  | SyncAbortRequest;
 
 export interface ResolveResponse {
   ok: boolean;
@@ -199,11 +231,18 @@ export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | nul
 export type TurnContextHandler = (req: TurnContextRequest) => Promise<TurnContextResult | null>;
 export type ContextPackHandler = (req: ContextPackRequest) => Promise<TurnContextResult | null>;
 
+export type SyncStartIpcHandler = (req: SyncStartRequest) => SyncStartResponse | Promise<SyncStartResponse>;
+export type SyncStatusIpcHandler = (req: SyncStatusRequest) => SyncStatusResponse | Promise<SyncStatusResponse>;
+export type SyncAbortIpcHandler = (req: SyncAbortRequest) => SyncAbortResponse | Promise<SyncAbortResponse>;
+
 /** Handler MAP replacing the single closure [ENG-3]. */
 export interface IpcHandlers {
   resolve: ResolveHandler;
   turn_context?: TurnContextHandler;
   context_pack?: ContextPackHandler;
+  sync_start?: SyncStartIpcHandler;
+  sync_status?: SyncStatusIpcHandler;
+  sync_abort?: SyncAbortIpcHandler;
 }
 
 export interface IpcServerOpts {
@@ -421,6 +460,65 @@ export async function requestContextPack(
   return resp as ContextPackResponse;
 }
 
+// ── Delegated-sync clients ────────────────────────────────────────────────
+
+/** Client-facing shapes (kind/protocol filled in by the helpers). */
+export type SyncStartClientRequest = Omit<SyncStartRequest, 'kind' | 'protocol'>;
+export type SyncStatusClientRequest = Omit<SyncStatusRequest, 'kind' | 'protocol'>;
+export type SyncAbortClientRequest = Omit<SyncAbortRequest, 'kind' | 'protocol'>;
+
+export type SyncStartIpcResult = SyncStartResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SyncStatusIpcResult = SyncStatusResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SyncAbortIpcResult = SyncAbortResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+
+/**
+ * Delegated-sync clients: same fail-soft ladder as requestTurnContext —
+ * transport trouble → IPC_UNAVAILABLE; a response without the protocol echo
+ * (a pre-delegation serve answered `unknown_kind:*` or treated the line as a
+ * resolve request) → { degraded: 'stale_serve' }; otherwise the server's
+ * typed response, INCLUDING ok:false rejections ('busy', 'unauthorized',
+ * 'unknown_job', …) that the sync CLI turns into remediation text. Never throw.
+ */
+export async function requestSyncStart(
+  socketPath: string,
+  req: SyncStartClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncStartIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_start', protocol: 2, ...req } satisfies SyncStartRequest);
+  return syncRoundTrip<SyncStartResponse>(socketPath, line, opts.timeoutMs ?? SYNC_START_CLIENT_TIMEOUT_MS);
+}
+
+export async function requestSyncStatus(
+  socketPath: string,
+  req: SyncStatusClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncStatusIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_status', protocol: 2, ...req } satisfies SyncStatusRequest);
+  return syncRoundTrip<SyncStatusResponse>(socketPath, line, opts.timeoutMs ?? SYNC_STATUS_CLIENT_TIMEOUT_MS);
+}
+
+export async function requestSyncAbort(
+  socketPath: string,
+  req: SyncAbortClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncAbortIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_abort', protocol: 2, ...req } satisfies SyncAbortRequest);
+  return syncRoundTrip<SyncAbortResponse>(socketPath, line, opts.timeoutMs ?? SYNC_ABORT_CLIENT_TIMEOUT_MS);
+}
+
+async function syncRoundTrip<Resp extends { ok: boolean; protocol: 2 }>(
+  socketPath: string,
+  line: string,
+  timeoutMs: number,
+): Promise<Resp | TurnContextStaleServe | typeof IPC_UNAVAILABLE> {
+  if (Buffer.byteLength(line, 'utf8') + 1 > MAX_MSG_BYTES) return IPC_UNAVAILABLE;
+  const resp = await roundTrip(socketPath, line, timeoutMs);
+  if (resp === IPC_UNAVAILABLE) return IPC_UNAVAILABLE;
+  if (!resp || typeof resp !== 'object') return IPC_UNAVAILABLE;
+  if ((resp as { protocol?: unknown }).protocol !== 2) return { degraded: 'stale_serve' };
+  return resp as Resp;
+}
+
 /** One request line out, one response line back. Fail-soft to IPC_UNAVAILABLE. */
 function roundTrip(
   socketPath: string,
@@ -560,6 +658,18 @@ export async function startResolveIpcServer(
             resp = JSON.stringify(
               await handleContextPack(parsed as ContextPackRequest, handlers, opts),
             );
+          } else if (kind === 'sync_start') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncStartRequest, handlers.sync_start, opts),
+            );
+          } else if (kind === 'sync_status') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncStatusRequest, handlers.sync_status, opts),
+            );
+          } else if (kind === 'sync_abort') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncAbortRequest, handlers.sync_abort, opts),
+            );
           } else {
             resp = JSON.stringify({ ok: false, error: `unknown_kind:${String(kind)}` });
           }
@@ -670,6 +780,29 @@ async function handleContextPack(
       block: result,
       ...(result?.degradedReason ? { degradedReason: result.degradedReason } : {}),
     };
+  } catch (e) {
+    return { ok: false, protocol: 2, error: (e as Error).message };
+  }
+}
+
+/**
+ * Shared auth ladder for the delegated-sync kinds — same fail-closed posture
+ * as turn_context (handler absent → unsupported_kind; protocol mismatch →
+ * unsupported_protocol; missing/wrong secret → unauthorized). No budget race:
+ * the handlers are O(1) in-memory operations in serve-sync-runner.ts.
+ */
+async function handleSyncKind<Req extends { protocol: number; secret: string }, Resp extends { ok: boolean; protocol: 2 }>(
+  req: Req,
+  handler: ((req: Req) => Resp | Promise<Resp>) | undefined,
+  opts: IpcServerOpts,
+): Promise<Resp | { ok: false; protocol: 2; error: string }> {
+  if (!handler) return { ok: false, protocol: 2, error: 'unsupported_kind' };
+  if (req.protocol !== 2) return { ok: false, protocol: 2, error: 'unsupported_protocol' };
+  if (!opts.secret || !secretMatches(req.secret, opts.secret)) {
+    return { ok: false, protocol: 2, error: 'unauthorized' };
+  }
+  try {
+    return await handler(req);
   } catch (e) {
     return { ok: false, protocol: 2, error: (e as Error).message };
   }
