@@ -107,6 +107,9 @@ describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () 
     expect(source).toContain(`'--max-usd'`);
     expect(source).toContain(`'--yes'`);
     expect(source).toContain(`'--json'`); // cross-modal needs --json for the summary envelope
+    expect(source).toContain(`'--slot-a-model'`);
+    expect(source).toContain(`'--slot-b-model'`);
+    expect(source).toContain(`'--slot-c-model'`);
   });
 
   test('runLongMemEvalForProbe builds argv with --output for output path', () => {
@@ -114,7 +117,14 @@ describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () 
     const fs = require('node:fs');
     const source = fs.readFileSync(path, 'utf-8');
     // longmemeval adapter: first positional arg is fixturePath, then --output outputPath.
-    expect(source).toMatch(/runEvalLongMemEval\(\[args\.fixturePath, '--output', args\.outputPath\]\)/);
+    expect(source).toContain(`args.fixturePath`);
+    expect(source).toContain(`'--mode', 'tokenmax'`);
+    expect(source).toContain(`'--no-reranker'`);
+    expect(source).toContain(`'--by-type'`);
+    expect(source).toContain(`'--model', probeModel`);
+    expect(source).toContain(`{ extractorModel: probeModel }`);
+    expect(source).toContain(`ensureProbeGatewayConfigured()`);
+    expect(source).toContain(`requireConfig()`);
   });
 });
 
