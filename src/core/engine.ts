@@ -186,6 +186,10 @@ export interface DerivedLinkReconciliationOpts {
   sourceId: string;
   /** Managed provenance partitions represented completely by `links`. Default: all. */
   linkSources?: readonly ManagedDerivedLinkSource[];
+  /** Exact page `updated_at` observed with the extracted content. Fences stale workers. */
+  expectedUpdatedAt?: string;
+  /** Atomically stamp `links_extracted_at` after reconciliation. Requires expectedUpdatedAt. */
+  stampExtractedAt?: string;
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -1258,6 +1262,8 @@ export interface BrainEngine {
    * frontmatter rows are owned by `origin_page_id`. Manual, mentions, custom
    * provenance, and frontmatter rows authored by another page are preserved.
    * Empty `links` intentionally clears only the selected managed partitions.
+   * When `expectedUpdatedAt` is set, the origin row is locked and a revision
+   * mismatch is a no-op. `stampExtractedAt` commits under that same row lock.
    */
   reconcileDerivedLinks(
     originSlug: string,

@@ -125,8 +125,26 @@ export async function runDerivedLinkReconciliation(
   opts: DerivedLinkReconciliationOpts,
 ): Promise<DerivedLinkReconciliationResult> {
   const { originSlug, rows, managedSources } = normalizedRows(originSlugRaw, links, opts);
+  if (opts.stampExtractedAt && !opts.expectedUpdatedAt) {
+    throw new Error('stampExtractedAt requires expectedUpdatedAt');
+  }
 
   return engine.transaction(async (tx) => {
+    // Revision fence + row lock: a worker may have extracted an older body
+    // while another writer (or sweep) advanced the page. Lock before any
+    // destructive reconciliation, then stamp under the same lock so no stale
+    // worker can overwrite newer edges and subsequently mark them fresh.
+    if (opts.expectedUpdatedAt) {
+      const current = await tx.executeRaw<{ matches: boolean }>(
+        `SELECT updated_at = $3::timestamptz AS matches
+           FROM pages
+          WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL
+          FOR UPDATE`,
+        [originSlug, opts.sourceId, opts.expectedUpdatedAt],
+      );
+      if (current[0]?.matches !== true) return { created: 0, removed: 0 };
+    }
+
     const inserted = await executeRawJsonb<{ one: number }>(
       tx,
       `WITH desired AS (${DESIRED_RECORDSET})
@@ -204,6 +222,14 @@ export async function runDerivedLinkReconciliation(
       [originSlug, opts.sourceId],
       [{ rows, managed_sources: managedSources }],
     );
+
+    if (opts.stampExtractedAt) {
+      await tx.executeRaw(
+        `UPDATE pages SET links_extracted_at = $3::timestamptz
+          WHERE slug = $1 AND source_id = $2`,
+        [originSlug, opts.sourceId, opts.stampExtractedAt],
+      );
+    }
 
     return { created: inserted.length, removed: removed.length };
   });

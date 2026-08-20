@@ -12,6 +12,8 @@ export interface StalePageLinkSet {
   sourceId: string;
   links: LinkBatchInput[];
   linkSources?: readonly ManagedDerivedLinkSource[];
+  expectedUpdatedAt: string;
+  stampExtractedAt: string;
 }
 
 export async function reconcileStalePageLinks(
@@ -24,7 +26,12 @@ export async function reconcileStalePageLinks(
     const result = await engine.reconcileDerivedLinks(
       desired.originSlug,
       desired.links,
-      { sourceId: desired.sourceId, linkSources: desired.linkSources },
+      {
+        sourceId: desired.sourceId,
+        linkSources: desired.linkSources,
+        expectedUpdatedAt: desired.expectedUpdatedAt,
+        stampExtractedAt: desired.stampExtractedAt,
+      },
     );
     created += result.created;
     removed += result.removed;

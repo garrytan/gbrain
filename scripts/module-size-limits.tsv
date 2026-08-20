@@ -15,7 +15,7 @@ src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyc
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
 src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)
 src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: supersede scoping + edge-existence gate
-src/core/engine.ts	2382	ratchet	v0.46.23.0 putPage allowEmptyOverwrite + provenance-scoped derived-link reconciliation contract
+src/core/engine.ts	2388	ratchet	v0.46.23.0 putPage allowEmptyOverwrite + revision-fenced provenance reconciliation contract
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2169	ratchet	provenance-scoped exact reconciliation for stale extraction
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy

@@ -629,7 +629,7 @@ async function runRoundtrip(
       capabilities: caps,
       log: opts.log,
     });
-    opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} timeline=${report.timelineExtracted}`);
+    opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} links_removed=${report.linksRemoved} timeline=${report.timelineExtracted}`);
   } catch (e) {
     checks.push({ id: 'graph_floor', ok: false, detail: `maintenance sweep failed: ${(e as Error).message}` });
     return { checks };

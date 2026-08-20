@@ -137,4 +137,60 @@ describe('reconcileDerivedLinks', () => {
     expect(await engine.getLinks('notes/context-writer', { sourceId: 'default' }))
       .toEqual([expect.objectContaining({ context: 'new excerpt' })]);
   });
+
+  test('revision-fenced reconciliation refuses a stale snapshot and stamps a current one', async () => {
+    await seed('notes/revision-writer');
+    await seed('concepts/revision-a');
+    await seed('concepts/revision-b');
+    await engine.reconcileDerivedLinks('notes/revision-writer', [{
+      from_slug: 'notes/revision-writer',
+      to_slug: 'concepts/revision-a',
+      link_type: 'related',
+      context: 'revision A',
+      link_source: 'markdown',
+    }], { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages
+          SET updated_at = '2026-08-20T00:00:02.123456Z', links_extracted_at = NULL
+        WHERE source_id = 'default' AND slug = 'notes/revision-writer'`,
+    );
+
+    const desiredB = [{
+      from_slug: 'notes/revision-writer',
+      to_slug: 'concepts/revision-b',
+      link_type: 'related',
+      context: 'revision B',
+      link_source: 'markdown',
+    }];
+    const staleOpts = {
+      sourceId: 'default',
+      expectedUpdatedAt: '2026-08-20T00:00:01.123456Z',
+      stampExtractedAt: '2026-08-20T00:00:01.123456Z',
+    } as Parameters<typeof engine.reconcileDerivedLinks>[2] & Record<string, string>;
+    expect(await engine.reconcileDerivedLinks('notes/revision-writer', desiredB, staleOpts))
+      .toEqual({ created: 0, removed: 0 });
+    expect((await engine.getLinks('notes/revision-writer')).map((link) => link.to_slug))
+      .toEqual(['concepts/revision-a']);
+
+    const unstamped = await engine.executeRaw<{ links_extracted_at: string | null }>(
+      `SELECT links_extracted_at FROM pages
+        WHERE source_id = 'default' AND slug = 'notes/revision-writer'`,
+    );
+    expect(unstamped[0]?.links_extracted_at).toBeNull();
+
+    const currentOpts = {
+      sourceId: 'default',
+      expectedUpdatedAt: '2026-08-20T00:00:02.123456Z',
+      stampExtractedAt: '2026-08-20T00:00:02.123456Z',
+    } as Parameters<typeof engine.reconcileDerivedLinks>[2] & Record<string, string>;
+    expect(await engine.reconcileDerivedLinks('notes/revision-writer', desiredB, currentOpts))
+      .toEqual({ created: 1, removed: 1 });
+    expect((await engine.getLinks('notes/revision-writer')).map((link) => link.to_slug))
+      .toEqual(['concepts/revision-b']);
+    const stamped = await engine.executeRaw<{ fresh: boolean }>(
+      `SELECT links_extracted_at = updated_at AS fresh FROM pages
+        WHERE source_id = 'default' AND slug = 'notes/revision-writer'`,
+    );
+    expect(stamped[0]?.fresh).toBe(true);
+  });
 });

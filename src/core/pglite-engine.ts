@@ -1781,7 +1781,7 @@ export class PGLiteEngine implements BrainEngine {
    */
   async resolveSlugsByPaths(
     paths: string[],
-    opts: DerivedLinkReconciliationOpts,
+    opts: { sourceId: string },
   ): Promise<Map<string, string>> {
     if (paths.length === 0) return new Map();
     if (paths.length > DELETE_BATCH_SIZE) {
@@ -3601,7 +3601,7 @@ export class PGLiteEngine implements BrainEngine {
   async reconcileDerivedLinks(
     originSlug: string,
     links: LinkBatchInput[],
-    opts: { sourceId: string },
+    opts: DerivedLinkReconciliationOpts,
   ): Promise<DerivedLinkReconciliationResult> {
     return this.batchRetry('addLinksBatch', undefined, () =>
       runDerivedLinkReconciliation(this, originSlug, links, opts), links.length);

@@ -1844,7 +1844,6 @@ export async function extractStaleFromDB(
 
     const linkRowsByPage: StalePageLinkSet[] = [];
     const timelineRows: TimelineBatchInput[] = [];
-    const processedRefs: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
 
     for (const page of rows) {
       const pageLinkRows: LinkBatchInput[] = [];
@@ -1863,27 +1862,13 @@ export async function extractStaleFromDB(
           to_source_id: r.toSourceId, origin_source_id: page.source_id,
         });
       }
-      // Preserve the empty desired set: it is what removes managed links that
-      // disappeared from this page. addLinksBatch is intentionally additive;
-      // the source-owned reconciliation primitive is the only safe destructive
-      // path because it cannot sweep manual/mentions/other-origin edges.
-      linkRowsByPage.push({
-        originSlug: page.slug,
-        sourceId: page.source_id,
-        links: pageLinkRows,
-        // Exactness applies only to partitions this invocation extracted.
-        // Without --include-frontmatter, preserve frontmatter edges rather
-        // than treating an intentionally omitted set as an empty desired set.
-        linkSources: includeFrontmatter ? undefined : ['markdown', 'wikilink-resolved'],
-      });
       for (const entry of parseTimelineEntries(fullContent)) {
         timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
-      // EVERY processed page is stamped (incl. zero-link pages). D4 race fix:
-      // stamp with the row's READ updated_at, NOT now() — a concurrent edit
-      // landing between this SELECT and the stamp advances updated_at past the
-      // stamped value, so the page stays stale and re-extracts next run instead
-      // of being marked fresh-with-stale-content.
+      // Reconciliation is revision-fenced by the exact updated_at observed
+      // with this content, and the watermark commits inside that same row-lock
+      // transaction. A stale worker is therefore a no-op, even if a newer
+      // worker has already reconciled and stamped the edited body.
       //
       // #1768: stamp the FULL-µs `updated_at_iso` (projected via to_char), NOT
       // `page.updated_at.toISOString()` — the JS Date is ms-truncated, so the
@@ -1900,19 +1885,29 @@ export async function extractStaleFromDB(
       const stampIso = page.updated_at.getTime() >= Date.parse(versionTs)
         ? page.updated_at_iso
         : versionTs;
-      processedRefs.push({ slug: page.slug, source_id: page.source_id, extractedAt: stampIso });
+      // Preserve the empty desired set: it removes managed links that
+      // disappeared. Exactness covers only the provenance partitions this
+      // invocation extracted; frontmatter remains untouched unless requested.
+      linkRowsByPage.push({
+        originSlug: page.slug,
+        sourceId: page.source_id,
+        links: pageLinkRows,
+        linkSources: includeFrontmatter ? undefined : ['markdown', 'wikilink-resolved'],
+        expectedUpdatedAt: page.updated_at_iso,
+        stampExtractedAt: stampIso,
+      });
     }
 
-    // Complete per-origin sets only; throws keep the watermark stale.
-    const reconciled = await reconcileStalePageLinks(engine, linkRowsByPage);
-    linksCreated += reconciled.created; // gbrain-allow-direct-insert: source-owned exact reconciliation is the canonical stale extraction write path
-    linksRemoved += reconciled.removed;
+    // Timeline is additive and must flush before any page can be stamped. A
+    // throw leaves every page stale; replay deduplicates the successful prefix.
     for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
       timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
     }
-    // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
-    // failure surfaces instead of looping forever.
-    await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+    // Complete per-origin sets only. Each reconciliation and watermark stamp
+    // share one revision-fenced transaction; throws keep the page stale.
+    const reconciled = await reconcileStalePageLinks(engine, linkRowsByPage);
+    linksCreated += reconciled.created; // gbrain-allow-direct-insert: source-owned exact reconciliation is the canonical stale extraction write path
+    linksRemoved += reconciled.removed;
 
     pagesProcessed += rows.length;
     progress.tick(rows.length);

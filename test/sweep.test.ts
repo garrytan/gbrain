@@ -26,6 +26,7 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
+import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 
 const KEYLESS: CapabilityReport = {
   embeddings: { available: false },
@@ -242,10 +243,11 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
         WHERE source_id = 'default' AND slug = 'notes/rewrite-example'`,
     );
 
-    await runMaintenanceSweep(engine, {
+    const rewrite = await runMaintenanceSweep(engine, {
       sourceId: 'default',
       capabilities: KEYLESS,
     });
+    expect(rewrite.linksRemoved).toBe(1);
 
     const remaining = await engine.executeRaw<{ link_source: string; context: string }>(
       `SELECT l.link_source, l.context
@@ -259,6 +261,73 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
     expect(remaining).toEqual([
       { link_source: 'manual', context: 'operator-curated relationship' },
     ]);
+  });
+
+  test('bounded sweeps advance through the stale watermark backlog', async () => {
+    await seedPage('concepts/sweep-target', 'concept', 'Target.');
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = now() - interval '1 hour'
+        WHERE slug = 'concepts/sweep-target'`,
+    );
+    for (let i = 0; i < 5; i++) {
+      await seedPage(
+        `notes/sweep-writer-${i}`,
+        'note',
+        `Writer ${i} links [[concepts/sweep-target]].`,
+      );
+      await engine.executeRaw(
+        `UPDATE pages SET updated_at = now() - ($2::int * interval '1 minute')
+          WHERE slug = $1`,
+        [`notes/sweep-writer-${i}`, i],
+      );
+    }
+
+    for (let pass = 0; pass < 3; pass++) {
+      await runMaintenanceSweep(engine, {
+        sourceId: 'default', batchLimit: 2, capabilities: KEYLESS,
+      });
+    }
+
+    const linked = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM links l
+        JOIN pages t ON t.id = l.to_page_id
+        JOIN pages f ON f.id = l.from_page_id
+       WHERE t.slug = 'concepts/sweep-target'
+         AND f.slug LIKE 'notes/sweep-writer-%'`,
+    );
+    expect(linked[0]?.n).toBe(5);
+  });
+
+  test('a concurrent edit cannot be hidden behind a fresh sweep watermark', async () => {
+    await seedPage('concepts/race-a', 'concept', 'A.');
+    await seedPage('concepts/race-b', 'concept', 'B.');
+    await seedPage('notes/race-writer', 'note', 'See [[concepts/race-a]].');
+
+    const original = engine.reconcileDerivedLinks.bind(engine);
+    let edited = false;
+    engine.reconcileDerivedLinks = async (origin, links, opts) => {
+      if (!edited && origin === 'notes/race-writer') {
+        edited = true;
+        await engine.executeRaw(
+          `UPDATE pages
+              SET compiled_truth = 'See [[concepts/race-b]].', updated_at = clock_timestamp()
+            WHERE source_id = 'default' AND slug = 'notes/race-writer'`,
+        );
+      }
+      return original(origin, links, opts);
+    };
+    try {
+      await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYLESS });
+    } finally {
+      engine.reconcileDerivedLinks = original;
+    }
+
+    expect(edited).toBe(true);
+    expect((await engine.getLinks('notes/race-writer')).map((link) => link.to_slug))
+      .not.toContain('concepts/race-a');
+    expect(await engine.countStalePagesForExtraction({
+      sourceId: 'default', versionTs: LINK_EXTRACTOR_VERSION_TS,
+    })).toBe(1);
   });
 });
 
@@ -501,7 +570,7 @@ describe('runMaintenanceSweep — bounded link resolution (no listAllPageRefs)',
     // The bounded resolver path: endpoint refs come from a candidate-scoped
     // lookup, never the whole-brain (slug, source_id) enumeration.
     expect(log).not.toContain('listAllPageRefs');
-    expect(log).toContain('getPage');
+    expect(log).not.toContain('getPage');
   });
 
   test('timeline-only sweep (zero link candidates) skips the ref lookup entirely', async () => {
@@ -563,6 +632,7 @@ describe('runMaintenanceSweep — budget + never-throw', () => {
       corpusIngested: 0,
       factsReconciled: 3,
       linksExtracted: 1,
+      linksRemoved: 0,
       timelineExtracted: 0,
       skipped: [{ reason: 'budget_exhausted:corpus', count: 2 }],
       durationMs: 10,

@@ -330,31 +330,77 @@ describe('gbrain extract --stale', () => {
     // Anchor acme's updated_at in the past so the read value is well-defined.
     await engine.executeRaw(`UPDATE pages SET updated_at = now() - interval '3 hours' WHERE slug = 'companies/acme'`);
 
-    // Simulate an edit landing BETWEEN the list read (updated_at = now-3h) and
-    // the stamp: bump acme's updated_at to now-1h just before the real stamp.
-    // D4 stamps with the READ updated_at (now-3h), so now-1h > now-3h → acme
-    // stays stale (edit preserved). The OLD now()-stamp would set
-    // links_extracted_at = now > now-1h → acme marked fresh, edit silently lost.
-    const origStamp = engine.markPagesExtractedBatch.bind(engine);
+    // Simulate an edit after extraction read but immediately before the
+    // revision-fenced reconciliation transaction takes its row lock.
+    const original = engine.reconcileDerivedLinks.bind(engine);
     let hooked = false;
-    (engine as unknown as { markPagesExtractedBatch: unknown }).markPagesExtractedBatch = async (
-      refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, def: string,
-    ) => {
-      if (!hooked) {
+    engine.reconcileDerivedLinks = async (origin, links, opts) => {
+      if (!hooked && origin === 'companies/acme') {
         hooked = true;
-        await engine.executeRaw(`UPDATE pages SET updated_at = now() - interval '1 hour' WHERE slug = 'companies/acme'`);
+        await engine.executeRaw(
+          `UPDATE pages
+              SET compiled_truth = 'Concurrent edit removed the old link.',
+                  updated_at = clock_timestamp()
+            WHERE slug = 'companies/acme'`,
+        );
       }
-      return origStamp(refs, def);
+      return original(origin, links, opts);
     };
     try {
       await runExtract(engine, ['--stale']);
     } finally {
-      (engine as unknown as { markPagesExtractedBatch: unknown }).markPagesExtractedBatch = origStamp;
+      engine.reconcileDerivedLinks = original;
     }
     expect(hooked).toBe(true);
-    // acme stays stale (only the concurrently-edited page); alice was stamped
-    // with its own read updated_at and is fresh.
+    expect((await engine.getLinks('companies/acme')).map((link) => link.to_slug))
+      .not.toContain('people/alice');
+    // acme stays stale (only the concurrently-edited page); alice committed
+    // its reconciliation + stamp atomically.
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1);
+  });
+
+  test('an older stale worker cannot overwrite a newer worker and freshen the old snapshot', async () => {
+    await engine.putPage('concepts/race-a', { type: 'concept', title: 'A', compiled_truth: 'A.' });
+    await engine.putPage('concepts/race-b', { type: 'concept', title: 'B', compiled_truth: 'B.' });
+    await engine.putPage('notes/race-writer', {
+      type: 'note', title: 'Writer', compiled_truth: 'See [[concepts/race-a]].', timeline: '',
+    });
+
+    const original = engine.reconcileDerivedLinks.bind(engine);
+    let releaseOlder!: () => void;
+    const olderGate = new Promise<void>((resolve) => { releaseOlder = resolve; });
+    let announceBlocked!: () => void;
+    const olderBlocked = new Promise<void>((resolve) => { announceBlocked = resolve; });
+    let blockedOnce = false;
+    engine.reconcileDerivedLinks = async (origin, links, opts) => {
+      if (!blockedOnce && origin === 'notes/race-writer') {
+        blockedOnce = true;
+        announceBlocked();
+        await olderGate;
+      }
+      return original(origin, links, opts);
+    };
+
+    try {
+      const olderRun = runExtract(engine, ['--stale']);
+      await olderBlocked;
+      await engine.executeRaw(
+        `UPDATE pages
+            SET compiled_truth = 'See [[concepts/race-b]].',
+                updated_at = clock_timestamp() + interval '1 second'
+          WHERE source_id = 'default' AND slug = 'notes/race-writer'`,
+      );
+      await runExtract(engine, ['--stale']);
+      releaseOlder();
+      await olderRun;
+    } finally {
+      releaseOlder();
+      engine.reconcileDerivedLinks = original;
+    }
+
+    expect((await engine.getLinks('notes/race-writer')).map((link) => link.to_slug))
+      .toEqual(['concepts/race-b']);
+    expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
   test('--source fs is rejected (DB-source only)', async () => {
