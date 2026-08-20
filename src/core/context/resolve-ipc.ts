@@ -521,6 +521,34 @@ export async function startResolveIpcServer(
   // Remove a stale socket file if present (a previous serve that didn't clean up).
   cleanupStaleSocket(socketPath);
 
+  return listenWithRetry(socketPath, handlers, opts);
+}
+
+/**
+ * win32 EADDRINUSE recovery (2026-08-20 field report): `cleanupStaleSocket`
+ * below is a POSIX-only op — it unlinks a real socket FILE, but on win32
+ * `server.listen(socketPath)` binds a named pipe (`\\.\pipe\<name>`) and no
+ * filesystem entry is ever created, so `existsSync(socketPath)` is always
+ * false there (same root cause as the client-side existsSync gap fixed
+ * 2026-08-19, PR #4330 — this is its server-side sibling). A `gbrain serve`
+ * killed ungracefully (app force-closed, repeated quick close/reopen cycles)
+ * can leave the pipe name held by the OS for a short window before the
+ * kernel reclaims it; the next serve's listen() hits EADDRINUSE against a
+ * name nothing is actually listening on anymore. There is no file to clean
+ * up — the fix is a short bounded retry, which is how Windows itself expects
+ * pipe-name contention to be handled. POSIX gets the existing cleanup path
+ * and never needs a retry (a live listener on a POSIX path is real
+ * contention, not staleness), so the retry loop only engages on win32.
+ */
+const WIN32_LISTEN_RETRY_ATTEMPTS = 5;
+const WIN32_LISTEN_RETRY_DELAY_MS = 300;
+
+function listenWithRetry(
+  socketPath: string,
+  handlers: IpcHandlers,
+  opts: IpcServerOpts,
+  attempt = 0,
+): Promise<net.Server | null> {
   return new Promise((resolve) => {
     const server = net.createServer((conn) => {
       let buf = '';
@@ -594,7 +622,20 @@ export async function startResolveIpcServer(
       });
       conn.on('error', () => { try { conn.destroy(); } catch { /* noop */ } });
     });
-    server.on('error', () => resolve(null));
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (
+        process.platform === 'win32' &&
+        err.code === 'EADDRINUSE' &&
+        attempt < WIN32_LISTEN_RETRY_ATTEMPTS
+      ) {
+        try { server.close(); } catch { /* noop — never bound, best effort */ }
+        setTimeout(() => {
+          listenWithRetry(socketPath, handlers, opts, attempt + 1).then(resolve);
+        }, WIN32_LISTEN_RETRY_DELAY_MS).unref?.();
+        return;
+      }
+      resolve(null);
+    });
     server.listen(socketPath, () => {
       // Mode set BEFORE readiness is announced (the resolve() below) [S3#6].
       try { chmodSync(socketPath, 0o600); } catch { /* best effort */ }

@@ -98,6 +98,60 @@ describe('resolve IPC', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // Server-side sibling of the client existsSync gap above (2026-08-20 field
+  // report): cleanupStaleSocket() unlinks a real socket FILE, which on win32
+  // never exists for a named pipe, so a serve killed ungracefully can leave
+  // the pipe name held by the OS long enough for the next serve's listen()
+  // to hit EADDRINUSE against a name nothing is really listening on anymore.
+  // The fix is a short bounded retry on win32 only. This test reproduces
+  // genuine EADDRINUSE (two real listeners racing the same path — true
+  // contention on every platform, not simulated), gates the win32 branch via
+  // the platform override, and proves the retry both (a) eventually succeeds
+  // once the blocking listener releases and (b) degrades to null instead of
+  // hanging when contention never clears.
+  test('win32: EADDRINUSE retries and succeeds once the blocking listener releases', async () => {
+    const dir = tmpDir();
+    const sock = resolveSocketPath(dir);
+    const blocker = await startResolveIpcServer(sock, async () => null);
+    expect(blocker).not.toBeNull();
+
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const secondAttempt = startResolveIpcServer(sock, async () => ({ pointers: [], text: 'RETRIED-OK' }));
+      // Release the "stale" pipe mid-retry-window (retries run every 300ms).
+      setTimeout(() => { try { blocker!.close(); } catch { /* noop */ } }, 150);
+      const server = await secondAttempt;
+      expect(server).not.toBeNull();
+      servers.push(server!);
+      const got = await resolveViaIpc(sock, { candidates: [{ display: 'A', query: 'A' }] });
+      expect(got).not.toBe(IPC_UNAVAILABLE);
+      expect((got as PointerBlock).text).toBe('RETRIED-OK');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }, 10_000);
+
+  test('win32: EADDRINUSE exhausts retries and degrades to null instead of hanging', async () => {
+    const dir = tmpDir();
+    const sock = resolveSocketPath(dir);
+    const blocker = await startResolveIpcServer(sock, async () => null);
+    expect(blocker).not.toBeNull();
+    servers.push(blocker!);
+
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      // blocker never closes — contention never clears, retries must exhaust.
+      const server = await startResolveIpcServer(sock, async () => null);
+      expect(server).toBeNull();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }, 10_000);
+
   test('server returning null relays as null (resolved, nothing found)', async () => {
     const dir = tmpDir();
     const sock = resolveSocketPath(dir);
