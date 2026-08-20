@@ -22,22 +22,30 @@ import { getCliOptions } from '../core/cli-options.ts';
 
 /**
  * Resolve the gbrain binary + args for spawning subcommands from
- * within skillpack-check. Handles three install cases:
- *   - Running the compiled binary (argv[1] ends in /gbrain): re-exec it.
+ * within skillpack-check. Handles four install cases:
+ *   - Running the compiled binary: re-exec process.execPath. Compiled-vs-dev
+ *     is detected by the RUNTIME's basename not being bun/node (the cli.ts
+ *     check-update precedent): a compiled Bun binary's argv[1] is the virtual
+ *     `/$bunfs/root/gbrain` entrypoint — it ends in `/gbrain` yet spawning it
+ *     is ENOENT (#4094) — and execPath may be a renamed binary
+ *     (`gbrain-darwin-arm64`) that a `/gbrain$` suffix check would miss.
+ *   - An on-disk gbrain launcher run under bun/node (argv[1] ends in /gbrain):
+ *     re-exec argv[1].
  *   - Running via `bun run src/cli.ts` (argv[1] is a .ts file): prefix with `bun run`.
  *   - Anything else: fall back to `which gbrain` on $PATH.
  */
 function gbrainSpawn(): { cmd: string; prefix: string[] } {
+  const exec = process.execPath ?? '';
+  const isDevRuntime = /[/\\](bun|node)(\.exe)?$/.test(exec);
+  if (!isDevRuntime && exec) {
+    return { cmd: exec, prefix: [] };
+  }
   const arg1 = process.argv[1] ?? '';
   if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
     return { cmd: arg1, prefix: [] };
   }
   if (arg1.endsWith('.ts') || arg1.endsWith('.mjs') || arg1.endsWith('.js')) {
     return { cmd: 'bun', prefix: ['run', arg1] };
-  }
-  const execPath = process.execPath ?? '';
-  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
-    return { cmd: execPath, prefix: [] };
   }
   return { cmd: 'gbrain', prefix: [] };
 }
@@ -262,4 +270,4 @@ function isSkillpackCheckSubcommand(): boolean {
 }
 
 /** Exported for unit tests. */
-export const __testing = { buildReport, runDoctor, runMigrationsList };
+export const __testing = { buildReport, runDoctor, runMigrationsList, gbrainSpawn };

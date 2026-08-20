@@ -3,11 +3,15 @@
  *
  * Writes one line per stub-guard fire to
  *   `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/stub-guard-YYYY-Www.jsonl`
- * when `writeFactsToFence` refuses to spawn an unprefixed entity page. The
- * audit log is the operator visibility surface for the v0.34.5+ stub guard
- * sunset criterion: when this reads <5 hits/week for 3 consecutive weeks
- * on production brains, the guard can be removed in v0.36 (the prefix
- * expansion in resolveEntitySlug is sufficient).
+ * when `writeFactsToFence` refuses to spawn an unprefixed entity page
+ * (reason 'unprefixed') or a page for a fallback-resolved slug (#4108,
+ * reason 'fallback_resolution'). The audit log is the operator visibility
+ * surface for the v0.34.5+ stub guard sunset criterion, WHICH APPLIES TO
+ * THE 'unprefixed' REASON ONLY: when unprefixed reads <5 hits/week for 3
+ * consecutive weeks on production brains, that arm can be removed in v0.36
+ * (the prefix expansion in resolveEntitySlug is sufficient). The
+ * 'fallback_resolution' arm never sunsets — it is the only wall between
+ * resolver-invented slugs and canonical page creation.
  *
  * Best-effort: write failures go to stderr and never block the legacy DB-only
  * fallback path. A disk-full attacker could silently disable the trail.
@@ -42,6 +46,11 @@ export interface StubGuardEvent {
   source_id: string;
   /** How many facts were in the rejected batch (informational). */
   fact_count: number;
+  /**
+   * Which guard arm fired (#4108). Optional: pre-#4108 lines have no reason
+   * and are counted as 'unprefixed' (the only arm that existed then).
+   */
+  reason?: 'unprefixed' | 'fallback_resolution';
 }
 
 /**

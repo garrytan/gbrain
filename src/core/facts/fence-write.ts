@@ -38,6 +38,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendF
 import { dirname, isAbsolute, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
+import type { ResolutionSource } from '../entities/resolve.ts';
 import { resolvePageFilePath } from '../markdown.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
@@ -55,6 +56,15 @@ export interface FenceTarget {
   localPath: string | null;
   /** Entity slug — also becomes source_markdown_slug + the file basename. */
   slug: string;
+  /**
+   * #4108: how `slug` was resolved. REQUIRED (not optional) so no caller can
+   * silently skip provenance: 'fallback_slugify' and null (resolver returned
+   * nothing / caller has no resolution step) are blocked from stub-creating a
+   * page — a fallback-minted slug names an entity nothing verified exists.
+   * 'exact_page' / 'alias_exact' / 'fuzzy_match' all verified a live page, so
+   * stub-create (DB↔file drift repair) stays allowed for them.
+   */
+  resolutionSource: ResolutionSource | null;
 }
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
@@ -89,12 +99,15 @@ export interface FenceWriteResult {
   fenceWriteFailed?: true;
   /**
    * True when the stub-creation guard refused to spawn a phantom entity
-   * page for an unprefixed bare slug (e.g. `jared` with no `people/`
-   * directory). Rows were NOT inserted; the caller is expected to route
-   * the facts to the legacy DB-only path so they aren't silently dropped.
+   * page — either for an unprefixed bare slug (e.g. `jared` with no
+   * `people/` directory), or (#4108) for a slug whose resolutionSource is
+   * 'fallback_slugify'/null, i.e. a slug the resolver invented rather than
+   * verified. Rows were NOT inserted; the caller is expected to route the
+   * facts to the legacy DB-only path so they aren't silently dropped.
    *
-   * This is the v0.34.5 fix for the entity-resolution bug where `"Jared"`
-   * fell through resolution and produced a top-level `jared.md` stub.
+   * The unprefixed arm is the v0.34.5 fix for the entity-resolution bug
+   * where `"Jared"` fell through resolution and produced a top-level
+   * `jared.md` stub.
    */
   stubGuardBlocked?: true;
 }
@@ -251,12 +264,17 @@ export async function writeFactsToFence(
     return { inserted: 0, ids: [], legacyFallback: true };
   }
 
-  // Local patch 2026-06-11: route through resolvePageFilePath so non-default
-  // sources fence into `<local_path>/.sources/<id>/<slug>.md` — the same path
-  // the put_page write-through and dream-cycle reverse-render compute. The
-  // bare join wrote main-source fences to the repo ROOT (the default source's
-  // tree), polluting ~/brain with stray root-level fence files.
-  const filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
+  // #4204: FenceTarget.localPath is the source's OWN tree root (from
+  // lookupSourceLocalPath), so its pages file at that root — the 'default'
+  // arm of resolvePageFilePath — matching every other writer/reader of a
+  // source's own tree (scanOneSource read-back, write-through #2018
+  // topology 1, takes-write P1-1, forget.ts's `join(localPath, slug.md)`).
+  // The `.sources/<id>/` nesting is the HOST-repo layout for sources
+  // WITHOUT their own local_path; those never reach this line (callers
+  // fall back to the legacy DB path when local_path is NULL), and sync's
+  // disk walk skips dot-directories, so a fence nested there is invisible
+  // and the next extract_facts reconcile wipes its DB rows.
+  const filePath = resolvePageFilePath(target.localPath, target.slug, 'default');
   const tmpPath = `${filePath}.tmp`;
   const durabilityEnabled = isDurabilityHardened(target.localPath);
 
@@ -268,32 +286,55 @@ export async function writeFactsToFence(
       if (existsSync(filePath)) {
         body = readFileSync(filePath, 'utf-8');
       } else {
-        // Stub-creation guard. Phantom entity pages at the brain root were
-        // being spawned when resolveEntitySlug fell through to a bare
-        // slugify because pg_trgm scored too low on short bare names. The
-        // resolver now has a prefix-expansion step that catches most of
-        // those, but this guard is the second wall: refuse to stub-create
-        // a page whose slug has no directory prefix (people/, companies/,
-        // deals/, topics/, etc.). The caller routes these facts to the
-        // legacy DB-only path so they aren't silently dropped — the fact
-        // still gets recorded, it just doesn't spawn a phantom entity
-        // page on disk.
+        // Stub-creation guard, two arms:
         //
-        // Sunset target: v0.36. Once `stub_guard_24h` (the gbrain doctor
-        // surface backed by the audit log written here) reads <5 hits/week
-        // for 3 consecutive weeks on production brains, the prefix-expansion
-        // in resolveEntitySlug is sufficient and this guard can be removed.
-        // The audit log under `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl`
-        // is the operator visibility surface for that retirement decision.
-        if (!target.slug.includes('/')) {
+        // 1. Unprefixed slug (v0.34.5). Phantom entity pages at the brain
+        //    root were being spawned when resolveEntitySlug fell through to
+        //    a bare slugify because pg_trgm scored too low on short bare
+        //    names. The resolver now has a prefix-expansion step that
+        //    catches most of those, but this arm is the second wall: refuse
+        //    to stub-create a page whose slug has no directory prefix
+        //    (people/, companies/, deals/, topics/, etc.).
+        //
+        // 2. Fallback/absent resolution provenance (#4108). A PREFIXED
+        //    fallback_slugify result (e.g. "companies/zeta-widgets" for an
+        //    entity no page backs) sailed past arm 1 and materialized as a
+        //    canonical stub page; after sync it resolved as exact_page,
+        //    closing a fallback→stub→exact-match feedback loop. Blocklist
+        //    shape on purpose: only 'fallback_slugify' and null are blocked,
+        //    so future ResolutionSource members that verify a live page
+        //    (like v0.46.15's 'alias_exact') fence without touching this.
+        //
+        // Either way the caller routes these facts to the legacy DB-only
+        // path so they aren't silently dropped — the fact still gets
+        // recorded (entity_slug retained), it just doesn't spawn a phantom
+        // entity page on disk.
+        //
+        // Sunset target: v0.36, for arm 1 ONLY (the 'unprefixed' reason in
+        // the audit log). Once `stub_guard_24h` (the gbrain doctor surface
+        // backed by the audit log written here) reads <5 unprefixed
+        // hits/week for 3 consecutive weeks on production brains, the
+        // prefix-expansion in resolveEntitySlug is sufficient and arm 1 can
+        // be removed. Arm 2 does NOT sunset: it is the only wall between
+        // resolver-invented slugs and canonical page creation, and no
+        // resolver improvement can retire it (the fallback floor is by
+        // design). The audit log under
+        // `~/.gbrain/audit/stub-guard-YYYY-Www.jsonl` is the operator
+        // visibility surface, with per-arm `reason` fields.
+        const fallbackResolved =
+          target.resolutionSource === 'fallback_slugify' || target.resolutionSource == null;
+        if (!target.slug.includes('/') || fallbackResolved) {
           logStubGuardEvent({
             slug: target.slug,
             source_id: target.sourceId,
             fact_count: facts.length,
+            reason: !target.slug.includes('/') ? 'unprefixed' : 'fallback_resolution',
           });
           // eslint-disable-next-line no-console
           console.warn(
-            `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`,
+            !target.slug.includes('/')
+              ? `[facts] refusing to stub-create unprefixed entity page slug=${target.slug} — routing to legacy DB-only path. Provide a directory prefix (people/, companies/, etc.) to opt into fence writes.`
+              : `[facts] refusing to stub-create entity page slug=${target.slug} from a fallback-resolved reference (no live page verified) — routing to legacy DB-only path.`,
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true };
         }

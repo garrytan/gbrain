@@ -30,6 +30,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { DELETE_BATCH_SIZE } from '../src/core/engine-constants.ts';
+import { findCollidingFallbackDeletes } from '../src/core/sync-git.ts';
 
 let engine: PGLiteEngine;
 
@@ -54,7 +55,7 @@ async function seedSource(id: string): Promise<void> {
   );
 }
 
-async function seedPageWithPath(slug: string, sourcePath: string, sourceId = 'default'): Promise<number> {
+async function seedPageWithPath(slug: string, sourcePath: string | null, sourceId = 'default'): Promise<number> {
   if (sourceId !== 'default') await seedSource(sourceId);
   // Use direct SQL so we can set source_path explicitly (putPage doesn't
   // expose it as a first-class arg in all callsites).
@@ -209,6 +210,123 @@ describe('engine.resolveSlugsByPaths (single-batch primitive)', () => {
 
     const mBeta = await engine.resolveSlugsByPaths(['overlap.md'], { sourceId: 'beta' });
     expect(mBeta.get('overlap.md')).toBe('b-only');
+  });
+});
+
+describe('#3942 findCollidingFallbackDeletes (fallback-slug collision guard)', () => {
+  test('refuses when the fallback slug resolves to a page backed by a DIFFERENT file', async () => {
+    await seedPageWithPath('wiki/propose/note', 'wiki/propose/note.md');
+    // slugifySegment strips the trailing hyphen: 'wiki/propose-/note.md'
+    // re-slugifies to the clean page's slug (#3942 collision shape).
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'wiki/propose-/note.md', slug: 'wiki/propose/note' }],
+      'default',
+    );
+    expect(refused).toHaveLength(1);
+    expect(refused[0].path).toBe('wiki/propose-/note.md');
+    expect(refused[0].slug).toBe('wiki/propose/note');
+    expect(refused[0].detail).toContain("'wiki/propose/note.md'");
+  });
+
+  test('allows NULL-source_path rows (DB-born / code-strategy / pre-migration back-compat)', async () => {
+    await seedPageWithPath('wiki/db-born', null);
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'wiki/db-born.md', slug: 'wiki/db-born' }],
+      'default',
+    );
+    expect(refused).toHaveLength(0);
+  });
+
+  test('allows phantom slugs with no row at all (deletePages RETURNING filters them)', async () => {
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'wiki/never-existed.md', slug: 'wiki/never-existed' }],
+      'default',
+    );
+    expect(refused).toHaveLength(0);
+  });
+
+  test('allows an exact source_path match', async () => {
+    await seedPageWithPath('wiki/exact', 'wiki/exact.md');
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'wiki/exact.md', slug: 'wiki/exact' }],
+      'default',
+    );
+    expect(refused).toHaveLength(0);
+  });
+
+  test('normalizes separators: a Windows backslash source_path does not false-refuse', async () => {
+    await seedPageWithPath('wiki/win', 'wiki\\win.md');
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'wiki/win.md', slug: 'wiki/win' }],
+      'default',
+    );
+    expect(refused).toHaveLength(0);
+  });
+
+  test('scoped lookup ignores same-slug rows in other sources', async () => {
+    await seedSource('alpha');
+    await seedSource('beta');
+    await seedPageWithPath('shared/guarded', 'shared/guarded.md', 'alpha');
+    await seedPageWithPath('shared/guarded', 'somewhere/else.md', 'beta');
+    // Scoped to alpha: only alpha's row (an exact match) is consulted.
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'shared/guarded.md', slug: 'shared/guarded' }],
+      'alpha',
+    );
+    expect(refused).toHaveLength(0);
+  });
+
+  test('unscoped legacy: refuses when multiple sources share the slug (fail-closed)', async () => {
+    await seedSource('alpha');
+    await seedPageWithPath('shared/multi', 'shared/multi.md', 'default');
+    await seedPageWithPath('shared/multi', 'shared/multi.md', 'alpha');
+    // Even though both rows match the path, the unscoped lookup can't prove
+    // which row deletePage (source 'default') should hit — refuse.
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [{ path: 'shared/multi.md', slug: 'shared/multi' }],
+      undefined,
+    );
+    expect(refused).toHaveLength(1);
+    expect(refused[0].detail).toContain('share this slug');
+  });
+
+  test('unscoped legacy: single row refused on mismatch, allowed on match', async () => {
+    await seedPageWithPath('wiki/legacy-a', 'wiki/legacy-a.md');
+    await seedPageWithPath('wiki/legacy-b', 'wiki/other-file.md');
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [
+        { path: 'wiki/legacy-a.md', slug: 'wiki/legacy-a' },
+        { path: 'wiki/legacy-b.md', slug: 'wiki/legacy-b' },
+      ],
+      undefined,
+    );
+    expect(refused).toHaveLength(1);
+    expect(refused[0].slug).toBe('wiki/legacy-b');
+    expect(refused[0].detail).toContain("'wiki/other-file.md'");
+  });
+
+  test('mixed batch: only the colliding pair is refused, allowed pairs pass through', async () => {
+    await seedPageWithPath('wiki/propose/note', 'wiki/propose/note.md');
+    await seedPageWithPath('wiki/null-born', null);
+    const refused = await findCollidingFallbackDeletes(
+      engine,
+      [
+        { path: 'wiki/propose-/note.md', slug: 'wiki/propose/note' },
+        { path: 'wiki/null-born.md', slug: 'wiki/null-born' },
+        { path: 'wiki/ghost.md', slug: 'wiki/ghost' },
+      ],
+      'default',
+    );
+    expect(refused).toHaveLength(1);
+    expect(refused[0].path).toBe('wiki/propose-/note.md');
   });
 });
 

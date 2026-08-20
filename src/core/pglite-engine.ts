@@ -92,7 +92,7 @@ import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, capFtsQueryTerms, MAX_FTS_QUERY_TERMS } from './search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
@@ -2283,8 +2283,13 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
 
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
     // v0.20.0 Cathedral II Layer 10 C1/C2: language + symbol-kind filters.
-    const params: unknown[] = [query, innerLimit, limit, offset];
+    const params: unknown[] = [cappedQuery, innerLimit, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);
@@ -2363,7 +2368,7 @@ export class PGLiteEngine implements BrainEngine {
     // recall arm relaxes; precision consumers (countMentions,
     // link-extraction, eval) keep the strict-AND contract.
     if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
+      const orQuery = buildOrFallbackWebsearchQuery(cappedQuery);
       if (orQuery) {
         const fallbackParams = [...params];
         fallbackParams[0] = orQuery;
@@ -2381,8 +2386,9 @@ export class PGLiteEngine implements BrainEngine {
    * construction) with the same page-grain filters the keyword arm applies
    * (type/types/excludeSlugs/date/source scoping, hard-excludes,
    * visibility), joined to one representative chunk per page. Applies the
-   * same AND→OR recall fallback as searchKeyword. NO query-length gate —
-   * long exact-title queries are the case this arm exists for.
+   * same AND→OR recall fallback as searchKeyword. The only query bound is
+   * capFtsQueryTerms — a Postgres stack-depth cap (#4091), never a recall
+   * gate; long exact-title queries pass through untouched.
    *
    * CJK queries fall through to websearch FTS here (a single-token CJK
    * query CAN exact-match a single-token CJK title); the richer CJK ILIKE
@@ -2410,7 +2416,12 @@ export class PGLiteEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const params: unknown[] = [query, limit, offset];
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
+    const params: unknown[] = [cappedQuery, limit, offset];
     let extraFilter = '';
     if (opts?.type) {
       params.push(opts.type);
@@ -2479,7 +2490,7 @@ export class PGLiteEngine implements BrainEngine {
 
     let { rows } = await this.db.query(titlesSql, params);
     if (rows.length === 0) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
+      const orQuery = buildOrFallbackWebsearchQuery(cappedQuery);
       if (orQuery) {
         const fallbackParams = [...params];
         fallbackParams[0] = orQuery;
@@ -2667,7 +2678,12 @@ export class PGLiteEngine implements BrainEngine {
       });
     }
 
-    const params: unknown[] = [query, limit, offset];
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
+    const params: unknown[] = [cappedQuery, limit, offset];
     let extraFilter = '';
     if (opts?.language) {
       params.push(opts.language);

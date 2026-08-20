@@ -54,6 +54,94 @@ export async function resolveSlugByPathOrSourcePath(
   return resolveSlugForPath(path);
 }
 
+export interface FallbackDeleteCandidate {
+  /** The deleted file path (git-diff form, forward slashes). */
+  path: string;
+  /** The slug the caller is about to delete for that path. */
+  slug: string;
+}
+
+export interface RefusedFallbackDelete extends FallbackDeleteCandidate {
+  /** Human-readable refusal cause for the `[sync] refusing to delete` warning. */
+  detail: string;
+}
+
+/** Same separator rule as planReconcileDeletes (#2828): a Windows-written
+ * backslash source_path must not false-refuse a git-diff forward-slash path. */
+function normalizePathSeparators(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/**
+ * #3942 — fallback-slug delete collision guard.
+ *
+ * When a deleted path has no `pages.source_path` row (DB-born pages from
+ * pre-#2482 writers, code-strategy pages, pre-migration brains), sync's
+ * delete lanes fall back to re-slugifying the path — and `slugifySegment`
+ * strips trailing hyphens, so distinct paths collapse onto one slug
+ * (`wiki/propose-/x.md` and `wiki/propose/x.md` → `wiki/propose/x`) and the
+ * delete lands on an unrelated page. Same no-slug-guess-deletes rail as the
+ * #3252 rename reconcile, applied to the delete side.
+ *
+ * Given (path, slug) candidates, returns the pairs that must NOT be deleted:
+ *
+ *   - scoped (sourceId set): refuse when the slug's row exists AND its
+ *     source_path is set AND differs from the deleted path. NULL
+ *     source_path or no row keeps the delete-by-path behavior —
+ *     code-strategy pages never populate source_path, and pre-migration
+ *     brains must stay deletable by path.
+ *   - unscoped (legacy no-sourceId callers): additionally refuse when
+ *     multiple rows share the slug across sources — `deletePage` without
+ *     opts hits source 'default', and the lookup can't prove which row the
+ *     caller means (fail-closed).
+ *
+ * Best-effort like resolveSlugByPathOrSourcePath above: a failed lookup
+ * refuses nothing (pre-fix behavior) rather than wedging delete convergence
+ * on a brain where this SELECT persistently fails.
+ */
+export async function findCollidingFallbackDeletes(
+  engine: BrainEngine,
+  candidates: FallbackDeleteCandidate[],
+  sourceId?: string,
+): Promise<RefusedFallbackDelete[]> {
+  if (candidates.length === 0) return [];
+  const slugs = unique(candidates.map(c => c.slug));
+  let rows: Array<{ slug: string; source_path: string | null }>;
+  try {
+    rows = sourceId
+      ? await engine.executeRaw<{ slug: string; source_path: string | null }>(
+          `SELECT slug, source_path FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2`,
+          [slugs, sourceId],
+        )
+      : await engine.executeRaw<{ slug: string; source_path: string | null }>(
+          `SELECT slug, source_path FROM pages WHERE slug = ANY($1::text[])`,
+          [slugs],
+        );
+  } catch {
+    return [];
+  }
+  const bySlug = new Map<string, Array<string | null>>();
+  for (const r of rows) {
+    const list = bySlug.get(r.slug);
+    if (list) list.push(r.source_path);
+    else bySlug.set(r.slug, [r.source_path]);
+  }
+  const refused: RefusedFallbackDelete[] = [];
+  for (const c of candidates) {
+    const stored = bySlug.get(c.slug);
+    if (!stored) continue; // no row: phantom delete; deletePages RETURNING filters it
+    if (!sourceId && stored.length > 1) {
+      refused.push({ ...c, detail: `${stored.length} pages share this slug across sources (unscoped legacy delete)` });
+      continue;
+    }
+    const sp = stored[0];
+    if (sp != null && normalizePathSeparators(sp) !== normalizePathSeparators(c.path)) {
+      refused.push({ ...c, detail: `page is backed by '${sp}'` });
+    }
+  }
+  return refused;
+}
+
 /**
  * git CLI helper.
  *

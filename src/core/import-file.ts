@@ -1762,10 +1762,11 @@ async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
 }
 
 /**
- * Cherry-1 OCR: optional gpt-4o-mini pass extracting visible text from an
+ * Cherry-1 OCR: optional vision-model pass extracting visible text from an
  * image. Returns '' when:
  * - the embedding_image_ocr config flag is off (default)
- * - the configured expansion model is unavailable (no API key)
+ * - the configured OCR model (embedding_image_ocr_model, else the expansion
+ *   model — #4107) is unavailable (no API key / no expansion touchpoint)
  * - the OCR call itself fails (logged once per session)
  *
  * Eng-1B: per-call result is reflected in counters the doctor `ocr_health`
@@ -1793,10 +1794,14 @@ async function maybeOcr(
 
   await bump('ocr_attempted');
   try {
-    const { isAvailable, generateOcrText } = await import('./ai/gateway.ts');
-    if (!isAvailable('expansion')) {
+    const { isAvailable, generateOcrText, getImageOcrModel } = await import('./ai/gateway.ts');
+    // getImageOcrModel throws on an unconfigured gateway; count that as
+    // no-key (the pre-#4107 isAvailable gate returned false there).
+    let ocrModel: string | null = null;
+    try { ocrModel = getImageOcrModel(); } catch { /* unconfigured gateway */ }
+    if (!ocrModel || !isAvailable('expansion', ocrModel)) {
       if (!_ocrWarnedThisSession) {
-        console.warn('[gbrain] OCR opt-in is true but expansion model is unavailable; skipping OCR for this session');
+        console.warn(`[gbrain] OCR opt-in is true but the OCR model (${ocrModel ?? 'gateway unconfigured'}) is unavailable; skipping OCR for this session`);
         _ocrWarnedThisSession = true;
       }
       await bump('ocr_failed_no_key');

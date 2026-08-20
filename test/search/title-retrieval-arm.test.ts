@@ -13,7 +13,8 @@
  * Fixes under test:
  *   C1 — engine.searchTitles: page-grain candidates from pages.search_vector
  *        (title weight 'A'), joined to one representative chunk, fused into
- *        hybridSearch as a keyword-class RRF list. No query-length gate.
+ *        hybridSearch as a keyword-class RRF list. No recall gate; oversized
+ *        pasted blobs are term-capped (#4091 stack-depth bound).
  *   C2 — searchKeyword retries ONCE with OR-of-terms when strict AND
  *        returns zero rows; strict results always win when non-empty.
  *
@@ -292,5 +293,57 @@ describe('hybridSearch wiring — title arm reaches the fused result set', () =>
     expect((await engine.searchKeyword(q, { limit: 5 })).length).toBe(0);
     const results = await hybridSearch(engine, q, { limit: 5 });
     expect(results.map(r => r.slug)).toContain('projects/chronomancer');
+  });
+});
+
+describe('#4091 — oversized pasted query survives the FTS term cap', () => {
+  /** Issue shape: a ~200KB grounding blob (3000 wikilink lines) pasted as the query. */
+  function buildHugeGroundingQuery(): string {
+    return Array.from({ length: 3000 }, (_, i) =>
+      `- [[proj/slug-${i}]] Some Distinct Title Alpha${i} Beta${i} Gamma${i}`
+    ).join('\n');
+  }
+
+  /** Matching rows are load-bearing: an empty DB never evaluates the tsquery. */
+  async function seedGroundingPages(): Promise<void> {
+    for (const i of [1, 2, 3]) {
+      await engine.putPage(`proj/slug-${i}`, {
+        type: 'note',
+        title: `Some Distinct Title Alpha${i} Beta${i} Gamma${i}`,
+        compiled_truth: `Grounding notes Alpha${i} Beta${i} Gamma${i} for project ${i}.`,
+      });
+      await engine.upsertChunks(`proj/slug-${i}`, [
+        {
+          chunk_index: 0,
+          chunk_text: `Grounding notes Alpha${i} Beta${i} Gamma${i} for project ${i}.`,
+          chunk_source: 'compiled_truth',
+        },
+      ]);
+    }
+  }
+
+  test('searchTitles resolves on a ~200KB 21k-term blob and still surfaces early-term pages', async () => {
+    await seedGroundingPages();
+    const huge = buildHugeGroundingQuery();
+    expect(huge.length).toBeGreaterThan(190_000);
+    const hits = await engine.searchTitles(huge, { limit: 5 });
+    expect(Array.isArray(hits)).toBe(true);
+    // The capped strict-AND query matches nothing; the bounded OR fallback
+    // must still retrieve a page whose tokens sit in the first capped terms.
+    expect(hits.map(r => r.slug)).toContain('proj/slug-1');
+  });
+
+  test('searchKeyword (orFallback) resolves on the same blob — no-throw smoke', async () => {
+    await seedGroundingPages();
+    const huge = buildHugeGroundingQuery();
+    const hits = await engine.searchKeyword(huge, { limit: 5, orFallback: true });
+    expect(Array.isArray(hits)).toBe(true);
+  });
+
+  test('searchKeywordChunks resolves on the same blob — no-throw smoke', async () => {
+    await seedGroundingPages();
+    const huge = buildHugeGroundingQuery();
+    const hits = await engine.searchKeywordChunks(huge, { limit: 5 });
+    expect(Array.isArray(hits)).toBe(true);
   });
 });

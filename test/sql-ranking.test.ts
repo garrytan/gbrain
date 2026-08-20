@@ -3,6 +3,9 @@ import {
   buildSourceFactorCase,
   buildHardExcludeClause,
   buildVisibilityClause,
+  buildOrFallbackWebsearchQuery,
+  capFtsQueryTerms,
+  MAX_FTS_QUERY_TERMS,
   escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
@@ -341,5 +344,43 @@ describe('buildVisibilityClause (v0.26.5)', () => {
     const clause = buildVisibilityClause('p', 's');
     expect(clause).not.toContain('@>');
     expect(clause).not.toContain('config');
+  });
+});
+
+// #4091 — FTS term cap (Postgres stack-depth bound, not a recall gate).
+describe('capFtsQueryTerms (#4091)', () => {
+  test('returns short/normal queries byte-identical (operators, quotes, inner whitespace preserved)', () => {
+    const q = '"alpha  beta" -gamma   delta\teps';
+    expect(capFtsQueryTerms(q)).toBe(q);
+    expect(capFtsQueryTerms('Chronomancer Codex Ledger')).toBe('Chronomancer Codex Ledger');
+    expect(capFtsQueryTerms('')).toBe('');
+  });
+
+  test('input exactly at the cap is untouched', () => {
+    const q = Array.from({ length: MAX_FTS_QUERY_TERMS }, (_, i) => `t${i}`).join(' ');
+    expect(capFtsQueryTerms(q)).toBe(q);
+  });
+
+  test('over-cap input truncates on whitespace boundary to exactly the cap', () => {
+    const q = Array.from({ length: 3000 }, (_, i) => `t${i}`).join(' ');
+    const capped = capFtsQueryTerms(q);
+    const tokens = capped.split(' ');
+    expect(tokens.length).toBe(MAX_FTS_QUERY_TERMS);
+    expect(tokens[0]).toBe('t0');
+    expect(tokens[MAX_FTS_QUERY_TERMS - 1]).toBe(`t${MAX_FTS_QUERY_TERMS - 1}`);
+  });
+
+  test('OR fallback of a capped huge input stays bounded', () => {
+    const huge = Array.from({ length: 3000 }, (_, i) => `t${i}`).join(' ');
+    const or = buildOrFallbackWebsearchQuery(capFtsQueryTerms(huge));
+    expect(or).not.toBeNull();
+    expect(or!.split(' OR ').length).toBeLessThanOrEqual(MAX_FTS_QUERY_TERMS);
+  });
+
+  test('belt-and-braces: OR fallback bounds even an uncapped huge input', () => {
+    const huge = Array.from({ length: 3000 }, (_, i) => `t${i}`).join(' ');
+    const or = buildOrFallbackWebsearchQuery(huge);
+    expect(or).not.toBeNull();
+    expect(or!.split(' OR ').length).toBeLessThanOrEqual(MAX_FTS_QUERY_TERMS);
   });
 });

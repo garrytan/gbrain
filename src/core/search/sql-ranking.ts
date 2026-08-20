@@ -228,6 +228,37 @@ export function buildBestPerPagePoolCte(candidateCte: string): string {
 }
 
 // ============================================================
+// FTS query term cap (#4091 — Postgres stack-depth bound)
+// ============================================================
+
+/**
+ * Hard ceiling on whitespace-delimited terms bound into
+ * `websearch_to_tsquery`. tsquery parse/execute recursion scales with term
+ * count: a pasted grounding blob (~20k terms / ~208KB, issue #4091) trips
+ * native Postgres "stack depth limit exceeded" (54001), and on PGLite the
+ * same class of query permanently poisons the WASM instance (every later
+ * query PANICs with ERRORDATA_STACK_SIZE exceeded). 512 sits ~40x below
+ * the observed native failure boundary and orders of magnitude above any
+ * real title — a stack-depth bound, NOT a recall gate.
+ */
+export const MAX_FTS_QUERY_TERMS = 512;
+
+/**
+ * Cap caller query text at MAX_FTS_QUERY_TERMS whitespace-delimited terms.
+ *
+ * Fast path returns the input byte-identical (operators, quotes, internal
+ * whitespace preserved). Over the cap, the first 512 tokens are joined on
+ * single spaces — truncation can split a quoted phrase, which is safe
+ * because websearch_to_tsquery never raises on malformed input (see the
+ * builder note below).
+ */
+export function capFtsQueryTerms(query: string): string {
+  const tokens = query.split(/\s+/u).filter(Boolean);
+  if (tokens.length <= MAX_FTS_QUERY_TERMS) return query;
+  return tokens.slice(0, MAX_FTS_QUERY_TERMS).join(' ');
+}
+
+// ============================================================
 // AND→OR keyword-recall fallback (fix/title-retrieval-arm, D2)
 // ============================================================
 
@@ -269,7 +300,10 @@ export function buildOrFallbackWebsearchQuery(query: string): string | null {
     .filter(Boolean)
     .filter(t => { const u = t.toUpperCase(); return u !== 'OR' && u !== 'AND'; });
   if (tokens.length < 2) return null;
-  return tokens.join(' OR ');
+  // Belt-and-braces #4091: non-alphanumeric splitting can yield MORE tokens
+  // than the caller's whitespace-based cap saw, so bound the OR list here
+  // too — no path may rebuild an unbounded tsquery from capped input.
+  return tokens.slice(0, MAX_FTS_QUERY_TERMS).join(' OR ');
 }
 
 // ============================================================

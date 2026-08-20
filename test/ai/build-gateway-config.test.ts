@@ -272,6 +272,22 @@ describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
   });
 });
 
+describe('buildGatewayConfig OCR-model threading (#4107)', () => {
+  // The config key was declared/env-merged/DB-merged in config.ts but never
+  // picked into AIGatewayConfig, so generateOcrText() could not see it.
+  test('embedding_image_ocr_model reaches the gateway config', () => {
+    const cfg = buildGatewayConfig({
+      embedding_image_ocr_model: 'deepseek:deepseek-v4-pro',
+    } as unknown as GBrainConfig);
+    expect(cfg.embedding_image_ocr_model).toBe('deepseek:deepseek-v4-pro');
+  });
+
+  test('absent embedding_image_ocr_model stays undefined (expansion fallback signal preserved)', () => {
+    const cfg = buildGatewayConfig(baseConfig);
+    expect(cfg.embedding_image_ocr_model).toBeUndefined();
+  });
+});
+
 /**
  * Side-effect guard (v0.37.x): importing buildGatewayConfig from src/cli.ts
  * must NOT trigger the CLI's top-level main() and dump help to stdout. The

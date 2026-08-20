@@ -555,6 +555,25 @@ function isResolverUserError(e: unknown): boolean {
 }
 
 /**
+ * issue #4097 — a scoped drain (or dry-run) that ends at 0 remaining reads as
+ * "done", but the count/drain scope to ONE source: with `sync.repo_path`
+ * unset an unscoped `--drain` runs against the empty 'default' source and
+ * silently no-ops while the backlog lives elsewhere. Stderr-only note (exit
+ * code + stdout JSON envelope unchanged — EXIT_DRAIN_INCOMPLETE consumers
+ * keep their contract); best-effort, a failed recount never blocks the drain.
+ */
+async function noteOtherSourceBacklog(engine: BrainEngine, drainedSourceId: string): Promise<void> {
+  try {
+    const { countExtractAtomsBacklogBySource } = await import('../core/cycle/extract-atoms.ts');
+    const bySource = await countExtractAtomsBacklogBySource(engine);
+    const others = (bySource ?? []).filter((r) => r.source_id !== drainedSourceId && r.cnt > 0);
+    if (others.length === 0) return;
+    const list = others.map((r) => `${r.source_id} (${r.cnt})`).join(', ');
+    process.stderr.write(`[drain] note: source "${drainedSourceId}" has no backlog, but other source(s) do: ${list} — rerun with --source <id>\n`);
+  } catch { /* best-effort */ }
+}
+
+/**
  * issue #1678 — bounded single-hold extract_atoms drain (see DreamArgs.drain).
  * Holds the cycle lock once (same id the routine cycle uses for this source),
  * loops bounded batches rediscovering eligibility, reports remaining, exits
@@ -580,6 +599,7 @@ async function runDrain(
     } else {
       console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
     }
+    if (remaining === 0) await noteOtherSourceBacklog(engine, extractionSourceId);
     // null = the backlog count query FAILED — treat as incomplete, never as
     // "drained" (Codex: `remaining ?? 0` would exit 0 on a failed count and
     // make automation believe the backlog cleared when it was never verified).
@@ -616,6 +636,7 @@ async function runDrain(
   } else {
     console.log(`[drain] extracted ${result.extracted} atom(s) across ${result.batches} batch(es); ${result.remaining ?? '?'} remaining (stopped: ${result.stopped})`);
   }
+  if (result.remaining === 0) await noteOtherSourceBacklog(engine, extractionSourceId);
   // null remaining = the final count query failed; do not report success.
   if (result.remaining === null || result.remaining > 0) process.exit(EXIT_DRAIN_INCOMPLETE);
 }

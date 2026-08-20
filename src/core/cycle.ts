@@ -2258,11 +2258,14 @@ export async function runCycle(
         // `extract_atoms_backlog` doctor check / log scrapers tell a
         // deliberately-off phase apart from a phase that ran with no work. The
         // backlog signal itself lives in doctor (one count, on demand).
+        // #4097: the drain scopes to `--source` (default 'default'), so when
+        // this cycle resolved a source the hint names it — an unscoped command
+        // would drain a different source than the one this cycle skipped.
         phaseResults.push({
           phase: 'extract_atoms',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'extract_atoms: active pack does not declare this phase (run `gbrain dream --phase extract_atoms --drain` to drain a backlog)',
+          summary: `extract_atoms: active pack does not declare this phase (run \`gbrain dream --phase extract_atoms --drain${cycleSourceId ? ` --source ${cycleSourceId}` : ''}\` to drain a backlog)`,
           details: { reason: 'not_in_active_pack', pack_gated: true },
         });
       } else {

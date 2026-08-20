@@ -2,6 +2,99 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.25.0] - 2026-08-20
+
+**Fix wave: 10 verified issues, every one adversarially re-verified against
+HEAD before entering scope.** Two deliberate behavior changes headline it:
+`config get` no longer prints secrets to your terminal by default, and the
+sync delete path now refuses to hard-delete a page when it can't prove the
+page belongs to the deleted file — closing a silent data-loss hole where
+removing `propose-/note.md` could delete an unrelated `propose/note` page.
+
+### Fixed
+
+- **sync:** deleting a file whose fallback-derived slug collides with a page
+  backed by a DIFFERENT file now refuses the delete with a one-shot stderr
+  warning instead of hard-deleting the wrong page; refusals apply to the
+  batched, legacy-unscoped, and unsyncable-cleanup delete paths as joint
+  (path, slug) pairs, and the legacy unscoped path fails closed on any
+  ambiguity. Stale refused pages are cleaned by the next full-sync reconcile
+  (#3942).
+- **config:** `config get` of a sensitive key (API keys, tokens,
+  `database_url`) prints redacted output like `show`/`set` always did; a new
+  `--raw` flag (either side of the key) restores verbatim output for
+  automation. `postgresql://` URLs keep password-only masking (#3943).
+- **dream/cycle:** a judge response that fails to parse during grade_takes now
+  warns and retries next cycle instead of being minted as a durable
+  `unresolvable` verdict cached forever. Previously-minted parse-failure
+  tombstones can be purged with
+  `DELETE FROM take_grade_cache WHERE verdict='unresolvable' AND confidence=0 AND applied=false`
+  — note the fingerprint overmatches legitimately-sparse-evidence rows;
+  the only cost of purging one is a re-grade (#3910).
+- **doctor:** `abandoned_threads` no longer warns spuriously on brains using
+  legal month-precision `since:` dates (YYYY-MM) — the check now normalizes
+  exactly like the calibration chart endpoint (#4041). The
+  `extract_atoms_backlog` fix hint names the source(s) that actually hold
+  backlog (`--source <id>`, multi-source aware, deterministic order) instead
+  of pointing every operator at draining the often-empty `default` source
+  (#4097).
+- **search:** title/keyword FTS arms cap query term fan-out at 512
+  whitespace-separated terms (with a stderr warning on truncation) before
+  binding into `websearch_to_tsquery`, so a 200KB grounding blob degrades to
+  a truncated search instead of a Postgres `stack depth limit exceeded`
+  crash — applied in lockstep to all six methods across both engines (#4091).
+- **skillpack-check:** self-spawn re-execs `process.execPath` instead of the
+  unspawnable `/$bunfs/root/gbrain` virtual entrypoint, so compiled binaries
+  (any on-disk name) pass instead of ENOENT; sibling self-spawn resolvers in
+  autopilot and brain-repo durability get the same guard (#4094).
+- **gateway:** `embedding_image_ocr_model` is honored — `generateOcrText`
+  routes to the configured OCR model (config plumbed end-to-end through
+  gateway config and reconfigure) instead of silently always using the
+  expansion model; OCR spend records carry the real OCR model id. A
+  mis-configured OCR model on an unavailable provider fails closed to `''`
+  (#4107).
+- **facts:** fence writes root-file a non-default source's pages into the
+  source's OWN working tree instead of nesting them under
+  `<tree>/.sources/<id>/` where sync can't see them and extract_facts
+  reconciliation wipes their DB rows (#4204). Facts whose entity resolution
+  fell back to slugification are stored DB-only with provenance instead of
+  minting canonical-looking stub pages for entities that don't exist; any
+  fallback-resolved fact in a group blocks the group's page creation
+  (fail-closed), and guard events are counted under a separate
+  `fallback_resolution` reason so the stub-guard sunset stays evidence-driven
+  (#4108).
+
+### To take advantage of v0.46.25.0
+
+- If automation pipes `gbrain config get <sensitive-key>` into another tool,
+  add `--raw` — the default is now redacted output. Interactive use needs no
+  change.
+- Sync deletes that would have guessed now refuse and warn on stderr; if you
+  see a `refusing to delete` warning, the named page was protected — run a
+  full sync to reconcile, or delete the page explicitly by its real path.
+- Set `embedding_image_ocr_model` to route image OCR to a cheaper or better
+  vision model — it now actually takes effect.
+- Nothing else changes by default: the FTS cap only engages on >512-term
+  queries, and the facts/fence changes correct where files land going
+  forward.
+
+### For contributors
+
+- Thank you to the issue reporters: @DarkNightForge (#3942, #3943),
+  @Masashi-Ono0611 (#3910, #4091), @amitmai (#4041), @h6y3 (#4094),
+  @Kkkkkuro (#4097, #4107), @mikeclay99 (#4108), @GabrielDeniro (#4204).
+- Community PRs evaluated and credited in the wave commits: #4288 by
+  @javieraldape (#4091 — shared-helper direction adopted; extended to all six
+  engine methods), #4248 by @javieraldape (#4097 — hint direction and test
+  scenario adopted), #4334 by @abhiramasonny (#4094 — execPath-first
+  direction; hardened for renamed binaries), #4258 by @harjothkhara (#4204 —
+  broader shared-resolution rewrite considered; wave ships the minimal
+  root-file fix, the deeper unification remains open in the PR).
+- Also in this release: TODOS.md captures five wave follow-ups (the
+  fallback-slugify provenance family audit, jobs/hook self-spawn hardening,
+  the extract_atoms OK-branch blind spot, the ocr_health credential hint, and
+  the subagent stop_reason residual from #4213's supersede note).
+
 ## [0.46.24.0] - 2026-08-20
 
 **`gbrain sync` now works while your agent's brain is live.** On a PGLite

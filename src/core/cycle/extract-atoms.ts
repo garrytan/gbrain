@@ -386,6 +386,49 @@ export async function countExtractAtomsBacklog(
 }
 
 /**
+ * issue #4097 — per-source split of the brain-wide backlog above. The drain
+ * the doctor check recommends scopes to `--source` (default 'default'), so
+ * hint builders need to know WHICH sources hold the backlog: an unscoped
+ * command on a brain whose backlog lives outside 'default' drains the empty
+ * default source and reports success while the backlog keeps growing. Same
+ * eligibility predicate as `countExtractAtomsBacklog` (kept in this file so
+ * the backlog definition can't drift); ORDER BY keeps hints deterministic.
+ *
+ * Fail-soft: returns null on error so callers fall back to an unscoped hint.
+ */
+export async function countExtractAtomsBacklogBySource(
+  engine: BrainEngine,
+): Promise<Array<{ source_id: string; cnt: number }> | null> {
+  try {
+    const sql = `SELECT p.source_id, COUNT(*) AS cnt FROM pages p
+       WHERE p.type = ANY($1::text[])
+         AND p.deleted_at IS NULL
+         AND p.content_hash IS NOT NULL
+         AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+         AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+         ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+         AND length(COALESCE(p.compiled_truth, '')) >= $2
+         AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
+         AND NOT EXISTS (
+           SELECT 1 FROM pages atom
+           WHERE atom.type = 'atom' AND atom.source_id = p.source_id
+             AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+             AND atom.deleted_at IS NULL
+         )
+       GROUP BY p.source_id
+       ORDER BY p.source_id`;
+    const extractableTypes = await resolveExtractableTypes();
+    const rows = await engine.executeRaw<{ source_id: string; cnt: string | number }>(
+      sql, [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]);
+    return rows.map((r) => ({ source_id: r.source_id, cnt: Number(r.cnt) }));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] per-source backlog count failed: ${msg}`);
+    return null;
+  }
+}
+
+/**
  * Batch source-hash idempotency check. Returns the set of contentHash16
  * values that already have an atom row for this source. One SQL
  * roundtrip; migration v104 adds the partial expression index that

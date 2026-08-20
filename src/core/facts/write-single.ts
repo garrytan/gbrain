@@ -33,7 +33,7 @@ export interface SingleFactInput {
   /** Free-text attribution, stored verbatim as the fact's `source`. */
   provenance: string;
   kind?: NewFact['kind'];
-  /** Free-form entity ref; canonicalized via resolveEntitySlug. */
+  /** Free-form entity ref; canonicalized via resolveEntitySlugWithSource. */
   entity?: string | null;
   /** Facts-layer default 'private'; the remember VERB passes 'world' [F2]. */
   visibility?: 'private' | 'world';
@@ -56,7 +56,7 @@ export async function writeSingleFact(
   sourceId: string,
   input: SingleFactInput,
 ): Promise<SingleFactResult> {
-  const { resolveEntitySlug } = await import('../entities/resolve.ts');
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isAvailable, embedOne } = await import('../ai/gateway.ts');
@@ -66,9 +66,13 @@ export async function writeSingleFact(
   const visibility = input.visibility ?? 'private';
   const validUntil = input.validUntil ?? null;
 
-  const resolvedSlug = input.entity
-    ? ((await resolveEntitySlug(engine, sourceId, input.entity)) ?? input.entity)
+  const resolved = input.entity
+    ? await resolveEntitySlugWithSource(engine, sourceId, input.entity)
     : null;
+  const resolvedSlug = input.entity ? (resolved?.slug ?? input.entity) : null;
+  // #4108: provenance for the fence writer's stub guard. Null when the
+  // resolver returned nothing (fail-closed — no live page was verified).
+  const resolutionSource = resolved?.source ?? null;
 
   // Embedding (NOT an LLM call): powers dedup + downstream recall. Fail-soft —
   // a missing/failing provider degrades dedup, never the write.
@@ -139,7 +143,7 @@ export async function writeSingleFact(
   if (fenceable) {
     const result = await writeFactsToFence(
       engine,
-      { sourceId, localPath, slug: resolvedSlug },
+      { sourceId, localPath, slug: resolvedSlug, resolutionSource },
       [
         {
           fact: factText,

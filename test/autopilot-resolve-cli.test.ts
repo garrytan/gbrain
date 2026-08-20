@@ -84,6 +84,24 @@ describe('resolveGbrainCliPath', () => {
       process.argv[1] = origArg1;
     }
   });
+
+  test('NEVER returns the /$bunfs virtual entrypoint (#4094)', async () => {
+    // A compiled Bun binary reports `/$bunfs/root/gbrain` in argv[1]; it ends
+    // in /gbrain but spawning it is ENOENT. With no shim on PATH and a
+    // non-gbrain execPath (the test runtime), the resolver must take the
+    // throw-with-install-hint path rather than hand back the vfs path.
+    const origArg1 = process.argv[1];
+    const emptyDir = mkdtempSync(join(tmpdir(), 'gbrain-nopath-'));
+    process.argv[1] = '/$bunfs/root/gbrain';
+    try {
+      await withEnv({ PATH: emptyDir }, async () => {
+        expect(() => resolveGbrainCliPath()).toThrow(/PATH|resolve/i);
+      });
+    } finally {
+      process.argv[1] = origArg1;
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
 });
 
 

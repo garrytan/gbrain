@@ -120,8 +120,10 @@ function resolveGbrainCliPath(): string {
   } catch { /* not on PATH */ }
   const exec = process.execPath ?? '';
   if (exec.endsWith('/gbrain') || exec.endsWith('\\gbrain.exe')) return exec;
+  // #4094: skip argv[1] when it is the compiled binary's /$bunfs virtual
+  // entrypoint — it ends in /gbrain but spawning it is ENOENT.
   const arg1 = process.argv[1] ?? '';
-  if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) return arg1;
+  if (!arg1.startsWith('/$bunfs/') && (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe'))) return arg1;
   return 'gbrain';
 }
 function credStoreFile(): string {

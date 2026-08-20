@@ -5,11 +5,11 @@
 # Columns: path	max_lines	policy	note
 src/commands/doctor.ts	4291	ratchet	peel target: containment sprint C8-C13; grown v0.46.x keyless not_configured state
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
-src/core/postgres-engine.ts	5837	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
-src/core/pglite-engine.ts	5881	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
+src/core/postgres-engine.ts	5853	ratchet	peel target: containment sprint C15; grown v0.46.23.0 putPage empty-overwrite guard (#4335) + #4091 FTS term cap
+src/core/pglite-engine.ts	5897	ratchet	peel target: containment sprint C15; grown v0.46.23.0 putPage guard (#4335) + #4284 close watchdog + #4091 FTS term cap
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
-src/commands/sync.ts	4327	ratchet	grown v0.46.24.0 serve-delegated sync: onProgress seam + help text
-src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
+src/commands/sync.ts	4375	ratchet	peel target: containment sprint C13-C14; grown v0.46.24.0 serve-delegated sync (#4362) + #3942 fallback-slug delete collision guard
+src/core/ai/gateway.ts	4449	ratchet	watchlist; merged: dream-wave turn permits + key-aware reconfigure + env-only worker refresh + discovery docstring + #4107 OCR-model routing (getImageOcrModel)
 src/cli.ts	3499	ratchet	grown v0.46.24.0: serve-delegated sync preflight hook
 src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
@@ -19,7 +19,7 @@ src/core/engine.ts	2351	ratchet	grown v0.46.23.0: putPage allowEmptyOverwrite co
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
-src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
+src/core/import-file.ts	2005	ratchet	grown v0.46.11.0 five-issue wave + v0.46.23.0 merge union with #4107 OCR-model doc/plumbing
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
 src/commands/embed.ts	1963	ratchet
 src/core/types.ts	1879	ratchet	grown v0.46.22.0 phone wave: supersession rerank result fields (#4056)

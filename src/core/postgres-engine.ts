@@ -81,7 +81,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, capFtsQueryTerms, MAX_FTS_QUERY_TERMS } from './search/sql-ranking.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
@@ -1917,7 +1917,12 @@ export class PostgresEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
-    const params: unknown[] = [query];
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
+    const params: unknown[] = [cappedQuery];
     let typeClause = '';
     if (type) {
       params.push(type);
@@ -2046,7 +2051,7 @@ export class PostgresEngine implements BrainEngine {
         boundParams[0] = queryText;
         return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true });
-    let rows = await runKeyword(query);
+    let rows = await runKeyword(cappedQuery);
     // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
     // grain mean one non-co-occurring token zeroes keyword recall. When the
     // strict query returns nothing, retry ONCE with OR-of-terms — through
@@ -2057,7 +2062,7 @@ export class PostgresEngine implements BrainEngine {
     // recall arm relaxes; precision consumers (countMentions,
     // link-extraction, eval) keep the strict-AND contract.
     if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
+      const orQuery = buildOrFallbackWebsearchQuery(cappedQuery);
       if (orQuery) rows = await runKeyword(orQuery);
     }
     return rows.map(rowToSearchResult);
@@ -2070,8 +2075,9 @@ export class PostgresEngine implements BrainEngine {
    * construction) with the same page-grain filters the keyword arm applies
    * (type/types/excludeSlugs/date/source scoping, hard-excludes,
    * visibility), joined to one representative chunk per page. Applies the
-   * same AND→OR recall fallback as searchKeyword. NO query-length gate —
-   * long exact-title queries are the case this arm exists for.
+   * same AND→OR recall fallback as searchKeyword. The only query bound is
+   * capFtsQueryTerms — a Postgres stack-depth cap (#4091), never a recall
+   * gate; long exact-title queries pass through untouched.
    */
   async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     // language/symbolKind are chunk-grain code filters with no page-grain
@@ -2095,7 +2101,12 @@ export class PostgresEngine implements BrainEngine {
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
 
-    const params: unknown[] = [query];
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
+    const params: unknown[] = [cappedQuery];
     let typeClause = '';
     if (opts?.type) {
       params.push(opts.type);
@@ -2192,9 +2203,9 @@ export class PostgresEngine implements BrainEngine {
         boundParams[0] = queryText;
         return await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
       }, { alwaysTransaction: true });
-    let rows = await runTitles(query);
+    let rows = await runTitles(cappedQuery);
     if (rows.length === 0) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
+      const orQuery = buildOrFallbackWebsearchQuery(cappedQuery);
       if (orQuery) rows = await runTitles(orQuery);
     }
     return rows.map(rowToSearchResult);
@@ -2231,7 +2242,12 @@ export class PostgresEngine implements BrainEngine {
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
 
-    const params: unknown[] = [query];
+    const cappedQuery = capFtsQueryTerms(query);
+    if (cappedQuery !== query) {
+      console.warn(`[gbrain] Warning: FTS query capped to first ${MAX_FTS_QUERY_TERMS} terms (#4091 stack-depth bound)`);
+    }
+
+    const params: unknown[] = [cappedQuery];
     let typeClause = '';
     if (type) {
       params.push(type);

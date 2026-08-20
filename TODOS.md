@@ -1,5 +1,47 @@
 # TODOS
 
+## fix-wave-j follow-ups (filed 2026-08-19; wave: #3942 #3943 #3910 #4041 #4091 #4094 #4097 #4107 #4108 #4204)
+
+- [ ] **P2 — Provenance-aware slug-resolution audit.** **What:** #3252, #3447,
+  #3942, #4108, and #4204 are one recurring bug family: a caller re-derives or
+  fallback-derives a slug (`fallbackSlugify`, `resolveSlugForPath` re-slugify)
+  and downstream code treats the guess as canonical. The wave added the third
+  and fourth pointwise guards; audit every remaining `fallbackSlugify`/
+  re-slugify consumer and thread `ResolutionSource` provenance (the #4108
+  pattern) through the write/delete paths that still lack it. **Why:** each
+  pointwise guard ships after a data-loss incident; provenance threading ends
+  the class. **Where to start:** `src/core/entities/resolve.ts` callers;
+  `grep -rn fallbackSlugify src/`. **Effort:** M.
+
+- [ ] **P3 — Self-spawn hardening for `jobs.ts` and `hook.ts`.** **What:** same
+  class as #4094 — `src/commands/jobs.ts` (`sup --detach`) prepends
+  `process.argv[1]` unconditionally (bogus `/$bunfs/...` first arg on compiled
+  binaries) and `src/commands/hook.ts` guards on the weaker `/gbrain$/`
+  execPath test that misfires for renamed binaries. Apply the
+  `resolveSelfSpawn` shape #4094 introduced in skillpack-check. **Why:** same
+  ENOENT/mis-spawn failure mode, different entry points. **Effort:** S.
+
+- [ ] **P3 — `extract_atoms_backlog` declared-pack OK-branch blind spot.**
+  **What:** the OK branch (`src/commands/doctor/checks/extraction-sync.ts`)
+  says "active pack runs extract_atoms each cycle", but source-scoped cycles
+  exclude `extract_atoms` (phase-scope), so a non-default source's backlog can
+  sit silently behind an `ok` status. #4097 fixed the warn branch's hint; the
+  OK branch still assumes unscoped cycles. **Why:** silent backlog behind a
+  green check. **Effort:** S.
+
+- [ ] **P3 — `ocr_health` doctor hint hardcodes OPENAI_API_KEY.** **What:** the
+  fix hint in `src/commands/doctor.ts` says "verify OPENAI_API_KEY is set"
+  regardless of which provider serves OCR; stale for non-openai expansion
+  models and now for `embedding_image_ocr_model` (#4107). Derive the provider
+  from the resolved OCR model. **Why:** operators chase the wrong credential.
+  **Effort:** S.
+
+- [ ] **P3 — Subagent stop_reason residual (from #4213's supersede note).**
+  **What:** #4253 dead-letters zero-write subagent jobs (#4217), but a child
+  that wrote pages and then ended with a bad stop_reason still counts as a
+  fully successful run. time-attack flagged this for re-filing when closing
+  #4213. **Why:** partial-honesty gap in the same accounting seam. **Where:**
+  `src/core/minions/handlers/subagent.ts` result mapping. **Effort:** S.
 ## Serve-delegated sync follow-ups (v0.46.24.0)
 
 - [ ] **P3 — `sync --all` under delegation.** **What:** delegate a multi-source

@@ -116,8 +116,12 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const key = args[1];
-  const value = args[2];
+  // #3943: `--raw` (get's redaction opt-out) may appear before the key, so
+  // strip it from the positional scan rather than reading args[1] blindly.
+  const rawFlag = args.includes('--raw');
+  const positionals = args.filter((a) => a !== '--raw');
+  const key = positionals[1];
+  const value = positionals[2];
 
   if (action === 'get' && key) {
     // #2120: `get` used to read only the DB plane, so a runtime-effective key
@@ -137,7 +141,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const dbVal = await engine.getConfig(key);
     const val = fileVal !== undefined && fileVal !== null ? fileVal : dbVal;
     if (val !== null && val !== undefined) {
-      console.log(typeof val === 'string' ? val : JSON.stringify(val));
+      // #3943: redact by default like `show`/`set` — `get` output lands in
+      // agent transcripts and shell history; scripts opt out with the flag.
+      const out = typeof val === 'string' ? val : JSON.stringify(val);
+      console.log(rawFlag ? out : redactConfigValue(key, out));
       if (fileVal !== undefined && fileVal !== null) {
         const shadow = dbVal !== null && dbVal !== undefined
           ? ' — a DB-plane value also exists and is shadowed at runtime'

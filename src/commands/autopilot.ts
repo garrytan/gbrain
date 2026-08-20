@@ -197,8 +197,8 @@ export function resolveWindowsCliPath(): string {
  *      enumeration (resolveWindowsCliPath) on win32, where `which` does
  *      not exist (#3793).
  *   2. process.execPath if it ends with /gbrain (compiled binary, no shim).
- *   3. argv[1] if it ends with /gbrain (e.g., direct invocation of compiled
- *      binary without PATH). Never .ts source paths.
+ *   3. argv[1] if it ends with /gbrain (direct invocation without PATH). Never
+ *      .ts source paths or the unspawnable /$bunfs virtual entrypoint (#4094).
  *   4. Throw with a clear install hint.
  */
 export function resolveGbrainCliPath(): string {
@@ -237,7 +237,7 @@ export function resolveGbrainCliPath(): string {
   }
 
   const arg1 = process.argv[1] ?? '';
-  if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
+  if (!arg1.startsWith('/$bunfs/') && (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe'))) {
     return arg1;
   }
 

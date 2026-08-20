@@ -38,6 +38,7 @@
  */
 
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
+import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 
@@ -469,7 +470,8 @@ async function runPipeline(
  *
  * Pipeline:
  *   1. extract (extractFactsFromTurn — sanitize + LLM + parser)
- *   2. resolve (resolveEntitySlug — canonicalize free-form entity refs)
+ *   2. resolve (resolveEntitySlugWithSource — canonicalize free-form entity
+ *      refs, provenance-tagged for the #4108 stub guard)
  *   3. dedup   (findCandidateDuplicates + cosineSimilarity @ 0.95)
  *   4. write   (writeFactsToFence → markdown atomic write + engine.insertFacts)
  *
@@ -488,7 +490,7 @@ async function runPipelineWithBody(
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
   const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
-  const { resolveEntitySlug } = await import('../entities/resolve.ts');
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
 
@@ -549,6 +551,8 @@ async function runPipelineWithBody(
   type SurvivedFact = {
     f: typeof facts[number];
     resolvedSlug: string | null;
+    // #4108: resolution provenance threaded to the fence writer's stub guard.
+    resolutionSource: ResolutionSource | null;
   };
   const survived: SurvivedFact[] = [];
 
@@ -558,9 +562,11 @@ async function runPipelineWithBody(
     // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    const resolvedSlug = f.entity_slug
-      ? await resolveEntitySlug(ctx.engine, ctx.sourceId, f.entity_slug)
+    const resolved = f.entity_slug
+      ? await resolveEntitySlugWithSource(ctx.engine, ctx.sourceId, f.entity_slug)
       : null;
+    const resolvedSlug = resolved?.slug ?? null;
+    const resolutionSource = resolved?.source ?? null;
 
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence
@@ -591,7 +597,7 @@ async function runPipelineWithBody(
       continue;
     }
 
-    survived.push({ f, resolvedSlug });
+    survived.push({ f, resolvedSlug, resolutionSource });
   }
 
   if (survived.length === 0) {
@@ -684,9 +690,18 @@ async function runPipelineWithBody(
       sessionId: f.source_session ?? null,
     }));
 
+    // #4108 fail-closed on mixed provenance: one fallback-minted ref in the
+    // group means the slug's existence is unproven — block the whole group.
+    // (byEntity members always resolved non-null, so null here is defensive.)
+    const groupResolutionSource: ResolutionSource = group.some(
+      (s) => s.resolutionSource === 'fallback_slugify' || s.resolutionSource == null,
+    )
+      ? 'fallback_slugify'
+      : group[0].resolutionSource!;
+
     const result = await writeFactsToFence(
       ctx.engine,
-      { sourceId: ctx.sourceId, localPath, slug },
+      { sourceId: ctx.sourceId, localPath, slug, resolutionSource: groupResolutionSource },
       inputFacts,
     );
 
@@ -700,10 +715,13 @@ async function runPipelineWithBody(
     }
     if (result.stubGuardBlocked) {
       // v0.34.5: writeFactsToFence refused to spawn a phantom
-      // unprefixed entity page (e.g. `jared.md` at brain root).
-      // Route these facts to the legacy DB-only path so they
+      // unprefixed entity page (e.g. `jared.md` at brain root) —
+      // or, #4108, a page for a fallback-resolved slug no live page
+      // backs. Route these facts to the legacy DB-only path so they
       // aren't dropped — the slug stays attached but no markdown
-      // file is created.
+      // file is created. This also keeps blocked slugs out of
+      // fencedSlugs, so fallback-minted slugs never reach the
+      // entity_slugs checkpoint/link manifests downstream.
       for (const { f } of group) {
         const newFact: NewFact = {
           fact: f.fact,
@@ -716,7 +734,7 @@ async function runPipelineWithBody(
           confidence: f.confidence,
           embedding: f.embedding ?? null,
         };
-        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed or fallback-resolved entity slugs (no fenceable page)
         fact_ids.push(legacyResult.id);
         if (legacyResult.status === 'inserted') inserted += 1;
         else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;

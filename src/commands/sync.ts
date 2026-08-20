@@ -85,6 +85,8 @@ import {
   isDetachedHead,
   unique,
   resolveSlugByPathOrSourcePath,
+  findCollidingFallbackDeletes,
+  type FallbackDeleteCandidate,
   createSyncBaselineCommit,
   isWithinRoot,
   resolveNoEmbed,
@@ -1308,6 +1310,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     try {
       const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
+        // #3942: getPage can't see source_path, and a fallback re-slugified
+        // path can name an unrelated page (trailing-hyphen collapse). Same
+        // guard as the delete loops: never delete a row verifiably backed by
+        // a different file.
+        const refusedCleanup = await findCollidingFallbackDeletes(engine, [{ path, slug }], opts.sourceId);
+        if (refusedCleanup.length > 0) {
+          serr(`[sync] refusing to delete un-syncable page '${slug}': resolved from '${path}' but ${refusedCleanup[0].detail}`);
+          continue;
+        }
         await engine.deletePage(slug, pageOpts);
         slog(`  Deleted un-syncable page: ${slug}`);
       }
@@ -1631,7 +1642,32 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // semantics.
           pathSlugMap = new Map();
         }
-        const slugs = batch.map(p => pathSlugMap.get(p) ?? resolveSlugForPath(p));
+        // #3942: a pair whose slug came from the fallback re-slugify (path
+        // absent from Phase A's map) can name an UNRELATED page — the
+        // trailing-hyphen strip in slugifySegment collapses distinct paths
+        // onto one slug — and deletePages would hard-delete it. Guard only
+        // fallback pairs; filter refusals as (path, slug) pairs JOINTLY so
+        // deletePaths[]/slugs[] stay index-aligned for the decompose catch
+        // below. A refusal is deterministic (the row is verifiably backed by
+        // a different file), so refused paths are checkpointed rather than
+        // failed — the source_path-keyed full-sync reconcile is the durable
+        // cleanup for genuinely stale rows.
+        const fallbackPairs: FallbackDeleteCandidate[] = [];
+        const pairs = batch.map(p => {
+          const dbSlug = pathSlugMap.get(p);
+          const pair = { path: p, slug: dbSlug ?? resolveSlugForPath(p) };
+          if (dbSlug === undefined) fallbackPairs.push(pair);
+          return pair;
+        });
+        const refused = await findCollidingFallbackDeletes(engine, fallbackPairs, sid);
+        for (const r of refused) {
+          serr(`[sync] refusing to delete '${r.slug}': resolved from '${r.path}' but ${r.detail}`);
+          await markCompleted(r.path);
+        }
+        const refusedPaths = new Set(refused.map(r => r.path));
+        const deletable = refusedPaths.size > 0 ? pairs.filter(pr => !refusedPaths.has(pr.path)) : pairs;
+        const deletePaths = deletable.map(pr => pr.path);
+        const slugs = deletable.map(pr => pr.slug);
 
         // Phase B: batch delete (1 round-trip per batch).
         try {
@@ -1643,7 +1679,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           for (const s of deleted) deletedSlugs.add(s);
           // v0.42.x (#1794): the whole batch is handled (deleted or already
           // gone); checkpoint every path so a resume skips it.
-          for (const p of batch) await markCompleted(p);
+          for (const p of deletePaths) await markCompleted(p);
         } catch (err) {
           // D7 decompose: a transient blip on this batch shouldn't lose all
           // 500 deletes. Fall back to per-slug deletePage for THIS batch
@@ -1654,10 +1690,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
               deletedSlugs.add(slugs[j]);
-              await markCompleted(batch[j]);
+              await markCompleted(deletePaths[j]);
             } catch (perSlugErr) {
               failedFiles.push({
-                path: batch[j],
+                path: deletePaths[j],
                 error: `delete failed: ${perSlugErr instanceof Error ? perSlugErr.message : String(perSlugErr)} (batch error: ${err instanceof Error ? err.message : String(err)})`,
               });
             }
@@ -1678,6 +1714,18 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           return await partial('timeout');
         }
         const slug = await resolveSlugByPathOrSourcePath(engine, path, undefined);
+        // #3942: same fallback-collision guard as the batched path, in its
+        // fail-closed unscoped form — deletePage(slug, undefined) hits source
+        // 'default', so an ambiguous multi-source slug or a row backed by a
+        // different file is never guess-deleted. Refusals checkpoint like the
+        // batched path (deterministic; full-sync reconcile is the cleanup).
+        const legacyRefused = await findCollidingFallbackDeletes(engine, [{ path, slug }], undefined);
+        if (legacyRefused.length > 0) {
+          serr(`[sync] refusing to delete '${slug}': resolved from '${path}' but ${legacyRefused[0].detail}`);
+          await markCompleted(path);
+          progress.tick(1, slug);
+          continue;
+        }
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);

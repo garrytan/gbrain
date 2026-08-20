@@ -980,10 +980,10 @@ export interface BrainEngine {
    * lowest chunk_index) so rows are shaped like searchKeyword's output and
    * can enter RRF fusion in hybridSearch.
    *
-   * Deliberately NO query-length gating — unlike the alias hop (≤6-token
+   * No recall-motivated query-length gate — unlike the alias hop (≤6-token
    * guard) and the title-phrase re-rank boost, this arm must GENERATE
-   * candidates for long exact-title queries, which is exactly where
-   * chunk-grain AND FTS is weakest.
+   * candidates for long exact-title queries. The only bound is
+   * capFtsQueryTerms: a Postgres stack-depth cap (#4091), not a recall gate.
    */
   searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]>;
   searchVector(embedding: Float32Array, opts?: SearchOpts): Promise<SearchResult[]>;

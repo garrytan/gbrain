@@ -415,7 +415,8 @@ export async function computeExtractAtomsBacklogCheck(
   const name = 'extract_atoms_backlog';
   const approx = 'page backlog only; transcript corpus not counted';
   try {
-    const { countExtractAtomsBacklog } = await import('../../../core/cycle/extract-atoms.ts');
+    const { countExtractAtomsBacklog, countExtractAtomsBacklogBySource } =
+      await import('../../../core/cycle/extract-atoms.ts');
     const backlog = await countExtractAtomsBacklog(engine); // brain-wide
     if (backlog === null) {
       return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
@@ -436,11 +437,20 @@ export async function computeExtractAtomsBacklogCheck(
     // The incident: pack does NOT run the phase but a real backlog exists →
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
-      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      // #4097: the drain scopes to `--source` (default 'default'), so the hint
+      // names each backlog-holding source — the unscoped command on a brain
+      // whose backlog lives outside 'default' drains the empty default source
+      // and reports success. Fail-soft: a failed breakdown keeps the old
+      // unscoped hint rather than dropping the warn.
+      const bySource = await countExtractAtomsBacklogBySource(engine);
+      const suffix = '(or declare extract_atoms in your active schema pack)';
+      const fix = bySource === null || bySource.length === 0
+        ? `gbrain dream --phase extract_atoms --drain --window 120 ${suffix}`
+        : `${bySource.map((r) => `gbrain dream --phase extract_atoms --drain --window 120 --source ${r.source_id}`).join('; ')} ${suffix}`;
       return {
         name, status: 'warn',
         message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
-        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+        details: { backlog, backlog_by_source: bySource ?? undefined, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
       };
     }
 

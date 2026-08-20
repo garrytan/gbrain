@@ -1007,12 +1007,12 @@ export async function buildChecks(
   }
 
   // 3b-tris. Stub-guard fire count (last 24h). The v0.34.5 stub guard in
-  // fence-write.ts refuses to spawn unprefixed entity pages (e.g. bare
-  // `alice.md` at brain root). Each fire is appended to
-  // ~/.gbrain/audit/stub-guard-YYYY-Www.jsonl. This check is the operator
-  // visibility surface for the guard's v0.36 sunset criterion: when the
-  // 24h count is consistently low, the prefix-expansion in
-  // resolveEntitySlug is doing its job and the guard can be removed.
+  // fence-write.ts refuses to spawn unprefixed entity pages (bare `alice.md`
+  // at brain root); the #4108 arm refuses pages for fallback-resolved slugs
+  // no live page backs. Fires append per-arm `reason` lines to
+  // ~/.gbrain/audit/stub-guard-YYYY-Www.jsonl (pre-#4108 lines lack one and
+  // count as unprefixed). The v0.36 sunset criterion covers 'unprefixed'
+  // ONLY; the fallback_resolution arm never sunsets.
   //
   // WARN at >10 fires/24h — at that rate the resolver is probably missing
   // a case (typo prefix, alias, non-Latin script). Operators should grep
@@ -1021,20 +1021,20 @@ export async function buildChecks(
   try {
     const { readRecentStubGuardEvents } = await import('../core/facts/stub-guard-audit.ts');
     const events = readRecentStubGuardEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const fallbackCount = events.filter((e) => e.reason === 'fallback_resolution').length;
+    const reasonSplit = `unprefixed=${events.length - fallbackCount}, fallback_resolution=${fallbackCount}`;
     if (events.length > 10) {
       // Surface the top 3 slugs that hit it so operators have somewhere to start.
       const slugCounts = new Map<string, number>();
       for (const e of events) slugCounts.set(e.slug, (slugCounts.get(e.slug) ?? 0) + 1);
       const topSlugs = [...slugCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([slug, n]) => `${slug}(${n})`)
-        .join(', ');
+        .sort((a, b) => b[1] - a[1]).slice(0, 3)
+        .map(([slug, n]) => `${slug}(${n})`).join(', ');
       checks.push({
         name: 'stub_guard_24h',
         status: 'warn',
         message:
-          `Stub guard fired ${events.length}x in last 24h (top: ${topSlugs}). ` +
+          `Stub guard fired ${events.length}x in last 24h (${reasonSplit}; top: ${topSlugs}). ` +
           `If this stays elevated, the prefix-expansion in resolveEntitySlug is ` +
           `missing a case. Check ~/.gbrain/audit/stub-guard-*.jsonl for the slugs ` +
           `that hit it.`,
@@ -1043,7 +1043,7 @@ export async function buildChecks(
       checks.push({
         name: 'stub_guard_24h',
         status: 'ok',
-        message: `Stub guard fired ${events.length}x in last 24h (below WARN threshold of 10).`,
+        message: `Stub guard fired ${events.length}x in last 24h (${reasonSplit}; below WARN threshold of 10).`,
       });
     }
     // Zero hits is the goal — emit no check at all so the doctor output stays clean.
