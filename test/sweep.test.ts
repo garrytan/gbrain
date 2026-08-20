@@ -301,7 +301,12 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
   test('a concurrent edit cannot be hidden behind a fresh sweep watermark', async () => {
     await seedPage('concepts/race-a', 'concept', 'A.');
     await seedPage('concepts/race-b', 'concept', 'B.');
-    await seedPage('notes/race-writer', 'note', 'See [[concepts/race-a]].');
+    await seedPage(
+      'notes/race-writer',
+      'note',
+      'See [[concepts/race-a]].',
+      '- **2026-01-02** | obsolete sweep event',
+    );
 
     const original = engine.reconcileDerivedLinks.bind(engine);
     let edited = false;
@@ -310,7 +315,9 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
         edited = true;
         await engine.executeRaw(
           `UPDATE pages
-              SET compiled_truth = 'See [[concepts/race-b]].', updated_at = clock_timestamp()
+              SET compiled_truth = 'See [[concepts/race-b]].',
+                  timeline = '',
+                  updated_at = clock_timestamp()
             WHERE source_id = 'default' AND slug = 'notes/race-writer'`,
         );
       }
@@ -325,6 +332,8 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
     expect(edited).toBe(true);
     expect((await engine.getLinks('notes/race-writer')).map((link) => link.to_slug))
       .not.toContain('concepts/race-a');
+    expect((await engine.getTimeline('notes/race-writer')).map((entry) => entry.summary))
+      .not.toContain('obsolete sweep event');
     expect(await engine.countStalePagesForExtraction({
       sourceId: 'default', versionTs: LINK_EXTRACTOR_VERSION_TS,
     })).toBe(1);

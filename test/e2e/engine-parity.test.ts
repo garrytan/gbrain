@@ -727,6 +727,103 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     });
   });
 
+  test('revision fencing preserves microseconds and admits timeline atomically on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      const slug = 'notes/dlr-microsecond-fence';
+      await eng.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', timeline: '' });
+      await eng.executeRaw(
+        `UPDATE pages
+            SET updated_at = '2026-08-20T00:48:23.673596Z', links_extracted_at = NULL
+          WHERE source_id = 'default' AND slug = $1`,
+        [slug],
+      );
+      const rows = await eng.executeRaw<{ updated_at_iso: string }>(
+        `SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+           FROM pages WHERE source_id = 'default' AND slug = $1`,
+        [slug],
+      );
+      const observed = rows[0]!.updated_at_iso;
+      expect(observed).toBe('2026-08-20T00:48:23.673596Z');
+      expect(await eng.reconcileDerivedLinks(slug, [], {
+        sourceId: 'default',
+        expectedUpdatedAt: observed,
+        stampExtractedAt: observed,
+        timelineEntries: [{
+          slug, date: '2026-08-20', summary: 'microsecond-fenced event', source_id: 'default',
+        }],
+      })).toEqual({ created: 0, removed: 0, timelineCreated: 1, applied: true });
+      const stamped = await eng.executeRaw<{ fresh: boolean }>(
+        `SELECT links_extracted_at = updated_at AS fresh
+           FROM pages WHERE source_id = 'default' AND slug = $1`,
+        [slug],
+      );
+      expect(stamped[0]?.fresh).toBe(true);
+    }
+  });
+
+  test('reciprocal revision-fenced origins do not deadlock on Postgres', async () => {
+    const slugA = 'notes/dlr-reciprocal-a';
+    const slugB = 'notes/dlr-reciprocal-b';
+    for (const slug of [slugA, slugB]) {
+      await pgEngine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', timeline: '' });
+    }
+    const observed = new Map<string, string>();
+    for (const slug of [slugA, slugB]) {
+      const rows = await pgEngine.executeRaw<{ updated_at_iso: string }>(
+        `SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+           FROM pages WHERE source_id = 'default' AND slug = $1`,
+        [slug],
+      );
+      observed.set(slug, rows[0]!.updated_at_iso);
+    }
+
+    // A BEFORE INSERT pause makes both transactions acquire their distinct
+    // origin locks before reciprocal FK checks. `FOR UPDATE` deadlocks here;
+    // `FOR NO KEY UPDATE` remains compatible with the FK's KEY SHARE lock.
+    await pgEngine.executeRaw(`
+      CREATE OR REPLACE FUNCTION dlr_pause_before_link_insert()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_sleep(0.15);
+        RETURN NEW;
+      END $$
+    `);
+    await pgEngine.executeRaw(`
+      CREATE TRIGGER dlr_pause_before_link_insert
+      BEFORE INSERT ON links
+      FOR EACH ROW EXECUTE FUNCTION dlr_pause_before_link_insert()
+    `);
+    try {
+      const [a, b] = await Promise.all([
+        pgEngine.reconcileDerivedLinks(slugA, [{
+          from_slug: slugA,
+          to_slug: slugB,
+          link_source: 'markdown',
+        }], {
+          sourceId: 'default',
+          expectedUpdatedAt: observed.get(slugA)!,
+          stampExtractedAt: observed.get(slugA)!,
+          timelineEntries: [],
+        }),
+        pgEngine.reconcileDerivedLinks(slugB, [{
+          from_slug: slugB,
+          to_slug: slugA,
+          link_source: 'markdown',
+        }], {
+          sourceId: 'default',
+          expectedUpdatedAt: observed.get(slugB)!,
+          stampExtractedAt: observed.get(slugB)!,
+          timelineEntries: [],
+        }),
+      ]);
+      expect(a.applied).toBe(true);
+      expect(b.applied).toBe(true);
+    } finally {
+      await pgEngine.executeRaw('DROP TRIGGER IF EXISTS dlr_pause_before_link_insert ON links');
+      await pgEngine.executeRaw('DROP FUNCTION IF EXISTS dlr_pause_before_link_insert()');
+    }
+  }, 10_000);
+
   test('v0.41.19.0 resolveSlugsByPaths parity: same Map on both engines', async () => {
     const seedSql = `
       INSERT INTO pages (source_id, slug, source_path, type, title, compiled_truth, timeline, frontmatter)

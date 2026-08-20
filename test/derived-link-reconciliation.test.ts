@@ -166,9 +166,12 @@ describe('reconcileDerivedLinks', () => {
       sourceId: 'default',
       expectedUpdatedAt: '2026-08-20T00:00:01.123456Z',
       stampExtractedAt: '2026-08-20T00:00:01.123456Z',
-    } as Parameters<typeof engine.reconcileDerivedLinks>[2] & Record<string, string>;
+      timelineEntries: [{
+        slug: 'notes/revision-writer', date: '2026-08-19', summary: 'stale event', source_id: 'default',
+      }],
+    };
     expect(await engine.reconcileDerivedLinks('notes/revision-writer', desiredB, staleOpts))
-      .toEqual({ created: 0, removed: 0 });
+      .toEqual({ created: 0, removed: 0, timelineCreated: 0, applied: false });
     expect((await engine.getLinks('notes/revision-writer')).map((link) => link.to_slug))
       .toEqual(['concepts/revision-a']);
 
@@ -182,9 +185,12 @@ describe('reconcileDerivedLinks', () => {
       sourceId: 'default',
       expectedUpdatedAt: '2026-08-20T00:00:02.123456Z',
       stampExtractedAt: '2026-08-20T00:00:02.123456Z',
-    } as Parameters<typeof engine.reconcileDerivedLinks>[2] & Record<string, string>;
+      timelineEntries: [{
+        slug: 'notes/revision-writer', date: '2026-08-20', summary: 'current event', source_id: 'default',
+      }],
+    };
     expect(await engine.reconcileDerivedLinks('notes/revision-writer', desiredB, currentOpts))
-      .toEqual({ created: 1, removed: 1 });
+      .toEqual({ created: 1, removed: 1, timelineCreated: 1, applied: true });
     expect((await engine.getLinks('notes/revision-writer')).map((link) => link.to_slug))
       .toEqual(['concepts/revision-b']);
     const stamped = await engine.executeRaw<{ fresh: boolean }>(
@@ -192,5 +198,7 @@ describe('reconcileDerivedLinks', () => {
         WHERE source_id = 'default' AND slug = 'notes/revision-writer'`,
     );
     expect(stamped[0]?.fresh).toBe(true);
+    expect((await engine.getTimeline('notes/revision-writer')).map((entry) => entry.summary))
+      .toEqual(['current event']);
   });
 });

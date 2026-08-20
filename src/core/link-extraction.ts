@@ -43,7 +43,7 @@ import { slugifyPath } from './sync.ts';
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-08-19T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-08-20T00:53:06Z';
 
 // ─── Entity references ──────────────────────────────────────────
 

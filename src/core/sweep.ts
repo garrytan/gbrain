@@ -19,9 +19,9 @@
  *   2. LINK/TIMELINE EXTRACTION [CX-P0.3] — zero-LLM, deterministic. The
  *      same per-page cores `gbrain extract links|timeline --source db`
  *      runs: extractPageLinks + parseTimelineEntries, endpoint-validated
- *      through resolveCandidateSources and batch-written via
- *      addLinksBatch / addTimelineEntriesBatch, then watermark-stamped
- *      (stampExtracted) since both kinds ran.
+ *      through resolveCandidateSources. Timeline rows flush first; managed
+ *      links reconcile exactly per origin under an updated_at row-lock fence,
+ *      with the shared watermark stamped in that same transaction.
  *
  *   3. CORPUS INGEST [CX-P0.1] — LLM-backed, spend-gated. Unprocessed
  *      `.txt` files in the dream corpus dir run through the narrowest
@@ -262,9 +262,9 @@ interface PassCtx {
  * Pass 2 body. Calls the SAME per-page cores as `gbrain extract
  * links|timeline --source db` (extract.ts:extractLinksFromDB /
  * extractTimelineFromDB): extractPageLinks + parseTimelineEntries, with
- * resolveCandidateSources doing the multi-source endpoint validation and
- * stampExtracted advancing the links_extracted_at watermark (both kinds
- * run here, so stamping is correct per extract.ts's C3/D6 rule).
+ * resolveCandidateSources doing multi-source endpoint validation. The exact
+ * reconciliation primitive also revision-fences + advances the watermark
+ * atomically when both kinds run (extract.ts C3/D6 rule).
  */
 async function runLinksTimelinePass(
   engine: BrainEngine,
@@ -330,6 +330,7 @@ async function runLinksTimelinePass(
   const pageCandidates: Array<{
     slug: string;
     candidates: Extracted['candidates'];
+    timelineEntries: TimelineBatchInput[];
     expectedUpdatedAt: string;
     stampExtractedAt: string;
   }> = [];
@@ -346,6 +347,21 @@ async function runLinksTimelinePass(
     const slug = page.slug;
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
+    const pageTimelineEntries: TimelineBatchInput[] = [];
+    if (timelineEnabled) {
+      for (const entry of parseTimelineEntries(fullContent)) {
+        pageTimelineEntries.push({
+          slug,
+          date: entry.date,
+          summary: entry.summary,
+          detail: entry.detail || '',
+          source_id: sourceId,
+        });
+      }
+      // With links disabled there is no revision-fenced origin transaction
+      // and the shared watermark cannot advance; keep the legacy additive path.
+      if (!linksEnabled) tlBatch.push(...pageTimelineEntries);
+    }
 
     if (linksEnabled) {
       // Reconcile the complete page-owned partition. Frontmatter can author
@@ -363,23 +379,10 @@ async function runLinksTimelinePass(
       pageCandidates.push({
         slug,
         candidates: extracted.candidates,
+        timelineEntries: pageTimelineEntries,
         expectedUpdatedAt: page.updated_at_iso,
         stampExtractedAt,
       });
-    }
-
-    if (timelineEnabled) {
-      for (const entry of parseTimelineEntries(fullContent)) {
-        // Same row shape as extractTimelineFromDB's batch push (extract.ts):
-        // no explicit source (engine default applies), detail '' when empty.
-        tlBatch.push({
-          slug,
-          date: entry.date,
-          summary: entry.summary,
-          detail: entry.detail || '',
-          source_id: sourceId,
-        });
-      }
     }
 
   }
@@ -393,12 +396,14 @@ async function runLinksTimelinePass(
   // only the rows it can possibly use. Zero candidates ⇒ zero queries.
   const linksByPage = new Map<string, {
     links: LinkBatchInput[];
+    timelineEntries: TimelineBatchInput[];
     expectedUpdatedAt: string;
     stampExtractedAt: string;
   }>();
   for (const page of pageCandidates) {
     linksByPage.set(page.slug, {
       links: [],
+      timelineEntries: page.timelineEntries,
       expectedUpdatedAt: page.expectedUpdatedAt,
       stampExtractedAt: page.stampExtractedAt,
     });
@@ -433,8 +438,10 @@ async function runLinksTimelinePass(
     }
   }
 
-  // Timeline is additive and must flush before any page can be stamped.
-  if (tlBatch.length > 0) {
+  // Timeline-only mode cannot stamp the combined watermark and retains the
+  // legacy additive batch path. Combined mode admits timeline rows inside the
+  // same revision-fenced transaction as exact link reconciliation.
+  if (!linksEnabled && tlBatch.length > 0) {
     report.timelineExtracted += await engine.addTimelineEntriesBatch(tlBatch); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]
   }
   // Reconciliation is exact and destructive, so every page carries the
@@ -444,12 +451,15 @@ async function runLinksTimelinePass(
     const reconciled = await engine.reconcileDerivedLinks(slug, desired.links, {
       sourceId,
       expectedUpdatedAt: desired.expectedUpdatedAt,
+      ...(timelineEnabled ? { timelineEntries: desired.timelineEntries } : {}),
       ...(linksEnabled && timelineEnabled
         ? { stampExtractedAt: desired.stampExtractedAt }
         : {}),
     });
     report.linksExtracted += reconciled.created; // gbrain-allow-direct-insert: the sweep IS the extract path for workspace pages — remote put_page skips extraction by design [CX-P0.3]
     report.linksRemoved += reconciled.removed;
+    report.timelineExtracted += reconciled.timelineCreated ?? 0;
+    if (reconciled.applied === false) skip('revision_conflict:links_timeline');
   }
 }
 

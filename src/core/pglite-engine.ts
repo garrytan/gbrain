@@ -3603,8 +3603,9 @@ export class PGLiteEngine implements BrainEngine {
     links: LinkBatchInput[],
     opts: DerivedLinkReconciliationOpts,
   ): Promise<DerivedLinkReconciliationResult> {
-    return this.batchRetry('addLinksBatch', undefined, () =>
-      runDerivedLinkReconciliation(this, originSlug, links, opts), links.length);
+    return this.batchRetry(opts.auditSite ?? 'addLinksBatch', opts.signal, () =>
+      runDerivedLinkReconciliation(this, originSlug, links, opts),
+      Math.max(1, links.length, opts.timelineEntries?.length ?? 0));
   }
 
   private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {

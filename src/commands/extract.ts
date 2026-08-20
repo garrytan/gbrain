@@ -1766,10 +1766,10 @@ async function extractTimelineFromDB(
  * DB-source (works on checkout-less Postgres/Supabase brains). Mirrors
  * embedAllStale's count → keyset-list → flush → stamp shape.
  *
- * Crash-safety + CDX-4: reconcile complete source-owned link sets and flush
- * timeline rows before stamping the keyset batch. A throw leaves pages stale;
- * replay is idempotent. Every processed page is stamped, including pages with
- * an empty desired link set (which removes obsolete managed edges).
+ * Crash-safety + CDX-4: each complete source-owned link set, timeline
+ * projection, and watermark stamp commit in one revision-fenced transaction.
+ * A throw or concurrent page edit leaves that page stale; replay is
+ * idempotent. Empty desired link sets still remove obsolete managed edges.
  */
 export async function extractStaleFromDB(
   engine: BrainEngine,
@@ -1780,7 +1780,7 @@ export async function extractStaleFromDB(
     sourceIdFilter?: string;
     catchUp: boolean;
   },
-): Promise<{ linksCreated: number; linksRemoved: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number }> {
+): Promise<{ linksCreated: number; linksRemoved: number; timelineCreated: number; pagesProcessed: number; pagesAttempted: number; revisionRejected: number; staleRemaining: number; skippedMissingTarget?: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
@@ -1791,11 +1791,11 @@ export async function extractStaleFromDB(
     } else {
       console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
     }
-    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: totalStale };
   }
   if (totalStale === 0) {
     if (!jsonMode) console.log('No stale pages — extraction is up to date.');
-    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: 0 };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the
@@ -1829,7 +1829,8 @@ export async function extractStaleFromDB(
 
   const startMs = Date.now();
   let afterPageId = 0;
-  let linksCreated = 0, linksRemoved = 0, timelineCreated = 0, pagesProcessed = 0;
+  let linksCreated = 0, linksRemoved = 0, timelineCreated = 0;
+  let pagesProcessed = 0, pagesAttempted = 0, revisionRejected = 0;
   let budgetHit = false;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
@@ -1843,10 +1844,10 @@ export async function extractStaleFromDB(
     if (rows.length === 0) break;
 
     const linkRowsByPage: StalePageLinkSet[] = [];
-    const timelineRows: TimelineBatchInput[] = [];
 
     for (const page of rows) {
       const pageLinkRows: LinkBatchInput[] = [];
+      const pageTimelineRows: TimelineBatchInput[] = [];
       const fullContent = page.compiled_truth + '\n' + page.timeline;
       const extracted = await extractPageLinks(
         page.slug, fullContent, page.frontmatter, page.type, resolver,
@@ -1863,7 +1864,7 @@ export async function extractStaleFromDB(
         });
       }
       for (const entry of parseTimelineEntries(fullContent)) {
-        timelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
+        pageTimelineRows.push({ slug: page.slug, date: entry.date, summary: entry.summary, detail: entry.detail || '', source_id: page.source_id });
       }
       // Reconciliation is revision-fenced by the exact updated_at observed
       // with this content, and the watermark commits inside that same row-lock
@@ -1895,21 +1896,21 @@ export async function extractStaleFromDB(
         linkSources: includeFrontmatter ? undefined : ['markdown', 'wikilink-resolved'],
         expectedUpdatedAt: page.updated_at_iso,
         stampExtractedAt: stampIso,
+        timelineEntries: pageTimelineRows,
       });
     }
 
-    // Timeline is additive and must flush before any page can be stamped. A
-    // throw leaves every page stale; replay deduplicates the successful prefix.
-    for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-      timelineCreated += await engine.addTimelineEntriesBatch(timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
-    }
-    // Complete per-origin sets only. Each reconciliation and watermark stamp
-    // share one revision-fenced transaction; throws keep the page stale.
+    // Each origin's timeline admission, complete managed-link set, and
+    // watermark stamp share one revision-fenced transaction. An older worker
+    // is a fully observable no-op — it cannot leak obsolete timeline rows.
     const reconciled = await reconcileStalePageLinks(engine, linkRowsByPage);
     linksCreated += reconciled.created; // gbrain-allow-direct-insert: source-owned exact reconciliation is the canonical stale extraction write path
     linksRemoved += reconciled.removed;
+    timelineCreated += reconciled.timelineCreated;
+    pagesProcessed += reconciled.pagesApplied;
+    revisionRejected += reconciled.revisionRejected;
 
-    pagesProcessed += rows.length;
+    pagesAttempted += rows.length;
     progress.tick(rows.length);
     afterPageId = rows[rows.length - 1]!.id;
 
@@ -1920,7 +1921,10 @@ export async function extractStaleFromDB(
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
 
   if (!jsonMode) {
-    console.log(`Extract --stale: ${linksCreated} link(s) added, ${linksRemoved} stale managed link(s) removed + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    console.log(`Extract --stale: ${linksCreated} link(s) added, ${linksRemoved} stale managed link(s) removed + ${timelineCreated} timeline entr(ies); ${pagesProcessed}/${pagesAttempted} page snapshot(s) applied.`);
+    if (revisionRejected > 0) {
+      console.log(`Revision fence rejected ${revisionRejected} stale page snapshot(s); they remain queued for replay.`);
+    }
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
@@ -1930,11 +1934,12 @@ export async function extractStaleFromDB(
   } else {
     process.stdout.write(JSON.stringify({
       action: 'extract_stale_done', links_created: linksCreated, links_removed: linksRemoved, timeline_created: timelineCreated,
-      pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
+      pages_processed: pagesProcessed, pages_attempted: pagesAttempted,
+      revision_rejected: revisionRejected, stale_remaining: staleRemaining, budget_hit: budgetHit,
       skipped_missing_target: skippedMissingTarget,
     }) + '\n');
   }
-  return { linksCreated, linksRemoved, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget };
+  return { linksCreated, linksRemoved, timelineCreated, pagesProcessed, pagesAttempted, revisionRejected, staleRemaining, skippedMissingTarget };
 }
 
 /**

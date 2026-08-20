@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runExtract } from '../src/commands/extract.ts';
+import { extractStaleFromDB, runExtract } from '../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import type { PageInput } from '../src/core/types.ts';
 
@@ -346,8 +346,14 @@ describe('gbrain extract --stale', () => {
       }
       return original(origin, links, opts);
     };
+    let result: Awaited<ReturnType<typeof extractStaleFromDB>>;
     try {
-      await runExtract(engine, ['--stale']);
+      result = await extractStaleFromDB(engine, {
+        dryRun: false,
+        jsonMode: false,
+        includeFrontmatter: false,
+        catchUp: false,
+      });
     } finally {
       engine.reconcileDerivedLinks = original;
     }
@@ -356,6 +362,10 @@ describe('gbrain extract --stale', () => {
       .not.toContain('people/alice');
     // acme stays stale (only the concurrently-edited page); alice committed
     // its reconciliation + stamp atomically.
+    expect(result.pagesAttempted).toBe(2);
+    expect(result.pagesProcessed).toBe(1);
+    expect(result.revisionRejected).toBe(1);
+    expect(result.staleRemaining).toBe(1);
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(1);
   });
 
@@ -363,7 +373,8 @@ describe('gbrain extract --stale', () => {
     await engine.putPage('concepts/race-a', { type: 'concept', title: 'A', compiled_truth: 'A.' });
     await engine.putPage('concepts/race-b', { type: 'concept', title: 'B', compiled_truth: 'B.' });
     await engine.putPage('notes/race-writer', {
-      type: 'note', title: 'Writer', compiled_truth: 'See [[concepts/race-a]].', timeline: '',
+      type: 'note', title: 'Writer', compiled_truth: 'See [[concepts/race-a]].',
+      timeline: '- **2026-01-02** | obsolete event',
     });
 
     const original = engine.reconcileDerivedLinks.bind(engine);
@@ -387,6 +398,7 @@ describe('gbrain extract --stale', () => {
       await engine.executeRaw(
         `UPDATE pages
             SET compiled_truth = 'See [[concepts/race-b]].',
+                timeline = '',
                 updated_at = clock_timestamp() + interval '1 second'
           WHERE source_id = 'default' AND slug = 'notes/race-writer'`,
       );
@@ -400,6 +412,8 @@ describe('gbrain extract --stale', () => {
 
     expect((await engine.getLinks('notes/race-writer')).map((link) => link.to_slug))
       .toEqual(['concepts/race-b']);
+    expect((await engine.getTimeline('notes/race-writer')).map((entry) => entry.summary))
+      .not.toContain('obsolete event');
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 

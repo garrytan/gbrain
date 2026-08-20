@@ -102,12 +102,14 @@ async function runStaleExtraction(
   return {
     name: 'extract_stale',
     status: 'applied',
-    message: `Processed ${result.pagesProcessed} stale page(s); ${result.staleRemaining} remain.`,
+    message: `Applied ${result.pagesProcessed}/${result.pagesAttempted} stale page snapshot(s); ${result.staleRemaining} remain.`,
     details: {
       links_created: result.linksCreated,
       links_removed: result.linksRemoved,
       timeline_created: result.timelineCreated,
       pages_processed: result.pagesProcessed,
+      pages_attempted: result.pagesAttempted,
+      revision_rejected: result.revisionRejected,
       stale_remaining: result.staleRemaining,
     },
   };

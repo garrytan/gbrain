@@ -178,11 +178,15 @@ export interface DerivedLinkReconciliationResult {
   created: number;
   /** Previously-derived rows no longer present in the page and deleted. */
   removed: number;
+  /** Timeline rows admitted under the same revision fence, when requested. */
+  timelineCreated?: number;
+  /** False when expectedUpdatedAt no longer matched the origin page. */
+  applied?: boolean;
 }
 
 export type ManagedDerivedLinkSource = 'markdown' | 'wikilink-resolved' | 'frontmatter';
 
-export interface DerivedLinkReconciliationOpts {
+export interface DerivedLinkReconciliationOpts extends BatchOpts {
   sourceId: string;
   /** Managed provenance partitions represented completely by `links`. Default: all. */
   linkSources?: readonly ManagedDerivedLinkSource[];
@@ -190,6 +194,8 @@ export interface DerivedLinkReconciliationOpts {
   expectedUpdatedAt?: string;
   /** Atomically stamp `links_extracted_at` after reconciliation. Requires expectedUpdatedAt. */
   stampExtractedAt?: string;
+  /** Additive timeline projection admitted under the same revision fence. */
+  timelineEntries?: TimelineBatchInput[];
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
@@ -1206,12 +1212,10 @@ export interface BrainEngine {
    * crash mid-batch leaves pages unstamped and they re-extract next run.
    *
    * Each ref may carry its own `extractedAt`; refs that omit it use the
-   * `defaultExtractedAt` arg. `gbrain extract --stale` passes the row's READ
-   * `updated_at` per ref (v0.42.7 D4 race fix) so a concurrent edit landing
-   * between the SELECT and this stamp advances `updated_at` past the stamped
-   * value → the page stays stale → re-extracted next run, never marked
-   * fresh-with-the-old-content. Sync / DB-extract sites omit per-ref values and
-   * pass `now()` (the page was just imported, so `now() >= updated_at`).
+   * `defaultExtractedAt` arg. Sync / DB-extract sites use this best-effort
+   * batch stamp after additive extraction. Exact stale replay instead uses
+   * `reconcileDerivedLinks({expectedUpdatedAt, stampExtractedAt})` so its
+   * destructive write and watermark commit under one origin-page row lock.
    */
   markPagesExtractedBatch(refs: Array<{ slug: string; source_id: string; extractedAt?: string }>, defaultExtractedAt: string): Promise<void>;
 

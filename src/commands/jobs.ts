@@ -2342,9 +2342,9 @@ export async function registerBuiltinHandlers(
       });
       // Internal 30-min budget hit with work remaining → chain a
       // continuation job so a very large deferred backlog converges without
-      // waiting for the next sync. Forward-progress guard (pagesProcessed >
-      // 0) prevents an infinite chain if the sweep can't advance.
-      if (!job.data.dryRun && r.staleRemaining > 0 && r.pagesProcessed > 0) {
+      // waiting for the next sync. Attempted rows include revision-conflict
+      // no-ops, which remain stale and deserve the next bounded pass.
+      if (!job.data.dryRun && r.staleRemaining > 0 && r.pagesAttempted > 0) {
         try {
           const queue = new MinionQueue(engine);
           // NO maxWaiting: with an unscoped (NULL-sourceId) payload the

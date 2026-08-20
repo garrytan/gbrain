@@ -15,7 +15,7 @@ import type {
   LinkBatchInput,
   ManagedDerivedLinkSource,
 } from './engine.ts';
-import { buildLinkRows, type LinkRow } from './batch-rows.ts';
+import { buildLinkRows, buildTimelineRows, type LinkRow, type TimelineRow } from './batch-rows.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { validateSlug } from './utils.ts';
@@ -128,6 +128,22 @@ export async function runDerivedLinkReconciliation(
   if (opts.stampExtractedAt && !opts.expectedUpdatedAt) {
     throw new Error('stampExtractedAt requires expectedUpdatedAt');
   }
+  if (opts.stampExtractedAt && opts.timelineEntries === undefined) {
+    throw new Error('stampExtractedAt requires a timelineEntries projection (empty is valid)');
+  }
+  const timelineRows: TimelineRow[] | undefined = opts.timelineEntries === undefined
+    ? undefined
+    : buildTimelineRows(opts.timelineEntries.map((entry) => {
+    if (validateSlug(entry.slug) !== originSlug) {
+      throw new Error('timeline reconciliation rows must belong to the scoped origin page');
+    }
+    const entrySourceId = entry.source_id ?? opts.sourceId;
+    assertValidSourceId(entrySourceId);
+    if (entrySourceId !== opts.sourceId) {
+      throw new Error('timeline reconciliation rows must belong to the scoped source');
+    }
+    return { ...entry, slug: originSlug, source_id: opts.sourceId };
+  }));
 
   return engine.transaction(async (tx) => {
     // Revision fence + row lock: a worker may have extracted an older body
@@ -136,13 +152,37 @@ export async function runDerivedLinkReconciliation(
     // worker can overwrite newer edges and subsequently mark them fresh.
     if (opts.expectedUpdatedAt) {
       const current = await tx.executeRaw<{ matches: boolean }>(
-        `SELECT updated_at = $3::timestamptz AS matches
+        `SELECT updated_at = $3::text::timestamptz AS matches
            FROM pages
           WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL
-          FOR UPDATE`,
+          FOR NO KEY UPDATE`,
         [originSlug, opts.sourceId, opts.expectedUpdatedAt],
       );
-      if (current[0]?.matches !== true) return { created: 0, removed: 0 };
+      if (current[0]?.matches !== true) {
+        return {
+          created: 0,
+          removed: 0,
+          ...(timelineRows !== undefined ? { timelineCreated: 0 } : {}),
+          applied: false,
+        };
+      }
+    }
+
+    let timelineCreated = 0;
+    if (timelineRows && timelineRows.length > 0) {
+      const insertedTimeline = await executeRawJsonb<{ one: number }>(
+        tx,
+        `INSERT INTO timeline_entries (page_id, date, source, summary, detail)
+         SELECT p.id, v.date::date, v.source, v.summary, v.detail
+           FROM jsonb_to_recordset(($1::jsonb)->'rows')
+             AS v(slug text, date text, source text, summary text, detail text, source_id text)
+           JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
+         ON CONFLICT (page_id, date, summary, source) DO NOTHING
+         RETURNING 1 AS one`,
+        [],
+        [{ rows: timelineRows }],
+      );
+      timelineCreated = insertedTimeline.length;
     }
 
     const inserted = await executeRawJsonb<{ one: number }>(
@@ -225,12 +265,17 @@ export async function runDerivedLinkReconciliation(
 
     if (opts.stampExtractedAt) {
       await tx.executeRaw(
-        `UPDATE pages SET links_extracted_at = $3::timestamptz
+        `UPDATE pages SET links_extracted_at = $3::text::timestamptz
           WHERE slug = $1 AND source_id = $2`,
         [originSlug, opts.sourceId, opts.stampExtractedAt],
       );
     }
 
-    return { created: inserted.length, removed: removed.length };
+    return {
+      created: inserted.length,
+      removed: removed.length,
+      ...(timelineRows !== undefined ? { timelineCreated } : {}),
+      ...(opts.expectedUpdatedAt ? { applied: true } : {}),
+    };
   });
 }
