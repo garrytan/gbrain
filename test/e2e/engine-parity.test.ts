@@ -780,6 +780,7 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     // A BEFORE INSERT pause makes both transactions acquire their distinct
     // origin locks before reciprocal FK checks. `FOR UPDATE` deadlocks here;
     // `FOR NO KEY UPDATE` remains compatible with the FK's KEY SHARE lock.
+    await pgEngine.executeRaw('DROP TRIGGER IF EXISTS dlr_pause_before_link_insert ON links');
     await pgEngine.executeRaw(`
       CREATE OR REPLACE FUNCTION dlr_pause_before_link_insert()
       RETURNS trigger LANGUAGE plpgsql AS $$
