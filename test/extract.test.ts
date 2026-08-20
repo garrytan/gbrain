@@ -241,10 +241,13 @@ after the prototype demo. [Source: user interview, 2026-07-30]`;
     const content = `- **2025-03-18** | Meeting notes
 Follow-up decision recorded. [Source: memo, 2025-03-20]`;
     const entries = extractTimelineFromContent(content, 'test');
-    expect(entries).toHaveLength(1);
-    expect(entries[0].date).toBe('2025-03-20');
-    expect(entries[0].source).toBe('memo');
-    expect(entries[0].summary).toBe('Follow-up decision recorded.');
+    expect(entries).toHaveLength(2);
+    expect(entries[0].date).toBe('2025-03-18');
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Meeting notes');
+    expect(entries[1].date).toBe('2025-03-20');
+    expect(entries[1].source).toBe('memo');
+    expect(entries[1].summary).toBe('Follow-up decision recorded.');
   });
 
   it('ignores dated citations inside fenced code blocks', () => {

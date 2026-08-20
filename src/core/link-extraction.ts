@@ -14,7 +14,12 @@
 import type { BrainEngine } from './engine.ts';
 import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
+import { stripCodeBlocks } from './markdown-code.ts';
+import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { slugifyPath } from './sync.ts';
+
+export { stripCodeBlocks } from './markdown-code.ts';
+export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidate } from './timeline-citations.ts';
 
 /**
  * v0.42.7 — link-extraction version stamp. Bump this ISO timestamp whenever the
@@ -205,42 +210,6 @@ const WIKILINK_GENERIC_RE = /\[\[([^|\]#\n[]+?)(?:#[^|\]]*?)?(?:\|([^\]]+?))?\]\
  * span out of the 2c scan so a wikilink inside a markdown label is inert.
  */
 const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]+\)/g;
-
-/**
- * Strip fenced code blocks (```...```) and inline code (`...`) from markdown,
- * replacing them with whitespace of equivalent length. Preserves byte offsets
- * for any caller that cares about positions; for our extractors this is just
- * defense-in-depth — slugs inside code are not real entity references.
- */
-export function stripCodeBlocks(content: string): string {
-  let out = '';
-  let i = 0;
-  while (i < content.length) {
-    // Fenced block: ``` (optional language) ... ```
-    if (content.startsWith('```', i)) {
-      const end = content.indexOf('```', i + 3);
-      if (end === -1) { out += ' '.repeat(content.length - i); break; }
-      out += ' '.repeat(end + 3 - i);
-      i = end + 3;
-      continue;
-    }
-    // Inline code: `...` (single backtick, no newline inside)
-    if (content[i] === '`') {
-      const end = content.indexOf('`', i + 1);
-      if (end === -1 || content.slice(i + 1, end).includes('\n')) {
-        out += content[i];
-        i++;
-        continue;
-      }
-      out += ' '.repeat(end + 1 - i);
-      i = end + 1;
-      continue;
-    }
-    out += content[i];
-    i++;
-  }
-  return out;
-}
 
 /**
  * A code-reference found in markdown prose. Created by extractCodeRefs and
@@ -1310,82 +1279,6 @@ const TIMELINE_LINE_RE = /^\s*-?\s*\*\*(\d{4}-\d{2}-\d{2})\*\*\s*[|\-–—]+\s*
 // 年/月 markers so plain ASCII `- 2020-01-02 - text` does NOT match — non-bold
 // ASCII dates were never timeline entries and must stay that way.
 const TIMELINE_LINE_RE_CN = /^\s*-?\s*(?:\*\*)?(\d{4})年(\d{1,2})月(\d{1,2})日?(?:\*\*)?\s*[|\-–—]+\s*(.+?)\s*$/;
-const CITATION_TIMELINE_RE = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
-
-export interface InlineCitationTimelineCandidate {
-  date: string;
-  source: string;
-  summary: string;
-}
-
-interface CitationParagraph {
-  lines: string[];
-  text: string;
-}
-
-function startsMarkdownBlock(line: string): boolean {
-  return /^#{1,6}\s/.test(line) || /^\s*(?:[-*+]|\d+\.)\s+/.test(line);
-}
-
-function citationParagraphs(
-  content: string,
-  opts: { skipLine?: (line: string) => boolean } = {},
-): CitationParagraph[] {
-  const paragraphs: CitationParagraph[] = [];
-  let lines: string[] = [];
-
-  const flush = () => {
-    if (lines.length === 0) return;
-    paragraphs.push({
-      lines,
-      text: lines.map((line) => line.trim()).join(' '),
-    });
-    lines = [];
-  };
-
-  for (const line of stripCodeBlocks(content).split(/\r?\n/)) {
-    if (line.trim().length === 0) {
-      flush();
-      continue;
-    }
-    if (opts.skipLine?.(line)) {
-      flush();
-      continue;
-    }
-    if (lines.length > 0 && startsMarkdownBlock(line)) flush();
-    lines.push(line);
-  }
-  flush();
-
-  return paragraphs;
-}
-
-export function parseInlineCitationTimelineEntries(
-  content: string,
-  opts: { skipLine?: (line: string) => boolean } = {},
-): InlineCitationTimelineCandidate[] {
-  const result: InlineCitationTimelineCandidate[] = [];
-  for (const paragraph of citationParagraphs(content, opts)) {
-    const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
-    if (matches.length === 0) continue;
-    const summary = paragraph.text
-      .replace(/\[Source:[^\]]*\]/g, '')
-      .replace(/^[-*>#\s]+/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
-    if (!summary) continue;
-    for (const m of matches) {
-      if (!isValidDate(m[2])) continue;
-      result.push({
-        date: m[2],
-        source: m[1].trim().slice(0, 200),
-        summary,
-      });
-    }
-  }
-  return result;
-}
 
 /**
  * Parse timeline entries from content. Looks at:
