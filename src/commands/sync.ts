@@ -2488,6 +2488,17 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
     }
 
+    // Is a `<rename:…>` sentinel for this destination already open from an
+    // earlier run? Read once per run: the ledger is only rewritten at the
+    // gate, after this loop.
+    const openRenameSentinels = new Set(
+      loadSyncFailures()
+        .filter(f => f.source_id === (opts.sourceId ?? DEFAULT_SOURCE_ID) && f.state === 'open')
+        .map(f => f.path),
+    );
+    const renameSentinelAlreadyOpen = (to: string): boolean =>
+      openRenameSentinels.has(renameSentinelPath(to));
+
     for (const { from, to } of renamesToDo) {
       // v0.41.13.0 (T2 / D-V4-2): per-iteration abort check. Renames call
       // importFile() at line 1173-style sites which can be slow on big files;
@@ -2637,6 +2648,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             // to the slug, 'unknown' when staleness could not be proven.
             const candidates = (active.get(from) ?? []).filter(s => s !== newSlug);
             const staleSlugs: string[] = [];
+            const unprovable: string[] = [];
             for (const s of candidates) {
               // Carried by ANOTHER rename in this diff (see renameOldSlugs):
               // its content is still tracked even when no slug state names
@@ -2659,17 +2671,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                   `file still derives to it (source_path ${from} is stale bookkeeping).`,
                 );
               } else if (verdict === 'unknown') {
-                // Deletion is UNAUTHORISED here, not merely postponed: an
-                // unreadable tracked file could own this slug, and a wrong
-                // delete is irreversible while a surviving duplicate is not.
-                // The run still banks normally — withholding the bookmark
-                // would let one unrelated unreadable file stall every future
-                // commit for this source. Any sentinel already open stays
-                // open as an UNRESOLVED marker; this path never opens one.
+                // An unreadable tracked file could own this slug, so the row
+                // is NOT deleted. It is also not silently accepted: banking
+                // the rename would clear any `<rename:…>` sentinel through
+                // the success path below (the gate deletes succeeded ledger
+                // rows before it decides), advance the bookmark past the
+                // rename, and leave the duplicate with nothing to retry it —
+                // and a second such rename would bank a second duplicate.
+                // Recorded as a reconcile failure instead: the sentinel
+                // survives, the bookmark freezes, and the run converges as
+                // soon as the unreadable file becomes readable.
+                unprovable.push(s);
                 serr(
-                  `  [sync] rename reconcile: leaving row ${s} in place — staleness ` +
-                  `is unprovable this run (an unreadable tracked file could own this ` +
-                  `slug), so it is spared rather than deleted.`,
+                  `  [sync] rename reconcile: cannot prove row ${s} stale — an ` +
+                  `unreadable tracked file could still own this slug, so it is ` +
+                  `neither deleted nor accepted; this rename stays open.`,
                 );
               } else {
                 // Established bookkeeping cleanup (#3056 → gate 6): a stale
@@ -2695,6 +2711,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             } else {
               serr(`  [sync] rename fallback: no active row has source_path ${from}; nothing left to reconcile.`);
             }
+            if (unprovable.length > 0 && renameSentinelAlreadyOpen(to)) {
+              // Provably-stale rows above were still removed; these were not
+              // provable either way. On its own that is an accepted cost (see
+              // the verdict comment). But an EARLIER run already recorded a
+              // `<rename:…>` sentinel for this rename, so convergence has been
+              // denied before — and falling through would hand that sentinel
+              // to the success path, which the gate clears before it decides.
+              // Clearing a non-convergence marker requires proof of
+              // convergence, and 'unprovable' is not proof.
+              staleSlug = unprovable[0];
+              throw new Error(
+                `staleness unprovable for ${unprovable.length} row(s) ` +
+                `(${unprovable.join(', ')}): the tracked-file slug index is ` +
+                `incomplete, so no index miss proves a row stale, and this ` +
+                `rename was already unresolved. Fix or remove the unreadable ` +
+                `tracked file and re-run.`,
+              );
+            }
           } catch (e: unknown) {
             reconcileFailed = true;
             failedFiles.push({
@@ -2713,6 +2747,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       // Converged (cheap rename, clean reconcile, or nothing to reconcile):
       // clear any `<rename:…>` sentinel a previous failing run recorded.
+      // A run that spared an UNPROVABLE row reaches here too — that is the
+      // accepted cost of never deleting without proof — EXCEPT when this
+      // rename already had a sentinel open, which the reconcile turns into
+      // a failure above precisely so this line cannot retire it.
       if (!reconcileFailed) succeededPaths.push(renameSentinelPath(to));
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again

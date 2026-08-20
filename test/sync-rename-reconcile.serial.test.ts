@@ -984,6 +984,66 @@ describe('#3583 review: an over-size-gate fallback-regime file suspends deletes 
     // stale ghost is ALSO spared this run (no delete without proof).
     expect(await engine.getPage('people/ghost')).not.toBeNull();
   });
+
+  test('R4_UNKNOWN_CLEARS_A_PRIOR_SENTINEL: an unprovable retry must not retire a rename an earlier run left open', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const { recordFailures, renameSentinelPath, renameReconcileErrorMessage, loadSyncFailures } =
+      await import('../src/core/sync-failure-ledger.ts');
+    const repo = mkRepo({
+      '\u{1F389}.md': [
+        '---', 'type: person', 'title: Party Notes', 'slug: Party-Notes', '---',
+        '', 'Party notes live here.',
+      ].join('\n'),
+      'people/alpha.md': personMd('Alpha', 'Alpha is a person.'),
+    });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    const anchorBefore = (await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = 'default'`,
+    ))[0]?.last_commit;
+
+    // An EARLIER run already failed to reconcile this very rename.
+    recordFailures('default', [{
+      path: renameSentinelPath('people/beta.md'),
+      error: renameReconcileErrorMessage('people/alpha.md', 'people/ghost', 'injected prior denial'),
+    }], 'deadbeef');
+
+    // Now make the tracked-slug index incomplete, exactly as above.
+    writeFileSync(join(repo, '\u{1F389}.md'), [
+      '---', 'type: person', 'title: Party Notes', 'slug: Party-Notes', '---',
+      '', 'x'.repeat(5_100_000),
+    ].join('\n'));
+    await engine.putPage('people/ghost', {
+      type: 'person', title: 'Ghost (stale)', compiled_truth: 'no backing file anywhere',
+    }, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = 'people/alpha.md'
+       WHERE source_id = 'default' AND slug = 'people/ghost'`,
+    );
+    await engine.putPage('people/beta', {
+      type: 'person', title: 'Beta (stale)', compiled_truth: 'occupies the destination slug',
+    }, { sourceId: 'default' });
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    execSync('git commit -m "rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
+
+    const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // The sentinel is the operator's only record that this rename never
+    // converged. 'unprovable' is not proof of convergence, so it survives...
+    const stillOpen = loadSyncFailures().filter(
+      f => f.path === renameSentinelPath('people/beta.md') && f.state === 'open',
+    );
+    expect(stillOpen).toHaveLength(1);
+    // ...the run does not report a clean sync...
+    expect(result.status).not.toBe('synced');
+    // ...the bookmark does not advance past the unresolved rename...
+    const anchorAfter = (await engine.executeRaw<{ last_commit: string }>(
+      `SELECT last_commit FROM sources WHERE id = 'default'`,
+    ))[0]?.last_commit;
+    expect(anchorAfter).toBe(anchorBefore);
+    // ...and nothing was deleted without proof.
+    expect(await engine.getPage('party-notes')).not.toBeNull();
+    expect(await engine.getPage('people/ghost')).not.toBeNull();
+  });
 });
 
 describe('#3583 review: both content states prove liveness — working tree AND index blob', () => {
@@ -2355,4 +2415,3 @@ describe('#3583 review: GATE25 — the upgrade path for someone already wedged b
     )).toHaveLength(1);
   });
 });
-
