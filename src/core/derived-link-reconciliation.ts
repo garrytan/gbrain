@@ -134,16 +134,16 @@ export async function runDerivedLinkReconciliation(
   const timelineRows: TimelineRow[] | undefined = opts.timelineEntries === undefined
     ? undefined
     : buildTimelineRows(opts.timelineEntries.map((entry) => {
-    if (validateSlug(entry.slug) !== originSlug) {
-      throw new Error('timeline reconciliation rows must belong to the scoped origin page');
-    }
-    const entrySourceId = entry.source_id ?? opts.sourceId;
-    assertValidSourceId(entrySourceId);
-    if (entrySourceId !== opts.sourceId) {
-      throw new Error('timeline reconciliation rows must belong to the scoped source');
-    }
-    return { ...entry, slug: originSlug, source_id: opts.sourceId };
-  }));
+      if (validateSlug(entry.slug) !== originSlug) {
+        throw new Error('timeline reconciliation rows must belong to the scoped origin page');
+      }
+      const entrySourceId = entry.source_id ?? opts.sourceId;
+      assertValidSourceId(entrySourceId);
+      if (entrySourceId !== opts.sourceId) {
+        throw new Error('timeline reconciliation rows must belong to the scoped source');
+      }
+      return { ...entry, slug: originSlug, source_id: opts.sourceId };
+    }));
 
   return engine.transaction(async (tx) => {
     // Revision fence + row lock: a worker may have extracted an older body

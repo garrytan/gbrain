@@ -19,9 +19,9 @@
  *   2. LINK/TIMELINE EXTRACTION [CX-P0.3] — zero-LLM, deterministic. The
  *      same per-page cores `gbrain extract links|timeline --source db`
  *      runs: extractPageLinks + parseTimelineEntries, endpoint-validated
- *      through resolveCandidateSources. Timeline rows flush first; managed
- *      links reconcile exactly per origin under an updated_at row-lock fence,
- *      with the shared watermark stamped in that same transaction.
+ *      through resolveCandidateSources. Each origin's timeline projection,
+ *      exact managed-link set, and shared watermark commit under one
+ *      updated_at row-lock fence.
  *
  *   3. CORPUS INGEST [CX-P0.1] — LLM-backed, spend-gated. Unprocessed
  *      `.txt` files in the dream corpus dir run through the narrowest
