@@ -94,6 +94,12 @@ import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-chec
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
 import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-types.ts';
+import {
+  emptySaveTimeResolutionCounts,
+  formatSaveTimeResolutionCounts,
+  mergeSaveTimeResolutionCounts,
+  resolveExtractedEntitiesForSave,
+} from '../core/entities/resolve-on-save.ts';
 
 // Re-exported verbatim so existing importers (this file's own helpers below
 // and this file's tests) keep working unchanged; doctor.ts, jobs.ts,
@@ -367,6 +373,10 @@ export interface ExtractConversationFactsResult {
   segments_processed: number;
   facts_extracted: number;
   facts_inserted: number;
+  /** Entity values that reached the shipped deterministic fallback slug path. */
+  fallback_slugify_count: number;
+  /** Entity values kept raw after a best-effort resolution failure. */
+  resolution_errors: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
 }
@@ -1053,6 +1063,7 @@ async function processPage(
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
+  const pageResolution = emptySaveTimeResolutionCounts();
 
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
@@ -1098,6 +1109,26 @@ async function processPage(
     segmentsThisPage++;
     state.result.facts_extracted += extracted.length;
 
+    // This bulk path bypasses writeSingleFact and writes through insertFacts.
+    // Canonicalize every extractor-provided entity via the shipped resolver
+    // (alias_exact / prefix / fuzzy / slugify) while source scope is known.
+    const segmentResolution = await resolveExtractedEntitiesForSave(
+      state.engine,
+      state.sourceId,
+      extracted,
+      (raw, message) => {
+        process.stderr.write(
+          `[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso} ` +
+          `entity resolution failed for ${JSON.stringify(raw)}: ${message}; keeping raw value\n`,
+        );
+      },
+    );
+    const commitSegmentResolutionTelemetry = () => {
+      mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
+      state.result.fallback_slugify_count += segmentResolution.fallback_slugify_count;
+      state.result.resolution_errors += segmentResolution.resolution_errors;
+    };
+
     if (!state.dryRun && extracted.length > 0) {
       // Eng-v2 C1 / E11: page-global row_num. Each fact in this batch gets
       // a unique row_num within (source_id, source_markdown_slug); the
@@ -1121,9 +1152,11 @@ async function processPage(
       pageInsertedTotal += ins.inserted;
       state.result.facts_inserted += ins.inserted;
       rowNum += extracted.length;
+      commitSegmentResolutionTelemetry();
     } else {
       // dry-run: count for reporting, no DB write.
       rowNum += extracted.length;
+      commitSegmentResolutionTelemetry();
     }
 
     newestEnd = seg.endIso;
@@ -1169,7 +1202,8 @@ async function processPage(
   }
 
   process.stderr.write(
-    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal} facts inserted across ${segmentsThisPage} segments\n`,
+    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal} facts inserted across ${segmentsThisPage} segments ` +
+    `entity_resolution_counts=${formatSaveTimeResolutionCounts(pageResolution.counts)}\n`,
   );
 
   state.result.pages_processed++;
@@ -1261,6 +1295,8 @@ export async function runExtractConversationFactsCore(
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
+    fallback_slugify_count: 0,
+    resolution_errors: 0,
   };
 
   // F2: honor brain-wide kill-switch unless overridden.
@@ -1898,6 +1934,8 @@ export async function runExtractConversationFacts(
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
+    fallback_slugify_count: 0,
+    resolution_errors: 0,
   };
   let totalSpent = 0;
   let anyBudgetExhausted = false;
@@ -1944,6 +1982,8 @@ export async function runExtractConversationFacts(
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
       aggregate.facts_inserted += perSource.facts_inserted;
+      aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
+      aggregate.resolution_errors += perSource.resolution_errors;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
 
@@ -1994,6 +2034,12 @@ export async function runExtractConversationFacts(
   if (aggregate.orphan_facts_cleaned > 0) {
     console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
   }
+  if (aggregate.fallback_slugify_count > 0) {
+    console.log(`  Minted ${aggregate.fallback_slugify_count} entity slug(s) via fallback_slugify.`);
+  }
+  if (aggregate.resolution_errors > 0) {
+    console.log(`  Kept ${aggregate.resolution_errors} raw entity value(s) after best-effort resolution errors.`);
+  }
   if (anyBudgetExhausted) {
     console.log(`  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
   }
@@ -2032,7 +2078,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isAbortError(err: unknown): boolean {
+export function isAbortError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message);
 }

@@ -18,7 +18,7 @@ src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: superse
 src/core/engine.ts	2351	ratchet	grown v0.46.23.0: putPage allowEmptyOverwrite contract (#4335)
 src/commands/autopilot.ts	2301	ratchet
 src/commands/extract.ts	2161	ratchet
-src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
+src/commands/extract-conversation-facts.ts	2090	ratchet	grown v0.46.x per-provider gateway-unavailable copy + save-time resolution caller
 src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
 src/commands/embed.ts	1963	ratchet
