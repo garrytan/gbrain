@@ -258,6 +258,17 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const coverageOverride =
       args.includes('--coverage-override') || args.includes('--yes');
 
+    if (key === 'cycle.timezone') {
+      const { isValidTimeZone } = await import('../core/cycle/cycle-date.ts');
+      if (!isValidTimeZone(value)) {
+        console.error(
+          `[config] cycle.timezone must be a valid IANA timezone ` +
+          `(for example Asia/Kolkata or America/Los_Angeles; got '${value}').`,
+        );
+        process.exit(1);
+      }
+    }
+
     // Validate sources.default at set time. This key is read by
     // source-resolver.ts tier 5 on EVERY unqualified call, and tier 5 calls
     // assertSourceExists — so a syntactically valid but non-existent id set

@@ -59,6 +59,11 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc.toLowerCase()).toContain('zero llm calls');
   });
 
+  test('help text documents local-day cycle timezone configuration', () => {
+    expect(dreamSrc).toContain('gbrain config set cycle.timezone Asia/Kolkata');
+    expect(dreamSrc).toContain('host timezone');
+  });
+
   // v0.41.13: --source / --source-id flag wiring (supersedes PR #1559).
   // Structural-only tests; behavioral tests live in test/dream.test.ts.
   describe('--source / --source-id wiring (v0.41.13)', () => {
