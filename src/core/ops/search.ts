@@ -66,14 +66,22 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile); when unset, an unqualified read spans every federated source. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    // #2561: unqualified trusted-local search spans federated sources.
-    const scope = federatedSearchScope(ctx);
+    // #2561: unqualified trusted-local search spans federated sources. An
+    // explicit per-call source_id narrows through the shared trust+grant
+    // resolver (resolveRequestedScope), matching the `query` op.
+    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    const scope = federatedSearchScope(ctx, sourceIdParam);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
