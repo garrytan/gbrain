@@ -417,6 +417,63 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS })).toBe(0);
   });
 
+  test('--catch-up resets its cursor and retries a transient revision rejection', async () => {
+    await engine.putPage('notes/catch-up-transient', {
+      type: 'note', title: 'Transient', compiled_truth: 'No links.', timeline: '',
+    });
+    const original = engine.reconcileDerivedLinks.bind(engine);
+    let calls = 0;
+    engine.reconcileDerivedLinks = async (origin, links, opts) => {
+      if (origin === 'notes/catch-up-transient' && calls++ === 0) {
+        return { created: 0, removed: 0, timelineCreated: 0, applied: false };
+      }
+      return original(origin, links, opts);
+    };
+    let result: Awaited<ReturnType<typeof extractStaleFromDB>>;
+    try {
+      result = await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: false, includeFrontmatter: false, catchUp: true,
+      });
+    } finally {
+      engine.reconcileDerivedLinks = original;
+    }
+    expect(calls).toBe(2);
+    expect(result.pagesProcessed).toBe(1);
+    expect(result.pagesAttempted).toBe(2);
+    expect(result.revisionRejected).toBe(1);
+    expect(result.staleRemaining).toBe(0);
+    expect(result.catchUpNoProgress).toBe(false);
+  });
+
+  test('--catch-up stops after two full no-progress passes under permanent revision churn', async () => {
+    await engine.putPage('notes/catch-up-churn', {
+      type: 'note', title: 'Churn', compiled_truth: 'No links.', timeline: '',
+    });
+    const original = engine.reconcileDerivedLinks.bind(engine);
+    let calls = 0;
+    engine.reconcileDerivedLinks = async (origin, _links, _opts) => {
+      if (origin === 'notes/catch-up-churn') {
+        calls++;
+        return { created: 0, removed: 0, timelineCreated: 0, applied: false };
+      }
+      throw new Error(`unexpected origin ${origin}`);
+    };
+    let result: Awaited<ReturnType<typeof extractStaleFromDB>>;
+    try {
+      result = await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: false, includeFrontmatter: false, catchUp: true,
+      });
+    } finally {
+      engine.reconcileDerivedLinks = original;
+    }
+    expect(calls).toBe(2);
+    expect(result.pagesProcessed).toBe(0);
+    expect(result.pagesAttempted).toBe(2);
+    expect(result.revisionRejected).toBe(2);
+    expect(result.staleRemaining).toBe(1);
+    expect(result.catchUpNoProgress).toBe(true);
+  });
+
   test('--source fs is rejected (DB-source only)', async () => {
     const origErr = console.error;
     const origExit = process.exit;

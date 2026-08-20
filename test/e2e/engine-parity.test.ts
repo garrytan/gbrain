@@ -761,6 +761,105 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   });
 
+  test('native Postgres page writers are fenced before and during reconciliation', async () => {
+    const beforeSlug = 'notes/dlr-writer-before-lock';
+    await pgEngine.putPage(beforeSlug, {
+      type: 'note', title: beforeSlug, compiled_truth: 'revision one', timeline: '',
+    });
+    const beforeRows = await pgEngine.executeRaw<{ updated_at_iso: string }>(
+      `SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+         FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [beforeSlug],
+    );
+    await pgEngine.executeRaw(
+      `UPDATE pages SET compiled_truth = 'revision two', updated_at = clock_timestamp() + interval '1 second'
+        WHERE source_id = 'default' AND slug = $1`,
+      [beforeSlug],
+    );
+    expect(await pgEngine.reconcileDerivedLinks(beforeSlug, [], {
+      sourceId: 'default',
+      expectedUpdatedAt: beforeRows[0]!.updated_at_iso,
+      stampExtractedAt: beforeRows[0]!.updated_at_iso,
+      timelineEntries: [{
+        slug: beforeSlug, date: '2026-08-20', summary: 'must not land', source_id: 'default',
+      }],
+    })).toEqual({ created: 0, removed: 0, timelineCreated: 0, applied: false });
+    expect(await pgEngine.getTimeline(beforeSlug)).toEqual([]);
+
+    const waitSlug = 'notes/dlr-writer-waits';
+    await pgEngine.putPage(waitSlug, {
+      type: 'note', title: waitSlug, compiled_truth: 'snapshot body', timeline: '',
+    });
+    const waitRows = await pgEngine.executeRaw<{ updated_at_iso: string }>(
+      `SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
+         FROM pages WHERE source_id = 'default' AND slug = $1`,
+      [waitSlug],
+    );
+    const observed = waitRows[0]!.updated_at_iso;
+    await pgEngine.executeRaw('DROP TRIGGER IF EXISTS dlr_pause_timeline_insert ON timeline_entries');
+    await pgEngine.executeRaw(`
+      CREATE OR REPLACE FUNCTION dlr_pause_timeline_insert()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.summary = 'writer-wait event' THEN
+          PERFORM pg_sleep(0.6);
+        END IF;
+        RETURN NEW;
+      END $$
+    `);
+    await pgEngine.executeRaw(`
+      CREATE TRIGGER dlr_pause_timeline_insert
+      BEFORE INSERT ON timeline_entries
+      FOR EACH ROW EXECUTE FUNCTION dlr_pause_timeline_insert()
+    `);
+    try {
+      const reconciliation = pgEngine.reconcileDerivedLinks(waitSlug, [], {
+        sourceId: 'default',
+        expectedUpdatedAt: observed,
+        stampExtractedAt: observed,
+        timelineEntries: [{
+          slug: waitSlug, date: '2026-08-20', summary: 'writer-wait event', source_id: 'default',
+        }],
+      });
+
+      let sawLockedSleep = false;
+      for (let i = 0; i < 100; i++) {
+        const activity = await pgEngine.executeRaw<{ n: number }>(
+          `SELECT count(*)::int AS n
+             FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND pid <> pg_backend_pid()
+              AND wait_event = 'PgSleep'
+              AND query LIKE '%INSERT INTO timeline_entries%'`,
+        );
+        if ((activity[0]?.n ?? 0) > 0) { sawLockedSleep = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(sawLockedSleep).toBe(true);
+
+      let writerDone = false;
+      const writer = pgEngine.executeRaw(
+        `UPDATE pages SET compiled_truth = 'writer landed after stamp', updated_at = clock_timestamp()
+          WHERE source_id = 'default' AND slug = $1`,
+        [waitSlug],
+      ).then(() => { writerDone = true; });
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      expect(writerDone).toBe(false);
+      expect((await reconciliation).applied).toBe(true);
+      await writer;
+
+      const final = await pgEngine.executeRaw<{ body: string; stale: boolean }>(
+        `SELECT compiled_truth AS body, updated_at > links_extracted_at AS stale
+           FROM pages WHERE source_id = 'default' AND slug = $1`,
+        [waitSlug],
+      );
+      expect(final[0]).toEqual({ body: 'writer landed after stamp', stale: true });
+    } finally {
+      await pgEngine.executeRaw('DROP TRIGGER IF EXISTS dlr_pause_timeline_insert ON timeline_entries');
+      await pgEngine.executeRaw('DROP FUNCTION IF EXISTS dlr_pause_timeline_insert()');
+    }
+  }, 10_000);
+
   test('reciprocal revision-fenced origins do not deadlock on Postgres', async () => {
     const slugA = 'notes/dlr-reciprocal-a';
     const slugB = 'notes/dlr-reciprocal-b';

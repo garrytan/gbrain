@@ -81,7 +81,8 @@ const BATCH_SIZE = 100;
 // Normal pages are KBs; raise via GBRAIN_EXTRACT_STALE_BATCH for throughput.
 const STALE_BATCH_SIZE = Math.max(1, Number(process.env.GBRAIN_EXTRACT_STALE_BATCH) || 25);
 // v0.42.7: wall-clock budget for one `extract --stale` invocation (default
-// 30 min). `--catch-up` removes the cap (loops until 0 stale). Mirrors
+// 30 min). `--catch-up` removes the cap and replays revision conflicts until
+// none remain or two complete passes make no progress. Mirrors
 // embedAllStale's time-budget shape. Exported so the #2849 deferred-sweep
 // submitters (sync's size-gate defer branch + the jobs continuation chain)
 // derive their job timeout_ms from the SAME budget instead of hardcoding.
@@ -735,7 +736,8 @@ Incremental sweep:
   gbrain extract --stale [--source-id <id>] [--include-frontmatter]
                          [--catch-up] [--dry-run] [--json]
       Re-extract links + timeline only for stale pages. DB-source; safe to
-      cron. --catch-up loops past the 30-minute budget until none remain.
+      cron. --catch-up removes the time cap and retries revision conflicts;
+      it stops if two full passes make no progress and reports what remains.
 
 Inspection:
   gbrain extract --explain <kind> [--json]
@@ -1780,7 +1782,7 @@ export async function extractStaleFromDB(
     sourceIdFilter?: string;
     catchUp: boolean;
   },
-): Promise<{ linksCreated: number; linksRemoved: number; timelineCreated: number; pagesProcessed: number; pagesAttempted: number; revisionRejected: number; staleRemaining: number; skippedMissingTarget?: number }> {
+): Promise<{ linksCreated: number; linksRemoved: number; timelineCreated: number; pagesProcessed: number; pagesAttempted: number; revisionRejected: number; staleRemaining: number; catchUpNoProgress: boolean; skippedMissingTarget?: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
@@ -1791,11 +1793,11 @@ export async function extractStaleFromDB(
     } else {
       console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
     }
-    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: totalStale };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: totalStale, catchUpNoProgress: false };
   }
   if (totalStale === 0) {
     if (!jsonMode) console.log('No stale pages — extraction is up to date.');
-    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: 0 };
+    return { linksCreated: 0, linksRemoved: 0, timelineCreated: 0, pagesProcessed: 0, pagesAttempted: 0, revisionRejected: 0, staleRemaining: 0, catchUpNoProgress: false };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the
@@ -1832,6 +1834,9 @@ export async function extractStaleFromDB(
   let linksCreated = 0, linksRemoved = 0, timelineCreated = 0;
   let pagesProcessed = 0, pagesAttempted = 0, revisionRejected = 0;
   let budgetHit = false;
+  let catchUpNoProgress = false;
+  let passAppliedStart = 0;
+  let consecutiveNoProgressPasses = 0;
   // #2576: candidates whose endpoint pages don't exist are skipped, not
   // persisted. Counted so a dropped reference is observable in the summary
   // instead of vanishing silently (the failure mode that hid bug 2).
@@ -1841,7 +1846,22 @@ export async function extractStaleFromDB(
     const rows = await engine.listStalePagesForExtraction({
       batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
     });
-    if (rows.length === 0) break;
+    if (rows.length === 0) {
+      if (!catchUp) break;
+      const remaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+      if (remaining === 0) break;
+      const appliedThisPass = pagesProcessed - passAppliedStart;
+      consecutiveNoProgressPasses = appliedThisPass === 0
+        ? consecutiveNoProgressPasses + 1
+        : 0;
+      if (consecutiveNoProgressPasses >= 2) {
+        catchUpNoProgress = true;
+        break;
+      }
+      passAppliedStart = pagesProcessed;
+      afterPageId = 0;
+      continue;
+    }
 
     const linkRowsByPage: StalePageLinkSet[] = [];
 
@@ -1911,7 +1931,7 @@ export async function extractStaleFromDB(
     revisionRejected += reconciled.revisionRejected;
 
     pagesAttempted += rows.length;
-    progress.tick(rows.length);
+    progress.tick(reconciled.pagesApplied);
     afterPageId = rows[rows.length - 1]!.id;
 
     if (!catchUp && Date.now() - startMs > STALE_TIME_BUDGET_MS) { budgetHit = true; break; }
@@ -1931,15 +1951,19 @@ export async function extractStaleFromDB(
     if (budgetHit && staleRemaining > 0) {
       console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
     }
+    if (catchUpNoProgress && staleRemaining > 0) {
+      console.log(`Catch-up stopped after two full passes made no progress; ${staleRemaining} page(s) remain stale.`);
+    }
   } else {
     process.stdout.write(JSON.stringify({
       action: 'extract_stale_done', links_created: linksCreated, links_removed: linksRemoved, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, pages_attempted: pagesAttempted,
       revision_rejected: revisionRejected, stale_remaining: staleRemaining, budget_hit: budgetHit,
+      catch_up_no_progress: catchUpNoProgress,
       skipped_missing_target: skippedMissingTarget,
     }) + '\n');
   }
-  return { linksCreated, linksRemoved, timelineCreated, pagesProcessed, pagesAttempted, revisionRejected, staleRemaining, skippedMissingTarget };
+  return { linksCreated, linksRemoved, timelineCreated, pagesProcessed, pagesAttempted, revisionRejected, staleRemaining, catchUpNoProgress, skippedMissingTarget };
 }
 
 /**

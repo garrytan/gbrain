@@ -62,12 +62,12 @@ function normalizedRows(
 
     const fromSourceId = link.from_source_id || sourceId;
     const toSourceId = link.to_source_id || sourceId;
-    const originSourceId = link.origin_source_id || sourceId;
     assertValidSourceId(fromSourceId);
     assertValidSourceId(toSourceId);
-    assertValidSourceId(originSourceId);
 
     if (linkSource === 'frontmatter') {
+      const originSourceId = link.origin_source_id || sourceId;
+      assertValidSourceId(originSourceId);
       const declaredOrigin = validateSlug(link.origin_slug || originSlug);
       if (declaredOrigin !== originSlug || originSourceId !== sourceId) {
         throw new Error('frontmatter reconciliation rows must be authored by the scoped origin page');
@@ -91,7 +91,12 @@ function normalizedRows(
       link_source: linkSource,
       from_source_id: sourceId,
       to_source_id: toSourceId,
-      origin_source_id: originSourceId,
+      // Origin metadata is ownership-bearing only for frontmatter. Normalize
+      // it away on body-derived edges so a direct caller cannot smuggle a
+      // misleading origin_page_id into the managed markdown partition.
+      origin_slug: undefined,
+      origin_field: undefined,
+      origin_source_id: sourceId,
     };
   });
   return { originSlug, rows: buildLinkRows(normalized), managedSources };

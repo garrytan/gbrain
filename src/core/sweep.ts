@@ -289,7 +289,15 @@ async function runLinksTimelinePass(
   ]);
   if (!linksEnabled) skip('auto_link_disabled');
   if (!timelineEnabled) skip('auto_timeline_disabled');
-  if (!linksEnabled && !timelineEnabled) return;
+  // links_extracted_at is a shared link+timeline watermark. Running only one
+  // projection cannot stamp it honestly, and leaving it unstamped would make
+  // every idle sweep reselect the same newest batch forever. Fail closed until
+  // both projections are enabled; explicit one-off extract commands remain
+  // available to operators who intentionally disable one automatic lane.
+  if (!linksEnabled || !timelineEnabled) {
+    if (linksEnabled !== timelineEnabled) skip('partial_auto_extraction_disabled');
+    return;
+  }
 
   const recent = await engine.executeRaw<{
     slug: string;
@@ -326,7 +334,6 @@ async function runLinksTimelinePass(
 
   type Extracted = Awaited<ReturnType<typeof extractPageLinks>>;
 
-  const tlBatch: TimelineBatchInput[] = [];
   const pageCandidates: Array<{
     slug: string;
     candidates: Extracted['candidates'];
@@ -348,42 +355,35 @@ async function runLinksTimelinePass(
 
     const fullContent = page.compiled_truth + '\n' + page.timeline;
     const pageTimelineEntries: TimelineBatchInput[] = [];
-    if (timelineEnabled) {
-      for (const entry of parseTimelineEntries(fullContent)) {
-        pageTimelineEntries.push({
-          slug,
-          date: entry.date,
-          summary: entry.summary,
-          detail: entry.detail || '',
-          source_id: sourceId,
-        });
-      }
-      // With links disabled there is no revision-fenced origin transaction
-      // and the shared watermark cannot advance; keep the legacy additive path.
-      if (!linksEnabled) tlBatch.push(...pageTimelineEntries);
-    }
-
-    if (linksEnabled) {
-      // Reconcile the complete page-owned partition. Frontmatter can author
-      // incoming edges, so omitting it here would make an exact reconciliation
-      // delete valid typed edges written by remote put_page.
-      const extracted = await extractPageLinks(
-        slug, fullContent, page.frontmatter, page.type, resolver,
-        { globalBasename },
-      );
-      // Empty is meaningful: reconciliation must remove links that disappeared
-      // when the page was rewritten.
-      const stampExtractedAt = Date.parse(page.updated_at_iso) >= Date.parse(LINK_EXTRACTOR_VERSION_TS)
-        ? page.updated_at_iso
-        : LINK_EXTRACTOR_VERSION_TS;
-      pageCandidates.push({
+    for (const entry of parseTimelineEntries(fullContent)) {
+      pageTimelineEntries.push({
         slug,
-        candidates: extracted.candidates,
-        timelineEntries: pageTimelineEntries,
-        expectedUpdatedAt: page.updated_at_iso,
-        stampExtractedAt,
+        date: entry.date,
+        summary: entry.summary,
+        detail: entry.detail || '',
+        source_id: sourceId,
       });
     }
+
+    // Reconcile the complete page-owned partition. Frontmatter can author
+    // incoming edges, so omitting it here would make an exact reconciliation
+    // delete valid typed edges written by remote put_page.
+    const extracted = await extractPageLinks(
+      slug, fullContent, page.frontmatter, page.type, resolver,
+      { globalBasename },
+    );
+    // Empty is meaningful: reconciliation must remove links that disappeared
+    // when the page was rewritten.
+    const stampExtractedAt = Date.parse(page.updated_at_iso) >= Date.parse(LINK_EXTRACTOR_VERSION_TS)
+      ? page.updated_at_iso
+      : LINK_EXTRACTOR_VERSION_TS;
+    pageCandidates.push({
+      slug,
+      candidates: extracted.candidates,
+      timelineEntries: pageTimelineEntries,
+      expectedUpdatedAt: page.updated_at_iso,
+      stampExtractedAt,
+    });
 
   }
 
@@ -438,23 +438,16 @@ async function runLinksTimelinePass(
     }
   }
 
-  // Timeline-only mode cannot stamp the combined watermark and retains the
-  // legacy additive batch path. Combined mode admits timeline rows inside the
-  // same revision-fenced transaction as exact link reconciliation.
-  if (!linksEnabled && tlBatch.length > 0) {
-    report.timelineExtracted += await engine.addTimelineEntriesBatch(tlBatch); // gbrain-allow-direct-insert: same extract-path rationale as addLinksBatch above [CX-P0.3]
-  }
   // Reconciliation is exact and destructive, so every page carries the
-  // observed updated_at into a row-lock fence. The shared watermark advances
-  // under that same lock only when BOTH link and timeline extraction ran.
+  // observed updated_at into a row-lock fence. Timeline admission and the
+  // shared watermark advance under that same lock.
   for (const [slug, desired] of linksByPage) {
     const reconciled = await engine.reconcileDerivedLinks(slug, desired.links, {
       sourceId,
       expectedUpdatedAt: desired.expectedUpdatedAt,
-      ...(timelineEnabled ? { timelineEntries: desired.timelineEntries } : {}),
-      ...(linksEnabled && timelineEnabled
-        ? { stampExtractedAt: desired.stampExtractedAt }
-        : {}),
+      timelineEntries: desired.timelineEntries,
+      stampExtractedAt: desired.stampExtractedAt,
+      auditSite: 'extract.stale',
     });
     report.linksExtracted += reconciled.created; // gbrain-allow-direct-insert: the sweep IS the extract path for workspace pages — remote put_page skips extraction by design [CX-P0.3]
     report.linksRemoved += reconciled.removed;

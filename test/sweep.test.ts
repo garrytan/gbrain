@@ -211,6 +211,39 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
     }
   });
 
+  test('partial auto-extraction modes fail closed instead of re-chewing one unstamped batch', async () => {
+    await seedPage('people/partial-target', 'person', 'Target.');
+    await seedPage(
+      'notes/partial-writer', 'note',
+      'See [Target](people/partial-target).\n- **2026-02-03** | partial entry',
+    );
+    try {
+      for (const [autoLink, autoTimeline] of [['true', 'false'], ['false', 'true']] as const) {
+        await engine.setConfig('auto_link', autoLink);
+        await engine.setConfig('auto_timeline', autoTimeline);
+        for (let pass = 0; pass < 2; pass++) {
+          const report = await runMaintenanceSweep(engine, {
+            sourceId: 'default', batchLimit: 1, capabilities: KEYLESS,
+          });
+          expect(report.linksExtracted).toBe(0);
+          expect(report.timelineExtracted).toBe(0);
+          expect(report.skipped.map(({ reason }) => reason))
+            .toContain('partial_auto_extraction_disabled');
+        }
+      }
+      const stamp = await engine.executeRaw<{ links_extracted_at: string | null }>(
+        `SELECT links_extracted_at FROM pages
+          WHERE source_id = 'default' AND slug = 'notes/partial-writer'`,
+      );
+      expect(stamp[0]?.links_extracted_at).toBeNull();
+      expect(await engine.getLinks('notes/partial-writer')).toEqual([]);
+      expect(await engine.getTimeline('notes/partial-writer')).toEqual([]);
+    } finally {
+      await engine.setConfig('auto_link', 'true');
+      await engine.setConfig('auto_timeline', 'true');
+    }
+  });
+
   test('rewriting a page removes stale markdown edges but preserves manual edges', async () => {
     await seedPage('concepts/target-a', 'concept', 'Target A.');
     await seedPage('concepts/target-b', 'concept', 'Target B.');

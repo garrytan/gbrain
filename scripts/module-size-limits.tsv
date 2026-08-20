@@ -17,7 +17,7 @@ src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source syn
 src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: supersede scoping + edge-existence gate
 src/core/engine.ts	2392	ratchet	v0.46.23.0 putPage guard + atomic link/timeline revision-fence contract
 src/commands/autopilot.ts	2301	ratchet
-src/commands/extract.ts	2169	ratchet	provenance-scoped exact reconciliation for stale extraction
+src/commands/extract.ts	2193	ratchet	exact stale reconciliation + bounded catch-up conflict replay
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches

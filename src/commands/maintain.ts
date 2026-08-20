@@ -110,6 +110,7 @@ async function runStaleExtraction(
       pages_processed: result.pagesProcessed,
       pages_attempted: result.pagesAttempted,
       revision_rejected: result.revisionRejected,
+      catch_up_no_progress: result.catchUpNoProgress,
       stale_remaining: result.staleRemaining,
     },
   };

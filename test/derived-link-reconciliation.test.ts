@@ -125,6 +125,9 @@ describe('reconcileDerivedLinks', () => {
       link_type: 'related',
       context: 'old excerpt',
       link_source: 'markdown',
+      origin_slug: 'notes/misleading-origin',
+      origin_field: 'misleading_field',
+      origin_source_id: 'other',
     };
     expect(await engine.reconcileDerivedLinks('notes/context-writer', [desired], { sourceId: 'default' }))
       .toEqual({ created: 1, removed: 0 });
@@ -135,7 +138,11 @@ describe('reconcileDerivedLinks', () => {
     )).toEqual({ created: 0, removed: 0 });
 
     expect(await engine.getLinks('notes/context-writer', { sourceId: 'default' }))
-      .toEqual([expect.objectContaining({ context: 'new excerpt' })]);
+      .toEqual([expect.objectContaining({
+        context: 'new excerpt',
+        origin_slug: null,
+        origin_field: null,
+      })]);
   });
 
   test('revision-fenced reconciliation refuses a stale snapshot and stamps a current one', async () => {
