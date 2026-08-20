@@ -82,6 +82,11 @@ more than embedding proximity. Four layers, added after the incident in
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
   query that is a phrase from the title can't lose to a body chunk by luck.
+  An explicit canonical named-page filter (`person`, `company`,
+  `organization`, `entity`, `project`, or `product`) is a narrower lookup
+  contract: a full normalized title equality is placed ahead of blended
+  body/vector matches after rerank. Alias hits remain stronger, and untyped or
+  other page-type searches keep their existing semantic order.
 - **Alias hop** — free-text `aliases:` frontmatter is projected into a
   `page_aliases` table (separate from the `slug_aliases` wikilink redirect) and
   consulted at query time: a full normalized-query match injects/boosts the
@@ -168,7 +173,10 @@ reranker (cross-encoder — balanced/tokenmax; fail-open)
 alias hop (exact alias match injects/boosts the canonical page)
        │
        ▼
-evidence stamp → adaptive return (opt-in) → autocut (reranked modes)
+typed exact-title preference → adaptive return (opt-in) → autocut
+       │                                  (reranked modes)
+       ▼
+evidence stamp
        │
        ▼
 limit slice → token-budget enforcement (per mode bundle)
@@ -181,8 +189,9 @@ The stage order is pinned by `hybridSearch` in `src/core/search/hybrid.ts`:
 dedup runs BEFORE the reranker (so the reranker sees a diverse candidate pool,
 capped by its own `topNIn`), the alias hop runs AFTER the reranker (so a query
 that is a page's declared name reliably surfaces that page regardless of how
-the reranker scored body chunks), and the token budget is enforced last, on
-the final slice.
+the reranker scored body chunks), typed exact-title preference runs after the
+alias hop but never ahead of an alias hit, and the token budget is enforced
+last, on the final slice.
 
 ### Autocut: score-discontinuity result-sizing
 
@@ -191,8 +200,8 @@ reranker and therefore no trustworthy cliff signal). `applyAutocut`
 (`src/core/search/autocut.ts`) cuts the ranked set at the largest
 cross-encoder rerank-score cliff, before the limit slice, first page only.
 Never-empty failsafe (`minKeep`), no-op when fewer than 2 results carry a
-finite rerank score (covers the fail-open reranker path), and alias-hop exact
-matches are preserved through the cut. Weak-top floor: when the top rerank
+finite rerank score (covers the fail-open reranker path), and alias-hop plus
+typed exact-title matches are preserved through the cut. Weak-top floor: when the top rerank
 score is below `minTopScore` (default 0.35, config `search.autocut_min_top`),
 cliff trimming is skipped entirely — a low-confidence list returns the full
 cluster for the caller to judge instead of collapsing to one result. Knobs:

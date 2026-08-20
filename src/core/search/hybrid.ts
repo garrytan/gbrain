@@ -36,8 +36,12 @@ import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
 import { autoDetectDetail, classifyQuery, isAmbiguousModalityQuery } from './query-intent.ts';
-import { isTitlePhraseMatch } from './title-match.ts';
 import { normalizeAlias } from './alias-normalize.ts';
+import {
+  applyTitleBoost,
+  isPreferredExactTitleLookup,
+  preferExactTitleForTypedEntityLookup,
+} from './title-ranking.ts';
 import { stampEvidence } from './evidence.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget, searchSalvageEnabled, type TokenBudgetMeta } from './token-budget.ts';
@@ -362,43 +366,6 @@ export function applyRecencyBoost(
     r.recency_boost = factor;
   }
 }
-
-/**
- * T2 (retrieval-maxpool incident) — apply the title-phrase boost.
- *
- * Fires when the normalized query is a contiguous token-run inside a result's
- * page title (or an exact full-title match), per `isTitlePhraseMatch`. Mutate-
- * in-place; caller re-sorts. Mirrors applyBacklinkBoost's floor-gate + stamp.
- *
- * Bounded by construction: a single fixed multiplier (`factor`, default 1.25),
- * floor-ratio-gated so a title hit on a weak-overlap page can't leapfrog a
- * strong primary hit. `base_score` (stamped at runPostFusionStages entry) is
- * NOT touched, so the agent's dedup gate still reads true match confidence.
- *
- * Why page.title and not "first compiled_truth chunk" (Codex#11): the title is
- * a stable column; the first chunk is a chunking accident that import changes
- * could shift. The signal is "the query is the name of this thing."
- */
-export function applyTitleBoost(
-  results: SearchResult[],
-  query: string,
-  factor: number,
-  floorThreshold?: number,
-): void {
-  if (!query || !Number.isFinite(factor) || factor <= 1.0) return;
-  for (const r of results) {
-    if (!Number.isFinite(r.score)) continue;
-    if (floorThreshold !== undefined && r.score < floorThreshold) continue;
-    if (!r.title) continue;
-    if (isTitlePhraseMatch(query, r.title)) {
-      r.score *= factor;
-      r.title_match_boost = factor; // attribution stamp (v0.40.4 convention)
-    }
-  }
-}
-
-/** Default title-phrase boost multiplier (mode-overridable via `title_boost`). */
-export const DEFAULT_TITLE_BOOST = 1.25;
 
 /**
  * v0.42.x — Life Chronicle (#2390) E1 temporal recall arm. On temporal queries
@@ -1440,8 +1407,9 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-    const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
+    const noEmbedPreferred = preferExactTitleForTypedEntityLookup(noEmbedHopped, query, opts?.types);
+    stampEvidence(noEmbedPreferred, { cosineFloor: resolvedMode.evidence_cosine_floor });
+    const noEmbedSliced = noEmbedPreferred.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, noEmbedBudgeted);
@@ -1789,8 +1757,9 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
     });
-    stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-    const kwSliced = kwHopped.slice(offset, offset + limit);
+    const kwPreferred = preferExactTitleForTypedEntityLookup(kwHopped, query, opts?.types);
+    stampEvidence(kwPreferred, { cosineFloor: resolvedMode.evidence_cosine_floor });
+    const kwSliced = kwPreferred.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, kwBudgeted);
@@ -1984,12 +1953,7 @@ export async function hybridSearch(
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
   });
-
-  // T4 — stamp evidence + create_safety so the agent's don't-duplicate
-  // decision keys off WHY a page matched, not a raw blended score. Stamp on
-  // the full alias-hopped set before any adaptive trim so the kept results
-  // carry evidence regardless of where the cap lands.
-  stampEvidence(aliasHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+  const lookupPreferred = preferExactTitleForTypedEntityLookup(aliasHopped, query, opts?.types);
 
   // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
   // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
@@ -2001,7 +1965,7 @@ export async function hybridSearch(
     opts?.adaptiveReturn,
     adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
   );
-  let returnPool = aliasHopped;
+  let returnPool = lookupPreferred;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
     // v0.46.15: 'concept' maps to the recall-preserving 'general' cap for
@@ -2009,7 +1973,7 @@ export async function hybridSearch(
     // concept intent, and concept queries are exactly the ones that want
     // breadth (widening the union is the adaptive-ablation wave's call).
     const adaptiveIntent = suggestions.intent === 'concept' ? 'general' : suggestions.intent;
-    const r = applyAdaptiveReturn(aliasHopped, adaptiveIntent, adaptiveCfg);
+    const r = applyAdaptiveReturn(lookupPreferred, adaptiveIntent, adaptiveCfg);
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -2045,12 +2009,16 @@ export async function hybridSearch(
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
-      (x) => x.alias_hit === true,
+      (x) => x.alias_hit === true || isPreferredExactTitleLookup(x),
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
   }
 
+  // Stamp the final kept pool after adaptive/autocut. The private exact-title
+  // marker was set before trimming so autocut could preserve it; this pass
+  // derives every public evidence/create_safety label consistently.
+  stampEvidence(returnPool, { cosineFloor: resolvedMode.evidence_cosine_floor });
   const sliced = returnPool.slice(offset, offset + limit);
   // v0.32.3 search-lite: budget enforcement at the main return path.
   // hybridSearchCached used to be the only place this fired; now bare
@@ -2179,6 +2147,10 @@ export async function hybridSearchCached(
     // bare hybridSearch does (opts.detail ?? autoDetectDetail(query)) so an
     // auto-detected `high` query keys like an explicit `high` one.
     detail: opts?.detail ?? autoDetectDetail(query),
+    // Typed requests have different SQL candidates and, for canonical entity
+    // types, an exact-title lookup precedence. Keep them isolated from both
+    // untyped rows and other type sets.
+    types: opts?.types,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global

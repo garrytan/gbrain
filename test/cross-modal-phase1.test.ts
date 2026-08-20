@@ -136,7 +136,7 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     return resolveSearchMode({ mode: 'balanced' });
   }
 
-  test('KNOBS_HASH_VERSION is 19 (cross-modal still appended; 16→17 degradation-stamp epoch; 17→18 autocut weak-top floor #1863; 18→19 autocut minKeep floor #3621)', () => {
+  test('KNOBS_HASH_VERSION is 20 (cross-modal still appended; 18→19 autocut minKeep floor #3621; 19→20 type-filter isolation)', () => {
     // v0.35 ladder: 1→2 reranker, 2→3 floor_ratio. v0.36 piggybacks on v=3
     // with 7 cross-modal knobs + column/provider context. v0.40.4 (salem) +
     // v0.39 T21 (master) bump to v=4 for graph_signals + schema-pack fields.
@@ -153,7 +153,8 @@ describe('D2 — knobsHash differs across cross-modal knob values', () => {
     // WP2/T3: 16→17 degradation-stamp epoch — pre-stamp cache rows must not
     // claim a clean (undegraded) run they can't prove.
     // #3621: 18→19 ack= autocut minKeep floor.
-    expect(KNOBS_HASH_VERSION).toBe(19);
+    // Typed lookup fix: 19→20 types= SQL candidate/ranking isolation.
+    expect(KNOBS_HASH_VERSION).toBe(20);
   });
 
   test('flipping unified_multimodal changes the hash', () => {

@@ -859,7 +859,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // expects the floor) — same contamination class as ac=/acj=. The PR
 // authored this as v=16; master had already reached 18, so it sequences
 // here per the D8 convention. Same one-time global cold-miss pattern.
-export const KNOBS_HASH_VERSION = 19;
+//
+// bump 19→20: explicit type filters participate in the key. Typed named-page
+// lookups have a stronger exact-title ordering contract, and even before that
+// change a cached untyped result set could bypass the SQL-level type filter
+// entirely. This PR originally claimed v=19 before #3621 landed there, so it
+// sequences as v=20 on current master.
+export const KNOBS_HASH_VERSION = 20;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -909,6 +915,12 @@ export interface KnobsHashContext {
    * as col=/prov=. Undefined falls back to 'medium' (the documented default).
    */
   detail?: 'low' | 'medium' | 'high';
+  /**
+   * v=20: explicit SQL-level page type filter. Sorted before hashing so
+   * semantically identical caller orderings share one cache row; undefined or
+   * empty means the untyped default.
+   */
+  types?: string[];
 }
 
 export function knobsHash(
@@ -1028,6 +1040,10 @@ export function knobsHash(
     // weak-top floor (v=18) already owns `acm=`. `?? 1` mirrors the defensive
     // read of acj= above for partial-knobs callers.
     `ack=${Math.max(1, Math.floor(knobs.autocut_min_keep ?? 1))}`,
+    // v=20 addition: SQL-level page types. A typed lookup must never read an
+    // untyped cache row (or a row for a different type set), because that can
+    // bypass both filtering and the typed exact-title preference.
+    `types=${ctx?.types && ctx.types.length > 0 ? [...ctx.types].sort().join(',') : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1325,4 +1341,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-
