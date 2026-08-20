@@ -216,6 +216,31 @@ describe('hybridSearch (the real user/MCP surface)', () => {
     expect(slugs).not.toContain('test/fixtures/widget');
     expect(slugs).not.toContain('.raw/widget-dump');
   });
+
+  test('include_slug_prefixes reaches the engine arms through hybridSearch', async () => {
+    const results = await hybridSearch(engine, 'widget test fixture', {
+      limit: 20,
+      include_slug_prefixes: ['test/'],
+    });
+    expect(results.map(r => r.slug)).toContain('test/fixtures/widget');
+  });
+
+  test('exclude_slug_prefixes reaches the engine arms through hybridSearch', async () => {
+    const results = await hybridSearch(engine, 'widget design pattern', {
+      limit: 20,
+      exclude_slug_prefixes: ['concepts/'],
+    });
+    expect(results.map(r => r.slug)).not.toContain('concepts/widget-pattern');
+  });
+
+  test('types reaches the engine arms through hybridSearch', async () => {
+    const results = await hybridSearch(engine, 'widget', {
+      limit: 20,
+      types: ['concept'],
+    });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every(r => r.type === 'concept')).toBe(true);
+  });
 });
 
 describe('caller-supplied exclude_slug_prefixes (additive)', () => {

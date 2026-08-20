@@ -7,7 +7,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { applyAliasHop } from '../../src/core/search/hybrid.ts';
+import { applyAliasHop, hybridSearch } from '../../src/core/search/hybrid.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 
@@ -95,6 +95,32 @@ describe('applyAliasHop', () => {
     await engine.setPageAliases('b/hall', 'default', ['the hall']);
     const out = await applyAliasHop(engine, [], 'the hall', { sourceId: 'default' });
     expect(out.map(r => r.slug).sort()).toEqual(['a/hall', 'b/hall']);
+  });
+
+  test('hybrid filters fence alias-injected pages after candidate generation', async () => {
+    await engine.putPage('notes/hidden-canonical', {
+      type: 'note',
+      title: 'Hidden canonical',
+      compiled_truth: 'Only reachable through its chosen alias.',
+    });
+    await engine.setPageAliases('notes/hidden-canonical', 'default', ['chosen name']);
+
+    const typed = await hybridSearch(engine, 'chosen name', { types: ['company'] });
+    expect(typed.map(r => r.slug)).not.toContain('notes/hidden-canonical');
+
+    await engine.putPage('test/hidden-canonical', {
+      type: 'note',
+      title: 'Test canonical',
+      compiled_truth: 'Only reachable through its test alias.',
+    });
+    await engine.setPageAliases('test/hidden-canonical', 'default', ['test chosen name']);
+
+    const excluded = await hybridSearch(engine, 'test chosen name');
+    expect(excluded.map(r => r.slug)).not.toContain('test/hidden-canonical');
+    const included = await hybridSearch(engine, 'test chosen name', {
+      include_slug_prefixes: ['test/'],
+    });
+    expect(included.map(r => r.slug)).toContain('test/hidden-canonical');
   });
 });
 

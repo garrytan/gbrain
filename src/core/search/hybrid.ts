@@ -23,6 +23,8 @@ import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
+import { applyResultFilters, shouldBoostCompiledTruth } from './result-filters.ts';
+export { shouldBoostCompiledTruth } from './result-filters.ts';
 import {
   resolveAdaptiveReturn,
   applyAdaptiveReturn,
@@ -56,31 +58,6 @@ import {
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
 
-/**
- * Which detail levels get the compiled_truth boost (#3430).
- *
- * ONLY `low`. The documented contract (`src/core/operations.ts`) is
- * "low (compiled truth only), medium (default, all with dedup), high (all
- * chunks)" — so `low` is the level that privileges compiled truth, and both
- * `medium` and `high` are supposed to see everything on equal footing.
- *
- * This was previously spelled `detail !== 'high'`, i.e. written as though
- * `high` were the special case. Because COMPILED_TRUTH_BOOST is applied AFTER
- * RRF normalization, and RRF's whole range over a 100-deep pool is 1/60 → 1/160,
- * a 2.0x multiplier is not a tilt — break-even is `2/(60+r) >= 1/60`, so any
- * boosted chunk inside the first 60 ranks outranks an unboosted rank-1 chunk.
- * At the default detail that made search categorically compiled-truth-only:
- * a page whose answer lived in a `fenced_code` chunk returned the prose chunk,
- * and the code chunk fell out of the window entirely.
- *
- * Extracted as a named predicate rather than left inline at three call sites so
- * the detail→boost mapping is directly testable. An inline expression can only
- * be covered through a full `hybridSearch` round trip, which is why the
- * original inversion went unnoticed.
- */
-export function shouldBoostCompiledTruth(detail: string | null | undefined): boolean {
-  return detail === 'low';
-}
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
 /**
@@ -1189,7 +1166,11 @@ export async function hybridSearch(
     // v0.33: multi-type filter for whoknows ('person','company'). Pushes
     // type filter to SQL level so the limit budget goes to candidate-typed
     // pages instead of being eaten by note/transcript/article pages.
+    type: opts?.type,
     types: opts?.types,
+    exclude_slugs: opts?.exclude_slugs,
+    exclude_slug_prefixes: opts?.exclude_slug_prefixes,
+    include_slug_prefixes: opts?.include_slug_prefixes,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
@@ -1436,10 +1417,10 @@ export async function hybridSearch(
     }
     // T3/T4 — alias hop + evidence stamp even without an embedding provider
     // (the named-thing fix is most valuable exactly when vector is unavailable).
-    const noEmbedHopped = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
+    const noEmbedHopped = applyResultFilters(await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
-    });
+    }), opts);
     stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
     const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
@@ -1785,10 +1766,10 @@ export async function hybridSearch(
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
       fallbackResults.sort((a, b) => b.score - a.score);
     }
-    const kwHopped = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
+    const kwHopped = applyResultFilters(await applyAliasHop(engine, dedupResults(fallbackResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
-    });
+    }), opts);
     stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
     const kwSliced = kwHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
@@ -1980,10 +1961,10 @@ export async function hybridSearch(
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const aliasHopped = await applyAliasHop(engine, reranked, query, {
+  const aliasHopped = applyResultFilters(await applyAliasHop(engine, reranked, query, {
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
-  });
+  }), opts);
 
   // T4 — stamp evidence + create_safety so the agent's don't-duplicate
   // decision keys off WHY a page matched, not a raw blended score. Stamp on
@@ -2211,13 +2192,19 @@ export async function hybridSearchCached(
   // now-relative timestamp, which a persisted cache row can't express.
   const dateFiltered =
     Boolean(opts?.since ?? opts?.afterDate) || Boolean(opts?.until ?? opts?.beforeDate);
+  // Page-type filters are not represented in the persisted query-cache key.
+  // Bypass the cache rather than serving an untyped row to a typed request (or
+  // caching a narrow typed result for a later untyped lookup). Prefix filters
+  // are cache-safe because their resolved list is already folded into hx=.
+  const typeFiltered = Boolean(opts?.type) || Boolean(opts?.types?.length);
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
     isNonDefaultColumn ||
     adaptiveReturnOn ||
-    dateFiltered;
+    dateFiltered ||
+    typeFiltered;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
   let cacheSimilarity: number | undefined;

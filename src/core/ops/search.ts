@@ -141,6 +141,21 @@ const query: Operation = {
     image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    types: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Filter results to these page types (CLI: comma-separated or repeat the flag).',
+    },
+    exclude_slug_prefixes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Add slug prefixes to the search-policy hard-exclude list (CLI: comma-separated or repeat the flag).',
+    },
+    include_slug_prefixes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Opt slug prefixes back in when search policy excludes them (CLI: comma-separated or repeat the flag).',
+    },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
@@ -244,6 +259,17 @@ const query: Operation = {
     // #2561: unqualified trusted-local query spans federated sources (per-call
     // source_id / remote grants still resolve through resolveRequestedScope).
     const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
+    const stringList = (value: unknown): string[] | undefined => {
+      if (!Array.isArray(value)) return undefined;
+      const items = value
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(Boolean);
+      return items.length > 0 ? [...new Set(items)] : undefined;
+    };
+    const types = stringList(p.types);
+    const excludeSlugPrefixes = stringList(p.exclude_slug_prefixes);
+    const includeSlugPrefixes = stringList(p.include_slug_prefixes);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -261,6 +287,9 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        types,
+        exclude_slug_prefixes: excludeSlugPrefixes,
+        include_slug_prefixes: includeSlugPrefixes,
         ...querySourceScope,
       });
       return results;
@@ -301,6 +330,9 @@ const query: Operation = {
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
       walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+      types,
+      exclude_slug_prefixes: excludeSlugPrefixes,
+      include_slug_prefixes: includeSlugPrefixes,
       ...querySourceScope,
       // v0.29.1 — agent-explicit recency + salience. Omitted = heuristic defaults.
       salience: p.salience as 'off' | 'on' | 'strong' | undefined,
