@@ -299,6 +299,38 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     }
   });
 
+  test('migration accepts an equivalent renamed source foreign key without duplicating it', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await dropAppPolicies();
+    await conn.unsafe(
+      'ALTER TABLE sealed_page_receipts RENAME CONSTRAINT sealed_page_receipts_source_id_fkey TO alternate_source_fk',
+    );
+    await engine.setConfig('version', '136');
+
+    try {
+      await expect(runMigrations(engine)).resolves.toMatchObject({ applied: 1 });
+      const rows = await conn.unsafe<{ count: number }[]>(`
+        SELECT count(*)::int AS count
+          FROM pg_constraint
+         WHERE conrelid = 'public.sealed_page_receipts'::regclass
+           AND contype = 'f'
+           AND pg_get_constraintdef(oid) =
+             'FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT'
+      `);
+      expect(rows[0]?.count).toBe(1);
+      expect(await engine.getConfig('version')).toBe('137');
+    } finally {
+      await conn.unsafe(
+        'ALTER TABLE sealed_page_receipts DROP CONSTRAINT IF EXISTS sealed_page_receipts_source_id_fkey',
+      );
+      await conn.unsafe(
+        'ALTER TABLE sealed_page_receipts RENAME CONSTRAINT alternate_source_fk TO sealed_page_receipts_source_id_fkey',
+      );
+      await engine.setConfig('version', '137');
+    }
+  }, 30_000);
+
   test('migration rejects a malformed pre-existing receipt table without advancing version', async () => {
     const engine = getEngine();
     const conn = getConn();

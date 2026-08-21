@@ -6233,8 +6233,15 @@ export const MIGRATIONS: Migration[] = [
           SELECT 1
             FROM pg_constraint
            WHERE conrelid = 'public.sealed_page_receipts'::regclass
-             AND conname = 'sealed_page_receipts_source_id_fkey'
              AND contype = 'f'
+             AND pg_get_constraintdef(oid) =
+               'FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT'
+        ) AND NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint
+           WHERE conrelid = 'public.sealed_page_receipts'::regclass
+             AND contype = 'f'
+             AND conname = 'sealed_page_receipts_source_id_fkey'
         ) THEN
           ALTER TABLE sealed_page_receipts
             ADD CONSTRAINT sealed_page_receipts_source_id_fkey
