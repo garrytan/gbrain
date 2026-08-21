@@ -21,6 +21,11 @@ function writeResolverSkillsDir(skillsDir: string): void {
   writeFileSync(join(skillsDir, 'RESOLVER.md'), '# Resolver\n');
 }
 
+function writeWorkspaceRootResolver(workspace: string): void {
+  mkdirSync(join(workspace, 'skills'), { recursive: true });
+  writeFileSync(join(workspace, 'AGENTS.md'), '# Agents\n');
+}
+
 function writeTriggerOnlySkillsDir(skillsDir: string): void {
   mkdirSync(join(skillsDir, 'query'), { recursive: true });
   writeFileSync(
@@ -73,6 +78,20 @@ describe('read-only GBRAIN_SKILLS_DIR detection', () => {
 
     expect(found.dir).toBeNull();
     expect(found.source).toBe('env_explicit');
+  });
+
+  test('preserves the OpenClaw workspace-root fallback for an explicit skills sibling', () => {
+    const workspace = scratch('openclaw-workspace-');
+    writeWorkspaceRootResolver(workspace);
+    const explicit = join(workspace, 'skills');
+
+    const found = autoDetectSkillsDirReadOnly(scratch('cwd-'), {
+      GBRAIN_SKILLS_DIR: explicit,
+      OPENCLAW_WORKSPACE: workspace,
+    });
+
+    expect(found.dir).toBe(explicit);
+    expect(found.source).toBe('openclaw_workspace_env_root');
   });
 
   test('check-resolvable --json reports the trigger-only explicit catalog', () => {

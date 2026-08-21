@@ -286,6 +286,24 @@ export function autoDetectSkillsDirReadOnly(
     if (hasResolverFile(explicit) || hasFrontmatterTriggerSkill(explicit)) {
       return { dir: explicit, source: 'env_explicit' };
     }
+
+    if (env.OPENCLAW_WORKSPACE) {
+      const workspace = isAbsolute(env.OPENCLAW_WORKSPACE)
+        ? env.OPENCLAW_WORKSPACE
+        : resolvePath(startDir, env.OPENCLAW_WORKSPACE);
+      const workspaceResolved = resolveWorkspaceSkillsDir(
+        workspace,
+        'openclaw_workspace_env',
+        'openclaw_workspace_env_root',
+      );
+      if (
+        workspaceResolved?.dir &&
+        resolvePath(workspaceResolved.dir) === resolvePath(explicit)
+      ) {
+        return workspaceResolved;
+      }
+    }
+
     return { dir: null, source: 'env_explicit' };
   }
 
