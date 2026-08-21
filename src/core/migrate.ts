@@ -6221,6 +6221,27 @@ export const MIGRATIONS: Migration[] = [
           AND jsonb_typeof(canonical_projection->'frontmatter') = 'object'
         )
       );
+      DO $constraint$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+            FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND table_name = 'sealed_page_receipts'
+             AND column_name = 'source_id'
+        ) AND NOT EXISTS (
+          SELECT 1
+            FROM pg_constraint
+           WHERE conrelid = 'public.sealed_page_receipts'::regclass
+             AND conname = 'sealed_page_receipts_source_id_fkey'
+             AND contype = 'f'
+        ) THEN
+          ALTER TABLE sealed_page_receipts
+            ADD CONSTRAINT sealed_page_receipts_source_id_fkey
+            FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT;
+        END IF;
+      END;
+      $constraint$;
       ALTER TABLE sealed_page_receipts ENABLE ROW LEVEL SECURITY;
 
       CREATE OR REPLACE FUNCTION protect_sealed_page_fn() RETURNS trigger SECURITY DEFINER SET search_path = pg_catalog, public AS $fn$

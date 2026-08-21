@@ -336,12 +336,14 @@ BEGIN
 END;
 \$fn\$ LANGUAGE plpgsql;
 DO \$owner\$
-DECLARE schema_owner NAME;
+DECLARE relation_owner NAME;
 BEGIN
-  SELECT r.rolname INTO schema_owner
-    FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
-   WHERE n.nspname = 'public';
-  EXECUTE format('ALTER FUNCTION public.protect_sealed_page_fn() OWNER TO %I', schema_owner);
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_page_fn() OWNER TO %I', relation_owner);
 END;
 \$owner\$;
 REVOKE ALL ON FUNCTION protect_sealed_page_fn() FROM PUBLIC;
@@ -460,12 +462,14 @@ BEGIN
 END;
 \$fn\$ LANGUAGE plpgsql;
 DO \$owner\$
-DECLARE schema_owner NAME;
+DECLARE relation_owner NAME;
 BEGIN
-  SELECT r.rolname INTO schema_owner
-    FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner
-   WHERE n.nspname = 'public';
-  EXECUTE format('ALTER FUNCTION public.protect_sealed_chunk_fn() OWNER TO %I', schema_owner);
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_chunk_fn() OWNER TO %I', relation_owner);
 END;
 \$owner\$;
 REVOKE ALL ON FUNCTION protect_sealed_chunk_fn() FROM PUBLIC;

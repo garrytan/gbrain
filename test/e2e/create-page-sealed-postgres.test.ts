@@ -305,14 +305,14 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     await dropAppPolicies();
     await conn.unsafe('DROP TABLE sealed_page_receipts');
     await conn.unsafe('CREATE TABLE sealed_page_receipts (operation_id text PRIMARY KEY)');
-    await engine.setConfig('version', '132');
+    await engine.setConfig('version', '136');
 
     try {
       await expect(runMigrations(engine)).rejects.toThrow(/post-condition|schema does not match/i);
-      expect(await engine.getConfig('version')).toBe('135');
+      expect(await engine.getConfig('version')).toBe('136');
     } finally {
       await conn.unsafe('DROP TABLE IF EXISTS sealed_page_receipts');
-      await engine.setConfig('version', '132');
+      await engine.setConfig('version', '136');
       await runMigrations(engine);
     }
   }, 30_000);
@@ -343,16 +343,16 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     await conn.unsafe(`CREATE TRIGGER protect_sealed_chunk_trg
       BEFORE UPDATE ON timeline_entries
       FOR EACH ROW EXECUTE FUNCTION wrong_sealed_trigger_fn()`);
-    await engine.setConfig('version', '132');
+    await engine.setConfig('version', '136');
 
     try {
       await expect(runMigrations(engine)).rejects.toBeInstanceOf(MigrationDriftError);
-      expect(await engine.getConfig('version')).toBe('135');
+      expect(await engine.getConfig('version')).toBe('136');
     } finally {
       await conn.unsafe('DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON timeline_entries');
       await conn.unsafe('DROP FUNCTION IF EXISTS wrong_sealed_trigger_fn()');
       await conn.unsafe('DROP TABLE IF EXISTS sealed_page_receipts');
-      await engine.setConfig('version', '132');
+      await engine.setConfig('version', '136');
       await runMigrations(engine);
     }
   }, 30_000);
