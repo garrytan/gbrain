@@ -36,10 +36,10 @@ describe('x-to-brain secret name alignment (#2789)', () => {
 
   it('features registry pins the resolver-canonical name', () => {
     const src = read('../src/commands/features.ts');
-    expect(src).toContain("{ id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] }");
+    expect(src).toContain("secrets: ['X_API_BEARER_TOKEN', 'XQUIK_API_KEY']");
   });
 
-  it('the x-to-brain recipe declares and uses only the canonical name', async () => {
+  it('the x-to-brain recipe keeps the canonical X API name', async () => {
     const { parseRecipe } = await import('../src/commands/integrations.ts');
     const raw = read('../recipes/x-to-brain.md');
     const recipe = parseRecipe(raw, 'x-to-brain.md');
@@ -47,10 +47,14 @@ describe('x-to-brain secret name alignment (#2789)', () => {
     // Frontmatter: the declared secret is the canonical name.
     const secretNames = recipe!.frontmatter.secrets.map(s => s.name);
     expect(secretNames).toContain('X_API_BEARER_TOKEN');
+    expect(secretNames).toContain('XQUIK_API_KEY');
     expect(secretNames).not.toContain('X_BEARER_TOKEN');
     // Health check: the bearer interpolation uses the canonical name.
-    const hc = recipe!.frontmatter.health_checks[0] as { auth_token?: string };
-    expect(hc.auth_token).toBe('$X_API_BEARER_TOKEN');
+    const providerCheck = recipe!.frontmatter.health_checks[0] as {
+      checks?: Array<{ auth_token?: string }>;
+    };
+    const xApiCheck = providerCheck.checks?.find(check => check.auth_token);
+    expect(xApiCheck?.auth_token).toBe('$X_API_BEARER_TOKEN');
     // Body: every $-interpolated token reference (curl examples etc.) is the
     // canonical name — catches a third misspelled variant, not just the exact
     // legacy string. (The legacy name may still appear as PROSE in the

@@ -104,7 +104,8 @@ describe('configured-detection semantics (drives real scanFeatures)', () => {
   // withEnv (rule R1: no direct process.env mutation), so leftover env can't leak in.
   const CLEARED: Record<string, undefined> = {
     CLAWVISOR_AGENT_TOKEN: undefined, GOOGLE_CLIENT_ID: undefined, X_API_BEARER_TOKEN: undefined,
-    TWILIO_AUTH_TOKEN: undefined, CIRCLEBACK_TOKEN: undefined, NGROK_AUTHTOKEN: undefined,
+    XQUIK_API_KEY: undefined, TWILIO_AUTH_TOKEN: undefined, CIRCLEBACK_TOKEN: undefined,
+    NGROK_AUTHTOKEN: undefined,
   };
 
   const noIntegrations = async () =>

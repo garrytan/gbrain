@@ -1,25 +1,39 @@
 ---
 id: x-to-brain
 name: X-to-Brain
-version: 0.8.3
-description: Twitter timeline, mentions, and keyword monitoring flow into brain pages. Tracks deletions, engagement velocity, OCR on images, and real-time alerts.
+version: 0.9.0
+description: Twitter timeline, mentions, and keyword monitoring flow into brain pages. Tracks deletions, engagement velocity, OCR on images, and alerts.
 category: sense
 requires: []
 secrets:
   - name: X_API_BEARER_TOKEN
-    description: X API v2 Bearer token (Basic tier minimum, $200/mo for full archive search)
+    description: X API v2 Bearer token for Option A
     where: https://developer.x.com/en/portal/dashboard — create a project + app, copy the Bearer Token from "Keys and tokens"
+    group: x-api
+  - name: XQUIK_API_KEY
+    description: Xquik API key. Option B reads public X data without an X developer account.
+    where: Create an API key at https://xquik.com/dashboard/api-keys
+    group: xquik
   - name: X_HANDLE
-    description: Your X username without the @ (used for the app-only health check — /users/me requires user-context OAuth, which app-only bearer tokens don't have)
+    description: Your X username without the @
     where: Your X profile — the handle in your profile URL, e.g. x.com/yourhandle → yourhandle
 health_checks:
-  - type: http
-    url: "https://api.x.com/2/users/by/username/$X_HANDLE"
-    auth: bearer
-    auth_token: "$X_API_BEARER_TOKEN"
-    label: "X API"
+  - type: any_of
+    label: "X data provider"
+    checks:
+      - type: http
+        url: "https://api.x.com/2/users/by/username/$X_HANDLE"
+        auth: bearer
+        auth_token: "$X_API_BEARER_TOKEN"
+        label: "X API"
+      - type: http
+        url: "https://xquik.com/api/v1/x/users/$X_HANDLE"
+        headers:
+          x-api-key: "$XQUIK_API_KEY"
+          xquik-api-contract: "2026-04-29"
+        label: "Xquik"
 setup_time: 15 min
-cost_estimate: "$0-200/mo (Free tier: 1 app, read-only. Basic: $200/mo for search + higher limits)"
+cost_estimate: "Varies by provider and usage"
 ---
 
 # X-to-Brain: Twitter Monitoring That Updates Your Brain
@@ -49,11 +63,11 @@ narratives are forming.
 ## Architecture
 
 ```
-X API v2 (Bearer token auth)
+X API v2 or Xquik REST API
   ↓ Three collection streams:
-  ├── Own timeline: GET /users/{id}/tweets
-  ├── Mentions: GET /users/{id}/mentions
-  └── Keyword searches: GET /tweets/search/recent
+  ├── Own timeline
+  ├── Mentions
+  └── Keyword searches
   ↓
 X Collector (deterministic Node.js script)
   ↓ Outputs:
@@ -90,19 +104,25 @@ Agent reads collected data
 - Only write snapshot if metrics actually changed (idempotent)
 
 **Rate limit awareness:**
-- Basic tier: 1500 req/15min for timeline, 450 for mentions, 60 for search
-- Collector tracks rate limits in state.json
-- Back off automatically when approaching limits
+- Track provider limits in state.json
+- Back off automatically on 429 responses
+- Preserve cursors and resume after the provider's reset window
 
 ## Prerequisites
 
 1. **GBrain installed and configured** (`gbrain doctor` passes)
 2. **Node.js 18+** (for the collector script)
-3. **X Developer account** with API access
+3. Access through one provider:
+   - X API v2 with a developer account
+   - Xquik with an API key
 
 ## Setup Flow
 
-### Step 1: Get X API Credentials
+### Step 1. Choose an X data provider
+
+Ask the user to choose X API v2 or Xquik. Configure one option, not both.
+
+#### Option A. X API v2
 
 Tell the user:
 "I need your X API Bearer token. Here's exactly where to get it:
@@ -134,7 +154,36 @@ starting with 'AAA...', (3) if you just created the app, the token is valid imme
 
 **STOP until X API validates.**
 
-### Step 2: Get Your X User ID
+#### Option B. Xquik
+
+Tell the user:
+"Create an API key at https://xquik.com/dashboard/api-keys and paste it here.
+I also need your X handle without the @. This route reads public X data and does
+not require an X developer account."
+
+Set `XQUIK_API_KEY` and `X_HANDLE`. Validate them without printing the key:
+
+```bash
+curl -sf -H "x-api-key: $XQUIK_API_KEY" \
+  -H "xquik-api-contract: 2026-04-29" \
+  "https://xquik.com/api/v1/account" \
+  && echo "PASS: Xquik connected" \
+  || echo "FAIL: Xquik key invalid"
+```
+
+**STOP until Xquik validates.**
+
+### Step 2. Resolve the collector identity
+
+For Xquik, verify the handle, then keep it as the collector identity:
+
+```bash
+curl -sf -H "x-api-key: $XQUIK_API_KEY" \
+  -H "xquik-api-contract: 2026-04-29" \
+  "https://xquik.com/api/v1/x/users/$X_HANDLE"
+```
+
+For X API v2, resolve and save the numeric user ID:
 
 ```bash
 # Look up the user's X user ID from their handle
@@ -142,8 +191,7 @@ curl -sf -H "Authorization: Bearer $X_API_BEARER_TOKEN" \
   "https://api.x.com/2/users/by/username/$X_HANDLE" | grep -o '"id":"[^"]*"'
 ```
 
-Look up the user ID from the handle collected in Step 1.
-Save it — the collector needs the numeric ID, not the handle.
+The X API collector needs the numeric ID, not the handle.
 
 ### Step 3: Configure the Collector
 
@@ -156,10 +204,18 @@ cd x-collector
 The collector script needs these capabilities:
 
 1. **collect** — pull tweets from three streams:
-   - Own timeline: `GET /2/users/{id}/tweets` with max_results=100
-   - Mentions: `GET /2/users/{id}/mentions` with max_results=100
-   - Keyword searches: configurable search terms via `GET /2/tweets/search/recent`
-2. **Deletion detection** — compare previous run's tweet IDs vs current. For missing IDs, verify with individual tweet lookup. 404 = deleted.
+   - X API own timeline: `GET /2/users/{id}/tweets?max_results=100`
+   - X API mentions: `GET /2/users/{id}/mentions?max_results=100`
+   - X API searches: `GET /2/tweets/search/recent?query={query}`
+   - Xquik own timeline: `GET /api/v1/x/users/{id}/tweets?pageSize=100`
+   - Xquik mentions: `GET /api/v1/x/users/{id}/mentions?pageSize=100`
+   - Xquik searches: `GET /api/v1/x/tweets/search?q={query}&limit=100`
+   Xquik accepts a username or user ID for `{id}`.
+   Send `x-api-key` and `xquik-api-contract: 2026-04-29` on Xquik requests.
+   Pass provider cursors unchanged on the next request.
+2. **Deletion detection.** Compare previous run's tweet IDs vs current. Verify
+   missing IDs through `/2/tweets/{id}` on X API or
+   `/api/v1/x/tweets/{id}` on Xquik. A 404 confirms deletion.
 3. **Engagement tracking** — snapshot metrics for tracked tweets. Only write if metrics changed.
 4. **State management** — save pagination tokens, last run timestamp, rate limit state to `data/state.json`
 5. **Atomic writes** — write to .tmp file, then rename (prevents corrupt data on crash)
@@ -210,7 +266,7 @@ The agent should review collected data 2-3x daily and run enrichment.
 
 ```bash
 mkdir -p ~/.gbrain/integrations/x-to-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.8.3","status":"ok","details":{"user_id":"X_USER_ID"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
+echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.9.0","status":"ok","details":{"provider":"PROVIDER","identity":"X_ID_OR_HANDLE"}}' >> ~/.gbrain/integrations/x-to-brain/heartbeat.jsonl
 ```
 
 ## Production Patterns (v0.8.1)
@@ -231,7 +287,7 @@ screenshots, charts, memes with text overlay, quote screenshots.
 
 This catches signal that text-only collectors miss entirely.
 
-### Real-Time Monitoring via Filtered Stream (NEW)
+### Real-time monitoring through the X API filtered stream
 
 **Problem:** 30-minute polling means you find out about things 30 minutes late.
 For time-sensitive content (engagement spikes, deletions, breaking threads),
@@ -249,6 +305,9 @@ near-real-time monitoring. Catches outbound tweets within seconds.
 
 **Use alongside polling:** Stream for real-time alerts, polling for completeness
 (stream can drop tweets during disconnects).
+
+Xquik collectors should keep the polling flow. Do not call the X filtered-stream
+routes with an Xquik key.
 
 ### Tweet Rating Rubric (NEW)
 
@@ -427,14 +486,12 @@ RUN_COMPLETE:{timestamp}:tweets_stored={N}:deletions={N}:velocity_alerts={N}
 
 ## Cost Estimate
 
-| Component | Monthly Cost |
-|-----------|-------------|
-| X API Free tier | $0 (read-only, low limits) |
-| X API Basic tier | $200/mo (search + higher limits) |
-| X API Pro tier | $5,000/mo (full archive) |
-| **Recommended** | **$0 (free) or $200 (basic)** |
+| Component | Cost basis |
+|-----------|------------|
+| X API | Check the current X developer pricing and access limits. |
+| Xquik | Check current usage and credit terms before collection. |
 
-Free tier works for personal monitoring. Basic tier needed for keyword search.
+Choose a provider whose current access and cost limits support all 3 streams.
 
 ## Troubleshooting
 
@@ -446,13 +503,17 @@ Free tier works for personal monitoring. Basic tier needed for keyword search.
   old name keeps running either way; the rename is what makes the integrations
   dashboard and the resolver see the token.
 
-**API returns 403:**
+**X API returns 403.**
 - Check your app has the right access level (Read or Read+Write)
 - Free tier apps can only use basic endpoints
 - Some endpoints require Basic or Pro tier
 
+**Xquik returns 401 or 402.**
+- Check `XQUIK_API_KEY` for 401 responses
+- Check the account's available usage for 402 responses
+
 **Rate limited (429):**
-- The collector respects rate limits automatically
+- The collector respects provider limits automatically
 - If hitting limits frequently, increase the cron interval to 60 minutes
 - Check `data/state.json` for rate limit tracking
 

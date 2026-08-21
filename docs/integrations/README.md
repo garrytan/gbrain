@@ -82,6 +82,9 @@ setup_time: 30 min              # estimated time to complete setup
 [Setup instructions the agent follows step by step...]
 ```
 
+Secrets without `group` are always required. When groups exist, one complete
+group is required. This models provider choices without requiring every option.
+
 **The recipe IS the installer.** Your agent (OpenClaw, Hermes, Claude Code) reads
 the markdown body and executes the setup steps. It asks you for API keys, validates
 each one, configures the integration, and runs a smoke test.

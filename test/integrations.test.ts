@@ -9,11 +9,14 @@ import {
   expandVars,
   executeHealthCheck,
   checkSecrets,
+  getStatus,
+  hasConfiguredSecrets,
   parseOctet,
   hostnameToOctets,
   isPrivateIpv4,
   isInternalUrl,
 } from '../src/commands/integrations.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const RECIPES_DIR = resolve(import.meta.dir, '..', 'recipes');
 
@@ -164,6 +167,130 @@ Content.
     expect(recipe!.frontmatter.secrets).toHaveLength(3);
     expect(recipe!.frontmatter.secrets[2].name).toBe('KEY_C');
   });
+
+  test('parses named alternative secret groups', () => {
+    const content = `---
+id: grouped-secrets
+secrets:
+  - name: SHARED_ID
+    description: Shared identity
+    where: https://example.com/identity
+  - name: OPTION_A_KEY
+    description: First provider
+    where: https://a.example.com
+    group: option-a
+  - name: OPTION_B_KEY
+    description: Second provider
+    where: https://b.example.com
+    group: option-b
+---
+Grouped secrets.
+`;
+    const recipe = parseRecipe(content, 'grouped.md');
+    expect(recipe).not.toBeNull();
+    expect(recipe!.frontmatter.secrets.map(secret => secret.group)).toEqual([
+      undefined,
+      'option-a',
+      'option-b',
+    ]);
+  });
+});
+
+describe('integration status', () => {
+  const content = `---
+id: grouped-status
+secrets:
+  - name: SHARED_ID
+    description: Shared identity
+    where: https://example.com/identity
+  - name: OPTION_A_ID
+    description: First provider ID
+    where: https://a.example.com
+    group: option-a
+  - name: OPTION_A_SECRET
+    description: First provider secret
+    where: https://a.example.com
+    group: option-a
+  - name: OPTION_B_TOKEN
+    description: Second provider token
+    where: https://b.example.com
+    group: option-b
+---
+Grouped status.
+`;
+
+  test('accepts one complete alternative with all ungrouped secrets', async () => {
+    await withEnv({
+      SHARED_ID: 'shared',
+      OPTION_A_ID: undefined,
+      OPTION_A_SECRET: undefined,
+      OPTION_B_TOKEN: 'token',
+    }, () => {
+      const recipe = parseRecipe(content, 'grouped-status.md');
+      expect(recipe).not.toBeNull();
+      expect(hasConfiguredSecrets(recipe!.frontmatter.secrets)).toBe(true);
+      expect(getStatus(recipe!)).toBe('configured');
+    });
+  });
+
+  test('rejects partial alternatives', async () => {
+    await withEnv({
+      SHARED_ID: 'shared',
+      OPTION_A_ID: 'id',
+      OPTION_A_SECRET: undefined,
+      OPTION_B_TOKEN: undefined,
+    }, () => {
+      const recipe = parseRecipe(content, 'grouped-status.md');
+      expect(recipe).not.toBeNull();
+      expect(hasConfiguredSecrets(recipe!.frontmatter.secrets)).toBe(false);
+      expect(getStatus(recipe!)).toBe('available');
+    });
+  });
+
+  test('keeps ungrouped secrets mandatory', async () => {
+    await withEnv({
+      SHARED_ID: undefined,
+      OPTION_A_ID: undefined,
+      OPTION_A_SECRET: undefined,
+      OPTION_B_TOKEN: 'token',
+    }, () => {
+      const recipe = parseRecipe(content, 'grouped-status.md');
+      expect(recipe).not.toBeNull();
+      expect(hasConfiguredSecrets(recipe!.frontmatter.secrets)).toBe(false);
+    });
+  });
+
+  test('preserves all-required behavior without groups', async () => {
+    const legacy = `---
+id: legacy-status
+secrets:
+  - name: LEGACY_A
+    description: First key
+    where: https://example.com
+  - name: LEGACY_B
+    description: Second key
+    where: https://example.com
+---
+Legacy status.
+`;
+    await withEnv({ LEGACY_A: 'set', LEGACY_B: undefined }, () => {
+      const recipe = parseRecipe(legacy, 'legacy-status.md');
+      expect(recipe).not.toBeNull();
+      expect(hasConfiguredSecrets(recipe!.frontmatter.secrets)).toBe(false);
+    });
+  });
+
+  test('treats malformed group values as ungrouped', async () => {
+    const malformed = [{
+      name: 'MALFORMED_GROUP_KEY',
+      description: 'Required key',
+      where: 'https://example.com',
+      group: 1,
+    }] as unknown as Parameters<typeof hasConfiguredSecrets>[0];
+    await withEnv({ MALFORMED_GROUP_KEY: undefined }, () => {
+      expect(hasConfiguredSecrets(malformed)).toBe(false);
+    });
+  });
 });
 
 // --- CLI structure tests ---
@@ -279,8 +406,12 @@ describe('x-to-brain recipe', () => {
     );
     const recipe = parseRecipe(content, 'x-to-brain.md');
     expect(recipe).not.toBeNull();
-    const httpChecks = recipe!.frontmatter.health_checks
-      .filter((c: any) => typeof c === 'object' && c.type === 'http');
+    const collectHttpChecks = (checks: any[]): any[] => checks.flatMap(check => {
+      if (typeof check !== 'object') return [];
+      if (check.type === 'http') return [check];
+      return check.type === 'any_of' ? collectHttpChecks(check.checks) : [];
+    });
+    const httpChecks = collectHttpChecks(recipe!.frontmatter.health_checks);
     expect(httpChecks.length).toBeGreaterThan(0);
     const secretNames = new Set(recipe!.frontmatter.secrets.map((s: any) => s.name));
     for (const check of httpChecks as any[]) {
@@ -289,13 +420,40 @@ describe('x-to-brain recipe', () => {
       expect(check.url).not.toContain('/users/me');
       // Every $VAR the check expands must be declared in secrets, or the
       // installer never prompts for it and the check fails for everyone.
-      const vars = [check.url, check.auth_token, check.auth_user, check.auth_pass]
+      const vars = [
+        check.url,
+        check.auth_token,
+        check.auth_user,
+        check.auth_pass,
+        ...Object.values(check.headers ?? {}),
+      ]
         .filter((v: unknown): v is string => typeof v === 'string')
         .flatMap((v: string) => v.match(/\$[A-Z_][A-Z0-9_]*/g) ?? [])
         .map((v: string) => v.slice(1));
       expect(vars.length).toBeGreaterThan(0);
       for (const name of vars) expect(secretNames.has(name)).toBe(true);
     }
+  });
+
+  test('supports either X API or Xquik credentials', async () => {
+    const { readFileSync } = require('fs');
+    const content = readFileSync(
+      new URL('../recipes/x-to-brain.md', import.meta.url),
+      'utf-8'
+    );
+    const recipe = parseRecipe(content, 'x-to-brain.md');
+    expect(recipe).not.toBeNull();
+    expect(recipe!.frontmatter.secrets.find(secret => secret.name === 'X_API_BEARER_TOKEN')?.group).toBe('x-api');
+    expect(recipe!.frontmatter.secrets.find(secret => secret.name === 'XQUIK_API_KEY')?.group).toBe('xquik');
+    expect(recipe!.frontmatter.secrets.find(secret => secret.name === 'X_HANDLE')?.group).toBeUndefined();
+
+    await withEnv({
+      X_API_BEARER_TOKEN: undefined,
+      XQUIK_API_KEY: 'xq_test',
+      X_HANDLE: 'example',
+    }, () => {
+      expect(hasConfiguredSecrets(recipe!.frontmatter.secrets)).toBe(true);
+    });
   });
 });
 

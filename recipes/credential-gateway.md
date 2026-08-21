@@ -9,15 +9,19 @@ secrets:
   - name: CLAWVISOR_URL
     description: ClawVisor gateway URL (Option A — recommended)
     where: https://clawvisor.com — create an agent, copy the gateway URL
+    group: clawvisor
   - name: CLAWVISOR_AGENT_TOKEN
     description: ClawVisor agent token (Option A)
     where: https://clawvisor.com — agent settings, copy the agent token
+    group: clawvisor
   - name: GOOGLE_CLIENT_ID
     description: Google OAuth2 client ID (Option B — direct API)
     where: https://console.cloud.google.com/apis/credentials — create OAuth 2.0 Client ID
+    group: google-oauth
   - name: GOOGLE_CLIENT_SECRET
     description: Google OAuth2 client secret (Option B)
     where: https://console.cloud.google.com/apis/credentials — same page as client ID
+    group: google-oauth
 health_checks:
   - type: any_of
     label: "Auth provider"
