@@ -4,6 +4,10 @@ function normalizeCatalogDefinition(definition: string): string {
   return definition.replace(/::text/g, '').replace(/[()\s]+/g, '');
 }
 
+function normalizeFunctionBody(body: string): string {
+  return body.replace(/\s+/g, ' ').trim();
+}
+
 export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Promise<boolean> {
   const columns = await engine.executeRaw<{
     column_name: string;
@@ -82,6 +86,87 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
     'u:UNIQUE (source_id, slug)',
   ].map((definition) => normalizeCatalogDefinition(definition)).sort();
   if (JSON.stringify(actualConstraints) !== JSON.stringify(expectedConstraints)) return false;
+
+  const functions = await engine.executeRaw<{
+    proname: string;
+    prosrc: string;
+    lanname: string;
+    provolatile: string;
+    proisstrict: boolean;
+    prosecdef: boolean;
+    proleakproof: boolean;
+    proparallel: string;
+    prokind: string;
+    pronargs: number;
+    return_type: string;
+    function_config: string;
+  }>(
+    `SELECT p.proname, p.prosrc, l.lanname, p.provolatile::text,
+            p.proisstrict, p.prosecdef, p.proleakproof, p.proparallel::text,
+            p.prokind::text, p.pronargs, p.prorettype::regtype::text AS return_type,
+            COALESCE(array_to_string(p.proconfig, ','), '') AS function_config
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = 'public'
+        AND p.proname IN ('protect_sealed_page_fn', 'protect_sealed_receipt_fn', 'protect_sealed_chunk_fn')
+      ORDER BY p.proname`,
+  );
+  const actualFunctions = functions.map((fn) => [
+    fn.proname,
+    normalizeFunctionBody(fn.prosrc),
+    fn.lanname,
+    fn.provolatile,
+    fn.proisstrict,
+    fn.prosecdef,
+    fn.proleakproof,
+    fn.proparallel,
+    fn.prokind,
+    Number(fn.pronargs),
+    fn.return_type,
+    fn.function_config,
+  ]);
+  const functionProperties = ['plpgsql', 'v', false, false, false, 'u', 'f', 0, 'trigger', 'search_path=pg_catalog, public'];
+  const expectedFunctions = [
+    [
+      'protect_sealed_chunk_fn',
+      normalizeFunctionBody(`
+        DECLARE protected_page_id INTEGER;
+        BEGIN
+          protected_page_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.page_id ELSE OLD.page_id END;
+          IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = protected_page_id)
+            OR (TG_OP = 'UPDATE' AND NEW.page_id <> OLD.page_id
+                AND EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = NEW.page_id)) THEN
+            RAISE EXCEPTION 'sealed page chunk is immutable: page_id=%', protected_page_id USING ERRCODE = '55000';
+          END IF;
+          RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+        END;
+      `),
+      ...functionProperties,
+    ],
+    [
+      'protect_sealed_page_fn',
+      normalizeFunctionBody(`
+        BEGIN
+          IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = OLD.id) THEN
+            RAISE EXCEPTION 'sealed page is immutable: %/%', OLD.source_id, OLD.slug USING ERRCODE = '55000';
+          END IF;
+          RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+        END;
+      `),
+      ...functionProperties,
+    ],
+    [
+      'protect_sealed_receipt_fn',
+      normalizeFunctionBody(`
+        BEGIN
+          RAISE EXCEPTION 'sealed page receipt is immutable' USING ERRCODE = '55000';
+        END;
+      `),
+      ...functionProperties,
+    ],
+  ];
+  if (JSON.stringify(actualFunctions) !== JSON.stringify(expectedFunctions)) return false;
 
   const triggers = await engine.executeRaw<{
     tgname: string;

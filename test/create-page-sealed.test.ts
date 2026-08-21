@@ -214,6 +214,42 @@ describe('create_page sealed contract', () => {
     await expect(create(slug, content(), 'forged-receipt')).rejects.toThrow(/integrity/i);
   });
 
+  test('every receipt read rejects altered deterministic page metadata', async () => {
+    const label = 'forged-page-metadata';
+    const slug = syntheticSlug(label);
+    const markdown = content('Forged page metadata');
+    await create(slug, markdown, label);
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+
+    await engine.executeRaw('ALTER TABLE pages DISABLE TRIGGER protect_sealed_page_trg');
+    await engine.executeRaw(
+      "UPDATE pages SET source_kind = 'attacker-source' WHERE id = $1",
+      [page!.id],
+    );
+    await engine.executeRaw('ALTER TABLE pages ENABLE TRIGGER protect_sealed_page_trg');
+
+    await expect(create(slug, markdown, label)).rejects.toThrow(/integrity/i);
+  });
+
+  test('every receipt read rejects an altered chunk model', async () => {
+    const label = 'forged-chunk-model';
+    const slug = syntheticSlug(label);
+    const markdown = content('Forged chunk model');
+    await create(slug, markdown, label);
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+
+    await engine.executeRaw('ALTER TABLE content_chunks DISABLE TRIGGER protect_sealed_chunk_trg');
+    await engine.executeRaw(
+      "UPDATE content_chunks SET model = 'attacker-model' WHERE page_id = $1 AND chunk_index = 0",
+      [page!.id],
+    );
+    await engine.executeRaw('ALTER TABLE content_chunks ENABLE TRIGGER protect_sealed_chunk_trg');
+
+    await expect(create(slug, markdown, label)).rejects.toThrow(/integrity/i);
+  });
+
   test('every receipt read rejects altered deterministic chunk fields', async () => {
     const mutations = [
       "chunk_index = 77",
@@ -369,6 +405,30 @@ describe('create_page sealed contract', () => {
       expect(await migration!.verify!(engine)).toBe(false);
     } finally {
       await engine.executeRaw("ALTER FUNCTION protect_sealed_chunk_fn() SET search_path = pg_catalog, public");
+    }
+    expect(await migration!.verify!(engine)).toBe(true);
+  });
+
+  test('v133 verifier rejects a permissive trigger function body on PGLite', async () => {
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 133);
+    expect(migration?.verify).toBeDefined();
+    expect(await migration!.verify!(engine)).toBe(true);
+
+    await engine.executeRaw(`CREATE OR REPLACE FUNCTION protect_sealed_receipt_fn()
+      RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+      BEGIN
+        RETURN NEW;
+      END;
+      $fn$ LANGUAGE plpgsql`);
+    try {
+      expect(await migration!.verify!(engine)).toBe(false);
+    } finally {
+      await engine.executeRaw(`CREATE OR REPLACE FUNCTION protect_sealed_receipt_fn()
+        RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+        BEGIN
+          RAISE EXCEPTION 'sealed page receipt is immutable' USING ERRCODE = '55000';
+        END;
+        $fn$ LANGUAGE plpgsql`);
     }
     expect(await migration!.verify!(engine)).toBe(true);
   });

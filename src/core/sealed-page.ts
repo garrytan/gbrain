@@ -6,6 +6,9 @@ import { chunkText } from './chunkers/recursive.ts';
 import { validateSlug } from './utils.ts';
 
 export const CREATE_PAGE_PROTOCOL_VERSION = 'gbrain.create_page.v1';
+const SEALED_PAGE_KIND = 'markdown';
+const SEALED_SOURCE_KIND = 'mcp:create_page';
+const SEALED_INGESTED_VIA = 'mcp:create_page';
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const GIT_SHA1_RE = /^[a-f0-9]{40}$/;
 declare const __GBRAIN_BUILD_COMMIT__: string | undefined;
@@ -149,9 +152,9 @@ export function prepareSealedPage(input: {
       timeline: parsed.timeline ?? '',
       frontmatter: projection.frontmatter,
       content_hash: canonicalPageSha256,
-      page_kind: 'markdown',
-      source_kind: 'mcp:create_page',
-      ingested_via: 'mcp:create_page',
+      page_kind: SEALED_PAGE_KIND,
+      source_kind: SEALED_SOURCE_KIND,
+      ingested_via: SEALED_INGESTED_VIA,
     },
     chunks,
   };
@@ -248,6 +251,9 @@ function receiptFromRow(row: Record<string, unknown>): SealedPageReceipt {
     || Number(row.persisted_revision) !== receipt.page_revision
     || row.persisted_content_hash !== receipt.canonical_page_sha256
     || row.persisted_timeline !== ''
+    || row.persisted_page_kind !== SEALED_PAGE_KIND
+    || row.persisted_source_kind !== SEALED_SOURCE_KIND
+    || row.persisted_ingested_via !== SEALED_INGESTED_VIA
     || canonicalJson(persistedProjection) !== canonicalJson(projection)) {
     throw integrityError('receipt differs from the persisted page');
   }
@@ -258,6 +264,7 @@ interface PersistedSealedChunk {
   chunk_index: number;
   chunk_text: string;
   chunk_source: string;
+  model: string;
   token_count: number | null;
   embedding_is_null: boolean;
   embedded_at: unknown;
@@ -275,16 +282,32 @@ interface PersistedSealedChunk {
   embedding_multimodal_is_null: boolean;
 }
 
+async function sealedChunkModelDefault(engine: BrainEngine): Promise<string> {
+  const rows = await engine.executeRaw<{ column_default: string }>(
+    `SELECT COALESCE(column_default, '') AS column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'content_chunks'
+        AND column_name = 'model'`,
+  );
+  const definition = rows[0]?.column_default ?? '';
+  const match = definition.match(/^'((?:[^']|'')*)'(?:::[\w\s.\[\]"]+)?$/);
+  if (!match) throw integrityError('content_chunks.model lacks an exact text default');
+  return match[1].replace(/''/g, "'");
+}
+
 async function assertPersistedChunksExact(
   engine: BrainEngine,
   pageId: number,
   compiledTruth: string,
 ): Promise<void> {
+  const model = await sealedChunkModelDefault(engine);
   const expected = compiledTruth.trim()
     ? chunkText(compiledTruth).map((chunk, chunkIndex): PersistedSealedChunk => ({
         chunk_index: chunkIndex,
         chunk_text: chunk.text,
         chunk_source: 'compiled_truth',
+        model,
         token_count: null,
         embedding_is_null: true,
         embedded_at: null,
@@ -303,7 +326,7 @@ async function assertPersistedChunksExact(
       }))
     : [];
   const actual = await engine.executeRaw<PersistedSealedChunk>(
-    `SELECT chunk_index, chunk_text, chunk_source, token_count,
+    `SELECT chunk_index, chunk_text, chunk_source, model, token_count,
             embedding IS NULL AS embedding_is_null, embedded_at,
             language, symbol_name, symbol_type, start_line, end_line,
             parent_symbol_path, doc_comment, symbol_name_qualified,
@@ -331,6 +354,8 @@ async function findReceipt(engine: BrainEngine, operationId: string): Promise<Se
             p.slug AS persisted_slug, p.type AS persisted_type, p.title AS persisted_title,
             p.compiled_truth AS persisted_compiled_truth, p.frontmatter AS persisted_frontmatter,
             p.timeline AS persisted_timeline, p.content_hash AS persisted_content_hash,
+            p.page_kind AS persisted_page_kind, p.source_kind AS persisted_source_kind,
+            p.ingested_via AS persisted_ingested_via,
             p.generation AS persisted_revision
        FROM sealed_page_receipts r
        JOIN pages p ON p.id = r.page_id
@@ -394,18 +419,21 @@ export async function createSealedPageTransactional(
         `INSERT INTO pages
           (source_id, slug, type, page_kind, title, compiled_truth, timeline,
            frontmatter, content_hash, source_kind, ingested_via, ingested_at)
-         VALUES ($1, $2, $3, 'markdown', $4, $5, $6, $7::text::jsonb,
-                 $8, 'mcp:create_page', 'mcp:create_page', now())
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb,
+                 $9, $10, $11, now())
          RETURNING id, generation`,
         [
           input.sourceId,
           input.projection.slug,
           input.page.type,
+          SEALED_PAGE_KIND,
           input.page.title,
           input.page.compiled_truth,
           input.page.timeline ?? '',
           canonicalJson(input.projection.frontmatter),
           input.canonicalPageSha256,
+          SEALED_SOURCE_KIND,
+          SEALED_INGESTED_VIA,
         ],
       );
       const pageId = Number(pageRows[0].id);
