@@ -45,6 +45,7 @@ import {
 import { dirname, resolve } from 'path';
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
+import { MinionQueue } from './queue.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import { resolveEnvNumber } from '../env-number.ts';
@@ -789,6 +790,35 @@ export class MinionSupervisor {
     }
   }
 
+  private async reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(): Promise<void> {
+    try {
+      // 30s bound: a hanging DB call here would otherwise block EVERY worker
+      // respawn indefinitely (the hook is awaited in the supervise loop with
+      // isStopping unchecked during the await). Timeout → spawn proceeds; the
+      // next respawn retries recovery.
+      const result = await Promise.race([
+        new MinionQueue(this.engine).reconcileOrphanedPrivateQueues({
+          reason: 'supervisor startup recovery: orphaned dream-inline private queue',
+        }),
+        new Promise<never>((_, reject) => {
+          const t = setTimeout(() => reject(new Error('private-queue recovery timed out after 30s')), 30_000);
+          t.unref?.();
+        }),
+      ]);
+      if (result.cancelled_jobs > 0) {
+        this.emit('health_warn', {
+          reason: 'private_queue_startup_recovery',
+          ...result,
+        });
+      }
+    } catch (e) {
+      this.emit('health_warn', {
+        reason: 'private_queue_startup_recovery_failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   /** Unified shutdown path. Reason becomes the audit event name; exitCode is process exit. */
   private async shutdown(reason: string, exitCode: number): Promise<void> {
     if (this.stopping) return;
@@ -1024,6 +1054,11 @@ export class MinionSupervisor {
       hardStopMaxCrashes: resolveHardStopMaxCrashes(this.opts.maxCrashes),
       _backoffFloorMs: this.opts._backoffFloorMs,
       isStopping: () => this.stopping,
+      // Run under the supervisor's queue-scoped DB singleton lock before every
+      // child spawn, not merely once when the supervisor starts. The supervisor
+      // intentionally survives worker crashes/watchdog drains, and those are
+      // exactly the exits that can strand a parent-owned private queue.
+      beforeSpawn: () => this.reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(),
       onMaxCrashesExceeded: (count, max) => {
         this.emit('max_crashes_exceeded', {
           crash_count: count,

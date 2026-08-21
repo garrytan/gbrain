@@ -662,7 +662,13 @@ export class PostgresEngine implements BrainEngine {
         EXISTS (SELECT 1 FROM information_schema.columns
                 WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'timeout_at') AS minion_jobs_timeout_at_exists,
         EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'idempotency_key') AS minion_jobs_idempotency_key_exists
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'idempotency_key') AS minion_jobs_idempotency_key_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_owner_job_id') AS minion_jobs_pq_owner_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_owner_token') AS minion_jobs_pq_token_exists,
+        EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_lease_until') AS minion_jobs_pq_lease_exists
     `;
     const probe = probeRows[0]!;
 
@@ -755,6 +761,9 @@ export class PostgresEngine implements BrainEngine {
       minion_jobs_exists?: boolean;
       minion_jobs_timeout_at_exists?: boolean;
       minion_jobs_idempotency_key_exists?: boolean;
+      minion_jobs_pq_owner_exists?: boolean;
+      minion_jobs_pq_token_exists?: boolean;
+      minion_jobs_pq_lease_exists?: boolean;
     };
     const needsContextualRetrievalColumns = (probe.pages_exists
         && (!probeCr.pages_cr_mode_exists || !probeCr.pages_corpus_generation_exists))
@@ -785,6 +794,11 @@ export class PostgresEngine implements BrainEngine {
       && !probeCr.minion_jobs_timeout_at_exists;
     const needsMinionJobsIdempotencyKey = probeCr.minion_jobs_exists === true
       && !probeCr.minion_jobs_idempotency_key_exists;
+    // Token rides the probe too: a token-only-missing brain (partial upgrade)
+    // would otherwise be unrepairable — the ALTER block adds all three.
+    const needsMinionJobsPrivateQueue = probeCr.minion_jobs_exists === true
+      && (!probeCr.minion_jobs_pq_owner_exists || !probeCr.minion_jobs_pq_token_exists
+          || !probeCr.minion_jobs_pq_lease_exists);
 
     if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
         && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -798,7 +812,8 @@ export class PostgresEngine implements BrainEngine {
         && !needsPagesEmbeddingSignature
         && !needsPagesLinksExtractedAt
         && !needsTimelineEventPageId
-        && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey) return;
+        && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
+        && !needsMinionJobsPrivateQueue) return;
 
     process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
 
@@ -1077,6 +1092,18 @@ export class PostgresEngine implements BrainEngine {
       // v7: blob index uniq_minion_jobs_idempotency references idempotency_key.
       await conn.unsafe(`
         ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+      `);
+    }
+    if (needsMinionJobsPrivateQueue) {
+      // v0.46.26: blob indexes idx_minion_jobs_private_queue_recovery /
+      // idx_minion_jobs_private_queue_owner reference the private-queue
+      // owner/lease columns; a pre-upgrade minion_jobs wedges blob replay
+      // without them (same class as v121). The token column is not indexed
+      // but rides along so upgraded rows carry the full lifecycle shape.
+      await conn.unsafe(`
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;
+        ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;
       `);
     }
   }

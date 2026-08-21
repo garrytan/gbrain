@@ -232,6 +232,11 @@ async function drainLoop(
           continue;
         }
         if (pending === 0) return;
+        // Renew the private-queue lease (and cycle lock) from the idle poll
+        // too: with every child delayed/backing off no per-child keepalive is
+        // armed, and an unrenewed lease reads as orphaned to spawn recovery —
+        // which would cancel this LIVE queue. The wrapper self-throttles (30s).
+        if (yieldDuringPhase) { try { await yieldDuringPhase(); } catch { /* best-effort */ } }
         // Idle poll with backoff (1s → 5s): under a pool, idle loops must not
         // hammer the queue while the last slow child drains.
         await new Promise((r) => setTimeout(r, idlePollMs));
@@ -239,6 +244,10 @@ async function drainLoop(
         continue;
       }
       idlePollMs = 1000;
+      // Same lease-liveness rationale as the idle branch, for the fast-failing
+      // child shape: a handler that dies in <60s never fires its first
+      // keepalive tick, so a claim-fail-claim loop would run lease-blind.
+      if (yieldDuringPhase) { try { await yieldDuringPhase(); } catch { /* best-effort */ } }
 
       const abort = new AbortController();
       const shutdown = new AbortController();

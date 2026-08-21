@@ -654,10 +654,17 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
     const autopilotMaxRssMb = resolveDefaultMaxRssMb();
     childSupervisor = new ChildWorkerSupervisor({
       cliPath,
+      // Orphaned-private-queue recovery runs INSIDE each spawned worker's
+      // startup (jobs.ts 'work', gated on GBRAIN_SUPERVISED !== '1', which
+      // autopilot children never set) — so every spawn AND crash-respawn
+      // recovers without a parent-side beforeSpawn double-running the scan.
       args: ['jobs', 'work', '--max-rss', String(autopilotMaxRssMb)],
       // process.env clone; autopilot doesn't gate shell jobs the way the
       // standalone supervisor does (autopilot is the operator-trust path).
-      env: { ...process.env },
+      // GBRAIN_SUPERVISED is stripped explicitly: worker-startup recovery is
+      // autopilot's ONLY private-queue recovery lane, and an inherited =1
+      // (operator export, nested supervision) would silently disable it.
+      env: { ...process.env, GBRAIN_SUPERVISED: undefined } as Record<string, string | undefined>,
       maxCrashes: 5,
       isStopping: () => stopping,
       onMaxCrashesExceeded: (count, max) => {

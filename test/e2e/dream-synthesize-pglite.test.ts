@@ -759,7 +759,13 @@ describe('E2E synthesize — PGLite inline subagent drain (takeover of #2699)', 
           return { ok: true };
         },
       );
-      expect(ticks).toBe(0); // 60s keepalive never fires for a fast child
+      // Per-child lease keepalive (v0.46.25): the drain fires yieldDuringPhase
+      // once per claimed child so fast children (<60s, never reaching a timer
+      // tick) still renew the private-queue lease. Two-sided: the upper bound
+      // catches the opposite regression — firing per 1s idle poll, the exact
+      // runaway the wrapper's 30s throttle exists to prevent.
+      expect(ticks).toBeGreaterThanOrEqual(1);
+      expect(ticks).toBeLessThanOrEqual(3);
 
       const final = await queue.getJob(child.id);
       expect(final?.status).toBe('completed');

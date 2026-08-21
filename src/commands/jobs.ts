@@ -349,6 +349,8 @@ USAGE
   gbrain jobs prune [--older-than 30d] [--dry-run]
   gbrain jobs delete <id>
   gbrain jobs stats [--queue Q] [--cluster-errors] [--json]
+                    (dream-inline-* queues report ABANDONED/live only with an
+                     explicit --queue; use \`gbrain doctor\` to discover them)
   gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
   gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
@@ -557,6 +559,30 @@ OPTIONS
   --dry-run         Report what would be deleted without deleting
 `,
 };
+
+// Bare (unsupervised) workers run the same orphaned-private-queue recovery
+// the supervisor runs in beforeSpawn — a deployment that starts
+// `gbrain jobs work` directly must not lose the crash-recovery lane.
+// Supervised children skip it: their supervisor already ran it.
+export async function maybeRunWorkerStartupRecovery(
+  queue: MinionQueue,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  if (env.GBRAIN_SUPERVISED === '1') return;
+  try {
+    const recovered = await queue.reconcileOrphanedPrivateQueues({
+      reason: 'worker startup recovery: orphaned dream-inline private queue',
+    });
+    if (recovered.cancelled_jobs > 0) {
+      console.error(
+        `[gbrain jobs] private-queue startup recovery: cancelled ${recovered.cancelled_jobs} ` +
+        `job(s) across ${recovered.cancelled_queues} orphaned queue(s)`,
+      );
+    }
+  } catch (e) {
+    console.error(`[gbrain jobs] private-queue startup recovery failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 
 export async function runJobs(engineOrNull: BrainEngine | null, args: string[]): Promise<void> {
   const sub = args[0];
@@ -1102,8 +1128,25 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         const mins = w.minutes_since_completion;
         // Shared derivation (queue.ts deriveWedgeSignal) so this line, the
         // doctor wedged_queue check, and the get_job_stats op agree (#1801).
-        const { wedged, wedge_threshold_minutes: wedgeMins } = deriveWedgeSignal(w);
-        if (wedged) {
+        const { wedged, wedge_threshold_minutes: wedgeMins, private_queue } = deriveWedgeSignal(w);
+        // Parent-owned dream-inline queue: no shared worker can EVER claim it,
+        // so the supervisor-restart advice below would be a dead end (the
+        // incident bug class). Gate the ABANDONED line on the SAME classifier
+        // recovery uses — a healthy mid-drain queue (active_healthy 0 in a
+        // claim gap) classifies live and must not scream.
+        const privateVerdict = private_queue && w.active_healthy === 0 && w.waiting > 0
+          ? await queue.classifyPrivateQueueForRecovery(w.queue)
+          : null;
+        if (privateVerdict === 'orphan' || privateVerdict === 'unowned') {
+          const since = mins === null ? 'no completions on record' : `${mins}m since last completion`;
+          console.log(
+            `\n  ⚠  ABANDONED PRIVATE QUEUE '${w.queue}': ${w.waiting} waiting, 0 active (live-lock), ${since}.\n` +
+            `     This dream-inline queue is parent-owned; restarting a worker cannot consume it.\n` +
+            (privateVerdict === 'orphan'
+              ? `     Auto-recovery cancels it at the next worker spawn or dream-cycle start.`
+              : `     Legacy unowned queue: preview \`gbrain dream retriage --help\` before manual cancellation.`),
+          );
+        } else if (wedged) {
           const since = mins === null ? 'no completions on record' : `${mins}m since last completion`;
           console.log(
             `\n  ⚠  WEDGED QUEUE '${w.queue}': ${w.waiting} waiting, 0 active (live-lock), ${since}.\n` +
@@ -1559,6 +1602,8 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
 
       try { await queue.ensureSchema(); }
       catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
+
+      await maybeRunWorkerStartupRecovery(queue);
 
       // issue #6: the direct-pool kill switch collapses lock renewal, health
       // probes, and handler workload onto ONE shared pool — silently. Make
@@ -2609,6 +2654,7 @@ export async function registerBuiltinHandlers(
       pull,
       signal: job.signal, // propagate abort so cycle bails on timeout/cancel
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
+      privateQueueOwnerJobId: job.id,
       ...(sourceId ? { sourceId } : {}),
       ...(effectivePhases !== undefined ? { phases: effectivePhases as any } : {}),
       yieldBetweenPhases: async () => {
@@ -2655,6 +2701,11 @@ export async function registerBuiltinHandlers(
       pull: false, // brain-wide DB/maintenance work never git-pulls
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
+      // The maintenance lane is where synthesize/patterns actually run on
+      // multi-source brains (per-source payloads normalize down to the
+      // freshness phases) — without the owner id its private queues would be
+      // owner-less and recovery would degrade to lease-expiry only.
+      privateQueueOwnerJobId: job.id,
       phases,
       forceGlobalOrphans: true,
       yieldBetweenPhases: async () => { await new Promise<void>((r) => setImmediate(r)); },
@@ -2805,6 +2856,7 @@ export async function registerBuiltinHandlers(
       phases: [phase as any],
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
+      privateQueueOwnerJobId: job.id,
     });
     return { phase, status: report.status, report };
   };

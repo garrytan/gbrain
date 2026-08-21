@@ -38,6 +38,35 @@ export interface WaitOpts {
   signal?: AbortSignal;
 }
 
+/**
+ * waitForCompletion in bounded chunks, invoking `renew` between chunks — the
+ * dream phases' post-drain waits can outlast a private-queue lease, and an
+ * unrenewed lease reads as orphaned to startup recovery. Chunking keeps the
+ * lease (and cycle lock, via the phases' composite renew wrapper) fresh for
+ * the whole wait without threading a callback into the poll loop.
+ */
+export async function waitForCompletionRenewing(
+  queue: MinionQueue,
+  jobId: number,
+  opts: WaitOpts & { renew?: () => Promise<void>; chunkMs?: number } = {},
+): Promise<MinionJob> {
+  const totalMs = opts.timeoutMs ?? 24 * 60 * 60 * 1000;
+  const chunkMs = Math.max(1000, opts.chunkMs ?? 60_000);
+  const deadline = Date.now() + totalMs;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    try {
+      return await waitForCompletion(queue, jobId, {
+        ...opts,
+        timeoutMs: Math.max(1, Math.min(chunkMs, remaining)),
+      });
+    } catch (e) {
+      if (!(e instanceof TimeoutError) || Date.now() >= deadline) throw e;
+      if (opts.renew) { try { await opts.renew(); } catch { /* best-effort */ } }
+    }
+  }
+}
+
 export async function waitForCompletion(
   queue: MinionQueue,
   jobId: number,

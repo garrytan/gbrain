@@ -49,6 +49,15 @@ export interface TrustedSubmitOpts {
 const MIGRATION_VERSION = 7;
 
 const DEFAULT_MAX_SPAWN_DEPTH = 5;
+export const DREAM_INLINE_PRIVATE_QUEUE_PREFIX = 'dream-inline-';
+export const DEFAULT_PRIVATE_QUEUE_LEASE_MS = 10 * 60 * 1000;
+/**
+ * Machine-readable reason family for private-queue reconciliation, mirroring
+ * the waiting-TTL prefix convention: every reconcile cancellation is stamped
+ * `<prefix>: <detail>` by reconcilePrivateQueue itself, so jobs-stats/doctor
+ * surfaces can LIKE-match the family without chasing per-call-site strings.
+ */
+export const PRIVATE_QUEUE_RECONCILE_REASON_PREFIX = 'private_queue_reconciled';
 
 /**
  * Stall-sweep reclaim grace (#4145, CDX-7): don't reclaim a row whose
@@ -108,6 +117,28 @@ export function resolveStallReclaimGraceMs(
 const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MiB
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'dead', 'cancelled'] as const;
+const NON_TERMINAL_STATUSES: MinionJobStatus[] = ['waiting', 'active', 'delayed', 'waiting-children', 'paused'];
+/**
+ * Literal IN-list derived from the constant above, for the recovery queries:
+ * the partial indexes idx_minion_jobs_private_queue_* embed these statuses in
+ * their WHERE predicate, and a parameterized `= ANY($n)` under a generic plan
+ * cannot be proven to imply it — literals keep the queries index-eligible.
+ * Values are internal constants, never user input.
+ */
+const NON_TERMINAL_SQL_LIST = NON_TERMINAL_STATUSES.map(st => `'${st}'`).join(', ');
+
+export function isDreamInlinePrivateQueue(queueName: string): boolean {
+  return queueName.startsWith(DREAM_INLINE_PRIVATE_QUEUE_PREFIX);
+}
+
+export interface PrivateQueueRecoveryResult {
+  scanned_queues: number;
+  cancelled_queues: number;
+  cancelled_jobs: number;
+  skipped_live_queues: number;
+  skipped_unowned_queues: number;
+  skipped_non_orphan_queues: number;
+}
 
 /** Audit payload deferred from inside the submission transaction. */
 type CoalesceAuditEvent = {
@@ -549,13 +580,18 @@ export class MinionQueue {
         ? Math.max(1, Math.min(100, Math.floor(opts!.max_stalled as number)))
         : null;
 
+      const privateQueueLeaseUntil = opts?.private_queue_lease_ms != null
+        ? new Date(Date.now() + Math.max(1, Math.floor(opts.private_queue_lease_ms))).toISOString()
+        : null;
+
       const baseCols = `name, queue, status, priority, data, max_attempts, backoff_type,
             backoff_delay, backoff_jitter, delay_until, parent_job_id, on_child_fail,
             depth, max_children, timeout_ms, lock_duration_ms, remove_on_complete, remove_on_fail, idempotency_key,
-            quiet_hours, stagger_key`;
+            quiet_hours, stagger_key, private_queue_owner_job_id, private_queue_owner_token, private_queue_lease_until`;
       const baseVals = `$1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21`;
+      const baseValsWithOwner = `${baseVals}, $22, $23, $24`;
       const cols = hasMaxStalled ? `${baseCols}, max_stalled` : baseCols;
-      const vals = hasMaxStalled ? `${baseVals}, $22` : baseVals;
+      const vals = hasMaxStalled ? `${baseValsWithOwner}, $25` : baseValsWithOwner;
 
       const insertSql = opts?.idempotency_key
         ? `INSERT INTO minion_jobs (${cols})
@@ -598,6 +634,9 @@ export class MinionQueue {
         opts?.idempotency_key ?? null,
         opts?.quiet_hours ?? null,
         opts?.stagger_key ?? null,
+        opts?.private_queue_owner_job_id ?? null,
+        opts?.private_queue_owner_token ?? null,
+        privateQueueLeaseUntil,
       ];
       if (hasMaxStalled) params.push(clampedMaxStalled);
 
@@ -719,6 +758,246 @@ export class MinionQueue {
     const cancelled = await this.cancelJobs([id]);
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
+  }
+
+  /**
+   * Terminalize every non-terminal job in one private, parent-owned queue.
+   *
+   * Dream phases drain `dream-inline-*` queues themselves; the shared worker
+   * intentionally never claims them.  A phase therefore owns cleanup too:
+   * every return/throw/timeout path calls this from `finally`.  The method is
+   * idempotent and routes through cancelJobs() so child_done messages,
+   * descendant cancellation, active-job aborts, and aggregator unblocking all
+   * retain the queue's normal bookkeeping semantics.
+   */
+  async reconcilePrivateQueue(queueName: string, reason: string): Promise<MinionJob[]> {
+    if (!isDreamInlinePrivateQueue(queueName)) {
+      throw new Error(`refusing to reconcile non-private queue '${queueName}'`);
+    }
+    // Enforce the machine-readable family at the single choke point so the
+    // call sites (phase finally ×2, supervisor/worker spawn, cycle start,
+    // startup recovery) can never drift apart.
+    if (!reason.startsWith(PRIVATE_QUEUE_RECONCILE_REASON_PREFIX)) {
+      reason = `${PRIVATE_QUEUE_RECONCILE_REASON_PREFIX}: ${reason}`;
+    }
+    const rows = await this.engine.executeRaw<{ id: number }>(
+      `SELECT id FROM minion_jobs
+        WHERE queue = $1
+          AND status IN ('waiting','active','delayed','waiting-children','paused')
+        ORDER BY id`,
+      [queueName],
+    );
+    if (rows.length === 0) return [];
+    return this.cancelJobs(rows.map(r => r.id), {
+      reason,
+      rootStatuses: ['waiting', 'active', 'delayed', 'waiting-children', 'paused'],
+    });
+  }
+
+  /**
+   * Renew the owner lease on still-non-terminal jobs in one private queue.
+   * The owner token prevents a stale phase finally/keepalive from extending a
+   * successor queue that reused the same queue name in a test or fixture.
+   */
+  async renewPrivateQueueLease(
+    queueName: string,
+    ownerToken: string,
+    leaseMs = DEFAULT_PRIVATE_QUEUE_LEASE_MS,
+  ): Promise<number> {
+    if (!isDreamInlinePrivateQueue(queueName)) {
+      throw new Error(`refusing to renew non-private queue '${queueName}'`);
+    }
+    if (ownerToken.length === 0) {
+      throw new Error('private queue owner token cannot be empty');
+    }
+    // GREATEST: a renewal may only EXTEND the lease. A default-horizon (10min)
+    // renewal racing a creation-time horizon sized to the phase's wait timeout
+    // must never shrink the window a healthy long run still needs — shrinking
+    // is what would let startup recovery cancel a LIVE ownerless queue.
+    const rows = await this.engine.executeRaw<{ id: number }>(
+      `UPDATE minion_jobs
+          SET private_queue_lease_until = GREATEST(
+                COALESCE(private_queue_lease_until, to_timestamp(0)),
+                now() + ($3::text::interval)
+              ),
+              updated_at = now()
+        WHERE queue = $1
+          AND private_queue_owner_token = $2
+          AND status IN (${NON_TERMINAL_SQL_LIST})
+        RETURNING id`,
+      [queueName, ownerToken, `${Math.max(1, Math.floor(leaseMs))} milliseconds`],
+    );
+    return rows.length;
+  }
+
+  /**
+   * Throttled keepalive closure for a phase that owns a private queue: renews
+   * the lease at most once per `throttleMs`, then runs `onRenewed` (the cycle
+   * lock refresh rides it). The throttle gates BOTH — 1-5s drain polls cost
+   * one UPDATE per half-minute, not per poll — and the order is fixed
+   * (renew, then onRenewed) so a lock-refresh failure can't starve the lease.
+   */
+  makeThrottledLeaseRenewer(
+    queueName: string,
+    ownerToken: string,
+    onRenewed?: () => Promise<void> | void,
+    throttleMs = 30_000,
+  ): () => Promise<void> {
+    let lastRenewalAtMs = 0;
+    return async () => {
+      const nowMs = Date.now();
+      if (nowMs - lastRenewalAtMs < throttleMs) return;
+      lastRenewalAtMs = nowMs;
+      await this.renewPrivateQueueLease(queueName, ownerToken);
+      if (onRenewed) await onRenewed();
+    };
+  }
+
+  /**
+   * Startup/supervisor crash recovery for metadata-backed private dream queues.
+   * Cancels only queues that are provably orphaned:
+   *   - no live child lock in the private queue;
+   *   - explicit owner metadata exists; and
+   *   - the owner job is terminal/missing OR the renewable lease has expired.
+   *
+   * Legacy `dream-inline-*` rows with no owner metadata are left untouched and
+   * remain a Doctor/manual-retriage concern.
+   */
+  async reconcileOrphanedPrivateQueues(opts: {
+    reason?: string;
+    maxQueues?: number;
+  } = {}): Promise<PrivateQueueRecoveryResult> {
+    const result: PrivateQueueRecoveryResult = {
+      scanned_queues: 0,
+      cancelled_queues: 0,
+      cancelled_jobs: 0,
+      skipped_live_queues: 0,
+      skipped_unowned_queues: 0,
+      skipped_non_orphan_queues: 0,
+    };
+    const maxQueues = Math.max(1, Math.floor(opts.maxQueues ?? 100));
+    // HAVING metadata: legacy unowned queues are NEVER recoverable by this
+    // lane (doctor/retriage owns them), so they must not occupy the LIMIT
+    // window — a backlog of them would otherwise starve every newer orphan
+    // out of the scan forever (the incident's exact accumulation shape).
+    const queues = await this.engine.executeRaw<{ queue: string }>(
+      `SELECT queue
+         FROM minion_jobs
+        WHERE queue LIKE '${DREAM_INLINE_PRIVATE_QUEUE_PREFIX}%'
+          AND status IN (${NON_TERMINAL_SQL_LIST})
+        GROUP BY queue
+        HAVING bool_or(private_queue_owner_job_id IS NOT NULL OR private_queue_lease_until IS NOT NULL)
+        ORDER BY min(created_at), queue
+        LIMIT $1`,
+      [maxQueues],
+    );
+    result.scanned_queues = queues.length;
+    for (const q of queues) {
+      const verdict = await this.classifyPrivateQueueForRecovery(q.queue);
+      if (verdict === 'live') {
+        result.skipped_live_queues++;
+        continue;
+      }
+      // Defensive only: the scan's HAVING bool_or(owner/lease) excludes
+      // metadata-less queues at the SQL level, so this arm is unreachable
+      // today — kept in case the scan predicate ever loosens.
+      if (verdict === 'unowned') {
+        result.skipped_unowned_queues++;
+        continue;
+      }
+      if (verdict === 'not_orphan') {
+        result.skipped_non_orphan_queues++;
+        continue;
+      }
+      // Re-verify immediately before cancelling: a child claimed (or a lease
+      // renewed) between the first classify and this point flips the verdict
+      // to live — the cancel itself must never run on a stale verdict.
+      const recheck = await this.classifyPrivateQueueForRecovery(q.queue);
+      if (recheck !== 'orphan') {
+        result.skipped_non_orphan_queues++;
+        continue;
+      }
+      const cancelled = await this.reconcilePrivateQueue(
+        q.queue,
+        opts.reason ?? 'startup recovery: orphaned dream-inline private queue',
+      );
+      if (cancelled.length > 0) {
+        result.cancelled_queues++;
+        result.cancelled_jobs += cancelled.length;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * PUBLIC (doctor shares this verdict): the orphaned_private_queue check
+   * buckets its candidates through the SAME classifier recovery uses, so the
+   * check's advertised remediation and recovery's actual behavior can't drift.
+   */
+  async classifyPrivateQueueForRecovery(
+    queueName: string,
+  ): Promise<'orphan' | 'live' | 'unowned' | 'not_orphan'> {
+    const rows = await this.engine.executeRaw<{
+      active_healthy: string | number;
+      owner_ids: unknown;
+      metadata_rows: string | number;
+      live_owner_rows: string | number;
+      nonterminal_owner_rows: string | number;
+      max_lease_until: string | null;
+      future_lease_rows: string | number;
+      recently_touched: string | number;
+    }>(
+      `WITH q AS (
+         SELECT *
+           FROM minion_jobs
+          WHERE queue = $1
+            AND status IN (${NON_TERMINAL_SQL_LIST})
+       ),
+       owner_ids AS (
+         SELECT DISTINCT private_queue_owner_job_id AS id
+           FROM q
+          WHERE private_queue_owner_job_id IS NOT NULL
+       ),
+       owners AS (
+         SELECT o.id, m.status, m.lock_until
+           FROM owner_ids o
+           LEFT JOIN minion_jobs m ON m.id = o.id
+       )
+       SELECT
+         count(*) FILTER (WHERE q.status = 'active' AND q.lock_until > now()) AS active_healthy,
+         COALESCE(jsonb_agg(DISTINCT q.private_queue_owner_job_id) FILTER (WHERE q.private_queue_owner_job_id IS NOT NULL), '[]'::jsonb) AS owner_ids,
+         count(*) FILTER (WHERE q.private_queue_owner_job_id IS NOT NULL OR q.private_queue_lease_until IS NOT NULL) AS metadata_rows,
+         (SELECT count(*) FROM owners WHERE status = 'active' AND lock_until > now()) AS live_owner_rows,
+         (SELECT count(*) FROM owners WHERE status IN ('waiting','active','delayed','waiting-children','paused')) AS nonterminal_owner_rows,
+         max(q.private_queue_lease_until)::text AS max_lease_until,
+         count(*) FILTER (WHERE q.private_queue_lease_until > now()) AS future_lease_rows,
+         count(*) FILTER (WHERE q.updated_at > now() - interval '120 seconds') AS recently_touched
+       FROM q`,
+      [queueName],
+    );
+    const r = rows[0];
+    // Defensive only: the FROM q aggregate always yields exactly one row.
+    if (!r) return 'not_orphan';
+    if (Number(r.active_healthy ?? 0) > 0 || Number(r.live_owner_rows ?? 0) > 0) {
+      return 'live';
+    }
+    if (Number(r.metadata_rows ?? 0) === 0) return 'unowned';
+    // Freshness guard BEFORE the owner-terminal fast path: any row touched in
+    // the last 2 minutes (a 30s-cadence lease renewal, a claim, a child_done)
+    // means SOMETHING is actively working this queue — even when the owner
+    // job row reads terminal (stall-swept owner whose drain loop survived a
+    // host suspend, the laptop-sleep shape). Never cancel under a live toucher;
+    // a genuinely crashed queue goes untouched and classifies orphan on the
+    // next pass ≤2 minutes later.
+    if (Number(r.recently_touched ?? 0) > 0) return 'live';
+    const ownerIds = Array.isArray(r.owner_ids)
+      ? r.owner_ids
+      : (typeof r.owner_ids === 'string' ? JSON.parse(r.owner_ids) : []);
+    const ownerTerminal = ownerIds.length > 0 && Number(r.nonterminal_owner_rows ?? 0) === 0;
+    if (ownerTerminal) return 'orphan';
+    if (Number(r.future_lease_rows ?? 0) > 0) return 'live';
+    const leaseExpired = r.max_lease_until !== null && new Date(r.max_lease_until).getTime() <= Date.now();
+    return leaseExpired ? 'orphan' : 'not_orphan';
   }
 
   /**
@@ -2125,14 +2404,20 @@ export class MinionQueue {
  * check: GBRAIN_WEDGED_QUEUE_WARN_MINUTES (server-side env), default 15.
  */
 export function deriveWedgeSignal(wedge: {
+  queue?: string;
   active_healthy: number;
   waiting: number;
   minutes_since_completion: number | null;
-}): { wedged: boolean; wedge_threshold_minutes: number } {
+}): { wedged: boolean; wedge_threshold_minutes: number; private_queue: boolean } {
   const raw = parseInt(process.env.GBRAIN_WEDGED_QUEUE_WARN_MINUTES ?? '', 10);
   const wedge_threshold_minutes = Number.isFinite(raw) && raw > 0 ? raw : 15;
+  // A dream-inline private queue is parent-owned: no shared worker will ever
+  // claim it, so "wedged — restart the worker" is impossible advice (the
+  // incident bug class). Surface it as private_queue instead so every consumer
+  // (jobs stats, get_job_stats op, doctor) points at reconciliation.
+  const private_queue = wedge.queue !== undefined && isDreamInlinePrivateQueue(wedge.queue);
   const mins = wedge.minutes_since_completion;
-  const wedged = wedge.active_healthy === 0 && wedge.waiting > 0
+  const wedged = !private_queue && wedge.active_healthy === 0 && wedge.waiting > 0
     && (mins === null || mins > wedge_threshold_minutes);
-  return { wedged, wedge_threshold_minutes };
+  return { wedged, wedge_threshold_minutes, private_queue };
 }

@@ -6010,14 +6010,36 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 136,
+    name: 'minion_private_queue_owner_metadata',
+    // issue #4332: durable ownership/liveness metadata for parent-owned
+    // dream-inline queues. Startup recovery uses these columns to cancel only
+    // orphaned private queues (terminal/missing owner or expired lease), never
+    // live queues and never legacy unowned rows.
+    idempotent: true,
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_recovery
+        ON minion_jobs (queue, private_queue_lease_until)
+        WHERE queue LIKE 'dream-inline-%'
+          AND status IN ('waiting','active','delayed','waiting-children','paused');
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_owner
+        ON minion_jobs (private_queue_owner_job_id)
+        WHERE private_queue_owner_job_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 137,
     name: 'takes_embedding_dimension_matches_config',
     // #2089: takes was created with a hard-coded vector(1536), while the
     // configured embedding model can emit another width (for example the
     // default zembed-1 2560d). The vector writer cannot be useful until the
     // column shares the configured dimension with content_chunks/facts.
-    // Renumbered to v136 because master consumed v133 (content_chunks
-    // embedded_text_hash) plus v134/v135 (chunk-index restore, event-time
-    // index) while this PR was in flight.
+    // Renumbered to v137 because master consumed v133 (content_chunks
+    // embedded_text_hash), v134/v135 (chunk-index restore, event-time
+    // index) and v136 (minion private queue owner metadata) while this PR
+    // was in flight.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
@@ -6055,7 +6077,7 @@ export const MIGRATIONS: Migration[] = [
              WHERE active AND embedding IS NOT NULL`,
         );
       }
-      process.stderr.write(`  v136: takes.embedding resized to vector(${embeddingDim}); existing take vectors cleared\n`);
+      process.stderr.write(`  v137: takes.embedding resized to vector(${embeddingDim}); existing take vectors cleared\n`);
     },
   },
 ];

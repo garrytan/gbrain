@@ -174,6 +174,26 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Create isolated database for the bootstrap suite
+        # The bootstrap suite rewinds the schema ledger and replays every
+        # migration; replayed constraint-adds (e.g. facts_source_id_fkey)
+        # break on rows earlier tier1 suites legitimately leave in
+        # gbrain_test (the suite's own TRUNCATE list predates facts). The
+        # nightly lane masks this via preceding files' TRUNCATE CASCADE —
+        # here it gets a database of its own instead.
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -d gbrain_test -c 'CREATE DATABASE gbrain_bootstrap_test'
+      - name: Run Postgres bootstrap suite
+        # Forward-reference bootstrap on REAL Postgres (#366/#375/#378, the
+        # v121/#2626 wedge class, v0.46.26 private-queue lifecycle incl. the
+        # token-only probe). Previously reachable only via the nightly
+        # coverage-full-e2e glob, so a broken PostgresEngine bootstrap block
+        # could reach master with every PR lane green. Own invocation line
+        # and its OWN database (see the step above). Named files only, no glob.
+        run: bun test --timeout=60000 test/e2e/postgres-bootstrap.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_bootstrap_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
       - name: Run serve-delegated sync suite
         # Serve-delegated sync (PGLite): a real `gbrain serve` owns the
         # single-writer lock while real `gbrain sync` subprocesses delegate
@@ -183,6 +203,12 @@ jobs:
         # would flip the sandboxed brain to Postgres; the file also
         # self-strips). Named files only, no glob.
         run: bun test --timeout=240000 test/e2e/sync-delegation-under-serve.serial.test.ts
+      - name: Run PGLite inline subagent drain suite
+        # dream-synthesize-pglite pins the inline drain's per-child lease
+        # keepalive (v0.46.26 private-queue lifecycle) — previously nightly-
+        # glob-only, where the keepalive pin broke silently. Deliberately NO
+        # DATABASE_URL: the suite is PGLite-only. Named files only, no glob.
+        run: bun test --timeout=120000 test/e2e/dream-synthesize-pglite.test.ts
 
   tier2:
     name: Tier 2 (LLM Skills)

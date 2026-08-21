@@ -157,6 +157,67 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(idx).toHaveLength(2);
   }, 60_000);
 
+  test('pre-v136 minion_jobs private-queue shape (dream-inline lifecycle) converges on REAL Postgres', async () => {
+    // v0.46.25 (#4332): the private-queue owner/lease columns are migration-
+    // added AND referenced by the blob partial indexes — the same wedge class
+    // as v121 and pre-v7 above. Strip all three columns + both indexes, then
+    // assert the bootstrap → SCHEMA_SQL replay re-adds every piece.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_recovery;
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_owner;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
+    `);
+
+    await engine.initSchema();
+
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'minion_jobs'
+        AND column_name IN ('private_queue_owner_job_id', 'private_queue_owner_token', 'private_queue_lease_until')
+    `;
+    expect(cols).toHaveLength(3);
+    const idx = await conn`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE tablename = 'minion_jobs'
+        AND indexname IN ('idx_minion_jobs_private_queue_recovery', 'idx_minion_jobs_private_queue_owner')
+    `;
+    expect(idx).toHaveLength(2);
+    // The recovery index must come back PARTIAL — the dream-inline predicate
+    // is what keeps the startup recovery scan off the general job table.
+    const recovery = idx.find(
+      (r: { indexname: string; indexdef: string }) => r.indexname === 'idx_minion_jobs_private_queue_recovery',
+    );
+    expect(recovery?.indexdef).toContain('dream-inline-');
+  }, 60_000);
+
+  test('token-only-missing minion_jobs is repaired by the pq_token probe on REAL Postgres (749a7dcb)', async () => {
+    // Partial-upgrade shape: ONLY private_queue_owner_token is missing.
+    // Neither blob index references the token, so SCHEMA_SQL replay cannot
+    // crash on it, and the ledger is already at LATEST so runMigrations won't
+    // re-run v136 — the ONLY repair path is the minion_jobs_pq_token_exists
+    // probe (749a7dcb) triggering the bootstrap's three-column ALTER block.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+    `);
+
+    await engine.initSchema();
+
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'minion_jobs'
+        AND column_name = 'private_queue_owner_token'
+    `;
+    expect(cols).toHaveLength(1);
+  }, 60_000);
+
   // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only
   // assertions (security_invoker has no surface on embedded PGLite).
   test('v120: page_links view runs with security_invoker=on (#1647b)', async () => {

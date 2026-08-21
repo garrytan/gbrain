@@ -829,8 +829,54 @@
   prefix `waiting_ttl_expired`) that turns out to have been wanted needs a
   `jobs requeue` (or a retry carve-out gated on that prefix) instead of
   hand-resubmitting. The data survives (cancelled rows keep payloads +
-  free their idempotency keys), so this is purely a CLI surface. **Effort:**
+  free their idempotency keys), so this is purely a CLI surface. v0.46.25.0
+  adds a SECOND machine-readable family to gate on: private-queue reconcile
+  cancellations are stamped `private_queue_reconciled: <detail>`
+  (PRIVATE_QUEUE_RECONCILE_REASON_PREFIX, minions/queue.ts). A requeue of
+  those rows must strip parent/ownership metadata (parent_job_id,
+  private_queue_owner_*) and resubmit into a CLAIMABLE queue — never flip
+  status in place inside a dead dream-inline-* queue. **Effort:**
   S. **Priority:** P2. (Pre-landing data-migration review, five-issue wave.)
+- [ ] **P2 — private-queue FK `ON DELETE SET NULL` erases owner evidence.**
+  **What:** purging/pruning an owner job nulls every child's
+  `private_queue_owner_job_id` (migrate.ts v136 FK), so its queue silently
+  degrades from the fast owner-terminal recovery path to legacy-unowned —
+  recovery's scan still sees the lease, but once that expires the queue needs
+  manual retriage instead of auto-cancel. Consider stamping a tombstone
+  (e.g. keep the id, mark owner_missing) or having prune reconcile the queue
+  first. Deferred from the v0.46.25.0 review (behavior change, not coverage).
+  **Effort:** M. **Priority:** P2.
+- [ ] **P2 — retry-shadow: a same-job-id retry shadows the crashed attempt's
+  private queue.** **What:** `jobs retry` reuses the job id; if the prior
+  attempt crashed owning a dream-inline queue, the retried (non-terminal)
+  owner makes the stale queue classify `live_owner` and recovery skips it
+  until the new attempt terminalizes. Options: retry clears/reconciles the
+  old private queue on transition, or recovery keys on attempt rather than
+  id. Deferred from the v0.46.25.0 review. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — v136 `CREATE INDEX` is non-concurrent.** **What:** on a large
+  hosted-Postgres `minion_jobs`, migration v136's two partial indexes take a
+  write lock for the build. Fine for typical brains; a busy multi-tenant
+  install would want `CONCURRENTLY` (which needs the migration runner to
+  support non-transactional steps). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — full 3-way schema-blob parity test.** **What:**
+  `pglite-schema.ts` / `schema-embedded.ts` / `schema.sql` have no general
+  drift guard; v0.46.25.0 added a private-queue-scoped parity pin
+  (test/private-queue-schema-parity.test.ts) — generalize it to the whole
+  blob surface (normalized statement diff). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — `jobs work` daemon-level e2e + global stats discovery.**
+  **What:** the worker-startup recovery lane is covered at the extracted-
+  function level (maybeRunWorkerStartupRecovery); a daemon-level e2e (spawn
+  real `gbrain jobs work`, observe recovery, stop it) would close the last
+  gap, and `jobs stats` without `--queue` could surface abandoned private
+  queues globally (today doctor is the discovery surface). **Effort:** M.
+  **Priority:** P3.
+- [ ] **P3 — consider ChildWorkerSupervisor.run() catching beforeSpawn
+  errors.** **What:** today a rejecting `beforeSpawn` propagates out of
+  `run()` with no crash accounting or respawn (documented contract;
+  composers must try/catch — MinionSupervisor does). A cross-model review
+  dissent argues run() should catch hook errors so one recovery failure can
+  never stop a worker silently. Behavior change; needs its own review.
+  **Effort:** S. **Priority:** P3.
 - [ ] **P2 — dream-path quota-degradation integration tests.** **What:**
   live-queue integration tests for the QueueQuotaExceededError consumers:
   cycle patterns → `skipped('admission_quota')`, synthesize → quota latch

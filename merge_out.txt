@@ -1,0 +1,8 @@
+Auto-merging scripts/module-size-limits.tsv
+CONFLICT (content): Merge conflict in scripts/module-size-limits.tsv
+Auto-merging src/core/migrate.ts
+CONFLICT (content): Merge conflict in src/core/migrate.ts
+Auto-merging src/core/pglite-engine.ts
+Auto-merging src/core/postgres-engine.ts
+Auto-merging test/schema-bootstrap-coverage.test.ts
+Automatic merge failed; fix conflicts and then commit the result.

@@ -61,6 +61,18 @@ describe('autopilot.ts ↔ ChildWorkerSupervisor wiring', () => {
     expect(AUTOPILOT_SRC).not.toContain("'--max-rss', '2048'");
   });
 
+  it('strips GBRAIN_SUPERVISED from the spawned worker env (worker-startup recovery lane)', () => {
+    // Worker-startup recovery (jobs.ts 'work') is autopilot's ONLY
+    // private-queue recovery lane and is gated on GBRAIN_SUPERVISED !== '1'.
+    // An inherited =1 (operator export, nested supervision) would silently
+    // disable it, so the spawn env must strip it explicitly. Behavioral
+    // proof lives in child-worker-supervisor.test.ts ("GBRAIN_SUPERVISED
+    // env strip"); this pins that autopilot's construction uses the strip.
+    expect(AUTOPILOT_SRC).toMatch(
+      /env:\s*\{\s*\.\.\.process\.env,\s*GBRAIN_SUPERVISED:\s*undefined\s*\}/,
+    );
+  });
+
   it("constructs ChildWorkerSupervisor with maxCrashes: 5", () => {
     // Matches the legacy `crashCount >= 5` give-up rule from the inline
     // loop. The shared core uses this to decide when to fire

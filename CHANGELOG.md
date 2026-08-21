@@ -2,6 +2,79 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.26.0] - 2026-08-20
+
+**Dream fan-out can no longer strand work in queues nobody owns.** The
+production incident: dead parent runs left thousands of waiting jobs in
+private `dream-inline-*` queues for 16-27 hours, and every dashboard said
+"restart the worker" — advice that cannot work, because no shared worker can
+claim a private queue. This release adopts the lifecycle repair from
+PR #4361 (thank you @garrytan-agents) and hardens every recovery lane the
+review found unwired. Closes #4332.
+
+### Added
+- Private dream queues now carry an explicit owner job, owner token, and
+  renewable lease (adopted from #4361). Synthesize and patterns reconcile
+  their children on every terminal path — success, throw, timeout, abort,
+  cancellation — and startup recovery cancels provably-orphaned queues
+  (owner terminal/missing, or lease expired) while never touching live ones.
+- Recovery now runs on EVERY lane that can strand a queue: the supervisor's
+  pre-spawn hook (adopted), bare `gbrain jobs work` startup, autopilot's
+  worker spawns and crash respawns, and dream-cycle start — the last one
+  being the only possible lane on PGLite brains, which previously had no
+  recovery surface at all.
+- Reconcile cancellations are stamped with a machine-readable reason family
+  (`private_queue_reconciled: <detail>`), mirroring the waiting-TTL prefix,
+  so operators and tooling can tell reconciliation from TTL expiry.
+
+### Changed
+- Lease renewal is monotonic (a renewal can only extend, never shrink) and
+  fires from the drain loop's idle polls and fast-failure iterations too —
+  a live queue with slow or bouncing children can no longer read as orphaned
+  mid-run.
+- The maintenance lane (where synthesize/patterns actually run on
+  multi-source brains) now threads its job id as the private-queue owner, so
+  its queues get the fast owner-terminal recovery path instead of waiting
+  out the lease.
+- Doctor's `orphaned_private_queue` check now runs on PGLite too and buckets
+  findings through the same classifier recovery uses: metadata-backed
+  orphans advertise auto-recovery, legacy unowned queues advertise the
+  retriage preview, and owner-pending queues say which owner job to inspect.
+  The wedged-queue surfaces (doctor, `jobs stats`, the `get_job_stats` op)
+  never call a private queue "wedged" and never advertise a worker restart
+  for it.
+- Doctor's stale-lock hints now name only commands that exist:
+  `gbrain dream --break-lock` was advertised for years but never implemented
+  — pasting it ran a full (paid) dream cycle instead of breaking a lock. The
+  cycle-lock remediation is `gbrain doctor --fix` (dead holders on this
+  host; also swept at the next dream start), and the circular `gbrain
+  doctor` fallback hint is gone. The wedged-queue restart hint names the
+  wedged queue (`supervisor start --queue '<q>'`) instead of always bouncing
+  the default worker.
+
+### Fixed
+- Doctor's orphaned-queue check is honest about truncation on the healthy
+  path too: with more than 100 candidate queues, the never-classified
+  remainder is now reported (`unclassified_candidates`) even when everything
+  classified came back live — previously 100 live + 50 unexamined orphans
+  read as a clean bill of health. `waiting_jobs` now counts flagged queues
+  only, matching what `orphaned_private_queues` reports.
+- The upgrade bootstrap probes all three private-queue columns (owner id,
+  owner token, lease) in both engines — a partially-upgraded brain missing
+  only the token column now repairs itself instead of wedging.
+- The private-queue lease keepalive is one shared, tested helper
+  (`MinionQueue.makeThrottledLeaseRenewer`) instead of twin inline copies in
+  synthesize and patterns; the coverage wave backfills behavioral tests for
+  every recovery lane, the renewing wait, the v136 migration replay, doctor's
+  hint/bucket surfaces, and token redaction on the jobs MCP ops.
+
+To take advantage of v0.46.26.0:
+- `gbrain upgrade` (or reinstall the binary). No schema action needed beyond
+  the automatic migration that adds the owner/lease columns.
+- Existing abandoned queues from before this release are legacy-unowned:
+  `gbrain doctor` now tells you exactly which repair applies; use the
+  `gbrain dream retriage` preview for those.
+
 ## [0.46.25.0] - 2026-08-20
 
 **The backlog release: 62 community pull requests merged, ~50 maintainer fixes, and 87 open issues closed in one landing.** Every pull request was individually trial-merged and tested before inclusion; every fix started from a reproduced bug and shipped with a failing-first test. The headline classes: embedding backfills can no longer quietly destroy vectors (probe-gated invalidation, honest counts, content-revision staleness, registry-aware writes end to end), sync can no longer delete the wrong page or be repointed by a foreign repo, search caching can no longer serve one source's rows to another or one query's rows to a different query, page timelines survive filesystem rebuilds, large piped CLI output is delivered to the last byte on every path, and the DB config plane is finally read at runtime.

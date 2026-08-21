@@ -470,6 +470,9 @@ CREATE TABLE IF NOT EXISTS minion_jobs (
   remove_on_complete BOOLEAN   NOT NULL DEFAULT FALSE,
   remove_on_fail   BOOLEAN     NOT NULL DEFAULT FALSE,
   idempotency_key  TEXT,
+  private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL,
+  private_queue_owner_token TEXT,
+  private_queue_lease_until TIMESTAMPTZ,
   result           JSONB,
   progress         JSONB,
   error_text       TEXT,
@@ -504,6 +507,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_minion_jobs_idempotency ON minion_jobs (i
 -- WP4/WP5 (v127, ENG-10): wedge-signal index — covers the queue-health count
 -- FILTERs and max(updated_at) reads in queryWedgeSignals (supervisor.ts).
 CREATE INDEX IF NOT EXISTS idx_minion_jobs_queue_status_updated ON minion_jobs (queue, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_recovery
+  ON minion_jobs (queue, private_queue_lease_until)
+  WHERE queue LIKE 'dream-inline-%'
+    AND status IN ('waiting','active','delayed','waiting-children','paused');
+CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_owner
+  ON minion_jobs (private_queue_owner_job_id)
+  WHERE private_queue_owner_job_id IS NOT NULL;
 
 -- Inbox table for sidechannel messaging
 CREATE TABLE IF NOT EXISTS minion_inbox (

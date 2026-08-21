@@ -21,6 +21,17 @@ mock.module('../src/core/minions/wait-for-completion.ts', () => ({
     id: jobId,
     status: 'completed',
   }),
+  // patterns/synthesize import the lease-renewing variant; a module mock
+  // replaces the WHOLE module, so it must export every named import its
+  // consumers reach for (a missing one is a load-time SyntaxError).
+  waitForCompletionRenewing: async (
+    _queue: unknown,
+    jobId: number,
+    opts?: { renew?: () => Promise<void> },
+  ) => {
+    if (opts?.renew) await opts.renew();
+    return { id: jobId, status: 'completed' };
+  },
 }));
 
 const { runPhasePatterns } = await import('../src/core/cycle/patterns.ts');
