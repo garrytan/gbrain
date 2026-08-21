@@ -3,6 +3,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { operations, OperationError, type OperationContext } from '../../src/core/operations.ts';
 import { __setServerBuildCommitForTests } from '../../src/core/sealed-page.ts';
+import { verifySealedPageReceiptsMigration } from '../../src/core/migrations/verify-sealed-page-receipts.ts';
 import { MigrationDriftError, runMigrations } from '../../src/core/migrate.ts';
 import {
   assertSafeE2eDatabaseUrl,
@@ -272,6 +273,25 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
         appB.executeRaw('UPDATE pages SET title = $1 WHERE id = $2', ['Ordinary changed', Number(ordinaryPage[0].id)]),
       ).resolves.toBeDefined();
     } finally {
+      await conn.unsafe(
+        `CREATE POLICY create_page_app_receipts ON sealed_page_receipts TO ${APP_ROLE}
+           USING (source_id = 'default') WITH CHECK (source_id = 'default')`,
+      );
+    }
+  });
+
+  test('migration verifier rejects additional permissive receipt policies', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn.unsafe('DROP POLICY create_page_app_receipts ON sealed_page_receipts');
+    try {
+      expect(await verifySealedPageReceiptsMigration(engine)).toBe(true);
+      await conn.unsafe(
+        'CREATE POLICY hostile_receipt_policy ON sealed_page_receipts TO PUBLIC USING (true) WITH CHECK (true)',
+      );
+      expect(await verifySealedPageReceiptsMigration(engine)).toBe(false);
+    } finally {
+      await conn.unsafe('DROP POLICY IF EXISTS hostile_receipt_policy ON sealed_page_receipts');
       await conn.unsafe(
         `CREATE POLICY create_page_app_receipts ON sealed_page_receipts TO ${APP_ROLE}
            USING (source_id = 'default') WITH CHECK (source_id = 'default')`,

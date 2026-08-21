@@ -226,9 +226,30 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
   ];
   if (JSON.stringify(actualTriggers) !== JSON.stringify(expectedTriggers)) return false;
 
-  const table = await engine.executeRaw<{ relrowsecurity: boolean }>(
-    `SELECT relrowsecurity FROM pg_class
-      WHERE oid = 'public.sealed_page_receipts'::regclass`,
+  const table = await engine.executeRaw<{
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+    policy_count: number;
+    public_has_privileges: boolean;
+  }>(
+    `SELECT c.relrowsecurity,
+            c.relforcerowsecurity,
+            (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policy_count,
+            (
+              has_table_privilege('public', c.oid, 'SELECT')
+              OR has_table_privilege('public', c.oid, 'INSERT')
+              OR has_table_privilege('public', c.oid, 'UPDATE')
+              OR has_table_privilege('public', c.oid, 'DELETE')
+              OR has_table_privilege('public', c.oid, 'TRUNCATE')
+              OR has_table_privilege('public', c.oid, 'REFERENCES')
+              OR has_table_privilege('public', c.oid, 'TRIGGER')
+            ) AS public_has_privileges
+       FROM pg_class c
+      WHERE c.oid = 'public.sealed_page_receipts'::regclass`,
   );
-  return table.length === 1 && table[0].relrowsecurity === true;
+  return table.length === 1
+    && table[0].relrowsecurity === true
+    && table[0].relforcerowsecurity === false
+    && Number(table[0].policy_count) === 0
+    && table[0].public_has_privileges === false;
 }
