@@ -88,6 +88,8 @@ export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;
 
+export type FactNotability = 'high' | 'medium' | 'low';
+
 export interface ExtractInput {
   turnText: string;
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
@@ -110,6 +112,11 @@ export interface ExtractInput {
   abortSignal?: AbortSignal;
   /** Cap on number of facts returned per turn. Defaults to 10. */
   maxFactsPerTurn?: number;
+  /** Optional pre-embedding admission selector for extracted fact tiers. */
+  notabilityAdmission?: {
+    allowed: readonly FactNotability[];
+    invalid: 'drop';
+  };
 }
 
 /** A pre-INSERT fact ready for the engine.insertFact path. */
@@ -420,8 +427,13 @@ export async function extractFactsFromTurnWithOutcome(
       ? (candidate.kind as FactKind)
       : 'fact';
     const confidence = clampConfidence(candidate.confidence);
-    const notability = ['high', 'medium', 'low'].includes(candidate.notability || '')
-      ? (candidate.notability as 'high' | 'medium' | 'low')
+    const validTier = ['high', 'medium', 'low'].includes(candidate.notability ?? '');
+    if (input.notabilityAdmission) {
+      const tier = validTier ? candidate.notability as FactNotability : null;
+      if (!tier || !input.notabilityAdmission.allowed.includes(tier)) continue;
+    }
+    const notability: FactNotability = validTier
+      ? candidate.notability as FactNotability
       : 'medium';
 
     let embedding: Float32Array | null = null;
