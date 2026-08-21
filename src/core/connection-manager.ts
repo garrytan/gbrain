@@ -167,6 +167,32 @@ export function deriveDirectUrl(url: string): string | null {
   }
 }
 
+/**
+ * Derive the SESSION-mode pooler URL from a TRANSACTION-mode pooler URL
+ * (#1915): same pooler host, port 6543 → 5432, KEEPING the postgres.<ref>
+ * user (Supavisor needs the tenant suffix — unlike deriveDirectUrl, which
+ * strips it for the db.<ref> host). The session pooler is IPv4-reachable and
+ * honors the direct pool's startup-parameter timeouts, so it is the natural
+ * second choice when the auto-derived db.<ref>.supabase.co host is
+ * IPv6-unreachable (Railway, most home ISPs). Returns null when the URL
+ * isn't a Supabase transaction-pooler shape (pooler hostname + port 6543 —
+ * a bare :6543 on an unknown host proves nothing about what :5432 serves).
+ */
+export function deriveSessionPoolerUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url.replace(/^postgres(ql)?:\/\//, 'http://'));
+    const isPoolerHost = SUPABASE_POOLER_HOSTNAME_PATTERNS.some(re => re.test(parsed.hostname));
+    if (!isPoolerHost || parsed.port !== '6543') return null;
+    const scheme = url.match(/^postgres(?:ql)?:\/\//i)?.[0] ?? 'postgres://';
+    const auth = parsed.username
+      ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+      : '';
+    return `${scheme}${auth}${parsed.hostname}:5432${parsed.pathname ?? ''}${parsed.search ?? ''}`;
+  } catch {
+    return null;
+  }
+}
+
 /** True when the URL targets Supavisor transaction mode (port 6543). */
 function isTransactionPoolerUrl(url: string): boolean {
   try {
@@ -244,6 +270,12 @@ export class ConnectionManager {
   private _killSwitch: boolean;
   private _directUrl: string | null;
   private _isSupabase: boolean;
+  /** #1915: true when _directUrl was auto-derived (no operator override) —
+   *  only then may the unreachable-host path retry the session pooler. */
+  private _directUrlAutoDerived = false;
+  /** #1915: single-flight guard for the session-pooler retry. */
+  private _sessionInit: Promise<Sql> | null = null;
+  private _sessionFallbackLogged = false;
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
@@ -254,6 +286,7 @@ export class ConnectionManager {
       this._killSwitch = opts.parent.isKillSwitchActive();
       this._isSupabase = opts.parent.isSupabase();
       this._directUrl = opts.parent.resolveDirectUrl();
+      this._directUrlAutoDerived = opts.parent.isDirectUrlAutoDerived();
       this._readPool = opts.parent.peekReadPool();
       this._readPoolOwnedExternally = true; // never end the parent's pool
     } else {
@@ -262,7 +295,11 @@ export class ConnectionManager {
       // Direct URL: explicit override > env > derive > null. Pooler-shaped
       // overrides are normalized to a real direct host (or dropped).
       const envOverride = process.env.GBRAIN_DIRECT_DATABASE_URL;
-      this._directUrl = normalizeDirectUrl(opts.url, opts.directUrl ?? envOverride);
+      const override = opts.directUrl ?? envOverride;
+      this._directUrl = normalizeDirectUrl(opts.url, override);
+      // #1915: an operator override is respected as-is — never second-guessed
+      // with the session-pooler retry. Only auto-derived URLs may fall back.
+      this._directUrlAutoDerived = override == null;
     }
   }
 
@@ -274,6 +311,7 @@ export class ConnectionManager {
   isSupabase(): boolean { return this._isSupabase; }
   isKillSwitchActive(): boolean { return this._killSwitch; }
   resolveDirectUrl(): string | null { return this._directUrl; }
+  isDirectUrlAutoDerived(): boolean { return this._directUrlAutoDerived; }
 
   /**
    * Internal: peek at the read pool without forcing init. Used by parent
@@ -379,6 +417,47 @@ export class ConnectionManager {
       // Non-network errors (auth, SQL) still throw: they mean misconfig,
       // not unreachability.
       if (isNetworkUnreachableError(err)) {
+        // #1915: before the permanent read-pool fallback, retry ONCE against
+        // the SESSION pooler (same host as the transaction pooler, port 5432).
+        // It is IPv4-reachable and honors the direct pool's startup-parameter
+        // timeouts, so DDL/bulk keep their 30min budget instead of dying on
+        // the transaction pooler's ~8s statement_timeout (cold-start init
+        // failures). Auto-derived URLs only — operator overrides are final.
+        if (this._directUrlAutoDerived) {
+          try {
+            // Single-flight FIRST, URL-equality guard second: caller 1 of a
+            // rejected _directInit mutates _directUrl to the session URL
+            // before starting the retry, so a concurrent caller 2 that
+            // checked `sessionUrl !== this._directUrl` first would see them
+            // equal, skip the in-flight retry entirely, and trip the
+            // read-pool kill-switch while caller 1's session pooler connects.
+            if (this._sessionInit) {
+              return await this._sessionInit;
+            }
+            const sessionUrl = deriveSessionPoolerUrl(this.opts.url);
+            if (sessionUrl && sessionUrl !== this._directUrl) {
+              const prevHost = this._directUrl ? this.hostOnly(this._directUrl) : 'unknown host';
+              this._directUrl = sessionUrl;
+              this._sessionInit = this.initDirectPool().then(p => {
+                this._directPool = p;
+                return p;
+              });
+              const p = await this._sessionInit;
+              if (!this._sessionFallbackLogged) {
+                this._sessionFallbackLogged = true;
+                console.error(
+                  `gbrain: direct connection to ${prevHost} unreachable; using the Supabase session pooler ` +
+                  `(${this.hostOnly(sessionUrl)}) for DDL/bulk instead — long-timeout settings still apply. ` +
+                  'Set GBRAIN_DIRECT_DATABASE_URL to override.',
+                );
+              }
+              return p;
+            }
+          } catch {
+            // Session pooler also failed → fall through to the #1641
+            // read-pool kill-switch below (the original behavior).
+          }
+        }
         const alreadyWarned = this._killSwitch;
         this._killSwitch = true;
         const msg = err instanceof Error ? err.message : String(err);

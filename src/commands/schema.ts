@@ -48,6 +48,7 @@ import {
 } from '../core/schema-pack/index.ts';
 import type { SchemaPackManifest, PackPrimitive } from '../core/schema-pack/manifest-v1.ts';
 import { PACK_PRIMITIVES } from '../core/schema-pack/manifest-v1.ts';
+import { bundledPackPath } from '../core/schema-pack/bundled-assets.ts';
 import { gbrainPath, loadConfig, configPath, toEngineConfig } from '../core/config.ts';
 
 export async function runSchema(args: string[]): Promise<void> {
@@ -368,7 +369,12 @@ function runUse(args: string[]): void {
 
 function packPathByName(name: string): string | null {
   if (BUNDLED_PACK_NAMES.has(name)) {
-    // Resolve bundled YAML — try a few locations.
+    // Statically bundled asset path [ENG-6] (#4266): resolves in dev AND
+    // inside `bun build --compile` binaries, where the import.meta-relative
+    // candidates below don't exist.
+    const asset = bundledPackPath(name);
+    if (asset) return asset;
+    // Resolve bundled YAML — import.meta fallback, try a few locations.
     const here = dirname(new URL(import.meta.url).pathname);
     const candidates = [
       join(here, '..', 'core', 'schema-pack', 'base', `${name}.yaml`),

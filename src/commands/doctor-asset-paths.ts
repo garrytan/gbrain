@@ -63,6 +63,19 @@ export function resolveAssetPath(
 }
 
 /**
+ * Resolve an image asset against the source that owns the files row. The
+ * global sync.repo_path is only a legacy fallback for rows without source root
+ * metadata.
+ */
+export function resolveImageAssetPath(
+  storagePath: string,
+  sourceLocalPath: string | null,
+  fallbackRepoRoot: string,
+): AssetPathResolution {
+  return resolveAssetPath(storagePath, sourceLocalPath ?? fallbackRepoRoot);
+}
+
+/**
  * Extract the `[automount] root` value from /etc/wsl.conf content.
  * Defaults to `/mnt` (WSL's own default) when absent/unparseable.
  */

@@ -11,9 +11,11 @@
  *   A. Schema       — assert migration v51 has run.
  *   B. Fence facts  — backfill DB facts → entity-page fences (dry-run
  *                     by default; explicit --write required).
- *   C. Verify       — re-parse each touched page, count rows, compare
+ *   C. Verify       — re-parse each fence-owned page, count rows, compare
  *                     against the DB rows for that page; partial on
- *                     mismatch.
+ *                     mismatch. Conversation-miner (`cli:`) facts are not
+ *                     fence-owned (extract-conversation-facts writes the
+ *                     chat log as source of truth) and are excluded.
  *   D. Record       — runner-owned ledger write (apply-migrations.ts).
  *
  * Idempotency: phase B only touches rows with row_num IS NULL. Re-runs
@@ -372,10 +374,15 @@ async function phaseCVerify(
     const localPathById = new Map<string, string | null>();
     for (const s of sources) localPathById.set(s.id, s.local_path);
 
+    // Conversation-miner rows stamp row_num without a ## Facts fence
+    // (chat-log shape is the source of truth). Same cli: exclusion as
+    // extract_facts reconciliation. Counting them here fails every brain
+    // that ran extract-conversation-facts.
     const groups = await engine.executeRaw<{ source_id: string; source_markdown_slug: string; n: string }>(
       `SELECT source_id, source_markdown_slug, COUNT(*) AS n
          FROM facts
         WHERE row_num IS NOT NULL
+          AND COALESCE(source, '') NOT LIKE 'cli:%'
         GROUP BY source_id, source_markdown_slug`,
     );
 

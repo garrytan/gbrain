@@ -56,12 +56,32 @@ describe('acquirePageLock', () => {
     await lock!.release();
   });
 
-  test('reclaims lock when holder PID is no longer alive', async () => {
+  // #2840: PID liveness is namespace-local. A holder running in another
+  // container (shared GBRAIN_HOME volume, separate PID namespace) presents
+  // exactly like this: a PID that resolves to ESRCH locally, but a FRESH
+  // heartbeat (mtime). Staleness must key on heartbeat recency only —
+  // kill(pid, 0) must never justify stealing a recently-refreshed lock.
+  test('does not steal a fresh lock whose holder PID is not visible in this namespace', async () => {
     const slug = 'people/charlie';
     const path = lockFile(slug);
     require('node:fs').mkdirSync(tmp, { recursive: true });
-    // PID 999999999 is virtually guaranteed to not exist.
+    // Foreign-host holder: PID 999999999 is ESRCH locally, heartbeat is fresh.
     writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
+    const lock = await acquirePageLock(slug, { lockRoot: tmp });
+    expect(lock).toBeNull();
+    // The holder's lockfile must be untouched (not unlinked, not overwritten).
+    const content = readFileSync(path, 'utf-8').trim();
+    expect(content.split('\n')[0]).toBe('999999999');
+  });
+
+  test('reclaims a dead-PID lock only after the TTL heartbeat window lapses', async () => {
+    const slug = 'people/charlie-crashed';
+    const path = lockFile(slug);
+    require('node:fs').mkdirSync(tmp, { recursive: true });
+    writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
+    // Holder stopped heartbeating 10 minutes ago (TTL is 5 min).
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(path, tenMinAgo, tenMinAgo);
     const lock = await acquirePageLock(slug, { lockRoot: tmp });
     expect(lock).not.toBeNull();
     await lock!.release();
@@ -85,13 +105,46 @@ describe('acquirePageLock', () => {
     const slug = 'test/foreign-release';
     const path = lockFile(slug);
     require('node:fs').mkdirSync(tmp, { recursive: true });
-    writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
-    // Acquire — this rewrites the lock with our pid.
+    // Acquire — this writes the lock with our pid + ownership token.
     const lock = await acquirePageLock(slug, { lockRoot: tmp });
     expect(lock).not.toBeNull();
     // Manually rewrite with a foreign pid.
     writeFileSync(path, `888888888\n${new Date().toISOString()}\n`);
-    // Release should be a no-op (different pid).
+    // Release should be a no-op (different holder).
+    await lock!.release();
+    expect(existsSync(path)).toBe(true);
+  });
+
+  // #2840 false-self direction: PIDs collide across namespaces. A foreign
+  // process whose recorded PID equals OUR process.pid must not be treated
+  // as "us" — ownership is the per-acquire token, never the bare PID.
+  test('release() does not unlink a same-pid lock acquired by a foreign process', async () => {
+    const slug = 'test/pid-collision-release';
+    const path = lockFile(slug);
+    require('node:fs').mkdirSync(tmp, { recursive: true });
+    const lock = await acquirePageLock(slug, { lockRoot: tmp });
+    expect(lock).not.toBeNull();
+    // Simulate a foreign-namespace process with a colliding PID that took
+    // over the lock (e.g. after our TTL lapsed): same pid, different token.
+    const foreign = `${process.pid}\n${new Date().toISOString()}\nforeign-token-not-ours\n`;
+    writeFileSync(path, foreign);
+    await lock!.release();
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, 'utf-8')).toBe(foreign);
+  });
+
+  test('refresh() does not clobber a lock we no longer own', async () => {
+    const slug = 'test/refresh-lost-ownership';
+    const path = lockFile(slug);
+    require('node:fs').mkdirSync(tmp, { recursive: true });
+    const lock = await acquirePageLock(slug, { lockRoot: tmp });
+    expect(lock).not.toBeNull();
+    // A foreign process (colliding pid, different token) now holds the lock.
+    const foreign = `${process.pid}\n${new Date().toISOString()}\nforeign-token-not-ours\n`;
+    writeFileSync(path, foreign);
+    await lock!.refresh();
+    // refresh must be a no-op — the foreign holder's heartbeat is untouched.
+    expect(readFileSync(path, 'utf-8')).toBe(foreign);
     await lock!.release();
     expect(existsSync(path)).toBe(true);
   });

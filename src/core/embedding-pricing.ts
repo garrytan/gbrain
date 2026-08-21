@@ -70,6 +70,18 @@ export type PriceLookupResult =
   | { kind: 'unknown'; provider: string; model: string };
 
 /**
+ * Provider aliases resolved on a lookup miss (#4032). Azure deployments of
+ * OpenAI embedding models bill at the same per-token rates as OpenAI-hosted,
+ * so `azure-openai:<model>` falls back to the `openai:<model>` row. An alias
+ * (not duplicated rows) so new openai entries never drift from their Azure
+ * twins. A model with no twin in the alias target stays `unknown` — fail
+ * closed rather than fabricate a rate.
+ */
+const EMBEDDING_PROVIDER_ALIASES: Record<string, string> = {
+  'azure-openai': 'openai',
+};
+
+/**
  * Resolve a model string into a price-per-1M-tokens. Accepts both
  * `provider:model` and bare `model` forms (bare assumes openai).
  */
@@ -82,6 +94,12 @@ export function lookupEmbeddingPrice(modelString: string): PriceLookupResult {
   const key = `${provider}:${model}`;
   const hit = EMBEDDING_PRICING[key];
   if (hit) return { kind: 'known', pricePerMTok: hit.pricePerMTok, key };
+  const alias = EMBEDDING_PROVIDER_ALIASES[provider];
+  if (alias) {
+    const aliasKey = `${alias}:${model}`;
+    const aliasHit = EMBEDDING_PRICING[aliasKey];
+    if (aliasHit) return { kind: 'known', pricePerMTok: aliasHit.pricePerMTok, key: aliasKey };
+  }
   return { kind: 'unknown', provider, model };
 }
 

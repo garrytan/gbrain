@@ -21,6 +21,7 @@
 //   6. Write concept-typed pages with the synthesis mode made explicit.
 
 import type { BrainEngine } from '../engine.ts';
+import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -216,6 +217,14 @@ export async function runPhaseSynthesizeConcepts(
     }
   }
 
+  // Honour the documented per-task routing. Without an explicit model this
+  // call inherits models.chat, so models.dream.synthesize (advertised in the
+  // routing table as tier.reasoning) had no effect on this path.
+  const synthModel = await resolveModel(engine, {
+    configKey: 'models.dream.synthesize',
+    tier: 'reasoning',
+    fallback: 'sonnet',
+  });
   for (const group of atomGroups) {
     tierCounts[group.tier]++;
     let narrative: string;
@@ -227,6 +236,7 @@ export async function runPhaseSynthesizeConcepts(
       } else {
         try {
           const result = await chat({
+            model: synthModel,
             system: SYNTH_PROMPT,
             messages: [
               {

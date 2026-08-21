@@ -55,7 +55,9 @@ describe('doctor command', () => {
   test('subagent_capability checks explicit models.subagent before tier/default fallbacks', async () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const config = new Map<string, string | null>([
-      ['models.subagent', 'openai:gpt-5.2'],
+      // A model whose recipe declares no prompt caching, so the precedence
+      // this test is about is visible through the resulting warn.
+      ['models.subagent', 'google:gemini-1.5-pro'],
       ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
       ['models.default', 'anthropic:claude-sonnet-4-6'],
     ]);
@@ -65,8 +67,46 @@ describe('doctor command', () => {
       },
     } as any);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('models.subagent is "openai:gpt-5.2"');
+    expect(check.message).toContain('models.subagent is "google:gemini-1.5-pro"');
     expect(check.message).toContain('prompt caching');
+  });
+
+  test('subagent_capability warns when models.subagent declares the loop unsupported', async () => {
+    // moonshot supports tools but declares supports_subagent_loop: false —
+    // pre-fix this classified as tools-sufficient and doctor reported no issue.
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'moonshot:kimi-k2.5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.subagent is "moonshot:kimi-k2.5"');
+    expect(check.message).toContain('supports_subagent_loop: false');
+    // Explicit models.subagent is refused at dispatch (no silent fallback).
+    expect(check.message).toContain('refused at dispatch');
+  });
+
+  test('subagent_capability distinguishes fallback wording for inherited tier source', async () => {
+    // models.tier.subagent routes through enforceSubagentCapable, which
+    // silently falls back to TIER_DEFAULTS.subagent — doctor must not claim
+    // dispatch refusal for that source.
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.tier.subagent', 'moonshot:kimi-k2.5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('supports_subagent_loop: false');
+    expect(check.message).toContain('fall back');
+    expect(check.message).not.toContain('refused at dispatch');
   });
 
   test('subagent_capability reports explicit models.subagent on the ok path', async () => {
@@ -88,7 +128,7 @@ describe('doctor command', () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const config = new Map<string, string | null>([
       ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
-      ['models.default', 'openai:gpt-5.2'],
+      ['models.default', 'google:gemini-1.5-pro'],
     ]);
     const check = await checkSubagentCapability({
       async getConfig(key: string): Promise<string | null> {
@@ -96,7 +136,7 @@ describe('doctor command', () => {
       },
     } as any);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+    expect(check.message).toContain('models.default is "google:gemini-1.5-pro"');
   });
 
   test('reranker_health warns on repeated unknown rerank failures', async () => {

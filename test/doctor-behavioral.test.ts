@@ -208,6 +208,40 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(connection!.status).toBe('warn');
   });
 
+  test('content-sanity checks run on PGLite — oversized page warns, none die on the dead postgres singleton (#1871)', async () => {
+    // Pre-fix these three checks reached the DB via db.getConnection() —
+    // the postgres.js singleton, which is never connected on the default
+    // PGLite engine — so every run reported
+    // "Skipped (No database connection: connect() has not been called)".
+    const big = 'oversized page body prose for the block threshold probe. '.repeat(11_000); // ~630KB > 500KB default
+    await engine.putPage('wiki/oversized-probe-1871', {
+      type: 'note',
+      title: 'Oversized Probe 1871',
+      compiled_truth: big,
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const checks = await buildChecks(engine, []);
+
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    expect(oversized).toBeDefined();
+    expect(oversized!.status).toBe('warn');
+    expect(oversized!.message).toContain('oversized-probe-1871');
+
+    // The sibling checks now execute for real on PGLite too.
+    const junk = checks.find(c => c.name === 'scraper_junk_pages');
+    expect(junk).toBeDefined();
+    expect(junk!.message).not.toContain('Skipped');
+    const mbc = checks.find(c => c.name === 'markdown_body_completeness');
+    expect(mbc).toBeDefined();
+
+    // No check on a healthy PGLite brain reports the dead-singleton error.
+    for (const c of checks) {
+      expect(c.message).not.toContain('connect() has not been called');
+    }
+  });
+
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {
     // The orchestrator's render path (outputResults in the wrapper) reads
     // the same DoctorReport.status enum we compute here. Pin the

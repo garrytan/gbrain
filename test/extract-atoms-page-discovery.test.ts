@@ -13,6 +13,9 @@
 // merge, dedup, dry-run, fail-soft on executeRaw errors.
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   runPhaseExtractAtoms,
@@ -305,6 +308,97 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     );
     expect(rows.length).toBe(1);
     expect(rows[0].source_id).toBe('dept-x');
+  });
+
+  test('production transcript discovery is default-only while non-default DB pages still extract', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('dept-x', 'dept-x') ON CONFLICT DO NOTHING`,
+    );
+    await seedPage({
+      slug: 'meeting/dept-x-page',
+      type: 'meeting',
+      source_id: 'dept-x',
+      content_hash: 'dept-page-hash-1234567890',
+    });
+
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-atoms-corpus-'));
+    writeFileSync(join(corpusDir, '2026-07-28-global.txt'), 'global transcript '.repeat(180));
+    let chatCalls = 0;
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      chatCalls++;
+      return stubChat(
+        `[{"title":"item-${chatCalls}","atom_type":"insight","body":"b"}]`,
+      )(opts);
+    };
+
+    try {
+      const result = await runPhaseExtractAtoms(engine, {
+        sourceId: 'dept-x',
+        brainDir: '/tmp/dept-x-brain',
+        _loadConfig: () => ({
+          dream: { synthesize: { session_corpus_dir: corpusDir } },
+        } as never),
+        _chat: chat,
+      });
+
+      expect(result.details?.transcripts_total).toBe(0);
+      expect(result.details?.pages_total).toBe(1);
+      expect(chatCalls).toBe(1);
+      const rows = await engine.executeRaw<{
+        source_id: string;
+        source_slug: string | null;
+        source_path: string | null;
+      }>(
+        `SELECT source_id,
+                frontmatter->>'source_slug' AS source_slug,
+                frontmatter->>'source_path' AS source_path
+           FROM pages
+          WHERE type = 'atom'`,
+      );
+      expect(rows).toEqual([{
+        source_id: 'dept-x',
+        source_slug: 'meeting/dept-x-page',
+        source_path: null,
+      }]);
+    } finally {
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
+  });
+
+  test('production transcript discovery remains enabled for the default source', async () => {
+    const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-atoms-default-corpus-'));
+    const transcriptPath = join(corpusDir, '2026-07-28-global.txt');
+    writeFileSync(transcriptPath, 'global transcript '.repeat(180));
+
+    try {
+      const result = await runPhaseExtractAtoms(engine, {
+        sourceId: 'default',
+        brainDir: '/tmp/default-brain',
+        _pages: [],
+        _loadConfig: () => ({
+          dream: { synthesize: { session_corpus_dir: corpusDir } },
+        } as never),
+        _chat: stubChat('[{"title":"default-item","atom_type":"insight","body":"b"}]'),
+      });
+
+      expect(result.details?.transcripts_total).toBe(1);
+      expect(result.details?.pages_total).toBe(0);
+      const rows = await engine.executeRaw<{
+        source_id: string;
+        source_path: string | null;
+      }>(
+        `SELECT source_id,
+                frontmatter->>'source_path' AS source_path
+           FROM pages
+          WHERE type = 'atom'`,
+      );
+      expect(rows).toEqual([{
+        source_id: 'default',
+        source_path: transcriptPath,
+      }]);
+    } finally {
+      rmSync(corpusDir, { recursive: true, force: true });
+    }
   });
 
   test('transcript-side idempotency: re-discovered same-hash transcript skipped (closes pre-existing bug)', async () => {

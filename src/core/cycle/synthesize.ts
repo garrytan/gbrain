@@ -41,7 +41,7 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
@@ -59,9 +59,12 @@ import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
 
-// Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7);
-// patterns.ts and the __testing surface import from here unchanged.
+// Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
+// allow-list loader to filing-rules.ts (#2397); patterns.ts and the
+// __testing surface import from here unchanged.
 export { runSubagentsInline, runDrainRenewalTick };
+import { loadAllowedSlugPrefixes } from './filing-rules.ts';
+export { loadAllowedSlugPrefixes };
 import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
@@ -516,7 +519,7 @@ export async function runPhaseSynthesize(
 
     // Fan-out: submit one subagent per worth-processing transcript (or one
     // per chunk for transcripts that exceed the model's per-prompt budget).
-    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot);
+    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine);
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
@@ -942,7 +945,7 @@ export async function runPhaseSynthesize(
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
-    const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    const summarySlug = buildDreamSummarySlug(config.outputRoot, summaryDate);
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
@@ -1213,6 +1216,13 @@ export interface SynthConfig {
   mode: 'agentic' | 'oneshot';
 }
 
+/** Keep orchestrator summaries inside a configured non-default namespace. */
+export function buildDreamSummarySlug(outputRoot: string, summaryDate: string): string {
+  return outputRoot === 'wiki'
+    ? `dream-cycle-summaries/${summaryDate}`
+    : `${outputRoot}/dream-cycle-summaries/${summaryDate}`;
+}
+
 /** #2415: shared output-root resolution (synthesize + patterns phases). */
 export async function loadOutputRoot(engine: BrainEngine): Promise<string> {
   const raw = await engine.getConfig('dream.synthesize.output_root');
@@ -1403,36 +1413,9 @@ async function checkCooldown(
 }
 
 // ── Allow-list source of truth ───────────────────────────────────────
-
-/**
- * #2415: `outputRoot` remaps the canonical `wiki/`-rooted globs to the
- * configured namespace (e.g. `notes/personal/reflections/*`). Default 'wiki'
- * returns the globs verbatim. Shared by the patterns phase (imported there —
- * the two phases must enforce the same allow-list).
- */
-export async function loadAllowedSlugPrefixes(outputRoot = 'wiki'): Promise<string[]> {
-  // Search a few known locations relative to the binary / repo. The first
-  // hit wins; if none found, return [].
-  const candidates = [
-    join(process.cwd(), 'skills', '_brain-filing-rules.json'),
-    join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const raw = readFileSync(path, 'utf8');
-      const parsed = JSON.parse(raw) as { dream_synthesize_paths?: { globs?: unknown } };
-      const globs = parsed?.dream_synthesize_paths?.globs;
-      if (Array.isArray(globs) && globs.every(g => typeof g === 'string')) {
-        if (outputRoot === 'wiki') return globs as string[];
-        return (globs as string[]).map(g =>
-          g.startsWith('wiki/') ? `${outputRoot}/${g.slice('wiki/'.length)}` : g,
-        );
-      }
-    } catch { /* try next */ }
-  }
-  return [];
-}
+// #2397: peeled to filing-rules.ts (cwd > engine-resolved brain repo >
+// __dirname > bundled-JSON ladder). Re-exported below so patterns.ts and
+// the tests keep importing from here.
 
 // ── Significance judge (gateway-routed; provider-agnostic) ──────────────
 //
@@ -2695,6 +2678,7 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 export const __testing = {
   collectChildPutPageSlugs,
   buildSynthesisPrompt,
+  buildDreamSummarySlug,
   stampDreamProvenance,
   reverseWriteRefs,
   runSubagentsInline,

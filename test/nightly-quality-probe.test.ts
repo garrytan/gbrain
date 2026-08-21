@@ -162,6 +162,31 @@ describe('runNightlyQualityProbe (DI stub harness)', () => {
     });
   });
 
+  test('threads live search-mode/reranker snapshot into LongMemEval', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
+      let seenSnapshot: Record<string, string> | undefined;
+      const r = await runNightlyQualityProbe(makeDeps({
+        resolveSearchConfigSnapshot: async () => ({
+          'search.mode': 'balanced',
+          'search.reranker.enabled': 'true',
+          'search.reranker.model': 'llama-server-reranker:qwen3-reranker-4b',
+          'search.reranker.timeout_ms': '30000',
+        }),
+        runLongMemEval: async (args) => {
+          seenSnapshot = args.searchConfigSnapshot;
+        },
+      }));
+
+      expect(r.outcome).toBe('pass');
+      expect(seenSnapshot).toEqual({
+        'search.mode': 'balanced',
+        'search.reranker.enabled': 'true',
+        'search.reranker.model': 'llama-server-reranker:qwen3-reranker-4b',
+        'search.reranker.timeout_ms': '30000',
+      });
+    });
+  });
+
   test('enabled + FAIL summary → outcome: fail', async () => {
     await withEnv({ GBRAIN_AUDIT_DIR: auditTmp }, async () => {
       const r = await runNightlyQualityProbe(makeDeps({

@@ -4,7 +4,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../src/core/think/index.ts';
 import { sanitizeTakeForPrompt, renderTakesBlock } from '../src/core/think/sanitize.ts';
 import { resolveCitations, parseInlineCitations, normalizeStructuredCitations } from '../src/core/think/cite-render.ts';
-import { runGather } from '../src/core/think/gather.ts';
+import { runGather, renderPagesBlock } from '../src/core/think/gather.ts';
 import { withoutAnthropicKey } from './helpers/no-anthropic-key.ts';
 
 let engine: PGLiteEngine;
@@ -141,6 +141,65 @@ describe('runGather', () => {
   });
 });
 
+describe('runGather — anchor page hydration (#2903)', () => {
+  test('anchor content lands in pages + renderPagesBlock even when hybrid misses it', async () => {
+    // The alice page was written via bare putPage (no chunks), and the
+    // question shares no tokens with it — hybrid returns nothing for the
+    // anchor. Pre-#2903 the anchor arm delivered slugs only, so <pages>
+    // carried zero anchor content.
+    const r = await runGather(engine, {
+      question: 'zzz-unrelated-nonsense-query-xqj',
+      anchor: 'people/alice-example',
+    });
+    const anchorHit = r.pages.find(p => p.slug === 'people/alice-example');
+    expect(anchorHit).toBeDefined();
+    expect(anchorHit!.chunk_text).toContain('Alice founded Acme.');
+    expect(anchorHit!.chunk_source).toBe('compiled_truth');
+    expect(r.warnings).not.toContain('ANCHOR_PAGE_NOT_FOUND');
+    const block = renderPagesBlock(r.pages, 600, 'zzz-unrelated-nonsense-query-xqj');
+    expect(block).toContain('people/alice-example');
+    expect(block).toContain('Alice founded Acme.');
+  });
+
+  test('dedupes when hybrid already returned the anchor page', async () => {
+    // 'Alice founded Acme' overlaps the page title/body → keyword arm can
+    // return it. Either way, exactly one row per slug must survive.
+    const r = await runGather(engine, {
+      question: 'Alice founded Acme',
+      anchor: 'people/alice-example',
+    });
+    const hits = r.pages.filter(p => p.slug === 'people/alice-example');
+    expect(hits.length).toBe(1);
+  });
+
+  test('missing anchor page → ANCHOR_PAGE_NOT_FOUND warning, no synthetic row', async () => {
+    const r = await runGather(engine, {
+      question: 'technical founder',
+      anchor: 'people/no-such-anchor',
+    });
+    expect(r.warnings).toContain('ANCHOR_PAGE_NOT_FOUND');
+    expect(r.pages.some(p => p.slug === 'people/no-such-anchor')).toBe(false);
+  });
+
+  test('getPage failure → GATHER_ANCHOR_HYDRATE_FAILED, pipeline survives', async () => {
+    const failing = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'getPage') {
+          return async () => { throw new Error('getPage boom'); };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as PGLiteEngine;
+    const r = await runGather(failing, {
+      question: 'technical founder',
+      anchor: 'people/alice-example',
+    });
+    expect(r.warnings).toContain('GATHER_ANCHOR_HYDRATE_FAILED');
+    expect(r.warnings).not.toContain('ANCHOR_PAGE_NOT_FOUND');
+  });
+});
+
 describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
   /** Delegating wrapper: listed methods reject; everything else hits the real engine. */
   function withFailing(methods: string[]): PGLiteEngine {
@@ -160,10 +219,12 @@ describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
     expect(r.warnings).toEqual([]);
   });
 
-  test('a throwing hybrid stream surfaces GATHER_HYBRID_FAILED and stays fail-open', async () => {
+  test('a keyword-arm failure degrades inside hybrid — no gather warning, takes keep working', async () => {
+    // #4296: the keyword arm fails open INSIDE hybridSearch, so the
+    // gather-level GATHER_HYBRID_FAILED is reserved for a hybrid call that
+    // throws outright, not a degraded arm.
     const r = await runGather(withFailing(['searchKeyword']), { question: 'technical founder' });
-    expect(r.warnings).toContain('GATHER_HYBRID_FAILED');
-    expect(r.pages).toEqual([]);
+    expect(r.warnings).not.toContain('GATHER_HYBRID_FAILED');
     // Fail-open: the takes stream keeps working.
     expect(r.takes.length).toBeGreaterThan(0);
   });
@@ -177,16 +238,23 @@ describe('runGather — per-stream typed warnings (GATHER_*_FAILED)', () => {
         questionEmbedding: new Float32Array(8),
       },
     );
+    // #4296: a degraded keyword arm no longer surfaces GATHER_HYBRID_FAILED;
+    // the takes/graph streams still map failures to their own codes.
     expect([...r.warnings].sort()).toEqual([
       'GATHER_GRAPH_FAILED',
-      'GATHER_HYBRID_FAILED',
       'GATHER_TAKES_KEYWORD_FAILED',
       'GATHER_TAKES_VECTOR_FAILED',
     ]);
-    expect(r.pages).toEqual([]);
     expect(r.takes).toEqual([]);
     expect(r.graphSlugs).toEqual([]);
   });
+
+  // No engine-level failure reaches GATHER_HYBRID_FAILED anymore: every arm
+  // inside hybridSearch fails open (#4296 completed the set), verified by
+  // attempting to trip it with every query surface rejecting. The gather-level
+  // catch stays as a defensive backstop for non-engine throws (bad opts,
+  // programming errors) and is deliberately untested rather than artificially
+  // triggered.
 
   test('runThink folds gather warnings into ThinkResult.warnings', async () => {
     const stubClient: ThinkLLMClient = {

@@ -38,7 +38,7 @@
  */
 
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { BrainEngine, TakeBatchInput, TakeKind } from './engine.ts';
 import {
   parseTakesFence,
@@ -51,8 +51,9 @@ import {
   type ParseResult,
 } from './takes-fence.ts';
 import { withPageLock } from './page-lock.ts';
-import { resolvePageFilePath } from './markdown.ts';
-import { isWriteTargetContained } from './path-confine.ts';
+import { resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
+import { sanitizeRecordedSourcePath, recordedPathFromFileUri } from './write-through.ts';
+import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { atomicWriteFileSync } from './atomic-write.ts';
 
 export type TakesWriteErrorCode =
@@ -125,13 +126,22 @@ export async function resolveTakesRepoDir(engine: BrainEngine): Promise<string |
  * `join(brainDir, slug.md)` ignored the page's source entirely, so a non-default
  * source's write clobbered a same-slug file in the wrong tree.
  *
- *   1. Source has its OWN `local_path` working tree → file at that tree's root
- *      (matches scanOneSource + write-through.ts; never nested under `.sources/`).
+ *   1. Source has its OWN `local_path` working tree → use the page's recorded
+ *      `source_path`, removing a duplicated Git-root scope when local_path is
+ *      a repo subdirectory; a DB-born page falls back to `<local_path>/<slug>.md`.
  *   2. No per-source `local_path` → the shared host repo (`brainDir`): default
  *      source at the root, non-default nested under `.sources/<id>/`.
  *
+ * #3605: in BOTH topologies the page's vetted recorded path (`source_path`,
+ * or a contained `file://` `source_uri` from `gbrain capture --file`) is
+ * preferred over a slug-derived name — the on-disk name is often NOT the slug
+ * (`people/Jane Doe.md` has slug `people/jane-doe`), so deriving `<slug>.md`
+ * minted a stray twin on add and refused update/resolve with
+ * 'mirror_unavailable' even though the page's file was right there. A hostile
+ * or unusable recorded path sanitizes to null and falls back to the slug path.
+ *
  * The returned `writeRoot` is the containment boundary enforced before any write
- * (P1-2). `resolvePageFilePath` does the slug→path join for the shared-repo case.
+ * (P1-2). `resolvePageFilePath` does the slug→path join for the fallback case.
  */
 async function resolveTakesFilePath(
   engine: BrainEngine,
@@ -140,17 +150,45 @@ async function resolveTakesFilePath(
   sourceId?: string,
 ): Promise<{ path: string; writeRoot: string }> {
   const src = sourceId ?? 'default';
-  const rows = await engine.executeRaw<{ local_path: string | null }>(
-    `SELECT local_path FROM sources WHERE id = $1`,
-    [src],
+  const rows = await engine.executeRaw<
+    { local_path: string | null; source_path: string | null; source_uri: string | null }
+  >(
+    `SELECT s.local_path, p.source_path, p.source_uri
+       FROM sources s
+       LEFT JOIN pages p ON p.source_id = s.id AND p.slug = $2 AND p.deleted_at IS NULL
+      WHERE s.id = $1
+      LIMIT 1`,
+    [src, slug],
   );
-  const sourceLocalPath = rows[0]?.local_path ?? null;
+  // #2955: heal Git Bash/MSYS-recorded local_path (`/c/Users/x`) before any
+  // join/containment math — same normalization as write-through.ts. Without
+  // it the writeRoot resolves to a phantom `<cwd-drive>:\c\...` on Windows.
+  const sourceLocalPath = rows[0]?.local_path ? msysToNativePath(rows[0].local_path) : null;
+  const recordedSourcePath = rows[0]?.source_path ?? null;
+  const recordedUri = rows[0]?.source_uri ?? null;
   if (sourceLocalPath) {
-    // A source's own working tree files pages at its root (default layout).
-    return { path: resolvePageFilePath(sourceLocalPath, slug, 'default'), writeRoot: sourceLocalPath };
+    const recordedPath =
+      resolveSourceLocalFilePath(sourceLocalPath, recordedSourcePath) ??
+      (() => {
+        const fromUri = recordedPathFromFileUri(recordedUri, sourceLocalPath);
+        return fromUri ? join(sourceLocalPath, fromUri) : null;
+      })();
+    // A null recorded path means a DB-born page. Keep the established slug path.
+    const path = recordedPath ?? resolvePageFilePath(sourceLocalPath, slug, 'default');
+    return { path, writeRoot: sourceLocalPath };
   }
-  return { path: resolvePageFilePath(brainDir, slug, src), writeRoot: brainDir };
+  const pageRoot = src === 'default' ? brainDir : join(brainDir, '.sources', src);
+  const knownPath =
+    sanitizeRecordedSourcePath(recordedSourcePath) ??
+    recordedPathFromFileUri(recordedUri, pageRoot);
+  const path = knownPath
+    ? join(pageRoot, knownPath)
+    : resolvePageFilePath(brainDir, slug, src);
+  return { path, writeRoot: brainDir };
 }
+
+/** Test seam: pins the #2955 msys local_path healing at THIS read site. */
+export const __takesWriteTesting = { resolveTakesFilePath };
 
 async function getPageId(engine: BrainEngine, slug: string, sourceId?: string): Promise<number> {
   const rows = sourceId

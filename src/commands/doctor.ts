@@ -19,6 +19,8 @@ import { gbrainPath, loadConfig } from '../core/config.ts';
 import { dirname, join } from 'path';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { resolveEnvNumber, resolveHoursEnv } from '../core/env-number.ts';
+import { computeEffectiveDate } from '../core/effective-date.ts';
+import { parseFrontmatter } from '../core/backfill-effective-date.ts';
 import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
@@ -2734,23 +2736,25 @@ export async function buildChecks(
   progress.heartbeat('markdown_body_completeness');
   const mbcHb = startHeartbeat(progress, 'scanning pages for truncation…');
   try {
-    const sql = db.getConnection();
-    const rows = await sql`
-      SELECT p.slug,
-             length(p.compiled_truth) AS body_len,
-             length(rd.data ->> 'content') AS raw_len
-      FROM pages p
-      JOIN raw_data rd ON rd.page_id = p.id
-      WHERE rd.data ? 'content'
-        AND length(rd.data ->> 'content') > 1000
-        AND length(p.compiled_truth) < length(rd.data ->> 'content') * 0.3
-        AND (rd.data ->> 'content') ~ '(^|\n)##+ '
-      LIMIT 100
-    `;
+    // #1871: engine.executeRaw (NOT db.getConnection() — that's the postgres
+    // singleton, dead on the default PGLite engine; this check silently
+    // reported "Skipped" on every PGLite brain).
+    const rows = await engine.executeRaw<{ slug: string; body_len: number; raw_len: number }>(
+      `SELECT p.slug,
+              length(p.compiled_truth) AS body_len,
+              length(rd.data ->> 'content') AS raw_len
+       FROM pages p
+       JOIN raw_data rd ON rd.page_id = p.id
+       WHERE rd.data ? 'content'
+         AND length(rd.data ->> 'content') > 1000
+         AND length(p.compiled_truth) < length(rd.data ->> 'content') * 0.3
+         AND (rd.data ->> 'content') ~ '(^|\n)##+ '
+       LIMIT 100`,
+    );
     if (rows.length === 0) {
       checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'No truncated bodies detected' });
     } else {
-      const sample = rows.slice(0, 3).map((r: any) => r.slug).join(', ');
+      const sample = rows.slice(0, 3).map((r) => r.slug).join(', ');
       checks.push({
         name: 'markdown_body_completeness',
         status: 'warn',
@@ -2785,7 +2789,6 @@ export async function buildChecks(
   const fullContentAudit = args.includes('--content-audit');
   progress.heartbeat('oversized_pages');
   try {
-    const sql = db.getConnection();
     // Read effective bytes_block from the cached effectiveCfg loaded
     // earlier in this doctor run if available; otherwise default.
     // (We re-read here per-check to avoid threading config through
@@ -2794,15 +2797,17 @@ export async function buildChecks(
     const { loadConfig: _loadCfg } = await import('../core/config.ts');
     const _cfg = _loadCfg();
     const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
-    const rows = await sql`
-      SELECT p.slug, p.source_id,
-             octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
-      FROM pages p
-      WHERE p.deleted_at IS NULL
-        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > ${bytesBlock}
-      ORDER BY bytes DESC
-      LIMIT 100
-    `;
+    // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
+    const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(
+      `SELECT p.slug, p.source_id,
+              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
+       FROM pages p
+       WHERE p.deleted_at IS NULL
+         AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1
+       ORDER BY bytes DESC
+       LIMIT 100`,
+      [bytesBlock],
+    );
     if (rows.length === 0) {
       checks.push({
         name: 'oversized_pages',
@@ -2831,30 +2836,31 @@ export async function buildChecks(
 
   progress.heartbeat('scraper_junk_pages');
   try {
-    const sql = db.getConnection();
     const { assessContentSanity } = await import('../core/content-sanity.ts');
     const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
     const literals = loadOperatorLiterals();
     const scanLimit = fullContentAudit ? null : 1000;
+    // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
     const rows = scanLimit
-      ? await sql`
-          SELECT p.slug, p.source_id, p.title,
-                 LEFT(p.compiled_truth, 2048) AS body_head,
-                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                 p.frontmatter
-            FROM pages p
-           WHERE p.deleted_at IS NULL
-           ORDER BY p.updated_at DESC
-           LIMIT ${scanLimit}
-        `
-      : await sql`
-          SELECT p.slug, p.source_id, p.title,
-                 LEFT(p.compiled_truth, 2048) AS body_head,
-                 LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                 p.frontmatter
-            FROM pages p
-           WHERE p.deleted_at IS NULL
-        `;
+      ? await engine.executeRaw(
+          `SELECT p.slug, p.source_id, p.title,
+                  LEFT(p.compiled_truth, 2048) AS body_head,
+                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                  p.frontmatter
+             FROM pages p
+            WHERE p.deleted_at IS NULL
+            ORDER BY p.updated_at DESC
+            LIMIT $1`,
+          [scanLimit],
+        )
+      : await engine.executeRaw(
+          `SELECT p.slug, p.source_id, p.title,
+                  LEFT(p.compiled_truth, 2048) AS body_head,
+                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
+                  p.frontmatter
+             FROM pages p
+            WHERE p.deleted_at IS NULL`,
+        );
     const hits: Array<{ slug: string; matched: string[] }> = [];
     const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
     for (const r of scanRows) {
@@ -3394,32 +3400,87 @@ export async function buildChecks(
   //
   // Sample 1000 random rows by default to keep the check fast on 200K-page
   // brains. The expression index pages_coalesce_date_idx makes the future-
-  // date and pre-1990 scans cheap; the parseable-fm-date scan reads
-  // frontmatter JSONB and is the slow path.
+  // date and pre-1990 scans cheap. The "fell back despite parseable date"
+  // arm can't be a pure SQL COUNT(*) — JSONB `?` only proves a key exists,
+  // not that its value parses — so it fetches the candidate rows and
+  // re-runs computeEffectiveDate() in JS (same function `gbrain
+  // reindex-frontmatter` uses) to confirm a real date was missed.
   progress.heartbeat('effective_date_health');
   try {
     const result = await engine.executeRaw<{ kind: string; count: string }>(
       `WITH sample AS (
-         SELECT slug, frontmatter, effective_date, effective_date_source
+         SELECT effective_date
            FROM pages
           ORDER BY id DESC
           LIMIT 1000
        )
-       SELECT 'fallback_with_fm_date' AS kind, COUNT(*)::text AS count
-         FROM sample
-        WHERE effective_date_source = 'fallback'
-          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')
-       UNION ALL
-       SELECT 'future_dated', COUNT(*)::text FROM sample
+       SELECT 'future_dated' AS kind, COUNT(*)::text AS count FROM sample
         WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
        UNION ALL
        SELECT 'pre_1990', COUNT(*)::text FROM sample
         WHERE effective_date IS NOT NULL AND effective_date < TIMESTAMPTZ '1990-01-01'`,
     );
     const counts = new Map(result.map(r => [r.kind, Number(r.count)]));
-    const fallbackWithFm = counts.get('fallback_with_fm_date') ?? 0;
     const future = counts.get('future_dated') ?? 0;
     const pre1990 = counts.get('pre_1990') ?? 0;
+
+    // `frontmatter ? 'date'` (JSONB key-existence) only proves the key is
+    // present — an empty string, null, or unparseable value still passes
+    // it, so a naive COUNT(*) on that predicate over-reports "fell back
+    // despite a parseable date". Fetch the candidate rows instead and run
+    // them through the SAME parse/range rules `gbrain reindex-frontmatter`
+    // uses (computeEffectiveDate) to confirm the frontmatter value itself
+    // is parseable. This is a ONE-DIRECTIONAL guarantee, not equivalence:
+    // every row counted here is a row reindex-frontmatter's dry run would
+    // also flag, but reindex-frontmatter's dry run additionally flags rows
+    // this arm intentionally excludes (filename-derived dates only, no
+    // parseable frontmatter — that's a different message). Two queries
+    // against the "last 1000 pages" window means this and the counts above
+    // can drift by a row or two under concurrent writes — acceptable for a
+    // sampled health check that already says "sample of last 1000 pages"
+    // in its message.
+    const candidates = await engine.executeRaw<{
+      slug: string;
+      frontmatter: unknown;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `WITH sample AS (
+         SELECT slug, frontmatter, effective_date_source, created_at, updated_at
+           FROM pages
+          ORDER BY id DESC
+          LIMIT 1000
+       )
+       SELECT slug, frontmatter, created_at, updated_at
+         FROM sample
+        WHERE effective_date_source = 'fallback'
+          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')`,
+    );
+    let fallbackWithFm = 0;
+    for (const row of candidates) {
+      // filename: null — this arm asks "does the frontmatter ALONE have a
+      // parseable date", independent of whichever source wins the full
+      // precedence chain. Passing the row's real filename would let a
+      // daily/meetings-prefixed slug's filename-first precedence (see
+      // effective-date.ts) resolve to source='filename' whenever the slug
+      // also carries a YYYY-MM-DD prefix — silently hiding a genuinely
+      // parseable frontmatter date (Codex review: reproduced with
+      // `daily/2024-03-15-standup` + `{ date: '2024-04-01' }`, which
+      // reindex-frontmatter WOULD still act on). filename=null makes
+      // computeEffectiveDate fall straight through to the frontmatter
+      // fields regardless of slug prefix.
+      const recomputed = computeEffectiveDate({
+        slug: row.slug,
+        frontmatter: parseFrontmatter(row.frontmatter),
+        filename: null,
+        updatedAt: new Date(row.updated_at),
+        createdAt: new Date(row.created_at),
+      });
+      if (recomputed.source === 'event_date' || recomputed.source === 'date' || recomputed.source === 'published') {
+        fallbackWithFm++;
+      }
+    }
+
     if (fallbackWithFm > 0 || future > 0 || pre1990 > 0) {
       const parts: string[] = [];
       if (fallbackWithFm > 0) parts.push(`${fallbackWithFm} fell back to updated_at despite parseable frontmatter date`);
@@ -3602,24 +3663,23 @@ export async function buildChecks(
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string }>(
-        `SELECT storage_path FROM files WHERE mime_type LIKE 'image/%' LIMIT 1000`
+      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null }>(
+        `SELECT f.storage_path, s.local_path AS source_local_path FROM files f LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') WHERE f.mime_type LIKE 'image/%' LIMIT 1000`
       );
       let vanished = 0;
       let foreign = 0;
       const vanishedPaths: string[] = [];
       const fs = await import('node:fs');
-      const { resolveAssetPath } = await import('./doctor-asset-paths.ts');
-      // storage_path is repo-relative for sync-ingested assets. Resolving
-      // against cwd made this check a false-positive WARN whenever doctor
-      // ran outside the brain repo.
+      const { resolveImageAssetPath } = await import('./doctor-asset-paths.ts');
+      // storage_path is repo-relative for sync-ingested assets. Prefer the
+      // owning source's root; sync.repo_path is only a legacy fallback.
       const repoRoot = (await engine.getConfig('sync.repo_path')) ?? process.cwd();
       for (const r of rows) {
         // #1835: Windows drive paths (D:/…) translate to the WSL automount
         // (/mnt/d/…) under WSL, and are SKIPPED (not "missing") on hosts
         // where they cannot exist (macOS / plain Linux) — never joined onto
         // repoRoot, which produced a false "restore from git" WARN.
-        const resolved = resolveAssetPath(r.storage_path, repoRoot);
+        const resolved = resolveImageAssetPath(r.storage_path, r.source_local_path, repoRoot);
         if (resolved.abs === null) {
           foreign++;
           continue;
@@ -4266,7 +4326,17 @@ export async function runRemediate(
     console.log(JSON.stringify(result, null, 2));
   } else if (result.submitted.length > 0) {
     console.log(`\nBrain score: ${result.brain_score_initial} → ${result.brain_score_final} (target ${targetScore})`);
-    console.log(`Submitted: ${result.submitted.length} job(s), ${result.aborted_count} aborted/failed`);
+    // #3626: split the count honestly — a step that deduped onto an in-flight
+    // job did not submit new work; a rotated re-run did.
+    const coalesced = result.submitted.filter((s) => s.coalesced).length;
+    const rotated = result.submitted.filter((s) => s.deduped_job_id !== undefined).length;
+    const notes = [
+      ...(rotated > 0 ? [`${rotated} re-ran under a rotated key (prior terminal row held it)`] : []),
+      ...(coalesced > 0 ? [`${coalesced} coalesced onto in-flight job(s)`] : []),
+    ];
+    console.log(
+      `Submitted: ${result.submitted.length - coalesced} job(s)${notes.length > 0 ? ` (${notes.join('; ')})` : ''}, ${result.aborted_count} aborted/failed`,
+    );
   }
 
   const anyFailed = result.submitted.some(

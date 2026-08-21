@@ -1095,6 +1095,11 @@ export function createGBrainContextEngine(ctx: {
       // Lazy SDK load on first method call (was top-level await pre-L0-B).
       await ensureSdkLoaded();
 
+      // #2880: fail-open on malformed host payloads. assemble() runs on EVERY
+      // turn; a host that sends messages:undefined (or a non-array) must not
+      // take down the whole context pipeline.
+      const msgs = Array.isArray(messages) ? messages : [];
+
       // 1. Generate deterministic context (<5ms, zero LLM calls)
       const liveCtx = generateLiveContext(workspaceDir);
       const contextBlock = formatContextBlock(liveCtx);
@@ -1126,11 +1131,11 @@ export function createGBrainContextEngine(ctx: {
       // nothing salient resolves. Detect + point, never auto-dump bodies.
       const reflexAddition = await buildReflexAddition({
         workspaceDir,
-        currentUserText: getLastUserText(messages),
-        priorContextText: getPriorContextText(messages),
+        currentUserText: getLastUserText(msgs),
+        priorContextText: getPriorContextText(msgs),
         // v0.43 (#2095): rolling window — assistant-introduced entities and
         // named-antecedent follow-ups from recent turns now resolve too.
-        windowTurns: getWindowTurns(messages),
+        windowTurns: getWindowTurns(msgs),
         resolveEntities: ctx.resolveEntities,
       });
 
@@ -1146,12 +1151,14 @@ export function createGBrainContextEngine(ctx: {
 
       // 4. Pass through messages unchanged (legacy assembly)
       return {
-        messages,
-        estimatedTokens: messages.reduce((sum, m) => {
+        messages: msgs,
+        estimatedTokens: msgs.reduce((sum, m) => {
           const text = typeof m.content === 'string'
             ? m.content
             : JSON.stringify(m.content);
-          return sum + Math.ceil(text.length / 4);
+          // #2880: JSON.stringify(undefined) is undefined, not a string —
+          // a content-less message counts 0 instead of throwing.
+          return sum + (typeof text === 'string' ? Math.ceil(text.length / 4) : 0);
         }, 0),
         systemPromptAddition: parts.join('\n\n'),
       };

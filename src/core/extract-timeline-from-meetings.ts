@@ -57,6 +57,12 @@ interface AttendedEdgeRow {
 }
 
 const BATCH_SIZE = 200;
+// gbrain-base-v2 catch-all retypes old meeting pages to note while
+// preserving legacy_type, so this extractor treats those rows as meetings.
+const MEETING_PAGE_PREDICATE =
+  `(type = 'meeting' OR (type = 'note' AND frontmatter ->> 'legacy_type' = 'meeting'))`;
+const MEETING_EDGE_PREDICATE =
+  `(pf.type = 'meeting' OR (pf.type = 'note' AND pf.frontmatter ->> 'legacy_type' = 'meeting'))`;
 
 export async function extractTimelineFromMeetings(
   engine: BrainEngine,
@@ -72,7 +78,7 @@ export async function extractTimelineFromMeetings(
     `SELECT slug, source_id, title, effective_date, updated_at,
             compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
-      WHERE type = 'meeting'
+      WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
         ${sourceFilter}
       ORDER BY effective_date DESC NULLS LAST, slug`,
@@ -94,7 +100,7 @@ export async function extractTimelineFromMeetings(
        JOIN pages pf ON pf.id = l.from_page_id
        JOIN pages pt ON pt.id = l.to_page_id
       WHERE l.link_type = 'attended'
-        AND pf.type = 'meeting'
+        AND ${MEETING_EDGE_PREDICATE}
         AND pf.deleted_at IS NULL
         AND pt.deleted_at IS NULL`,
   );

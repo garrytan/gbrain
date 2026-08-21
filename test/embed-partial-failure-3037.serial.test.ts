@@ -242,8 +242,12 @@ describe('#3037 — cost bounding: no per-chunk fan-out on transient failures', 
     expect(result.failures).toBe(3);
   }, 30_000);
 
-  test('AITransientError (outage/network) does not fan out', async () => {
-    embedBatchBehavior = async () => { throw new AITransientError('upstream 502', { status: 502 }); };
+  test('sustained 502 retries batch but does not fan out per-chunk (#3966)', async () => {
+    embedBatchBehavior = async () => {
+      const err = new Error('Bad Gateway — try again in 0ms.');
+      (err as any).cause = { status: 502 };
+      throw err;
+    };
     const stale = THREE_CHUNKS.map(c => ({
       slug: 'outage-page', chunk_index: c.chunk_index, chunk_text: c.chunk_text,
       chunk_source: c.chunk_source, model: null, token_count: 1, source_id: 'default', page_id: 1,
@@ -257,10 +261,10 @@ describe('#3037 — cost bounding: no per-chunk fan-out on transient failures', 
 
     const result = await runEmbedCore(engine, { stale: true });
 
-    // Non-429 → no backoff retries; transient → no isolation. Exactly 1 call.
-    expect(embedCalls).toHaveLength(1);
-    expect(embedCalls[0]).toHaveLength(3);
+    // 502 → embedBatchWithBackoff retries the full batch; never 1-text isolation.
+    expect(embedCalls.length).toBeGreaterThan(1);
+    for (const call of embedCalls) expect(call).toHaveLength(3);
     expect(result.embedded).toBe(0);
     expect(result.failures).toBe(3);
-  });
+  }, 30_000);
 });

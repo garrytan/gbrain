@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { writeFactsToFence, lookupSourceLocalPath } from '../src/core/facts/fence-write.ts';
 import type { FenceInputFact } from '../src/core/facts/fence-write.ts';
+import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
@@ -131,6 +132,27 @@ describe('writeFactsToFence — happy path', () => {
       source_markdown_slug: 'people/alice',
       fact: 'Founded Acme in 2017',
     });
+  });
+
+  // #4322 regression. stubEntityPage used to pick the type from a hardcoded
+  // people/companies/deals/topics ternary, so a stub under ANY other declared
+  // prefix silently became `concept`. `projects/` is in the gbrain-base prefix
+  // table (→ `project`) but was absent from that ternary, so it is the minimal
+  // case that fails on the old code and passes on the pack-aware one. No custom
+  // pack needed: with no pack configured the loader returns null and
+  // inferTypeFromPack falls back to GBRAIN_BASE_PATH_PREFIXES.
+  test('types a stub from the prefix table, not a hardcoded 4-entry list', async () => {
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: brainDir, slug: 'projects/apollo' },
+      [baseInput({ fact: 'Apollo shipped in 2017' })],
+    );
+
+    expect(result.inserted).toBe(1);
+    const body = readFileSync(join(brainDir, 'projects/apollo.md'), 'utf-8');
+    expect(body).toContain('type: project');
+    expect(body).not.toContain('type: concept');
+    expect(body).toContain('slug: projects/apollo');
   });
 
   test('appends to existing entity page without overwriting body', async () => {
@@ -588,6 +610,108 @@ describe('writeFactsToFence — durability latch recovery', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 60_000);
+});
+
+describe('writeFactsToFence — path matches writePageThrough (#4204)', () => {
+  test('non-default source with its own local_path fences at the tree ROOT, not .sources/<id>/', async () => {
+    const projDir = mkdtempSync(join(tmpdir(), 'fence-write-proj-'));
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `INSERT INTO sources (id, name, local_path) VALUES ('proj', 'proj-test', $1)
+         ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
+        [projDir],
+      );
+
+      const result = await writeFactsToFence(
+        engine,
+        { sourceId: 'proj', localPath: projDir, slug: 'people/alice' },
+        [baseInput()],
+      );
+
+      expect(result.inserted).toBe(1);
+      // writePageThrough (#2018) writes a source that has its OWN local_path at
+      // that tree's root, never nested under `.sources/` — and sync's walker
+      // skips dot-directories, so a `.sources/` fence would be invisible to
+      // sync and its DB rows wiped by the next extract_facts reconcile.
+      expect(existsSync(join(projDir, 'people/alice.md'))).toBe(true);
+      expect(existsSync(join(projDir, '.sources/proj/people/alice.md'))).toBe(false);
+    } finally {
+      rmSync(projDir, { recursive: true, force: true });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`DELETE FROM facts WHERE source_id = 'proj'`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`DELETE FROM pages WHERE source_id = 'proj'`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`DELETE FROM sources WHERE id = 'proj'`);
+    }
+  });
+
+  test("fence appends into the page's recorded source_path file, not a slug-derived twin", async () => {
+    try {
+      // A human-authored vault file whose on-disk name is not the slug.
+      const recordedRel = 'People/Alice Smith.md';
+      const recordedAbs = join(brainDir, recordedRel);
+      mkdirSync(join(brainDir, 'People'), { recursive: true });
+      writeFileSync(
+        recordedAbs,
+        '---\ntype: person\ntitle: Alice Smith\nslug: people/alice-smith\n---\n\n# Alice Smith\n',
+        'utf-8',
+      );
+      await engine.putPage('people/alice-smith', {
+        type: 'person',
+        title: 'Alice Smith',
+        compiled_truth: '# Alice Smith',
+        source_path: recordedRel,
+      }, { sourceId: 'default' });
+
+      const result = await writeFactsToFence(
+        engine,
+        { sourceId: 'default', localPath: brainDir, slug: 'people/alice-smith' },
+        [baseInput()],
+      );
+
+      expect(result.inserted).toBe(1);
+      // The fence must land in the file of record (same preference
+      // writePageThrough applies), or sync round-trips two divergent files.
+      expect(readFileSync(recordedAbs, 'utf-8')).toContain('Founded Acme in 2017');
+      expect(existsSync(join(brainDir, 'people/alice-smith.md'))).toBe(false);
+
+      // Round-trip: forget must find the fence in the SAME file the write
+      // targeted, or it degrades to a DB-only expire and leaves a live fence
+      // row for the next absorb to resurrect.
+      const forgot = await forgetFactInFence(engine, result.ids[0], { reason: 'test' });
+      expect(forgot.ok).toBe(true);
+      expect(forgot.path).toBe('fence');
+      expect(readFileSync(recordedAbs, 'utf-8')).toContain('~~');
+    } finally {
+      // The engine is shared across the file; drop the page row so its
+      // recorded source_path (relative to this test's dead tempdir) can't
+      // leak into later tests.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`DELETE FROM pages WHERE slug = 'people/alice-smith' AND source_id = 'default'`);
+    }
+  });
+
+  test('unusable source tree returns targetUnresolvable so callers route to DB-only, not drop', async () => {
+    // Point the source at a directory that no longer exists — the resolver
+    // must refuse (same repo_not_found refusal as writePageThrough) instead
+    // of blindly resurrecting the deleted tree with mkdir -p.
+    const goneDir = mkdtempSync(join(tmpdir(), 'fence-write-gone-'));
+    rmSync(goneDir, { recursive: true, force: true });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [goneDir]);
+
+    const result = await writeFactsToFence(
+      engine,
+      { sourceId: 'default', localPath: goneDir, slug: 'people/erin' },
+      [baseInput()],
+    );
+
+    expect(result.inserted).toBe(0);
+    expect(result.targetUnresolvable).toBe(true);
+    expect(existsSync(goneDir)).toBe(false);
+  });
 });
 
 // Cleanup any leftover tempdirs after the whole suite.

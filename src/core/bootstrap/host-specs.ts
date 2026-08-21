@@ -278,9 +278,13 @@ export function claudeUserMcpConfigPath(): string {
   return join(home || homedir(), '.claude.json');
 }
 
-/** Where Claude Code stores session transcripts — the confinement root [S3#8]. */
+/**
+ * Where Claude Code stores session transcripts — the confinement root [S3#8].
+ * Uses the same config-dir base as settings/skills so custom config dirs keep
+ * legitimate transcript paths inside the allowed root.
+ */
 export function claudeProjectsDir(): string {
-  return join(homedir(), '.claude', 'projects');
+  return join(claudeConfigBase(), 'projects');
 }
 
 /**

@@ -31,6 +31,15 @@ beforeEach(async () => {
   await (engine as any).db.query('DELETE FROM facts');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (engine as any).db.query('DELETE FROM pages');
+  // #2763: the legacy-row guard only counts rows the v0_32_2 Phase B
+  // backfill could actually fence, which requires the source to carry a
+  // local_path. The guard tests here simulate a migrated v0.31 brain,
+  // whose default source inherits local_path from sync.repo_path
+  // (migration v14) — mirror that. A fresh PGLite seed leaves it NULL.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (engine as any).db.query(
+    `UPDATE sources SET local_path = '/tmp/gbrain-extract-facts-phase-test' WHERE id = 'default'`,
+  );
 });
 
 async function putPage(slug: string, body: string): Promise<void> {
@@ -671,12 +680,61 @@ describe('runExtractFacts — empty-fence guard (Codex R2-#7)', () => {
   });
 });
 
-describe('runExtractFacts — multi-source isolation', () => {
-  test('a pending legacy row in source A does NOT jam extraction for source B (#2646 source-scope)', async () => {
+describe('runExtractFacts — guard requires a fenceable source (#2763)', () => {
+  const seedLegacyRow = async (): Promise<void> => {
+    // NULL-row_num fact whose entity_slug maps to a LIVE page — the shape
+    // the guard gates on.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (engine as any).db.query(
-      `INSERT INTO sources (id, name, config) VALUES ('work', 'work', '{}'::jsonb)
-       ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence)
+       VALUES ('default', 'people/alice', 'db-only claim', 'fact', 'private', 'medium',
+               now(), 'mcp:put_page', 1.0)`,
+    );
+    await putPage('people/alice', FACT_FENCE(
+      `| 1 | new fact | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`,
+    ));
+  };
+
+  test('a local_path-less source does NOT trip the guard (thin-client rows are unfenceable)', async () => {
+    // Thin-client / DB-only source: the backstop writer keeps producing
+    // row_num-NULL rows with a live backing page, but the v0_32_2 Phase B
+    // backfill SKIPS sources without local_path (skipped_no_local_path)
+    // while returning complete — those rows can never drain, so they must
+    // not jam the phase forever.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `UPDATE sources SET local_path = NULL WHERE id = 'default'`,
+    );
+    await seedLegacyRow();
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r.guardTriggered).toBe(false);
+    expect(r.legacyRowsPending).toBe(0);
+    expect(r.factsInserted).toBe(1);
+  });
+
+  test('the same row on a source WITH local_path still trips the guard', async () => {
+    // beforeEach set default.local_path (the migrated v0.31 brain shape);
+    // Phase B CAN fence this row, so the guard must keep gating.
+    await seedLegacyRow();
+
+    const r = await runExtractFacts(engine, { slugs: ['people/alice'] });
+    expect(r.guardTriggered).toBe(true);
+    expect(r.legacyRowsPending).toBe(1);
+    expect(r.factsInserted).toBe(0);
+  });
+});
+
+describe('runExtractFacts — multi-source isolation', () => {
+  test('a pending legacy row in source A does NOT jam extraction for source B (#2646 source-scope)', async () => {
+    // local_path set: 'work' simulates a fenceable (migrated) source, so
+    // its pending legacy row must still gate work's own cycle (#2763).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('work', 'work', '/tmp/gbrain-extract-facts-work-src', '{}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET local_path = EXCLUDED.local_path`,
     );
 
     // Source "work": a genuine pending legacy row (row_num NULL, active,

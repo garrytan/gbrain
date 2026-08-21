@@ -78,6 +78,38 @@ describe('dedupResults', () => {
     expect(personCount).toBeGreaterThan(0);
     expect(conceptCount).toBeGreaterThan(0);
   });
+
+  test('nightly-7 regression: preserves all three distinct note sessions', () => {
+    const results = [
+      makeResult({
+        slug: 'chat/nightly-7-s1',
+        page_id: 1,
+        score: 0.8381,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/payments in January',
+      }),
+      makeResult({
+        slug: 'chat/nightly-7-s3',
+        page_id: 3,
+        score: 0.8280,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/reporting in June',
+      }),
+      makeResult({
+        slug: 'chat/nightly-7-s2',
+        page_id: 2,
+        score: 0.8213,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/identity in March',
+      }),
+    ];
+
+    expect(dedupResults(results).map(result => result.slug)).toEqual([
+      'chat/nightly-7-s1',
+      'chat/nightly-7-s3',
+      'chat/nightly-7-s2',
+    ]);
+  });
 });
 
 describe('compiled truth guarantee', () => {

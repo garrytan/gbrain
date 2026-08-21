@@ -35,11 +35,15 @@ import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readines
 /** A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
  * `resolveSourceWithTier`'s `assertSourceExists` as a plain Error with one of
  * these message prefixes. Mirrors dream.ts:isResolverUserError so we surface a
- * clean usage error instead of an uncaught stack. */
+ * clean usage error instead of an uncaught stack. Matches both the legacy
+ * `not found.` and the fail-closed `not found or is archived.` wordings —
+ * the message change silently un-caught the bad-pin path (the exit-2
+ * `invalid_source_pin` envelope became an uncaught SourceTargetError). */
 function isResolverUserError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const m = e.message;
-  return (m.startsWith('Source "') && m.includes(' not found.'))
+  return (m.startsWith('Source "')
+      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
     || m.startsWith('Invalid --source value')
     || m.startsWith('Invalid GBRAIN_SOURCE value');
 }

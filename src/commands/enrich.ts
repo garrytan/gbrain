@@ -34,7 +34,7 @@ import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
-import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, type BudgetReason } from '../core/budget/budget-tracker.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
@@ -81,6 +81,9 @@ export const ENRICHED_BY = 'cli:enrich';
 export const HYBRID_SEARCH_LIMIT = 8;
 export const BACKLINK_LIMIT = 12;
 export const FACT_LIMIT = 20;
+/** #2085: per-chunk clamp for hybrid evidence. One long chunk must not eat
+ *  the whole render window (MAX_CONTEXT_CHARS) and evict facts/backlinks. */
+export const HYBRID_CHUNK_CLAMP_CHARS = 2000;
 /** Flush the resume checkpoint every N completions during a long run. */
 const CHECKPOINT_FLUSH_EVERY = 25;
 /** Rough per-page cost estimate (USD) for the dry-run preview. */
@@ -137,8 +140,15 @@ export interface EnrichCoreOpts {
 export interface EnrichResult {
   candidates_considered: number;
   pages_enriched: number;
-  /** Skipped because the brain knew too little (pre-LLM gate OR model SKIP). */
+  /** Skipped because the brain knew too little (pre-LLM gate OR model SKIP).
+   *  Legacy compat: equals pre_llm + model_skip + empty_output (#2085). */
   pages_skipped_insufficient: number;
+  /** #2085 split: the grounding gate refused BEFORE any LLM call (no spend). */
+  pages_skipped_pre_llm?: number;
+  /** #2085 split: the model explicitly answered SKIP (a grounding verdict). */
+  pages_model_skip?: number;
+  /** #2085 split: the model returned blank output (a synthesis failure shape). */
+  pages_empty_output?: number;
   /** Skipped because another worker/process held the per-page lock. */
   pages_skipped_lock: number;
   /** Skipped because the page disappeared between enumeration and fetch. */
@@ -149,6 +159,11 @@ export interface EnrichResult {
   would_enrich?: number;
   spent_usd?: number;
   budget_exhausted?: boolean;
+  /** Why the run aborted when budget_exhausted (#4032): BudgetExhausted.reason.
+   *  'no_pricing' means the cap was never the problem — raising --max-usd won't help. */
+  budget_exhausted_reason?: BudgetReason;
+  /** Model that triggered a no_pricing abort, when the tracker knew it (#4032). */
+  budget_exhausted_model?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -202,16 +217,73 @@ const defaultSynthesize: SynthesizeFn = async ({ system, user, model, abortSigna
 // Retrieval — deterministic, brain-internal. No LLM.
 // ---------------------------------------------------------------------------
 
+/**
+ * #2085: assemble evidence in PRIORITY order — facts, then backlinks, then
+ * hybrid chunks. renderEvidence packs whole blocks in order into a fixed
+ * window (MAX_CONTEXT_CHARS); pre-fix, hybrid came first and a few long
+ * chunks consumed the window, pushing short high-signal facts/backlinks out
+ * of the prompt — fact-rich stub pages false-SKIPped. Hybrid chunks are
+ * additionally clamped per item. Pure — exported as the test seam.
+ */
+export function assembleEvidence(parts: {
+  facts: EnrichEvidence[];
+  backlinks: EnrichEvidence[];
+  hybrid: EnrichEvidence[];
+}): EnrichEvidence[] {
+  return [
+    ...parts.facts,
+    ...parts.backlinks,
+    ...parts.hybrid.map((h) => ({ ...h, text: h.text.slice(0, HYBRID_CHUNK_CLAMP_CHARS) })),
+  ];
+}
+
 async function retrieveEvidence(
   engine: BrainEngine,
   sourceId: string,
   slug: string,
   title: string,
 ): Promise<EnrichEvidence[]> {
-  const evidence: EnrichEvidence[] = [];
+  const facts: EnrichEvidence[] = [];
+  const backlinks: EnrichEvidence[] = [];
+  const hybrid: EnrichEvidence[] = [];
   const seen = new Set<string>();
 
-  // 1. Hybrid search on the entity name — pages that mention it.
+  // 1. Facts the brain has extracted about this entity (highest signal/char).
+  try {
+    const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
+      `SELECT fact, context FROM facts
+        WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
+        ORDER BY confidence DESC, id DESC
+        LIMIT $3`,
+      [sourceId, slug, FACT_LIMIT],
+    );
+    for (const r of rows) {
+      const text = r.context ? `${r.fact} (${r.context})` : r.fact;
+      facts.push({ source_slug: slug, text });
+    }
+  } catch {
+    // Pre-facts brains / column drift → no facts evidence.
+  }
+
+  // 2. Inbound-link context — how OTHER pages describe this entity.
+  try {
+    const rows = await engine.getBacklinks(slug, { sourceId });
+    let n = 0;
+    for (const l of rows) {
+      if (n >= BACKLINK_LIMIT) break;
+      const ctx = (l.context ?? '').trim();
+      if (!ctx) continue;
+      const dedup = `${l.from_slug}:${ctx.slice(0, 40)}`;
+      if (seen.has(dedup)) continue;
+      seen.add(dedup);
+      backlinks.push({ source_slug: l.from_slug, text: ctx });
+      n++;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. Hybrid search on the entity name — pages that mention it.
   try {
     const hits = await hybridSearch(engine, title || slug, {
       limit: HYBRID_SEARCH_LIMIT,
@@ -223,49 +295,14 @@ async function retrieveEvidence(
       if (seen.has(dedup)) continue;
       seen.add(dedup);
       if (h.chunk_text && h.chunk_text.trim()) {
-        evidence.push({ source_slug: h.slug, text: h.chunk_text });
+        hybrid.push({ source_slug: h.slug, text: h.chunk_text });
       }
     }
   } catch {
     // Search unavailable (no embeddings) → fall through to other signals.
   }
 
-  // 2. Inbound-link context — how OTHER pages describe this entity.
-  try {
-    const backlinks = await engine.getBacklinks(slug, { sourceId });
-    let n = 0;
-    for (const l of backlinks) {
-      if (n >= BACKLINK_LIMIT) break;
-      const ctx = (l.context ?? '').trim();
-      if (!ctx) continue;
-      const dedup = `${l.from_slug}:${ctx.slice(0, 40)}`;
-      if (seen.has(dedup)) continue;
-      seen.add(dedup);
-      evidence.push({ source_slug: l.from_slug, text: ctx });
-      n++;
-    }
-  } catch {
-    // ignore
-  }
-
-  // 3. Facts the brain has extracted about this entity.
-  try {
-    const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
-      `SELECT fact, context FROM facts
-        WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
-        ORDER BY confidence DESC, id DESC
-        LIMIT $3`,
-      [sourceId, slug, FACT_LIMIT],
-    );
-    for (const r of rows) {
-      const text = r.context ? `${r.fact} (${r.context})` : r.fact;
-      evidence.push({ source_slug: slug, text });
-    }
-  } catch {
-    // Pre-facts brains / column drift → no facts evidence.
-  }
-
-  return evidence;
+  return assembleEvidence({ facts, backlinks, hybrid });
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +360,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
 
   if (!grounding.grounded) {
     ctx.result.pages_skipped_insufficient++;
+    ctx.result.pages_skipped_pre_llm = (ctx.result.pages_skipped_pre_llm ?? 0) + 1;
     if (!ctx.dryRun) ctx.done.add(completedKey(sourceId, slug));
     return;
   }
@@ -351,6 +389,14 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   const parsed = parseSynthesis(raw);
   if (parsed.skip || !parsed.body.trim()) {
     ctx.result.pages_skipped_insufficient++;
+    // #2085 split: an explicit SKIP is a grounding verdict; blank output (or a
+    // body that strips to nothing) is a synthesis failure shape. parseSynthesis
+    // reports skip=true for blank raw too, so discriminate on the raw text.
+    if (parsed.skip && (raw ?? '').trim().length > 0) {
+      ctx.result.pages_model_skip = (ctx.result.pages_model_skip ?? 0) + 1;
+    } else {
+      ctx.result.pages_empty_output = (ctx.result.pages_empty_output ?? 0) + 1;
+    }
     ctx.done.add(completedKey(sourceId, slug));
     return;
   }
@@ -408,6 +454,9 @@ export async function runEnrichCore(
     candidates_considered: 0,
     pages_enriched: 0,
     pages_skipped_insufficient: 0,
+    pages_skipped_pre_llm: 0,
+    pages_model_skip: 0,
+    pages_empty_output: 0,
     pages_skipped_lock: 0,
     pages_skipped_disappeared: 0,
     pages_failed: 0,
@@ -526,6 +575,10 @@ export async function runEnrichCore(
   } catch (err) {
     if (err instanceof BudgetExhausted) {
       result.budget_exhausted = true;
+      // #4032: carry the reason (and model, for no_pricing) so the CLI can
+      // branch its advice instead of collapsing every abort into "raise the cap".
+      result.budget_exhausted_reason = err.reason;
+      if (err.modelId) result.budget_exhausted_model = err.modelId;
       return result; // partial run; caller surfaces it (NOT a thrown failure)
     }
     throw err;
@@ -540,6 +593,7 @@ export async function runEnrichCore(
   // tracker's read-only cap; no shared gateway.ts change.
   if (tracker.cap !== undefined && tracker.totalSpent > tracker.cap) {
     result.budget_exhausted = true;
+    result.budget_exhausted_reason ??= 'cost'; // post-hoc overage is a cost abort (#4032)
   }
 
   return result;
@@ -738,6 +792,9 @@ function emptyAgg(): EnrichResult {
     candidates_considered: 0,
     pages_enriched: 0,
     pages_skipped_insufficient: 0,
+    pages_skipped_pre_llm: 0,
+    pages_model_skip: 0,
+    pages_empty_output: 0,
     pages_skipped_lock: 0,
     pages_skipped_disappeared: 0,
     pages_failed: 0,
@@ -749,10 +806,39 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
   agg.candidates_considered += r.candidates_considered;
   agg.pages_enriched += r.pages_enriched;
   agg.pages_skipped_insufficient += r.pages_skipped_insufficient;
+  agg.pages_skipped_pre_llm = (agg.pages_skipped_pre_llm ?? 0) + (r.pages_skipped_pre_llm ?? 0);
+  agg.pages_model_skip = (agg.pages_model_skip ?? 0) + (r.pages_model_skip ?? 0);
+  agg.pages_empty_output = (agg.pages_empty_output ?? 0) + (r.pages_empty_output ?? 0);
   agg.pages_skipped_lock += r.pages_skipped_lock;
   agg.pages_skipped_disappeared += r.pages_skipped_disappeared;
   agg.pages_failed += r.pages_failed;
   agg.would_enrich = (agg.would_enrich ?? 0) + (r.would_enrich ?? 0);
+  if (r.budget_exhausted) agg.budget_exhausted = true;
+  // #4032: no_pricing is the actionable reason — it wins over cost when
+  // per-source runs disagree; otherwise first reason seen sticks.
+  if (
+    r.budget_exhausted_reason &&
+    (agg.budget_exhausted_reason === undefined || r.budget_exhausted_reason === 'no_pricing')
+  ) {
+    agg.budget_exhausted_reason = r.budget_exhausted_reason;
+    agg.budget_exhausted_model = r.budget_exhausted_model;
+  }
+}
+
+/**
+ * #4032: the exhaustion advice must branch on WHY the tracker aborted.
+ * A no_pricing TX2 hard-fail is not a cost overrun — "raise --max-usd"
+ * sends the operator after the wrong knob. Exported for tests.
+ */
+export function budgetExhaustedMessage(reason?: BudgetReason, modelId?: string): string {
+  if (reason === 'no_pricing') {
+    const m = modelId ? ` for ${modelId}` : '';
+    return (
+      `  No pricing${m} — the cost cap cannot be enforced. ` +
+      'Add a pricing entry for the model, or re-run uncapped (--max-usd off).'
+    );
+  }
+  return '  Budget cap reached. Re-run with a higher --max-usd to continue.';
 }
 
 export async function runEnrich(engine: BrainEngine, args: string[]): Promise<void> {
@@ -909,7 +995,9 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
       `across ${sourceIds.length} source(s). Spent ~$${totalSpent.toFixed(4)}.`,
     );
     if (anyBudgetExhausted) {
-      console.log('  Budget cap reached. Re-run with a higher --max-usd to continue.');
+      console.log(
+        budgetExhaustedMessage(aggregate.budget_exhausted_reason, aggregate.budget_exhausted_model),
+      );
     }
   }
 

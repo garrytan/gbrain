@@ -1183,3 +1183,92 @@ describe('finalizeWriteAccounting read-error posture (CX-A3)', () => {
     expect(out.pages_attempted).toBe(0);
   });
 });
+
+describe('handler-entry capability gate on the resolved model', () => {
+  test('config-resolved models.subagent with supports_subagent_loop: false is refused at dispatch', async () => {
+    // The queue submit gate only sees explicit data.model. A job that omits
+    // data.model resolves `models.subagent` inside the handler — pre-fix that
+    // path bypassed the capability check entirely and a loop-incapable model
+    // (declared supports_subagent_loop: false) ran the loop anyway.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' }); // no data.model → queue gate passes
+      await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop/);
+      expect(client.calls.length).toBe(0); // refused before any provider call
+    } finally {
+      await engine.unsetConfig('models.subagent');
+    }
+  });
+
+  test('already-terminal replay is NOT refused when config points at a loop-incapable model', async () => {
+    // #1151 precedent: a job whose last persisted message is a terminal
+    // assistant turn needs no provider call — the replay short-circuit
+    // returns the committed result. A capability refusal here (config
+    // repointed between submit and replay) would dead-letter completed work.
+    // Gateway loop ON: that's the only routing where the capability gate is
+    // the deciding check (the legacy path's Anthropic pin refuses
+    // non-Anthropic models regardless). The gateway path's terminal
+    // early-return runs before any provider client is constructed, so no
+    // API key is needed.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      // Persist a completed transcript: seed user + terminal assistant.
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'text', text: 'committed answer' }]),
+        ],
+      );
+      const result = await handler(ctx);
+      expect(result.result).toBe('committed answer');
+      // Replay short-circuit: no new turns persisted beyond the 2 seeded rows
+      // (a provider call would have appended an assistant row — and would have
+      // failed anyway, since no gateway credentials are configured here).
+      const rows = await engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count FROM subagent_messages WHERE job_id = $1`,
+        [ctx.id],
+      );
+      expect(parseInt(rows[0]!.count, 10)).toBe(2);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
+  test('non-terminal gateway replay (pending tool-call) IS still refused on a loop-incapable model', async () => {
+    // A gateway transcript persists pending dispatch as `tool-call` blocks.
+    // A replay that still needs the loop to resume on the provider must NOT
+    // slip past the capability gate via the terminal exception.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'tool-call', toolCallId: 'tc_1', toolName: 'echo', input: {} }]),
+        ],
+      );
+      await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop/);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+});

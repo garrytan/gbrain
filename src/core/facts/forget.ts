@@ -33,10 +33,10 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
 
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
+import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 
 export interface ForgetFactResult {
@@ -155,7 +155,17 @@ export async function forgetFactInFence(
 
   const slug = row.source_markdown_slug!;
   const targetRowNum = row.row_num!;
-  const filePath = join(localPath, `${slug}.md`);
+  // #4204: resolve the fence file the same way writeFactsToFence /
+  // writePageThrough do (recorded source_path preference, own-local_path
+  // root). A bare `join(localPath, slug.md)` misses fences that live in a
+  // human-named vault file, degrading forget to a DB-only expire while the
+  // fence keeps the live row for the next absorb to resurrect.
+  const resolved = await resolvePageWriteTarget(engine, slug, row.source_id);
+  if (!resolved.ok) {
+    const ok = await engine.expireFact(factId); // gbrain-allow-direct-insert: legacy fallback path inside forgetFactInFence — fence rewrite not possible (pre-v51 row / missing local_path / file deleted / row_num drift)
+    return { ok, path: 'legacy_db', reason };
+  }
+  const filePath = resolved.filePath;
   const tmpPath = `${filePath}.tmp`;
 
   if (!existsSync(filePath)) {

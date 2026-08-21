@@ -183,22 +183,37 @@ export function rankOpenAIChatModels(
 
 /* ── sync cache read (the resolveTierDefault overlay) ─────────────────────── */
 
-// mtime-keyed memo: the sync read fires per model resolution on OpenAI-keyed
+// File-identity-keyed memo: the sync read fires per model resolution on OpenAI-keyed
 // installs — statSync is far cheaper than read+parse, and staleness is
 // already tolerated by design. Keyed on path too (GBRAIN_HOME can change in
-// tests). Invalidated implicitly: a refresh write bumps the mtime.
-let _cacheMemo: { path: string; mtimeMs: number; value: ModelCacheFile | null } | null = null;
+// tests). mtime alone is insufficient: two fast writes can share an observed
+// timestamp, while an external atomic rename can preserve it deliberately.
+// ino changes across atomic replacement, whether the write comes from this
+// process or a concurrent one (readCacheFile() always re-stats and re-reads
+// on a mismatch — writeCacheFile() deliberately does not memo its own write,
+// since statting post-rename can race a peer process's own atomic replace).
+let _cacheMemo: {
+  path: string;
+  mtimeMs: number;
+  ino: number;
+  value: ModelCacheFile | null;
+} | null = null;
 
 function readCacheFile(): ModelCacheFile | null {
   const path = cachePath();
   try {
-    const mtimeMs = statSync(path).mtimeMs;
-    if (_cacheMemo && _cacheMemo.path === path && _cacheMemo.mtimeMs === mtimeMs) {
+    const { mtimeMs, ino } = statSync(path);
+    if (
+      _cacheMemo &&
+      _cacheMemo.path === path &&
+      _cacheMemo.mtimeMs === mtimeMs &&
+      _cacheMemo.ino === ino
+    ) {
       return _cacheMemo.value;
     }
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ModelCacheFile;
     const value = parsed?.version === 1 ? parsed : null;
-    _cacheMemo = { path, mtimeMs, value };
+    _cacheMemo = { path, mtimeMs, ino, value };
     return value;
   } catch {
     _cacheMemo = null;
@@ -239,7 +254,15 @@ function accountFingerprint(base: string, apiKey: string): string {
   return createHash('sha256').update(`${base}|${apiKey}`).digest('hex').slice(0, 16);
 }
 
-/** Atomic cache write (tmp + rename) so a concurrent sync reader never sees a torn file. */
+/**
+ * Atomic cache write (tmp + rename) so a concurrent sync reader never sees a
+ * torn file. Deliberately does NOT refresh `_cacheMemo` here: statting `path`
+ * post-rename can observe a DIFFERENT process's file if that process wins an
+ * atomic replace in the same window (measured ~167µs), which would poison
+ * this process's memo with someone else's (mtimeMs, ino) pair keyed to a
+ * value that isn't what's actually on disk long-term. The next `readCacheFile()`
+ * call re-stats and self-heals through the normal cache-miss path instead.
+ */
 function writeCacheFile(next: ModelCacheFile): void {
   const path = cachePath();
   mkdirSync(dirname(path), { recursive: true });

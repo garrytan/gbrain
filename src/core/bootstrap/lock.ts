@@ -80,7 +80,10 @@ export type BootstrapErrorCode =
   /** --delete-brain requested but bootstrap did not create this brain [G2]. */
   | 'DELETE_BRAIN_REFUSED'
   /** GBRAIN_HOME guard tripped: not explicit / bad signature / symlink [S3#5]. */
-  | 'HOME_GUARD';
+  | 'HOME_GUARD'
+  /** The resolved --workspace (or its cwd default) is the user's home
+   * directory — refuse before any home-directory-scale git operation runs. */
+  | 'HOME_WORKSPACE';
 
 /**
  * The bootstrap family's error type. `exitCode` carries dispatcher semantics:

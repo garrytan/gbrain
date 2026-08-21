@@ -43,7 +43,7 @@
   "context-audit/SKILL.md": "6c811783349f740f039078bef991077bdc85007b2f730897465266e4c31b66da",
   "context-audit/routing-eval.jsonl": "fb1832e24cc1b04163a74c5cde72bca53050a66246ca902e1a5f40303f52b5ab",
   "conventions/brain-first.md": "d9b18321150830d38586f5bd23ce9de735f08ac3b54d7ac63bc3184a61e17ef1",
-  "conventions/brain-routing.md": "a8035f7dbadff0ea68b8babb8314b3d044cafbed8242dce5b931fa08b028fc45",
+  "conventions/brain-routing.md": "cfdc22cb4becebf11deafe6c9a6802d2481e90473aaf36e307d1dd83a048fc3b",
   "conventions/calibration.md": "dc357891a86987fbc39e06a21a190119b9900e03a2460af64b278307af1b4289",
   "conventions/cron-via-minions.md": "badb1cd6cd825d6f1ac0b6b28cc47e5d80facc783a3e59a14146ae901ee0f933",
   "conventions/cross-modal.yaml": "c012c3d72614a87b1ee698173dce2a0fb0d057a54df7aab87993c4b07fff6280",

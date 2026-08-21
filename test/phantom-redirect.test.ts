@@ -582,27 +582,38 @@ describe('runExtractFacts — phantom-redirect integration', () => {
 
   test('round 2 P1: legacy-row guard fires BEFORE phantom-redirect pass', async () => {
     await withTempDirs(async ({ brainDir }) => {
-      // Seed a legacy v0.31 fact row (row_num NULL, entity_slug NOT NULL).
-      // `source` is NOT NULL in the schema; the v0.31 path always set it.
-      // #2484: the guard only gates on rows whose entity_slug resolves to a
-      // LIVE page (genuine backfill candidates), so seed the backing page too.
-      await putPage('people/legacy', '# legacy\n', { type: 'person' });
-      writeMd(brainDir, 'people/legacy', '# legacy\n');
+      // #2763: the guard only gates on rows the v0_32_2 Phase B backfill
+      // could actually fence, which requires the source's local_path — set
+      // it (the migrated v0.31 brain shape) so the legacy row keeps gating.
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source)
-         VALUES ('default', 'people/legacy', 'Legacy claim', 'fact', '2020-01-01'::date, 'legacy-import')`,
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [brainDir],
       );
-      // Seed a phantom that SHOULD have been redirected if the guard didn't fire
-      await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
-      writeMd(brainDir, 'people/alice-example', '# alice-example\n');
-      await putPage('alice', STUB_BODY);
-      writeMd(brainDir, 'alice', STUB_BODY);
+      try {
+        // Seed a legacy v0.31 fact row (row_num NULL, entity_slug NOT NULL).
+        // `source` is NOT NULL in the schema; the v0.31 path always set it.
+        // #2484: the guard only gates on rows whose entity_slug resolves to a
+        // LIVE page (genuine backfill candidates), so seed the backing page too.
+        await putPage('people/legacy', '# legacy\n', { type: 'person' });
+        writeMd(brainDir, 'people/legacy', '# legacy\n');
+        await engine.executeRaw(
+          `INSERT INTO facts (source_id, entity_slug, fact, kind, valid_from, source)
+           VALUES ('default', 'people/legacy', 'Legacy claim', 'fact', '2020-01-01'::date, 'legacy-import')`,
+        );
+        // Seed a phantom that SHOULD have been redirected if the guard didn't fire
+        await putPage('people/alice-example', '# alice-example\n', { type: 'person' });
+        writeMd(brainDir, 'people/alice-example', '# alice-example\n');
+        await putPage('alice', STUB_BODY);
+        writeMd(brainDir, 'alice', STUB_BODY);
 
-      const result = await runExtractFacts(engine, { sourceId: 'default', brainDir });
-      expect(result.guardTriggered).toBe(true);
-      expect(result.phantomsRedirected).toBe(0);
-      // Phantom .md still on disk (pass skipped)
-      expect(mdExists(brainDir, 'alice')).toBe(true);
+        const result = await runExtractFacts(engine, { sourceId: 'default', brainDir });
+        expect(result.guardTriggered).toBe(true);
+        expect(result.phantomsRedirected).toBe(0);
+        // Phantom .md still on disk (pass skipped)
+        expect(mdExists(brainDir, 'alice')).toBe(true);
+      } finally {
+        await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      }
     });
   });
 

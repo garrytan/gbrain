@@ -23,21 +23,27 @@ import { getCliOptions } from '../core/cli-options.ts';
 /**
  * Resolve the gbrain binary + args for spawning subcommands from
  * within skillpack-check. Handles three install cases:
- *   - Running the compiled binary (argv[1] ends in /gbrain): re-exec it.
+ *   - Running the compiled binary: process.execPath IS the real on-disk
+ *     binary — re-exec it. Checked before argv[1] (#4094): in a Bun
+ *     single-file compiled binary, argv[1] is the virtual bunfs path
+ *     `/$bunfs/root/gbrain`, which also ends in `/gbrain` but is not
+ *     spawnable (ENOENT). execPath never has this problem.
+ *   - argv[1] ends in /gbrain (e.g. a `gbrain` shim script on $PATH,
+ *     where execPath points at the bun runtime instead): re-exec argv[1].
  *   - Running via `bun run src/cli.ts` (argv[1] is a .ts file): prefix with `bun run`.
  *   - Anything else: fall back to `which gbrain` on $PATH.
  */
 function gbrainSpawn(): { cmd: string; prefix: string[] } {
+  const execPath = process.execPath ?? '';
+  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
+    return { cmd: execPath, prefix: [] };
+  }
   const arg1 = process.argv[1] ?? '';
   if (arg1.endsWith('/gbrain') || arg1.endsWith('\\gbrain.exe')) {
     return { cmd: arg1, prefix: [] };
   }
   if (arg1.endsWith('.ts') || arg1.endsWith('.mjs') || arg1.endsWith('.js')) {
     return { cmd: 'bun', prefix: ['run', arg1] };
-  }
-  const execPath = process.execPath ?? '';
-  if (execPath.endsWith('/gbrain') || execPath.endsWith('\\gbrain.exe')) {
-    return { cmd: execPath, prefix: [] };
   }
   return { cmd: 'gbrain', prefix: [] };
 }
@@ -262,4 +268,4 @@ function isSkillpackCheckSubcommand(): boolean {
 }
 
 /** Exported for unit tests. */
-export const __testing = { buildReport, runDoctor, runMigrationsList };
+export const __testing = { buildReport, runDoctor, runMigrationsList, gbrainSpawn };

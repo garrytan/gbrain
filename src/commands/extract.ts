@@ -38,9 +38,12 @@ import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
   extractFrontmatterLinks, isGlobalBasenameEnabled, LINK_EXTRACTOR_VERSION_TS,
   WIKILINK_BASENAME_LINK_TYPE,
-  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks,
+  buildBasenameIndex, queryBasenameIndex, stripCodeBlocks, normalizeBasename,
+  parseInlineCitationTimelineEntries,
   type UnresolvedFrontmatterRef, type LinkCandidate,
 } from '../core/link-extraction.ts';
+export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
+import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, pruneDir, isSyncable } from '../core/sync.ts';
@@ -96,7 +99,7 @@ export const STALE_TIME_BUDGET_MS = Math.max(1000, Number(process.env.GBRAIN_EXT
  */
 export async function stampExtracted(
   engine: BrainEngine,
-  refs: Array<{ slug: string; source_id: string }>,
+  refs: Array<{ slug: string; source_id: string; extractedAt?: string }>,
   at: string = new Date().toISOString(),
 ): Promise<void> {
   if (refs.length === 0) return;
@@ -169,13 +172,6 @@ export interface ExtractedLink {
   link_source?: string;
 }
 
-export interface ExtractedTimelineEntry {
-  slug: string;
-  date: string;
-  source: string;
-  summary: string;
-  detail?: string;
-}
 
 interface ExtractResult {
   links_created: number;
@@ -235,8 +231,14 @@ export function extractMarkdownLinks(content: string): { name: string; relTarget
   const mdPattern = /\[([^\]]+)\]\(([^)]+\.md)\)/g;
   let match;
   while ((match = mdPattern.exec(content)) !== null) {
-    const target = match[2];
+    let target = match[2];
     if (target.includes('://')) continue;
+    // Obsidian's useMarkdownLinks mode percent-encodes link targets
+    // (`[Alice](People/Alice%20Chen.md)`). Decode before resolution; a
+    // malformed escape keeps the raw text rather than throwing.
+    if (target.includes('%')) {
+      try { target = decodeURIComponent(target); } catch { /* keep raw */ }
+    }
     results.push({ name: match[1], relTarget: target });
   }
 
@@ -445,8 +447,8 @@ export async function extractLinksFromFile(
 
   if (opts?.includeFrontmatter) {
     // Synthetic sync-ish resolver: only does step 1 (already a slug) and
-    // step 2 (dir-hint + slugify), backed by the Set of all known slugs.
-    const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim().replace(/\s+/g, '-');
+    // step 2 (dir-hint + slugify via normalizeBasename — #2367: was an inline
+    // ASCII-only clone that emptied CJK names and mis-folded accents).
     const fsResolver = {
       async resolve(name: string, dirHint?: string | string[]): Promise<string | null> {
         if (!name) return null;
@@ -460,7 +462,7 @@ export async function extractLinksFromFile(
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
         for (const hint of hints) {
           if (!hint) continue;
-          const candidate = `${hint}/${slugify(trimmed)}`;
+          const candidate = `${hint}/${normalizeBasename(trimmed)}`;
           if (allSlugs.has(candidate)) return candidate;
         }
         return null;
@@ -490,103 +492,6 @@ export async function extractLinksFromFile(
 
 // --- Timeline extraction ---
 
-/**
- * Index of the first dash (—, –, -) that can serve as the Source — Summary
- * delimiter: it must have whitespace on both sides and sit outside every
- * markdown-link span. Hyphens inside link targets
- * (`../people/alice-example.md`) and dashes inside link labels
- * (`[Deals — Q1 Review](...)`) are content, not delimiters — splitting on
- * them shatters one entry into two fragments whose halves re-insert on
- * every sync (the (page_id, date, summary, source) uniqueness sees each
- * fragment shape as a new row). Returns -1 when the line has no delimiter.
- */
-function findDelimiterOutsideLinks(text: string): number {
-  let depth = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '[' || c === '(') depth++;
-    else if (c === ']' || c === ')') { if (depth > 0) depth--; }
-    else if (
-      depth === 0 &&
-      (c === '—' || c === '–' || c === '-') &&
-      i > 0 && /\s/.test(text[i - 1]) &&
-      i + 1 < text.length && /\s/.test(text[i + 1])
-    ) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** Extract timeline entries from markdown content */
-export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {
-  const entries: ExtractedTimelineEntry[] = [];
-
-  // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  // The delimiter search is link-aware (see findDelimiterOutsideLinks); a
-  // bullet with no delimiter (e.g. an auto-generated backlink line
-  // `- **date** | Referenced in [X](y.md)`) is kept whole as the summary
-  // rather than dropped or fragmented.
-  const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+)$/gm;
-  let match;
-  while ((match = bulletPattern.exec(content)) !== null) {
-    const rest = match[2].trim();
-    const at = findDelimiterOutsideLinks(rest);
-    if (at >= 0) {
-      entries.push({ slug, date: match[1], source: rest.slice(0, at).trim(), summary: rest.slice(at + 1).trim() });
-    } else {
-      entries.push({ slug, date: match[1], source: 'markdown', summary: rest });
-    }
-  }
-
-  // Format 2: Header — ### YYYY-MM-DD — Title
-  const headerPattern = /^###\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+)$/gm;
-  while ((match = headerPattern.exec(content)) !== null) {
-    const afterIdx = match.index + match[0].length;
-    const nextHeader = content.indexOf('\n### ', afterIdx);
-    const nextSection = content.indexOf('\n## ', afterIdx);
-    const endIdx = Math.min(
-      nextHeader >= 0 ? nextHeader : content.length,
-      nextSection >= 0 ? nextSection : content.length,
-    );
-    const detail = content.slice(afterIdx, endIdx).trim();
-    entries.push({ slug, date: match[1], source: 'markdown', summary: match[2].trim(), detail: detail || undefined });
-  }
-
-  // Format 3: Inline citation — [Source: <source>, YYYY-MM-DD]
-  //
-  // This is the citation convention gbrain's own quality rules require on
-  // every brain write (skills/conventions/quality.md), so dated evidence is
-  // pervasive in curated pages — but until now the extractor could not see
-  // it, and a page whose dates all live in citations scored zero timeline
-  // coverage. The entry's summary is the sentence the citation annotates
-  // (the surrounding line with citation markers stripped).
-  //
-  // Lines already captured by Format 1 are skipped: a timeline bullet often
-  // carries its own [Source: ...] citation, and re-extracting it would file
-  // a duplicate entry under a different (source, summary) shape that the
-  // DB-level uniqueness cannot collapse.
-  const citationPattern = /\[Source:\s*([^\]]+?),\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
-  const bulletLinePattern = /^-\s+\*\*\d{4}-\d{2}-\d{2}\*\*\s*\|/;
-  for (const line of content.split(/\r?\n/)) {
-    if (bulletLinePattern.test(line)) continue;
-    const lineMatches = [...line.matchAll(citationPattern)];
-    if (lineMatches.length === 0) continue;
-    // Strip every citation marker from the line to leave the annotated text.
-    const summary = line
-      .replace(/\[Source:[^\]]*\]/g, '')
-      .replace(/^[-*>#\s]+/, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 300);
-    if (!summary) continue; // a bare citation with no surrounding text is not an event
-    for (const m of lineMatches) {
-      entries.push({ slug, date: m[2], source: m[1].trim().slice(0, 200), summary });
-    }
-  }
-
-  return entries;
-}
 
 // --- Main command ---
 

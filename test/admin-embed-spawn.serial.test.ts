@@ -157,6 +157,32 @@ describe('admin embed E2E — /admin served from embedded manifest (v0.36.1.x #1
     }
   }, 90_000);
 
+  test('GET /admin (no trailing slash) redirects to /admin/', async () => {
+    const s = await spawnServer();
+    try {
+      const res = await fetch(`http://127.0.0.1:${s.port}/admin`, {
+        signal: AbortSignal.timeout(5000),
+        redirect: 'manual',
+      });
+      // Pre-fix this 404'd: the embedded-manifest branch only registered
+      // '/admin/{*path}', which requires the literal '/' before the
+      // wildcard segment and never matches a bare '/admin' request.
+      expect([301, 302, 303, 307, 308]).toContain(res.status);
+      expect(res.headers.get('location')).toBe('/admin/');
+
+      // Following the redirect lands on the same SPA shell as GET /admin/.
+      const followed = await fetch(`http://127.0.0.1:${s.port}/admin`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(followed.status).toBe(200);
+      const html = await followed.text();
+      expect(html).toContain('GBrain Admin');
+      expect(html).toContain('<div id="root">');
+    } finally {
+      await s.cleanup();
+    }
+  }, 90_000);
+
   test('GET /admin/index.html (explicit path) also returns the SPA HTML', async () => {
     const s = await spawnServer();
     try {

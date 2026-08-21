@@ -21,16 +21,12 @@ import { parseModelId } from './ai/model-resolver.ts';
  * buildGatewayConfig now, so a config-plane key is genuinely usable by the
  * gateway and counting it here is no longer a false positive.
  *
- * Caveat inherited from the existing OPENAI_API_KEY/ZEROENTROPY_API_KEY
- * entries (unchanged by #2662, noted here for anyone extending this map):
- * autopilot's resolveKey resolves these fields via `engine.getConfig()`
- * (DB plane), while `buildGatewayConfig` only folds the FILE-plane
- * (config.json) value. A `gbrain config set voyage_api_key X` with no
- * matching config.json entry can therefore still read "configured" here
- * while the gateway has no key — a pre-existing false-positive class, not
- * introduced or fixed by this change. Closing it requires threading
- * `*_api_key` DB values through `loadConfigWithEngine()` before
- * `buildGatewayConfig`, which is a separate, larger change.
+ * The historical DB-plane/file-plane split for these fields is closed
+ * (#2119 read-side): `loadConfigWithEngine()` sparse-merges every
+ * `DB_MERGED_PROVIDER_KEY_FIELDS` entry from the DB plane (env > file > DB)
+ * before `buildGatewayConfig` folds the merged config into the gateway env,
+ * so a key that reads "configured" via `engine.getConfig()` is genuinely
+ * usable by the gateway on any path that runs the DB merge.
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
@@ -439,8 +435,9 @@ function pickMax(current: number, max: number, status: RemediationStatus | undef
 
 // ---------------------------------------------------------------------
 // Idempotency key construction (D9 — content-hash, no time-slot).
-// Same params produce the same key across runs. Failed-row replay
-// appends `:r<N>` (caller responsibility — handled by --remediate loop).
+// Same params produce the same key across runs. Terminal-row replay
+// (a completed/failed row holds the key forever) rotates the key to
+// `:r:<doctor_run_id>` in the --remediate loop (#3626, remediation/run.ts).
 // ---------------------------------------------------------------------
 
 function idemKey(source: string, job: string, params: Record<string, unknown>): string {

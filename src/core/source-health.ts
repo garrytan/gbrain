@@ -357,10 +357,17 @@ async function pageCountsBySource(engine: BrainEngine): Promise<Map<string, numb
 }
 
 async function chunkCountsBySource(engine: BrainEngine): Promise<Map<string, { total: number; embedded: number }>> {
+  // Coverage must count the ACTIVE embedding column: a registry-routed brain
+  // (search_embedding_column != 'embedding') writes vectors elsewhere, and
+  // keying the literal legacy column here read 0% forever — a permanently-red
+  // doctor check recommending no-op remediations. Fail open to legacy.
+  const { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+  const active = await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true });
+  const col = quoteIdentifier(active.name);
   const rows = await engine.executeRaw<{ source_id: string; total: number; embedded: number }>(
     `SELECT p.source_id,
             COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE c.embedding IS NOT NULL)::int AS embedded
+            COUNT(*) FILTER (WHERE c.${col} IS NOT NULL)::int AS embedded
        FROM content_chunks c
        JOIN pages p ON p.id = c.page_id
       WHERE p.deleted_at IS NULL

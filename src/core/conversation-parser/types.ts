@@ -176,6 +176,40 @@ export interface PatternEntry {
    */
   score_continuations_as_body?: boolean;
   /**
+   * Extra gate on `score_continuations_as_body`: once set, the
+   * candidate-only density score only activates when the anchor lines that
+   * fully match `regex` collectively capture at least this many DISTINCT
+   * `speaker_group` values (not just this many anchor lines). Without this,
+   * a pattern whose anchor grammar is a plausible label in ordinary prose
+   * (e.g. a literal `**You:**` heading in documentation) gets the SAME
+   * density immunity a genuine back-and-forth conversation gets from a
+   * single repeated — or even solitary, via `firstLineAnchored` — anchor.
+   * Requiring multiple DISTINCT speakers (e.g. 2, for a two-party format)
+   * means a page that merely repeats one role's label, or opens with one
+   * anchor, falls back to the ordinary flat-density score instead of
+   * getting density-exclusion immunity. Patterns whose anchor grammar is
+   * ALREADY distinctive enough on its own (e.g. `bold-time-dash`'s bold
+   * name + valid 24h time + dash) can safely leave this unset.
+   */
+  score_continuations_min_distinct_speakers?: number;
+  /**
+   * Extra gate on `score_continuations_as_body`, orthogonal to
+   * `score_continuations_min_distinct_speakers`: once set, the
+   * candidate-only density score only activates when the FIRST fully-
+   * matching anchor line appears at or before this index in the scored
+   * line array. A genuine export's anchor grammar starts near the top of
+   * the body (this tolerates a short title/heading preamble); an anchor
+   * — or anchor pair — merely embedded deep inside an otherwise unrelated
+   * long document sits far past this bound, so it falls back to the
+   * ordinary flat-density score instead of getting the same acceptance
+   * immunity a real transcript gets. Most useful alongside
+   * `score_continuations_min_distinct_speakers` for anchor grammars
+   * (like a bare `**You:**` heading) that are plausible prose labels on
+   * their own: distinct-speaker count alone still lets a single
+   * illustrative example pair anywhere in a long document through.
+   */
+  score_continuations_max_preamble_lines?: number;
+  /**
    * D11: optional cheap O(1) prefix check. If set, orchestrator runs
    * this FIRST per line; only tries `regex` if quick_reject matches.
    * Examples: `/^\*\*\[/` for telegram-bracket.

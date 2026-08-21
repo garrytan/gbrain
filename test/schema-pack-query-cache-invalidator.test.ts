@@ -64,6 +64,34 @@ describe('invalidateQueryCache', () => {
     expect(await countCacheRows()).toBe(0);
   });
 
+  it('per-source invalidation also clears __unscoped__ rows and __set__ rows containing the id (wave-D review)', async () => {
+    // An unscoped search reads ALL sources and a federated (__set__) search
+    // reads every listed source — both row kinds can carry the mutated
+    // source's pages, so a per-source invalidation must delete them too.
+    await seedCacheRow('source-a', 'q1');
+    await seedCacheRow('__unscoped__', 'q2');
+    await seedCacheRow('__set__:source-a,source-b', 'q3');
+    await seedCacheRow('__set__:source-b,source-c', 'q4');
+    await seedCacheRow('source-b', 'q5');
+
+    const result = await invalidateQueryCache(engine, 'source-a');
+    expect(result.rows_invalidated).toBe(3);
+    expect(await countCacheRows('source-a')).toBe(0);
+    expect(await countCacheRows('__unscoped__')).toBe(0);
+    expect(await countCacheRows('__set__:source-a,source-b')).toBe(0);
+    // Rows that cannot contain the mutated source survive.
+    expect(await countCacheRows('__set__:source-b,source-c')).toBe(1);
+    expect(await countCacheRows('source-b')).toBe(1);
+  });
+
+  it('__set__ membership is a whole-token match, not a substring match', async () => {
+    // 'source-a' must not clear a set whose only member is 'source-ab'.
+    await seedCacheRow('__set__:source-ab', 'q1');
+    const result = await invalidateQueryCache(engine, 'source-a');
+    expect(result.rows_invalidated).toBe(0);
+    expect(await countCacheRows('__set__:source-ab')).toBe(1);
+  });
+
   it('is idempotent on empty cache', async () => {
     const r1 = await invalidateQueryCache(engine, 'source-a');
     const r2 = await invalidateQueryCache(engine, 'source-a');

@@ -175,7 +175,7 @@ live in `test/postgres-engine-rls-scope.test.ts`.
 | Concurrency | Single process | Connection pooling |
 | Backups | Manual (file copy) | Managed by Supabase |
 
-**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline) and imports into Supabase. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
+**Migration:** `gbrain migrate --to supabase` exports everything (pages, chunks, embeddings, links, tags, timeline, facts) and imports into Supabase. Config rows copy in full minus the engine-local denylist (`MIGRATE_CONFIG_ENGINE_LOCAL_KEYS`: the target-owned `engine`/`version` connection + schema ledger and the physical embedding-column registry keys); skipped keys are printed, never silent, and the run ends with a per-table copied-count summary. `gbrain migrate --to pglite` goes the other direction. Bidirectional, lossless.
 
 The migration and the autopilot daemon do not race: `migrate --to` claims a
 cooperative pause marker before touching the target. The marker doubles as a

@@ -525,7 +525,20 @@ function roundTrip(
   requestLine: string,
   timeoutMs: number,
 ): Promise<unknown | typeof IPC_UNAVAILABLE> {
-  if (!existsSync(socketPath)) return Promise.resolve(IPC_UNAVAILABLE);
+  // POSIX fast-path only: a Unix domain socket is a real filesystem entry, so
+  // existsSync() lets the common "no server running" case skip a syscall.
+  // On win32, net.createServer()/createConnection() silently translate a
+  // plain path into \\.\pipe\<name> — no file is ever created on disk, so
+  // existsSync() is always false here even while a live server is listening
+  // and a real connection would succeed. Gating on it on Windows made every
+  // IPC call fail closed unconditionally (verified: a listen()+connect()
+  // round trip against the same plain path succeeds on Bun 1.3.14 / Windows
+  // 11, while existsSync() on that path returns false throughout). Skip the
+  // pre-check there and let the connection-level error/timeout handlers
+  // below do the real "no server" detection.
+  if (process.platform !== 'win32' && !existsSync(socketPath)) {
+    return Promise.resolve(IPC_UNAVAILABLE);
+  }
   return new Promise((resolve) => {
     let settled = false;
     let buf = '';

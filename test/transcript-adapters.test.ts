@@ -257,6 +257,35 @@ describe('claudeCodeAdapter', () => {
   test('detect sniffs the first line shape', () => {
     expect(claudeCodeAdapter.detect(FIXTURE, readSample(FIXTURE))).toBe(true);
   });
+
+  // Regression: Claude Code leads its transcripts with non-turn control
+  // records (`queue-operation`, `last-prompt`, `mode`, `ai-title`). Measured
+  // 2026-08-16 over 400 live files: 273/115/10/2 led with those and ZERO led
+  // with a turn, so a line-1-only probe rejected 100% of real sessions.
+  test('detect accepts a transcript led by control records', () => {
+    const p = join(tdir(), 'led-by-control.jsonl');
+    writeFileSync(
+      p,
+      [
+        JSON.stringify({ type: 'queue-operation', operation: 'add', sessionId: 's1', timestamp: '2026-08-16T00:00:00Z', content: 'x' }),
+        JSON.stringify({ type: 'mode', mode: 'default', sessionId: 's1' }),
+        JSON.stringify({ type: 'user', sessionId: 's1', message: { role: 'user', content: 'hi' } }),
+      ].join('\n') + '\n',
+    );
+    expect(claudeCodeAdapter.detect(p, readSample(p))).toBe(true);
+  });
+
+  // A control-record head must not turn every .jsonl into a Claude transcript:
+  // hook-telemetry files under ~/.claude/projects have no sessionId and must
+  // still be rejected.
+  test('detect still rejects non-transcript jsonl', () => {
+    const p = join(tdir(), 'hook-telemetry.jsonl');
+    writeFileSync(
+      p,
+      JSON.stringify({ event: 'skill-injection', hookEvent: 'UserPromptSubmit', matchedSkills: [], contextChunks: 0 }) + '\n',
+    );
+    expect(claudeCodeAdapter.detect(p, readSample(p))).toBe(false);
+  });
 });
 
 // ── Codex adapter [structural turn selection, never preamble heuristics] ────

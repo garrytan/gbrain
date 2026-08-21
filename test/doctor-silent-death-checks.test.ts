@@ -55,17 +55,18 @@ async function addSource(id: string, localPath: string | null): Promise<void> {
 
 async function addPage(
   slug: string,
-  opts: { sourceId?: string; hash?: string | null; pageKind?: string; deleted?: boolean } = {},
+  opts: { sourceId?: string; hash?: string | null; pageKind?: string; deleted?: boolean; sourcePath?: string | null } = {},
 ): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO pages (slug, source_id, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, deleted_at)
-     VALUES ($1, $2, 'concept', $3, $1, 'body', '', '{}'::jsonb, $4, $5)`,
+    `INSERT INTO pages (slug, source_id, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, deleted_at, source_path)
+     VALUES ($1, $2, 'concept', $3, $1, 'body', '', '{}'::jsonb, $4, $5, $6)`,
     [
       slug,
       opts.sourceId ?? 'default',
       opts.pageKind ?? 'markdown',
       opts.hash === undefined ? `h-${slug}` : opts.hash,
       opts.deleted ? new Date().toISOString() : null,
+      opts.sourcePath ?? null,
     ],
   );
 }
@@ -157,6 +158,35 @@ describe('undeclared_db_only_pages (#2784)', () => {
     await addSource('src-a', repo);
     await addPage('.archive/people/alice-example', { sourceId: 'src-a' });
     const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
+  test('file-backed page without source_path uses its normalized file slug', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, 'People'), { recursive: true });
+    writeFileSync(join(repo, 'People', 'Alice Example.md'), '# Alice');
+    await addSource('src-a', repo);
+    await addPage('people/alice-example', { sourceId: 'src-a' });
+
+    const c = await checkUndeclaredDbOnlyPages(engine);
+
+    expect(c.status).toBe('ok');
+  });
+
+  test('Git-root source_path under a subdirectory local_path → file-backed', async () => {
+    const gitRoot = makeRepo();
+    mkdirSync(join(gitRoot, '.git'));
+    const sourceRoot = join(gitRoot, 'public', 'changelog');
+    mkdirSync(join(sourceRoot, 'posts'), { recursive: true });
+    writeFileSync(join(sourceRoot, 'posts', '2026-08-18.md'), '# Release');
+    await addSource('src-a', sourceRoot);
+    await addPage('public/changelog/posts/2026-08-18', {
+      sourceId: 'src-a',
+      sourcePath: 'public/changelog/posts/2026-08-18.md',
+    });
+
+    const c = await checkUndeclaredDbOnlyPages(engine);
+
     expect(c.status).toBe('ok');
   });
 

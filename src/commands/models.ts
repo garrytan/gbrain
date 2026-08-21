@@ -619,7 +619,13 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
       await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: 1,
+        // OpenAI rejects max_output_tokens below 16 ("Invalid
+        // 'max_output_tokens': integer below minimum value. Expected a value
+        // >= 16, but got 1 instead."), so a probe of 1 fails for EVERY
+        // OpenAI-family chat model regardless of whether it is reachable —
+        // which is precisely what this check exists to tell apart. 16 is the
+        // documented floor; the probe still costs at most 16 output tokens.
+        maxTokens: 16,
         abortSignal: controller.signal,
       });
       return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };

@@ -314,6 +314,123 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   },
 
   {
+    // ChatGPT's web-export → Markdown conversion anchors every turn
+    // with a literal `**You:**` / `**ChatGPT:**` label followed by a
+    // BLANK line and then a multi-paragraph reply (often 20-30+ lines
+    // of prose before the next anchor). bold-name-no-time (declared
+    // directly below) is `multi_line: false`, so on this shape it
+    // treats every reply paragraph as an unrelated non-matching line:
+    // a 156-line export with 4 real anchors scores ~4/156 ≈ 0.026 via
+    // its own score_full_body density check — correctly for THAT
+    // pattern (it has no way to know a plain-prose paragraph belongs
+    // to the preceding anchor), but the page as a whole should have
+    // parsed.
+    //
+    // NARROW-BY-CONSTRUCTION (this is what keeps the BROAD-REGEX GUARD
+    // on bold-name-no-time meaningful — this pattern does NOT reopen
+    // it): bold-name-no-time's speaker capture is `(.+?)` — any label.
+    // This pattern's speaker capture is a closed two-value enumeration
+    // (`You` or `ChatGPT` exactly). It can never match an arbitrary
+    // `**Label:** text` prose idiom (`**Note:**`, `**Owner:**`,
+    // `**Attendees:**`, …), so a notes page cannot accidentally clear
+    // this pattern's anchor regex no matter how its bold labels are
+    // clustered — see the 'REGRESSION: notes-page bold labels never
+    // match the enumerated ChatGPT speakers' test below, which reuses
+    // bold-name-no-time's own F1 notes-page fixture.
+    //
+    // multi_line + score_continuations_as_body (mirrors bold-time-dash
+    // above) absorbs every non-`**`-prefixed reply line as message
+    // body EXCLUDED from the density denominator, so long
+    // multi-paragraph replies don't dilute the anchor ratio the way
+    // bold-name-no-time's flat line-count density does — a real
+    // export scores ~1.0 instead of ~0.026. score_full_body is ALSO
+    // set as a belt-and-suspenders full-body recompute of the WINNING
+    // candidate (same guarantee bold-name-no-time takes from
+    // score_full_body), so acceptance never depends on where the
+    // first anchor happens to land inside the head-pass window.
+    //
+    // score_continuations_min_distinct_speakers: 2 is a SECOND, narrower
+    // guard on top of that: unlike bold-time-dash's anchor grammar (bold
+    // name + valid 24h time + dash, implausible by coincidence), a bare
+    // `**You:**` / `**ChatGPT:**` heading is a plausible label in ordinary
+    // prose ABOUT ChatGPT. Without this gate, one solitary heading (via
+    // `firstLineAnchored`) or several repeats of the SAME role's heading
+    // would get the identical density-exclusion immunity a genuine
+    // back-and-forth transcript gets. Requiring BOTH roles to actually
+    // appear scopes that immunity to pages that look like a real exchange.
+    //
+    // score_continuations_max_preamble_lines: 5 is a THIRD guard, because
+    // distinct-speaker count alone still lets ONE illustrative `**You:**` /
+    // `**ChatGPT:**` example pair ANYWHERE inside an otherwise unrelated
+    // long document (a tutorial, a "how I use ChatGPT" article) through —
+    // both roles are present, so it would still get full density immunity.
+    // Requiring the first anchor's index to be <= 5 (i.e. at or before the
+    // 6th scored line, tolerating a short title/heading before the
+    // transcript starts, but not an arbitrary amount of unrelated prose)
+    // keeps that immunity scoped to pages that look like a real export
+    // from the top.
+    //
+    // DECLARATION ORDER (tie-break only — the safety is the enumerated
+    // regex, not this position): declared BEFORE bold-name-no-time so
+    // that on an input matching BOTH regexes (a literal `**You:**` /
+    // `**ChatGPT:**` line, which the broader `(.+?)` pattern also
+    // matches), the more specific ChatGPT-export identification wins
+    // the score tie instead of the generic Circleback/Granola/Zoom id.
+    id: 'chatgpt-export-you-chatgpt',
+    origin: 'builtin',
+    // Matches: **You:** message text / **ChatGPT:** message text
+    // (colon INSIDE bold, same shape as bold-name-no-time, speaker
+    // restricted to the two literal ChatGPT-export labels).
+    regex: /^\*\*(You|ChatGPT):\*\*\s*(.*)$/,
+    captures: {
+      speaker_group: 1,
+      text_group: 2,
+    },
+    date_source: 'frontmatter',
+    time_format: '24h',
+    timezone_policy: 'utc_assumed_with_warn',
+    multi_line: true,
+    score_continuations_as_body: true,
+    // Unlike bold-time-dash's anchor grammar (bold name + valid 24h time +
+    // dash — implausible to occur by coincidence), a bare `**You:**` /
+    // `**ChatGPT:**` heading is a plausible label in ordinary prose about
+    // ChatGPT (prompt-writing notes, comparison articles, documentation).
+    // Without this gate, score_continuations_as_body's density-exclusion
+    // would give a page containing just ONE such heading — or several
+    // repeats of the SAME role's heading — the same acceptance immunity a
+    // genuine back-and-forth transcript gets, regardless of how much
+    // surrounding non-conversational prose exists. Requiring both roles
+    // (You AND ChatGPT) to actually appear keeps that immunity scoped to
+    // pages that look like a real two-party exchange.
+    score_continuations_min_distinct_speakers: 2,
+    score_continuations_max_preamble_lines: 5,
+    score_full_body: true,
+    quick_reject: /^\*\*(?:You|ChatGPT):\*\*/,
+    test_positive: [
+      '**You:** what is the capital of France?',
+      '**ChatGPT:** The capital of France is Paris.',
+      '**You:** thanks',
+    ],
+    test_negative: [
+      // bold-name-no-time's own generic shape MUST fall through —
+      // any label other than the literal You/ChatGPT enumeration:
+      '**Alice Example:** hello world',
+      '**Assistant:** not the literal ChatGPT label',
+      '**User:** not the literal You label',
+      // bold-paren-time shape (colon OUTSIDE bold) MUST fall through:
+      '**You** (00:00): text',
+      // Bold but no colon at all:
+      '**You** hello world',
+      // No bold markers:
+      'You: plain no bold',
+      // telegram-bracket shape (timestamp INSIDE bold) MUST NOT match:
+      '**[18:37] \u{1f464} You:** hello',
+    ],
+    source_doc:
+      'ChatGPT web export → Markdown conversion: `**You:**` / `**ChatGPT:**` turn labels with multi-paragraph bodies separated by blank lines',
+  },
+
+  {
     // Modern meeting-transcription tools (Circleback, Granola, Zoom)
     // emit `**Speaker Name:** message text` with NO per-line
     // timestamp. Every other built-in requires a time anchor, so this

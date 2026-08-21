@@ -31,6 +31,7 @@ import { getProviderCapabilities } from '../ai/capabilities.ts';
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
+import { parseTemporalWindow } from './temporal-window.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -374,6 +375,7 @@ export async function runThink(
 ): Promise<ThinkResult> {
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
+  const window = parseTemporalWindow(opts.since, opts.until);
 
   // Resolve the model through the 6-tier chain.
   const modelUsed = await resolveModel(engine, {
@@ -416,6 +418,7 @@ export async function runThink(
     question: opts.question,
     anchor: opts.anchor,
     questionEmbedding,
+    ...(window ? { window } : {}),
     takesHoldersAllowList: opts.takesHoldersAllowList,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
@@ -424,6 +427,9 @@ export async function runThink(
   // raw error text stays on stderr. Distinguishes an errored stream from a
   // legitimately-empty one for MCP/remote callers.
   for (const w of gather.warnings) warnings.push(w);
+  if (gather.diagnostics.window?.dropped) {
+    warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
+  }
 
   // Render evidence blocks for the prompt
   const pagesBlock = renderPagesBlock(gather.pages, 600, opts.question);
@@ -474,6 +480,7 @@ export async function runThink(
   // `other` intent short-circuits before any SQL fires.
   let trajectoryBlock = '';
   let trajectoryPointsCount = 0;
+  let trajectoryExcludedCount = 0;
   const trajectoryEnabledConfig = await readThinkTrajectoryEnabled(engine);
   const trajectoryEnabledOpt = opts.withTrajectory !== false; // default true
   if (trajectoryEnabledConfig && trajectoryEnabledOpt) {
@@ -520,8 +527,15 @@ export async function runThink(
                     setTimeout(() => resolve([]), 5000);
                   }),
                 ]);
-                if (points.length === 0) return null;
-                const fmt = formatTrajectoryBlock(points, resolved.slug, {
+                const boundedPoints = window ? points.filter(point => {
+                  const ms = point.valid_from.getTime();
+                  const outside = (window.startMs !== null && ms < window.startMs)
+                    || (window.endMs !== null && ms > window.endMs);
+                  if (outside) trajectoryExcludedCount++;
+                  return !outside;
+                }) : points;
+                if (boundedPoints.length === 0) return null;
+                const fmt = formatTrajectoryBlock(boundedPoints, resolved.slug, {
                   intent: trajIntent,
                 });
                 if (fmt.rendered.length === 0) return null;
@@ -552,6 +566,7 @@ export async function runThink(
   if (trajectoryPointsCount > 0) {
     warnings.push(`TRAJECTORY_INJECTED_${trajectoryPointsCount}_POINTS`);
   }
+  if (trajectoryExcludedCount > 0) warnings.push(`WINDOW_EXCLUDED_${trajectoryExcludedCount}_TRAJECTORY_POINTS`);
 
   // SYNTHESIZE
   const intent = inferIntent(opts.question, opts.anchor);

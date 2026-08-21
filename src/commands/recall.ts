@@ -417,23 +417,38 @@ async function fetchRowsLocal(
     return engine.listFactsByEntity(sourceId, slug, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
+      excludeAuditRows: true,
     });
   }
   if (flags.sessionId) {
     return engine.listFactsBySession(sourceId, flags.sessionId, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
+      excludeAuditRows: true,
     });
   }
   if (resolvedSince) {
+    // Post-review fix: `--since-last-run`/`--watch` resolve `resolvedSince`
+    // from a cursor written as the PRIOR RUN's wall-clock start time
+    // (`writeCursor(sourceId, tStart, ...)` in runRecallOnce — creation-time
+    // semantics). Comparing that cursor against event time
+    // (COALESCE(valid_from, created_at)) drops rows created after the cursor
+    // but backdated to an earlier valid_from — a delayed extraction of a
+    // past conversation would never surface on the next tick. An explicit
+    // `--since DURATION`/`--today` cutoff is a genuine "what happened in
+    // this window" question and keeps event-time ordering.
     return engine.listFactsSince(sourceId, resolvedSince, {
+      eventTime: !flags.sinceLastRun,
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
+      excludeAuditRows: true,
     });
   }
   return engine.listFactsSince(sourceId, new Date(0), {
+    eventTime: true,
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
+    excludeAuditRows: true,
   });
 }
 

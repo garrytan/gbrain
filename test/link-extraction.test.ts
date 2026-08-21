@@ -13,6 +13,7 @@ import {
   unwrapWikilink,
   buildBasenameIndex,
   queryBasenameIndex,
+  normalizeBasename,
   type SlugResolver,
 } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -116,6 +117,23 @@ describe('extractEntityRefs', () => {
     const refs = extractEntityRefs('See [Standup](meetings/2026-01-15-standup).');
     expect(refs.length).toBe(1);
     expect(refs[0].dir).toBe('meetings');
+  });
+
+  test('percent-decodes a markdown-link target before resolution', () => {
+    // ANY_DIR_SEGMENT requires a lowercase leading directory segment, so
+    // this producer's realistic percent-encoded input keeps the dir
+    // lowercase and encodes a character in the basename — here `%2D` for
+    // `-`, decoding to the exact page slug `people/alice-chen`.
+    const refs = extractEntityRefs('Met with [Alice Chen](people/alice%2Dchen) at the office.');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('people/alice-chen');
+  });
+
+  test('keeps a malformed percent-escape raw instead of throwing', () => {
+    expect(() => extractEntityRefs('[Alice](people/alice%zzchen)')).not.toThrow();
+    const refs = extractEntityRefs('[Alice](people/alice%zzchen)');
+    expect(refs.length).toBe(1);
+    expect(refs[0].slug).toBe('people/alice%zzchen');
   });
 
   // ─── issue #972: generic `[[bare-name]]` wikilinks (pass 2c) ─────────────
@@ -1583,9 +1601,45 @@ describe('parseTimelineEntries — Format 3: inline [Source: ..., YYYY-MM-DD] ci
     expect(entries[0].detail).toBe('Source: email re: offer, signed');
   });
 
+  test('uses the full paragraph for a wrapped inline citation summary', () => {
+    const entries = parseTimelineEntries(`The imported app showed product fit for commercial use
+after the prototype demo. [Source: user interview, 2026-07-30]`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-30');
+    expect(entries[0].summary).toBe(
+      'The imported app showed product fit for commercial use after the prototype demo.',
+    );
+    expect(entries[0].detail).toBe('Source: user interview');
+  });
+
   test('does not double-extract a timeline bullet carrying its own citation', () => {
     const entries = parseTimelineEntries('- **2025-03-18** | Meeting notes [Source: notes, 2025-03-18]');
     expect(entries).toHaveLength(1); // bullet pass only
+  });
+
+  test('keeps a prose citation directly under a timeline bullet', () => {
+    const entries = parseTimelineEntries(`- **2025-03-18** | Meeting notes
+Follow-up decision recorded. [Source: memo, 2025-03-20]`);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].date).toBe('2025-03-18');
+    expect(entries[1]).toEqual({
+      date: '2025-03-20',
+      summary: 'Follow-up decision recorded.',
+      detail: 'Source: memo',
+    });
+  });
+
+  test('ignores dated citations inside fenced code blocks', () => {
+    const entries = parseTimelineEntries(`\`\`\`
+Fake claim. [Source: generated fixture, 2025-01-01]
+\`\`\`
+Real claim. [Source: memo, 2025-01-02]`);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      date: '2025-01-02',
+      summary: 'Real claim.',
+      detail: 'Source: memo',
+    });
   });
 
   test('skips invalid calendar dates and bare citations', () => {
@@ -1763,5 +1817,77 @@ describe('extractFrontmatterLinks — [[wikilink]] related: values (end-to-end)'
     expect(candidates).toHaveLength(0);
     expect(unresolved).toHaveLength(1);
     expect(unresolved[0]).toEqual({ field: 'related', name: '[[99-archive/does-not-exist]]' });
+  });
+});
+
+// ─── #2367: normalizeBasename must keep non-Latin scripts ──────────────
+//
+// normalizeBasename previously stripped everything outside [a-z0-9\s-],
+// so a CJK basename collapsed to '' (every lookup missed) and accented
+// names diverged from slugifySegment ('Café' → 'caf' vs 'cafe'). It now
+// mirrors slugifySegment's normalization (NFD → strip accents → NFC →
+// lowercase → SLUG_WORD_CHARS filter), so display names in any script
+// produce the same key the slug grammar produces.
+
+describe('normalizeBasename — CJK + accent folding (#2367)', () => {
+  test('Korean display name normalizes to the slugifySegment form, not empty', () => {
+    expect(normalizeBasename('루카텍 올핸즈 미팅')).toBe('루카텍-올핸즈-미팅');
+  });
+
+  test('accented name folds like slugifySegment (Café → cafe, not caf)', () => {
+    expect(normalizeBasename('Café Notes')).toBe('cafe-notes');
+  });
+
+  test('ASCII keys unchanged from the old behavior', () => {
+    expect(normalizeBasename('Fast-Weigh')).toBe('fast-weigh');
+    expect(normalizeBasename('Alice Smith')).toBe('alice-smith');
+    expect(normalizeBasename('v1.0.0_beta!')).toBe('v100beta');
+  });
+
+  test('basename index: spaced CJK display name hits the hyphenated slug tail', () => {
+    const idx = buildBasenameIndex(['meetings/루카텍-올핸즈-미팅']);
+    expect(queryBasenameIndex(idx, '루카텍 올핸즈 미팅'))
+      .toEqual(['meetings/루카텍-올핸즈-미팅']);
+  });
+
+  test('end-to-end: bare CJK wikilink resolves via the basename index', async () => {
+    const idx = buildBasenameIndex(['meetings/루카텍-올핸즈-미팅']);
+    const resolver: SlugResolver = {
+      resolve: async () => null,
+      resolveBasenameMatches: async (name) => queryBasenameIndex(idx, name),
+    };
+    const { candidates } = await extractPageLinks(
+      'notes/weekly', '어제 [[루카텍 올핸즈 미팅]] 노트 참고.',
+      {}, 'concept', resolver, { globalBasename: true },
+    );
+    const resolved = candidates.filter(c => c.linkSource === 'wikilink-resolved');
+    expect(resolved.map(c => c.targetSlug)).toEqual(['meetings/루카텍-올핸즈-미팅']);
+  });
+
+  test('makeResolver step 2 dir-hint slugifies accented names like the slug grammar', async () => {
+    // The resolver used an inline clone of the old ASCII-only normalizer for
+    // its dir-hint candidate ('Café Notes' + 'notes' → 'notes/caf-notes'),
+    // which could never match a page slugged by slugifySegment.
+    const engine = {
+      async getPage(slug: string) {
+        return slug === 'notes/cafe-notes' ? { slug } as any : null;
+      },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    expect(await r.resolve('Café Notes', 'notes')).toBe('notes/cafe-notes');
+  });
+
+  test('makeResolver.resolveBasenameMatches finds CJK slugs from getAllSlugs', async () => {
+    const engine = {
+      async getPage() { return null; },
+      async findByTitleFuzzy() { return null; },
+      async searchKeyword() { return []; },
+      async getAllSlugs() { return ['meetings/루카텍-올핸즈-미팅', 'people/alice']; },
+    } as unknown as BrainEngine;
+    const r = makeResolver(engine, { mode: 'batch' });
+    expect(await r.resolveBasenameMatches!('루카텍 올핸즈 미팅'))
+      .toEqual(['meetings/루카텍-올핸즈-미팅']);
   });
 });

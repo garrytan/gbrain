@@ -60,6 +60,19 @@ export const NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
 
 /**
+ * LEGACY runtime/bundle reranker default — the sunsetting ZeroEntropy
+ * zerank-2. The ONE code home for the value (#3657 seam): the three mode
+ * bundles (`src/core/search/mode.ts` MODE_BUNDLES.*.reranker_model) and the
+ * gateway's runtime fallback (`src/core/ai/gateway.ts` DEFAULT_RERANKER_MODEL)
+ * all resolve through this constant, so the September default swap is a
+ * one-line edit HERE (plus retiring the matching RERANKER_SUNSETS row).
+ * Pinned by test/reranker-default-seam.test.ts, which also fails if the
+ * literal grows a new code home. Do NOT point new code at this; new-install
+ * surfaces read NEW_INSTALL_DEFAULT_RERANKER_MODEL above.
+ */
+export const LEGACY_DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
+
+/**
  * ZeroEntropy announced (2026-07-24) that its hosted API — including
  * /models/embed and /models/rerank — shuts down on this date. Query
  * embedding uses the same endpoint as ingestion, so a brain still on a
@@ -69,6 +82,41 @@ export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
  * doctor check. Self-hosting the Apache-2.0 zembed-1 weights is unaffected.
  */
 export const ZEROENTROPY_SUNSET_DATE = '2026-09-04';
+
+/** A reranker model family with an announced provider shutdown. */
+export interface RerankerSunset {
+  /** Provider-prefix match: `model.startsWith(prefix)`. */
+  prefix: string;
+  /** ISO date the hosted API dies. */
+  date: string;
+  /** Paste-ready live replacement (`gbrain config set search.reranker.model <this>`). */
+  replacement: string;
+}
+
+/**
+ * Sunset list for reranker models (#3657/#4382). Doctor's `search_mode`
+ * check consults this BEFORE recommending `gbrain search modes --reset`:
+ * a reset that would re-arm a listed model gets the sunset date named
+ * instead of the reset command, and an ACTIVE listed reranker warns with
+ * the date. Prefix-matching by provider covers zerank-2/-1/-1-small in
+ * one row. Retire a row in the release that deletes the provider recipe.
+ */
+export const RERANKER_SUNSETS: ReadonlyArray<RerankerSunset> = Object.freeze([
+  Object.freeze({
+    prefix: 'zeroentropyai:',
+    date: ZEROENTROPY_SUNSET_DATE,
+    replacement: NEW_INSTALL_DEFAULT_RERANKER_MODEL,
+  }),
+]);
+
+/** Sunset entry matching a reranker model string, or null when it is live. */
+export function rerankerSunset(model: string | null | undefined): RerankerSunset | null {
+  if (!model) return null;
+  for (const s of RERANKER_SUNSETS) {
+    if (model.startsWith(s.prefix)) return s;
+  }
+  return null;
+}
 
 /**
  * ONE canonical rendering of the sunset-migration command for every surface

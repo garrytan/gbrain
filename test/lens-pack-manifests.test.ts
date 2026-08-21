@@ -245,3 +245,32 @@ describe('v0.41 T4: gbrain-everything meta-pack shape', () => {
     expect(byName.risk_assessment).toBe('scalar_brier');
   });
 });
+
+// #2117 — gbrain-base-v2 must ship the NER inference regexes. gbrain-base
+// (v1) ships 4 (founded/invested_in/advises/works_at); pre-fix v2 shipped
+// ZERO, so extract-ner returned pack_unavailable and NER was inert for any
+// brain on the default successor pack. The explicit `phases: []` documents
+// that lens-pack cycle phases (extract_atoms, synthesize_concepts) stay
+// opt-in via lens packs or a manifest edit.
+describe('#2117: gbrain-base-v2 ships link-inference regexes + explicit phases', () => {
+  const pack = loadPack('gbrain-base-v2');
+
+  test('version bumped to 1.1.0 (regex + phases addition propagates by name)', () => {
+    expect(pack.version).toBe('1.1.0');
+  });
+
+  test('declares the 4 v1 inference regexes (founded/invested_in/advises/works_at)', () => {
+    for (const name of ['founded', 'invested_in', 'advises', 'works_at']) {
+      const lt = pack.link_types.find((l) => l.name === name);
+      expect(lt).toBeDefined();
+      const inference = lt?.inference as { regex?: string } | undefined;
+      expect(typeof inference?.regex).toBe('string');
+      expect(inference!.regex!.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('declares an explicit (empty) phases list — lens packs opt in', () => {
+    expect(pack.phases).toBeDefined();
+    expect(pack.phases).toEqual([]);
+  });
+});

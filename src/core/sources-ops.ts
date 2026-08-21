@@ -38,7 +38,7 @@
 
 import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
-import { isPathContained } from './path-confine.ts';
+import { isPathContained, msysToNativePath } from './path-confine.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import {
@@ -371,16 +371,42 @@ export async function addSource(
 ): Promise<SourceRow> {
   validateSourceId(opts.id);
 
+  // gbrain#2955: normalize a Git Bash / MSYS drive path (`/c/Users/x`,
+  // `/cygdrive/c/x`) to native Windows form BEFORE the overlap check and the
+  // INSERT — otherwise the recorded local_path later join-resolves to a
+  // phantom `C:\c\Users\x` and sync/write-through silently miss the real
+  // directory. Identity on POSIX and for already-native paths.
+  if (opts.localPath) {
+    opts = { ...opts, localPath: msysToNativePath(opts.localPath) };
+  }
+
   // Q4: pre-flight collision check before any clone work.
-  const existing = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id = $1`,
+  const existing = await engine.executeRaw<{ id: string; local_path: string | null }>(
+    `SELECT id, local_path FROM sources WHERE id = $1`,
     [opts.id],
   );
-  if (existing.length > 0) {
+  // #3903: attach, don't collide. `gbrain sync --source X` on a path-less
+  // source prints "Run: gbrain sources add X --path <path>" — so when the
+  // existing row has NO local_path and the caller supplies exactly a --path
+  // (no --url, no --kind github), treat this as attaching a working tree to
+  // the existing row (non-destructive UPDATE) instead of demanding
+  // `sources remove --confirm-destructive`, which cascades page deletion.
+  const attachPath =
+    existing.length > 0 &&
+    existing[0]!.local_path === null &&
+    !!opts.localPath &&
+    !opts.remoteUrl &&
+    !opts.github;
+  if (existing.length > 0 && !attachPath) {
+    const pathNote = existing[0]!.local_path
+      ? ` with local_path ${existing[0]!.local_path}`
+      : '';
     throw new SourceOpError(
       'source_id_taken',
-      `Source id "${opts.id}" is already registered. ` +
-        `Use 'gbrain sources remove ${opts.id} --confirm-destructive' first, then re-add.`,
+      `Source id "${opts.id}" is already registered${pathNote}. ` +
+        `To replace it, run 'gbrain sources remove ${opts.id} --confirm-destructive' ` +
+        `first, then re-add — WARNING: remove permanently deletes every page ` +
+        `imported for this source.`,
     );
   }
 
@@ -561,16 +587,35 @@ export async function addSource(
           `register anyway and git-init later, pass --force.`,
       );
     }
-    const config: Record<string, unknown> = {};
-    if (opts.federated !== null && opts.federated !== undefined) {
-      config.federated = opts.federated;
+    if (attachPath) {
+      // #3903: non-destructive attach — the row already exists (path-less).
+      // local_path is set, and an explicitly-passed --name / --federated is
+      // applied too (silently dropping them would lie to the caller who
+      // typed them). Unmentioned fields, other config keys, and pages all
+      // survive. No JSON.stringify into ::jsonb — the federated flag merges
+      // via jsonb_build_object on a bound boolean.
+      await engine.executeRaw(
+        `UPDATE sources
+            SET local_path = $2,
+                name = COALESCE($3, name),
+                config = CASE WHEN $4::boolean IS NULL THEN config
+                              ELSE COALESCE(config, '{}'::jsonb)
+                                   || jsonb_build_object('federated', $4::boolean) END
+          WHERE id = $1`,
+        [opts.id, finalPath, opts.name ?? null, opts.federated ?? null],
+      );
+    } else {
+      const config: Record<string, unknown> = {};
+      if (opts.federated !== null && opts.federated !== undefined) {
+        config.federated = opts.federated;
+      }
+      const displayName = opts.name ?? opts.id;
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path, config)
+             VALUES ($1, $2, $3, $4::text::jsonb)`,
+        [opts.id, displayName, finalPath, JSON.stringify(config)],
+      );
     }
-    const displayName = opts.name ?? opts.id;
-    await engine.executeRaw(
-      `INSERT INTO sources (id, name, local_path, config)
-           VALUES ($1, $2, $3, $4::text::jsonb)`,
-      [opts.id, displayName, finalPath, JSON.stringify(config)],
-    );
   }
 
   const created = await fetchSourceRow(engine, opts.id);

@@ -1,8 +1,9 @@
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
 import { fileURLToPath } from 'url';
 import { isAbsolute, join, resolve as resolvePath } from 'path';
 import { RESOLVER_FILENAMES, hasResolverFile } from './resolver-filenames.ts';
 import { isPathContained } from './path-confine.ts';
+import { parseSkillFrontmatter } from './skill-frontmatter.ts';
 
 /**
  * Walk up from `startDir` looking for a `skills/` directory that
@@ -22,6 +23,43 @@ export function findRepoRoot(startDir: string = process.cwd()): string | null {
     dir = parent;
   }
   return null;
+}
+
+/**
+ * True when `dir` is a usable trigger-only skills catalog. Frontmatter
+ * `triggers:` are the canonical routing surface for modern skillpacks, so an
+ * explicit operator override must not require RESOLVER.md / AGENTS.md.
+ */
+function hasFrontmatterTriggerSkill(dir: string): boolean {
+  if (!existsSync(dir)) return false;
+
+  let dirents: Dirent[];
+  try {
+    dirents = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) continue;
+    const name = dirent.name;
+    if (name.startsWith('_') || name.startsWith('.')) continue;
+    if (name.includes('/') || name.includes('\\')) continue;
+
+    // Directory names come from readdirSync(dir), are separator-checked above,
+    // and are confined to explicit operator-selected skills catalogs.
+    const skillPath = join(dir, name, 'SKILL.md'); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    if (!existsSync(skillPath)) continue;
+
+    try {
+      const parsed = parseSkillFrontmatter(readFileSync(skillPath, 'utf-8'));
+      if (parsed?.triggers && parsed.triggers.length > 0) return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -126,7 +164,8 @@ export function autoDetectSkillsDir(
   if (env.GBRAIN_SKILLS_DIR) {
     const explicit = isAbsolute(env.GBRAIN_SKILLS_DIR)
       ? env.GBRAIN_SKILLS_DIR
-      : resolvePath(startDir, env.GBRAIN_SKILLS_DIR);
+      // GBRAIN_SKILLS_DIR is an explicit operator override for local skills discovery.
+      : resolvePath(startDir, env.GBRAIN_SKILLS_DIR); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
     if (hasResolverFile(explicit)) {
       return { dir: explicit, source: 'env_explicit' };
     }
@@ -239,8 +278,20 @@ export function autoDetectSkillsDirReadOnly(
   startDir: string = process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
 ): SkillsDirDetection {
+  if (env.GBRAIN_SKILLS_DIR) {
+    const explicit = isAbsolute(env.GBRAIN_SKILLS_DIR)
+      ? env.GBRAIN_SKILLS_DIR
+      // GBRAIN_SKILLS_DIR is an explicit operator override for local skills discovery.
+      : resolvePath(startDir, env.GBRAIN_SKILLS_DIR); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    if (hasResolverFile(explicit) || hasFrontmatterTriggerSkill(explicit)) {
+      return { dir: explicit, source: 'env_explicit' };
+    }
+    return { dir: null, source: 'env_explicit' };
+  }
+
   const primary = autoDetectSkillsDir(startDir, env);
   if (primary.dir) return primary;
+  if (primary.source === 'env_explicit') return primary;
 
   // Tier-5 install-path fallback: walk up from this module's install
   // location. Gate with isGbrainRepoRoot so we don't false-positive when

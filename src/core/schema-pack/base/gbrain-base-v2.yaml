@@ -26,7 +26,7 @@
 
 api_version: gbrain-schema-pack-v1
 name: gbrain-base-v2
-version: 1.0.0
+version: 1.1.0
 description: 14-type DRY/MECE canonical taxonomy + `note` catch-all (15 total). Successor to gbrain-base. Issue #1479.
 gbrain_min_version: 0.42.0
 extends: null
@@ -36,6 +36,12 @@ takes_kinds:
   - take
   - bet
   - hunch
+
+# #2117 — explicit: this pack declares NO lens-pack cycle phases.
+# extract_atoms / synthesize_concepts stay opt-in — activate a lens pack
+# that ships them (gbrain-creator, gbrain-everything) or add the phase
+# name to this list in a fork.
+phases: []
 
 migration_from:
   pack: gbrain-base
@@ -267,6 +273,29 @@ page_types:
     extractable: true
     expert_routing: false
 
+  # #2184 — conversation-shaped types carried over from gbrain-base.
+  # The conversation-facts pipeline (ALLOWED_TYPES in
+  # src/core/facts/conversation-types.ts) walks pages by these exact
+  # type names; leaving them undeclared sent them through the D12
+  # catch-all (→ note), silently emptying the extraction backlog after
+  # a pack upgrade.
+  - name: meeting
+    primitive: temporal
+    path_prefixes:
+      - meetings/
+      - meeting/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
+  - name: conversation
+    primitive: temporal
+    path_prefixes:
+      - conversations/
+    aliases: []
+    extractable: true
+    expert_routing: false
+
   - name: writing
     primitive: media
     path_prefixes:
@@ -326,12 +355,25 @@ link_types:
     inverse: relates_to
   - name: mentions
   - name: discusses
+  # #2117 — NER inference regexes carried over verbatim from gbrain-base
+  # (v1). Without them extract-ner has no patterns to match and returns
+  # pack_unavailable, leaving the NER pipeline inert on this pack.
   - name: founded
     inverse: founded_by
+    inference:
+      regex: \b(founded|founder of|co-?founded|started)\b
   - name: works_at
     inverse: employs
+    inference:
+      regex: \b(works? at|employed by|works? for|joined|hired by|ceo of|cto of|cmo of)\b
   - name: invested_in
     inverse: investor_of
+    inference:
+      regex: \b(invested in|backed|seeded|funded|wrote a check)\b
+  - name: advises
+    inverse: advised_by
+    inference:
+      regex: \b(advises|advisor|advising|advisor to)\b
   - name: sourced_from
   - name: derived_from
   - name: supersedes

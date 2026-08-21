@@ -306,6 +306,42 @@ describe('applyRetrievalUpgrade — state machine + atomicity (D12, D18)', () =>
     expect(rows[0].indexdef).toMatch(/WHERE\s+\(?embedding_image IS NOT NULL\)?/i);
   });
 
+  // #4252 — DROP COLUMN embedding cascades away every index depending on the
+  // column, including the two partial btree indexes on `embedding IS NULL`
+  // (idx_chunks_embedding_null from migration v66, content_chunks_stale_idx
+  // from v103 / fresh schema). They are exactly what `embed --stale` — the
+  // migration's own recommended next step — needs. The transition must
+  // capture and replay every dependent index, not just the ones it names.
+  test('runSchemaTransition preserves partial stale indexes on content_chunks.embedding (#4252)', async () => {
+    await setLegacyDefaultConfig();
+    await seedPages(150);
+
+    // Fresh PGLite schema only carries content_chunks_stale_idx
+    // (pglite-schema.ts). Brains upgraded through migration v66 also have
+    // idx_chunks_embedding_null — create it to cover both index names.
+    await engine.executeRaw(
+      `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_null
+         ON content_chunks (page_id, chunk_index)
+         WHERE embedding IS NULL`,
+    );
+
+    const plan = await planRetrievalUpgrade(engine);
+    await applyRetrievalUpgrade(engine, plan);
+
+    const rows = await engine.executeRaw<{ indexname: string; indexdef: string }>(
+      `SELECT indexname, indexdef FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'content_chunks'
+          AND indexname IN ('idx_chunks_embedding_null', 'content_chunks_stale_idx')
+        ORDER BY indexname`,
+    );
+    const byName = new Map(rows.map(r => [r.indexname, r.indexdef]));
+    expect([...byName.keys()]).toEqual(['content_chunks_stale_idx', 'idx_chunks_embedding_null']);
+    // The replayed definitions must keep the partial predicate.
+    expect(byName.get('content_chunks_stale_idx')).toMatch(/WHERE\s+\(?embedding IS NULL\)?/i);
+    expect(byName.get('idx_chunks_embedding_null')).toMatch(/WHERE\s+\(?embedding IS NULL\)?/i);
+  });
+
   test('runSchemaTransition EXISTS guard short-circuits cleanly when embedding_image column is absent', async () => {
     // Simulate a (hypothetical) pre-v0.27.1 brain with no embedding_image
     // column. The fix's EXISTS probe must skip the image branch without

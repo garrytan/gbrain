@@ -21,10 +21,11 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { __takesWriteTesting } from '../src/core/takes-write.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { parseTakesFence, TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../src/core/takes-fence.ts';
 
@@ -215,6 +216,75 @@ describe('takes_resolve', () => {
     ] as const) {
       const res = await dispatchToolCall(engine, op, args as Record<string, unknown>, { ...STDIO_WORLD });
       expect(parsed(res).error).toBe('invalid_params');
+    }
+  });
+
+  test('#2955: resolveTakesFilePath heals a Git Bash /c/... local_path before join/containment (win32)', async () => {
+    // Raw, an msys-recorded local_path join-resolves to a phantom
+    // C:\c\Users\... on Windows — the take file lands nowhere real.
+    const msysEngine = {
+      executeRaw: async () => [{ local_path: '/c/Users/Tiger/Vault', source_path: null, source_uri: null }],
+    } as unknown as PGLiteEngine;
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const { path, writeRoot } = await __takesWriteTesting.resolveTakesFilePath(
+        msysEngine, '/unused-brain-dir', 'notes/msys-heal',
+      );
+      expect(writeRoot).toBe('C:\\Users\\Tiger\\Vault'); // healed, NOT the raw /c/... shape
+      expect(path.startsWith('C:\\Users\\Tiger\\Vault')).toBe(true);
+      expect(path).toContain('notes/msys-heal');
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+
+  test('#2955: identity on POSIX — a legitimate /c/... directory name is preserved', async () => {
+    const posixEngine = {
+      executeRaw: async () => [{ local_path: '/c/legit-posix-dir', source_path: null, source_uri: null }],
+    } as unknown as PGLiteEngine;
+    const { writeRoot } = await __takesWriteTesting.resolveTakesFilePath(
+      posixEngine, '/unused-brain-dir', 'notes/msys-heal',
+    );
+    expect(writeRoot).toBe('/c/legit-posix-dir');
+  });
+
+  test('resolves a Git-root source_path when local_path is a repo subdirectory', async () => {
+    const gitRoot = mkdtempSync(join(tmpdir(), 'gbrain-takes-scoped-source-'));
+    mkdirSync(join(gitRoot, '.git'));
+    const sourceRoot = join(gitRoot, 'public', 'changelog');
+    const slug = 'public/changelog/posts/scoped-take';
+    const sourcePath = `${slug}.md`;
+    const filePath = join(sourceRoot, 'posts', 'scoped-take.md');
+    mkdirSync(join(sourceRoot, 'posts'), { recursive: true });
+    writeFileSync(filePath, [
+      '# Scoped take',
+      '',
+      TAKES_FENCE_BEGIN,
+      '| # | claim | kind | who | weight | since | source |',
+      '|---|-------|------|-----|--------|-------|--------|',
+      '| 1 | The scoped path resolves | take | world | 0.8 | 2026-08 | test |',
+      TAKES_FENCE_END,
+      '',
+    ].join('\n'));
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'Scoped take' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = $1 WHERE source_id = 'default' AND slug = $2`,
+      [sourcePath, slug],
+    );
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [sourceRoot]);
+
+    try {
+      const res = await dispatchToolCall(engine, 'takes_resolve', {
+        slug, row_num: 1, quality: 'correct', evidence: 'verified',
+      }, { ...STDIO_WORLD });
+
+      expect(res.isError ?? false).toBe(false);
+      expect(readFileSync(filePath, 'utf-8')).toContain('| correct |');
+      expect(existsSync(join(sourceRoot, `${slug}.md`))).toBe(false);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      rmSync(gitRoot, { recursive: true, force: true });
     }
   });
 });
@@ -455,8 +525,8 @@ describe('takes-write adversarial regressions (F1 cross-holder / P1-2 containmen
       get(target, prop) {
         if (prop === 'executeRaw') {
           return async (sql: unknown, params: unknown) => {
-            if (typeof sql === 'string' && /SELECT local_path FROM sources/i.test(sql)) {
-              return [{ local_path: sourceRoot }];
+            if (typeof sql === 'string' && /SELECT\s+(?:s\.)?local_path[\s\S]+FROM sources/i.test(sql)) {
+              return [{ local_path: sourceRoot, source_path: null }];
             }
             return (target as unknown as { executeRaw: (s: unknown, p: unknown) => Promise<unknown> })
               .executeRaw(sql, params);
@@ -502,5 +572,81 @@ describe('concurrency [ENG-E4/EV11]', () => {
     expect(new Set(rows).size).toBe(rows.length); // sequential, never overwritten
     const fence = parseTakesFence(pageMd('notes/lockrace'));
     expect(fence.takes.length).toBe(rows.length);
+  });
+});
+
+// #3605: shared-repo pages whose on-disk file name differs from the slug.
+// The recorded `source_path` (or a contained `file://` `source_uri` from
+// `gbrain capture --file`) is the file of record; the slug-derived path
+// minted a stray twin on add and refused update/resolve with
+// takes_mirror_unavailable even though the page's file was right there.
+describe('takes-write recorded source_path routing (#3605)', () => {
+  test('add/update/resolve hit the recorded source_path file; no slug-derived stray', async () => {
+    const slug = 'people/jane-doe-3605';
+    const recorded = 'people/Jane Doe 3605.md';
+    const filePath = join(repo, recorded);
+    mkdirSync(join(repo, 'people'), { recursive: true });
+    writeFileSync(filePath, '# Jane Doe\n\nabout jane\n', 'utf-8');
+    await engine.putPage(slug, { type: 'person', title: 'Jane Doe', compiled_truth: 'about jane' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = $1 WHERE source_id = 'default' AND slug = $2`,
+      [recorded, slug],
+    );
+
+    const add = parsed(await dispatchToolCall(engine, 'takes_add', {
+      slug, claim: 'Jane ships weekly', kind: 'take', holder: 'world', weight: 0.6,
+    }, { ...STDIO_WORLD }));
+    expect(add.row_num).toBe(1);
+    // The fence landed in the recorded file, not a slug-derived twin.
+    expect(readFileSync(filePath, 'utf-8')).toContain('Jane ships weekly');
+    expect(existsSync(join(repo, `${slug}.md`))).toBe(false);
+
+    // update + resolve read the SAME file instead of refusing mirror_unavailable.
+    const upd = await dispatchToolCall(engine, 'takes_update', {
+      slug, row_num: add.row_num, weight: 0.9,
+    }, { ...STDIO_WORLD });
+    expect(upd.isError ?? false).toBe(false);
+    const fence = parseTakesFence(readFileSync(filePath, 'utf-8'));
+    expect(fence.takes[0].weight).toBeCloseTo(0.9);
+
+    const res = await dispatchToolCall(engine, 'takes_resolve', {
+      slug, row_num: add.row_num, quality: 'correct', evidence: 'verified',
+    }, { ...STDIO_WORLD });
+    expect(res.isError ?? false).toBe(false);
+    expect(readFileSync(filePath, 'utf-8')).toContain('| correct |');
+    expect(existsSync(join(repo, `${slug}.md`))).toBe(false);
+  });
+
+  test('a hostile recorded source_path is ignored — slug-derived fallback, nothing escapes', async () => {
+    const slug = 'notes/hostile-3605';
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'x' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_path = $1 WHERE source_id = 'default' AND slug = $2`,
+      ['../outside-3605.md', slug],
+    );
+    const add = parsed(await dispatchToolCall(engine, 'takes_add', {
+      slug, claim: 'falls back safely', kind: 'take', holder: 'world',
+    }, { ...STDIO_WORLD }));
+    expect(add.row_num).toBe(1);
+    expect(readFileSync(join(repo, `${slug}.md`), 'utf-8')).toContain('falls back safely');
+    expect(existsSync(join(repo, '..', 'outside-3605.md'))).toBe(false);
+  });
+
+  test('a captured page (file:// source_uri, no source_path) appends to the captured file', async () => {
+    const slug = 'notes/captured-3605';
+    const capturedAbs = join(repo, 'notes', 'Captured Note 3605.md');
+    mkdirSync(join(repo, 'notes'), { recursive: true });
+    writeFileSync(capturedAbs, '# Captured\n\nbody\n', 'utf-8');
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body' });
+    await engine.executeRaw(
+      `UPDATE pages SET source_uri = $1 WHERE source_id = 'default' AND slug = $2`,
+      [`file://${capturedAbs}`, slug],
+    );
+    const add = parsed(await dispatchToolCall(engine, 'takes_add', {
+      slug, claim: 'captured file is the file of record', kind: 'take', holder: 'world',
+    }, { ...STDIO_WORLD }));
+    expect(add.row_num).toBe(1);
+    expect(readFileSync(capturedAbs, 'utf-8')).toContain('captured file is the file of record');
+    expect(existsSync(join(repo, `${slug}.md`))).toBe(false);
   });
 });

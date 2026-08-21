@@ -20,9 +20,9 @@
  *      processor-skillpack hint
  *   4. Happy path: text/markdown → 200/202 with job_id in response
  *   5. Header overrides: X-Gbrain-Slug is forwarded; X-Gbrain-Source-Id
- *      tags the event
+ *      cannot override the OAuth client's trusted write source
  *   6. Idempotency: same content + same client → job_id returned twice
- *      should match (queue dedup on (client_id, content_hash))
+ *      should match (queue dedup on (client_id, write_source_id, content_hash))
  *
  * Mirrors the spawn + mint pattern from test/e2e/serve-http-oauth.test.ts
  * exactly so future maintainers see one pattern, not two.
@@ -31,7 +31,9 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { hasDatabase } from './helpers.ts';
+import { execSync } from 'child_process';
+import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { assertSafeE2eDatabaseUrl, hasDatabase } from './helpers.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -45,16 +47,24 @@ const BASE = `http://localhost:${PORT}`;
 
 describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
+  let workerProcess: ReturnType<typeof import('child_process').spawn> | null = null;
+  let queryEngine: PostgresEngine | null = null;
   let clientId: string | undefined;
   let clientSecret: string | undefined;
+  let scopedClient: { clientId: string; clientSecret: string } | undefined;
+  let archivedClient: { clientId: string; clientSecret: string } | undefined;
+  const registeredClientIds: string[] = [];
+  const liveSourceId = 'e2e-webhook-live';
+  const archivedSourceId = 'e2e-webhook-archived';
+  const rescopeTargetSourceId = 'e2e-webhook-rescope-target';
+  const fixtureSourceIds = [liveSourceId, archivedSourceId, rescopeTargetSourceId];
 
-  beforeAll(async () => {
-    const { execSync, spawn } = await import('child_process');
-
-    // Register a confidential client with both read and write scopes.
-    // The write scope is what POST /ingest gates on.
+  // Hoisted out of beforeAll so the rescope test can register its own client
+  // mid-run (it needs a client it is free to move between sources).
+  function registerClientForRescope(name: string, sourceId?: string): { clientId: string; clientSecret: string } {
+    const sourceArg = sourceId ? ` --source "${sourceId}"` : '';
     const regOutput = execSync(
-      'bun run src/cli.ts auth register-client e2e-webhook-test --grant-types client_credentials --scopes "read write"',
+      `bun run src/cli.ts auth register-client "${name}" --grant-types client_credentials --scopes "read write"${sourceArg}`,
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
@@ -62,8 +72,38 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     if (!idMatch || !secretMatch) {
       throw new Error('Failed to register webhook test client:\n' + regOutput);
     }
-    clientId = idMatch[1];
-    clientSecret = secretMatch[1];
+    registeredClientIds.push(idMatch[1]);
+    return { clientId: idMatch[1], clientSecret: secretMatch[1] };
+  }
+
+  beforeAll(async () => {
+    const { spawn } = await import('child_process');
+
+    // This file connects a PostgresEngine to the ambient DATABASE_URL and runs
+    // destructive SQL (initSchema, plus the afterAll fixture cleanup) without
+    // going through setupDB(), so it calls the production guard itself.
+    assertSafeE2eDatabaseUrl(process.env.DATABASE_URL!);
+    queryEngine = new PostgresEngine();
+    await queryEngine.connect({ database_url: process.env.DATABASE_URL! });
+    await queryEngine.initSchema();
+    await queryEngine.executeRaw(
+      `INSERT INTO sources (id, name, archived)
+       VALUES ($1, $1, false), ($2, $2, true), ($3, $3, false)
+       ON CONFLICT (id) DO UPDATE
+       SET name = EXCLUDED.name, archived = EXCLUDED.archived`,
+      [liveSourceId, archivedSourceId, rescopeTargetSourceId],
+    );
+
+    const registerClient = registerClientForRescope;
+
+    // Register unscoped, live-source-scoped, and archived-source-scoped clients.
+    // The write scope is what POST /ingest gates on.
+    const suffix = Date.now();
+    const defaultClient = registerClient(`e2e-webhook-default-${suffix}`);
+    clientId = defaultClient.clientId;
+    clientSecret = defaultClient.clientSecret;
+    scopedClient = registerClient(`e2e-webhook-scoped-${suffix}`, liveSourceId);
+    archivedClient = registerClient(`e2e-webhook-archived-${suffix}`, archivedSourceId);
 
     serverProcess = spawn(
       'bun',
@@ -106,6 +146,27 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     if (!ready) {
       throw new Error('Webhook E2E server failed to start within 15s.\nstderr: ' + stderr.slice(-500));
     }
+
+    workerProcess = spawn(
+      'bun',
+      ['run', 'src/cli.ts', 'jobs', 'work', '--concurrency', '1'],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          DATABASE_URL: process.env.DATABASE_URL ?? '',
+        },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      },
+    );
+    let workerStderr = '';
+    workerProcess.stderr?.on('data', (d: Buffer) => {
+      workerStderr += d.toString();
+    });
+    await new Promise(r => setTimeout(r, 1000));
+    if (workerProcess.exitCode !== null) {
+      throw new Error(`Webhook E2E worker exited during startup: ${workerStderr.slice(-500)}`);
+    }
   }, 30_000);
 
   afterAll(async () => {
@@ -114,10 +175,15 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
-    if (clientId) {
+    if (workerProcess && workerProcess.exitCode === null) {
+      workerProcess.kill('SIGTERM');
+      await new Promise(r => setTimeout(r, 1000));
+      if (workerProcess.exitCode === null) workerProcess.kill('SIGKILL');
+    }
+    for (const registeredClientId of registeredClientIds) {
       try {
         const { execSync } = await import('child_process');
-        execSync(`bun run src/cli.ts auth revoke-client "${clientId}"`, {
+        execSync(`bun run src/cli.ts auth revoke-client "${registeredClientId}"`, {
           cwd: process.cwd(),
           encoding: 'utf8',
           env: { ...process.env },
@@ -127,14 +193,31 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
         console.error(`[afterAll] revoke-client cleanup failed: ${(e as Error).message}`);
       }
     }
+    // Fixture rows live in the shared DATABASE_URL brain, so leaving them
+    // behind leaks into every other e2e suite (one of them is permanently
+    // archived) and into later runs of this file. Pages first: the scoped ones
+    // would cascade with their source, but the default-source ones would not.
+    try {
+      await queryEngine?.executeRaw(`DELETE FROM pages WHERE slug LIKE 'webhook/test/%'`);
+      await queryEngine?.executeRaw(`DELETE FROM sources WHERE id = ANY($1::text[])`, [fixtureSourceIds]);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`[afterAll] fixture cleanup failed: ${(e as Error).message}`);
+    }
+    await queryEngine?.disconnect();
   }, 30_000);
 
   // Helper — mint a token with a specific scope subset.
-  async function mintToken(scope = 'read write'): Promise<string> {
+  async function mintToken(
+    scope = 'read write',
+    credentials?: { clientId: string; clientSecret: string },
+  ): Promise<string> {
+    const tokenClientId = credentials?.clientId ?? clientId;
+    const tokenClientSecret = credentials?.clientSecret ?? clientSecret;
     const res = await fetch(`${BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}&scope=${encodeURIComponent(scope)}`,
+      body: `grant_type=client_credentials&client_id=${tokenClientId}&client_secret=${tokenClientSecret}&scope=${encodeURIComponent(scope)}`,
     });
     expect(res.ok).toBe(true);
     const data = (await res.json()) as { access_token: string };
@@ -158,6 +241,28 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
       headers,
       body: body as BodyInit,
     });
+  }
+
+  async function waitForPage(
+    slug: string,
+    timeoutMs = 15_000,
+  ): Promise<{ source_id: string; source_kind: string | null; source_uri: string | null; ingested_via: string | null }> {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const rows = await queryEngine!.executeRaw<{
+        source_id: string;
+        source_kind: string | null;
+        source_uri: string | null;
+        ingested_via: string | null;
+      }>(
+        `SELECT source_id, source_kind, source_uri, ingested_via
+         FROM pages WHERE slug = $1`,
+        [slug],
+      );
+      if (rows[0]) return rows[0];
+      await new Promise(r => setTimeout(r, 100));
+    }
+    throw new Error(`Timed out waiting for ingested page '${slug}'`);
   }
 
   // =========================================================================
@@ -332,15 +437,20 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     // test/ingestion/ingest-capture.test.ts).
   });
 
-  test('X-Gbrain-Source-Id header is accepted', async () => {
-    const token = await mintToken('read write');
+  test('X-Gbrain-Source-Id header is accepted but non-authoritative', async () => {
+    const token = await mintToken('read write', scopedClient);
+    const slug = `webhook/test/header-source-${Date.now()}`;
     const res = await postIngest(
       token,
       'text/markdown',
       '# source-id header test',
-      { 'X-Gbrain-Source-Id': 'zapier-webhook' },
+      {
+        'X-Gbrain-Slug': slug,
+        'X-Gbrain-Source-Id': 'other',
+      },
     );
     expect([200, 202]).toContain(res.status);
+    expect((await waitForPage(slug)).source_id).toBe(liveSourceId);
   });
 
   test('X-Gbrain-Source-Uri header is accepted', async () => {
@@ -353,6 +463,127 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     );
     expect([200, 202]).toContain(res.status);
   });
+
+  // =========================================================================
+  // Trusted OAuth write-source attribution
+  // =========================================================================
+
+  test('source-scoped client writes the page under its trusted source', async () => {
+    const token = await mintToken('read write', scopedClient);
+    const slug = `webhook/test/scoped-${Date.now()}`;
+    const sourceUri = `https://example.com/scoped/${Date.now()}`;
+    const res = await postIngest(
+      token,
+      'text/markdown',
+      '# scoped OAuth source',
+      {
+        'X-Gbrain-Slug': slug,
+        'X-Gbrain-Source-Uri': sourceUri,
+      },
+    );
+    expect([200, 202]).toContain(res.status);
+
+    // The 202 names the routed destination in `write_source_id`; the legacy
+    // `source_id` field stays the EMITTER identity for back-compat. Asserting
+    // both pins the split — collapsing them would silently break either the
+    // new routing contract or the old field's meaning.
+    const body = (await res.json()) as { source_id: string; write_source_id: string };
+    expect(body.write_source_id).toBe(liveSourceId);
+    expect(body.source_id).toMatch(/^webhook-gbrain_cl_/);
+
+    const page = await waitForPage(slug);
+    expect(page.source_id).toBe(liveSourceId);
+    expect(page.source_kind).toBe('webhook');
+    expect(page.source_uri).toBe(sourceUri);
+    expect(page.ingested_via).toBe('ingest_capture');
+  });
+
+  test('unscoped client writes under default', async () => {
+    const token = await mintToken('read write');
+    const slug = `webhook/test/default-${Date.now()}`;
+    const res = await postIngest(
+      token,
+      'text/markdown',
+      '# unscoped OAuth source',
+      { 'X-Gbrain-Slug': slug },
+    );
+    expect([200, 202]).toContain(res.status);
+    expect(((await res.json()) as { write_source_id: string }).write_source_id).toBe('default');
+    expect((await waitForPage(slug)).source_id).toBe('default');
+  });
+
+  test('archived-source client falls back to default', async () => {
+    const token = await mintToken('read write', archivedClient);
+    const slug = `webhook/test/archived-${Date.now()}`;
+    const res = await postIngest(
+      token,
+      'text/markdown',
+      '# archived OAuth source',
+      { 'X-Gbrain-Slug': slug },
+    );
+    expect([200, 202]).toContain(res.status);
+    // Enqueue-time intent is the client's scoped source; the archived-source
+    // redirect happens later, in the job. The 202 therefore still names the
+    // requested source while the page lands under default.
+    expect(((await res.json()) as { write_source_id: string }).write_source_id).toBe(archivedSourceId);
+    expect((await waitForPage(slug)).source_id).toBe('default');
+  });
+
+  test('an unscoped client cannot opt into a real source via X-Gbrain-Source-Id', async () => {
+    // Sharper than the header test above: the header names a genuinely
+    // REGISTERED, LIVE source the caller was never granted. If the header ever
+    // regains routing power, this is the privilege escalation it buys.
+    const token = await mintToken('read write');
+    const slug = `webhook/test/header-escalation-${Date.now()}`;
+    const res = await postIngest(
+      token,
+      'text/markdown',
+      '# header escalation attempt',
+      { 'X-Gbrain-Slug': slug, 'X-Gbrain-Source-Id': liveSourceId },
+    );
+    expect([200, 202]).toContain(res.status);
+    expect(((await res.json()) as { write_source_id: string }).write_source_id).toBe('default');
+    expect((await waitForPage(slug)).source_id).toBe('default');
+  });
+
+  test('rescoping a client makes identical content land a NEW capture', async () => {
+    // The write source is part of the queue idempotency key. Without it, a
+    // client moved from source X to source Y would be deduped against its old
+    // X-bound job and its first post-rescope capture would never reach Y.
+    const rescoped = registerClientForRescope(`e2e-webhook-rescope-${Date.now()}`, liveSourceId);
+    const content = `# rescope dedup ${Date.now()}`;
+    const slugA = `webhook/test/rescope-a-${Date.now()}`;
+
+    const first = await postIngest(
+      await mintToken('read write', rescoped),
+      'text/markdown',
+      content,
+      { 'X-Gbrain-Slug': slugA },
+    );
+    expect([200, 202]).toContain(first.status);
+    const firstBody = (await first.json()) as { job_id: number | string; write_source_id: string };
+    expect(firstBody.write_source_id).toBe(liveSourceId);
+    expect((await waitForPage(slugA)).source_id).toBe(liveSourceId);
+
+    execSync(
+      `bun run src/cli.ts auth rescope-client "${rescoped.clientId}" --source "${rescopeTargetSourceId}"`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+
+    const slugB = `webhook/test/rescope-b-${Date.now()}`;
+    const second = await postIngest(
+      await mintToken('read write', rescoped),
+      'text/markdown',
+      content,
+      { 'X-Gbrain-Slug': slugB },
+    );
+    expect([200, 202]).toContain(second.status);
+    const secondBody = (await second.json()) as { job_id: number | string; write_source_id: string };
+
+    expect(secondBody.job_id).not.toBe(firstBody.job_id);
+    expect(secondBody.write_source_id).toBe(rescopeTargetSourceId);
+    expect((await waitForPage(slugB)).source_id).toBe(rescopeTargetSourceId);
+  }, 40_000);
 
   // =========================================================================
   // Idempotency
@@ -369,8 +600,9 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
     expect([200, 202]).toContain(second.status);
     const secondBody = (await second.json()) as { job_id?: number | string };
 
-    // Queue idempotency_key: `ingest:webhook:${clientId}:${contentHash}` —
-    // same input, same key, MinionQueue.add returns the existing job.
+    // Queue idempotency_key:
+    // `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}` — same input
+    // and same write source, same key, MinionQueue.add returns the existing job.
     expect(secondBody.job_id).toBe(firstBody.job_id!);
   });
 

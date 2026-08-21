@@ -140,14 +140,58 @@ export class GitOperationError extends Error {
   }
 }
 
-export const GIT_ENV = {
-  // Confine to the gbrain SSRF model — no credential helpers, no SSH askpass,
-  // no GUI prompts. Inherit PATH so git itself is findable.
-  GIT_TERMINAL_PROMPT: '0',
-  GCM_INTERACTIVE: 'never',
-  GIT_ASKPASS: '/bin/false',
-  SSH_ASKPASS: '/bin/false',
-} as const;
+/**
+ * Stderr-first error detail for a failed git subprocess (#1315).
+ *
+ * execFileSync errors put the full argv echo FIRST
+ * ("Command failed: git -C <path> -c http.followRedirects=false …") and the
+ * real `fatal: …` stderr last — so every downstream `.slice(0, N)` (sync's
+ * warn-and-continue lines, phase breadcrumbs) truncated the message before
+ * the actual reason ever appeared. Lead with the captured stderr; fall back
+ * to the envelope message when stderr is empty (e.g. spawn failures).
+ */
+function gitErrorDetail(e: unknown): string {
+  const stderr = (e as { stderr?: unknown } | null)?.stderr;
+  if (stderr != null) {
+    const s = String(stderr).trim();
+    if (s) return s;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Build the strict no-prompt git env for the current (or given) platform.
+ *
+ * POSIX: confine to the gbrain SSRF model — no credential helpers, no SSH
+ * askpass, no GUI prompts (`/bin/false` fails any askpass invocation fast).
+ *
+ * win32 (#1315): `/bin/false` does not exist, so pointing GIT_ASKPASS at it
+ * makes every authed operation die with a confusing "could not run askpass"
+ * spawn error instead of failing auth cleanly. Drop both askpass overrides
+ * there and set `SSH_ASKPASS_REQUIRE=never` (OpenSSH 8.4+) so ssh never
+ * pops a GUI prompt; `GIT_TERMINAL_PROMPT=0` remains the no-terminal-prompt
+ * guard on every platform.
+ *
+ * Pure + platform-parameterized so the win32 shape is unit-testable on
+ * POSIX CI (no Windows runner exists).
+ */
+export function buildGitEnv(
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const env: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+  };
+  if (platform === 'win32') {
+    env.SSH_ASKPASS_REQUIRE = 'never';
+  } else {
+    env.GIT_ASKPASS = '/bin/false';
+    env.SSH_ASKPASS = '/bin/false';
+  }
+  return env;
+}
+
+export const GIT_ENV = buildGitEnv();
 
 /**
  * Auth-capable git env for the durability push/probe paths (v0.42.44).
@@ -208,7 +252,7 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   } catch (e) {
     throw new GitOperationError(
       'clone',
-      `git clone failed for ${url}: ${(e as Error).message}`,
+      `git clone failed for ${url}: ${gitErrorDetail(e)}`,
       e,
     );
   }
@@ -226,7 +270,7 @@ export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): v
   } catch (e) {
     throw new GitOperationError(
       'pull',
-      `git pull failed in ${repoPath}: ${(e as Error).message}`,
+      `git pull failed in ${repoPath}: ${gitErrorDetail(e)}`,
       e,
     );
   }
@@ -251,7 +295,7 @@ export function fetchRemote(repoPath: string, branch: string, opts: { timeoutMs?
   } catch (e) {
     throw new GitOperationError(
       'fetch',
-      `git fetch failed in ${repoPath}: ${(e as Error).message}`,
+      `git fetch failed in ${repoPath}: ${gitErrorDetail(e)}`,
       e,
     );
   }
@@ -423,7 +467,7 @@ function runGit(
     );
     return out.toString().trim();
   } catch (e) {
-    throw new GitOperationError(op, `git ${subcommand} failed in ${repoPath}: ${(e as Error).message}`, e);
+    throw new GitOperationError(op, `git ${subcommand} failed in ${repoPath}: ${gitErrorDetail(e)}`, e);
   }
 }
 

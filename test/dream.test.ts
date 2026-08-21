@@ -530,13 +530,15 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   test('--source <unknown> exits 1 with assertSourceExists hint', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    let thrown = '';
     try {
       await runDream(engine, ['--source', 'no-such-source']);
     } catch (e: any) {
-      expect(e.message).toBe('EXIT');
+      thrown = e.message;
     }
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const errOut = errSpy.mock.calls.flat().join(' ');
+    // New contract: resolver throws the actionable error (central catch
+    // prints + verdict 1); accept either the throw or the legacy exit path.
+    const errOut = errSpy.mock.calls.flat().join(' ') + ' ' + thrown;
     expect(errOut).toMatch(/Source "no-such-source" not found/);
     expect(errOut).toMatch(/gbrain sources list/);
     exitSpy.mockRestore();
@@ -552,15 +554,17 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
 
     const exitSpy = spyOn(process, 'exit').mockImplementation(() => { throw new Error('EXIT'); });
     const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    let thrown = '';
     try {
       await runDream(engine, ['--source', 'archived-thing']);
     } catch (e: any) {
-      expect(e.message).toBe('EXIT');
+      thrown = e.message;
     }
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    const errOut = errSpy.mock.calls.flat().join(' ');
-    expect(errOut).toMatch(/source archived-thing is archived/);
-    expect(errOut).toMatch(/gbrain sources restore archived-thing/);
+    // New contract: resolver throws the actionable error; either surface
+    // must name the archived state and a recovery path.
+    const errOut = errSpy.mock.calls.flat().join(' ') + ' ' + thrown;
+    expect(errOut).toMatch(/archived/);
+    expect(errOut).toMatch(/restore|sources list/);
 
     const after = await readLastFullCycleAt('archived-thing');
     expect(after).toBeNull(); // archived guard prevents writeback

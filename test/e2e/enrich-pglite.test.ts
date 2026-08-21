@@ -315,6 +315,37 @@ describe('runEnrichCore', () => {
     });
     expect(r.budget_exhausted).toBe(true);
     expect(r.pages_enriched).toBe(1); // only the first synthesized before the cap
+    // cost abort → reason surfaces so the CLI prints the raise-the-cap advice.
+    expect(r.budget_exhausted_reason).toBe('cost');
+  }, 30000);
+
+  test('no_pricing abort surfaces reason + model (#4032)', async () => {
+    await seedStub('people/p1', 'P1 Example', 'person');
+    await seedLinkInto('people/p1', 'meetings/m1', RICH_CONTEXT);
+
+    // TX2 shape: an unpriced model hard-fails reserve() on the FIRST call of a
+    // capped run. Pre-fix the CLI collapsed this into "Budget cap reached" —
+    // the reason/model never reached the result.
+    const noPricingSynth: SynthesizeFn = async () => {
+      throw new BudgetExhausted('no pricing for model', {
+        reason: 'no_pricing',
+        spent: 0,
+        cap: 5,
+        modelId: 'azure-openai:text-embedding-3-large',
+      });
+    };
+    const r = await runEnrichCore(engine, {
+      sourceId: 'default',
+      types: ['person'],
+      order: 'inbound-links',
+      thinThreshold: 400,
+      model: 'test:model',
+      workers: 1,
+      synthesizeFn: noPricingSynth,
+    });
+    expect(r.budget_exhausted).toBe(true);
+    expect(r.budget_exhausted_reason).toBe('no_pricing');
+    expect(r.budget_exhausted_model).toBe('azure-openai:text-embedding-3-large');
   }, 30000);
 
   test('budget abort flushes checkpoint so resume skips completed (P2#1)', async () => {

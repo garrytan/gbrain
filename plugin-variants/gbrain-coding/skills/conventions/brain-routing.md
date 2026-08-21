@@ -58,7 +58,7 @@ Do NOT switch brain when:
 | 3 | `dotfile` | `.gbrain-source` file in CWD or any ancestor directory |
 | 4 | `local_path` | A registered source whose `local_path` contains CWD (longest prefix wins) |
 | 5 | `brain_default` | Brain-level `sources.default` config key (explicit user intent) |
-| 5.5 | `sole_non_default` | When tiers 1–5 missed AND exactly one registered source has a `local_path` AND isn't `'default'`, auto-route to it. Fires a one-time stderr nudge per CLI invocation. Suppress with `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1`. |
+| 5.5 | `sole_non_default` | When tiers 1–5 missed AND exactly one registered source has a `local_path` AND isn't `'default'` AND the `'default'` source holds no active pages (the emptiness guard: a non-empty `'default'` suppresses the flip — resolution falls through to `seed_default` with a one-line stderr notice naming both sides), auto-route to it. Fires a one-time stderr nudge per CLI invocation. Suppress both notices with `GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1`. |
 | 6 | `seed_default` | Literal `'default'` (always exists post-migration v16) |
 
 **v0.41.13 tier 5.5 (`sole_non_default`):** added for single-source brains

@@ -19,7 +19,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   isTrustedDotfile, isPathContained, realpathOrResolve, isWriteTargetContained,
-  resolvedPrefixContained,
+  resolvedPrefixContained, msysToNativePath,
 } from '../src/core/path-confine.ts';
 import { validateSlug } from '../src/core/utils.ts';
 import { resolveSourceId } from '../src/core/source-resolver.ts';
@@ -364,5 +364,59 @@ describe('resolvedPrefixContained — win32 shapes (gbrain#4103)', () => {
   test('POSIX shapes still hold through the same core', () => {
     expect(resolvedPrefixContained('/brain/pages/a.md', '/brain', '/')).toBe(true);
     expect(resolvedPrefixContained('/brainstorm/a.md', '/brain', '/')).toBe(false);
+  });
+});
+
+// ── msysToNativePath — gbrain#2955 (Git Bash / MSYS local_path healing) ─────
+//
+// On Windows, a `sources add --path` run from Git Bash / MSYS records an
+// msys-style local_path like `/c/Users/Tiger/Vault`. Later,
+// `path.win32.resolve('C:\\cwd', '/c/Users/Tiger/Vault')` joins it as
+// `C:\c\Users\Tiger\Vault` — a phantom path that never exists, so every
+// write-through / sync silently misses the real vault. The helper is a pure
+// function taking `platform` explicitly so the win32 branch is testable on
+// POSIX CI (same pattern as resolvedPrefixContained above).
+
+describe('msysToNativePath — gbrain#2955', () => {
+  test('win32: /c/… → C:\\… (the exact phantom-path shape)', () => {
+    expect(msysToNativePath('/c/Users/Tiger/Vault', 'win32')).toBe('C:\\Users\\Tiger\\Vault');
+  });
+
+  test('win32: /cygdrive/c/… → C:\\…', () => {
+    expect(msysToNativePath('/cygdrive/c/Users/Tiger/Vault', 'win32')).toBe('C:\\Users\\Tiger\\Vault');
+  });
+
+  test('win32: other drive letters, uppercased', () => {
+    expect(msysToNativePath('/d/repo', 'win32')).toBe('D:\\repo');
+    expect(msysToNativePath('/D/repo', 'win32')).toBe('D:\\repo');
+  });
+
+  test('win32: bare drive root /c → C:\\', () => {
+    expect(msysToNativePath('/c', 'win32')).toBe('C:\\');
+    expect(msysToNativePath('/cygdrive/c', 'win32')).toBe('C:\\');
+  });
+
+  test('win32: already-native paths are identity', () => {
+    expect(msysToNativePath('C:\\Users\\Tiger\\Vault', 'win32')).toBe('C:\\Users\\Tiger\\Vault');
+    expect(msysToNativePath('C:/Users/Tiger/Vault', 'win32')).toBe('C:/Users/Tiger/Vault');
+    expect(msysToNativePath('\\\\server\\share\\brain', 'win32')).toBe('\\\\server\\share\\brain');
+  });
+
+  test('win32: non-drive absolute paths are identity (no false conversion)', () => {
+    expect(msysToNativePath('/foo/bar', 'win32')).toBe('/foo/bar');
+    expect(msysToNativePath('/cygdrive/notadrive/x', 'win32')).toBe('/cygdrive/notadrive/x');
+    expect(msysToNativePath('relative/path', 'win32')).toBe('relative/path');
+    expect(msysToNativePath('', 'win32')).toBe('');
+  });
+
+  test('POSIX platforms: pure identity — /c/… is a legitimate directory there', () => {
+    expect(msysToNativePath('/c/Users/Tiger/Vault', 'linux')).toBe('/c/Users/Tiger/Vault');
+    expect(msysToNativePath('/cygdrive/c/x', 'darwin')).toBe('/cygdrive/c/x');
+  });
+
+  test('default platform is process.platform (identity on POSIX CI)', () => {
+    if (process.platform !== 'win32') {
+      expect(msysToNativePath('/c/Users/Tiger/Vault')).toBe('/c/Users/Tiger/Vault');
+    }
   });
 });

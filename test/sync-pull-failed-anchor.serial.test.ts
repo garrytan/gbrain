@@ -120,10 +120,32 @@ describe('#3068: failed git pull + zero imports must not report up_to_date', () 
     await new Promise((r) => setTimeout(r, 1100));
 
     // Pre-fix this reported `up_to_date`, bumped last_sync_at, and exited clean
-    // forever — the #3068 silent wedge.
-    const wedged = await performSync(engine, { repoPath: mirror, ...SYNC_OPTS });
+    // forever — the #3068 silent wedge. Capture stderr for the #1315 assertion
+    // below (serr routes through console.error; belt-and-braces also capture
+    // raw stderr writes).
+    const errLines: string[] = [];
+    const origConsoleError = console.error;
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    console.error = (...args: unknown[]) => { errLines.push(args.map(String).join(' ')); };
+    (process.stderr as unknown as { write: (chunk: unknown) => boolean }).write =
+      (chunk: unknown) => { errLines.push(String(chunk)); return true; };
+    let wedged;
+    try {
+      wedged = await performSync(engine, { repoPath: mirror, ...SYNC_OPTS });
+    } finally {
+      console.error = origConsoleError;
+      process.stderr.write = origStderrWrite;
+    }
     expect(wedged.status).toBe('partial');
     expect(wedged.reason).toBe('pull_failed');
+
+    // #1315: the warn-and-continue line must carry the REAL git stderr
+    // ("fatal: …"), not a truncated "Command failed: git -C <argv…>" envelope
+    // whose slice ends before the reason ever appears.
+    const pullWarn = errLines.find((l) => l.includes('Warning: git pull failed'));
+    expect(pullWarn).toBeDefined();
+    expect(pullWarn!).toMatch(/fatal:/);
+    expect(pullWarn!).not.toContain('Command failed');
     expect(wedged.added + wedged.modified + wedged.deleted + wedged.renamed).toBe(0);
     expect(wedged.fromCommit).toBe(afterFirst.last_commit);
     expect(wedged.toCommit).toBe(afterFirst.last_commit ?? '');

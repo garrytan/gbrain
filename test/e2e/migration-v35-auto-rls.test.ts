@@ -140,9 +140,12 @@ describeE2E('migration v35: auto_rls_event_trigger', () => {
   test('replay idempotency: re-running migration leaves exactly one trigger', async () => {
     const conn = getConn();
     expect(v35Sql.length).toBeGreaterThan(0);
-    // Re-execute the entire v35 SQL. The DROP EVENT TRIGGER IF EXISTS +
-    // CREATE EVENT TRIGGER pattern must be a clean round-trip. The backfill
-    // DO block runs again too, but is a no-op since RLS is now on everywhere.
+    // Re-execute the entire v35 SQL. The create-if-absent pattern (#3603 —
+    // no DROP+CREATE; both objects are gated on existence probes) must
+    // converge as a no-op. The backfill DO block runs again too, but is a
+    // no-op since RLS is now on everywhere. Oid stability (proving the
+    // trigger is genuinely untouched) is pinned in
+    // test/e2e/migration-v35-event-trigger.test.ts.
     await conn.unsafe(v35Sql);
 
     const triggers = await conn`

@@ -45,6 +45,29 @@ export const ollama: Recipe = {
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,
     },
+    expansion: {
+      models: ['qwen2.5-coder:14b'],
+      cost_per_1m_tokens_usd: 0,
+      price_last_verified: '2026-06-26',
+    },
+    chat: {
+      // Model ids are user-managed; this informational default makes the chat
+      // capability visible in provider discovery without constraining custom tags.
+      models: ['qwen2.5-coder:14b'],
+      // Chat completion is provider-wide, but tool support varies by loaded
+      // model. Keep the subagent capability gate conservative.
+      supports_tools: false,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      // Provider-wide routing ceiling only; Ollama still enforces each loaded
+      // model's actual context window at request time.
+      max_context_tokens: 128_000,
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-08-18',
+      // Local cold starts can exceed the generic 5-second provider probe.
+      default_timeout_ms: 180_000,
+    },
   },
-  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` and `ollama serve`.',
+  setup_hint: 'Install Ollama from https://ollama.ai, then `ollama pull nomic-embed-text` for embeddings and `ollama pull qwen2.5-coder:14b` for local chat. Start it with `ollama serve`. Custom local model tags are accepted.',
 };

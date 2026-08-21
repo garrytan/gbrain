@@ -253,22 +253,37 @@ export async function runRemediation(
       hooks.onStepStart?.(stepCount, totalSteps, step);
       try {
         const isProtected = !!step.protected;
-        const job = await queue.add(
-          step.job,
-          { ...step.params, doctor_run_id: doctorRunId },
-          {
-            queue: 'default',
-            idempotency_key: step.idempotency_key,
-            max_attempts: 2,
-            maxWaiting: 1,
-          },
-          isProtected ? { allowProtectedSubmit: true } : undefined,
-        );
+        const submitWith = (key: string) =>
+          queue.add(
+            step.job,
+            { ...step.params, doctor_run_id: doctorRunId },
+            {
+              queue: 'default',
+              idempotency_key: key,
+              max_attempts: 2,
+              maxWaiting: 1,
+            },
+            isProtected ? { allowProtectedSubmit: true } : undefined,
+          );
+        let job = await submitWith(step.idempotency_key);
+        let dedupedJobId: number | undefined;
+        if (job.coalesced && (job.status === 'completed' || job.status === 'failed')) {
+          // #3626: the content-hash key never rotates and the queue frees a
+          // key only for dead/cancelled rows — a completed/failed row from a
+          // PRIOR run holds it forever, so every later --remediate "ran" this
+          // step as an instant no-op against the old terminal row. Rotate
+          // ONCE onto this run's id so the work actually re-executes.
+          // Waiting/active rows still coalesce (dedupe onto in-flight work).
+          dedupedJobId = job.id;
+          job = await submitWith(`${step.idempotency_key}:r:${doctorRunId}`);
+        }
         const submittedResult: StepResult = {
           step: stepCount,
           id: step.id,
           job_id: job.id,
           status: 'submitted',
+          ...(job.coalesced === true ? { coalesced: true } : {}),
+          ...(dedupedJobId !== undefined ? { deduped_job_id: dedupedJobId } : {}),
         };
         submitted.push(submittedResult);
 

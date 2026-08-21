@@ -934,10 +934,17 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
     if (legacyRows.length > 0) {
       // For legacy tokens, name = clientId = clientName (single identifier).
-      // Update last_used_at
-      await this.sql`
-        UPDATE access_tokens SET last_used_at = now() WHERE token_hash = ${tokenHash}
-      `;
+      // #2833: debounced fire-and-forget last_used_at update — only writes
+      // once per token per 60s, and NEVER blocks or fails verification (a
+      // slow/broken UPDATE used to hang or 401 every legacy-token request).
+      // Mirrors src/mcp/http-transport.ts validateToken; the SQL-level WHERE
+      // keeps the debounce race-tolerant under concurrent requests.
+      this.sql`
+        UPDATE access_tokens
+        SET last_used_at = now()
+        WHERE token_hash = ${tokenHash}
+          AND (last_used_at IS NULL OR last_used_at < now() - interval '60 seconds')
+      `.catch(() => { /* fire-and-forget */ });
       const name = legacyRows[0].name as string;
       const permissions = coerceLegacyPermissions(legacyRows[0].permissions);
       const { sourceId, allowedSources } = parseLegacyTokenScope(permissions?.source_id);

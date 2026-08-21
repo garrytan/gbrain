@@ -645,6 +645,42 @@ describe('gbrain-context engine', () => {
 
     expect(result.systemPromptAddition).toContain('**User awake:** no');
   });
+
+  // #2880: a content-less message (host sends { role } with no content) made
+  // the estimatedTokens reduce throw (JSON.stringify(undefined) → undefined →
+  // .length), and messages:undefined threw before that. assemble() must
+  // fail-open: it runs on EVERY turn, so a malformed host payload would
+  // otherwise take down the whole context pipeline.
+  it('does not throw on a content-less message; counts it as 0 tokens (#2880)', async () => {
+    tmpDir = makeWorkspace();
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+
+    const result = await engine.assemble({
+      sessionId: 'no-content',
+      messages: [
+        { role: 'user', content: 'abcd' },     // 4 chars → 1 estimated token
+        { role: 'assistant' } as any,          // content-less → 0 tokens
+      ],
+    });
+
+    expect(result.estimatedTokens).toBe(1);
+    expect(result.messages).toHaveLength(2);
+    expect(result.systemPromptAddition).toContain('Live Context');
+  });
+
+  it('does not throw when messages is undefined (#2880)', async () => {
+    tmpDir = makeWorkspace();
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+
+    const result = await engine.assemble({
+      sessionId: 'no-messages',
+      messages: undefined as any,
+    });
+
+    expect(result.estimatedTokens).toBe(0);
+    expect(result.messages).toEqual([]);
+    expect(result.systemPromptAddition).toContain('Live Context');
+  });
 });
 
 describe('invalid configured timezone degrades instead of throwing (RangeError guard)', () => {

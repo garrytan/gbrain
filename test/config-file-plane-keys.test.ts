@@ -69,3 +69,77 @@ describe('config set — file-plane bootstrap hook-lane keys [D18]', () => {
     });
   });
 });
+
+/**
+ * Vendor API keys are FILE-plane canonical too.
+ *
+ * `buildGatewayConfig` folds credentials into the gateway env from the file
+ * plane (config.json) + process env ONLY — it never reads the DB plane. So
+ * `gbrain config set openai_api_key sk-...` writing the DB was a silent
+ * no-op: it printed "Set openai_api_key = ***", exited 0, and `config get`
+ * read it straight back, while every provider call still failed with
+ * "requires OPENAI_API_KEY".
+ *
+ * This is the same bug class the v0.37.11.0 wave closed for embedding_model
+ * ("writes the DB plane, which the embed pipeline never reads — silent lie
+ * that took users hours to diagnose"). embedding_model can only be fixed by
+ * refusing, since changing it needs a wipe-and-reinit. A credential has no
+ * such constraint, so the better fix is to route the write to the plane the
+ * consumer actually reads.
+ *
+ * A null engine is the discriminator: the file-plane branch must return
+ * before any DB access, so these pass only if nothing reaches the engine.
+ */
+const GATEWAY_MAPPED_KEYS = [
+  'openai_api_key',
+  'anthropic_api_key',
+  'zeroentropy_api_key',
+  'openrouter_api_key',
+  'voyage_api_key',
+  'dashscope_api_key',
+  'google_api_key',
+] as const;
+
+describe('config set — vendor API keys are FILE-plane canonical', () => {
+  test('openai_api_key lands in config.json, is redacted in output, and never touches the engine', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-apikey-'));
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      const out = await captureLog(() => runConfig(noEngine, ['set', 'openai_api_key', 'sk-TEST-VALUE-123']));
+      expect(out).toContain('file plane');
+      // #892: the raw secret must never reach stdout/scrollback.
+      expect(out).not.toContain('sk-TEST-VALUE-123');
+      expect(out).toContain('***');
+
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { openai_api_key?: string };
+      expect(cfg.openai_api_key).toBe('sk-TEST-VALUE-123');
+    });
+  });
+
+  test('every gateway-mapped vendor key routes to the file plane', async () => {
+    for (const key of GATEWAY_MAPPED_KEYS) {
+      const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-apikey-all-'));
+      await withEnv({ GBRAIN_HOME: parent }, async () => {
+        await captureLog(() => runConfig(noEngine, ['set', key, `secret-for-${key}`]));
+        const cfgPath = join(parent, '.gbrain', 'config.json');
+        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>;
+        expect(cfg[key]).toBe(`secret-for-${key}`);
+      });
+    }
+  });
+
+  test('unset removes the key from the file plane, so set/unset round-trip on one plane', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-apikey-unset-'));
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      await captureLog(() => runConfig(noEngine, ['set', 'openai_api_key', 'sk-TO-BE-REMOVED']));
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      expect((JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>).openai_api_key)
+        .toBe('sk-TO-BE-REMOVED');
+
+      const out = await captureLog(() => runConfig(noEngine, ['unset', 'openai_api_key']));
+      expect(out).toContain('file plane');
+      expect((JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>).openai_api_key)
+        .toBeUndefined();
+    });
+  });
+});

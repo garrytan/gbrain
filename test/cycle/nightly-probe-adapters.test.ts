@@ -114,7 +114,15 @@ describe('nightly-probe-adapters: argv shape regression (codex round-2 #1)', () 
     const fs = require('node:fs');
     const source = fs.readFileSync(path, 'utf-8');
     // longmemeval adapter: first positional arg is fixturePath, then --output outputPath.
-    expect(source).toMatch(/runEvalLongMemEval\(\[args\.fixturePath, '--output', args\.outputPath\]\)/);
+    expect(source).toContain("[args.fixturePath, '--output', args.outputPath]");
+  });
+
+  test('runLongMemEvalForProbe passes the live search config snapshot via RunOpts', () => {
+    const path = require('node:path').resolve('src/core/cycle/nightly-probe-adapters.ts');
+    const fs = require('node:fs');
+    const source = fs.readFileSync(path, 'utf-8');
+
+    expect(source).toContain('searchConfigSnapshot: args.searchConfigSnapshot');
   });
 });
 

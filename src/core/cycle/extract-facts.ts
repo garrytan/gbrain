@@ -235,6 +235,15 @@ export async function runExtractFacts(
   // legacy row in any mounted source jammed extract_facts for every
   // source — a cross-source leak of one source's migration state into
   // another's cycle (CLAUDE.md source-isolation invariant).
+  //
+  // #2763: the count also requires the source to have a `local_path` —
+  // mirroring the v0_32_2 Phase B fenceability rule (its backfill SKIPS
+  // rows whose source has no local_path, `skipped_no_local_path`, yet
+  // still returns complete). On a thin-client / DB-only source the
+  // backstop writer keeps producing row_num-NULL rows whose entity_slug
+  // maps to a LIVE page; without the local_path check those rows
+  // tripped the guard forever with drain advice (`apply-migrations
+  // --force-retry 0.32.2`) that is a structural no-op for them.
   const legacy = await engine.executeRaw<{ n: string }>(
     `SELECT COUNT(*) AS n
        FROM facts f
@@ -247,6 +256,11 @@ export async function runExtractFacts(
            WHERE p.source_id = f.source_id
              AND p.slug = f.entity_slug
              AND p.deleted_at IS NULL
+        )
+        AND EXISTS (
+          SELECT 1 FROM sources s
+           WHERE s.id = f.source_id
+             AND s.local_path IS NOT NULL
         )`,
     [sourceId],
   );
@@ -440,26 +454,36 @@ export async function runExtractFacts(
     // unavailable (no API key configured), facts still insert with
     // NULL embeddings — drift_score gracefully returns null and
     // clustering falls back to recency.
-    if (isAvailable('embedding') && toInsert.length > 0) {
-      try {
-        const texts = toInsert.map(e => e.fact);
-        // #1972: forward the abort signal so a cancelled cycle's in-flight
-        // batch embed (a network call) is itself abortable, not just the loop.
-        const embeddings = await embed(texts, { abortSignal: opts.signal });
-        // Defensive: embed should return one vector per input; if the
-        // gateway returns a partial array (provider partial-batch retry
-        // returning fewer than requested), only fill what we have.
-        for (let i = 0; i < toInsert.length && i < embeddings.length; i++) {
-          toInsert[i].embedding = embeddings[i];
+    if (toInsert.length > 0) {
+      if (isAvailable('embedding')) {
+        try {
+          const texts = toInsert.map(e => e.fact);
+          // #1972: forward the abort signal so a cancelled cycle's in-flight
+          // batch embed (a network call) is itself abortable, not just the loop.
+          const embeddings = await embed(texts, { abortSignal: opts.signal });
+          // Defensive: embed should return one vector per input; if the
+          // gateway returns a partial array (provider partial-batch retry
+          // returning fewer than requested), only fill what we have.
+          for (let i = 0; i < toInsert.length && i < embeddings.length; i++) {
+            toInsert[i].embedding = embeddings[i];
+          }
+        } catch (err) {
+          // Embedding failure is non-fatal — facts still get inserted, just
+          // without embeddings. The warning is NOT swallowed (#3044): the cycle
+          // wrapper folds result.warnings into a 'warn' phase status with a
+          // warning count, so a billing/auth/rate-limit embed failure surfaces
+          // in the cycle report instead of hiding behind a green 'ok'.
+          result.warnings.push(
+            `${slug}: extract_facts batch embed failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-      } catch (err) {
-        // Embedding failure is non-fatal — facts still get inserted, just
-        // without embeddings. The warning is NOT swallowed (#3044): the cycle
-        // wrapper folds result.warnings into a 'warn' phase status with a
-        // warning count, so a billing/auth/rate-limit embed failure surfaces
-        // in the cycle report instead of hiding behind a green 'ok'.
+      } else {
+        // #2821: same fail-open contract, but never silently. Pre-fix only
+        // the embed() FAILURE path warned — an UNAVAILABLE gateway inserted
+        // NULL-embedding rows with a clean green 'ok', hiding the degraded
+        // consolidate/drift_score behavior until someone diffed the DB.
         result.warnings.push(
-          `${slug}: extract_facts batch embed failed: ${err instanceof Error ? err.message : String(err)}`,
+          `${slug}: embedding gateway unavailable — ${toInsert.length} fact(s) inserted with NULL embedding (won't cluster in consolidate until re-embedded)`,
         );
       }
     }

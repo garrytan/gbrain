@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000;
 // DEFAULT_FALLBACK from recency-decay.ts, mirrored to keep the test focused on
 // the function under test (the value an unpatched hybrid path would apply).
 const DEFAULT_FALLBACK_HL = 90;
-const DEFAULT_FALLBACK_COEFF = 0.5;
+const DEFAULT_FALLBACK_COEFF = 0.3; // #895: fallback lowered below the weakest mapped family
 
 /**
  * Minimal engine stub: only getEffectiveDates is exercised because the test

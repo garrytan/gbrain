@@ -698,9 +698,11 @@ async function runPipelineWithBody(
       // would write rows to a DB index whose fence is broken.
       continue;
     }
-    if (result.stubGuardBlocked) {
+    if (result.stubGuardBlocked || result.targetUnresolvable) {
       // v0.34.5: writeFactsToFence refused to spawn a phantom
       // unprefixed entity page (e.g. `jared.md` at brain root).
+      // #4204: or the shared page-target resolver found the source
+      // tree unusable (deleted dir / hostile source_path row).
       // Route these facts to the legacy DB-only path so they
       // aren't dropped — the slug stays attached but no markdown
       // file is created.
@@ -716,7 +718,7 @@ async function runPipelineWithBody(
           confidence: f.confidence,
           embedding: f.embedding ?? null,
         };
-        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard fallback for unprefixed entity slugs (no fenceable page)
+        const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback (no fenceable page or usable tree)
         fact_ids.push(legacyResult.id);
         if (legacyResult.status === 'inserted') inserted += 1;
         else if ((legacyResult.status as FactInsertStatus) === 'duplicate') duplicate += 1;

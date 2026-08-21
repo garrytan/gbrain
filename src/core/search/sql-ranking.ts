@@ -228,6 +228,48 @@ export function buildBestPerPagePoolCte(candidateCte: string): string {
 }
 
 // ============================================================
+// websearch_to_tsquery input bounds
+// ============================================================
+
+export const MAX_WEBSEARCH_QUERY_CHARS = 64_000;
+export const MAX_WEBSEARCH_QUERY_TERMS = 256;
+
+/**
+ * Bound caller text before feeding it to `websearch_to_tsquery`.
+ *
+ * Postgres can hit `stack depth limit exceeded` when websearch parses very
+ * large, high-term-count strings. Keep ordinary exact-title/body searches
+ * untouched, but cap pasted grounding blobs before they reach SQL.
+ */
+export function boundWebsearchQuery(query: string): string {
+  if (query.length <= MAX_WEBSEARCH_QUERY_CHARS) {
+    let terms = 0;
+    for (const _ of query.matchAll(/[\p{L}\p{N}]+/gu)) {
+      terms++;
+      if (terms > MAX_WEBSEARCH_QUERY_TERMS) break;
+    }
+    if (terms <= MAX_WEBSEARCH_QUERY_TERMS) return query;
+  }
+
+  let end = Math.min(query.length, MAX_WEBSEARCH_QUERY_CHARS);
+  let terms = 0;
+  for (const match of query.matchAll(/[\p{L}\p{N}]+/gu)) {
+    if (match.index >= MAX_WEBSEARCH_QUERY_CHARS) {
+      end = Math.min(end, match.index);
+      break;
+    }
+    terms++;
+    if (terms > MAX_WEBSEARCH_QUERY_TERMS) {
+      end = Math.min(end, match.index);
+      break;
+    }
+  }
+
+  const bounded = query.slice(0, end).trim();
+  return bounded.length > 0 ? bounded : query.slice(0, MAX_WEBSEARCH_QUERY_CHARS).trim();
+}
+
+// ============================================================
 // AND→OR keyword-recall fallback (fix/title-retrieval-arm, D2)
 // ============================================================
 

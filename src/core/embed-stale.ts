@@ -21,6 +21,11 @@ import type { BrainEngine } from './engine.ts';
 import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
+import { invalidateStaleSignatureEmbeddingsGuarded } from './embedding-invalidation.ts';
+import {
+  resolveActiveEmbeddingColumnFromEngine,
+  quoteIdentifier,
+} from './search/embedding-column.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
 
@@ -112,12 +117,55 @@ export interface EmbedStaleResult {
   chunksProcessed: number;
   /** Pages whose embeddings landed. */
   pagesProcessed: number;
+  /**
+   * #4283: chunks whose embeddings THIS run set to NULL (signature drift +
+   * content drift). Callers use `invalidated > 0 && embedded === 0` as the
+   * mass-null-without-replacement failure signal.
+   */
+  invalidated: number;
+  /**
+   * #4283: set when signature-drifted chunks existed but the pre-invalidation
+   * embedder probe failed, so nothing was NULLed. The run degrades to
+   * NULL-embedding-only staleness instead of destroying working vectors.
+   */
+  invalidationSkipped?: 'embedder_probe_failed';
   /** Last cursor reached. null iff zero stale chunks existed at start. */
   lastCursor: StaleCursor | null;
   /** True iff the loop exited because every stale chunk was processed. */
   done: boolean;
   /** True iff the loop exited because `signal.aborted` fired. */
   aborted: boolean;
+}
+
+/** Probe input for `probeEmbedder`. Exported so tests can detect probe calls. */
+export const EMBED_PROBE_TEXT = 'gbrain embedder preflight probe';
+
+/**
+ * #4283: live embedder health check, run BEFORE any signature-drift
+ * invalidation NULLs working vectors. A misresolved worker config (e.g. a
+ * temp GBRAIN_HOME resolving the compile-time default model with no API key)
+ * yields a signature that mismatches 100% of the corpus AND an embedder that
+ * cannot write a single vector — pre-probe, that combination stripped every
+ * embedding and reported success. The probe embeds one short string; when
+ * `signature` carries a parseable trailing `:<dims>`, the returned vector
+ * must match it (a wrong-dims vector would fail every upsert AFTER the
+ * NULLing). Any throw or malformed result → false.
+ */
+export async function probeEmbedder(
+  embedFn: (texts: string[], opts: { abortSignal?: AbortSignal }) => Promise<Float32Array[]>,
+  signature?: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  try {
+    const vecs = await embedFn([EMBED_PROBE_TEXT], { abortSignal: signal });
+    const vec = vecs?.[0];
+    if (!vec || vec.length === 0) return false;
+    const dims = signature ? Number(signature.split(':').pop()) : NaN;
+    if (Number.isFinite(dims) && dims > 0 && vec.length !== dims) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -163,6 +211,14 @@ export async function embedStalePages(
   const embedFn = opts.embedFn ?? (async (texts: string[], fnOpts: { abortSignal?: AbortSignal }) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
   const result = { embedded: 0, pagesProcessed: 0, aborted: false };
+  // S2: stale = NULL in the registry-ACTIVE column (the one upsertChunks
+  // writes) — the literal legacy `embedding` stays NULL forever on a
+  // registry-routed brain, which would re-embed every chunk on every phase
+  // end. Resolved once per call; fallback keeps the per-page log+skip
+  // contract (a broken registry surfaces at the upsert, loudly).
+  const staleColId = quoteIdentifier(
+    (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name,
+  );
   for (const slug of slugs) {
     if (opts.signal?.aborted) {
       result.aborted = true;
@@ -174,7 +230,7 @@ export async function embedStalePages(
         (await engine.executeRaw<{ chunk_index: number }>(
           `SELECT cc.chunk_index
              FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-            WHERE p.slug = $1 AND p.source_id = $2 AND cc.embedding IS NULL
+            WHERE p.slug = $1 AND p.source_id = $2 AND cc.${staleColId} IS NULL
             ORDER BY cc.chunk_index`,
           [slug, sourceId],
         )).map(r => r.chunk_index),
@@ -238,6 +294,7 @@ export async function embedStaleForSource(
     embedded: 0,
     chunksProcessed: 0,
     pagesProcessed: 0,
+    invalidated: 0,
     lastCursor: null,
     done: false,
     aborted: false,
@@ -247,12 +304,44 @@ export async function embedStaleForSource(
   // v0.41.31: invalidate embeddings stamped under a prior model signature so
   // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
   // untouched. Best-effort — a failure here must not abort the backfill.
+  //
+  // #4283: NULLing is conditional on a WORKING embedder. The drift pre-count
+  // (two cheap COUNTs; probe only fires when drift exists) keeps the probe's
+  // one embed call off the no-drift common path; a failed probe skips the
+  // invalidation entirely so a misresolved worker can't strip a corpus it
+  // can never re-embed.
   if (signature) {
     try {
-      await engine.invalidateStaleSignatureEmbeddings({ signature, sourceId });
+      const wide = await engine.countStaleChunks({ sourceId, signature });
+      const nullOnly = await engine.countStaleChunks({ sourceId });
+      if (wide - nullOnly > 0) {
+        if (await probeEmbedder(embedFn, signature, signal)) {
+          // #4306: guarded wrapper — never NULL embed_skip pages the stale
+          // selectors below can't re-embed.
+          result.invalidated += await invalidateStaleSignatureEmbeddingsGuarded(engine, { signature, sourceId });
+        } else {
+          result.invalidationSkipped = 'embedder_probe_failed';
+          process.stderr.write(
+            `\n  [embed-stale] ${wide - nullOnly} chunk(s) drifted from signature ${signature} but the embedder probe failed — ` +
+            `SKIPPING invalidation (existing vectors preserved). Check embedding provider config/credentials.\n`,
+          );
+        }
+      }
     } catch {
       // Non-fatal: fall through to the NULL-only stale loop.
     }
+  }
+
+  // #4246: invalidate chunks whose embedding was computed from a PREVIOUS
+  // chunk_text revision (embedded_text_hash <> md5(chunk_text)) so content
+  // edits flow through the NULL cursor. NOT probe-gated: the blast radius is
+  // bounded by real content edits (config-independent, unlike signature
+  // drift) and those vectors point at stale text either way. NULL hash
+  // (pre-v133 rows) is grandfathered.
+  try {
+    result.invalidated += await engine.invalidateContentDriftEmbeddings({ sourceId });
+  } catch {
+    // Non-fatal: fall through to the NULL-only stale loop.
   }
 
   for (;;) {

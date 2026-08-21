@@ -457,24 +457,62 @@ function scoreFromLines(
   let anchored = 0;
   let anchorCandidates = 0;
   let firstLineAnchored = false;
+  let firstAnchorIndex = -1;
+  // Only populated when score_continuations_min_distinct_speakers is set
+  // (avoids a Set + exec() per line for every other pattern, which only
+  // needs the boolean match `test()` already gave before this change).
+  const tracksDistinctSpeakers =
+    entry.score_continuations_min_distinct_speakers !== undefined;
+  const distinctSpeakers: Set<string> | undefined = tracksDistinctSpeakers
+    ? new Set()
+    : undefined;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     if (entry.quick_reject && !entry.quick_reject.test(line)) {
       continue;
     }
     anchorCandidates++;
-    if (entry.regex.test(line)) {
+    let isMatch: boolean;
+    if (distinctSpeakers) {
+      const m = entry.regex.exec(line);
+      isMatch = m !== null;
+      if (m) {
+        const speaker = m[entry.captures.speaker_group];
+        if (speaker) distinctSpeakers.add(speaker);
+      }
+    } else {
+      isMatch = entry.regex.test(line);
+    }
+    if (isMatch) {
       anchored++;
       if (index === 0) firstLineAnchored = true;
+      if (firstAnchorIndex === -1) firstAnchorIndex = index;
     }
   }
+
+  const distinctSpeakersOk =
+    entry.score_continuations_min_distinct_speakers === undefined ||
+    (distinctSpeakers?.size ?? 0) >=
+      entry.score_continuations_min_distinct_speakers;
+  // Bounds how far into the body the FIRST anchor may appear before the
+  // candidate-only density score activates. A genuine export's anchor
+  // grammar starts near the top of the body (allowing a short title/heading
+  // preamble); an anchor pair merely embedded deep inside an unrelated long
+  // document — which would otherwise get the SAME density immunity once
+  // both roles are present — sits far past this bound instead.
+  const preambleOk =
+    entry.score_continuations_max_preamble_lines === undefined ||
+    (firstAnchorIndex !== -1 &&
+      firstAnchorIndex <= entry.score_continuations_max_preamble_lines);
 
   if (
     entry.score_continuations_as_body &&
     entry.multi_line &&
     entry.quick_reject &&
     anchorCandidates > 0 &&
-    (anchored >= 2 || firstLineAnchored)
+    (anchored >= 2 || firstLineAnchored) &&
+    distinctSpeakersOk &&
+    preambleOk
   ) {
     return anchored / anchorCandidates;
   }

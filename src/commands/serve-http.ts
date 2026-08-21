@@ -12,7 +12,7 @@
 
 import express from 'express';
 import type { Socket } from 'net';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -519,7 +519,11 @@ export function parseCorsAllowlistOAuth(): Set<string> | null {
 /**
  * Build a `cors.CorsOptions['origin']` value from the allowlist. The cors
  * package accepts:
- *   - `false` → reject everything (no Allow-Origin header sent)
+ *   - `false` → NOT an Allow-Origin header of "none"; cors@2.8.x treats a
+ *     falsy `origin` option as "no CORS gate" and simply calls `next()`
+ *     without setting or short-circuiting anything (see the mismatch note on
+ *     `mountOAuthCorsGate` below). We keep `false` for the null-allowlist case
+ *     because the gate is enforced by `mountOAuthCorsGate`, not by cors.
  *   - `(origin, cb) => cb(null, boolean)` → dynamic per-request check
  * We use the function form when an allowlist is set so the value of the
  * Allow-Origin header echoes the request Origin (RFC 6454) instead of a
@@ -535,6 +539,45 @@ export function resolveCorsOrigin(allowlist: Set<string> | null): cors.CorsOptio
   return (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
     if (!origin) return cb(null, true);
     cb(null, allowlist.has(origin));
+  };
+}
+
+/**
+ * Wrap the OAuth `cors()` middleware so it OWNS the preflight response and a
+ * denied/default-deny origin can never fall through to a downstream handler
+ * that answers OPTIONS with `Access-Control-Allow-Origin: *`.
+ *
+ * Why this is necessary (#3845): the MCP SDK's `mcpAuthRouter` mounts a bare
+ * `cors()` (origin `*`) as the FIRST middleware on `/token`, `/revoke`, and
+ * `/register` (see @modelcontextprotocol/sdk auth/handlers/{token,revoke,
+ * register}). Our gate at `app.use('/token', cors(oauthOptions))` runs first,
+ * but when the origin is denied — either the allowlist is unset (origin
+ * `false`) or the request Origin is not on the allowlist — cors@2.8.x does NOT
+ * emit a header and does NOT short-circuit; it just calls `next()`. Control
+ * then reaches the SDK's bare `cors()`, which answers the OPTIONS preflight
+ * with `*`, leaking the endpoint surface + methods to any web origin and
+ * contradicting the documented default-deny posture.
+ *
+ * The wrapper closes that gap: cors() only reaches our callback when it did
+ * NOT short-circuit the preflight itself (i.e. the origin was denied or the
+ * request is a real, non-OPTIONS request). For a denied OPTIONS we terminate
+ * with a header-free 204 so the SDK's cors never runs; real requests fall
+ * through unchanged. Allowed origins are still short-circuited by cors() with
+ * the reflected Origin, exactly as before.
+ */
+export function mountOAuthCorsGate(options: cors.CorsOptions): RequestHandler {
+  const corsMiddleware = cors(options);
+  return (req: Request, res: Response, next: NextFunction) => {
+    corsMiddleware(req, res, (err?: unknown) => {
+      if (err) return next(err as Error);
+      if (req.method === 'OPTIONS') {
+        // Default-deny preflight: no Allow-Origin header, no fall-through.
+        res.statusCode = 204;
+        res.setHeader('Content-Length', '0');
+        return res.end();
+      }
+      return next();
+    });
   };
 }
 
@@ -965,10 +1008,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
   };
   app.use('/mcp', cors(corsOAuthOptions));
-  app.use('/token', cors(corsOAuthOptions));
   app.use('/authorize', cors(corsOAuthOptions));
-  app.use('/register', cors(corsOAuthOptions));
-  app.use('/revoke', cors(corsOAuthOptions));
+  // /token, /revoke and /register are shadowed by the MCP SDK's own bare
+  // `cors()` (origin `*`) mounted inside mcpAuthRouter. A denied preflight must
+  // be terminated here — a plain `cors(corsOAuthOptions)` would fall through to
+  // the SDK's `*` (#3845). /mcp and /authorize are not shadowed (no downstream
+  // cors), so they keep the plain gate.
+  app.use('/token', mountOAuthCorsGate(corsOAuthOptions));
+  app.use('/register', mountOAuthCorsGate(corsOAuthOptions));
+  app.use('/revoke', mountOAuthCorsGate(corsOAuthOptions));
 
   // #2179: capture the optional `token_ttl_seconds` DCR extension field
   // BEFORE the SDK's /register handler runs — its request schema strips
@@ -2157,6 +2205,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       cache.set(asset.path, buf);
       return buf;
     }
+    // Bare /admin (no trailing slash) never matches the '/admin/{*path}'
+    // pattern below — path-to-regexp requires the literal '/' that
+    // precedes the wildcard segment. The dev-path branch above doesn't need
+    // this: express.static() issues its own redirect-to-trailing-slash for
+    // a directory index request. Mirror that behavior explicitly here.
+    // Express route matching is non-strict by default, so the '/admin'
+    // pattern below also matches '/admin/' — guard on the exact path so
+    // it doesn't shadow the '/admin/{*path}' handler and redirect-loop.
+    app.get('/admin', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path !== '/admin') {
+        return next();
+      }
+      res.redirect('/admin/');
+    });
     app.get('/admin/{*path}', (req: Request, res: Response, next: NextFunction) => {
       if (req.path.startsWith('/admin/api/') || req.path === '/admin/events' || req.path === '/admin/login') {
         return next();
@@ -2590,6 +2652,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // gets parseable JSON back.
     try {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
+      // #2844: per-request teardown (SDK stateless pattern) — without it every POST /mcp leaks the transport+Server pair (~3GB/day RSS). Registered BEFORE connect/handleRequest so early disconnects and handleRequest throws still clean up; best-effort catches so cleanup never surfaces an unhandledRejection.
+      res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}); });
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
     } catch (e) {
@@ -2748,19 +2812,21 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const content = body.toString('utf8');
       const contentHash = computeContentHash(content);
       const sourceUri = (req.header('x-gbrain-source-uri') || `mcp-webhook:${authInfo.clientId}:${Date.now()}`).slice(0, 1024);
-      const sourceId = (req.header('x-gbrain-source-id') || `webhook-${authInfo.clientId}`).slice(0, 256);
+      const sourceId = `webhook-${authInfo.clientId}`.slice(0, 256);
       const callerSlug = req.header('x-gbrain-slug');
 
       // Slug-bound clients cannot use /ingest at all. The route hands its
       // payload to the ingest_capture minion handler, which deliberately
       // bypasses the put_page op layer — so no OperationContext exists and
-      // enforceClientSlugFence never runs, and because the payload is marked
-      // untrusted the handler also refuses to honor any source id, landing
-      // every write in the DEFAULT source. Fencing just the slug here would
-      // still write the right slug into the WRONG source, outside the
-      // client's grant. These clients have put_page over MCP, which enforces
-      // both the prefix fence and the source scope; webhook integrations use
-      // unbound clients.
+      // enforceClientSlugFence never runs. The caller-supplied
+      // X-Gbrain-Source-Id is still never honored, but the write source is now
+      // resolved server-side from the client's own OAuth scope, so the write
+      // does land inside the client's granted source. The fence gap is
+      // therefore the SLUG axis alone: without this 403 a bound client could
+      // write any slug within its source, which is exactly the binding it was
+      // given. These clients have put_page over MCP, which enforces both the
+      // prefix fence and the source scope; webhook integrations use unbound
+      // clients.
       const boundPrefixes = authInfo.boundSlugPrefixes;
       if (boundPrefixes || authInfo.fenceProjectionDegraded) {
         res.status(403).json({
@@ -2804,18 +2870,23 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       }
 
       try {
+        const writeSourceId = authInfo.sourceId ?? 'default';
         const job = await ingestQueue.add(
           'ingest_capture',
           {
             event,
             ...(callerSlug ? { slug: callerSlug } : {}),
+            sourceId: writeSourceId,
           },
           {
             // Idempotency: same content from the same client within the
             // queue's lifetime is a single job. Different content gets
             // different jobs. Daemon-side dedup catches the 24h window;
             // the queue-level idempotency catches simultaneous retries.
-            idempotency_key: `ingest:webhook:${authInfo.clientId}:${contentHash}`,
+            // The effective write source is part of the key: a client rescoped
+            // from source X to Y must land a NEW capture in Y rather than being
+            // deduped against its old X-bound job.
+            idempotency_key: `ingest:webhook:${authInfo.clientId}:${writeSourceId}:${contentHash}`,
             // Cap waiting jobs from a single client so a runaway integration
             // can't fill the queue.
             maxWaiting: 50,
@@ -2829,7 +2900,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
              VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
             [authInfo.clientId, agentName, 'webhook_ingest', latency, 'success'],
-            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id }],
+            // write_source_id is the security-relevant part of this request:
+            // which partition the capture was routed to. Without it the audit
+            // trail cannot answer "where did this client's writes land".
+            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId }],
           );
         } catch { /* best effort */ }
         broadcastEvent({
@@ -2844,7 +2918,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         res.status(202).json({
           job_id: job.id,
           content_hash: contentHash,
+          // Emitter identity (`webhook-<clientId>`), kept for back-compat.
           source_id: sourceId,
+          // The brain source this capture is routed to, resolved server-side
+          // from the client's OAuth scope. This is the routing decision the
+          // caller actually cares about; `source_id` above is NOT a partition.
+          // Enqueue-time intent: the write runs asynchronously after this 202,
+          // so a later source_fallback (see the ingest_capture job result) can
+          // still redirect it.
+          write_source_id: writeSourceId,
           message: 'Accepted. Event queued for ingestion.',
         });
       } catch (err) {
@@ -3190,5 +3272,23 @@ ${bootstrapFromEnv
 `);
   });
 
-  await waitForHttpServerLifecycle(httpServer);
+  // SIGTERM/SIGHUP route through process-cleanup's pass and then
+  // `process.exit`, which skips cli.ts's finally-teardown — so on those
+  // signals the PGLite write handle was never closed. An unclosed PGLite
+  // can leave the control file pointing at a checkpoint record whose WAL
+  // page never reached disk; every later start then dies with
+  // `PANIC: could not locate a valid checkpoint record` (surfaced as the
+  // misleading WASM-init hint) and the daemon crash-loops until a human
+  // intervenes. Registering the engine here gives abnormal termination
+  // the same clean close the SIGINT path already gets via the cli
+  // teardown. Deregistered on normal return so the cli finally remains
+  // the single owner of orderly shutdown.
+  const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', () =>
+    engine.disconnect(),
+  );
+  try {
+    await waitForHttpServerLifecycle(httpServer);
+  } finally {
+    deregisterEngineCleanup();
+  }
 }

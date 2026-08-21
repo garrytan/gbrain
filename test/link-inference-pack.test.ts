@@ -132,3 +132,28 @@ describe('frontmatterLinkTypeFromPack (T7b)', () => {
     expect(frontmatterLinkTypeFromPack(pack, 'person', 'company')).toBeNull();
   });
 });
+
+// #2117 — the bundled gbrain-base-v2 pack routes the four legacy NER verbs
+// through pack-declared regexes. Pre-fix v2 declared zero inference regexes,
+// so extract-ner returned pack_unavailable for every v2 brain while the
+// same text routed fine on gbrain-base.
+import { readFileSync } from 'node:fs';
+import { parseYamlMini } from '../src/core/schema-pack/index.ts';
+
+describe('#2117: gbrain-base-v2 NER verb routes', () => {
+  const p = new URL('../src/core/schema-pack/base/gbrain-base-v2.yaml', import.meta.url);
+  const v2 = parseSchemaPackManifest(parseYamlMini(readFileSync(p, 'utf-8')), {
+    path: p.pathname,
+  });
+
+  test('founded/invested_in/advises/works_at resolve via pack regexes', () => {
+    expect(inferLinkTypeFromPack(v2, 'person', 'co-founded Acme Corp last year')).toBe('founded');
+    expect(inferLinkTypeFromPack(v2, 'person', 'invested in Acme Series A')).toBe('invested_in');
+    expect(inferLinkTypeFromPack(v2, 'person', 'advises widget-co on hiring')).toBe('advises');
+    expect(inferLinkTypeFromPack(v2, 'person', 'works at widget-co')).toBe('works_at');
+  });
+
+  test('non-matching text still falls through to null', () => {
+    expect(inferLinkTypeFromPack(v2, 'person', 'a sentence with no verb signal')).toBeNull();
+  });
+});

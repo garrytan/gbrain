@@ -55,7 +55,7 @@ import { resolveModel, resolveModelDetailed, resolveEffectiveChatModel, resolveE
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
-import { hasAnthropicKey } from './anthropic-key.ts';
+import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
@@ -113,6 +113,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_EMBEDDING_DIMENSIONS,
   NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
+  LEGACY_DEFAULT_RERANKER_MODEL,
   renderCanonicalMigrationCommands,
 } from './defaults.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
@@ -120,12 +121,11 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
 // AND no explicit reranker_model is configured. Mode bundles' per-mode
 // `reranker_model` default to this same value but can be overridden.
-// v0.46.3: stays on the LEGACY zerank-2 until the September removal (reranker
-// split-default: existing ZE-keyed brains keep their working reranker until
-// the API dies; voyage-keyed NEW installs get an explicit
-// `search.reranker.model voyage:rerank-2.5` override written at init, and
-// keyed non-voyage installs get explicit `search.reranker.enabled false`).
-const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
+// v0.46.3: stays on the LEGACY zerank-2 until the September removal (split-default: existing
+// ZE-keyed brains keep their working reranker until the API dies; NEW installs get explicit
+// `search.reranker.*` config at init — `voyage:rerank-2.5` with a Voyage key, `enabled false`
+// otherwise). #3657 seam: ONE constant in defaults.ts, shared with the mode bundles.
+const DEFAULT_RERANKER_MODEL = LEGACY_DEFAULT_RERANKER_MODEL;
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
@@ -480,6 +480,7 @@ export function configureGateway(config: AIGatewayConfig): void {
     provider_chat_options: config.provider_chat_options,
     env: config.env,
   };
+  stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
   _modelCache.clear();
   _shrinkState.clear();
   warnRecipesMissingBatchTokens();
@@ -690,6 +691,7 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   _modelCache.clear();
   _shrinkState.clear();
   _embedTransport = embedMany;
@@ -3169,8 +3171,13 @@ export interface ChatOpts {
   maxTokens?: number;
   abortSignal?: AbortSignal;
   /**
-   * Anthropic-specific: cache the system prompt + last tool def. Silently
-   * ignored on providers without `supports_prompt_cache`.
+   * Ask for the stable prefix (system prompt + last tool def) to be cached.
+   * Silently ignored on providers whose recipe declares no prompt caching.
+   *
+   * Only Anthropic reads the resulting `cache_control` markers. Providers that
+   * cache prefixes automatically (OpenAI, DeepSeek) need no markers, and the
+   * Anthropic-namespace `providerOptions` this attaches never reach their
+   * request body — the AI SDK routes provider options by provider key.
    */
   cacheSystem?: boolean;
 }
@@ -3344,8 +3351,10 @@ function mapStopReason(
 
 /**
  * Run one chat completion turn. Provider-neutral wrapper over Vercel AI SDK's
- * `generateText`. Tool-use blocks are normalized; cache_control markers are
- * applied only on Anthropic when `cacheSystem: true`.
+ * `generateText`. Tool-use blocks are normalized. `cacheSystem: true` engages
+ * the caching path on any provider whose recipe declares prompt caching; the
+ * `cache_control` markers it attaches are read only by Anthropic, and are inert
+ * on providers that cache prefixes automatically.
  *
  * Crash-resumable replay is the caller's responsibility (subagent.ts persists
  * blocks via the provider-neutral schema landing in commit 2a).
@@ -3842,7 +3851,11 @@ export interface ToolLoopOpts {
   /** Per-turn max output tokens. Default 4096. */
   maxTokens?: number;
   abortSignal?: AbortSignal;
-  /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
+  /**
+   * Ask for the stable prefix (system + last tool) to be cached. Forwarded to
+   * `chat()`; see `ChatOpts.cacheSystem` for what each provider does with it.
+   * Silently ignored on recipes that declare no prompt caching.
+   */
   cacheSystem?: boolean;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */

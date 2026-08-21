@@ -446,6 +446,9 @@ export async function resolveModel(
  *
  *   - `unusable:no_tools` → fall back to TIER_DEFAULTS.subagent + warn (the
  *     loop literally cannot dispatch tools, so the resolved model is wrong)
+ *   - `unusable:no_subagent_loop` → fall back to TIER_DEFAULTS.subagent + warn
+ *     (the recipe declares tool_call_ids unstable across crash/replay, so the
+ *     loop can't reconcile — same refusal class as no_tools)
  *   - `unknown` → fall back to TIER_DEFAULTS.subagent + warn (unknown provider
  *     — defensive: don't burn money on a model we can't verify supports tools)
  *   - `degraded:no_caching` → return resolved; warn once per (source, model)
@@ -463,7 +466,7 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
   // (capabilities → model-resolver → recipes; this would create a cycle if
   // model-config itself were imported by recipes, which it isn't, but
   // defensive against future drift).
-  let verdict: 'ok' | 'degraded:no_caching' | 'degraded:no_parallel' | 'unusable:no_tools' | 'unknown';
+  let verdict: 'ok' | 'degraded:no_caching' | 'degraded:no_parallel' | 'unusable:no_tools' | 'unusable:no_subagent_loop' | 'unknown';
   try {
     // Synchronous-style import via require shim isn't available in ESM; the
     // helper is pure, so a synchronous static import is fine here. Pulling
@@ -479,16 +482,19 @@ function enforceSubagentCapable(resolved: string, tier: ModelTier | undefined, s
   }
 
   const key = `${source}:${resolved}`;
-  if (verdict === 'unusable:no_tools' || verdict === 'unknown') {
+  if (verdict === 'unusable:no_tools' || verdict === 'unusable:no_subagent_loop' || verdict === 'unknown') {
     if (!_subagentTierWarningsEmitted.has(key)) {
       _subagentTierWarningsEmitted.add(key);
       const reason = verdict === 'unusable:no_tools'
         ? `lacks tool-calling support`
-        : `is an unrecognized provider`;
+        : verdict === 'unusable:no_subagent_loop'
+          ? `declares the subagent loop unsupported (supports_subagent_loop: false)`
+          : `is an unrecognized provider`;
       process.stderr.write(
         `[models] tier.subagent resolved to "${resolved}" via "${source}", which ${reason}. ` +
         `The subagent tool loop cannot run on this model — falling back to ${TIER_DEFAULTS.subagent}. ` +
-        `Fix: gbrain config set models.tier.subagent <provider>:<model-with-tools>\n`,
+        `Fix: gbrain config set models.tier.subagent <provider>:<model> ` +
+        `(the provider's recipe must declare supports_subagent_loop: true)\n`,
       );
     }
     return TIER_DEFAULTS.subagent;

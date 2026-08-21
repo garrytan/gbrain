@@ -70,6 +70,7 @@ import {
   type OpCheckpointKey,
 } from '../core/op-checkpoint.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
+import { msysToNativePath } from '../core/path-confine.ts';
 import { type DbPacer, createDbPacer, createNoopPacer, observed } from '../core/db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../core/pace-mode.ts';
 import { AbortError } from '../core/abort-check.ts';
@@ -85,6 +86,9 @@ import {
   isDetachedHead,
   unique,
   resolveSlugByPathOrSourcePath,
+  resolveSlugsForRemovedPaths,
+  resolveRemovedPathSlug,
+  refusedRemovedPathMessage,
   createSyncBaselineCommit,
   isWithinRoot,
   resolveNoEmbed,
@@ -866,7 +870,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       serr(`[gbrain phase] sync.git_pull done ${Date.now() - _t0}ms`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 80)})`);
+      serr(`[gbrain phase] sync.git_pull error ${Date.now() - _t0}ms (${msg.slice(0, 200)})`);
       // v0.41.13.0 (T3 / D-V4-mech-7): pullRepo wraps execFileSync errors
       // in GitOperationError, so `error.code === 'ETIMEDOUT'` and
       // `error.signal === 'SIGTERM'` live on `.cause`, NOT on the top-
@@ -896,7 +900,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       if (msg.includes('non-fast-forward') || msg.includes('diverged')) {
         serr(`Warning: git pull failed (remote diverged). Syncing from local state.`);
       } else {
-        serr(`Warning: git pull failed: ${msg.slice(0, 100)}`);
+        serr(`Warning: git pull failed: ${msg.slice(0, 200)}`); // #1315 stderr-first
       }
     }
   }
@@ -1304,7 +1308,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // its row — only the poison signature (`](`/control chars) is sweepable.
     // Deleting a legit page's row while its file sits on disk is data loss.
     if (reason === 'malformed-path' && !isPoisonedPath(path)) continue;
-    const slug = await resolveSlugByPathOrSourcePath(engine, path, opts.sourceId);
+    // #3942: guarded resolver — never delete a page whose recorded origin is
+    // a DIFFERENT file just because this path re-slugifies onto its slug.
+    const slug = await resolveRemovedPathSlug(engine, path, opts.sourceId, serr);
+    if (slug === undefined) continue;
     try {
       const existing = await engine.getPage(slug, pageOpts);
       if (existing) {
@@ -1575,13 +1582,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   //   abort-check ──► partial('timeout')
   //       │
   //       ▼
-  //   engine.resolveSlugsByPaths(batch, {sourceId})  ◀── 1 SQL round-trip
+  //   resolveSlugsForRemovedPaths(batch)             ◀── exact source_path,
+  //       │                                              then VERIFIED fallback;
+  //       ▼                                              foreign-origin refusals
+  //   slugs = deletable.map(...)                         (#3942) warned + skipped
   //       │
   //       ▼
-  //   slugs = batch.map(path => map.get(path)
-  //                  ?? resolveSlugForPath(path))    ◀── pure-JS fallback for
-  //       │                                              frontmatter-fallback
-  //       ▼                                              + missing-source-path
   //   try {
   //     deleted = engine.deletePages(slugs, opts)    ◀── 1 SQL round-trip
   //     pagesAffected.push(...deleted)               ◀── D6: only confirmed
@@ -1620,18 +1626,16 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         }
         const batch = deletesToDo.slice(i, i + DELETE_BATCH_SIZE);
 
-        // Phase A: batch slug resolution (1 round-trip per batch).
-        let pathSlugMap: Map<string, string>;
-        try {
-          pathSlugMap = await engine.resolveSlugsByPaths(batch, deleteScopedOpts);
-        } catch {
-          // Resolve failure: fall back to empty map; per-path fallback
-          // below will use resolveSlugForPath. Best-effort, matches the
-          // existing resolveSlugByPathOrSourcePath swallow-and-fallback
-          // semantics.
-          pathSlugMap = new Map();
+        // Phase A: guarded batch slug resolution (#3942 — a re-slugified
+        // fallback can name a DIFFERENT page; refusals are logged + skipped).
+        const resolution = await resolveSlugsForRemovedPaths(engine, batch, sid);
+        for (const r of resolution.refused) {
+          serr(refusedRemovedPathMessage(r));
+          // Deliberately handled — checkpoint so a resume doesn't re-refuse.
+          await markCompleted(r.path);
         }
-        const slugs = batch.map(p => pathSlugMap.get(p) ?? resolveSlugForPath(p));
+        const deletable = batch.filter(p => resolution.slugs.has(p));
+        const slugs = deletable.map(p => resolution.slugs.get(p) as string);
 
         // Phase B: batch delete (1 round-trip per batch).
         try {
@@ -1641,9 +1645,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           // downstream extract/embed don't waste lookups.
           pagesAffected.push(...deleted);
           for (const s of deleted) deletedSlugs.add(s);
-          // v0.42.x (#1794): the whole batch is handled (deleted or already
-          // gone); checkpoint every path so a resume skips it.
-          for (const p of batch) await markCompleted(p);
+          // v0.42.x (#1794): the whole batch is handled (deleted, already
+          // gone, or refused above); checkpoint every path so a resume skips it.
+          for (const p of deletable) await markCompleted(p);
         } catch (err) {
           // D7 decompose: a transient blip on this batch shouldn't lose all
           // 500 deletes. Fall back to per-slug deletePage for THIS batch
@@ -1654,10 +1658,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
               await engine.deletePage(slugs[j], deleteScopedOpts);
               pagesAffected.push(slugs[j]);
               deletedSlugs.add(slugs[j]);
-              await markCompleted(batch[j]);
+              await markCompleted(deletable[j]);
             } catch (perSlugErr) {
               failedFiles.push({
-                path: batch[j],
+                path: deletable[j],
                 error: `delete failed: ${perSlugErr instanceof Error ? perSlugErr.message : String(perSlugErr)} (batch error: ${err instanceof Error ? err.message : String(err)})`,
               });
             }
@@ -1677,7 +1681,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           progress.finish();
           return await partial('timeout');
         }
-        const slug = await resolveSlugByPathOrSourcePath(engine, path, undefined);
+        // #3942: same guarded resolver as the batched lane (single-path call).
+        const slug = await resolveRemovedPathSlug(engine, path, undefined, serr);
+        if (slug === undefined) {
+          await markCompleted(path);
+          progress.tick(1, path);
+          continue;
+        }
         try {
           await engine.deletePage(slug, deleteOpts);
           pagesAffected.push(slug);
@@ -1729,15 +1739,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           return await partial('timeout');
         }
         const batch = fromPaths.slice(i, i + DELETE_BATCH_SIZE);
-        let m: Map<string, string>;
-        try {
-          m = await engine.resolveSlugsByPaths(batch, { sourceId: sid });
-        } catch {
-          m = new Map();
-        }
-        for (const p of batch) {
-          fromSlugByPath.set(p, m.get(p) ?? resolveSlugForPath(p));
-        }
+        // #3942: guarded resolver — a refused from-path gets NO entry, so the
+        // rename below skips updateSlug and falls back to add + reconcile.
+        const res = await resolveSlugsForRemovedPaths(engine, batch, sid);
+        for (const r of res.refused) serr(refusedRemovedPathMessage(r));
+        for (const [p, s] of res.slugs) fromSlugByPath.set(p, s);
       }
     }
 
@@ -1749,9 +1755,11 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         progress.finish();
         return await partial('timeout');
       }
+      // #3942: a refused (foreign-origin) from-path resolves to undefined —
+      // never rename a page whose recorded origin is a different file.
       const oldSlug = opts.sourceId
-        ? (fromSlugByPath.get(from) ?? resolveSlugForPath(from))
-        : await resolveSlugByPathOrSourcePath(engine, from, undefined);
+        ? fromSlugByPath.get(from)
+        : await resolveRemovedPathSlug(engine, from, undefined, serr);
       // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
       // #3056: the cheap rename is OBSERVED, not assumed. A zero-row UPDATE
@@ -1761,7 +1769,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // shapes now fall through to the reconcile below.
       let renameApplied = false;
       try {
-        renameApplied = (await engine.updateSlug(oldSlug, newSlug, renameOpts)) > 0;
+        if (oldSlug !== undefined) renameApplied = (await engine.updateSlug(oldSlug, newSlug, renameOpts)) > 0;
       } catch {
         // Destination slug occupied or invalid — treat as add; the reconcile
         // below removes the stale old row once the destination materialized.
@@ -3511,7 +3519,7 @@ See also:
         : undefined;
       timer?.unref?.();
       const repoOpts: SyncOpts = {
-        repoPath: src.local_path!,
+        repoPath: msysToNativePath(src.local_path!), // #2955: heal MSYS /c/... before joins
         dryRun, full, noPull,
         noEmbed: effectiveNoEmbed,
         noExtract,
@@ -4050,7 +4058,7 @@ export async function syncOneSource(
   const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
   const log = `\n--- Syncing source: ${src.name} ---\n`;
   const repoOpts: SyncOpts = {
-    repoPath: src.local_path!,
+    repoPath: msysToNativePath(src.local_path!), // #2955: heal MSYS /c/... before joins
     dryRun: shared.dryRun,
     full: shared.full,
     noPull: shared.noPull,
@@ -4063,8 +4071,7 @@ export async function syncOneSource(
     sourceId: src.id,
     strategy: cfg.strategy,
     concurrency: shared.concurrency,
-    // lockId defaults to `gbrain-sync:${src.id}` via the invariant in
-    // performSync (no explicit override needed — sourceId triggers it).
+    // lockId defaults to `gbrain-sync:${src.id}` via the performSync invariant (sourceId triggers it).
   };
   const result = await withSourcePrefix(src.id, () => performSync(engine, repoOpts));
   return { result, log };

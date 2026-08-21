@@ -339,6 +339,9 @@ export interface PageFilters {
    * pre-v0.34 unscoped behavior is preserved for local CLI callers.
    */
   sourceIds?: string[];
+  /** Inclusive bounds on semantic page time. NULL effective dates do not match. */
+  effective_after?: string;
+  effective_before?: string;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
