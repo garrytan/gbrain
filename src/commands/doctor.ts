@@ -5,6 +5,7 @@ import { ALLOWED_TYPES } from '../core/facts/conversation-types.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
+import { detectMissingColumns } from '../core/schema-verify.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport } from '../core/dry-fix.ts';
 import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
@@ -1920,6 +1921,39 @@ export async function buildChecks(
     }
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
+  }
+
+  // 6b. Schema columns — gbrain#4421. schema_version above only compares the
+  // migrations-ledger counter; it reads as "ok" even when a migration's DDL
+  // never landed (the ledger row got written as applied, but e.g. PgBouncer
+  // transaction-mode silently swallowed the ALTER TABLE — see schema-verify.ts's
+  // module docstring). detectMissingColumns() does the same live-column check
+  // `gbrain init --migrate-only` already self-heals with, but read-only: a
+  // plain diagnostic run should never issue DDL on its own.
+  progress.heartbeat('schema_columns');
+  try {
+    const detected = await detectMissingColumns(engine);
+    if (detected.missing.length === 0) {
+      checks.push({ name: 'schema_columns', status: 'ok', message: `${detected.checked} column(s) verified against live schema` });
+    } else {
+      const cols = detected.missing.map(m => `${m.table}.${m.column}`).join(', ');
+      // Codex review (2026-08-22): only claim "despite schema_version being
+      // current" when it actually is — a DB that's genuinely behind
+      // (schema_version warn/fail above) is expected to have missing
+      // columns from migrations that haven't run yet, and that's a
+      // different, already-covered situation (see the check above's own
+      // "Fix: gbrain apply-migrations --yes").
+      const context = schemaVersion >= LATEST_VERSION
+        ? 'despite schema_version reporting up to date'
+        : '(schema_version above also reports pending migrations)';
+      checks.push({
+        name: 'schema_columns',
+        status: 'warn',
+        message: `${detected.missing.length} column(s) missing ${context}: ${cols}. Fix: gbrain init --migrate-only`,
+      });
+    }
+  } catch {
+    checks.push({ name: 'schema_columns', status: 'warn', message: 'Could not verify live schema columns' });
   }
 
   // Note: we intentionally DO NOT fail on "schema v7+ but no preferences.json".
