@@ -3,35 +3,36 @@
 # Raising a ceiling is a conscious, reviewer-visible act. Lower ceilings in
 # the same commit as any peel (the guard fails on >50 lines of stale slack).
 # Columns: path	max_lines	policy	note
-src/commands/doctor.ts	4296	ratchet	peel target: containment sprint C8-C13; grown v0.46.x keyless not_configured state + chat fallback-chain inert warning wiring
+src/commands/doctor.ts	4366	ratchet	grown v0.46.25.0 fix waves: sunset-aware search-mode check, dead-check pruning (#3626 #1871 #4382)
 src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
-src/core/postgres-engine.ts	5837	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
-src/core/pglite-engine.ts	5881	ratchet	grown v0.46.23.0: putPage empty-overwrite guard (#4335)
+src/core/postgres-engine.ts	5989	ratchet	grown v0.46.25.0 fix waves: registry plane + timeline honesty + think temporal windows (#1262 #3827 #4389)
+src/core/pglite-engine.ts	5971	ratchet	grown v0.46.24.0 overnight wave: registry-aware writes + stale/invalidate plane unification (#1262); peeled cjk-search (#4299)
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
-src/commands/sync.ts	4327	ratchet	grown v0.46.24.0 serve-delegated sync: onProgress seam + help text
-src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
-src/cli.ts	3499	ratchet	grown v0.46.24.0: serve-delegated sync preflight hook
-src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
-src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
-src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)
-src/core/search/hybrid.ts	2629	ratchet	grown v0.46.23.0 review fix wave: supersede scoping + edge-existence gate
-src/core/engine.ts	2351	ratchet	grown v0.46.23.0: putPage allowEmptyOverwrite contract (#4335)
-src/commands/autopilot.ts	2301	ratchet
-src/commands/extract.ts	2161	ratchet
+src/commands/sync.ts	4334	ratchet	grown v0.46.25.0 fix waves: delete-slug resolver + msys healing (#3942 #2955)
+src/core/ai/gateway.ts	4441	ratchet	grown v0.46.25.0 D2: env-key snapshot stash (#2119)
+src/cli.ts	3628	ratchet	grown v0.46.25.0 D2: stdout interposer install (#4383)
+src/core/cycle.ts	3099	ratchet	grown v0.46.25.0 fix waves: refresher abort gating + keyless honesty (#4309 #2821) | signal feature-detect (#4309 handler shape)
+src/commands/serve-http.ts	3294	ratchet	grown v0.46.25.0 D2: /mcp per-request teardown (#2844)
+src/commands/jobs.ts	3041	ratchet	grown v0.46.25.0 fix waves: jobs list/get --json (#3685)
+src/core/search/hybrid.ts	2703	ratchet	grown v0.46.25.0 fix waves: cache scope isolation + pool floor + offset bypass (#3871 #3002)
+src/core/engine.ts	2415	ratchet	grown v0.46.25.0 fix waves: timeline dedup contract + registry write contract (#3827 #1262)
+src/commands/autopilot.ts	2349	ratchet	grown v0.46.25.0 fix waves: positional validation (#1525) + liveness takeover (#4300)
+src/commands/extract.ts	2066	ratchet	lowered: timeline extractor hoisted to core/timeline-extract.ts (module-cycle fix)
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
-src/core/import-file.ts	2000	ratchet	grown v0.46.11.0 five-issue wave
+src/core/import-file.ts	2016	ratchet	grown v0.46.24.0 overnight wave: embedding_plane_split named error (#4287)
 src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
-src/commands/embed.ts	1963	ratchet
-src/core/types.ts	1879	ratchet	grown v0.46.22.0 phone wave: supersession rerank result fields (#4056)
+src/commands/embed.ts	2046	ratchet	grown v0.46.25.0 delegated wave (#3971)
+src/core/types.ts	1882	ratchet	grown v0.46.22.0 phone wave: supersession rerank result fields + effective-date page filters (#4056 #4389)
 src/commands/skillpack.ts	1360	ratchet
-src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
+src/core/minions/queue.ts	2138	ratchet	grown by #4078 subagent-loop capability fix
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
-src/commands/integrations.ts	1675	ratchet
-src/core/minions/handlers/subagent.ts	1818	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches
-src/commands/bootstrap.ts	1923	ratchet	grandfathered at merge (grew past the 1500 cap on master)
+src/commands/integrations.ts	1733	ratchet	grown v0.46.24.0 overnight wave (#3588)
+src/core/minions/handlers/subagent.ts	1825	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches; grown by #4078 subagent-loop capability fix
+src/commands/bootstrap.ts	2010	ratchet	grandfathered at merge (grew past the 1500 cap on master); raised for #4066 HOME_WORKSPACE_GUARD_EXEMPT (status/uninstall/harness)
 src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
 src/commands/sources.ts	1790	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
-src/core/link-extraction.ts	1504	ratchet	new row: crossed the 1500 unlisted cap in v0.46.22.0 phone wave (relative-link resolution, #3804)
+src/core/link-extraction.ts	1467	ratchet	grown v0.46.25.0 delegated wave (#3939 #3723); lowered: stripCodeBlocks + citation loop peeled to markdown-code.ts/timeline-citations.ts (#3892 adoption)
+src/core/embedding-migration.ts	1545	ratchet	new row: crossed 1500 in v0.46.25.0 fix waves (#4305 #4306 chunk-model truth helpers)
 src/core/github-source.ts	1560	ratchet	new row: crossed the 1500 unlisted cap in v0.46.23.0 review fix wave (scope-state gating, client hardening, symlink containment)
 src/core/bootstrap/harness.ts	1947	ratchet
 src/commands/hook.ts	1550	ratchet	cathedral-5 heartbeat extraction offsets part of the BrainBench-seam growth

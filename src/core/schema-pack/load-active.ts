@@ -38,6 +38,7 @@ import {
   type ResolutionResult,
 } from './registry.ts';
 import { isBundledPackName } from './bundled.ts';
+import { bundledPackPath } from './bundled-assets.ts';
 
 /**
  * Inputs the caller (operations.ts handler / engine query path) provides.
@@ -94,8 +95,13 @@ export function _resetPackLocatorForTests(): void {
  */
 function defaultPackLocator(name: string): string | null {
   if (isBundledPackName(name)) {
-    // Resolve bundled YAML relative to this source file. Works in both
-    // direct-bun execution and bun --compile binaries.
+    // Statically bundled asset path [ENG-6] (#4266): resolves in dev AND
+    // inside `bun build --compile` binaries, where the import.meta-relative
+    // paths below don't exist.
+    const asset = bundledPackPath(name);
+    if (asset) return asset;
+    // Resolve bundled YAML relative to this source file — fallback for
+    // direct-bun execution should the asset path ever be unreadable.
     const here = dirname(fileURLToPath(import.meta.url));
     const bundledPath = join(here, 'base', `${name}.yaml`);
     if (existsSync(bundledPath)) return bundledPath;

@@ -112,6 +112,34 @@ export function realpathOrResolve(p: string): string {
 }
 
 /**
+ * Convert a Git Bash / MSYS / Cygwin drive path to native Windows form
+ * (gbrain#2955): `/c/Users/x` and `/cygdrive/c/Users/x` → `C:\Users\x`.
+ *
+ * On Windows, a `sources add --path` run from Git Bash records an msys-style
+ * `local_path`. Every later `path.win32.resolve(cwd, '/c/Users/x')` joins it
+ * as `<cwd-drive>:\c\Users\x` — a phantom path that never exists — so
+ * write-through / sync silently target a directory nothing ever created.
+ *
+ * Pure and platform-parameterized (defaults to `process.platform`) so the
+ * win32 branch is unit-testable on POSIX CI, mirroring
+ * `resolvedPrefixContained` above. On non-win32 platforms it is identity —
+ * `/c/…` is a legitimate directory name there. Anything that doesn't match
+ * the drive shape (native paths, UNC shares, relative paths, non-drive
+ * absolutes) passes through unchanged.
+ */
+export function msysToNativePath(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32' || !p) return p;
+  const m = /^\/(?:cygdrive\/)?([A-Za-z])(\/.*)?$/.exec(p);
+  if (!m) return p;
+  const drive = m[1]!.toUpperCase();
+  const rest = (m[2] ?? '').replace(/\//g, '\\');
+  return `${drive}:${rest || '\\'}`;
+}
+
+/**
  * Containment check for a write TARGET that may not exist yet (a new page file).
  * `isPathContained` requires the child to already exist; this instead realpaths
  * the deepest EXISTING ancestor of `target` (catching a symlinked intermediate

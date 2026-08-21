@@ -2,6 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import {
   isSupabasePoolerUrl,
   deriveDirectUrl,
+  deriveSessionPoolerUrl,
   normalizeDirectUrl,
   readKillSwitchEnv,
   isNetworkUnreachableError,
@@ -362,5 +363,175 @@ describe('ConnectionManager — direct-pool fallback on unreachable host (#1641)
     const again = await cm.ddl();
     expect(again).toBe(fakeReadPool);
     expect(errLines.filter(l => l.includes('GBRAIN_DIRECT_DATABASE_URL')).length).toBe(1);
+  }, 20000);
+});
+
+// ─────────────────────────────────────────────────────────────────
+// #1915 — session-pooler retry before the read-pool kill-switch.
+//
+// On IPv6-less networks (Railway, most home ISPs) the auto-derived
+// db.<ref>.supabase.co direct host is unreachable, and pre-fix the #1641
+// fallback dropped ALL DDL onto the TRANSACTION pooler — whose ~8s
+// statement_timeout killed cold-start migrations (init retry loops). The
+// session pooler (same host, port 5432) is IPv4-reachable and honors the
+// direct pool's startup-parameter timeouts, so it's tried once first.
+// ─────────────────────────────────────────────────────────────────
+
+describe('deriveSessionPoolerUrl (#1915)', () => {
+  test('transaction pooler → session pooler: same host, port 5432, KEEPS postgres.<ref> user', () => {
+    const s = deriveSessionPoolerUrl(
+      'postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require',
+    );
+    // The tenant suffix is REQUIRED on the pooler (Supavisor routing) — unlike
+    // deriveDirectUrl, the user must NOT be stripped to bare `postgres`.
+    expect(s).toBe(
+      'postgresql://postgres.abcxyz:secret@aws-0-us-east-1.pooler.supabase.com:5432/postgres?sslmode=require',
+    );
+  });
+
+  test('null for non-pooler hosts, already-session URLs, and junk', () => {
+    // Direct host: nothing to derive.
+    expect(deriveSessionPoolerUrl('postgresql://u:p@db.abc.supabase.co:5432/postgres')).toBeNull();
+    // Already session mode (pooler host, 5432): no-op.
+    expect(deriveSessionPoolerUrl('postgresql://postgres.abc:p@aws.pooler.supabase.com:5432/db')).toBeNull();
+    // 6543 on a non-pooler host: 5432 there is NOT known to be a session pooler.
+    expect(deriveSessionPoolerUrl('postgresql://u:p@localhost:6543/db')).toBeNull();
+    expect(deriveSessionPoolerUrl('not a url')).toBeNull();
+  });
+});
+
+describe('ConnectionManager — session-pooler retry on unreachable direct host (#1915)', () => {
+  let originalKillSwitch: string | undefined;
+  let originalError: typeof console.error;
+  let errLines: string[];
+  beforeEach(() => {
+    originalKillSwitch = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    originalError = console.error;
+    errLines = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+  });
+  afterEach(() => {
+    console.error = originalError;
+    if (originalKillSwitch === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    else process.env.GBRAIN_DISABLE_DIRECT_POOL = originalKillSwitch;
+  });
+
+  const POOLER_URL = 'postgresql://postgres.abc:p@aws-0-us-east-1.pooler.supabase.com:6543/db';
+  type Pool = ReturnType<typeof ConnectionManager.prototype.read>;
+  const unreachable = () =>
+    Object.assign(new Error('getaddrinfo ENOTFOUND db.abc.supabase.co'), { code: 'ENOTFOUND' });
+
+  test('auto-derived direct unreachable → retries the session pooler, keeps dual-pool active', async () => {
+    const cm = new ConnectionManager({ url: POOLER_URL }); // no override → auto-derived
+    const fakeReadPool = {} as Pool;
+    cm.setReadPool(fakeReadPool);
+    const fakeSessionPool = { __session: true } as unknown as Pool;
+
+    const attempts: string[] = [];
+    // Instance-shadow the private init so no real sockets are opened. The
+    // manager re-reads this._directUrl per attempt — that's the retry order pin.
+    (cm as unknown as { initDirectPool: () => Promise<Pool> }).initDirectPool =
+      async function (this: { _directUrl: string }) {
+        attempts.push(this._directUrl);
+        if (attempts.length === 1) throw unreachable();
+        return fakeSessionPool;
+      };
+
+    const pool = await cm.ddl();
+    expect(pool).toBe(fakeSessionPool);
+    expect(attempts.length).toBe(2);
+    expect(attempts[0]).toContain('db.abc.supabase.co:5432'); // direct first
+    expect(attempts[1]).toContain('aws-0-us-east-1.pooler.supabase.com:5432'); // then session pooler
+    // NOT the #1641 kill-switch: DDL still runs on a long-timeout pool.
+    expect(cm.isKillSwitchActive()).toBe(false);
+    expect(cm.isDualPoolActive()).toBe(true);
+    expect(cm.describeMode().mode).toBe('split');
+    expect(cm.describeMode().direct_host).toContain('pooler.supabase.com:5432');
+    // One informational stderr line, no re-init on later calls.
+    expect(errLines.filter(l => l.toLowerCase().includes('session pooler')).length).toBe(1);
+    expect(await cm.ddl()).toBe(fakeSessionPool);
+    expect(attempts.length).toBe(2);
+  }, 20000);
+
+  test('concurrent callers of a rejected direct init share the session-pooler single-flight (no premature kill-switch)', async () => {
+    const cm = new ConnectionManager({ url: POOLER_URL }); // no override → auto-derived
+    const fakeReadPool = {} as Pool;
+    cm.setReadPool(fakeReadPool);
+    const fakeSessionPool = { __session: true } as unknown as Pool;
+
+    const attempts: string[] = [];
+    let releaseSession!: (p: Pool) => void;
+    const sessionGate = new Promise<Pool>(res => { releaseSession = res; });
+    (cm as unknown as { initDirectPool: () => Promise<Pool> }).initDirectPool =
+      async function (this: { _directUrl: string }) {
+        attempts.push(this._directUrl);
+        if (attempts.length === 1) throw unreachable();
+        // Session attempt stays in flight until the test releases it, so the
+        // second caller resumes while the retry is pending — the race window
+        // where caller 1 has already mutated _directUrl to the session URL.
+        return sessionGate;
+      };
+
+    // Both callers await the SAME rejected _directInit; caller 1 mutates
+    // _directUrl before caller 2's continuation runs. Pre-fix, caller 2's
+    // `sessionUrl !== this._directUrl` guard saw them equal, skipped the
+    // in-flight _sessionInit, and tripped the read-pool kill-switch.
+    const p1 = cm.ddl();
+    const p2 = cm.ddl();
+    await new Promise(res => setTimeout(res, 10)); // let both reach the retry logic
+    releaseSession(fakeSessionPool);
+    const [pool1, pool2] = await Promise.all([p1, p2]);
+    expect(pool1).toBe(fakeSessionPool);
+    expect(pool2).toBe(fakeSessionPool); // pre-fix: fakeReadPool + kill-switch
+    expect(attempts.length).toBe(2); // direct once, session once — single-flight held
+    expect(cm.isKillSwitchActive()).toBe(false);
+    expect(cm.isDualPoolActive()).toBe(true);
+    expect(errLines.filter(l => l.toLowerCase().includes('session pooler')).length).toBe(1);
+    expect(errLines.filter(l => l.includes('falling back to the pooler')).length).toBe(0);
+  }, 20000);
+
+  test('direct AND session pooler unreachable → #1641 read-pool fallback (kill-switch)', async () => {
+    const cm = new ConnectionManager({ url: POOLER_URL });
+    const fakeReadPool = {} as Pool;
+    cm.setReadPool(fakeReadPool);
+
+    const attempts: string[] = [];
+    (cm as unknown as { initDirectPool: () => Promise<Pool> }).initDirectPool =
+      async function (this: { _directUrl: string }) {
+        attempts.push(this._directUrl);
+        throw unreachable();
+      };
+
+    const pool = await cm.ddl();
+    expect(pool).toBe(fakeReadPool);
+    expect(attempts.length).toBe(2); // direct, then session — exactly once each
+    expect(cm.isKillSwitchActive()).toBe(true);
+    expect(cm.isDualPoolActive()).toBe(false);
+    expect(errLines.filter(l => l.includes('GBRAIN_DIRECT_DATABASE_URL')).length).toBe(1);
+    // Subsequent calls stay on the read pool without new attempts.
+    expect(await cm.ddl()).toBe(fakeReadPool);
+    expect(attempts.length).toBe(2);
+  }, 20000);
+
+  test('explicit directUrl override is respected as-is — NO session second-guessing', async () => {
+    const cm = new ConnectionManager({
+      url: POOLER_URL,
+      directUrl: 'postgresql://postgres:p@10.11.12.13:5432/db', // operator says THIS
+    });
+    const fakeReadPool = {} as Pool;
+    cm.setReadPool(fakeReadPool);
+
+    const attempts: string[] = [];
+    (cm as unknown as { initDirectPool: () => Promise<Pool> }).initDirectPool =
+      async function (this: { _directUrl: string }) {
+        attempts.push(this._directUrl);
+        throw unreachable();
+      };
+
+    const pool = await cm.ddl();
+    expect(pool).toBe(fakeReadPool); // straight to the #1641 fallback
+    expect(attempts.length).toBe(1); // no session retry on operator overrides
+    expect(cm.isKillSwitchActive()).toBe(true);
   }, 20000);
 });

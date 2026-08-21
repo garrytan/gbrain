@@ -18,6 +18,7 @@ import { loadQuestionBank } from '../src/core/bootstrap/assets.ts';
 import { byteFloors } from '../src/core/bootstrap/render.ts';
 import {
   verifyWorkspace,
+  resolveVerifySourceId,
   VERIFY_PROBE_SLUG,
   VERIFY_PROBE_ENTITY_SLUG,
   VERIFY_MAGIC_TOKEN,
@@ -145,6 +146,10 @@ describe('verifyWorkspace — keyless pass', () => {
     // execution_env is informational and NEVER gates [D-cloud].
     expect(check(res.checks, 'execution_env')[0].ok).toBe(true);
     for (const c of check(res.checks, 'roundtrip')) expect(c.ok).toBe(true);
+    // #4287 wiring: the active-plane probe runs on every verify; keyless
+    // installs pass it (no active plane exists to split).
+    expect(check(res.checks, 'embedding_plane')[0].ok).toBe(true);
+    expect(check(res.checks, 'embedding_plane')[0].detail).toContain('keyless');
     expect(check(res.checks, 'graph_floor')[0].ok).toBe(true);
     expect(check(res.checks, 'magic_moment')[0].ok).toBe(true);
     expect(check(res.checks, 'capability_report')[0].detail).toContain('keyless');
@@ -448,6 +453,90 @@ describe('verifyWorkspace — source_id collision resolution', () => {
     } finally {
       await e2.disconnect();
       rmSync(firstBrain, { recursive: true, force: true });
+      rmSync(ws2, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
+describe('verifyWorkspace — workspace source registration (#4328)', () => {
+  test("uninitialized workspace resolves through the source resolver to 'default' and verify passes", async () => {
+    const e2 = new PGLiteEngine();
+    await e2.connect({});
+    await e2.initSchema();
+    const ws2 = mkdtempSync(join(tmpdir(), 'gb-verify-uninit-'));
+    try {
+      mkdirSync(join(ws2, 'brain'), { recursive: true });
+      // Identity files above the 0-answer floors (uninit ws — no interview ran).
+      const floors0 = byteFloors(0);
+      writeFileSync(join(ws2, 'SOUL.md'), pad('# Soul\n\nMinimal identity.\n', floors0['SOUL.md'] + 200));
+      writeFileSync(join(ws2, 'USER.md'), pad('# User\n\nMinimal user notes.\n', floors0['USER.md'] + 100));
+      // No manifest at all — the pre-fix hardcoded 'workspace' fallback made
+      // put_page fail its sources FK on any brain that never registered it.
+      const resolved = await resolveVerifySourceId(e2, ws2);
+      expect(resolved).toBe('default');
+      // The shape `gbrain sources add` leaves behind: the resolved source's
+      // local_path is the workspace brain/ so write-through materializes.
+      // (Direct UPDATE — 'default' is seeded by migration, so add would collide.)
+      await e2.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [join(ws2, 'brain')]);
+      const res = await verifyWorkspace(e2, ws2, {
+        sourceId: resolved,
+        gbrainHomeDir: home,
+        capabilities: KEYLESS,
+        skipHooksSmoke: true,
+        sweepBudgetMs: 5_000,
+      });
+      if (!res.ok) console.error(res.report);
+      expect(res.ok).toBe(true);
+      for (const c of res.checks) expect(c.detail).not.toContain('foreign key');
+    } finally {
+      await e2.disconnect();
+      rmSync(ws2, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  test('unregistered workspace source → named actionable FAIL, probe writes + hooks smoke skipped, no raw FK error', async () => {
+    const e2 = new PGLiteEngine();
+    await e2.connect({});
+    await e2.initSchema();
+    const ws2 = mkdtempSync(join(tmpdir(), 'gb-verify-unreg-'));
+    try {
+      mkdirSync(join(ws2, 'brain'), { recursive: true });
+      writeManifest(ws2, {
+        format_version: 1,
+        initialized: true,
+        agent_name: 'Unregistered',
+        created_by: 'test',
+        created_at: new Date().toISOString(),
+        source_id: 'workspace',
+      });
+      // Initialized manifest wins resolution — but 'workspace' was never
+      // `gbrain sources add`-ed on this brain.
+      expect(await resolveVerifySourceId(e2, ws2)).toBe('workspace');
+      const res = await verifyWorkspace(e2, ws2, {
+        sourceId: 'workspace',
+        gbrainHomeDir: home,
+        capabilities: KEYLESS,
+        sweepBudgetMs: 5_000,
+      });
+      expect(res.ok).toBe(false);
+      const rt = check(res.checks, 'roundtrip');
+      expect(rt.length).toBe(1);
+      expect(rt[0].ok).toBe(false);
+      expect(rt[0].detail).toContain(`gbrain sources add workspace --path ${join(ws2, 'brain')}`);
+      // The named FAIL replaces the raw FK violation the put used to surface.
+      for (const c of res.checks) expect(c.detail).not.toContain('foreign key');
+      // put_page was SKIPPED (not attempted-and-failed): zero probe rows.
+      const rows = await e2.executeRaw<{ n: string }>(
+        `SELECT count(*)::text AS n FROM pages WHERE slug = ANY($1::text[])`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]],
+      );
+      expect(rows[0].n).toBe('0');
+      // The hooks smoke binds the workspace source id — skipped with the same pointer.
+      const hooks = check(res.checks, 'hooks_smoke')[0];
+      expect(hooks.ok).toBe(true);
+      expect(hooks.detail).toContain('not registered');
+    } finally {
+      await e2.disconnect();
       rmSync(ws2, { recursive: true, force: true });
     }
   }, 240_000);

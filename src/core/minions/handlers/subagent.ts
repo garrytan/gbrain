@@ -325,8 +325,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // resolveModel's explicit-key branch, which does NOT run
     // enforceSubagentCapable's silent fallback (only the inherited
     // models.default / tier / env branches do). An explicitly chosen
-    // tool-incapable model must be refused loudly here rather than silently
-    // run a loop that has no way to dispatch tools.
+    // loop-incapable model must be refused loudly here rather than silently
+    // run a loop that can't dispatch tools or can't reconcile on replay.
     // The queue.ts gate already catches explicit data.model at submit; this
     // check additionally covers config-resolved models, direct `gbrain agent
     // run` invocations, and any path that bypasses the queue's check.
@@ -335,7 +335,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // message is a terminal assistant turn (no tool_use blocks) needs NO
     // further provider call — the path-specific replay logic below returns
     // the already-committed result. Don't let a capability refusal (e.g.
-    // config repointed to a tool-incapable model between submit and replay)
+    // config repointed to a loop-incapable model between submit and replay)
     // dead-letter completed work.
     {
       const lastRows = await engine.executeRaw<{ role: string; content_blocks: unknown }>(
@@ -377,6 +377,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         throw new Error(
           `subagent job rejected: ${modelSource} "${model}" lacks native tool calling. ` +
           `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
+        );
+      }
+      if (verdict === 'unusable:no_subagent_loop') {
+        throw new Error(
+          `subagent job rejected: ${modelSource} "${model}" comes from a provider whose recipe declares ` +
+          `supports_subagent_loop: false — its tool_call_ids are not stable enough across crashes/replays ` +
+          `to drive the subagent loop.`,
         );
       }
       if (verdict === 'unknown') {

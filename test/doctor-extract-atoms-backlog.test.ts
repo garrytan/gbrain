@@ -22,6 +22,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { countExtractAtomsBacklog } from '../src/core/cycle/extract-atoms.ts';
 import { computeExtractAtomsBacklogCheck } from '../src/commands/doctor.ts';
+import { addSource } from '../src/core/sources-ops.ts';
 
 let engine: PGLiteEngine;
 const EMPTY_HOME = mkdtempSync(join(tmpdir(), 'gbrain-xa-backlog-home-'));
@@ -42,8 +43,8 @@ beforeEach(async () => {
 
 const BODY = 'x'.repeat(600); // >= MIN_PAGE_CHARS_FOR_EXTRACTION (500)
 
-async function seedArticle(slug: string) {
-  return engine.putPage(slug, { type: 'article', title: slug, compiled_truth: BODY });
+async function seedArticle(slug: string, sourceId = 'default') {
+  return engine.putPage(slug, { type: 'article', title: slug, compiled_truth: BODY }, { sourceId });
 }
 
 describe('countExtractAtomsBacklog (issue #1678)', () => {
@@ -105,5 +106,22 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     expect(check.message).toContain('--drain');
     expect((check.details as { pack_declares_phase: boolean }).pack_declares_phase).toBe(false);
     expect((check.details as { known_approximation: string }).known_approximation).toContain('page backlog only');
+  });
+
+  it('includes the source in the drain hint when backlog lives outside default', async () => {
+    await addSource(engine, { id: 'gbrain-raw' });
+    for (let i = 0; i < 11; i++) await seedArticle(`raw-article-${i}`, 'gbrain-raw');
+
+    expect(await countExtractAtomsBacklog(engine)).toBe(11);
+    expect(await countExtractAtomsBacklog(engine, 'default')).toBe(0);
+    expect(await countExtractAtomsBacklog(engine, 'gbrain-raw')).toBe(11);
+
+    const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME }, () =>
+      computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('gbrain dream --phase extract_atoms --drain --source gbrain-raw --window 120');
+    expect((check.details as { fix_hint: string }).fix_hint).toContain('--source gbrain-raw');
+    expect((check.details as { backlog_by_source: Array<{ source_id: string; backlog: number }> }).backlog_by_source)
+      .toEqual([{ source_id: 'gbrain-raw', backlog: 11 }]);
   });
 });

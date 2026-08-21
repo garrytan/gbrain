@@ -16,6 +16,8 @@ import {
   resolveRecencyDecayMap,
 } from '../src/core/search/recency-decay.ts';
 import { buildRecencyComponentSql } from '../src/core/search/sql-ranking.ts';
+import { applyRecencyBoost } from '../src/core/search/hybrid.ts';
+import type { SearchResult } from '../src/core/types.ts';
 
 describe('parseRecencyDecayEnv', () => {
   test('empty / undefined → empty map', () => {
@@ -217,5 +219,53 @@ describe('DEFAULT_RECENCY_DECAY composition', () => {
   test('daily/ has aggressive decay', () => {
     expect(DEFAULT_RECENCY_DECAY['daily/']?.halflifeDays).toBeLessThan(30);
     expect(DEFAULT_RECENCY_DECAY['daily/']?.coefficient).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #895 — the unmapped-slug fallback must never carry a stronger recency
+// coefficient than the weakest DELIBERATELY-mapped family. When it did
+// (fallback 0.5 vs people/ 0.3), --recency strong boosted a random unmapped
+// note 1.75x while the entity page the user asked about got 1.45x — the
+// lexical-only ranking-inversion class from the issue.
+// ---------------------------------------------------------------------------
+
+describe('#895 fallback coefficient invariant', () => {
+  test('DEFAULT_FALLBACK.coefficient <= every non-evergreen mapped coefficient', () => {
+    const mapped = Object.values(DEFAULT_RECENCY_DECAY).filter(c => c.coefficient > 0);
+    const minMapped = Math.min(...mapped.map(c => c.coefficient));
+    expect(DEFAULT_FALLBACK.coefficient).toBeLessThanOrEqual(minMapped);
+  });
+
+  function res(slug: string, score: number): SearchResult {
+    return {
+      slug,
+      page_id: 1,
+      title: slug,
+      type: 'note',
+      chunk_text: 'x',
+      chunk_source: 'compiled_truth',
+      chunk_id: 1,
+      chunk_index: 0,
+      score,
+      stale: false,
+      source_id: 'default',
+    } as unknown as SearchResult;
+  }
+
+  test('strong recency cannot flip a fresh unmapped note above a fresh people/ page it lexically trails', () => {
+    const now = Date.now();
+    const results = [
+      res('people/zhangsan', 1.0),    // the entity the user asked about
+      res('inbox/random-note', 0.99), // unmapped prefix → fallback config
+    ];
+    const dates = new Map([
+      ['default::people/zhangsan', new Date(now)],
+      ['default::inbox/random-note', new Date(now)],
+    ]);
+    applyRecencyBoost(results, dates, 'strong', DEFAULT_RECENCY_DECAY, DEFAULT_FALLBACK, now);
+    results.sort((a, b) => b.score - a.score);
+    // Pre-fix: note 0.99 * (1 + 1.5*0.5) = 1.7325 beat person 1.0 * (1 + 1.5*0.3) = 1.45.
+    expect(results[0].slug).toBe('people/zhangsan');
   });
 });

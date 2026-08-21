@@ -337,6 +337,35 @@ export function inferFrontmatter(relativePath: string, content: string): Inferre
 }
 
 /**
+ * Is `title` safe to emit as an UNQUOTED YAML plain scalar?
+ *
+ * This is an allowlist on purpose. The previous denylist of "special" chars
+ * (`/[:"\'#\[\]{}|>&*!?,]/`) could never be complete, and every gap corrupted
+ * a page at import time:
+ *   - a leading backtick or `@` (YAML c-reserved) threw a parse error — the
+ *     failure that blocked `docs/guides/skillopt.md` and two siblings, since
+ *     gbrain doc H1s are routinely `` `gbrain <cmd>` ``;
+ *   - a leading `%` (directive indicator) threw the same way;
+ *   - a leading `- ` parsed as a sequence entry, so `title` came back
+ *     `undefined` — silent, and worse than the throw;
+ *   - `true` / `2026` coerced to a boolean / number (the #1948/#1939 class).
+ *
+ * Inverting to an allowlist makes the worst case a redundant pair of quotes
+ * instead of a broken or silently-wrong import. Non-ASCII titles (em dashes,
+ * CJK) are quoted rather than enumerated — harmless, and it keeps the safe
+ * set small enough to reason about.
+ */
+export function isSafePlainYamlScalar(title: string): boolean {
+  // Must start with an ASCII letter: excludes every YAML indicator, plus the
+  // digit-leading titles that would coerce to a number.
+  if (!/^[A-Za-z][A-Za-z0-9 _.()/-]*$/.test(title)) return false;
+  // Trailing whitespace does not survive a round trip.
+  if (/\s$/.test(title)) return false;
+  // YAML 1.1 boolean/null keywords js-yaml still coerces.
+  return !/^(y|yes|n|no|true|false|on|off|null)$/i.test(title);
+}
+
+/**
  * Generate a YAML frontmatter block from inferred fields.
  * Returns the `---\n...\n---\n` string to prepend to content.
  */
@@ -345,9 +374,11 @@ export function serializeFrontmatter(fm: InferredFrontmatter): string {
 
   const lines: string[] = ['---'];
 
-  // Title — quote if it contains special YAML chars
-  const needsQuote = /[:"'#\[\]{}|>&*!?,]/.test(fm.title);
-  lines.push(`title: ${needsQuote ? JSON.stringify(fm.title) : fm.title}`);
+  // Title — emit as a plain scalar ONLY when provably safe (see
+  // isSafePlainYamlScalar). Everything else is quoted.
+  lines.push(
+    `title: ${isSafePlainYamlScalar(fm.title) ? fm.title : JSON.stringify(fm.title)}`,
+  );
 
   lines.push(`type: ${fm.type}`);
 

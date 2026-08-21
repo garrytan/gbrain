@@ -4,9 +4,11 @@
  * sprint C13-C14) as a pure move.
  */
 import { realpathSync } from 'fs';
+import { resolve as pathResolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import type { SyncOpts } from '../commands/sync.ts';
-import { ownsGlobalSyncAnchor } from './sync.ts';
+import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
+import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
@@ -89,6 +91,126 @@ export async function isAnchorOwnedSyncPath(
   }
 }
 
+export interface SourceAnchorOwnership {
+  owns: boolean;
+  /** The path ownership was judged against, or null when the source has no
+   * directory identity yet (bootstrap allowed). */
+  configured: string | null;
+}
+
+/**
+ * #4369 — may a sync of `dir` move THIS source's directory anchor
+ * (`sources.local_path`)? The per-source analog of `ownsGlobalSyncAnchor`,
+ * one level down: `local_path` is the source's registered directory
+ * identity, and `writeSyncAnchor`'s per-source branch used to UPDATE it
+ * unconditionally — an explicit `--source <id>` paired with a foreign
+ * directory (or a fallback that resolved the wrong dir) silently repointed
+ * an explicitly-registered source, poisoning put_page write-through and
+ * that source's incremental anchor. Ownership rules:
+ *   - `'default'` delegates to `ownsGlobalSyncAnchor` (the default source
+ *     IS the brain repo; its identity rules — global key first, then the
+ *     row's local_path, bootstrap only when neither exists — already live
+ *     there, so the two layers cannot drift).
+ *   - any other id: the row's `local_path` when set (realpath-tolerant via
+ *     `sameRepoDir`, so a symlinked/case-variant spelling can't
+ *     false-refuse the source's own directory); a null `local_path`
+ *     bootstraps (first sync of a freshly-registered source).
+ * Best-effort: a failed row read fails OPEN (a guard bug must never block
+ * anchor writes — the UPDATE itself surfaces real DB trouble).
+ */
+export async function ownsSourceSyncAnchor(
+  engine: BrainEngine,
+  sourceId: string,
+  dir: string,
+): Promise<SourceAnchorOwnership> {
+  if (sourceId === 'default') {
+    return await ownsGlobalSyncAnchor(engine, sourceId, dir);
+  }
+  try {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    const configured = rows[0]?.local_path ?? null;
+    if (configured === null) return { owns: true, configured: null };
+    return { owns: sameRepoDir(configured, dir), configured };
+  } catch {
+    return { owns: true, configured: null };
+  }
+}
+
+/** Realpath-normalize a directory (the same fallback ladder as
+ * `sync.ts:sameRepoDir`'s inner norm — resolve, native realpath, realpath,
+ * else the resolved spelling). */
+function normRepoDir(p: string): string {
+  const abs = pathResolve(p); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- this resolve IS the ownership guard (#4369): canonicalizes before same-repo containment comparison
+  try {
+    return realpathSync.native(abs);
+  } catch {
+    // fall through
+  }
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+/** Equal, or nested in EITHER direction after realpath normalization. The
+ * commit-anchor guard's comparator: a subpath-scoped sync passes the git
+ * ROOT while the registered `local_path` is the scope root inside it (and a
+ * nested-repo registration is the mirror shape) — both are the same tree.
+ * Only two disjoint trees (a foreign repo) fail. */
+function sameOrNestedRepoDir(a: string, b: string): boolean {
+  const na = normRepoDir(a);
+  const nb = normRepoDir(b);
+  return na === nb || isWithinRoot(na, nb) || isWithinRoot(nb, na);
+}
+
+/**
+ * Wave-D review (#4369 follow-up) — may a sync running against git root
+ * `repoDir` advance THIS source's commit-anchor trio (`last_commit` /
+ * `last_sync_at` / `newest_content_at`)? Deliberately WEAKER than
+ * `ownsSourceSyncAnchor` (which pins the directory identity itself with an
+ * equality compare): a subpath-scoped sync legitimately advances the commit
+ * anchor while the dir it passes (the git root) differs from the registered
+ * scope root — so containment in either direction is allowed, and only a
+ * FOREIGN repo (disjoint trees) is refused. Without this, a sync fallback
+ * that resolved the wrong source (or an explicit `--source` paired with a
+ * foreign directory) stamps another repo's HEAD into this source's
+ * incremental anchor, silently skipping every future delta between the
+ * poisoned hash and reality.
+ *
+ * Identity resolution mirrors `ownsGlobalSyncAnchor` for `'default'` (global
+ * `sync.repo_path` key first, else the row's `local_path`); other ids use the
+ * row's `local_path`. A null identity bootstraps (first sync of a
+ * freshly-registered source). Best-effort: a failed read fails OPEN — a
+ * guard bug must never block anchor writes.
+ */
+export async function sourceCommitAnchorAllowed(
+  engine: BrainEngine,
+  sourceId: string,
+  repoDir: string,
+): Promise<SourceAnchorOwnership> {
+  try {
+    let configured: string | null = null;
+    if (sourceId === 'default') {
+      configured = (await engine.getConfig('sync.repo_path')) || null;
+    }
+    if (configured === null) {
+      const rows = await engine.executeRaw<{ local_path: string | null }>(
+        `SELECT local_path FROM sources WHERE id = $1`,
+        [sourceId],
+      );
+      configured = rows[0]?.local_path ?? null;
+    }
+    if (configured === null) return { owns: true, configured: null };
+    return { owns: sameOrNestedRepoDir(configured, repoDir), configured };
+  } catch {
+    return { owns: true, configured: null };
+  }
+}
+
 export async function writeSyncAnchor(
   engine: BrainEngine,
   sourceId: string | undefined,
@@ -111,6 +233,26 @@ export async function writeSyncAnchor(
     const col = which === 'repo_path' ? 'local_path' : 'last_commit';
     // last_sync_at bookmarked on every last_commit advance.
     if (which === 'last_commit') {
+      // Wave-D review (#4369 follow-up): guard the commit-anchor trio
+      // (last_commit / last_sync_at / newest_content_at) too. A foreign
+      // REPO's HEAD stamped here poisons the incremental anchor — every
+      // future sync diffs from a hash that isn't in the registered repo's
+      // history. Same-tree containment (git root vs registered scope root,
+      // either direction) stays allowed so subpath-scoped syncs keep
+      // advancing; callers that omit repoDir keep pre-guard behavior (the
+      // dir is unknown, and a guard that can't see it must not refuse).
+      if (repoDir !== undefined) {
+        const { owns, configured } = await sourceCommitAnchorAllowed(engine, sourceId, repoDir);
+        if (!owns) {
+          serr(
+            `[sync] sources.last_commit for "${sourceId}" not advanced — syncing repo ` +
+            `"${repoDir}" is neither the registered directory ${configured ?? '(unset)'} nor ` +
+            `within the same tree. Sync from the registered directory, or re-register the ` +
+            `source to move it intentionally.`,
+          );
+          return;
+        }
+      }
       if (newestContentEpochMs !== undefined) {
         const iso = newestContentEpochMs === null
           ? null
@@ -126,6 +268,20 @@ export async function writeSyncAnchor(
         );
       }
     } else {
+      // #4369: repo_path repoints require directory-identity EQUALITY
+      // (ownsSourceSyncAnchor); last_commit advances above use the weaker
+      // same-tree containment guard (sourceCommitAnchorAllowed) so
+      // subpath-scoped syncs — whose git root differs from the registered
+      // scope root — keep advancing while foreign repos are refused.
+      const { owns, configured } = await ownsSourceSyncAnchor(engine, sourceId, value);
+      if (!owns) {
+        serr(
+          `[sync] sources.local_path for "${sourceId}" stays at ${configured ?? '(unset)'} — ` +
+          `not repointing the source at "${value}". Sync from the registered directory, ` +
+          `or re-register the source to move it intentionally.`,
+        );
+        return;
+      }
       await engine.executeRaw(
         `UPDATE sources SET ${col} = $1 WHERE id = $2`,
         [value, sourceId],

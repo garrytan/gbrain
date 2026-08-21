@@ -400,6 +400,33 @@ describe('writePageThrough', () => {
     expect(walkFiles(globalDir).some((f) => f.endsWith('.md'))).toBe(false);
   });
 
+  test('Git-root source_path updates the file inside a subdirectory local_path', async () => {
+    const gitRoot = path.join(tmpRoot, 'monorepo');
+    fs.mkdirSync(path.join(gitRoot, '.git'), { recursive: true });
+    const sourceRoot = path.join(gitRoot, 'public', 'changelog');
+    fs.mkdirSync(path.join(sourceRoot, 'posts'), { recursive: true });
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config) VALUES ('changelog', 'Changelog', $1, '{}'::jsonb)`,
+      [sourceRoot],
+    );
+    const slug = 'public/changelog/posts/2026-08-18';
+    const sourcePath = `${slug}.md`;
+    const filePath = path.join(sourceRoot, 'posts', '2026-08-18.md');
+    await importFromContent(engine, slug, `---\ntitle: Release\ntype: note\n---\n\n# Current body\n`, {
+      noEmbed: true,
+      sourceId: 'changelog',
+      sourcePath,
+    });
+    fs.writeFileSync(filePath, 'stale\n');
+
+    const res = await writePageThrough(engine, slug, { sourceId: 'changelog' });
+
+    expect(res.written).toBe(true);
+    expect(res.path).toBe(filePath);
+    expect(fs.readFileSync(filePath, 'utf8')).not.toBe('stale\n');
+    expect(fs.existsSync(path.join(sourceRoot, sourcePath))).toBe(false);
+  });
+
   test('[REGRESSION #2831] differently-cased entry occupying the target → skipped case_insensitive_collision, existing file untouched', async () => {
     await engine.setConfig('sync.repo_path', brainDir);
     const slug = 'wiki/ideas/note';

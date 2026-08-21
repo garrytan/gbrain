@@ -415,3 +415,20 @@ describe('five-issue fix wave — integrity progress is (source_id, slug)-keyed'
     expect(src).toMatch(/new BrainWriter\(engine, \{ strictMode: 'off', sourceId \}\)/);
   });
 });
+
+describe('#2955 — sync multi-source repoPath routes through msysToNativePath', () => {
+  // sources.local_path can be msys-shaped (`/c/Users/x`, recorded by a Git
+  // Bash `sources add` on Windows) and join-resolves to a phantom
+  // C:\c\Users\x. The pure helper is unit-tested in path-confine.test.ts
+  // (identity off win32, so a POSIX behavioral test can't observe the site);
+  // this pins that BOTH multi-source repoPath sites — the parallel --all
+  // closure and syncOneSource — heal the value before it becomes a repoPath.
+  test('both `repoPath: src.local_path` sites in sync.ts wrap with msysToNativePath', () => {
+    const src = readFileSync('src/commands/sync.ts', 'utf8');
+    expect(src).toMatch(/from '\.\.\/core\/path-confine\.ts'/);
+    const healed = src.match(/repoPath:\s*msysToNativePath\(src\.local_path!\)/g) ?? [];
+    expect(healed.length).toBe(2);
+    // No remaining raw multi-source assignment.
+    expect(src).not.toMatch(/repoPath:\s*src\.local_path!/);
+  });
+});

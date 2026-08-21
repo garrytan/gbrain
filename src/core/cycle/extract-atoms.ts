@@ -42,7 +42,7 @@
 // Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
 //
-// Source-scoped: opts.sourceId routes the per-source corpus dir lookup,
+// Source-scoped: opts.sourceId gates brain-global transcript discovery,
 // the discovery SQL (source_id = $1), the NOT EXISTS idempotency
 // subquery (atom.source_id = $1), AND every putPage write
 // ({sourceId} third arg). Pre-fix the putPage call was missing the
@@ -444,7 +444,13 @@ export async function runPhaseExtractAtoms(
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
   //     dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  if (transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (
+    sourceId === 'default'
+    && transcripts.length === 0
+    && opts.brainDir !== undefined
+    && opts._transcripts === undefined
+  ) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
       const { loadConfigWithEngine } = await import('../config.ts');

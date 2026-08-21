@@ -21,6 +21,7 @@ import {
   type SweepReport,
 } from '../src/core/sweep.ts';
 import { isTotalFailure, runSweep, SWEEP_HELP } from '../src/commands/sweep.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
@@ -208,6 +209,98 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
       await engine.setConfig('auto_link', 'true');
       await engine.setConfig('auto_timeline', 'true');
     }
+  });
+});
+
+describe('runMaintenanceSweep — watermark progress + link reconciliation (#4196)', () => {
+  // Seed with an explicit updated_at so batch-selection order is deterministic.
+  async function seedPageAt(slug: string, body: string, updatedAtIso: string) {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, updated_at)
+       VALUES ($1, 'default', 'note', $1, $2, $3::timestamptz)`,
+      [slug, body, updatedAtIso],
+    );
+  }
+  const minsAgo = (n: number) => new Date(Date.now() - n * 60_000).toISOString();
+
+  test('repeated bounded sweeps make forward progress past batchLimit', async () => {
+    // Newest two pages fill a batchLimit=2 selection; the oldest writer is
+    // starved unless the selection honors links_extracted_at.
+    await seedPageAt('prog/target', 'Target page.', minsAgo(1));
+    await seedPageAt('prog/w-new', 'See [T](prog/target).', minsAgo(2));
+    await seedPageAt('prog/w-old', 'Also see [T](prog/target).', minsAgo(3));
+
+    const sweep = () => runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, batchLimit: 2, budgetMs: 30_000,
+    });
+    await sweep();
+    await sweep();
+
+    const oldEdge = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+        WHERE pf.slug = 'prog/w-old'`,
+    );
+    expect(parseInt(oldEdge[0].n, 10)).toBeGreaterThanOrEqual(1);
+
+    // Every swept page is stamped at its own updated_at (extract.ts D4/#1768
+    // discipline), so the engines' shared stale predicate clears fully.
+    const stale = await engine.countStalePagesForExtraction({ sourceId: 'default' });
+    expect(stale).toBe(0);
+  });
+
+  test('a link removed via the remote put_page path is reconciled away', async () => {
+    const page = (t: string, b: string) => `---\ntitle: ${t}\ntype: note\n---\n\n${b}\n`;
+    const write = (slug: string, c: string) =>
+      importFromContent(engine, slug, c, { noEmbed: true, sourceId: 'default' });
+    const sweep = () => runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+    });
+    const edges = async (slug: string) => engine.executeRaw<{ to_slug: string; link_source: string | null }>(
+      `SELECT pt.slug AS to_slug, l.link_source FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE pf.slug = $1 ORDER BY pt.slug`,
+      [slug],
+    );
+
+    await write('concepts/target-a', page('Target A', 'Target page.'));
+    await write('concepts/writer-a', page('Writer A', 'References [Target A](concepts/target-a).'));
+    await sweep();
+    expect((await edges('concepts/writer-a')).map(e => e.to_slug)).toEqual(['concepts/target-a']);
+
+    // Non-sweep-owned provenances on the same page must survive reconciliation.
+    await engine.addLink('concepts/writer-a', 'concepts/target-a', '', 'manual-ref', 'manual');
+    await engine.addLink('concepts/writer-a', 'concepts/target-a', '', 'mention', 'mentions');
+
+    await write('concepts/writer-a', page('Writer A', 'The reference is gone.'));
+    await sweep();
+
+    const after = await edges('concepts/writer-a');
+    expect(after.map(e => e.link_source).sort()).toEqual(['manual', 'mentions']);
+  });
+
+  test('reconciliation never touches pages outside the sweep batch', async () => {
+    // A page last updated outside the recentDays window keeps its edges even
+    // though the sweep runs over the same source.
+    await seedPageAt('cold/target', 'Cold target.', minsAgo(1));
+    await seedPageAt('cold/writer', 'See [T](cold/target).', minsAgo(2));
+    await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000 });
+    await engine.executeRaw(
+      `UPDATE pages SET updated_at = now() - interval '30 days',
+                        links_extracted_at = now() - interval '30 days'
+        WHERE slug = 'cold/writer'`,
+    );
+    // Rewrite the page body so the edge would be stale IF the page were swept.
+    await engine.executeRaw(
+      `UPDATE pages SET compiled_truth = 'Reference removed.' WHERE slug = 'cold/writer'`,
+    );
+    await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000 });
+    const n = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM links l JOIN pages pf ON pf.id = l.from_page_id
+        WHERE pf.slug = 'cold/writer'`,
+    );
+    expect(parseInt(n[0].n, 10)).toBe(1);
   });
 });
 
@@ -512,6 +605,7 @@ describe('runMaintenanceSweep — budget + never-throw', () => {
       corpusIngested: 0,
       factsReconciled: 3,
       linksExtracted: 1,
+      linksRemoved: 0,
       timelineExtracted: 0,
       skipped: [{ reason: 'budget_exhausted:corpus', count: 2 }],
       durationMs: 10,

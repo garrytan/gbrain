@@ -323,6 +323,7 @@ describe('runExtractConversationFactsCore', () => {
   let repoDir: string;
   let chatFailure: Error | null = null;
   let chatHook: (() => Promise<void>) | null = null;
+  let mainChatCalls = 0;
   let chatStopReason: ChatResult['stopReason'] = 'end';
   let chatTextOverride: string | null = null;
   let fallbackCalls = 0;
@@ -378,6 +379,7 @@ describe('runExtractConversationFactsCore', () => {
           providerId: 'stub',
         };
       }
+      mainChatCalls++;
       if (chatFailure) throw chatFailure;
       const hook = chatHook;
       chatHook = null;
@@ -425,6 +427,7 @@ describe('runExtractConversationFactsCore', () => {
   beforeEach(async () => {
     chatFailure = null;
     chatHook = null;
+    mainChatCalls = 0;
     chatStopReason = 'end';
     chatTextOverride = null;
     fallbackCalls = 0;
@@ -678,6 +681,32 @@ describe('runExtractConversationFactsCore', () => {
       expect(result.pages_skipped).toBe(1);
       expect(result.spent_usd).toBeGreaterThan(1);
       expect(fallbackCalls).toBe(1);
+    });
+  });
+
+  test('extraction BudgetExhausted halts the run after one attempt (#3669)', async () => {
+    // Regression: extractFactsFromTurnWithOutcome folds a BudgetExhausted
+    // thrown by the provider into `{ ok: false, error }`; the per-segment
+    // failure branch used to wrap it in a plain Error, stripping the
+    // BUDGET_EXHAUSTED tag. The worker pool's D13 must-abort check never
+    // fired, so every remaining page burned a doomed reserve-denied attempt
+    // instead of the run halting with budget_exhausted = true.
+    chatFailure = new BudgetExhausted('reserve denied', {
+      reason: 'cost',
+      spent: 5,
+      cap: 5,
+    });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        sleepMs: 0,
+      });
+      // Halted-with-receipt, not a per-page failure loop: exactly ONE
+      // extraction attempt (not one per eligible page), and the partial
+      // result reports the budget stop.
+      expect(result.budget_exhausted).toBe(true);
+      expect(mainChatCalls).toBe(1);
+      expect(result.pages_failed).toBe(0);
     });
   });
 

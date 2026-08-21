@@ -16,6 +16,13 @@
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
+// #3994: created stubs route through serializeMarkdown + importFromContent
+// (the same parse→chunk→embed pipeline put_page uses) instead of a bare
+// engine.putPage, so fresh entity pages land in the retrieval surface
+// (content_chunks + embeddings) — the #2163 concept-page precedent.
+import { importFromContent } from './import-file.ts';
+import { serializeMarkdown } from './markdown.ts';
+import { isAvailable } from './ai/gateway.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -123,20 +130,40 @@ export async function enrichEntity(
     const title = request.entityName;
     const type = request.entityType;
     const content = generateStubContent(request.entityName, request.entityType, request.context);
-    await engine.putPage(slug, {
-      title,
-      type,
-      compiled_truth: content,
-      timeline: '',
-      frontmatter: {
-        created: new Date().toISOString().split('T')[0],
-        source: request.sourceSlug,
-        tier,
-        // issue #160 quarantine lane: stubs extracted from untrusted input
-        // carry provenance + unverified markers until the owner reviews them.
-        ...(trusted ? {} : quarantineMarkers()),
-      },
-    }, scope);
+    const frontmatter = {
+      created: new Date().toISOString().split('T')[0],
+      source: request.sourceSlug,
+      tier,
+      // issue #160 quarantine lane: stubs extracted from untrusted input
+      // carry provenance + unverified markers until the owner reviews them.
+      ...(trusted ? {} : quarantineMarkers()),
+    };
+    try {
+      // #3994: canonical import pipeline so the stub is chunked (+ embedded
+      // when a provider is configured) and reachable by the recall arms.
+      const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
+      await importFromContent(engine, slug, md, {
+        noEmbed: !isAvailable('embedding'),
+        ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+      });
+    } catch (e) {
+      // Fail-open fallback: a pipeline error (parse edge case, size guard)
+      // must never regress the batch — the pre-#3994 direct write still
+      // produces a page (unchunked, but present + reviewable). Warn loudly:
+      // silence here would hide that the stub is invisible to vector recall
+      // until the next `gbrain embed --stale` / re-import sweep.
+      process.stderr.write(
+        `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
+        'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',
+      );
+      await engine.putPage(slug, {
+        title,
+        type,
+        compiled_truth: content,
+        timeline: '',
+        frontmatter,
+      }, scope);
+    }
     action = 'created';
   }
 

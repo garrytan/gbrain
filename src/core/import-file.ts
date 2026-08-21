@@ -1,13 +1,13 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname } from 'path';
 import { createHash } from 'crypto';
-import { marked } from 'marked';
 import type { BrainEngine, FileSpec } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION } from './chunkers/code.ts';
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
+import { planEmbeddingReuse } from './embed-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
@@ -38,10 +38,12 @@ import {
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
 import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
+import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from './facts-fence.ts';
+import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -49,11 +51,12 @@ import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from './facts-fen
  * Roughly 40% of gbrain's brain is docs/guides/architecture notes with
  * substantial inline code. In v0.19.0 those fenced code blocks chunk as
  * prose, so querying "how do we import from engine" ranks paragraphs
- * ABOUT the import above the actual import example. D2 walks the marked
- * lexer tokens, extracts each `{type:'code', lang, text}` fence with a
- * known language tag, chunks the content via the code chunker (so TS
- * fence gets TS-aware chunking), and persists those as extra chunks on
- * the parent markdown page with `chunk_source='fenced_code'`.
+ * ABOUT the import above the actual import example. D2 scans the body for
+ * fenced code blocks (linear line scanner as of #2862 — formerly a
+ * marked.lexer walk, which was quadratic on autolink-dense text), extracts
+ * each fence with a known language tag, chunks the content via the code
+ * chunker (so a TS fence gets TS-aware chunking), and persists those as
+ * extra chunks on the parent markdown page with `chunk_source='fenced_code'`.
  *
  * Fence tag → pseudo-extension map. We don't need a full file extension
  * because chunkCodeText only calls detectCodeLanguage to pick a grammar;
@@ -98,14 +101,8 @@ function fenceTagToPseudoPath(lang: string | undefined): string | null {
   return FENCE_TAG_TO_PSEUDO_PATH[lang.toLowerCase().trim()] ?? null;
 }
 
-/**
- * Maximum code fences we'll extract from a single markdown page. Fence-bomb
- * DOS defense — a malicious markdown file with 10K ```ts blocks could
- * generate 10K chunks × embedding API calls. Override per-page via the
- * `GBRAIN_MAX_FENCES_PER_PAGE` env var if docs-heavy brains legitimately
- * exceed 100 fences on a single page.
- */
-const MAX_FENCES_PER_PAGE = Number.parseInt(process.env.GBRAIN_MAX_FENCES_PER_PAGE || '100', 10);
+// MAX_FENCES_PER_PAGE (fence-bomb DOS cap, GBRAIN_MAX_FENCES_PER_PAGE env
+// override) moved to fence-scan.ts with the #2862 linear scanner.
 
 function extractFactsFenceBlock(body: string): string | null {
   const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
@@ -129,10 +126,12 @@ function replaceOrAppendFactsFence(body: string, fenceBlock: string): string {
 }
 
 /**
- * Walk the marked lexer output and extract recognizable code fences.
- * Returns one ChunkInput per fence whose language tag maps to a grammar
- * the chunker understands. Unknown tags + empty fences are skipped.
- * Per-fence try/catch: one malformed fence doesn't abort the page import.
+ * Extract recognizable code fences via the linear scanner in fence-scan.ts
+ * (#2862 — formerly a `marked.lexer` walk, which was quadratic on
+ * autolink-dense text under bun). Returns one ChunkInput per fence whose
+ * language tag maps to a grammar the chunker understands. Unknown tags +
+ * empty fences are skipped. Per-fence try/catch: one malformed fence doesn't
+ * abort the page import.
  */
 async function extractFencedChunks(
   markdown: string,
@@ -140,41 +139,25 @@ async function extractFencedChunks(
 ): Promise<ChunkInput[]> {
   const out: ChunkInput[] = [];
   // Fast path: most pages (prose, tables, converted docs) contain no code
-  // fence at all, so there is nothing for this function to extract. marked's
-  // lexer still allocates transient memory proportional to page size on every
-  // call — a ~2MB table-heavy page spikes ~110MB of heap just to produce zero
-  // fenced chunks. During bulk import those per-page spikes stack on top of
-  // accumulated chunk/embedding memory and can OOM the worker, and the
-  // try/catch below cannot rescue an OOM (it is process death, not a throw).
-  // Skip the lexer entirely when no fence marker (``` or ~~~) is present.
-  // The `\r` in the line-start class mirrors marked's own `\r\n|\r → \n`
-  // normalization, so CR/CRLF-only documents don't lose a real fence.
+  // fence at all, so there is nothing for this function to extract — skip
+  // even the line split when no fence marker (``` or ~~~) is present.
+  // The `\r` in the line-start class mirrors the scanner's `\r\n|\r → \n`
+  // line splitting, so CR/CRLF-only documents don't lose a real fence.
   if (!/(^|[\r\n])[ \t]{0,3}(```|~~~)/.test(markdown)) return out;
-  let tokens: ReturnType<typeof marked.lexer>;
-  try {
-    tokens = marked.lexer(markdown);
-  } catch {
-    // marked's lexer errors on truly malformed input — bail, keep the
-    // markdown-level chunks that came from compiled_truth.
-    return out;
+
+  const { fences, capped } = scanFencedBlocks(markdown);
+  if (capped) {
+    console.warn(
+      `[gbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
+      `Override via GBRAIN_MAX_FENCES_PER_PAGE env var.`,
+    );
   }
 
-  let fencesSeen = 0;
   let indexOffset = 0;
-  for (const tok of tokens) {
-    if (tok.type !== 'code') continue;
-    const code = tok as { type: 'code'; lang?: string; text?: string };
-    const text = (code.text ?? '').trim();
+  for (const fence of fences) {
+    const text = fence.text.trim();
     if (!text) continue;
-    if (fencesSeen >= MAX_FENCES_PER_PAGE) {
-      console.warn(
-        `[gbrain] markdown fence cap hit (${MAX_FENCES_PER_PAGE} fences/page); skipping additional fences. ` +
-        `Override via GBRAIN_MAX_FENCES_PER_PAGE env var.`,
-      );
-      break;
-    }
-    fencesSeen++;
-    const pseudoPath = fenceTagToPseudoPath(code.lang);
+    const pseudoPath = fenceTagToPseudoPath(fence.lang);
     if (!pseudoPath) continue; // unknown or missing lang tag → prose fallback
     const lang = detectCodeLanguage(pseudoPath);
     if (!lang) continue;
@@ -195,7 +178,7 @@ async function extractFencedChunks(
     } catch (e: unknown) {
       // One fence failing shouldn't sink the page. Log + continue.
       console.warn(
-        `[gbrain] fence extraction failed for lang=${code.lang}: ${e instanceof Error ? e.message : String(e)}`,
+        `[gbrain] fence extraction failed for lang=${fence.lang}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -1006,6 +989,21 @@ export async function importFromContent(
         );
       } catch { /* same reason — silent skip */ }
     }
+  }).catch(async (err: unknown) => {
+    // #4287: name the dimension-mismatch rollback instead of letting the bare
+    // pgvector message ("expected N dimensions, not M") surface with no code,
+    // no consequence and no fix. S2: name the registry-ACTIVE column the
+    // write actually targeted (best-effort — plane-agnostic wording when the
+    // registry itself is unreadable).
+    let activeColName: string | undefined;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/expected \d+ dimensions, not \d+/.test(msg)) {
+      try {
+        const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+        activeColName = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+      } catch { /* keep the plane-agnostic wording */ }
+    }
+    throw decorateEmbeddingDimError(err, slug, activeColName);
   });
 
   // T3 — project frontmatter `aliases:` into page_aliases (free-text alias
@@ -1392,27 +1390,23 @@ export async function importCodeFile(
   // v0.19.0 E2 — incremental chunking. Embedding calls dominate the cost
   // of a sync; re-embedding unchanged chunks wastes money without
   // improving retrieval. Look up existing chunks by slug and, for any
-  // whose chunk_text exactly matches the new chunk at the same index,
-  // reuse the existing embedding. Only truly new/changed chunks hit the
-  // OpenAI API. Order matters: our chunk_index is semantic (tree-sitter
-  // order), so a matching (chunk_index, text_hash) means a verbatim
-  // preserved symbol.
-  const existingChunks = existing ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default' }) : [];
-  const existingByKey = new Map<string, typeof existingChunks[number]>();
-  for (const ec of existingChunks) {
-    existingByKey.set(`${ec.chunk_index}:${ec.chunk_text}`, ec);
-  }
-  const needsEmbedIndexes: number[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const key = `${chunks[i]!.chunk_index}:${chunks[i]!.chunk_text}`;
-    const matched = existingByKey.get(key);
-    if (matched && matched.embedding) {
-      // Reuse the existing embedding verbatim. No API call, no cost.
-      chunks[i]!.embedding = matched.embedding as Float32Array;
-      chunks[i]!.token_count = matched.token_count ?? undefined;
-    } else {
-      needsEmbedIndexes.push(i);
-    }
+  // whose body matches a new chunk's, reuse the existing embedding. Only truly
+  // new/changed chunks hit the embedding API. The match runs on the
+  // header-stripped body: the header carries line numbers and the index shifts
+  // when a symbol is added above, so keying on either re-embedded
+  // byte-identical bodies.
+  // `includeEmbedding` is load-bearing: #2544 dropped the vector from the
+  // default column list, which silently made this whole cache a no-op.
+  const existingChunks = existing
+    ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true })
+    : [];
+  const { reuse, needsEmbedIndexes } = planEmbeddingReuse(existingChunks, chunks);
+  for (const [i, matched] of reuse) {
+    // Reuse the existing embedding verbatim. No API call, no cost. Carry the
+    // stored model stamp with the vector so provenance survives a model swap.
+    chunks[i]!.embedding = matched.embedding as Float32Array;
+    chunks[i]!.token_count = matched.token_count ?? undefined;
+    if (matched.model) chunks[i]!.model = matched.model;
   }
 
   // Embed only the new/changed chunks.

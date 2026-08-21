@@ -890,6 +890,8 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
   // Refuse on detached HEAD — pushing to a wrong ref is worse than not pushing.
   if (currentBranch(repoPath) === 'HEAD') {
     push('pull', { status: 'needs_attention', detail: 'detached HEAD — checkout a branch before hardening' });
+  } else if (dryRun) {
+    push('pull', { status: 'skipped', detail: `dry-run — would fetch + pull --rebase origin/${branch}` });
   } else {
     // 1. pull current state
     try { push('pull', pullDetail(divergenceSafePull(repoPath, branch))); }

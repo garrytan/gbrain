@@ -857,16 +857,25 @@ export function buildYieldDuringPhase(
  * the next tick). On a fenced refresh returning false, aborts `controller`
  * with a LockStolenError; a thrown (transient) refresh error is logged and
  * retried next tick — the TTL is the backstop.
+ *
+ * #4309: the tick also gates on `externalSignal` (the caller's abort, i.e.
+ * runCycle's opts.signal). An externally-aborted run whose current phase
+ * ignores the abort never reaches runCycle's finally, so without this gate
+ * the leaked timer kept renewing the fenced lock forever and no successor
+ * could ever take over. The once-listener stops the interval the moment the
+ * external abort fires; stop() detaches it so the autopilot daemon's reused
+ * shutdown signal doesn't accumulate one listener per tick.
  */
 export function startCycleLockRefresher(
   lock: LockHandle,
   controller: AbortController,
   lockId: string,
   intervalMs: number = resolveCycleLockRefreshMs(),
+  externalSignal?: AbortSignal,
 ): () => void {
   let inFlight = false;
   const timer = setInterval(() => {
-    if (inFlight || controller.signal.aborted) return;
+    if (inFlight || controller.signal.aborted || externalSignal?.aborted) return;
     inFlight = true;
     void (async () => {
       try {
@@ -884,7 +893,26 @@ export function startCycleLockRefresher(
   }, intervalMs);
   // Don't let the refresher pin the event loop open past real work.
   (timer as unknown as { unref?: () => void }).unref?.();
-  return () => clearInterval(timer);
+  let onExternalAbort: (() => void) | undefined;
+  const stop = () => {
+    clearInterval(timer);
+    if (onExternalAbort && typeof externalSignal?.removeEventListener === 'function') {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
+  };
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      stop();
+    } else if (typeof externalSignal.addEventListener === 'function') {
+      onExternalAbort = stop;
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+    // Signal-LIKE objects (the minion job's { aborted } shape) carry no
+    // EventTarget surface — the per-tick `externalSignal.aborted` gate above
+    // still stops refreshing within one interval, which is the #4309
+    // guarantee; only the instant-stop listener is skipped.
+  }
+  return stop;
 }
 
 /** Refresh 6x per TTL window (~50s at the 5-min TTL), matching withRefreshingLock's cadence. */
@@ -1987,8 +2015,10 @@ export async function runCycle(
   // `cycleLockIdFor` throw here crashed `--source __all__` runs that never
   // needed a lock id). Real acquisition validated above via acquireDbCycleLock.
   const cycleLockId = cycleLockIdLabelFor(opts.sourceId);
+  // #4309: pass the caller's signal so an external abort stops lock renewal
+  // even when a hung phase never lets the run reach the finally's stopRefresher.
   const stopRefresher: (() => void) | undefined = lock && stolen
-    ? startCycleLockRefresher(lock, stolen, cycleLockId)
+    ? startCycleLockRefresher(lock, stolen, cycleLockId, undefined, externalSignal)
     : undefined;
   const onStolen = stolen ? (e: LockStolenError) => { if (!stolen.signal.aborted) stolen.abort(e); } : undefined;
   // The reason can arrive as undefined (see isLockStolenAbort); rejecting a
@@ -2262,7 +2292,7 @@ export async function runCycle(
           phase: 'extract_atoms',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'extract_atoms: active pack does not declare this phase (run `gbrain dream --phase extract_atoms --drain` to drain a backlog)',
+          summary: 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `gbrain dream --phase extract_atoms --drain` to drain a backlog',
           details: { reason: 'not_in_active_pack', pack_gated: true },
         });
       } else {
@@ -2388,7 +2418,7 @@ export async function runCycle(
           phase: 'synthesize_concepts',
           status: 'skipped',
           duration_ms: 0,
-          summary: 'synthesize_concepts: active pack does not declare this phase',
+          summary: 'synthesize_concepts: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything)',
           details: { reason: 'not_in_active_pack', pack_gated: true },
         });
       } else {

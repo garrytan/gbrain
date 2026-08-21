@@ -18,13 +18,13 @@ test/autopilot-install.test.ts	autopilot wrapper script — bun PATH export (v0.
 test/autopilot-install.test.ts	autopilot wrapper script — env source order (v0.36.1.x #966)	1	readFileSync
 test/autopilot-pause-marker.test.ts	pause marker fences minion job pickup	1	readFileSync
 test/autopilot-self-upgrade.test.ts	autopilot self-upgrade static-shape regressions	4	readFileSync
-test/autopilot-shutdown-engine-close.test.ts	autopilot.ts graceful engine shutdown (#1872)	4	readFileSync
+test/autopilot-shutdown-engine-close.test.ts	autopilot.ts graceful engine shutdown (#1872)	6	readFileSync
 test/autopilot-supervisor-wiring.test.ts	autopilot.ts ↔ ChildWorkerSupervisor wiring	6	readFileSync
 test/backlinks-job-default.test.ts	backlinks Minion handler — empty payload defaults to check, not fix	3	readFileSync
 test/book-mirror.test.ts	gbrain book-mirror — source file invariants	7	readFileSync
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
-test/brain-repo-durability.serial.test.ts	hardenBrainRepo	15	readFileSync
+test/brain-repo-durability.serial.test.ts	hardenBrainRepo	16	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
 test/brain-score-breakdown.test.ts	Bug 11 — orphan_pages is "no inbound links"	3	doctor-source-helper
@@ -62,6 +62,7 @@ test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	4	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync
 test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
 test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	1	readFileSync
+test/cycle-pack-gating.test.ts	#2117: pack-gated skip summaries are actionable	2	readFileSync
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: NEEDS_LOCK_PHASES contract (source-shape)	2	readFileSync
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: dispatch result envelope	2	readFileSync
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: orchestrator dispatch wires the pack-gate	5	readFileSync
@@ -86,7 +87,7 @@ test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton —
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
-test/doctor.test.ts	doctor command	32	doctor-source-helper
+test/doctor.test.ts	doctor command	34	doctor-source-helper
 test/doctor.test.ts	issue #972 — link_resolution_opportunity check	8	doctor-source-helper
 test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	bun-file,doctor-source-helper
@@ -113,13 +114,16 @@ test/eval-brainbench-e2e.test.ts	--llm availability gate	1	exec-scan
 test/eval-brainbench-e2e.test.ts	privacy guard violation branches (negative path)	1	exec-scan
 test/eval-brainbench-e2e.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
 test/eval-brainbench-e2e.test.ts	run-all once-per-sweep semantics (decision 16)	1	exec-scan
+test/eval-capture-db-plane.serial.test.ts	eval.capture set on the DB plane reaches the runtime gate (#1475)	9	bun-file
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	2	readFileSync
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
 test/extract-workers.test.ts	extract.ts → workers wiring (T7)	10	readFileSync
 test/features.test.ts	CLI routing	2	bun-file
+test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
 test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	3	readFileSync
 test/fix-wave-structural.test.ts	#2084 — cli.ts owns process-exit teardown via finishCliTeardown	4	readFileSync
+test/fix-wave-structural.test.ts	#2955 — sync multi-source repoPath routes through msysToNativePath	1	readFileSync
 test/fix-wave-structural.test.ts	WAL-repair wave structural pins (#223/#2575)	4	readFileSync
 test/fix-wave-structural.test.ts	five-issue fix wave — integrity progress is (source_id, slug)-keyed	1	readFileSync
 test/fix-wave-structural.test.ts	v0.36.1.x #1077 — admin register-client supports PKCE public clients	1	readFileSync
@@ -134,6 +138,7 @@ test/hook-command.serial.test.ts	user-prompt	14	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
 test/integrations.test.ts	CLI integration	3	readFileSync
 test/jobs-embed-background-parity.serial.test.ts	embed job background parity (D7)	2	readFileSync
+test/jobs-list-get-json.serial.test.ts	help advertises --json on list/get/stats (#3685)	2	readFileSync
 test/jobs-thin-client-date-rehydration.test.ts	thin-client unpack sites route through rehydrateJobDates (source audit)	2	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	readFileSync
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync
@@ -179,6 +184,7 @@ test/register-client-source-normalize.test.ts	register-client route wiring (stru
 test/regression-strict-source-id.test.ts	cycle reverse-write call sites use the consolidated path	4	readFileSync
 test/regression-strict-source-id.test.ts	utils.ts no longer carries an inline permissive regex	2	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	10	readFileSync
+test/reranker-default-seam.test.ts	LEGACY_DEFAULT_RERANKER_MODEL seam (#3657)	4	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/schema-cli-contract.test.ts	v0.39 T6 — schema CLI contract	7	readFileSync
@@ -188,6 +194,7 @@ test/scripts/coverage-diff-gate.test.ts	exemptions	3	readFileSync
 test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution coverage	1	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	readFileSync
+test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync

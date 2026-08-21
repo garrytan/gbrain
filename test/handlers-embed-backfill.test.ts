@@ -142,3 +142,62 @@ describe('embed-backfill handler — D2 lock contract', () => {
     await lock?.release();
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// #4283 — honesty gates. The incident: a misconfigured worker NULLed
+// 60,434 embeddings, embedded 0, spent $0, and reported success — 12 runs
+// in a row. A run that embeds nothing while having work to do must FAIL
+// the job (loud, retried, visible), never report success.
+// ────────────────────────────────────────────────────────────────
+
+describe('embed-backfill handler — #4283 honesty gates', () => {
+  const drainBase = { pagesProcessed: 0, lastCursor: null, done: true, aborted: false };
+
+  test('IRON-RULE: invalidated > 0 with embedded 0 → job FAILS instead of reporting success', async () => {
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => ({ ...drainBase, embedded: 0, chunksProcessed: 60434, invalidated: 60434 }),
+    });
+    await expect(handler(fakeJob({ sourceId: 'default' }))).rejects.toThrow(/refusing to report success/);
+  });
+
+  test('chunksProcessed > 0 with embedded 0 (every page log-skipped) also fails', async () => {
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => ({ ...drainBase, embedded: 0, chunksProcessed: 120, invalidated: 0 }),
+    });
+    await expect(handler(fakeJob({ sourceId: 'default' }))).rejects.toThrow(/embedded 0 of 120/);
+  });
+
+  test('lock is released after the honesty throw (next run can claim)', async () => {
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => ({ ...drainBase, embedded: 0, chunksProcessed: 10, invalidated: 10 }),
+    });
+    await expect(handler(fakeJob({ sourceId: 'default' }))).rejects.toThrow();
+    const lock = await tryAcquireDbLock(engine, 'gbrain-embed-backfill:default', 60);
+    expect(lock).not.toBeNull();
+    await lock?.release();
+  });
+
+  test('aborted partial run with embedded 0 stays status=aborted (resumable, not a defect)', async () => {
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => ({ ...drainBase, embedded: 0, chunksProcessed: 5, invalidated: 5, done: false, aborted: true }),
+    });
+    const result = await handler(fakeJob({ sourceId: 'default' }));
+    expect(result).toMatchObject({ status: 'aborted', embedded: 0, invalidated: 5 });
+  });
+
+  test('success carries invalidated + invalidationSkipped counts in the job result row', async () => {
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => ({
+        ...drainBase, embedded: 7, chunksProcessed: 7, invalidated: 3,
+        invalidationSkipped: 'embedder_probe_failed' as const,
+      }),
+    });
+    const result = await handler(fakeJob({ sourceId: 'default' }));
+    expect(result).toMatchObject({
+      status: 'success',
+      embedded: 7,
+      invalidated: 3,
+      invalidationSkipped: 'embedder_probe_failed',
+    });
+  });
+});

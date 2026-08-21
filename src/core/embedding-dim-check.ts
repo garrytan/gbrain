@@ -14,6 +14,7 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { OperationError } from './ops/contract.ts';
 import { PGVECTOR_HNSW_VECTOR_MAX_DIMS, hnswMaxDimsForType } from './vector-index.ts';
 import { gbrainPath } from './config.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
@@ -83,35 +84,42 @@ export function assertEmbeddingEnabled(cfg: { embedding_disabled?: boolean } | n
 }
 
 export interface ColumnDimResult {
-  /** Whether the `content_chunks.embedding` column exists. False on a fresh brain. */
+  /** Whether the probed `content_chunks` column exists. False on a fresh brain. */
   exists: boolean;
-  /** Parsed `vector(N)` dimension if known. null when the column doesn't exist or the type isn't vector. */
+  /** Parsed `vector(N)` / `halfvec(N)` dimension if known. null when the column doesn't exist or the type isn't a pgvector type. */
   dims: number | null;
 }
 
 /**
- * Read the actual dimension of `content_chunks.embedding` from the engine.
+ * Read the actual dimension of an arbitrary `content_chunks` vector column
+ * (S2 generalization of the legacy `embedding`-only reader — the bootstrap
+ * verify probe compares the runtime embedder against the registry-ACTIVE
+ * column, which need not be the legacy one).
  *
- * Uses information_schema + a vector-specific catalog query. Returns
- * { exists: false, dims: null } on a fresh brain that doesn't have the
- * column yet. Returns { exists: true, dims: null } on a brain whose
- * column type isn't `vector` (shouldn't happen but defensive).
+ * Uses information_schema + a vector-specific catalog query, with the column
+ * name bound as a parameter. Returns { exists: false, dims: null } when the
+ * column doesn't exist. Returns { exists: true, dims: null } on a column
+ * whose type isn't a pgvector type (defensive).
  */
-export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promise<ColumnDimResult> {
+export async function readContentChunksColumnDim(
+  engine: BrainEngine,
+  columnName: string,
+): Promise<ColumnDimResult> {
   // Probe column existence first to avoid noisy errors on fresh brains.
   const existsRows = await engine.executeRaw<{ exists: boolean }>(
     `SELECT EXISTS (
        SELECT 1 FROM information_schema.columns
        WHERE table_schema = 'public'
          AND table_name = 'content_chunks'
-         AND column_name = 'embedding'
+         AND column_name = $1
      ) AS exists`,
+    [columnName],
   );
   const exists = !!existsRows?.[0]?.exists;
   if (!exists) return { exists: false, dims: null };
 
   // pgvector stores dim in pg_type.typmod when atttypmod is set; format_type
-  // returns the human-readable `vector(N)`. We parse N out of that.
+  // returns the human-readable `vector(N)` / `halfvec(N)`. We parse N out.
   const formatRows = await engine.executeRaw<{ formatted: string | null }>(
     `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
        FROM pg_attribute a
@@ -119,14 +127,24 @@ export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promis
        JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public'
         AND c.relname = 'content_chunks'
-        AND a.attname = 'embedding'
+        AND a.attname = $1
         AND NOT a.attisdropped`,
+    [columnName],
   );
   const formatted = formatRows?.[0]?.formatted ?? null;
   if (!formatted) return { exists: true, dims: null };
 
-  const m = formatted.match(/vector\((\d+)\)/i);
+  const m = formatted.match(/(?:vector|halfvec)\((\d+)\)/i);
   return { exists: true, dims: m ? parseInt(m[1], 10) : null };
+}
+
+/**
+ * Legacy-column reader: the init/doctor dim-mismatch checks probe the
+ * default `embedding` column specifically. Thin wrapper over
+ * readContentChunksColumnDim so both share one catalog query shape.
+ */
+export async function readContentChunksEmbeddingDim(engine: BrainEngine): Promise<ColumnDimResult> {
+  return readContentChunksColumnDim(engine, 'embedding');
 }
 
 /**
@@ -759,4 +777,38 @@ export async function assertFactsEmbeddingDimMatchesConfig(engine: BrainEngine):
   );
   _factsDimCheckCache.set(engine, { err });
   throw err;
+}
+
+/**
+ * #4287 — name the dimension-mismatch write failure.
+ *
+ * pgvector rejects a vector whose width differs from the column with the bare
+ * "expected N dimensions, not M" message: no error code, no statement of
+ * consequence, no fix. That shape means the EMBEDDING PLANE is split — the
+ * runtime embedder and the schema column disagree — so EVERY embedding write
+ * fails and the page transaction rolls back (the page is NOT stored, even
+ * though the message never says so). Decorate it with a named OperationError
+ * (`embedding_plane_split` — distinct from `embedding_failed`, because a
+ * retry can never succeed until the planes are re-aligned) carrying the
+ * consequence and the recovery command. Anything else passes through
+ * untouched. Applied at the import/put transaction boundary
+ * (import-file.ts:importFromContent).
+ *
+ * S2: pgvector's message never names the column, and on a registry-routed
+ * brain the failing column is NOT the legacy `embedding`. When the caller
+ * knows the active column it passes `columnName`; otherwise the wording
+ * stays plane-agnostic instead of blaming the wrong column.
+ */
+export function decorateEmbeddingDimError(err: unknown, slug: string, columnName?: string): unknown {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.match(/expected (\d+) dimensions, not (\d+)/);
+  if (!m) return err;
+  const colLabel = columnName
+    ? `content_chunks.${columnName} column`
+    : 'active embedding column';
+  return new OperationError(
+    'embedding_plane_split',
+    `page '${slug}' was NOT written: the runtime embedder emitted ${m[2]}d vectors but the ${colLabel} is ${m[1]}d (${msg}). Every embedding write fails until the planes agree.`,
+    `Diagnose with \`gbrain migrate embeddings --status\`; fix with \`gbrain migrate embeddings --to <provider:model> --dim ${m[2]}\` (or correct embedding_model/embedding_dimensions to match the column).`,
+  );
 }

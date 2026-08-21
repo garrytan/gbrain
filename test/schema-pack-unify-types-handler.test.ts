@@ -10,6 +10,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runUnifyTypes } from '../src/core/schema-pack/unify-types-handler.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
+import { ALLOWED_TYPES } from '../src/core/facts/conversation-types.ts';
+import { parseSchemaPackManifest, parseYamlMini } from '../src/core/schema-pack/index.ts';
 
 let engine: PGLiteEngine;
 
@@ -154,6 +156,51 @@ describe('runUnifyTypes', () => {
       expect(r2.per_phase.retype_explicit.applied).toBe(0);
       expect(r2.per_phase.page_to_alias.aliased).toBe(0);
     });
+  });
+});
+
+// #2184 — conversation-shaped types must survive the v2 migration. The
+// conversation-facts pipeline (ALLOWED_TYPES in src/core/facts/
+// conversation-types.ts) walks pages by type ∈ {conversation, meeting,
+// slack, email, imessage, imessage-daily}. Pre-fix, gbrain-base-v2
+// declared neither `meeting` nor `conversation` and had no explicit
+// retype rule for them, so the D12 catch-all retyped both to `note`
+// (legacy_type stamp) — silently emptying the facts-extraction backlog
+// after a pack upgrade.
+describe('#2184 conversation-shaped types survive v2 unify', () => {
+  it('meeting/conversation/slack keep their types through apply', async () => {
+    await seed('meetings/2026-04-03', 'meeting');
+    await seed('conversations/imessage/alice-example', 'conversation');
+    await seed('slack/general-2026-04-03', 'slack');
+    await runUnifyTypes(ctxOf(), {
+      target_pack: 'gbrain-base-v2',
+      apply: true,
+    });
+    const rows = await engine.executeRaw<{ slug: string; type: string }>(
+      `SELECT slug, type FROM pages WHERE deleted_at IS NULL ORDER BY slug`,
+    );
+    const map = Object.fromEntries(rows.map((r) => [r.slug, r.type]));
+    expect(map['meetings/2026-04-03']).toBe('meeting');
+    expect(map['conversations/imessage/alice-example']).toBe('conversation');
+    expect(map['slack/general-2026-04-03']).toBe('slack');
+    // Every survivor stays enumerable by the conversation-facts walker.
+    for (const t of Object.values(map)) {
+      expect(ALLOWED_TYPES as readonly string[]).toContain(t);
+    }
+  });
+
+  it('gbrain-base-v2 statically declares meeting + conversation (temporal, extractable)', () => {
+    const p = new URL('../src/core/schema-pack/base/gbrain-base-v2.yaml', import.meta.url);
+    const manifest = parseSchemaPackManifest(parseYamlMini(readFileSync(p, 'utf-8')), {
+      path: p.pathname,
+    });
+    for (const [name, prefix] of [['meeting', 'meetings/'], ['conversation', 'conversations/']] as const) {
+      const pt = manifest.page_types.find((t) => t.name === name);
+      expect(pt).toBeDefined();
+      expect(pt?.primitive).toBe('temporal');
+      expect(pt?.path_prefixes).toContain(prefix);
+      expect(pt?.extractable).toBe(true);
+    }
   });
 });
 

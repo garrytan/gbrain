@@ -73,6 +73,39 @@ describe('lookupEmbeddingPrice — fall-through behavior', () => {
   });
 });
 
+describe('lookupEmbeddingPrice — azure-openai alias (#4032)', () => {
+  // Azure deployments bill the same per-token rates as OpenAI-hosted models.
+  // The alias (not duplicated rows) means new openai:* entries can never drift
+  // from their Azure twins.
+  test.each([
+    ['azure-openai:text-embedding-3-large', 0.13],
+    ['azure-openai:text-embedding-3-small', 0.02],
+    ['azure-openai:text-embedding-ada-002', 0.10],
+  ])('%s resolves via the openai row at $%d/MTok', (model, expected) => {
+    const r = lookupEmbeddingPrice(model);
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(expected);
+      expect(r.key).toBe((model as string).replace('azure-openai', 'openai'));
+    }
+  });
+
+  test('alias provider is case-insensitive too', () => {
+    const r = lookupEmbeddingPrice('Azure-OpenAI:text-embedding-3-small');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.02);
+  });
+
+  test('azure-openai model with no openai twin stays unknown', () => {
+    const r = lookupEmbeddingPrice('azure-openai:custom-embed-9000');
+    expect(r.kind).toBe('unknown');
+    if (r.kind === 'unknown') {
+      expect(r.provider).toBe('azure-openai');
+      expect(r.model).toBe('custom-embed-9000');
+    }
+  });
+});
+
 describe('EMBEDDING_PRICING — table integrity', () => {
   test('all entries have pricePerMTok as a non-negative finite number', () => {
     for (const [key, val] of Object.entries(EMBEDDING_PRICING)) {

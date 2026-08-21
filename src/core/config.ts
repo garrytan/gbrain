@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync, renameSy
 import { isAbsolute, join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
+import { applyDbPlaneReadSideMerge, type DbPlaneEngineReader } from './config-db-merge.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -60,11 +61,10 @@ export interface GBrainConfig {
    * launchd/daemon/MCP contexts without a process-env export silently
    * failed multimodal embeds despite config.json looking complete.
    *
-   * NOTE (scoped to what this fix covers): `gbrain config set
-   * voyage_api_key X` writes the DB plane, which `loadConfigWithEngine()`
-   * does NOT merge for any `*_api_key` field (zeroentropy_api_key /
-   * openrouter_api_key have the same pre-existing gap) — only the
-   * config.json file-plane route is wired through today.
+   * NOTE: `gbrain config set voyage_api_key X` routes to the FILE plane
+   * (FILE_PLANE_API_KEYS in src/commands/config.ts); a value that landed in
+   * the DB plane anyway is still honored via the #2119 read-side merge
+   * (DB_MERGED_PROVIDER_KEY_FIELDS, env > file > DB).
    */
   voyage_api_key?: string;
   /**
@@ -84,6 +84,13 @@ export interface GBrainConfig {
    * caveat) as voyage_api_key above.
    */
   google_api_key?: string;
+  /**
+   * Azure OpenAI API key (#4031). File-plane slot folded into the gateway env
+   * as AZURE_OPENAI_API_KEY (the name the azure-openai recipe reads). Same
+   * fold pattern (and same DB-plane caveat) as voyage_api_key above. Key-based
+   * auth alternative to the Entra flow below.
+   */
+  azure_openai_api_key?: string;
   /** Azure OpenAI (keyless/Entra). Non-secret endpoint + deployment + Entra opt-in,
    * folded into the gateway env so the azure-openai recipe works in any shell.
    * The bearer token is minted at request time via `az` — no secret stored here. */
@@ -367,6 +374,16 @@ export interface GBrainConfig {
       min_evidence?: number;
     };
   };
+
+  /**
+   * #2119-class read-side (also #2137/#4297) — flat map of DB-plane `cycle.*`
+   * knobs, keyed by the path UNDER the `cycle.` prefix (e.g.
+   * `cycle.extract_atoms.budget_usd` → `cycle['extract_atoms.budget_usd']`),
+   * values raw strings (each consumer owns its parse, as with
+   * `engine.getConfig()`). Populated by `loadConfigWithEngine()`; per-leaf
+   * precedence file > DB (no env layer). See src/core/config-db-merge.ts.
+   */
+  cycle?: Record<string, string>;
 
   /**
    * Thin-client mode (multi-topology v1). When set, this install does NOT
@@ -727,6 +744,9 @@ export function loadConfig(): GBrainConfig | null {
   return merged as GBrainConfig;
 }
 
+// #2119 read-side merge list re-exported so callers keep one config surface.
+export { DB_MERGED_PROVIDER_KEY_FIELDS } from './config-db-merge.ts';
+
 /**
  * v0.27.1 — async config loader that overlays DB-plane config on top of the
  * file/env config. Used by `gbrain` CLI's connectEngine() AFTER engine.connect()
@@ -736,15 +756,16 @@ export function loadConfig(): GBrainConfig | null {
  * Precedence: env > file > DB > defaults. Env stays the operator escape hatch;
  * file is the durable per-machine config; DB is the user-mutable runtime knob.
  *
- * Today only the v0.27.1 multimodal flags participate in DB-merge. Existing
- * fields (embedding_model, etc.) keep their file/env-only loading because they
- * size the schema and must be stable across engine connect.
+ * Participating DB-plane keys: multimodal/OCR flags, provider_base_urls.*,
+ * the embedding-column registry, content_sanity.*, dream.*, eval.*, and the
+ * #2119-class read-side set (provider credentials, chat/expansion pins,
+ * chat_fallback_chain, flat cycle.* — see src/core/config-db-merge.ts, which
+ * also documents why embedding_model/dims must NEVER join any list, #4287).
  */
 export async function loadConfigWithEngine(
-  engine: {
-    getConfig(key: string): Promise<string | null | undefined>;
-    listConfigKeys?(prefix: string): Promise<string[]>;
-  },
+  // DbPlaneEngineReader: { getConfig; listConfigKeys?; executeRaw? } — the
+  // optional executeRaw lets the #2119 merge batch its reads in one query.
+  engine: DbPlaneEngineReader,
   base?: GBrainConfig | null,
 ): Promise<GBrainConfig | null> {
   // Codex /ship finding #3: when there's no file config AND no env DB URL,
@@ -969,6 +990,66 @@ export async function loadConfigWithEngine(
     merged.dream = mergedDream;
   }
 
+  // #1475 — eval.* DB-plane merge. Both keys are in KNOWN_CONFIG_KEYS, so
+  // `gbrain config set eval.capture true` is accepted and stored, and
+  // `gbrain config get` reads it back (it queries engine.getConfig directly
+  // and prints `source: db plane`). But the runtime gates read the MERGED
+  // config — isEvalCaptureEnabled/isEvalScrubEnabled take `ctx.config` — so
+  // without a merge branch here the write was accepted, echoed back, and had
+  // no effect: capture stayed off unless GBRAIN_CONTRIBUTOR_MODE=1 was also
+  // exported, which is what the config was supposed to make unnecessary.
+  //
+  // Both directions matter. `false` is not "unset": eval.capture=false is the
+  // documented opt-out for a brain that has CONTRIBUTOR_MODE exported, and
+  // eval.scrub_pii=false is an explicit privacy decision. dbBool already
+  // distinguishes them ('' / null / undefined → undefined).
+  // Strict, not `dbBool`. `dbBool` maps every non-empty value other than the
+  // exact string 'true' to FALSE, and `config set` stores whatever it is given
+  // — so `gbrain config set eval.scrub_pii TRUE` (or `1`, or a typo like
+  // `tru`) would arrive here as `false` and silently DISABLE PII scrubbing.
+  // Measured: 'true'→true, 'false'→false, and 'tru' / 'TRUE' / '1' / 'yes' all
+  // →false under dbBool. Before this merge existed those values were inert, so
+  // adopting dbBool here would newly activate that footgun on a privacy knob.
+  // An unrecognised value is treated as unset, which falls back to the
+  // documented default (scrub on, capture per CONTRIBUTOR_MODE) — fail-safe.
+  //
+  // Deliberately scoped to the two keys this change introduces. The same
+  // looseness applies to the other dbBool keys, but tightening those is a
+  // behavior change for existing brains and belongs in its own PR.
+  async function dbBoolStrict(key: string): Promise<boolean | undefined> {
+    try {
+      const v = await engine.getConfig(key);
+      if (v === 'true') return true;
+      if (v === 'false') return false;
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const dbEvalCapture = await dbBoolStrict('eval.capture');
+  const dbEvalScrubPii = await dbBoolStrict('eval.scrub_pii');
+
+  const mergedEval: NonNullable<GBrainConfig['eval']> = { ...(merged.eval ?? {}) };
+  if (mergedEval.capture === undefined && dbEvalCapture !== undefined) {
+    mergedEval.capture = dbEvalCapture;
+  }
+  if (mergedEval.scrub_pii === undefined && dbEvalScrubPii !== undefined) {
+    mergedEval.scrub_pii = dbEvalScrubPii;
+  }
+  // Same container discipline as dream/content_sanity: a brain that sets
+  // neither key keeps `cfg.eval` undefined, so `config show` does not sprout
+  // an empty object and downstream `config?.eval?.x === undefined` reads are
+  // unchanged.
+  if (Object.keys(mergedEval).length > 0) {
+    merged.eval = mergedEval;
+  }
+
+  // #2119-class read-side merge (also #2137/#4297): provider credentials,
+  // chat/expansion pins, chat_fallback_chain, flat cycle.* (env > file > DB).
+  // One batched, ~30s-memoized read per engine handle (D2 remediation).
+  await applyDbPlaneReadSideMerge(merged, engine);
+
   return merged;
 }
 
@@ -999,6 +1080,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'voyage_api_key',
   'dashscope_api_key',
   'google_api_key',
+  'azure_openai_api_key',
   'azure_openai_endpoint',
   'azure_openai_deployment',
   'azure_openai_use_entra',
@@ -1026,6 +1108,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'remote_mcp',
   'sync',
   'sync.repo_path',
+  'import.require_configured_root',
   'sync.last_commit',
   // Opt-out for the put_page/capture disk write-through (write-through.ts):
   // 'false' makes every page write DB-only. For brains whose host repo is a
@@ -1083,6 +1166,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.brainstorm.judge',
   'models.eval.longmemeval',
   'facts.extraction_model',
+  // Brain-wide kill switch for fact extraction, read by
+  // src/core/facts/extract.ts:isFactsExtractionEnabled and honored by
+  // sweep.ts, operations.ts and transcripts/ingest-facts.ts. That function's
+  // own docstring tells operators to flip it with
+  // `gbrain config set facts.extraction_enabled false` — which was rejected
+  // as an unknown key until this registration.
+  'facts.extraction_enabled',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
   // [ENG-8] Brain-level default visibility for facts writes when the caller
@@ -1249,6 +1339,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   //   minions.ttl_notice_shown flag. Booleans via the canonical truthiness
   //   parser; numeric 0 disables.
   'minions.',
+  'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
 ];
 
 /**

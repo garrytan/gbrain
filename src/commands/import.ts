@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -26,6 +26,50 @@ import {
   resolveImportTargetDir,
   resumeFilter,
 } from '../core/import-checkpoint.ts';
+import { realpathOrResolve } from '../core/path-confine.ts';
+
+/** Return a refusal when an import target lies outside every admitted root. */
+export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
+  if (configuredRoots.length === 0) return null;
+  const target = realpathOrResolve(dir);
+  const admitted = configuredRoots.some((candidate) => {
+    const root = realpathOrResolve(candidate);
+    const rel = relative(root, target);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  });
+  if (admitted) return null;
+  return (
+    `Import root ${target} is not under the configured root for the destination source ` +
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- error-message hint construction, no fs operation
+        `(${configuredRoots.map((root) => resolve(root)).join(', ')}). ` +
+    `Pass --allow-noncanonical-root to override deliberately.`
+  );
+}
+
+/** Resolve only roots belonging to the selected import destination. */
+export async function listConfiguredRoots(
+  engine: BrainEngine,
+  destinationSourceId: string,
+): Promise<string[]> {
+  const roots: string[] = [];
+  try {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [destinationSourceId],
+    );
+    for (const row of rows) if (row.local_path) roots.push(resolve(row.local_path)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- resolves REGISTERED roots to build the containment allowlist (#4388 guard)
+    if (destinationSourceId === 'default') {
+      const legacyRoot = await engine.getConfig('sync.repo_path');
+      if (legacyRoot) roots.push(resolve(legacyRoot)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: registered root canonicalization for the guard allowlist
+    }
+  } catch (error) {
+    throw new Error(
+      `Cannot determine configured source roots: ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return [...new Set(roots)];
+}
 
 /**
  * Records one failed file against the run's error-grouping state and
@@ -129,6 +173,7 @@ export async function runImport(
   } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
+  const allowNoncanonicalRoot = args.includes('--allow-noncanonical-root');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
   const includeGitignored = args.includes('--include-gitignored') || opts.includeGitignored === true;
@@ -257,7 +302,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -272,6 +317,35 @@ export async function runImport(
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`Import target is not readable: ${dirArg} (${msg})`);
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
+  }
+
+  if (!allowNoncanonicalRoot) {
+    try {
+      const strictRoot = (await engine.getConfig('import.require_configured_root')) === 'true';
+      if (strictRoot) {
+        const configuredRoots = await listConfiguredRoots(engine, sourceId ?? 'default');
+        if (configuredRoots.length === 0) {
+          console.error(
+            'import.require_configured_root is enabled but the destination source has no configured root. ' +
+            'Configure its local_path or pass --allow-noncanonical-root deliberately.',
+          );
+          throw new ImportAbortError('configured-root admission has no destination root');
+        }
+        const refusal = configuredRootImportError(dir, configuredRoots);
+        if (refusal) {
+          console.error(refusal);
+          throw new ImportAbortError('import target is outside the configured destination root');
+        }
+      }
+    } catch (error) {
+      if (error instanceof ImportAbortError) throw error;
+      console.error(
+        `Cannot evaluate configured-root admission: ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        `Pass --allow-noncanonical-root to bypass deliberately.`,
+      );
+      throw new ImportAbortError('configured-root admission failed closed');
+    }
   }
 
   // v0.31.2: collect under the right strategy. Pre-fix this called

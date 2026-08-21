@@ -63,10 +63,19 @@ export const DEFAULT_RECENCY_DECAY: RecencyDecayMap = {
   'deals/':          { halflifeDays: 180, coefficient: 0.5 },
 };
 
-/** Fallback applied to slugs that don't match any default or override prefix. */
+/**
+ * Fallback applied to slugs that don't match any default or override prefix.
+ *
+ * #895 invariant: the fallback coefficient must stay <= the weakest
+ * deliberately-mapped family (people//companies/ at 0.3). At 0.5 it out-
+ * boosted the entity namespaces under --recency strong (1.75x vs 1.45x),
+ * flipping unmapped notes above the entity page the user asked about.
+ * Pinned by test/recency-decay.test.ts. (A per-bundle floor_ratio default
+ * is deferred to a search-mode ablation follow-up.)
+ */
 export const DEFAULT_FALLBACK: RecencyDecayConfig = {
   halflifeDays: 90,
-  coefficient: 0.5,
+  coefficient: 0.3,
 };
 
 /** Sentinel error thrown by parsers; CLI catches it and exits with a useful message. */

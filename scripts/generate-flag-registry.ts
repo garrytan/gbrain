@@ -169,7 +169,7 @@ export function buildFlagRegistry(): Record<string, string[]> {
   // standalone literal (`includes('--dry-run')`, `has('--dry-run')`,
   // `=== '--dry-run'`). Prose bleed embeds the flag inside a longer string, so
   // it never has quotes on both sides of the bare flag.
-  const SAFETY_FLAGS = new Set(['--dry-run']);
+  const SAFETY_FLAGS = new Set(['--dry-run', '--allow-noncanonical-root']);
   // Reindex scope/mode flags can bleed through upgrade's imported modules even
   // though upgrade does not forward them. Require direct consumption on the
   // affected dispatch surfaces so callers never get silently ignored selectors.

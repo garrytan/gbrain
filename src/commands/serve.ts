@@ -4,6 +4,14 @@ import { startMcpServer } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import {
+  installLoopStallWatchdog,
+  resolveServeStallWatchdogMs,
+  SERVE_STALL_WATCHDOG_ENV,
+  STALL_DEFAULT_GRACE_MS,
+  type LoopStallWatchdogOpts,
+  type WatchdogHandle,
+} from '../core/process-watchdog.ts';
+import {
   delegatedSyncSettleMs,
   isDelegatedSyncRunning,
   maybeDrainDeferredEmbeds,
@@ -110,6 +118,17 @@ export interface ServeOptions {
   // Kill switch seam for the idle sweep. Defaults to
   // `process.env.GBRAIN_SWEEP !== '0'` when omitted.
   sweepEnabled?: boolean;
+  // Test seam for the --http lane (#4281): replaces the dynamically imported
+  // runServeHttp so the stall-watchdog arm/dispose ordering can be asserted
+  // without booting the real OAuth server. Type-only reference to
+  // serve-http.ts — erased at compile time, so the lazy runtime import stays.
+  runServeHttp?: (typeof import('./serve-http.ts'))['runServeHttp'];
+  // Test seam (#4281): replaces installLoopStallWatchdog.
+  installStallWatchdog?: (o: LoopStallWatchdogOpts) => WatchdogHandle;
+  // Test seam (#4281) for the loop-stall threshold in ms; 0 = off. Defaults
+  // to resolveServeStallWatchdogMs(GBRAIN_SERVE_STALL_WATCHDOG_MS) — opt-in,
+  // 15s floor, garbage values warn and stay off.
+  stallWatchdogMs?: number;
 }
 
 /**
@@ -248,8 +267,37 @@ export async function runServe(
     // raw value even on a non-TTY start.
     const printAdminToken = args.includes('--print-admin-token');
 
-    const { runServeHttp } = await import('./serve-http.ts');
-    await runServeHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface });
+    // `??` short-circuits, so the real module only loads when no seam is injected.
+    const runHttp = opts.runServeHttp ?? (await import('./serve-http.ts')).runServeHttp;
+
+    // Loop-stall watchdog (#4281): opt-in via GBRAIN_SERVE_STALL_WATCHDOG_MS.
+    // A serve wedged in a synchronous spin can't answer requests OR run its
+    // own SIGTERM cleanup (process-cleanup.ts needs a live loop), so it holds
+    // the PGLite write lock hostage — the serve-shaped twin of the #1633 sync
+    // incident. The watchdog worker (own OS thread) is petted by the main
+    // loop; sustained lag ≥ stall latches one SIGTERM (graceful chance),
+    // lag ≥ stall+grace SIGKILLs. Armed around runServeHttp ONLY: the stdio
+    // lane has its own lifecycle above, and finishHttpServe below carries its
+    // own cleanup deadline.
+    const httpLog = opts.log ?? ((msg: string) => console.error(msg));
+    const stallMs = opts.stallWatchdogMs ?? resolveServeStallWatchdogMs(process.env[SERVE_STALL_WATCHDOG_ENV], httpLog);
+    let stallWatchdog: WatchdogHandle | null = null;
+    if (stallMs > 0) {
+      const installStall = opts.installStallWatchdog ?? installLoopStallWatchdog;
+      stallWatchdog = installStall({ stallMs, graceMs: STALL_DEFAULT_GRACE_MS, label: 'serve-http-stall', onWarn: httpLog });
+      if (stallWatchdog.active) {
+        httpLog(
+          `[serve-http-stall] loop-stall watchdog armed: SIGTERM after ${stallMs}ms of main-loop stall, ` +
+          `SIGKILL ${STALL_DEFAULT_GRACE_MS}ms later (${SERVE_STALL_WATCHDOG_ENV}; 0 disables)`,
+        );
+      }
+    }
+
+    try {
+      await runHttp(engine, { port, tokenTtl, enableDcr, enableDcrInsecure, publicUrl, logFullParams, bind, suppressBootstrapToken, printAdminToken, surface });
+    } finally {
+      stallWatchdog?.dispose();
+    }
 
     await finishHttpServe(engine, opts);
     return;

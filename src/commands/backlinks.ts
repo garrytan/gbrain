@@ -41,7 +41,18 @@ export interface BacklinkGap {
  * filesystem-walker code that does `${dir}/${slug}` keeps working.
  */
 export function extractEntityRefs(content: string, _pagePath: string): { name: string; slug: string; dir: string }[] {
-  const refs = canonicalExtractEntityRefs(content);
+  return projectPeopleCompaniesRefs(canonicalExtractEntityRefs(content));
+}
+
+/**
+ * The legacy people/companies projection shared by the exported wrapper above
+ * and findBacklinkGaps (#1776: the gap walker extracts canonical refs ONCE per
+ * page and derives both this projection and the backlink-credit slug set from
+ * that single pass).
+ */
+function projectPeopleCompaniesRefs(
+  refs: { name: string; slug: string; dir: string }[],
+): { name: string; slug: string; dir: string }[] {
   return refs
     .filter(r => r.dir === 'people' || r.dir === 'companies')
     .map(r => ({
@@ -67,7 +78,16 @@ export function hasBacklink(targetContent: string, sourceFilename: string): bool
 
 /** Build a timeline back-link entry */
 export function buildBacklinkEntry(sourceTitle: string, sourcePath: string, date: string): string {
-  return `- **${date}** | Referenced in [${sourceTitle}](${sourcePath})`;
+  // #1776: dir-shaped sources get an extension-less link (the brain-slug
+  // convention the canonical extractor parses, so a freshly-written row is
+  // credited by the next check pass instead of re-flagged). Root-level
+  // sources keep the `.md` form: the extractor only parses `dir/name`
+  // paths, so the legacy filename-substring check is the only thing that
+  // can credit those rows — stripping `.md` there would make fix→check
+  // non-idempotent (duplicate rows on every run).
+  const bare = sourcePath.replace(/^(?:\.\.\/)+/, '');
+  const linkPath = bare.includes('/') ? sourcePath.replace(/\.md$/, '') : sourcePath;
+  return `- **${date}** | Referenced in [${sourceTitle}](${linkPath})`;
 }
 
 /** Scan a brain directory for back-link gaps */
@@ -92,17 +112,28 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   }
   walk(brainDir);
 
-  // Build a lookup of existing pages by directory/slug
+  // Build a lookup of existing pages by directory/slug. #1776: extract each
+  // page's canonical refs ONCE here — they feed both the gap candidates
+  // (people/companies projection) and the backlink-credit slug set, so
+  // extension-less convention links ([Alice](../people/alice),
+  // [[people/alice]]) count as backlinks even though the legacy
+  // `<basename>.md` substring check can't see them.
   const pagesBySlug = new Map<string, { path: string; content: string }>();
+  const refsByRelPath = new Map<string, { name: string; slug: string; dir: string }[]>();
+  const outgoingSlugsBySlug = new Map<string, Set<string>>();
   for (const page of allPages) {
     const slug = page.relPath.replace('.md', '');
     pagesBySlug.set(slug, { path: page.path, content: page.content });
+    const canonical = canonicalExtractEntityRefs(page.content);
+    refsByRelPath.set(page.relPath, canonical);
+    outgoingSlugsBySlug.set(slug, new Set(canonical.map(r => r.slug)));
   }
 
   // For each page, check entity references
   for (const page of allPages) {
-    const refs = extractEntityRefs(page.content, page.relPath);
+    const refs = projectPeopleCompaniesRefs(refsByRelPath.get(page.relPath) ?? []);
     const sourceFilename = basename(page.relPath);
+    const sourceSlug = page.relPath.replace(/\.md$/, '');
     // LOCAL PATCH (paolo, 2026-05-12): dedupe (source, target) pairs within
     // a single source page. extractEntityRefs returns one EntityRef per
     // occurrence, so a source page that mentions the same target N times
@@ -120,15 +151,19 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
       const target = pagesBySlug.get(targetSlug);
       if (!target) continue; // target page doesn't exist
 
-      // Check if the target already has a back-link to this source page
-      if (!hasBacklink(target.content, sourceFilename)) {
-        gaps.push({
-          sourcePage: page.relPath,
-          targetPage: targetSlug + '.md',
-          entityName: ref.name,
-          sourceTitle: extractPageTitle(page.content),
-        });
-      }
+      // Check if the target already has a back-link to this source page.
+      // Credited two ways (#1776): the legacy `<basename>.md` substring
+      // (old fixer rows, explicit .md links) OR the target's canonical
+      // outgoing refs containing the source slug (extension-less
+      // convention links and wikilinks the substring check misses).
+      if (hasBacklink(target.content, sourceFilename)) continue;
+      if (outgoingSlugsBySlug.get(targetSlug)?.has(sourceSlug)) continue;
+      gaps.push({
+        sourcePage: page.relPath,
+        targetPage: targetSlug + '.md',
+        entityName: ref.name,
+        sourceTitle: extractPageTitle(page.content),
+      });
     }
   }
 

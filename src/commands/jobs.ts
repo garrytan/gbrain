@@ -342,13 +342,13 @@ USAGE
                             [--idempotency-key K] [--queue Q] [--dry-run]
                             [--redact-secrets]   (shell only; scrubs inherit
                                                   values from stdout/stderr)
-  gbrain jobs list [--status S] [--queue Q] [--limit N]
-  gbrain jobs get <id>
+  gbrain jobs list [--status S] [--queue Q] [--limit N] [--json]
+  gbrain jobs get <id> [--json]
   gbrain jobs cancel <id>
   gbrain jobs retry <id>
   gbrain jobs prune [--older-than 30d] [--dry-run]
   gbrain jobs delete <id>
-  gbrain jobs stats [--queue Q] [--cluster-errors]
+  gbrain jobs stats [--queue Q] [--cluster-errors] [--json]
   gbrain jobs smoke [--sigkill-rescue] [--wedge-rescue]
   gbrain jobs watch [--json] [--follow] [--refresh-ms=N]
   gbrain jobs work [--queue Q] [--concurrency N] [--max-rss MB]
@@ -837,6 +837,15 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         jobs = await queue.getJobs({ status, queue: queueName, limit });
       }
 
+      // #3685: --json emits the machine-readable array the CHANGELOG's
+      // scripting guidance promises (before this guard the flag was accepted
+      // and silently discarded — scripts got the padded ASCII table). Guard
+      // sits BEFORE the empty-check so an empty queue emits `[]`, not prose.
+      if (hasFlag(args, '--json')) {
+        console.log(JSON.stringify(jobs, null, 2));
+        break;
+      }
+
       if (jobs.length === 0) {
         console.log('No jobs found.');
         return;
@@ -876,6 +885,11 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         job = await queue.getJob(id);
       }
       if (!job) { console.error(`Job #${id} not found.`); process.exit(1); }
+      // #3685: same machine-readable contract as `list --json` above.
+      if (hasFlag(args, '--json')) {
+        console.log(JSON.stringify(job, null, 2));
+        break;
+      }
       console.log(formatJobDetail(job));
       break;
     }

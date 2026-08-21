@@ -72,6 +72,7 @@ describe('embedStaleForSource', () => {
       embedded: 0,
       chunksProcessed: 0,
       pagesProcessed: 0,
+      invalidated: 0,
       lastCursor: null,
       done: true,
       aborted: false,
@@ -351,6 +352,217 @@ describe('contextual-retrieval wrapping on re-embed (#3507)', () => {
 
     expect(seen).toContain('prose chunk about widgets');
     expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #4283 — a backfill must NEVER NULL more embeddings than it can write.
+// The incident shape: a worker with a misresolved embedding config (temp
+// GBRAIN_HOME → compile-time default model, no API key) saw every page's
+// signature as drifted, NULLed 60k embeddings, embedded 0, and reported
+// success — 12 runs in a row.
+// ────────────────────────────────────────────────────────────────
+
+describe('signature invalidation is probe-gated (#4283)', () => {
+  /** Seed a page with N EMBEDDED chunks stamped under `signature`. */
+  async function seedEmbeddedPage(slug: string, chunkCount: number, signature: string): Promise<void> {
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `# ${slug}` });
+    await engine.upsertChunks(slug, Array.from({ length: chunkCount }, (_, i) => ({
+      chunk_index: i,
+      chunk_text: `chunk ${i} of ${slug}`,
+      chunk_source: 'compiled_truth',
+      token_count: 4,
+      embedding: new Float32Array(1536).fill(0.1),
+    })));
+    await engine.setPageEmbeddingSignature(slug, { sourceId: 'default', signature });
+  }
+
+  async function embeddedCount(): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NOT NULL`,
+    );
+    return rows[0]!.n;
+  }
+
+  test('IRON-RULE: broken embedder + drifted signature → nothing is NULLed, run degrades to NULL-only', async () => {
+    await seedEmbeddedPage('p1', 2, 'old:model:1536');
+    await seedEmbeddedPage('p2', 2, 'old:model:1536');
+    expect(await embeddedCount()).toBe(4);
+
+    const result = await embedStaleForSource(engine, 'default', {
+      embeddingSignature: 'zeroentropyai:zembed-1:1280',
+      embedFn: async () => { throw new Error('ZeroEntropy embedding requires ZEROENTROPY_API_KEY.'); },
+    });
+
+    // Pre-fix: all 4 embeddings were stripped and the run reported done.
+    expect(await embeddedCount()).toBe(4);
+    expect(result.invalidated).toBe(0);
+    expect(result.invalidationSkipped).toBe('embedder_probe_failed');
+    expect(result.embedded).toBe(0);
+  });
+
+  test('wrong-dims probe result (signature lies about the vectors) also skips invalidation', async () => {
+    await seedEmbeddedPage('p1', 2, 'old:model:1536');
+    const result = await embedStaleForSource(engine, 'default', {
+      // Signature claims 1280 dims but the embedder returns 1536-d vectors:
+      // every post-NULL upsert would fail, so refuse to NULL at all.
+      embeddingSignature: 'zeroentropyai:zembed-1:1280',
+      embedFn: fakeEmbedFn,
+    });
+    expect(await embeddedCount()).toBe(2);
+    expect(result.invalidated).toBe(0);
+    expect(result.invalidationSkipped).toBe('embedder_probe_failed');
+  });
+
+  test('working embedder → probe fires once, drifted chunks are invalidated, re-embedded, and counted', async () => {
+    const { EMBED_PROBE_TEXT } = await import('../src/core/embed-stale.ts');
+    await seedEmbeddedPage('p1', 3, 'old:model:1536');
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', {
+      embeddingSignature: 'new:model:1536',
+      embedFn: async (texts) => {
+        seen.push(...texts);
+        return fakeEmbedFn(texts);
+      },
+    });
+    expect(seen.filter((t) => t === EMBED_PROBE_TEXT).length).toBe(1);
+    expect(result.invalidated).toBe(3);
+    expect(result.embedded).toBe(3);
+    expect(result.invalidationSkipped).toBeUndefined();
+    expect(await embeddedCount()).toBe(3);
+    const sig = await engine.executeRaw<{ s: string | null }>(
+      `SELECT embedding_signature AS s FROM pages WHERE slug = 'p1'`,
+    );
+    expect(sig[0]!.s).toBe('new:model:1536');
+  });
+
+  test('no signature drift → no probe call (no embed spend on the common path)', async () => {
+    const { EMBED_PROBE_TEXT } = await import('../src/core/embed-stale.ts');
+    await seedPageWithStaleChunks('a', 2); // NULL embeddings only, no drift
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', {
+      embeddingSignature: 'new:model:1536',
+      embedFn: async (texts) => {
+        seen.push(...texts);
+        return fakeEmbedFn(texts);
+      },
+    });
+    expect(seen.some((t) => t === EMBED_PROBE_TEXT)).toBe(false);
+    expect(result.embedded).toBe(2);
+    expect(result.invalidated).toBe(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #4246 — staleness keys on the content revision the vector was computed
+// from. A chunk whose text was rewritten after embedding (historical writer
+// bugs, races) kept its old vector forever: `embedding IS NULL` never
+// matched, coverage read 100%, retrieval served the old body.
+// ────────────────────────────────────────────────────────────────
+
+describe('content-drift staleness via embedded_text_hash (#4246)', () => {
+  test('upsert stamps md5(chunk_text) when an embedding lands; NULL when text changes without one', async () => {
+    await engine.putPage('h1', { type: 'note', title: 'h1', compiled_truth: 'seeded' });
+    await engine.upsertChunks('h1', [{
+      chunk_index: 0, chunk_text: 'original text', chunk_source: 'compiled_truth',
+      token_count: 4, embedding: new Float32Array(1536).fill(0.2),
+    }]);
+    const stamped = await engine.executeRaw<{ h: string | null; m: string }>(
+      `SELECT embedded_text_hash AS h, md5(chunk_text) AS m FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'h1')`,
+    );
+    expect(stamped[0]!.h).toBe(stamped[0]!.m);
+
+    // Deferred-embed rewrite (sync noEmbed path): embedding AND hash reset.
+    await engine.upsertChunks('h1', [{
+      chunk_index: 0, chunk_text: 'rewritten text', chunk_source: 'compiled_truth', token_count: 4,
+    }]);
+    const reset = await engine.executeRaw<{ h: string | null }>(
+      `SELECT embedded_text_hash AS h FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'h1')`,
+    );
+    expect(reset[0]!.h).toBeNull();
+  });
+
+  /** Manufacture the damaged state: text rewritten under a kept vector. */
+  async function seedDriftedPage(slug: string): Promise<void> {
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: 'seeded' });
+    await engine.upsertChunks(slug, [{
+      chunk_index: 0, chunk_text: `old body of ${slug}`, chunk_source: 'compiled_truth',
+      token_count: 4, embedding: new Float32Array(1536).fill(0.3),
+    }]);
+    // Simulate a historical writer that changed text without touching the
+    // vector (the reporter's production state: 253 such chunks).
+    await engine.executeRaw(
+      `UPDATE content_chunks SET chunk_text = 'NEW body, never re-embedded'
+        WHERE page_id = (SELECT id FROM pages WHERE slug = $1)`,
+      [slug],
+    );
+  }
+
+  test('IRON-RULE: a drifted chunk is re-embedded from its CURRENT text; coverage stops lying', async () => {
+    await seedDriftedPage('drifted');
+    // Pre-fix: countStaleChunks = 0 and embed --stale had nothing to do.
+    const seen: string[] = [];
+    const result = await embedStaleForSource(engine, 'default', {
+      embedFn: async (texts) => {
+        seen.push(...texts);
+        return fakeEmbedFn(texts);
+      },
+    });
+    expect(result.invalidated).toBe(1);
+    expect(result.embedded).toBe(1);
+    expect(seen).toContain('NEW body, never re-embedded');
+    const rows = await engine.executeRaw<{ h: string | null; m: string; is_null: boolean }>(
+      `SELECT embedded_text_hash AS h, md5(chunk_text) AS m, (embedding IS NULL) AS is_null
+         FROM content_chunks WHERE page_id = (SELECT id FROM pages WHERE slug = 'drifted')`,
+    );
+    expect(rows[0]!.is_null).toBe(false);
+    expect(rows[0]!.h).toBe(rows[0]!.m); // hash restamped against the new text
+  });
+
+  test('NULL hash (pre-v133 rows) is grandfathered — no upgrade re-embed spike', async () => {
+    await engine.putPage('legacy', { type: 'note', title: 'legacy', compiled_truth: 'seeded' });
+    await engine.upsertChunks('legacy', [{
+      chunk_index: 0, chunk_text: 'legacy text', chunk_source: 'compiled_truth',
+      token_count: 4, embedding: new Float32Array(1536).fill(0.4),
+    }]);
+    await engine.executeRaw(`UPDATE content_chunks SET embedded_text_hash = NULL`);
+    const n = await engine.invalidateContentDriftEmbeddings({ sourceId: 'default' });
+    expect(n).toBe(0);
+    const rows = await engine.executeRaw<{ is_null: boolean }>(
+      `SELECT (embedding IS NULL) AS is_null FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'legacy')`,
+    );
+    expect(rows[0]!.is_null).toBe(false);
+  });
+
+  test('embed_skip pages are never invalidated (nothing would re-embed them)', async () => {
+    await seedDriftedPage('skipped');
+    await engine.executeRaw(
+      `UPDATE pages SET frontmatter = frontmatter || '{"embed_skip": true}'::jsonb WHERE slug = 'skipped'`,
+    );
+    const n = await engine.invalidateContentDriftEmbeddings({ sourceId: 'default' });
+    expect(n).toBe(0);
+  });
+
+  test('source-scoped: drift in another source is untouched', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('other-drift', 'other-drift', '{"federated":true}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage('od', { type: 'note', title: 'od', compiled_truth: 'seeded' }, { sourceId: 'other-drift' });
+    await engine.upsertChunks('od', [{
+      chunk_index: 0, chunk_text: 'other old', chunk_source: 'compiled_truth',
+      token_count: 4, embedding: new Float32Array(1536).fill(0.5),
+    }], { sourceId: 'other-drift' });
+    await engine.executeRaw(
+      `UPDATE content_chunks SET chunk_text = 'other NEW'
+        WHERE page_id = (SELECT id FROM pages WHERE slug = 'od' AND source_id = 'other-drift')`,
+    );
+    const n = await engine.invalidateContentDriftEmbeddings({ sourceId: 'default' });
+    expect(n).toBe(0);
+    const m = await engine.invalidateContentDriftEmbeddings({ sourceId: 'other-drift' });
+    expect(m).toBe(1);
   });
 });
 

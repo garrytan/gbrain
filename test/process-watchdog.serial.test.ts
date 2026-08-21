@@ -18,7 +18,7 @@ async function runHarness(
   deadlineMs: number,
   graceMs: number,
   hardCapMs: number,
-): Promise<{ exitCode: number | null; signalled: boolean; elapsedMs: number; stdout: string; killedByTest: boolean }> {
+): Promise<{ exitCode: number | null; signalled: boolean; elapsedMs: number; stdout: string; stderr: string; killedByTest: boolean }> {
   const proc = Bun.spawn(['bun', HARNESS, mode, String(deadlineMs), String(graceMs)], {
     stdout: 'pipe',
     stderr: 'pipe',
@@ -30,10 +30,11 @@ async function runHarness(
   clearTimeout(cap);
   const elapsedMs = Date.now() - start;
   const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
   // Bun surfaces signal death via exitCode === null + signalCode, or a negative
   // exitCode on some platforms. Treat "not a clean 0" as signalled for our purpose.
   const signalled = proc.exitCode !== 0;
-  return { exitCode: proc.exitCode, signalled, elapsedMs, stdout, killedByTest };
+  return { exitCode: proc.exitCode, signalled, elapsedMs, stdout, stderr, killedByTest };
 }
 
 describe('process-watchdog integration (Bun-pinned)', () => {
@@ -63,5 +64,41 @@ describe('process-watchdog integration (Bun-pinned)', () => {
     expect(r.killedByTest).toBe(false);
     expect(r.stdout).toContain('DISPOSED');
     expect(r.elapsedMs).toBeLessThan(4000);
+  }, 15000);
+});
+
+describe('loop-stall watchdog integration (Bun-pinned, #4281)', () => {
+  test('starved loop with a SIGTERM listener is SIGTERMed then SIGKILLed around stall+grace', async () => {
+    // stall 300 + grace 250 = ~550ms expected death (plus worker boot). The
+    // harness registers a SIGTERM listener, so only the SIGKILL escalation can
+    // actually kill it — exactly the serve-http shape (process-cleanup's
+    // handler can't run on a starved loop).
+    const r = await runHarness('stall-with', 300, 250, 5000);
+    expect(r.stdout).not.toContain('SURVIVED'); // the bug symptom
+    expect(r.killedByTest).toBe(false);          // watchdog, not the test, killed it
+    expect(r.signalled).toBe(true);
+    expect(r.elapsedMs).toBeLessThan(3500);
+    // The worker latched SIGTERM first, then escalated — both visible in its log.
+    expect(r.stderr).toContain('SIGTERM');
+    expect(r.stderr).toContain('SIGKILL');
+  }, 15000);
+
+  test('healthy petting loop is NEVER killed across multiple stall windows', async () => {
+    // The false-positive pin: the harness idles (pets flowing) for well past
+    // stall+grace. Any signal is a watchdog bug — a false SIGTERM prints
+    // TERMED and exits 1; a false SIGKILL shows as non-zero exit.
+    const r = await runHarness('stall-healthy', 300, 200, 6000);
+    expect(r.killedByTest).toBe(false);
+    expect(r.stdout).not.toContain('TERMED');
+    expect(r.stdout).toContain('HEALTHY');
+    expect(r.exitCode).toBe(0);
+  }, 15000);
+
+  test('disposed stall watchdog never kills, even under genuine starvation', async () => {
+    // Disposed immediately, then the harness truly starves past stall+grace.
+    const r = await runHarness('stall-dispose', 300, 200, 6000);
+    expect(r.killedByTest).toBe(false);
+    expect(r.stdout).toContain('DISPOSED');
+    expect(r.exitCode).toBe(0);
   }, 15000);
 });

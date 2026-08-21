@@ -63,6 +63,15 @@ describe('formatRecipeTable', () => {
     expect(openaiLine).toContain('✗ missing OPENAI_API_KEY');
   });
 
+  test('shows keyless Ollama chat as available', () => {
+    const out = formatRecipeTable(listRecipes(), {});
+    const ollamaLine = out.split('\n').find(line => line.startsWith('ollama'));
+    expect(ollamaLine).toBeDefined();
+    // Master-skew fixup: on this branch ollama also carries an expansion
+    // touchpoint (#4073), so the EXPAND column reads `yes`, not `—`.
+    expect(ollamaLine).toMatch(/ollama\s+openai-compat\s+yes\s+yes\s+yes\s+✓ ready/);
+  });
+
   test('each recipe appears at most once', () => {
     const out = formatRecipeTable(listRecipes(), {});
     const recipes = listRecipes();

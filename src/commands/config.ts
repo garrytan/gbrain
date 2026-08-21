@@ -29,11 +29,41 @@ export function isSensitiveConfigKey(key: string): boolean {
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
 
+/**
+ * Vendor credential keys that `buildGatewayConfig` folds into the gateway env.
+ * That seam reads the FILE plane (~/.gbrain/config.json) plus process.env and
+ * never the DB plane, so `config set <vendor>_api_key` must not write the DB:
+ * it would report success, `config get` would read it straight back, and every
+ * provider call would still fail "requires <VENDOR>_API_KEY".
+ *
+ * Same bug class the v0.37.11.0 wave closed for embedding_model. That field
+ * could only be fixed by refusing, because changing it needs a wipe-and-reinit.
+ * A credential carries no such constraint, so the honest fix is to route the
+ * write to the plane the consumer actually reads.
+ *
+ * Keep in sync with the `envFromConfig` mappings in
+ * src/core/ai/build-gateway-config.ts.
+ */
+export const FILE_PLANE_API_KEYS: readonly string[] = [
+  'openai_api_key',
+  'anthropic_api_key',
+  'zeroentropy_api_key',
+  'openrouter_api_key',
+  'voyage_api_key',
+  'dashscope_api_key',
+  'google_api_key',
+  'azure_openai_api_key', // #4031: mergedProviderEnv reads the file plane only
+];
+
 export function redactConfigValue(key: string, value: string): string {
   if (value.includes('postgresql://')) return redactUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
   return value;
 }
+
+// #3661: the flags `config set` actually honors. Everything else that looks
+// like a flag is rejected before the write — see the gate in the `set` branch.
+const CONFIG_SET_KNOWN_FLAGS = ['--force', '--coverage-override', '--yes'];
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
@@ -106,6 +136,19 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
+    if (FILE_PLANE_API_KEYS.includes(key)) {
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = loadConfigFileOnly() as unknown as Record<string, unknown> | null;
+      if (cfg && key in cfg) {
+        delete cfg[key];
+        saveConfig(cfg as unknown as Parameters<typeof saveConfig>[0]);
+        console.log(`Unset ${key} (file plane)`);
+      } else {
+        console.error(`Config key not found: ${key}`);
+        process.exit(1);
+      }
+      return;
+    }
     const n = await engine.unsetConfig(key);
     if (n > 0) {
       console.log(`Unset ${key}`);
@@ -151,6 +194,29 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       process.exit(1);
     }
   } else if (action === 'set' && key && value) {
+    // #3661: `config set` dropped flags it does not implement and wrote
+    // anyway. `--dry-run` — honored by sync/import/extract/quarantine/pages —
+    // printed the usual "Set <key> = <value>" confirmation and persisted the
+    // mutation, so a caller probing a value silently changed live config.
+    // Unknown flags are now refused BEFORE any validation or write runs —
+    // regardless of whether they land after the value
+    // (`config set <key> <value> --dry-run`) or before it
+    // (`config set <key> --dry-run <value>`). Scan every token after the
+    // key and resolve the value as the first non-flag one, so a flag
+    // sitting in the value slot can't slip through as literal config
+    // content.
+    const tail = args.slice(2);
+    const unknownFlags = tail.filter(a => a.startsWith('-') && !CONFIG_SET_KNOWN_FLAGS.includes(a));
+    if (unknownFlags.length > 0) {
+      for (const flag of unknownFlags) {
+        console.error(`[config] unknown flag: ${flag}`);
+      }
+      console.error(`[config] \`gbrain config set\` accepts: ${CONFIG_SET_KNOWN_FLAGS.join(', ')}.`);
+      console.error(`[config] Nothing was written.`);
+      process.exit(1);
+    }
+    const value = tail.find(a => !a.startsWith('-')) ?? args[2];
+
     // Bootstrap hook-lane keys are FILE-plane canonical: they are read by
     // engine-free processes (the harness hook children and the detached
     // `sources push` child) via loadConfigFileOnly, which never sees the DB
@@ -183,6 +249,19 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
+    // Vendor credentials are file-plane canonical (see FILE_PLANE_API_KEYS).
+    // Routed, not refused: unlike embedding_model there is nothing to re-init,
+    // so the user's intent is satisfiable exactly as typed.
+    if (FILE_PLANE_API_KEYS.includes(key)) {
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+      (cfg as unknown as Record<string, unknown>)[key] = value;
+      saveConfig(cfg);
+      // #892: redact — the raw secret must not reach scrollback or shell history.
+      console.log(`Set ${key} = ${redactConfigValue(key, value)} (file plane: ~/.gbrain/config.json)`);
+      return;
+    }
+
     // v0.37.11.0 fix wave (Lane C.2 + CDX2-13): refuse writes to schema-sizing
     // fields unconditionally. These fields size the `content_chunks.embedding`
     // column at init time and are file-plane canonical. `gbrain config set

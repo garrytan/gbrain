@@ -375,7 +375,7 @@ const TOP_LEVEL_TYPES: Partial<Record<SupportedCodeLanguage, Set<string>>> = {
   c_sharp: new Set([
     'method_declaration', 'class_declaration', 'interface_declaration',
     'struct_declaration', 'enum_declaration', 'namespace_declaration',
-    'using_directive', 'property_declaration',
+    'file_scoped_namespace_declaration', 'using_directive', 'property_declaration',
   ]),
   cpp: new Set([
     'function_definition', 'class_specifier', 'struct_specifier',
@@ -862,12 +862,24 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
   return merged;
 }
 
+/**
+ * The structured header `buildChunk` prepends: "[Lang] path:N-M symbol\n\n".
+ * It carries line numbers, so it is volatile across edits above a symbol —
+ * `src/core/embed-reuse.ts` keys the embedding-reuse cache on the stripped body.
+ */
+export const CHUNK_HEADER_RE = /^\[[^\]]+\] [^\n]+\n\n/;
+
+/** Chunk text minus its header, or unchanged when there is no header. */
+export function stripChunkHeader(text: string): string {
+  return text.replace(CHUNK_HEADER_RE, '');
+}
+
 function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
   const first = group[0]!;
   const last = group[group.length - 1]!;
   // Strip each chunk's structured header line when merging so the combined
   // body reads like the original source. Header is always "[Lang] path:N-M symbol".
-  const bodies = group.map((c) => c.text.replace(/^\[[^\]]+\] [^\n]+\n\n/, ''));
+  const bodies = group.map((c) => stripChunkHeader(c.text));
   const mergedBody = bodies.join('\n\n');
   const header = `[${displayLang(first.metadata.language)}] ${first.metadata.filePath}:${first.metadata.startLine}-${last.metadata.endLine} merged (${group.length} siblings)`;
   return {
@@ -920,7 +932,7 @@ function capOversizedChunks(
     // header's standalone cl100k figure under-counts ~2.5x once the body
     // contains CJK and the weighted branch takes over (see
     // estimateEmbedTokensCeiling).
-    const headerMatch = c.text.match(/^\[[^\]]+\] [^\n]+\n\n/);
+    const headerMatch = c.text.match(CHUNK_HEADER_RE);
     const body = headerMatch ? c.text.slice(headerMatch[0].length) : c.text;
     const bodyCap = Math.max(1, cap - (headerMatch ? estimateEmbedTokensCeiling(headerMatch[0]) : 0));
     for (const piece of splitToTokenBudget(body, bodyCap, opts)) {

@@ -424,3 +424,22 @@ describe('chunkCodeText — empty input', () => {
     expect(await chunkCodeText('   \n  ', 'foo.ts')).toEqual([]);
   });
 });
+
+describe('chunkCodeText — C# file-scoped namespace (#3601)', () => {
+  test('indexes the class body inside a file-scoped namespace', async () => {
+    const source = `using System;
+namespace Demo;
+
+public class OrderService
+{
+    public decimal ComputeRefund(decimal amount) => amount * 0.9m;
+}
+`;
+
+    const result = await chunkCodeText(source, 'OrderService.cs');
+    const text = result.map(chunk => chunk.text).join('\n');
+
+    expect(text).toContain('OrderService');
+    expect(text).toContain('ComputeRefund');
+  });
+});

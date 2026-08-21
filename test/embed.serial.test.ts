@@ -624,7 +624,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     }
   });
 
-  test('case 4: non-rate-limit error rethrows immediately without retry', async () => {
+  test('case 4: non-retriable error rethrows immediately without retry', async () => {
     const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
     let calls = 0;
     embedBatchBehavior = async () => {
@@ -632,8 +632,31 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
       throw new Error('500 internal server error');
     };
     await expect(embedBatchWithBackoff(['x'])).rejects.toThrow('500 internal server error');
-    // Single attempt — no retries on non-429.
+    // Single attempt — no retries on non-gateway 5xx (#3966 keeps 500 fatal).
     expect(calls).toBe(1);
+  });
+
+  test('case 4b: 502 Bad Gateway retries then succeeds (#3966)', async () => {
+    const { embedBatchWithBackoff, detectGatewayErrorFromCause } = await import('../src/commands/embed.ts');
+    expect(detectGatewayErrorFromCause({ cause: { status: 502 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 503 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 504 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 500 } })).toBe(false);
+
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        // NIM-style wrap: status on cause; parseable delay keeps the test fast.
+        const err = new Error('[embed(nvidia:nvidia/nv-embed-v1)] Bad Gateway — try again in 10ms');
+        (err as any).cause = { status: 502 };
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
   });
 
   test('case 5: jitter range — same parsed delay produces non-identical sleeps across runs', async () => {
@@ -672,7 +695,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
   });
 
   test('case 7: AITransientError-shaped wrap with 429 cause triggers retry; 500 cause does not', async () => {
-    const { embedBatchWithBackoff, detect429FromCause } = await import('../src/commands/embed.ts');
+    const { embedBatchWithBackoff, detect429FromCause, detectGatewayErrorFromCause } = await import('../src/commands/embed.ts');
 
     // Pure helper checks first.
     expect(detect429FromCause({ cause: { status: 429 } })).toBe(true);
@@ -681,6 +704,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     expect(detect429FromCause({ status: 500 })).toBe(false);
     expect(detect429FromCause(undefined)).toBe(false);
     expect(detect429FromCause(null)).toBe(false);
+    expect(detectGatewayErrorFromCause({ cause: { cause: { status: 502 } } })).toBe(true);
     // Deep wrap (defensive — current normalizeAIError wraps once).
     expect(detect429FromCause({ cause: { cause: { status: 429 } } })).toBe(true);
 

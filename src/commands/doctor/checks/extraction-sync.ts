@@ -22,6 +22,7 @@ import {
   findDbOnlyCollisions,
 } from '../../../core/storage-config.ts';
 import { slugifyPath } from '../../../core/sync.ts';
+import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -307,15 +308,21 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
         // already surfaces the config error itself.
       }
       const dbOnlyDirs = effectiveDbOnlyDirs(declared);
-      const rows = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND page_kind = 'markdown'`,
+      const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+        `SELECT slug, source_path FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND page_kind = 'markdown'`,
         [src.id],
       );
       if (rows.length === 0) continue;
-      const backed = collectMarkdownSlugs(src.local_path!);
-      for (const { slug } of rows) {
+      let backedWithoutSourcePath: Set<string> | null = null;
+      for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
-        if (backed.has(slug)) continue;
+        if (sourcePath) {
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath);
+          if (filePath && existsSync(filePath)) continue;
+        } else {
+          backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);
+          if (backedWithoutSourcePath.has(slug.toLowerCase())) continue;
+        }
         total++;
         perSource[src.id] = (perSource[src.id] ?? 0) + 1;
         if (samples.length < 5) samples.push(`${slug} (src=${src.id})`);
@@ -394,6 +401,42 @@ export async function checkDbOnlyCollectorCollision(
   }
 }
 
+type ExtractAtomsBacklogCounter = (engine: BrainEngine, sourceId?: string) => Promise<number | null>;
+
+async function countExtractAtomsBacklogBySource(
+  engine: BrainEngine,
+  countBacklog: ExtractAtomsBacklogCounter,
+): Promise<Array<{ source_id: string; backlog: number }> | null> {
+  try {
+    const sources = await engine.executeRaw<{ source_id: string }>(
+      `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
+    );
+    const rows: Array<{ source_id: string; backlog: number }> = [];
+    for (const src of sources) {
+      const backlog = await countBacklog(engine, src.source_id);
+      if (backlog === null) return null;
+      if (backlog > 0) rows.push({ source_id: src.source_id, backlog });
+    }
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
+function buildExtractAtomsBacklogFixHint(
+  bySource: Array<{ source_id: string; backlog: number }> | null,
+): string {
+  const suffix = '(or declare extract_atoms in your active schema pack)';
+  if (!bySource || bySource.length === 0) {
+    return `gbrain dream --phase extract_atoms --drain --source <source-id> --window 120 ${suffix}`;
+  }
+  if (bySource.length === 1) {
+    return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 ${suffix}`;
+  }
+  const sources = bySource.map((row) => row.source_id).join(', ');
+  return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources}; or declare extract_atoms in your active schema pack)`;
+}
+
 /**
  * issue #1678 — extract_atoms_backlog doctor check.
  *
@@ -436,11 +479,12 @@ export async function computeExtractAtomsBacklogCheck(
     // The incident: pack does NOT run the phase but a real backlog exists →
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
-      const fix = 'gbrain dream --phase extract_atoms --drain --window 120 (or declare extract_atoms in your active schema pack)';
+      const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+      const fix = buildExtractAtomsBacklogFixHint(backlogBySource);
       return {
         name, status: 'warn',
         message: `${backlog} pages eligible for atom extraction but the active pack does not run extract_atoms — backlog growing. Fix: ${fix}`,
-        details: { backlog, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
+        details: { backlog, backlog_by_source: backlogBySource ?? undefined, pack_declares_phase: false, fix_hint: fix, known_approximation: approx },
       };
     }
 

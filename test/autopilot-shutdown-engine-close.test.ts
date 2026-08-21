@@ -55,9 +55,27 @@ describe('autopilot.ts graceful engine shutdown (#1872)', () => {
     expect(AUTOPILOT_SRC).toMatch(/inflightInlineCycle\s*=\s*cyclePromise/);
   });
 
-  it('shutdown() awaits closeEngine() before process.exit(0) (SIGINT + internal-stop path)', () => {
+  it('shutdown() awaits closeEngine() before process.exit (SIGINT + internal-stop path)', () => {
     expect(AUTOPILOT_SRC).toMatch(
-      /await closeEngine\(\);[\s\S]{0,400}process\.exit\(0\)/,
+      /await closeEngine\(\);[\s\S]{0,400}process\.exit\(/,
+    );
+  });
+
+  it('exits non-zero when the daemon gives up after repeated failures (#2234)', () => {
+    expect(AUTOPILOT_SRC).toContain(
+      "process.exit(sig === 'max_crashes' || sig === 'cycle-failure-cap' ? 1 : 0);",
+    );
+  });
+
+  it('keeps operator stops and intentional relaunch stops clean', () => {
+    expect(AUTOPILOT_SRC).toMatch(
+      /process\.on\('SIGTERM', \(\) => \{ void shutdown\('SIGTERM'\); \}\);/,
+    );
+    expect(AUTOPILOT_SRC).toMatch(
+      /process\.on\('SIGINT',\s+\(\) => \{ void shutdown\('SIGINT'\);\s+\}\);/,
+    );
+    expect(AUTOPILOT_SRC).toContain(
+      "await shutdown('engine-config-changed');",
     );
   });
 });

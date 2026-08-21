@@ -345,9 +345,22 @@ describe('socket + secret hardening [S3#6]', () => {
       { secret, boundSourceId: 'default' },
     );
     servers.push(server!);
-    expect(statSync(sock).mode & 0o777).toBe(0o600);
-    expect(statSync(ipcSecretPath(dir)).mode & 0o777).toBe(0o600);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    // win32: none of these three assertions hold there, for two distinct
+    // reasons — neither fixable by this PR's scope (the round-trip bug):
+    //   - the socket path: net maps it to \\.\pipe\<name>, no filesystem
+    //     entry is ever created, so statSync() throws rather than returning
+    //     a fake mode.
+    //   - the secret file and parent dir: chmodSync() on win32 can only
+    //     toggle the FILE_ATTRIBUTE_READONLY flag, not the full POSIX
+    //     owner/group/other bit pattern — Node's fs.stat().mode synthesizes
+    //     0o666/0o777-ish values there regardless of the 0600/0700 the code
+    //     requested. Real hardening on Windows needs the ACL APIs
+    //     (icacls-equivalent), a separate piece of work.
+    if (process.platform !== 'win32') {
+      expect(statSync(sock).mode & 0o777).toBe(0o600);
+      expect(statSync(ipcSecretPath(dir)).mode & 0o777).toBe(0o600);
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+    }
   });
 
   test('ensureIpcSecret is stable across calls; readIpcSecret round-trips', async () => {

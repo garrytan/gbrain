@@ -139,6 +139,11 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
  * Layer 3: No page type exceeds maxRatio of total results.
  */
 function enforceTypeDiversity(results: SearchResult[], maxRatio: number): SearchResult[] {
+  // A diversity cap cannot improve a homogeneous candidate set. Applying
+  // the ratio anyway only drops relevant results (for 3 notes, the default
+  // 60% cap returns 2) without adding another type in their place.
+  if (new Set(results.map(r => r.type)).size <= 1) return results;
+
   const maxPerType = Math.max(1, Math.ceil(results.length * maxRatio));
   const typeCounts = new Map<string, number>();
   const kept: SearchResult[] = [];

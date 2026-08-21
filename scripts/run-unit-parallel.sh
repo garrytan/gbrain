@@ -277,6 +277,23 @@ grep_count() {
   echo "${n:-0}"
 }
 
+# strip_ansi: emit FILE with SGR color sequences removed.
+#
+# Every parser below reads a log that `bun test` wrote to a pipe with color
+# still enabled, so its lines carry SGR escapes:
+#     ESC[0mESC[32m 5385 passESC[0m
+#     ESC[0mESC[31m✗ESC[0m ESC[0msome test name
+# Parsing those raw makes awk's $1 the escape blob rather than the count or the
+# marker — which silently produced `pass=0 fail=0` on shards that had thousands
+# of passes, and stopped every `✗`/`(fail)` pattern below from ever matching.
+# The ESC is built with printf rather than written as `\x1b`, because BSD sed
+# (macOS) does not understand `\x` escapes.
+strip_ansi() {
+  local esc
+  esc=$(printf '\033')
+  sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" "$1"
+}
+
 # bun_summary_count: parses Bun's summary lines (one per `bun test` invocation
 # inside a shard — there's only one when we pass an explicit file list).
 # Looks for ` N pass` / ` N fail` / ` N skip` patterns and sums them across
@@ -285,10 +302,10 @@ grep_count() {
 bun_summary_count() {
   local label="$1"; local file="$2"
   if [ ! -f "$file" ]; then echo 0; return; fi
-  awk -v label="$label" '
+  strip_ansi "$file" | awk -v label="$label" '
     $1 ~ /^[0-9]+$/ && $2 == label { total += $1 }
     END { print total + 0 }
-  ' "$file"
+  '
 }
 
 # shard_total_files: parse the "[unit-shard N/M] running X files" line that
@@ -412,8 +429,11 @@ trap - EXIT
 
 # ──────────────────────────────────────────────────────────────────────────
 # Aggregate failures (single writer; serial; never concurrent).
-# Bun failure block format: from `(fail) ...` line through next `(pass)`,
-# `(skip)`, blank line, or `__bun_test_summary__` marker.
+# Bun failure block format: from the failure marker line through the next pass
+# marker, `(skip)`, blank line, or `__bun_test_summary__`. Bun 1.3 emits `✗ ` /
+# `✓ `; older releases emitted `(fail) ` / `(pass) `. Both are matched, and every
+# parse runs on ANSI-stripped text — the markers are color-wrapped on the wire,
+# so raw patterns silently matched nothing.
 # ──────────────────────────────────────────────────────────────────────────
 TOTAL_FAILURES=0
 TOTAL_PASS=0
@@ -425,6 +445,31 @@ TOTAL_RC=0
 # NON_OOM_FAIL records that at least one failure exists that the rescue lane
 # must NOT absolve (plain assertion failures, wedges without the signature).
 OOM_RE='Out of memory|WebAssembly\.Memory|RuntimeError: [Aa]borted|Aborted\(\)'
+
+# oom_signature_in_log: true when FILE carries a genuine WASM OOM signature.
+#
+# Not a bare `grep -qE "$OOM_RE"`. The signature is ordinary text, so any test
+# that merely PRINTS it trips the detector — and one does: the rescue lane's own
+# meta-test (test/scripts/run-unit-parallel.test.ts) writes fixtures containing
+# `Original error: Out of memory` and asserts on the nested runner's output. When
+# that assertion fails, Bun prints the captured payload as an `Expected:` /
+# `Received:` diff, the fixture text lands in the PARENT shard log, and the
+# parent concludes a real OOM occurred — re-running every file in the shard
+# serially. Observed 2026-08-11: a full 372-file serial rescue kicked off on a
+# machine with 19 GB free, triggered by the test that exists to verify rescue.
+#
+# Assertion payloads are therefore excluded. A real OOM aborts the file and the
+# signature appears as runtime output on its own line; it never shows up ONLY
+# inside a quoted expect() diff. Keeps the safety net armed for real OOMs while
+# refusing to be fooled by a string a test happened to print.
+oom_signature_in_log() {
+  local file="$1"
+  [ -f "$file" ] || return 1
+  strip_ansi "$file" \
+    | grep -vE '^[[:space:]]*(Expected|Received):' \
+    | grep -qE "$OOM_RE"
+}
+
 OOM_RESCUE_LIST="$LOG_DIR/oom-rescue-files.txt"
 : > "$OOM_RESCUE_LIST"
 NON_OOM_FAIL=0
@@ -442,15 +487,15 @@ EXTERNAL_KILL_ANY=0
 failing_files_in_log() {
   local file="$1"
   [ -f "$file" ] || return 0
-  awk '
+  strip_ansi "$file" | awk '
     /^(::group::)?[^ ].*\.test\.ts:$/ {
       current = $0
       sub(/^::group::/, "", current)
       current = substr(current, 1, length(current) - 1)
       next
     }
-    /^\(fail\) / && current != "" { print current }
-  ' "$file" | sort -u
+    /^(\(fail\) |✗ )/ && current != "" { print current }
+  ' | sort -u
 }
 
 # shard_unstarted_files: completion evidence for the EXIT-HANG classifier.
@@ -498,7 +543,7 @@ for i in $(seq 1 "$N"); do
 
   shard_oom=0
   if [ "$rc" != "0" ] && [ "${GBRAIN_TEST_NO_OOM_FALLBACK:-0}" != "1" ] \
-     && [ -f "$SHARD_LOG" ] && grep -qE "$OOM_RE" "$SHARD_LOG"; then
+     && [ -f "$SHARD_LOG" ] && oom_signature_in_log "$SHARD_LOG"; then
     shard_oom=1
   fi
 
@@ -616,15 +661,16 @@ for i in $(seq 1 "$N"); do
   if [ "$rc" != "0" ]; then
     TOTAL_RC=1
     if [ "$fail_count" -gt 0 ] && [ -f "$SHARD_LOG" ]; then
-      # Extract each (fail) block: from `(fail)` line through next `(pass)`,
-      # `(skip)`, blank line, or `__bun_test_summary__`. Single awk pass.
-      awk -v shard="$i" '
-        /^\(fail\) / { in_block=1; print "--- shard " shard ": " $0; next }
+      # Extract each failure block: from the `✗ ` / `(fail) ` line through the
+      # next pass/skip marker, blank line, or `__bun_test_summary__`. Single awk
+      # pass over ANSI-stripped text.
+      strip_ansi "$SHARD_LOG" | awk -v shard="$i" '
+        /^(\(fail\) |✗ )/ { in_block=1; print "--- shard " shard ": " $0; next }
         in_block {
-          if (/^\(pass\)/ || /^\(skip\)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
+          if (/^(\(pass\)|\(skip\)|✓ |✓$)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
           print $0
         }
-      ' "$SHARD_LOG" >> "$FAILURES_LOG"
+      ' >> "$FAILURES_LOG"
     elif [ -f "$SHARD_LOG" ]; then
       # Non-zero rc but no (fail) line found — extraction couldn't pinpoint.
       # Dump the full shard log so we never silently lose the failure cause.
@@ -679,13 +725,13 @@ if [ "$SERIAL_FILES_COUNT" -gt 0 ]; then
     s_fail=$(bun_summary_count "fail" "$LOG_DIR/serial.log")
     TOTAL_FAILURES=$((TOTAL_FAILURES + s_fail))
     if [ "$s_fail" -gt 0 ]; then
-      awk '
-        /^\(fail\) / { in_block=1; print "--- shard serial: " $0; next }
+      strip_ansi "$LOG_DIR/serial.log" | awk '
+        /^(\(fail\) |✗ )/ { in_block=1; print "--- shard serial: " $0; next }
         in_block {
-          if (/^\(pass\)/ || /^\(skip\)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
+          if (/^(\(pass\)|\(skip\)|✓ |✓$)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
           print $0
         }
-      ' "$LOG_DIR/serial.log" >> "$FAILURES_LOG"
+      ' >> "$FAILURES_LOG"
     else
       {
         echo "--- shard serial: rc=$SERIAL_RC, no (fail) markers — full log follows ---"
@@ -776,13 +822,13 @@ if [ "$TOTAL_RC" != "0" ] && [ "${RESCUE_COUNT:-0}" -gt 0 ]; then
   else
     # Real failures confirmed serially (or a non-OOM failure exists anyway).
     OOM_RESCUE_NOTE=" | oom_rescue_failed=${r_fail}real"
-    awk '
-      /^\(fail\) / { in_block=1; print "--- oom-rescue (serial, confirmed real): " $0; next }
+    strip_ansi "$RESCUE_LOG" | awk '
+      /^(\(fail\) |✗ )/ { in_block=1; print "--- oom-rescue (serial, confirmed real): " $0; next }
       in_block {
-        if (/^\(pass\)/ || /^\(skip\)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
+        if (/^(\(pass\)|\(skip\)|✓ |✓$)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
         print $0
       }
-    ' "$RESCUE_LOG" >> "$FAILURES_LOG"
+    ' >> "$FAILURES_LOG"
     echo "oom-rescue: $RESCUE_COUNT files pass=$r_pass fail=$r_fail rc=$RESCUE_RC (real failures confirmed)" >> "$SUMMARY_FILE"
   fi
 fi

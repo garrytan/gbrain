@@ -22,6 +22,7 @@ import { packToBudget, estimateTokens, resultTokens } from '../search/token-budg
 import { isAvailable } from '../ai/gateway.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
+import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 
 // ============================================================
 // v0.31 — Hot memory ops: extract_facts / recall / forget_fact
@@ -197,6 +198,11 @@ const recall: Operation = {
       return decorated.slice(0, limit).map(d => d.r);
     };
     const byCreated = (rec: Record<string, unknown>) => rec.created_at ?? rec.since_date;
+    // The since-arms below pass eventTime:true (COALESCE(valid_from,
+    // created_at) — see FactListOpts.eventTime), so their per-source ORDER BY
+    // is event time, not creation time. The federated merge key has to match
+    // or truncation at `limit` drops the wrong rows across sources.
+    const byEventTime = (rec: Record<string, unknown>) => rec.valid_from ?? rec.created_at;
 
     let rows: FactRows = [];
 
@@ -220,6 +226,7 @@ const recall: Operation = {
             activeOnly: !includeExpired,
             limit,
             visibility,
+            excludeAuditRows: true,
           });
         })),
         (rec) => rec.valid_from ?? rec.created_at,
@@ -231,6 +238,7 @@ const recall: Operation = {
             activeOnly: !includeExpired,
             limit,
             visibility,
+            excludeAuditRows: true,
           }),
         )),
         byCreated,
@@ -241,12 +249,14 @@ const recall: Operation = {
         rows = mergeNewest(
           await Promise.all(factSources.map(src =>
             ctx.engine.listFactsSince(src, since, {
+              eventTime: true,
               activeOnly: !includeExpired,
               limit,
               visibility,
+              excludeAuditRows: true,
             }),
           )),
-          byCreated,
+          byEventTime,
         );
       }
     } else {
@@ -254,14 +264,24 @@ const recall: Operation = {
       rows = mergeNewest(
         await Promise.all(factSources.map(src =>
           ctx.engine.listFactsSince(src, new Date(0), {
+            eventTime: true,
             activeOnly: !includeExpired,
             limit,
             visibility,
+            excludeAuditRows: true,
           }),
         )),
-        byCreated,
+        byEventTime,
       );
     }
+
+    // extract-conversation-facts writes durable audit checkpoint rows
+    // (source = TERMINAL_AUDIT_SOURCE / NON_EXTRACTABLE_AUDIT_SOURCE) into
+    // the facts table. They are checkpoints, not user facts. Every arm
+    // above already passes excludeAuditRows: true (SQL-level, both
+    // engines, keyed on `source` not `fact` text) — this client-side
+    // filter is belt-and-braces defense in depth, not the primary guard.
+    rows = rows.filter((r) => !(AUDIT_ROW_SOURCES as readonly string[]).includes(r.source));
 
     if (grep) rows = rows.filter(r => r.fact.toLowerCase().includes(grep));
 

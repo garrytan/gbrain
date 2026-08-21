@@ -94,6 +94,7 @@ import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-chec
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
 import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-types.ts';
+import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE } from '../core/facts/audit-sources.ts';
 
 // Re-exported verbatim so existing importers (this file's own helpers below
 // and this file's tests) keep working unchanged; doctor.ts, jobs.ts,
@@ -103,6 +104,12 @@ import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-type
 // own CLI flag surface.
 export { ALLOWED_TYPES };
 export type { AllowedType };
+
+// Re-exported for existing importers (test/extract-conversation-facts.test.ts,
+// test/doctor-conversation-facts-backlog.test.ts, src/eval/brainbench/metrics/write-back.ts).
+// The values themselves now live in ../core/facts/audit-sources.ts — see that
+// leaf module's docstring for why (engine-live static-import requirement).
+export { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE };
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -220,21 +227,13 @@ export const CHECKPOINT_OP = 'extract-conversation-facts';
  */
 export const PER_SEGMENT_SOURCE_PREFIX = 'cli:extract-conversation-facts';
 
-/**
- * Source string written on the page-level terminal audit row (Eng-v2 C7).
- * Doctor's backlog query matches THIS source + source_session, not
- * the per-segment source. Partial extraction = no terminal row = page
- * stays in backlog.
- */
-export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal:v2';
-
-/**
- * Durable outcome for a successfully scanned page that contains no eligible
- * multi-message segment. Kept distinct from successful extraction so operator
- * surfaces can report the truth without rescanning the page forever.
- */
-export const NON_EXTRACTABLE_AUDIT_SOURCE =
-  'cli:extract-conversation-facts:non-extractable:v2';
+// TERMINAL_AUDIT_SOURCE / NON_EXTRACTABLE_AUDIT_SOURCE: defined in
+// ../core/facts/audit-sources.ts, imported + re-exported above. (Doctor's
+// backlog query matches TERMINAL_AUDIT_SOURCE + source_session, not the
+// per-segment source; partial extraction = no terminal row = page stays in
+// backlog. NON_EXTRACTABLE_AUDIT_SOURCE is kept distinct from successful
+// extraction so operator surfaces can report the truth without rescanning
+// the page forever.)
 
 // ---------------------------------------------------------------------------
 // Public types.
@@ -1084,6 +1083,12 @@ async function processPage(
         abortSignal: state.signal,
       });
       if (!extraction.ok) {
+        // #3669 — rethrow BudgetExhausted UNWRAPPED. Wrapping it in a plain
+        // Error strips the BUDGET_EXHAUSTED tag, so the worker pool's D13
+        // must-abort check never fires and every remaining page burns a
+        // reserve_denied attempt instead of the run halting with a
+        // budget_exhausted receipt (core catch → halted receipt → return).
+        if (extraction.error instanceof BudgetExhausted) throw extraction.error;
         const detail = extraction.error instanceof Error
           ? `: ${extraction.error.message}`
           : '';

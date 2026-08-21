@@ -29,6 +29,15 @@ export interface InvalidateQueryCacheResult {
  * bound to the old knobs_hash don't serve stale page types after
  * schema mutations.
  *
+ * Wave-D review: per-source invalidation must reach every row whose stored
+ * result set can CONTAIN the mutated source, not just the scalar-keyed rows.
+ * `cacheScopeKey` also writes `'__unscoped__'` rows (an unscoped search reads
+ * ALL sources) and `'__set__:a,b,c'` rows (federated reads) — both can carry
+ * the source's pages, so both go too. The `__set__` match is a cheap
+ * comma-token LIKE on the id list; LIKE wildcards in an id (`_`) can only
+ * OVER-match, and a false-positive delete is just one extra cache miss —
+ * always the safe direction for an invalidator.
+ *
  * Best-effort: failures (e.g. pre-v51 brain without the table) return
  * {rows_invalidated: 0} silently. Mutation hot-path must never break
  * because the cache invalidator fell over.
@@ -41,9 +50,27 @@ export async function invalidateQueryCache(
   sourceId?: string,
 ): Promise<InvalidateQueryCacheResult> {
   try {
-    const cache = new SemanticQueryCache(engine);
-    const rows_invalidated = await cache.clear(sourceId !== undefined ? { sourceId } : {});
-    return { rows_invalidated };
+    if (sourceId === undefined) {
+      const cache = new SemanticQueryCache(engine);
+      const rows_invalidated = await cache.clear({});
+      return { rows_invalidated };
+    }
+    // '__set__:' is 8 chars; substring(... from 9) is the sorted,
+    // comma-joined id list. Wrapping both the list and the target in commas
+    // makes the LIKE an exact token match ('a' never matches 'aa').
+    const rows = await engine.executeRaw<{ n: number }>(
+      `WITH deleted AS (
+         DELETE FROM query_cache
+         WHERE source_id = $1
+            OR source_id = '__unscoped__'
+            OR (source_id LIKE '\\_\\_set\\_\\_:%'
+                AND (',' || substring(source_id from 9) || ',') LIKE ('%,' || $1 || ',%'))
+         RETURNING 1
+       )
+       SELECT COUNT(*)::int AS n FROM deleted`,
+      [sourceId],
+    );
+    return { rows_invalidated: rows[0]?.n ?? 0 };
   } catch {
     return { rows_invalidated: 0 };
   }

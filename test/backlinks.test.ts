@@ -74,9 +74,115 @@ describe('hasBacklink', () => {
 });
 
 describe('buildBacklinkEntry', () => {
-  test('builds properly formatted entry', () => {
+  test('dir-shaped source: extension-less link (#1776, brain-slug convention)', () => {
     const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
-    expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+    expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review)');
+  });
+
+  test('root-level source keeps .md (only the filename substring can credit it)', () => {
+    // The canonical extractor only parses `dir/name` paths, so an
+    // extension-less link to a root-level page would never be credited on
+    // the next check pass and the fixer would append duplicates forever.
+    const entry = buildBacklinkEntry('Notes', '../notes.md', '2026-04-11');
+    expect(entry).toBe('- **2026-04-11** | Referenced in [Notes](../notes.md)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1776: extension-less convention links must count as backlinks
+// ---------------------------------------------------------------------------
+
+describe('findBacklinkGaps — extension-less backlink credit (#1776)', () => {
+  const fs = { mkdtempSync, writeFileSync, mkdirSync, rmSync };
+  const os = { tmpdir };
+
+  function makeRoot(): string {
+    const root = fs.mkdtempSync(join(os.tmpdir(), 'gbrain-backlinks-1776-'));
+    fs.mkdirSync(join(root, 'people'));
+    fs.mkdirSync(join(root, 'companies'));
+    fs.mkdirSync(join(root, 'meetings'));
+    return root;
+  }
+
+  test('bidirectional extension-less pair → 0 gaps', () => {
+    const root = makeRoot();
+    try {
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n\nWorks at [Acme](../companies/acme).\n');
+      fs.writeFileSync(join(root, 'companies/acme.md'), '# Acme\n\nFounded by [Alice](../people/alice).\n');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('one-way mention → exactly 1 gap', () => {
+    const root = makeRoot();
+    try {
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n\nWorks at [Acme](../companies/acme).\n');
+      fs.writeFileSync(join(root, 'companies/acme.md'), '# Acme\n\nNo links back.\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].sourcePage).toBe('people/alice.md');
+      expect(gaps[0].targetPage).toBe('companies/acme.md');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy .md fixer row still credited; wikilink backlink credited too', () => {
+    const root = makeRoot();
+    try {
+      // standup mentions both alice (who has a legacy .md fixer row) and
+      // bob (who links back via a [[meetings/...]] wikilink).
+      fs.writeFileSync(
+        join(root, 'meetings/standup.md'),
+        '# Standup\n\n[Alice](../people/alice) and [Bob](../people/bob).\n',
+      );
+      fs.writeFileSync(
+        join(root, 'people/alice.md'),
+        '# Alice\n\n## Timeline\n\n- **2026-01-01** | Referenced in [Standup](../meetings/standup.md)\n',
+      );
+      fs.writeFileSync(join(root, 'people/bob.md'), '# Bob\n\nSee [[meetings/standup]].\n');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fix then check → 0 gaps (fixer output is credited by the next scan)', async () => {
+    const root = makeRoot();
+    const lockRoot = join(root, '.locks');
+    try {
+      fs.writeFileSync(join(root, 'meetings/standup.md'), '# Standup\n\nSaw [Alice](../people/alice).\n');
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(after).toContain('Referenced in [Standup](../meetings/standup)');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fix then check → 0 gaps for a root-level source page (.md row, legacy credit)', async () => {
+    const root = makeRoot();
+    const lockRoot = join(root, '.locks');
+    try {
+      fs.writeFileSync(join(root, 'inbox.md'), '# Inbox\n\nPing [Alice](people/alice).\n');
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(after).toContain('Referenced in [Inbox](../inbox.md)');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -238,7 +344,9 @@ describe('fixBacklinkGaps safety pipeline', () => {
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
       const bodyStart = frontmatterBodyOffset(original);
       expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
-      expect(after).toContain('Referenced in [Standup](../meetings/standup.md)');
+      // #1776: dir-shaped fixer rows are extension-less so the next check
+      // pass credits them through the canonical extractor.
+      expect(after).toContain('Referenced in [Standup](../meetings/standup)');
       expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
     } finally {
       cleanup();
@@ -372,8 +480,8 @@ describe('fixBacklinkGaps safety pipeline', () => {
       // Both bullets present, and both land BELOW the Timeline heading.
       const headingIdx = after.indexOf('## Timeline');
       expect(headingIdx).toBeGreaterThan(bodyStart);
-      const standupIdx = after.indexOf('Referenced in [Standup](../meetings/standup.md)');
-      const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro.md)');
+      const standupIdx = after.indexOf('Referenced in [Standup](../meetings/standup)');
+      const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro)');
       expect(standupIdx).toBeGreaterThan(headingIdx);
       expect(retroIdx).toBeGreaterThan(headingIdx);
       // Exactly one Timeline section — the second gap must not mint a new one.

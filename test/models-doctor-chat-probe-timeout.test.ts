@@ -31,6 +31,11 @@ describe('resolveChatProbeTimeoutMs', () => {
     expect(ms).toBe(30_000);
   });
 
+  test('Ollama chat allows a local cold start', async () => {
+    const ms = await resolveChatProbeTimeoutMs('ollama:qwen3:8b', 'chat');
+    expect(ms).toBe(180_000);
+  });
+
   test('a provider without a declared default_timeout_ms keeps the historical 5000ms', async () => {
     const ms = await resolveChatProbeTimeoutMs('anthropic:claude-sonnet-4-6', 'chat');
     expect(ms).toBe(5000);

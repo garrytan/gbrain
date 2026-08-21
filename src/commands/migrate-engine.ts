@@ -119,7 +119,7 @@ interface MigratedSourceRow {
   created_at: Date | string;
 }
 
-export async function copyMigrationSources(source: BrainEngine, target: BrainEngine): Promise<void> {
+export async function copyMigrationSources(source: BrainEngine, target: BrainEngine): Promise<number> {
   const sources = await source.executeRaw<MigratedSourceRow>(`
     SELECT id, name, local_path, last_commit, last_sync_at, config::text AS config_json, archived,
            archived_at, archive_expires_at, contextual_retrieval_mode,
@@ -153,6 +153,205 @@ export async function copyMigrationSources(source: BrainEngine, target: BrainEng
       row.newest_content_at, row.created_at,
     ]);
   }
+  return sources.length;
+}
+
+/** Result of the facts-table copy — surfaced in the per-table summary (#4350). */
+export interface MigrateFactsResult {
+  copied: number;
+  failed: Array<{ id: string; reason: string }>;
+  /** Rows whose vector could not land on the target (e.g. a dimension
+   * mismatch between the two schemas' embedding columns) and were copied
+   * with embedding NULL instead of being lost. */
+  embeddings_dropped: number;
+  /** True when the source schema predates the facts table entirely. */
+  table_missing: boolean;
+}
+
+/**
+ * Non-empty-target guard, facts leg: `getStats().page_count` can't see a
+ * facts-only brain (a DB-only remember corpus — conversation facts with zero
+ * pages), so the page guard alone would let `copyMigrationFacts`'s
+ * delete-and-recopy destroy the target's only copy of its hot memory.
+ * Bounded single-row probe; a target schema that predates the facts table
+ * has nothing to protect, so probe failure returns false.
+ */
+async function targetHasFactRows(target: BrainEngine): Promise<boolean> {
+  try {
+    const rows = await target.executeRaw<{ one: number }>('SELECT 1 AS one FROM facts LIMIT 1');
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function factsColumns(engine: BrainEngine): Promise<string[]> {
+  const rows = await engine.executeRaw<{ column_name: string }>(`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'facts'
+     ORDER BY ordinal_position`);
+  return rows.map(r => r.column_name);
+}
+
+/**
+ * #4350: copy the facts table (hot memory) verbatim. Facts are the one data
+ * table whose rows can exist ONLY in the DB — conversation facts (`source`
+ * LIKE 'cli:%') have no markdown fence to re-sync from, so a migration that
+ * skips them loses them permanently (`recall` comes back empty on the new
+ * engine, the original report).
+ *
+ * Shape decisions:
+ * - Column list is the source∩target intersection read from
+ *   information_schema, so an older source schema (missing newer columns
+ *   like event_type/dimension) still copies; absent columns land as the
+ *   target's defaults.
+ * - Delete-and-recopy: facts on the target can only have come from this
+ *   same migration (the non-empty guard blocks foreign targets), so wiping
+ *   and re-copying converges every re-run to source truth — including after
+ *   --force, whose pages wipe does NOT cascade into facts.
+ * - Two passes for `superseded_by`: it's a self-FK where the OLD row points
+ *   at the NEWER (higher) id, so id-ordered inserts would violate the FK;
+ *   insert with NULL, then restore the pointers.
+ * - Embeddings round-trip as text (`'[...]'` parses into vector AND halfvec,
+ *   whichever the target column is). A row whose vector can't land is
+ *   retried with embedding NULL and counted — losing a re-buildable vector
+ *   beats losing the fact.
+ * - The id sequence is bumped past MAX(id) so post-migration inserts don't
+ *   collide with copied rows.
+ *
+ * Takes are deliberately NOT copied here: they're fence-canonical (markdown-
+ * mirrored) and keyed on page_id, which the target reassigns — the next
+ * extract cycle rebuilds them from the migrated pages. Facts'
+ * `consolidated_into` take-pointers therefore dangle until that rebuild;
+ * `consolidated_at` still marks the rows as promoted, so the consolidate
+ * phase won't double-promote them.
+ */
+export async function copyMigrationFacts(
+  source: BrainEngine,
+  target: BrainEngine,
+  onRow?: () => void,
+): Promise<MigrateFactsResult> {
+  const sourceCols = await factsColumns(source);
+  if (sourceCols.length === 0) {
+    return { copied: 0, failed: [], embeddings_dropped: 0, table_missing: true };
+  }
+  const targetColSet = new Set(await factsColumns(target));
+  const cols = sourceCols.filter(c => targetColSet.has(c));
+
+  const selectList = cols
+    .map(c => (c === 'embedding' ? 'embedding::text AS embedding' : `"${c}"`))
+    .join(', ');
+  const rows = await source.executeRaw<Record<string, unknown>>(
+    `SELECT ${selectList} FROM facts ORDER BY id`);
+
+  // The write-side cast must name the target column's physical type
+  // (halfvec on pgvector >= 0.7, vector otherwise); text parses into either.
+  const udt = await target.executeRaw<{ udt_name: string }>(`
+    SELECT udt_name FROM information_schema.columns
+     WHERE table_schema = current_schema() AND table_name = 'facts' AND column_name = 'embedding'`);
+  const embType = udt[0]?.udt_name === 'halfvec' ? 'halfvec' : 'vector';
+
+  await target.executeRaw('DELETE FROM facts');
+
+  const embIdx = cols.indexOf('embedding');
+  const insertSql = `INSERT INTO facts (${cols.map(c => `"${c}"`).join(', ')})
+    VALUES (${cols.map((c, i) => (c === 'embedding' ? `$${i + 1}::text::${embType}` : `$${i + 1}`)).join(', ')})`;
+
+  const result: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
+  const chainPairs: Array<{ id: unknown; superseded_by: unknown }> = [];
+  for (const raw of rows) {
+    const row = nullifyUndefinedColumns(raw);
+    if (row.superseded_by != null) chainPairs.push({ id: row.id, superseded_by: row.superseded_by });
+    // Pass 1 inserts with superseded_by NULL (see the two-pass note above).
+    const values = cols.map(c => (c === 'superseded_by' ? null : row[c]));
+    try {
+      await target.executeRaw(insertSql, values);
+      result.copied++;
+    } catch (e) {
+      if (embIdx !== -1 && values[embIdx] != null) {
+        try {
+          const withoutEmbedding = [...values];
+          withoutEmbedding[embIdx] = null;
+          await target.executeRaw(insertSql, withoutEmbedding);
+          result.copied++;
+          result.embeddings_dropped++;
+          onRow?.();
+          continue;
+        } catch { /* fall through to the failure record below */ }
+      }
+      result.failed.push({
+        id: String(row.id),
+        reason: e instanceof Error ? e.message : String(e),
+      });
+    }
+    onRow?.();
+  }
+
+  const failedIds = new Set(result.failed.map(f => f.id));
+  for (const pair of chainPairs) {
+    if (failedIds.has(String(pair.id)) || failedIds.has(String(pair.superseded_by))) continue;
+    await target.executeRaw('UPDATE facts SET superseded_by = $1 WHERE id = $2', [pair.superseded_by, pair.id]);
+  }
+
+  // BIGSERIAL doesn't advance on explicit-id inserts; without this the first
+  // post-migration insertFact would collide with a copied row's id.
+  await target.executeRaw(
+    `SELECT setval(pg_get_serial_sequence('facts', 'id'), (SELECT COALESCE(MAX(id), 0) + 1 FROM facts), false)`);
+
+  return result;
+}
+
+/**
+ * #4350: engine-LOCAL config rows that must not follow the data to the
+ * target. Everything else in the config table copies verbatim — the pre-fix
+ * allowlist of 3 keys silently dropped sync anchors (`sync.repo_path`),
+ * search settings, feature toggles: everything an operator had tuned.
+ *
+ * - 'engine': the seeded engine-identity row; the target's own initSchema
+ *   stamped the correct value for itself.
+ * - 'version': the schema-migration ledger position. The target's own
+ *   initSchema stamped it at the current latest; overwriting it with the
+ *   source's (potentially older) value would make apply-migrations re-run
+ *   against a schema that already has them.
+ * - 'embedding_columns' / 'search_embedding_column': registry of (and active
+ *   pointer into) PHYSICAL vector columns added to the source database by
+ *   ze-switch DDL. The copy does not create those columns on the target, so
+ *   carrying the registry would advertise columns that don't exist — and
+ *   break search outright if the active pointer names one. Re-run
+ *   `gbrain ze switch` on the target to rebuild them.
+ *
+ * Skipped keys are printed in the migration summary — never silent.
+ */
+export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
+  'engine',
+  'version',
+  'embedding_columns',
+  'search_embedding_column',
+]);
+
+/**
+ * Copy every DB-plane config row except the engine-local denylist above.
+ * Subsumes the old 3-key allowlist (embedding_model / embedding_dimensions /
+ * chunk_strategy — schema metadata recording what the schema was sized
+ * with); those still copy, now alongside everything else.
+ */
+export async function copyMigrationConfig(
+  source: BrainEngine,
+  target: BrainEngine,
+): Promise<{ copied: number; skipped: string[] }> {
+  const rows = await source.executeRaw<{ key: string; value: string }>(
+    'SELECT key, value FROM config ORDER BY key');
+  const skipped: string[] = [];
+  let copied = 0;
+  for (const row of rows) {
+    if (MIGRATE_CONFIG_ENGINE_LOCAL_KEYS.has(row.key)) {
+      skipped.push(row.key);
+      continue;
+    }
+    await target.setConfig(row.key, row.value);
+    copied++;
+  }
+  return { copied, skipped };
 }
 
 export async function copyPageLinksToTarget(
@@ -160,8 +359,9 @@ export async function copyPageLinksToTarget(
   target: BrainEngine,
   page: Page,
   failedKeys: ReadonlySet<string> = new Set(),
-): Promise<void> {
+): Promise<number> {
   const links = await source.getLinks(page.slug, { sourceId: page.source_id });
+  let copied = 0;
   for (const link of links) {
     const toSourceId = link.to_source_id ?? page.source_id;
     if (failedKeys.has(makeManifestKey(toSourceId, link.to_slug))) continue;
@@ -171,7 +371,9 @@ export async function copyPageLinksToTarget(
       undefined, undefined, undefined,
       { fromSourceId: page.source_id, toSourceId },
     );
+    copied++;
   }
+  return copied;
 }
 
 /**
@@ -203,11 +405,19 @@ function nullifyUndefinedColumns<T extends Record<string, unknown>>(row: T): T {
  * inject fake engines and exercise the failure path without a live
  * DATABASE_URL.
  */
+/** Per-page sub-row copy counts, accumulated into the per-table summary (#4350). */
+export interface PageCopyCounts {
+  chunks: number;
+  tags: number;
+  timeline_entries: number;
+  raw_data: number;
+}
+
 export async function copyPageToTarget(
   source: BrainEngine,
   target: BrainEngine,
   page: Page,
-): Promise<void> {
+): Promise<PageCopyCounts> {
   const sourceOpts = { sourceId: page.source_id };
 
   // Copy page (preserve source_id). v0.32.8 F8: thread source_id end-to-end
@@ -259,6 +469,13 @@ export async function copyPageToTarget(
   for (const rd of rawData) {
     await target.putRawData(page.slug, rd.source, rd.data, sourceOpts);
   }
+
+  return {
+    chunks: chunks.length,
+    tags: tags.length,
+    timeline_entries: timeline.length,
+    raw_data: rawData.length,
+  };
 }
 
 /** A page that failed to copy during migrate — tracked so the run's final
@@ -583,6 +800,20 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     return;
   } else if (targetStats.page_count > 0 && resumingMatchingManifest) {
     console.log(`Resuming previous migration: ${manifest!.completed_slugs.length} page(s) already copied.`);
+  } else if (!resumingMatchingManifest && await targetHasFactRows(targetEngine)) {
+    // Facts leg of the non-empty guard: a facts-only foreign target (zero
+    // pages, so the page_count check above passed) would lose its hot memory
+    // to copyMigrationFacts's DELETE FROM facts. A matching manifest means
+    // those rows came from OUR OWN in-progress run (delete-and-recopy
+    // converges them), so only a manifest-less target refuses. Same refusal
+    // shape as the page guard.
+    console.error('Target brain is not empty (its facts table has rows, though no pages).');
+    console.error('Run with --force to overwrite, or migrate to an empty brain.');
+    await targetEngine.disconnect();
+    // Not process.exit: the resume must run (see the quiesce block above).
+    setCliExitVerdict(1);
+    resumeAutopilot();
+    return;
   }
 
   // v0.32.8 F8: manifest keys are now `${source_id}::${slug}` so multi-source
@@ -635,8 +866,16 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   let pagesToMigrate: Page[] = [];
   let migrated = 0;
   const failures: MigratePageFailure[] = [];
+  // Per-table copy counts for the end-of-run summary (#4350): every table
+  // the migration touches reports what actually landed, so an omitted table
+  // is visible instead of silent.
+  let sourcesCopied = 0;
+  const rowCounts: PageCopyCounts = { chunks: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
+  let linksCopied = 0;
+  let factsResult: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
+  let configResult: { copied: number; skipped: string[] } = { copied: 0, skipped: [] };
   try {
-    await copyMigrationSources(sourceEngine, targetEngine);
+    sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
 
     // Get all source pages
     sourceStats = await sourceEngine.getStats();
@@ -655,7 +894,11 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // wrong row.
     for (const page of pagesToMigrate) {
       try {
-        await copyPageToTarget(sourceEngine, targetEngine, page);
+        const counts = await copyPageToTarget(sourceEngine, targetEngine, page);
+        rowCounts.chunks += counts.chunks;
+        rowCounts.tags += counts.tags;
+        rowCounts.timeline_entries += counts.timeline_entries;
+        rowCounts.raw_data += counts.raw_data;
         // Track progress with composite key so multi-source resume is correct.
         manifest!.completed_slugs.push(makeManifestKey(page.source_id, page.slug));
         saveManifest(manifest!);
@@ -704,34 +947,48 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         progress.tick(1);
         continue;
       }
-      await copyPageLinksToTarget(sourceEngine, targetEngine, page, failedKeys);
+      linksCopied += await copyPageLinksToTarget(sourceEngine, targetEngine, page, failedKeys);
       progress.tick(1);
     }
     progress.finish();
 
-    // Copy config (selective).
-    //
-    // v0.37 fix wave Lane C.4: these DB-plane writes are SCHEMA METADATA for
-    // the target engine — they record "the schema was sized using this
-    // embedding model + dimension." They are NOT the runtime gateway config
-    // (which lives in the file plane via `~/.gbrain/config.json`). When this
-    // function copies them, it's preserving the schema-applied state across
-    // the migration, not re-pointing the gateway. The newConfig below
-    // doesn't carry these fields because the user's existing file config
-    // already has them (or didn't, in which case the file plane should stay
-    // unset and re-read from gateway defaults).
-    const configKeys = ['embedding_model', 'embedding_dimensions', 'chunk_strategy'];
-    for (const key of configKeys) {
-      const val = await sourceEngine.getConfig(key);
-      if (val) await targetEngine.setConfig(key, val);
+    // Copy facts (#4350): hot memory has no markdown mirror for
+    // conversation facts, so skipping this table loses them permanently.
+    console.log('Copying facts...');
+    progress.start('migrate.copy_facts');
+    factsResult = await copyMigrationFacts(sourceEngine, targetEngine, () => progress.tick(1));
+    progress.finish();
+    if (factsResult.failed.length > 0) {
+      console.error(`\n${factsResult.failed.length} fact row(s) FAILED to copy:`);
+      for (const f of factsResult.failed.slice(0, 10)) {
+        console.error(`  - fact id ${f.id}: ${f.reason}`);
+      }
+      if (factsResult.failed.length > 10) {
+        console.error(`  ... and ${factsResult.failed.length - 10} more`);
+      }
+      console.error('Re-run `gbrain migrate` to retry (facts re-copy from scratch each run).');
+      // Same contract as page failures: the run keeps going so everything
+      // else lands, but it must exit non-zero and must not flip the config.
+      setCliExitVerdict(1);
     }
+
+    // Copy config (#4350): every DB-plane row except the engine-local
+    // denylist (see MIGRATE_CONFIG_ENGINE_LOCAL_KEYS). The old 3-key
+    // allowlist (embedding_model / embedding_dimensions / chunk_strategy —
+    // the v0.37 Lane C.4 schema metadata) silently dropped everything else:
+    // sync anchors, search settings, feature toggles. Those three still copy
+    // as part of copy-all. The file-plane config (`~/.gbrain/config.json`)
+    // is untouched by this — the newConfig flip below preserves it.
+    console.log('Copying config rows...');
+    configResult = await copyMigrationConfig(sourceEngine, targetEngine);
 
     // Update local config. v0.37 fix wave: preserve existing file-plane
     // embedding/expansion/chat config across the engine migration; only
     // the engine + connection target should change.
     //
-    // #3194: only flip the ACTIVE config when the migration is fully clean.
-    // A partial migration leaves the target's data incomplete; auto-switching
+    // #3194: only flip the ACTIVE config when the migration is fully clean
+    // (no page failures AND no fact-row failures). A partial migration
+    // leaves the target's data incomplete; auto-switching
     // every subsequent `gbrain` invocation onto that incomplete target would
     // (a) make the failure invisible behind otherwise-normal usage and (b)
     // break the natural retry — `gbrain migrate --to X` again would hit the
@@ -739,7 +996,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // finished. Leaving the file-plane config untouched keeps the source the
     // active engine, so a retry (which resumes via the still-intact manifest)
     // is a same-shaped command, not a special case.
-    if (failures.length === 0) {
+    if (failures.length === 0 && factsResult.failed.length === 0) {
       const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
       const newConfig: GBrainConfig = {
         ...existingFile,
@@ -764,14 +1021,47 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     resumeAutopilot();
   }
 
-  if (failures.length > 0) {
-    console.log(`\nMigration completed with errors. ${migrated} of ${pagesToMigrate.length} pages copied, ${failures.length} failed (${completedSet.size} already done from a prior run). See failure list above.`);
+  // Per-table copied-count summary (#4350): every table the migration
+  // touches reports what landed THIS run, so a dropped table is visible
+  // instead of silent. Facts/config re-copy fully on every run; page-plane
+  // counts cover only pages not already banked in the resume manifest.
+  console.log('\nCopied to target (this run):');
+  const summaryRow = (label: string, detail: string) => console.log(`  ${label.padEnd(18)} ${detail}`);
+  summaryRow('sources', String(sourcesCopied));
+  summaryRow('pages', failures.length > 0 ? `${migrated} (${failures.length} FAILED)` : String(migrated));
+  summaryRow('chunks', String(rowCounts.chunks));
+  summaryRow('tags', String(rowCounts.tags));
+  summaryRow('timeline entries', String(rowCounts.timeline_entries));
+  summaryRow('raw data rows', String(rowCounts.raw_data));
+  summaryRow('links', String(linksCopied));
+  if (factsResult.table_missing) {
+    summaryRow('facts', '0 (source schema predates the facts table)');
+  } else {
+    const factsNotes = [
+      factsResult.failed.length > 0 ? `${factsResult.failed.length} FAILED` : '',
+      factsResult.embeddings_dropped > 0
+        ? `${factsResult.embeddings_dropped} embedding(s) dropped — run a re-embed on the target`
+        : '',
+    ].filter(Boolean).join('; ');
+    summaryRow('facts', factsNotes ? `${factsResult.copied} (${factsNotes})` : String(factsResult.copied));
+  }
+  summaryRow('config rows', configResult.skipped.length > 0
+    ? `${configResult.copied} (skipped engine-local: ${configResult.skipped.join(', ')})`
+    : String(configResult.copied));
+
+  const cleanRun = failures.length === 0 && factsResult.failed.length === 0;
+  if (!cleanRun) {
+    const parts = [
+      failures.length > 0 ? `${migrated} of ${pagesToMigrate.length} pages copied, ${failures.length} failed (${completedSet.size} already done from a prior run)` : '',
+      factsResult.failed.length > 0 ? `${factsResult.failed.length} fact row(s) failed` : '',
+    ].filter(Boolean).join('; ');
+    console.log(`\nMigration completed with errors. ${parts}. See failure list above.`);
     console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`gbrain migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);
   } else {
     console.log(`\nMigration complete. ${migrated} pages transferred.`);
     console.log(`Config updated to engine: ${opts.targetEngine}`);
   }
-  if (failures.length === 0 && config.engine === 'pglite' && config.database_path) {
+  if (cleanRun && config.engine === 'pglite' && config.database_path) {
     console.log(`Original PGLite brain preserved at ${config.database_path} (backup).`);
   }
 

@@ -1,16 +1,29 @@
 /**
  * v0.28: per-page file lock for atomic markdown read-modify-write.
  *
- * Eng-review fold: reuses the v0.17 `~/.gbrain/cycle.lock` PID-liveness
- * pattern (src/core/cycle.ts:acquireFileLock) but scoped per page so two
- * parallel `gbrain takes add` calls + a refresh-mode `takes seed` running in
- * autopilot can't race on the same `<slug>.md` file.
+ * Scoped per page so two parallel `gbrain takes add` calls + a refresh-mode
+ * `takes seed` running in autopilot can't race on the same `<slug>.md` file.
  *
  * Lock file path: `~/.gbrain/page-locks/<sha256-of-slug>.lock`. SHA-256
  * keeps filenames safe regardless of slug content (slashes, unicode, etc.).
  *
- * File contents: `{pid}\n{iso-timestamp}`. Staleness = mtime older than
- * `LOCK_TTL_MS` (5 min) OR the PID is no longer alive on this host.
+ * File contents: `{pid}\n{iso-timestamp}\n{ownership-token}`. The pid line
+ * is DIAGNOSTIC ONLY. Staleness = mtime older than `LOCK_TTL_MS` (5 min) —
+ * i.e. heartbeat/lease recency, nothing else (#2840). PID liveness
+ * (`process.kill(pid, 0)`) is deliberately NOT consulted: a PID is only
+ * meaningful inside the namespace that produced it, so in containerized
+ * deploys sharing `GBRAIN_HOME` across PID namespaces (e.g. `gbrain serve`
+ * + `gbrain jobs work` as sibling containers) a LIVE holder resolves to
+ * ESRCH and would be stolen milliseconds after it heartbeated — silent
+ * last-writer-wins on facts/takes. Same family as the sync lock's
+ * refresh-recency rule (GBRAIN_LOCK_STEAL_GRACE): a holder that heartbeated
+ * recently is never stolen; dead holders stop refreshing and age past the
+ * TTL. Cost: a crashed holder blocks the page for up to the TTL (bounded
+ * wait) instead of being reaped instantly on the same host.
+ *
+ * Ownership for release()/refresh() is the per-acquire random token, never
+ * the bare PID — PIDs collide across namespaces, so a same-pid lockfile is
+ * not proof it is ours (#2840 false-self direction).
  *
  * Usage:
  *
@@ -24,7 +37,7 @@
 
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { gbrainPath } from './config.ts';
 
 const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches eng-review fold spec
@@ -53,55 +66,47 @@ function lockPathFor(slug: string, lockRoot?: string): string {
   return join(dir, `${sha}.lock`);
 }
 
-function isPidAlive(pid: number): boolean {
-  if (pid <= 0) return false;
-  // Note: unlike cycle.ts (single lock per process), page-lock allows
-  // multiple concurrent locks per process for DIFFERENT slugs. A same-pid
-  // collision on the SAME slug means another concurrent caller in this
-  // process holds it — treat as live and let mtime expiry handle stale
-  // post-crash cases.
-  if (pid === process.pid) return true;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    // ESRCH = no such process; anything else (e.g. EPERM) = still alive.
-    return code !== 'ESRCH';
-  }
+/** Line 3 of the lock file. Empty string when absent (pre-#2840 format). */
+function tokenOf(content: string): string {
+  return content.trim().split('\n')[2] ?? '';
 }
 
 function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
   const dir = join(lockPath, '..');
   mkdirSync(dir, { recursive: true });
   const pid = process.pid;
+  // Namespace-stable per-acquire identity. Release/refresh ownership keys on
+  // this, never on the PID (#2840: PIDs collide across PID namespaces).
+  const token = randomUUID();
 
   if (existsSync(lockPath)) {
     try {
       const st = statSync(lockPath);
       const ageMs = Date.now() - st.mtimeMs;
-      const content = readFileSync(lockPath, 'utf-8').trim();
-      const existingPid = parseInt(content.split('\n')[0] || '0', 10);
-      const pidAlive = isPidAlive(existingPid);
-
-      if (pidAlive && ageMs < LOCK_TTL_MS) {
-        return null; // live holder
+      // Liveness = heartbeat recency ONLY. Do not consult PID liveness:
+      // kill(pid, 0) answers "does this PID exist in MY namespace", which is
+      // the wrong question for a lockfile on a volume shared across
+      // containers — a live foreign holder is ESRCH here and would be
+      // stolen while it works (#2840).
+      if (ageMs < LOCK_TTL_MS) {
+        return null; // live holder (heartbeat within TTL)
       }
-      // Stale — remove it, then race for the exclusive create below. Two
-      // reclaimers can both unlink, but only ONE wins the 'wx' open; the
-      // pre-fix existsSync→writeFileSync sequence let both "acquire"
-      // (adversarial finding — the loser silently lost its writes).
+      // Stale (holder stopped heartbeating for a full TTL) — remove it, then
+      // race for the exclusive create below. Two reclaimers can both unlink,
+      // but only ONE wins the 'wx' open; the pre-fix
+      // existsSync→writeFileSync sequence let both "acquire" (adversarial
+      // finding — the loser silently lost its writes).
       try { unlinkSync(lockPath); } catch { /* already gone */ }
     } catch {
-      // Any read/stat error → treat as stale.
-      try { unlinkSync(lockPath); } catch { /* already gone */ }
+      // Stat error → lockfile vanished mid-check (holder released) or is
+      // unreadable; fall through to the exclusive create, which decides.
     }
   }
 
   // Exclusive create: mutual exclusion comes from O_EXCL, not from the
   // (racy) existence check above. Losing the create race = lock not held.
   try {
-    writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`, { flag: 'wx' });
+    writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n${token}\n`, { flag: 'wx' });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'EEXIST') return null;
     throw e;
@@ -111,16 +116,19 @@ function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
     slug,
     refresh: async () => {
       try {
-        writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n`);
+        // Only heartbeat a lock we still own — if our TTL lapsed and another
+        // process reclaimed it, overwriting would clobber ITS heartbeat.
+        if (tokenOf(readFileSync(lockPath, 'utf-8')) !== token) return;
+        writeFileSync(lockPath, `${pid}\n${new Date().toISOString()}\n${token}\n`);
       } catch {
         /* non-fatal — next acquirer will see it as stale */
       }
     },
     release: async () => {
       try {
-        const content = readFileSync(lockPath, 'utf-8').trim();
-        const heldPid = parseInt(content.split('\n')[0] || '0', 10);
-        if (heldPid === pid) unlinkSync(lockPath);
+        // Token match, not PID match: a foreign-namespace process can share
+        // our PID number, and unlinking its lock reopens the #2840 race.
+        if (tokenOf(readFileSync(lockPath, 'utf-8')) === token) unlinkSync(lockPath);
       } catch {
         /* already gone */
       }

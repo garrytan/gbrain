@@ -265,7 +265,7 @@ const chronicle_backfill: Operation = {
         eligible++;
         if (dryRun || !queue) continue;
         try {
-          await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId ?? 'default' });
+          await queue.add('chronicle_extract', { slug: page.slug, sourceId: page.source_id });
           enqueued++;
         } catch (e) {
           // Never swallow — surface per-page failures (the #2057 no-swallow pattern).

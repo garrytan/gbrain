@@ -153,6 +153,20 @@ describe('resolveModel — 6-tier precedence', () => {
     expect(m).toBe(DEFAULT_ALIASES.sonnet);
   });
 
+  test('subagent tier: loop-incapable models.tier.subagent falls back to TIER_DEFAULTS with warn', async () => {
+    // moonshot supports tools but declares supports_subagent_loop: false —
+    // pre-fix enforceSubagentCapable classified it tools-sufficient and let
+    // the inherited tier value drive the loop.
+    stub.set('models.tier.subagent', 'moonshot:kimi-k2.5');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      configKey: 'models.subagent',
+      fallback: TIER_DEFAULTS.subagent,
+    });
+    expect(m).toBe(TIER_DEFAULTS.subagent);
+    expect(stderrCapture).toContain('supports_subagent_loop: false');
+  });
+
   test('deprecation warning fires once per process per key', async () => {
     stub.set('dream.synthesize.model', 'opus');
     await resolveModel(stub as never, {
@@ -204,15 +218,28 @@ describe('resolveModel — v0.31.12 tier system', () => {
   test('v0.38 D7: tier.subagent accepts non-Anthropic models that support tools (with cost warn)', async () => {
     // Pre-v0.38 the resolver hard-fell-back to TIER_DEFAULTS.subagent for any
     // non-Anthropic model. v0.38 (D6/D7) replaces that with a capability check:
-    // OpenAI/Gemini/etc. support tools → resolved unchanged + warn about
-    // missing prompt caching (cost regression on long loops, not a refusal).
+    // a provider with tools but no prompt caching → resolved unchanged + warn
+    // about the cost regression on long loops (not a refusal).
+    stub.set('models.default', 'google:gemini-1.5-pro');
+    const m = await resolveModel(stub as never, {
+      tier: 'subagent',
+      fallback: 'sonnet',
+    });
+    expect(m).toBe('google:gemini-1.5-pro');
+    expect(stderrCapture).toContain('caching');
+  });
+
+  test('v0.38 D7: a provider that caches automatically is accepted WITHOUT the cost warn', async () => {
+    // The warn advises moving to an Anthropic model "for lower cost on long
+    // loops". On providers that already cache prompt prefixes server-side that
+    // advice is backwards, so the capability check must not fire it.
     stub.set('models.default', 'openai:gpt-5.2');
     const m = await resolveModel(stub as never, {
       tier: 'subagent',
       fallback: 'sonnet',
     });
     expect(m).toBe('openai:gpt-5.2');
-    expect(stderrCapture).toContain('caching');
+    expect(stderrCapture).not.toContain('caching');
   });
 
   test('v0.38 D7: tier.subagent rejects unknown providers (falls back to default)', async () => {
@@ -365,15 +392,15 @@ describe('resolveModelDetailed — sources + key-aware step 7', () => {
     expect(noTier.model).toBe(DEFAULT_ALIASES.sonnet);
   });
 
-  test('subagent + openai-only: returns openai with once-per-process no-caching warn', async () => {
+  test('subagent + openai-only: returns cache-capable openai without a no-caching warn', async () => {
     process.env.OPENAI_API_KEY = 'sk-test';
     try {
       const r = await resolveModelDetailed(null, { tier: 'subagent', fallback: 'sonnet' });
       expect(r.model).toBe(openaiStaticTierFallback().subagent);
-      expect(stderrCapture).toContain('caching');
+      expect(stderrCapture).not.toContain('caching');
       const before = stderrCapture.length;
       await resolveModelDetailed(null, { tier: 'subagent', fallback: 'sonnet' });
-      expect(stderrCapture.length).toBe(before); // warned once
+      expect(stderrCapture.length).toBe(before); // remains warning-free
     } finally {
       delete process.env.OPENAI_API_KEY;
     }
@@ -394,10 +421,10 @@ describe('providerKeyReady + resolveEffectiveChatModel (shared runtime/report re
     // A keyed/keyless but CHAT-LESS recipe is NOT ready: honoring an
     // embedding-only pin as chat_model would install a model
     // isAvailable('chat') rejects instead of falling back to the key-aware
-    // default. (ollama is embedding-only in this repo's recipe, hence false
-    // despite requiring no keys.)
+    // default. (voyage is embedding-only, hence false despite a live key.
+    // ollama gained a local chat touchpoint in #4073/#4315, so keyless → ready.)
     expect(providerKeyReady('voyage:voyage-4-large', { VOYAGE_API_KEY: 'x' })).toBe(false);
-    expect(providerKeyReady('ollama:llama3', {})).toBe(false);
+    expect(providerKeyReady('ollama:llama3', {})).toBe(true);
   });
 
   test('servable file pin wins (init-era openai pin + live key)', () => {

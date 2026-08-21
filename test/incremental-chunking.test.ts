@@ -15,6 +15,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importCodeFile } from '../src/core/import-file.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -115,6 +116,107 @@ export function gamma(p: number[], q: number[], r: number[]): number {
     expect(betaV1).toBeDefined();
     expect(betaV2).toBeDefined();
     expect(betaV2!.chunk_text).not.toBe(betaV1!.chunk_text);
+  });
+
+  // Regression: #2544 dropped `cc.embedding` from getChunks' column list, so
+  // `matched.embedding` was always undefined and the reuse cache silently died.
+  // Every other test here passes `noEmbed`, so nothing caught it. This one
+  // embeds for real, and inserting comment lines above the symbols moves only
+  // the line numbers in each chunk header — every body stays byte-identical.
+  test('inserting lines above unchanged symbols reuses stored embeddings', async () => {
+    const filePath = 'src/test/reuse-after-shift.ts';
+    const bodies = `export function alpha(a: number[], b: number[], c: number[]): number {
+  let sum = 0;
+  for (const x of a) { sum += x; }
+  for (const x of b) { sum += x * 2; }
+  for (const x of c) { sum += x * 3; }
+  if (sum < 0) return 0;
+  if (sum > 1_000_000) return 1_000_000;
+  if (a.length === b.length) return sum * 2;
+  if (b.length === c.length) return sum * 3;
+  return sum / (a.length + b.length + c.length);
+}
+
+export function beta(x: number[], y: number[], z: number[]): number {
+  let sum = 0;
+  for (const v of x) { sum += v * 2; }
+  for (const v of y) { sum += v * 4; }
+  for (const v of z) { sum += v * 6; }
+  if (sum < 0) return 0;
+  if (sum > 2_000_000) return 2_000_000;
+  if (x.length === y.length) return sum * 3;
+  if (y.length === z.length) return sum * 5;
+  return sum / (x.length + y.length + z.length);
+}
+
+export function gamma(p: number[], q: number[], r: number[]): number {
+  let sum = 0;
+  for (const v of p) { sum += v * 3; }
+  for (const v of q) { sum += v * 6; }
+  for (const v of r) { sum += v * 9; }
+  if (sum < 0) return 0;
+  if (sum > 3_000_000) return 3_000_000;
+  if (p.length === q.length) return sum * 4;
+  if (q.length === r.length) return sum * 7;
+  return sum / (p.length + q.length + r.length);
+}`;
+    const slug = 'src-test-reuse-after-shift-ts';
+
+    await importCodeFile(engine, filePath, bodies, { noEmbed: true });
+    const seeded = await engine.getChunks(slug);
+    expect(seeded.length).toBeGreaterThan(1);
+
+    // Derive the vector width from the column itself — the configured model
+    // resizes it (1280 here, not schema.sql's declared 1536).
+    const [dimRow] = await engine.executeRaw<{ atttypmod: number }>(
+      `SELECT atttypmod FROM pg_attribute
+        WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'`,
+    );
+    const dims = dimRow!.atttypmod;
+    expect(dims).toBeGreaterThan(0);
+
+    // Seed one distinguishable vector per chunk, chunk_text preserved verbatim.
+    await engine.upsertChunks(slug, seeded.map((c, i) => ({
+      chunk_index: c.chunk_index,
+      chunk_text: c.chunk_text,
+      chunk_source: c.chunk_source,
+      embedding: new Float32Array(dims).fill((i + 1) / 10),
+      token_count: c.token_count ?? undefined,
+      language: c.language ?? undefined,
+      symbol_name: c.symbol_name ?? undefined,
+      symbol_type: c.symbol_type ?? undefined,
+      start_line: c.start_line ?? undefined,
+      end_line: c.end_line ?? undefined,
+    })));
+    const before = await engine.getChunksWithEmbeddings(slug);
+    expect(before.every((c) => c.embedding !== null)).toBe(true);
+
+    // Two comment lines at the top: no new symbol, so every body is unchanged
+    // and only the `[TypeScript] path:N-M symbol` headers shift.
+    const shifted = `// added line one\n// added line two\n${bodies}`;
+    // Keys cleared so a reuse regression fails loudly instead of hitting a
+    // real provider; embedBatch would throw and leave embedding NULL.
+    await withEnv({
+      OPENAI_API_KEY: undefined,
+      ZEROENTROPY_API_KEY: undefined,
+      OPENROUTER_API_KEY: undefined,
+    }, async () => {
+      const r = await importCodeFile(engine, filePath, shifted, {});
+      expect(r.status).toBe('imported');
+    });
+
+    // Every seeded vector survived byte-for-byte => embedBatch was never
+    // consulted. upsertChunks takes EXCLUDED.embedding whenever chunk_text
+    // changed (and it did — the headers moved), so a miss would NULL these out.
+    const after = await engine.getChunksWithEmbeddings(slug);
+    expect(after.length).toBe(before.length);
+    for (const c of after) {
+      const src = before.find((b) => b.chunk_index === c.chunk_index);
+      expect(c.embedding).not.toBeNull();
+      expect(Array.from(c.embedding!)).toEqual(Array.from(src!.embedding!));
+    }
+    // getChunks still hides vectors by default — the #2544 egress fix stands.
+    expect((await engine.getChunks(slug)).every((c) => !c.embedding)).toBe(true);
   });
 
   test('new file import embeds all chunks (nothing to reuse)', async () => {

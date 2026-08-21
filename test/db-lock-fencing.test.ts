@@ -169,6 +169,65 @@ describe('startCycleLockRefresher (Tier-1 #1 + D5.11)', () => {
     await new Promise(r => setTimeout(r, 60));
     expect(calls).toBe(after);
   });
+
+  // #4309: the tick gate used to check ONLY the internal steal controller. An
+  // external abort (opts.signal) with a hung phase never reaches runCycle's
+  // finally, so the leaked timer renewed the fenced lock forever and no
+  // successor could ever take over.
+  test('external abort stops renewals even when stop() is never called (#4309)', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const external = new AbortController();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => { calls++; return true; }),
+      controller, 'test-lock', 15, external.signal,
+    );
+    try {
+      const deadline = Date.now() + 5_000;
+      while (calls === 0 && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 20));
+      }
+      expect(calls).toBeGreaterThan(0); // was renewing while un-aborted
+      external.abort();
+      // Deliberately do NOT call stop() — this is the hung-phase leak shape.
+      const after = calls;
+      await new Promise(r => setTimeout(r, 100));
+      expect(calls).toBe(after);
+      // An external abort is not a steal — the internal controller stays quiet.
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  test('an already-aborted external signal never ticks (#4309)', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const external = new AbortController();
+    external.abort();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => { calls++; return true; }),
+      controller, 'test-lock', 15, external.signal,
+    );
+    try {
+      await new Promise(r => setTimeout(r, 80));
+      expect(calls).toBe(0);
+    } finally {
+      stop();
+    }
+  });
+
+  test('stop() after external abort is safe and idempotent (#4309)', async () => {
+    const controller = new AbortController();
+    const external = new AbortController();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => true),
+      controller, 'test-lock', 15, external.signal,
+    );
+    external.abort();
+    stop();
+    stop(); // second call must not throw
+  });
 });
 
 describe('buildYieldDuringPhase steal reporting', () => {

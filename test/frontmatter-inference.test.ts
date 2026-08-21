@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import matter from 'gray-matter';
 import {
   compileExcludePatterns,
   DEFAULT_EXCLUDE_PATTERNS,
@@ -261,6 +262,36 @@ describe('serializeFrontmatter', () => {
       type: 'note',
     });
     expect(fm).toContain('title: "What\'s the deal: a \\"primer\\""');
+  });
+
+  // Regression: the title quoting rule was a denylist of "special" chars and
+  // every gap corrupted a page at import. A round trip through gray-matter is
+  // the assertion that matters — `toContain` on the emitted string cannot tell
+  // a throw from a silent coercion.
+  describe('title quoting round-trips through the YAML parser', () => {
+    const cases: Array<[string, string]> = [
+      ['leading backtick (blocked docs/guides/skillopt.md)', '`gbrain skillopt` — Self-evolving skills'],
+      ['leading @ (YAML c-reserved)', '@mentions and you'],
+      ['leading % (directive indicator)', '% completion tracking'],
+      ['leading dash (parsed as a sequence — title went undefined)', '- dash leading title'],
+      ['bare true (coerced to boolean)', 'true'],
+      ['bare year (coerced to number)', '2026'],
+      ['plain safe title', 'Search Modes'],
+      ['colon and quotes', 'What\'s the deal: a "primer"'],
+    ];
+    for (const [label, title] of cases) {
+      test(label, () => {
+        const parsed = matter(serializeFrontmatter({ title, type: 'guide' }));
+        expect(parsed.data.title).toBe(title);
+        expect(typeof parsed.data.title).toBe('string');
+      });
+    }
+  });
+
+  test('leaves a provably-safe title unquoted', () => {
+    expect(serializeFrontmatter({ title: 'Alice Smith', type: 'note' })).toContain(
+      'title: Alice Smith',
+    );
   });
 
   test('returns empty string for skipped files', () => {

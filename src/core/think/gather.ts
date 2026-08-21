@@ -17,7 +17,8 @@
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
-import type { SearchResult } from '../types.ts';
+import type { Page, SearchResult } from '../types.ts';
+import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
@@ -34,6 +35,7 @@ export interface ThinkGatherOpts {
   graphDepth?: number;
   /** Optional pre-computed embedding for the question. Lets the caller share embedding cost. */
   questionEmbedding?: Float32Array;
+  window?: TemporalWindow;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
   takesHoldersAllowList?: string[];
   /** Source scope inherited from the caller. Federated array wins over scalar. */
@@ -62,6 +64,7 @@ export interface ThinkGatherResult {
     takesFromVector: number;
     graphHits: number;
     questionSanitizedFor: 'expansion' | 'none';
+    window?: { dropped: number; undatedKept: number };
   };
 }
 
@@ -124,13 +127,46 @@ export async function runGather(
   const sanitizedQuestion = sanitizeQueryForPrompt(opts.question);
 
   const warnings: string[] = [];
+  const window = opts.window;
+
+  const toSearchResult = (page: Page, rank: number): SearchResult => ({
+    slug: page.slug, page_id: page.id, title: page.title, type: page.type,
+    chunk_text: page.compiled_truth ?? '', chunk_source: 'compiled_truth',
+    chunk_id: 0, chunk_index: 0, score: 1 / (51 + rank), stale: false,
+    source_id: page.source_id ?? 'default',
+    effective_date: page.effective_date instanceof Date ? page.effective_date.toISOString() : null,
+    effective_date_source: page.effective_date_source ?? null,
+  });
+
+  let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
 
   // Stream 1: hybrid page search (existing primitive).
-  const pagesPromise = hybridSearch(engine, opts.question, {
+  const pagesPromise = (window ? Promise.all([
+    hybridSearch(engine, opts.question, {
+      limit: Math.min(gatherLimit * 4, 200),
+      expansion: false,
+      ...sourceScope,
+    }),
+    engine.listPages({
+      ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
+      ...(window.endMs !== null ? { effective_before: new Date(window.endMs).toISOString() } : {}),
+      limit: 50, ...sourceScope,
+    }).then(pages => pages.map(toSearchResult)).catch((e) => {
+      warnings.push('GATHER_WINDOW_FLOOR_FAILED');
+      process.stderr.write(`[think.gather] window floor failed: ${(e as Error).message}\n`);
+      return [] as SearchResult[];
+    }),
+  ]).then(([hybrid, floor]) => {
+    const seen = new Set<string>();
+    const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
+    const filtered = filterPagesToWindow(combined, window);
+    windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
+    return filtered.kept.slice(0, gatherLimit);
+  }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
-    expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+    expansion: false,
     ...sourceScope,
-  }).catch((e) => {
+  })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
@@ -178,9 +214,51 @@ export async function runGather(
         })
     : Promise.resolve([] as string[]);
 
-  const [pages, takesKw, takesVec, graphSlugs] = await Promise.all([
-    pagesPromise, takesKwPromise, takesVecPromise, graphPromise,
+  // Stream 5 (#2903): anchor page hydration. The graph stream returns slugs
+  // only; when the hybrid stream misses the anchor page (unchunked stub,
+  // no lexical overlap with the question), --anchor used to deliver zero
+  // anchor CONTENT to the prompt. Fetch the page directly so its
+  // compiled_truth always reaches the <pages> block.
+  let anchorHydrateFailed = false;
+  const anchorPagePromise: Promise<Page | null> = opts.anchor
+    ? engine.getPage(opts.anchor, sourceScope).catch((e) => {
+        anchorHydrateFailed = true;
+        warnings.push('GATHER_ANCHOR_HYDRATE_FAILED');
+        process.stderr.write(`[think.gather] anchor hydrate failed: ${(e as Error).message}\n`);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [pages, takesKw, takesVec, graphSlugs, anchorPage] = await Promise.all([
+    pagesPromise, takesKwPromise, takesVecPromise, graphPromise, anchorPagePromise,
   ]);
+
+  // Diagnostics honesty: count hybrid's own hits BEFORE the synthetic
+  // anchor row is (possibly) unshifted below.
+  const pagesFromHybrid = pages.length;
+
+  if (opts.anchor && !anchorPage && !anchorHydrateFailed) {
+    // The anchor slug resolves to no page (typo, wrong source scope, or
+    // deleted). Distinct from a hydrate ERROR: the caller asked to anchor on
+    // something that isn't there.
+    warnings.push('ANCHOR_PAGE_NOT_FOUND');
+  }
+  if (anchorPage && !pages.some(p => p.slug === anchorPage.slug)) {
+    pages.unshift({
+      slug: anchorPage.slug,
+      page_id: anchorPage.id,
+      title: anchorPage.title,
+      type: anchorPage.type,
+      chunk_text: anchorPage.compiled_truth,
+      chunk_source: 'compiled_truth',
+      chunk_id: 0,
+      chunk_index: 0,
+      // Synthetic rank-0 row: the caller explicitly anchored on this page,
+      // so it pins the top slot ahead of the fused hybrid scores.
+      score: pages.length > 0 ? pages[0].score : 1,
+      stale: false,
+    });
+  }
 
   // Fuse takes streams (keyword + vector). Key by (page_slug, row_num).
   const fusedTakes = fuseRanked(
@@ -194,11 +272,12 @@ export async function runGather(
     graphSlugs,
     warnings,
     diagnostics: {
-      pagesFromHybrid: pages.length,
+      pagesFromHybrid,
       takesFromKeyword: takesKw.length,
       takesFromVector: takesVec.length,
       graphHits: graphSlugs.length,
       questionSanitizedFor: sanitizedQuestion === opts.question ? 'none' : 'expansion',
+      ...(windowDiagnostic ? { window: windowDiagnostic } : {}),
     },
   };
 }

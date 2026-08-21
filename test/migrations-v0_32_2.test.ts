@@ -314,6 +314,31 @@ describe('phaseCVerify', () => {
     expect(r.detail).toContain('drifted');
     expect(r.detail).toContain('people/alice');
   });
+
+  test('ignores conversation-miner facts that have no markdown fence', async () => {
+    await seedLegacyFact({ entity_slug: 'people/alice', fact: 'F1' });
+    await __testing.phaseBFenceFacts(engine, OPTS);
+
+    const slug = 'cursor-sessions/chat-1';
+    mkdirSync(join(brainDir, 'cursor-sessions'), { recursive: true });
+    writeFileSync(
+      join(brainDir, `${slug}.md`),
+      '---\ntype: conversation\n---\n\n# chat\n\nhello\n',
+      'utf-8',
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability,
+                          valid_from, source, confidence, row_num, source_markdown_slug)
+       VALUES ('default', NULL, 'Said hello', 'fact', 'private', 'medium',
+               now(), 'cli:extract-conversation-facts:seg', 1.0, 1, $1)`,
+      [slug],
+    );
+
+    const r = await __testing.phaseCVerify(engine, OPTS);
+    expect(r.status).toBe('complete');
+    expect(r.detail).toContain('pages_checked=1');
+  });
 });
 
 describe('orchestrator end-to-end', () => {

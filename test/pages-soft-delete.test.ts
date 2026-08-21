@@ -193,6 +193,123 @@ describe('purgeDeletedPages (TTL boundary)', () => {
   });
 });
 
+describe('purgeDeletedPages dry-run (shares the delete predicate)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = await setupBrain();
+  }, 30000);
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  async function pageCount(): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages`);
+    return rows[0].n;
+  }
+
+  test('dryRun: true deletes nothing (row count unchanged)', async () => {
+    await seedPage(engine, 'dryrun/keeps-rows');
+    await engine.softDeletePage('dryrun/keeps-rows');
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now() - INTERVAL '73 hours' WHERE slug = $1`,
+      ['dryrun/keeps-rows'],
+    );
+    const before = await pageCount();
+    const preview = await engine.purgeDeletedPages(72, { dryRun: true });
+    expect(preview.count).toBeGreaterThanOrEqual(1);
+    expect(preview.slugs).toContain('dryrun/keeps-rows');
+    expect(await pageCount()).toBe(before);
+  });
+
+  test('dryRun set === set actually deleted by the subsequent real run; live pages in neither', async () => {
+    await seedPage(engine, 'dryrun/old-a');
+    await seedPage(engine, 'dryrun/old-b');
+    await seedPage(engine, 'dryrun/recent');
+    await seedPage(engine, 'dryrun/live');
+    await engine.softDeletePage('dryrun/old-a');
+    await engine.softDeletePage('dryrun/old-b');
+    await engine.softDeletePage('dryrun/recent');
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now() - INTERVAL '73 hours' WHERE slug IN ($1, $2)`,
+      ['dryrun/old-a', 'dryrun/old-b'],
+    );
+
+    const preview = await engine.purgeDeletedPages(72, { dryRun: true });
+    const purged = await engine.purgeDeletedPages(72);
+
+    expect([...preview.slugs].sort()).toEqual([...purged.slugs].sort());
+    expect(preview.count).toBe(purged.count);
+    // Live and inside-window pages are in neither set.
+    expect(preview.slugs).not.toContain('dryrun/live');
+    expect(preview.slugs).not.toContain('dryrun/recent');
+    expect(purged.slugs).not.toContain('dryrun/live');
+    expect(purged.slugs).not.toContain('dryrun/recent');
+    // The real run actually removed the previewed rows.
+    const rows = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages`);
+    const remaining = rows.map((r) => r.slug);
+    expect(remaining).not.toContain('dryrun/old-a');
+    expect(remaining).not.toContain('dryrun/old-b');
+    expect(remaining).toContain('dryrun/live');
+    expect(remaining).toContain('dryrun/recent');
+  });
+
+  test('dry-run pages carry deleted_at as a Date (for CLI display)', async () => {
+    await seedPage(engine, 'dryrun/dated');
+    await engine.softDeletePage('dryrun/dated');
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now() - INTERVAL '73 hours' WHERE slug = $1`,
+      ['dryrun/dated'],
+    );
+    const preview = await engine.purgeDeletedPages(72, { dryRun: true });
+    const entry = preview.pages?.find((p) => p.slug === 'dryrun/dated');
+    expect(entry).toBeDefined();
+    expect(entry!.deleted_at).toBeInstanceOf(Date);
+    // Clean up so later tests in this describe see a stable baseline.
+    await engine.purgeDeletedPages(72);
+  });
+
+  test('red contrast: the old listPages enumeration under-counts once live pages consume the cap', async () => {
+    // The pre-fix dry-run enumerated listPages({ includeDeleted: true,
+    // limit: 10000 }) and filtered in JS against Date.now(). Live pages
+    // consume the cap, so a soft-deleted row past the cap is silently
+    // missed. Reproduce the class at small scale: 3 recently-updated live
+    // pages + 1 old soft-deleted page, enumeration capped at 3.
+    for (const slug of ['cap/live-1', 'cap/live-2', 'cap/live-3', 'cap/victim']) {
+      await seedPage(engine, slug);
+    }
+    await engine.softDeletePage('cap/victim');
+    // Old deleted_at (past the 72h cutoff) AND old updated_at so the victim
+    // sorts LAST under listPages' default updated_desc — exactly the row
+    // shape that fell off the capped enumeration.
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = now() - INTERVAL '73 hours', updated_at = now() - INTERVAL '100 hours' WHERE slug = $1`,
+      ['cap/victim'],
+    );
+
+    // Old predicate, verbatim (src/commands/pages.ts pre-fix), cap = 3.
+    const candidates = await engine.listPages({ includeDeleted: true, limit: 3 });
+    const cutoff = Date.now() - 72 * 60 * 60 * 1000;
+    const oldStyle = candidates.filter(
+      (p) => p.deleted_at && p.deleted_at instanceof Date && p.deleted_at.getTime() < cutoff,
+    );
+    expect(oldStyle.map((p) => p.slug)).not.toContain('cap/victim'); // the bug
+
+    // The predicate-sharing dry-run finds it, and the real run deletes it.
+    const preview = await engine.purgeDeletedPages(72, { dryRun: true });
+    expect(preview.slugs).toContain('cap/victim');
+    const purged = await engine.purgeDeletedPages(72);
+    expect(purged.slugs).toContain('cap/victim');
+  });
+
+  test('dry-run clamps negative hours (no crash, finite count)', async () => {
+    const preview = await engine.purgeDeletedPages(-72, { dryRun: true });
+    expect(Number.isFinite(preview.count)).toBe(true);
+    expect(preview.count).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('getPage / listPages includeDeleted contract (Q3 IRON RULE)', () => {
   let engine: PGLiteEngine;
 

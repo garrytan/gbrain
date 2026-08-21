@@ -30,19 +30,17 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   const json = args.includes('--json');
 
   if (dryRun) {
-    // Use listPages with includeDeleted to enumerate the recoverable set, then
-    // count how many would be purged given the cutoff. Stays read-only.
-    const candidates = await engine.listPages({ includeDeleted: true, limit: 10000 });
-    const cutoff = Date.now() - olderThanHours * 60 * 60 * 1000;
-    const wouldPurge = candidates.filter(
-      (p) => p.deleted_at && p.deleted_at instanceof Date && p.deleted_at.getTime() < cutoff,
-    );
+    // Same engine method, same WHERE predicate, same DB now() clock as the
+    // real purge — only the verb differs (SELECT, stays read-only). The old
+    // listPages enumeration capped at 10000 rows (live pages included), so
+    // brains past the cap under-reported the purge set.
+    const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true });
     if (json) {
-      console.log(JSON.stringify({ dry_run: true, older_than_hours: olderThanHours, count: wouldPurge.length, slugs: wouldPurge.map((p) => p.slug) }, null, 2));
+      console.log(JSON.stringify({ dry_run: true, older_than_hours: olderThanHours, count: preview.count, slugs: preview.slugs }, null, 2));
       return;
     }
-    console.log(`(dry-run) Would purge ${wouldPurge.length} page(s) soft-deleted more than ${olderThanHours}h ago.`);
-    for (const p of wouldPurge) console.log(`  ${p.slug}  deleted_at=${p.deleted_at?.toISOString()}`);
+    console.log(`(dry-run) Would purge ${preview.count} page(s) soft-deleted more than ${olderThanHours}h ago.`);
+    for (const p of preview.pages ?? []) console.log(`  ${p.slug}  deleted_at=${p.deleted_at.toISOString()}`);
     return;
   }
 

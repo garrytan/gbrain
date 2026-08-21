@@ -69,8 +69,9 @@ describe('recipe: openrouter', () => {
     const r = getRecipe('openrouter')!;
     expect(r.touchpoints.chat).toBeDefined();
     expect(r.touchpoints.chat!.supports_tools).toBe(true);
-    // supports_subagent_loop is informational; isAnthropicProvider() is the
-    // real gate. Field stays false per the recipe docstring.
+    // supports_subagent_loop: false is enforced — classifyCapabilities()
+    // refuses the subagent tier on it (unusable:no_subagent_loop). Field
+    // stays false per the recipe docstring.
     expect(r.touchpoints.chat!.supports_subagent_loop).toBe(false);
     expect(() =>
       assertTouchpoint(r, 'chat', 'some/provider-model'),
@@ -181,8 +182,19 @@ describe('recipe: openrouter', () => {
     expect(openrouterSupportsPromptCache('openai/text-embedding-3-small')).toBe(false);
     expect(openrouterSupportsPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
     expect(openrouterSupportsPromptCache('anthropic/claude-opus-4.7')).toBe(true);
-    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat')).toBe(false);
+    // DeepSeek routes cache automatically, same as the OpenAI ones — and the
+    // native `deepseek` recipe says so too, so the two routes must agree.
+    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat')).toBe(true);
     expect(openrouterSupportsPromptCache('google/gemini-3-flash-preview')).toBe(false);
+
+    // Routing variants (`:online`, `:nitro`, `:floor`, …) are an OpenRouter
+    // concept, not part of the upstream model id, so they must not change the
+    // answer either way.
+    expect(openrouterSupportsPromptCache('openai/gpt-4o:online')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/gpt-4.1:nitro')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/o1:floor')).toBe(true);
+    expect(openrouterSupportsPromptCache('openai/gpt-4-turbo:online')).toBe(false);
+    expect(openrouterSupportsPromptCache('deepseek/deepseek-chat:free')).toBe(true);
   });
 
   test('13. only Anthropic Claude routes require the explicit cache_control rewrite', () => {

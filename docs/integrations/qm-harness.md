@@ -54,8 +54,8 @@ Isolation model:
   `people/*` pages the caller never named — the same capability
   `extract_facts` is denied for, reached through an in-prefix write. It is
   skipped for bound clients. `POST /ingest` is refused outright: its handler
-  bypasses the op layer *and* discards the source grant for untrusted
-  payloads, so it would write into the `default` source.
+  bypasses the op layer, so `enforceClientSlugFence` never runs and a bound
+  client could write any slug inside its granted source.
 ### Known limitations — read these before you rely on the fence
 
 The write fence is a **write** boundary within a source. It is not a privacy
@@ -95,11 +95,16 @@ v0.42.73.2:
 - **Reads touch `last_retrieved_at`** on the pages they return, including
   pages in read-only sources. Freshness/usage signals are therefore
   writable-by-reading; nothing else about the page is.
-- **`POST /ingest` writes land in the `default` source** regardless of the
-  calling client's `source_id`, because the handler discards the source for
-  untrusted payloads. Bound clients are refused the route outright for this
-  reason; if you point a webhook integration at it, scope that brain's
-  `default` source deliberately.
+- **`POST /ingest` writes land in the calling client's granted source.** The
+  write source is resolved server-side from `oauth_clients.source_id`; the
+  caller-supplied `X-Gbrain-Source-Id` header does not route anything, so a
+  client cannot choose its own write partition. A client registered without a
+  source writes to `default`, and a write falls back to `default` if its
+  source is unregistered, archived, or deleted mid-write (the job result
+  reports this via `source_fallback`). If you point a webhook integration at
+  this route, give its client an explicit `--source` so its captures do not
+  accumulate in the brain's `default` source. Bound clients are still refused
+  the route outright, because the slug fence cannot run on this path.
 - **Tradeoff to state out loud:** read isolation is per-source, so within the
   shared `agents` source every employee can *read* every prefix (including
   other employees' `emp-*/`). That matches qm's transparent-by-default,

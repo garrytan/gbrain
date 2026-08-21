@@ -40,6 +40,10 @@ export function mergedProviderEnv(
   if (cfg?.voyage_api_key) fromConfig.VOYAGE_API_KEY = cfg.voyage_api_key;
   if (cfg?.dashscope_api_key) fromConfig.DASHSCOPE_API_KEY = cfg.dashscope_api_key;
   if (cfg?.google_api_key) fromConfig.GOOGLE_GENERATIVE_AI_API_KEY = cfg.google_api_key;
+  // #4031: the Azure key was the only member of the group below left unfolded,
+  // so a config.json-only setup failed every embed from keyless shells
+  // (launchd/cron/MCP) while `config show` looked complete.
+  if (cfg?.azure_openai_api_key) fromConfig.AZURE_OPENAI_API_KEY = cfg.azure_openai_api_key;
   if (cfg?.azure_openai_endpoint) fromConfig.AZURE_OPENAI_ENDPOINT = cfg.azure_openai_endpoint;
   if (cfg?.azure_openai_deployment) fromConfig.AZURE_OPENAI_DEPLOYMENT = cfg.azure_openai_deployment;
   if (cfg?.azure_openai_use_entra) fromConfig.AZURE_OPENAI_USE_ENTRA = cfg.azure_openai_use_entra;

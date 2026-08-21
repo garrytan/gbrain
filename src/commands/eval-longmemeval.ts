@@ -393,6 +393,12 @@ export interface RunOpts {
    * a production engine with real data would clobber it via resetTables.
    */
   engine?: PGLiteEngine;
+  /**
+   * v0.45.0+ (#3676): live nightly-probe search-mode/reranker settings copied
+   * into the isolated benchmark brain. This preserves benchmark data isolation
+   * while keeping the probe on the operator-selected retrieval pipeline.
+   */
+  searchConfigSnapshot?: Record<string, string>;
 }
 
 export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}): Promise<void> {
@@ -526,7 +532,15 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   // already calls resetTables() as its first line so the prior caller's
   // pages are cleared on the first question of this run.
   const work = async (engine: PGLiteEngine): Promise<void> => {
-    // v0.32.3 search-lite: thread --mode into the in-memory brain's config.
+    // v0.45.0+ (#3676): nightly probe callers may copy audited live search
+    // config into this isolated engine. Data tables stay hermetic, but the
+    // benchmark no longer silently evaluates a different reranker/mode.
+    for (const [key, value] of Object.entries(runOpts.searchConfigSnapshot ?? {})) {
+      if (key.trim().length > 0) {
+        await engine.setConfig(key, value);
+      }
+    }
+    // v0.32.3 search-lite: explicit --mode wins over any injected snapshot.
     // resetTables preserves `config` between questions, so this fires once
     // for the run. hybridSearch resolves it through the standard chain.
     if (opts.mode) {
