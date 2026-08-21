@@ -6,9 +6,49 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
 // Leaf module (no flag surface of its own) — see that file for why this
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES } from '../../../core/facts/conversation-types.ts';
+
+function hasNonEmptyChatFallbackChain(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) return false;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+    }
+  } catch {
+    // `config set` stores raw strings; any non-empty non-JSON value is set.
+  }
+  return true;
+}
+
+/**
+ * `chat_fallback_chain` is accepted by config and reaches the gateway config,
+ * but no production chat path consumes it. Keep the warning in doctor rather
+ * than config loading so ordinary commands stay quiet. Returning null for an
+ * empty value keeps clean doctor reports silent instead of adding an OK line.
+ */
+export async function checkChatFallbackChainInert(
+  engine: BrainEngine,
+  effectiveConfig: Pick<GBrainConfig, 'chat_fallback_chain'> | null = loadConfig(),
+): Promise<Check | null> {
+  const fileOrEnvSet = hasNonEmptyChatFallbackChain(effectiveConfig?.chat_fallback_chain);
+  const dbValue = await engine.getConfig('chat_fallback_chain').catch(() => null);
+  if (!fileOrEnvSet && !hasNonEmptyChatFallbackChain(dbValue)) return null;
+  return {
+    name: 'chat_fallback_chain_inert',
+    status: 'warn',
+    message:
+      '`chat_fallback_chain` is set but currently has no effect: no production chat path consumes it. ' +
+      'If you set it expecting fallback behavior, clear it from every plane that still holds a value: ' +
+      'the DB (`gbrain config unset chat_fallback_chain`), `~/.gbrain/config.json`, and `GBRAIN_CHAT_FALLBACK_CHAIN`.',
+  };
+}
 
 /**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.

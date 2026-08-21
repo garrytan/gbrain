@@ -99,6 +99,7 @@ export {
   checkCyclePhaseScope,
 } from './doctor/checks/routing-federation.ts';
 export {
+  checkChatFallbackChainInert,
   checkSearchMode,
   checkEvalDrift,
   checkEmbeddingEnvOverride,
@@ -178,6 +179,7 @@ import {
   checkCyclePhaseScope,
 } from './doctor/checks/routing-federation.ts';
 import {
+  checkChatFallbackChainInert,
   checkSearchMode,
   checkEvalDrift,
   checkEmbeddingEnvOverride,
@@ -3714,6 +3716,9 @@ export async function buildChecks(
   // v0.32.3 search-lite — mode + eval_drift surfaces. Status stays 'ok' per
   // [CDX-20]; hint lives in `message`.
   if (engine !== null) {
+    progress.heartbeat('chat_fallback_chain_inert');
+    const inertFallbackChain = await checkChatFallbackChainInert(engine);
+    if (inertFallbackChain) checks.push(inertFallbackChain);
     progress.heartbeat('search_mode');
     checks.push(await checkSearchMode(engine));
     // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
