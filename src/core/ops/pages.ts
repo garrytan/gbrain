@@ -788,6 +788,62 @@ const put_page: Operation = {
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
 
+const create_page: Operation = {
+  name: 'create_page',
+  description: 'Create a new sealed page exactly once. The server verifies the canonical request hash and commits deterministic non-embedded chunks with an immutable receipt.',
+  params: {
+    operation_id: { type: 'string', required: true, description: 'Exact lowercase SHA-256 idempotency identifier.' },
+    slug: { type: 'string', required: true, description: 'New page slug. Existing slugs always conflict.' },
+    content: { type: 'string', required: true, description: 'Non-empty markdown content with optional YAML frontmatter.' },
+    request_sha256: { type: 'string', required: true, description: 'SHA-256 of canonical JSON {slug,content}, with normalized slug and exact content bytes.' },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const slug = p.slug as string;
+    if (!/^synthetic\/[a-f0-9]{64}$/.test(slug)) {
+      throw new OperationError('invalid_params', 'create_page accepts only synthetic/<lowercase SHA-256> slugs.');
+    }
+    enforceSubagentSlugFence(ctx, slug, 'create_page');
+    enforceClientSlugFence(ctx, slug, 'create_page');
+
+    let prepared;
+    try {
+      prepared = prepareSealedPage({
+        operationId: p.operation_id as string,
+        sourceId: ctx.sourceId ?? 'default',
+        slug,
+        content: p.content as string,
+        requestSha256: p.request_sha256 as string,
+      });
+    } catch (error) {
+      throw new OperationError(
+        'invalid_params',
+        error instanceof Error ? error.message : String(error),
+        'Use exact lowercase SHA-256 values and non-empty content. Hash JSON.stringify({slug,content}) after normalizing the slug.',
+      );
+    }
+
+    if (ctx.dryRun) {
+      return {
+        dry_run: true,
+        action: 'create_page',
+        slug: prepared.projection.slug,
+        canonical_page_sha256: prepared.canonicalPageSha256,
+      };
+    }
+
+    try {
+      return await ctx.engine.createSealedPage(prepared);
+    } catch (error) {
+      if (error instanceof SealedPageError) {
+        throw new OperationError(error.code, error.message);
+      }
+      throw error;
+    }
+  },
+};
+
 // v0.31.2: isFactsBackstopEligible moved to src/core/facts/eligibility.ts
 // so sync.ts, file_upload, code_import, and runFactsBackstop all share one
 // predicate. Imported above.
@@ -1373,7 +1429,7 @@ const capture: Operation = {
 // (Page CRUD quartet first, then the v0.26.5 destructive-guard ops:
 // page-level soft-delete recovery + admin purge, then capture.)
 export const pagesOperations: Operation[] = [
-  get_page, put_page, delete_page, list_pages,
+  get_page, put_page, create_page, delete_page, list_pages,
   restore_page, purge_deleted_pages, capture,
   fetch_page,
 ];
