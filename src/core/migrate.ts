@@ -6184,6 +6184,132 @@ export const MIGRATIONS: Migration[] = [
         ON chat_usage_log (model, created_at);
     `,
   },
+  {
+    version: 141,
+    name: 'sealed_page_receipts',
+    idempotent: true,
+    // Creates only the receipt substrate and guards. It never inserts a receipt,
+    // so pages that predate this migration remain ordinary mutable pages.
+    sql: `
+      CREATE TABLE IF NOT EXISTS sealed_page_receipts (
+        protocol_version       TEXT NOT NULL CHECK (protocol_version = 'gbrain.create_page.v1'),
+        operation_id           TEXT PRIMARY KEY CHECK (operation_id ~ '^[a-f0-9]{64}$'),
+        source_id              TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+        slug                   TEXT NOT NULL,
+        request_sha256         TEXT NOT NULL CHECK (request_sha256 ~ '^[a-f0-9]{64}$'),
+        page_id                INTEGER NOT NULL UNIQUE REFERENCES pages(id) ON DELETE RESTRICT,
+        page_revision          BIGINT NOT NULL CHECK (page_revision > 0),
+        canonical_page_sha256  TEXT NOT NULL CHECK (canonical_page_sha256 ~ '^[a-f0-9]{64}$'),
+        canonical_projection   JSONB NOT NULL,
+        committed_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+        server_build_commit    TEXT NOT NULL CHECK (server_build_commit ~ '^[a-f0-9]{40}$'),
+        receipt_id             TEXT NOT NULL UNIQUE CHECK (receipt_id ~ '^[a-f0-9]{64}$'),
+        CONSTRAINT sealed_page_receipts_source_slug_key UNIQUE (source_id, slug),
+        CONSTRAINT sealed_page_projection_exact CHECK (
+          canonical_projection = jsonb_build_object(
+            'slug', canonical_projection->'slug',
+            'type', canonical_projection->'type',
+            'title', canonical_projection->'title',
+            'compiled_truth', canonical_projection->'compiled_truth',
+            'frontmatter', canonical_projection->'frontmatter'
+          )
+          AND canonical_projection->>'slug' = slug
+          AND jsonb_typeof(canonical_projection->'slug') = 'string'
+          AND jsonb_typeof(canonical_projection->'type') = 'string'
+          AND jsonb_typeof(canonical_projection->'title') = 'string'
+          AND jsonb_typeof(canonical_projection->'compiled_truth') = 'string'
+          AND jsonb_typeof(canonical_projection->'frontmatter') = 'object'
+        )
+      );
+      ALTER TABLE sealed_page_receipts ENABLE ROW LEVEL SECURITY;
+
+      CREATE OR REPLACE FUNCTION protect_sealed_page_fn() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = OLD.id) THEN
+          RAISE EXCEPTION 'sealed page is immutable: %/%', OLD.source_id, OLD.slug USING ERRCODE = '55000';
+        END IF;
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS protect_sealed_page_trg ON pages;
+      CREATE TRIGGER protect_sealed_page_trg
+        BEFORE UPDATE OR DELETE ON pages
+        FOR EACH ROW EXECUTE FUNCTION protect_sealed_page_fn();
+
+      CREATE OR REPLACE FUNCTION protect_sealed_receipt_fn() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+      BEGIN
+        RAISE EXCEPTION 'sealed page receipt is immutable' USING ERRCODE = '55000';
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS protect_sealed_receipt_trg ON sealed_page_receipts;
+      CREATE TRIGGER protect_sealed_receipt_trg
+        BEFORE UPDATE OR DELETE ON sealed_page_receipts
+        FOR EACH ROW EXECUTE FUNCTION protect_sealed_receipt_fn();
+
+      CREATE OR REPLACE FUNCTION protect_sealed_chunk_fn() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+      DECLARE protected_page_id INTEGER;
+      BEGIN
+        protected_page_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.page_id ELSE OLD.page_id END;
+        IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = protected_page_id)
+          OR (TG_OP = 'UPDATE' AND NEW.page_id <> OLD.page_id
+              AND EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = NEW.page_id)) THEN
+          RAISE EXCEPTION 'sealed page chunk is immutable: page_id=%', protected_page_id USING ERRCODE = '55000';
+        END IF;
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+      END;
+      $fn$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON content_chunks;
+      CREATE TRIGGER protect_sealed_chunk_trg
+        BEFORE INSERT OR UPDATE OR DELETE ON content_chunks
+        FOR EACH ROW EXECUTE FUNCTION protect_sealed_chunk_fn();
+    `,
+    verify: async (engine) => {
+      const columns = await engine.executeRaw<{ column_name: string; is_nullable: string }>(
+        `SELECT column_name, is_nullable
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'sealed_page_receipts'`,
+      );
+      const requiredColumns = [
+        'protocol_version', 'operation_id', 'source_id', 'slug', 'request_sha256',
+        'page_id', 'page_revision', 'canonical_page_sha256', 'canonical_projection',
+        'committed_at', 'server_build_commit', 'receipt_id',
+      ];
+      if (columns.length !== requiredColumns.length
+        || requiredColumns.some((name) => !columns.some((column) => column.column_name === name && column.is_nullable === 'NO'))) {
+        return false;
+      }
+      const constraints = await engine.executeRaw<{ contype: string; definition: string }>(
+        `SELECT c.contype::text, pg_get_constraintdef(c.oid) AS definition
+           FROM pg_constraint c
+           JOIN pg_class t ON t.oid = c.conrelid
+           JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname = 'public' AND t.relname = 'sealed_page_receipts'`,
+      );
+      const definitions = constraints.map((constraint) => constraint.definition).join('\n');
+      if (!constraints.some((constraint) => constraint.contype === 'p')
+        || constraints.filter((constraint) => constraint.contype === 'f').length !== 2
+        || constraints.filter((constraint) => constraint.contype === 'u').length !== 3
+        || !definitions.includes('{64}')
+        || !definitions.includes('{40}')
+        || !definitions.includes('gbrain.create_page.v1')) {
+        return false;
+      }
+      const triggers = await engine.executeRaw<{ tgname: string }>(
+        `SELECT tgname FROM pg_trigger
+          WHERE NOT tgisinternal
+            AND tgname IN ('protect_sealed_page_trg', 'protect_sealed_receipt_trg', 'protect_sealed_chunk_trg')`,
+      );
+      if (new Set(triggers.map((trigger) => trigger.tgname)).size !== 3) return false;
+      const table = await engine.executeRaw<{ relrowsecurity: boolean }>(
+        `SELECT relrowsecurity FROM pg_class
+          WHERE oid = 'public.sealed_page_receipts'::regclass`,
+      );
+      return table.length === 1 && table[0].relrowsecurity === true;
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

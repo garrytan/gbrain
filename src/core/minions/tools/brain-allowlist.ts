@@ -273,7 +273,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
   if (opts.sourceId !== undefined) validateSourceId(opts.sourceId);
 
   return picked.map<ToolDef>(op => {
-    const schema = op.name === 'put_page'
+    const schema = op.name === 'put_page' || op.name === 'create_page'
       ? namespacedPutPageSchema(op, opts.subagentId, opts.allowedSlugPrefixes)
       : paramsToInputSchema(op);
 

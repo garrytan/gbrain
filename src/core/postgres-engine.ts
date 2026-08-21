@@ -38,6 +38,7 @@ import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { createSealedPageTransactional, type PreparedSealedPage } from './sealed-page.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
 import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
@@ -1395,6 +1396,10 @@ export class PostgresEngine implements BrainEngine {
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
     return rowToPage(rows[0]);
+  }
+
+  async createSealedPage(input: PreparedSealedPage) {
+    return createSealedPageTransactional(this, input);
   }
 
   async deletePage(slug: string, opts?: { sourceId?: string }): Promise<void> {

@@ -29,7 +29,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
-import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import type { Operation, OperationContext, AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
 import {
   GBrainOAuthProvider,
@@ -169,6 +169,21 @@ import { registerCleanup } from '../core/process-cleanup.ts';
  * 3s leaves 2s of headroom for TCP, response framing, and clock skew.
  */
 export const HEALTH_TIMEOUT_MS = 3000;
+
+export function isMcpToolAllowedByBinding(
+  toolName: string,
+  boundTools: string[] | undefined,
+): boolean {
+  return boundTools === undefined || boundTools.includes(toolName);
+}
+
+export function filterMcpOperationsByToolBinding<T extends Pick<Operation, 'name'>>(
+  mcpOperations: T[],
+  boundTools: string[] | undefined,
+): T[] {
+  if (boundTools === undefined) return mcpOperations;
+  return mcpOperations.filter(op => boundTools.includes(op.name));
+}
 
 /**
  * The narrowest contract this module actually consumes: subscribe, unsubscribe.
@@ -2410,6 +2425,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           timestamp: new Date().toISOString(),
         });
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
+      }
+
+      if (!isMcpToolAllowedByBinding(name, authInfo.boundTools)) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: 'permission_denied',
+              message: `Operation ${name} is excluded by this client's bound_tools allow-list`,
+            }),
+          }],
+          isError: true,
+        };
       }
 
       // Scope enforcement (v0.28: hasScope replaces exact-string-match so

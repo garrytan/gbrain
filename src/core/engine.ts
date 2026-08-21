@@ -21,6 +21,7 @@ import type {
   AdjacencyRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
+import type { PreparedSealedPage, SealedPageReceipt } from './sealed-page.ts';
 
 /**
  * v0.27.1: file row for binary-asset metadata. Mirrors the `files` table
@@ -764,6 +765,11 @@ export interface BrainEngine {
    * deleting a page goes through `deletePage`/`softDeletePage`, not this path.
    */
   putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page>;
+  /** Atomically creates a new page, deterministic chunks, seal, and immutable receipt. */
+  createSealedPage(input: PreparedSealedPage): Promise<{
+    status: 'created' | 'matched';
+    receipt: SealedPageReceipt;
+  }>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *

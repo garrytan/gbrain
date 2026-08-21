@@ -203,6 +203,8 @@ export interface AuthInfo {
    * `allowedSources` above.
    */
   takesHoldersAllowList?: string[];
+  /** Exact OAuth tool allow-list. Undefined preserves the legacy surface. */
+  boundTools?: string[];
   /**
    * v0.42.72.0: slug-prefix WRITE binding from
    * `oauth_clients.bound_slug_prefixes`, threaded at token-verification

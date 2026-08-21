@@ -381,6 +381,24 @@ describe('verifyAccessToken', () => {
     expect(unboundInfo.boundSlugPrefixes).toBeUndefined();
   });
 
+  test('bound_tools threads into AuthInfo; absent binding stays undefined', async () => {
+    const bound = await provider.registerClientManual(
+      'tool-binding-thread-test', ['client_credentials'], 'read write', [], 'default', undefined, undefined, {
+        boundTools: ['create_page', 'get_page'],
+      },
+    );
+    const boundTokens = await provider.exchangeClientCredentials(bound.clientId, bound.clientSecret!, 'read write');
+    const boundInfo = await provider.verifyAccessToken(boundTokens.access_token) as unknown as CoreAuthInfo;
+    expect(boundInfo.boundTools).toEqual(['create_page', 'get_page']);
+
+    const unbound = await provider.registerClientManual(
+      'tool-binding-unbound-test', ['client_credentials'], 'read write',
+    );
+    const unboundTokens = await provider.exchangeClientCredentials(unbound.clientId, unbound.clientSecret!, 'read write');
+    const unboundInfo = await provider.verifyAccessToken(unboundTokens.access_token) as unknown as CoreAuthInfo;
+    expect(unboundInfo.boundTools).toBeUndefined();
+  });
+
   test('expired token is rejected', async () => {
     // Insert a token that's already expired
     const expiredToken = generateToken('gbrain_at_');
