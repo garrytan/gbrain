@@ -6804,8 +6804,14 @@ async function applyOneMigration(engine: BrainEngine, m: Migration): Promise<voi
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
           if (m.handler) await m.handler(engine);
-          // Best-effort: don't double-throw if second run still fails verify.
-          // Operator's next run of doctor will re-detect drift.
+          const retryVerifyOk = await m.verify(engine).catch(() => false);
+          if (!retryVerifyOk) {
+            throw new MigrationDriftError(
+              m.version,
+              m.name,
+              `Schema does not match expected post-condition after idempotent retry. Repair the malformed object and retry.`,
+            );
+          }
         } else {
           throw new MigrationDriftError(
             m.version,
