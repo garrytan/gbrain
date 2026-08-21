@@ -289,7 +289,7 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
 
     try {
       await expect(runMigrations(engine)).rejects.toThrow(/post-condition|schema does not match/i);
-      expect(await engine.getConfig('version')).toBe('132');
+      expect(await engine.getConfig('version')).toBe('135');
     } finally {
       await conn.unsafe('DROP TABLE IF EXISTS sealed_page_receipts');
       await engine.setConfig('version', '132');
@@ -297,7 +297,7 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     }
   }, 30_000);
 
-  test('migration rejects exact-shape drift and preserves version 132', async () => {
+  test('migration rejects exact-shape drift and preserves the last successful version', async () => {
     const engine = getEngine();
     const conn = getConn();
     await dropAppPolicies();
@@ -327,7 +327,7 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
 
     try {
       await expect(runMigrations(engine)).rejects.toBeInstanceOf(MigrationDriftError);
-      expect(await engine.getConfig('version')).toBe('132');
+      expect(await engine.getConfig('version')).toBe('135');
     } finally {
       await conn.unsafe('DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON timeline_entries');
       await conn.unsafe('DROP FUNCTION IF EXISTS wrong_sealed_trigger_fn()');
