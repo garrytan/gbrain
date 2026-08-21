@@ -23,6 +23,7 @@ import { computeEffectiveDate } from '../core/effective-date.ts';
 import { parseFrontmatter } from '../core/backfill-effective-date.ts';
 import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
+import { schemaVersionHealth } from '../core/schema-version-health.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
 // this file. doctor.ts re-exports every moved public symbol under its
 // original name so existing importers (tests, scripts/live-brain-first-check.ts,
@@ -1880,22 +1881,7 @@ export async function buildChecks(
   try {
     const version = await engine.getConfig('version');
     schemaVersion = parseInt(version || '0', 10);
-    if (schemaVersion >= LATEST_VERSION) {
-      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
-    } else if (schemaVersion === 0) {
-      checks.push({
-        name: 'schema_version',
-        status: 'fail',
-        message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
-                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
-      });
-    } else {
-      checks.push({
-        name: 'schema_version',
-        status: 'warn',
-        message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Fix: gbrain apply-migrations --yes`,
-      });
-    }
+    checks.push({ name: 'schema_version', ...schemaVersionHealth(schemaVersion, LATEST_VERSION) });
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }

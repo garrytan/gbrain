@@ -15,6 +15,7 @@ import { loadConfig } from '../../core/config.ts';
 import { loadCompletedMigrations } from '../../core/preferences.ts';
 import { compareVersions } from '../migrations/index.ts';
 import { resolveHoursEnv } from '../../core/env-number.ts';
+import { schemaVersionHealth } from '../../core/schema-version-health.ts';
 import {
   type Check,
   type DoctorReport,
@@ -109,21 +110,10 @@ export async function doctorReportRemote(
   try {
     const versionStr = await engine.getConfig('version');
     const version = parseInt(versionStr || '0', 10);
-    if (version >= LATEST_VERSION) {
-      checks.push({ name: 'schema_version', status: 'ok', message: `Version ${version} (latest: ${LATEST_VERSION})` });
-    } else if (version === 0) {
-      checks.push({
-        name: 'schema_version',
-        status: 'fail',
-        message: `No schema version recorded. Migrations never ran. Run \`gbrain apply-migrations --yes\` on the host.`,
-      });
-    } else {
-      checks.push({
-        name: 'schema_version',
-        status: 'warn',
-        message: `Version ${version}, latest is ${LATEST_VERSION}. Run \`gbrain apply-migrations --yes\` on the host.`,
-      });
-    }
+    checks.push({
+      name: 'schema_version',
+      ...schemaVersionHealth(version, LATEST_VERSION, { remote: true }),
+    });
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
