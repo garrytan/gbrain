@@ -323,7 +323,7 @@ CREATE TABLE IF NOT EXISTS sealed_page_receipts (
 );
 ALTER TABLE sealed_page_receipts ENABLE ROW LEVEL SECURITY;
 
-CREATE OR REPLACE FUNCTION protect_sealed_page_fn() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION protect_sealed_page_fn() RETURNS trigger SECURITY DEFINER SET search_path = pg_catalog, public AS $fn$
 BEGIN
   IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = OLD.id) THEN
     RAISE EXCEPTION 'sealed page is immutable: %/%', OLD.source_id, OLD.slug USING ERRCODE = '55000';
@@ -331,6 +331,18 @@ BEGIN
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $fn$ LANGUAGE plpgsql;
+DO $owner$
+DECLARE relation_owner NAME;
+BEGIN
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_page_fn() OWNER TO %I', relation_owner);
+END;
+$owner$;
+REVOKE ALL ON FUNCTION protect_sealed_page_fn() FROM PUBLIC;
 
 DROP TRIGGER IF EXISTS protect_sealed_page_trg ON pages;
 CREATE TRIGGER protect_sealed_page_trg
@@ -433,7 +445,7 @@ CREATE TRIGGER chunk_search_vector_trigger
   ON content_chunks
   FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
 
-CREATE OR REPLACE FUNCTION protect_sealed_chunk_fn() RETURNS trigger SET search_path = pg_catalog, public AS $fn$
+CREATE OR REPLACE FUNCTION protect_sealed_chunk_fn() RETURNS trigger SECURITY DEFINER SET search_path = pg_catalog, public AS $fn$
 DECLARE protected_page_id INTEGER;
 BEGIN
   protected_page_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.page_id ELSE OLD.page_id END;
@@ -445,6 +457,18 @@ BEGIN
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $fn$ LANGUAGE plpgsql;
+DO $owner$
+DECLARE relation_owner NAME;
+BEGIN
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_chunk_fn() OWNER TO %I', relation_owner);
+END;
+$owner$;
+REVOKE ALL ON FUNCTION protect_sealed_chunk_fn() FROM PUBLIC;
 
 DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON content_chunks;
 CREATE TRIGGER protect_sealed_chunk_trg

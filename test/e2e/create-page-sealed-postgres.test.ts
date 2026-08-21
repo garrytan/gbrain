@@ -244,6 +244,41 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     await expect(appB.executeRaw('DELETE FROM sealed_page_receipts WHERE page_id = $1', [pageId])).rejects.toThrow(/immutable/i);
   });
 
+  test('page trigger sees sealed receipts hidden from a NOBYPASSRLS caller', async () => {
+    const sealedSlug = slugFor('rls-hidden-receipt');
+    await create(appA, sealedSlug, markdownFor('RLS hidden receipt'), 'rls-hidden-receipt');
+    const sealedPage = await appB.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1', [sealedSlug]);
+    const sealedPageId = Number(sealedPage[0].id);
+    const ordinarySlug = slugFor('rls-ordinary-page');
+    const ordinaryPage = await getEngine().executeRaw<{ id: number }>(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth)
+       VALUES ('default', $1, 'note', 'Ordinary page', 'Mutable body')
+       RETURNING id`,
+      [ordinarySlug],
+    );
+    const conn = getConn();
+
+    await conn.unsafe('DROP POLICY create_page_app_receipts ON sealed_page_receipts');
+    try {
+      const hidden = await appB.executeRaw<{ count: number }>(
+        'SELECT count(*)::int AS count FROM sealed_page_receipts WHERE page_id = $1',
+        [sealedPageId],
+      );
+      expect(Number(hidden[0].count)).toBe(0);
+      await expect(
+        appB.executeRaw('UPDATE pages SET title = $1 WHERE id = $2', ['changed', sealedPageId]),
+      ).rejects.toThrow(/sealed/i);
+      await expect(
+        appB.executeRaw('UPDATE pages SET title = $1 WHERE id = $2', ['Ordinary changed', Number(ordinaryPage[0].id)]),
+      ).resolves.toBeDefined();
+    } finally {
+      await conn.unsafe(
+        `CREATE POLICY create_page_app_receipts ON sealed_page_receipts TO ${APP_ROLE}
+           USING (source_id = 'default') WITH CHECK (source_id = 'default')`,
+      );
+    }
+  });
+
   test('migration rejects a malformed pre-existing receipt table without advancing version', async () => {
     const engine = getEngine();
     const conn = getConn();

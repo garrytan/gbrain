@@ -100,11 +100,17 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
     pronargs: number;
     return_type: string;
     function_config: string;
+    trusted_owner: boolean;
+    public_can_execute: boolean;
   }>(
     `SELECT p.proname, p.prosrc, l.lanname, p.provolatile::text,
             p.proisstrict, p.prosecdef, p.proleakproof, p.proparallel::text,
             p.prokind::text, p.pronargs, p.prorettype::regtype::text AS return_type,
-            COALESCE(array_to_string(p.proconfig, ','), '') AS function_config
+            COALESCE(array_to_string(p.proconfig, ','), '') AS function_config,
+            (NOT p.prosecdef OR p.proowner = (
+              SELECT relowner FROM pg_class WHERE oid = 'public.sealed_page_receipts'::regclass
+            )) AS trusted_owner,
+            has_function_privilege('public', p.oid, 'EXECUTE') AS public_can_execute
        FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
        JOIN pg_language l ON l.oid = p.prolang
@@ -125,8 +131,11 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
     Number(fn.pronargs),
     fn.return_type,
     fn.function_config,
+    fn.trusted_owner,
+    fn.public_can_execute,
   ]);
-  const functionProperties = ['plpgsql', 'v', false, false, false, 'u', 'f', 0, 'trigger', 'search_path=pg_catalog, public'];
+  const invokerProperties = ['plpgsql', 'v', false, false, false, 'u', 'f', 0, 'trigger', 'search_path=pg_catalog, public', true, true];
+  const definerProperties = ['plpgsql', 'v', false, true, false, 'u', 'f', 0, 'trigger', 'search_path=pg_catalog, public', true, false];
   const expectedFunctions = [
     [
       'protect_sealed_chunk_fn',
@@ -142,7 +151,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
           RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
         END;
       `),
-      ...functionProperties,
+      ...definerProperties,
     ],
     [
       'protect_sealed_page_fn',
@@ -154,7 +163,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
           RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
         END;
       `),
-      ...functionProperties,
+      ...definerProperties,
     ],
     [
       'protect_sealed_receipt_fn',
@@ -163,7 +172,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
           RAISE EXCEPTION 'sealed page receipt is immutable' USING ERRCODE = '55000';
         END;
       `),
-      ...functionProperties,
+      ...invokerProperties,
     ],
   ];
   if (JSON.stringify(actualFunctions) !== JSON.stringify(expectedFunctions)) return false;
