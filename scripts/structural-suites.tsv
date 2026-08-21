@@ -82,6 +82,7 @@ test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — load-be
 test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — structural rendering (source-grep)	6	doctor-source-helper
 test/doctor-orphan-ratio.test.ts	cross-surface parity contract	3	doctor-source-helper,readFileSync
 test/doctor-orphan-ratio.test.ts	runOrphanRatioCheck — thin-client surface (D11)	1	readFileSync
+test/doctor-self-upgrade.test.ts	#3747 cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — honors the recorded pid_file (custom --pid-file)	2	doctor-source-helper
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — pid_file fallback (source-grep)	1	doctor-source-helper
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync

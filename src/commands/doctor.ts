@@ -1694,6 +1694,13 @@ export async function buildChecks(
     }
   }
 
+  // 3e. v0.42 self_upgrade_health: mode, whether behind, recent failures.
+  // File-plane only (no engine) — runs unconditionally, same as the
+  // `doctorReportRemote()` (thin-client) copy of this check at the
+  // equivalent slot in report-remote.ts. Was registered in
+  // doctor-categories.ts but only ever emitted on the remote path — see #3747.
+  checks.push(checkSelfUpgradeHealth());
+
   // --- DB checks (skip if --fast or no engine) ---
 
   if (fastMode || !engine) {
