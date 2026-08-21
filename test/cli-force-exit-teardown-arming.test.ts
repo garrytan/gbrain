@@ -21,7 +21,7 @@ import { readFileSync } from 'fs';
 
 describe('cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body', () => {
   test('no timer arming exists between op-dispatch setup and the try; the deadline arms inside finishCliTeardown before the drain', () => {
-    const cli = readFileSync('src/cli.ts', 'utf8');
+    const cli = readFileSync('src/cli-main.ts', 'utf8');
 
     // The old pre-try arming constant must stay gone (its return is the
     // kill-slow-ops-with-exit-0 regression).

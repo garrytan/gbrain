@@ -173,7 +173,7 @@ describe('CLI integration', () => {
 
   beforeAll(() => {
     const { readFileSync } = require('fs');
-    cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+    cliSource = readFileSync(new URL('../src/cli-main.ts', import.meta.url), 'utf-8');
   });
 
   test('CLI_ONLY set contains integrations', () => {

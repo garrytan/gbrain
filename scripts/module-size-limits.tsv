@@ -10,7 +10,7 @@ src/core/pglite-engine.ts	5881	ratchet	grown v0.46.23.0: putPage empty-overwrite
 src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
 src/commands/sync.ts	4327	ratchet	grown v0.46.24.0 serve-delegated sync: onProgress seam + help text
 src/core/ai/gateway.ts	4428	ratchet	watchlist; merged: dream-wave turn permits + key-aware effective-model reconfigure + env-only worker refresh + discovery endpoint-trust docstring
-src/cli.ts	3499	ratchet	grown v0.46.24.0: serve-delegated sync preflight hook
+src/cli-main.ts	3504	ratchet	legacy full CLI; loaded lazily by src/cli.ts for non-hook commands; includes v0.46.24.0 serve-delegated sync preflight
 src/core/cycle.ts	3080	ratchet	grown v0.46.20.0 phase-boundary split (resolveCyclePhases + normalizeQueuedSourcePhases + deriveStatus exclusion filter)
 src/commands/serve-http.ts	3194	ratchet	grown v0.46.23.0 review fix wave: github-kind webhook gating + case-insensitive repo match
 src/commands/jobs.ts	3027	ratchet	grown v0.46.22.0 phone wave: github source sync job (#4104)
@@ -28,10 +28,10 @@ src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
 src/commands/integrations.ts	1675	ratchet
 src/core/minions/handlers/subagent.ts	1818	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches
-src/commands/bootstrap.ts	1923	ratchet	grandfathered at merge (grew past the 1500 cap on master)
+src/commands/bootstrap.ts	1943	ratchet	thin multi-host hook repair dispatch; implementation lives in bootstrap sibling modules
 src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
 src/commands/sources.ts	1790	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
 src/core/link-extraction.ts	1504	ratchet	new row: crossed the 1500 unlisted cap in v0.46.22.0 phone wave (relative-link resolution, #3804)
 src/core/github-source.ts	1560	ratchet	new row: crossed the 1500 unlisted cap in v0.46.23.0 review fix wave (scope-state gating, client hardening, symlink containment)
 src/core/bootstrap/harness.ts	1947	ratchet
-src/commands/hook.ts	1550	ratchet	cathedral-5 heartbeat extraction offsets part of the BrainBench-seam growth
+src/commands/hook.ts	1572	ratchet	baseline after multi-harness context commits; unchanged by hook fast-path work

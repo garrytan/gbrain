@@ -207,9 +207,9 @@ if (RUN_CLI_REFS) {
     warnings.push('[cli-refs] --tools-json parsed to an EMPTY command set; skipping CLI-ref check (the warn-only lane is not running)');
   }
   if (known && known.size > 0) {
-    // top-level commands defined directly in src/cli.ts (not ops): derive from source
+    // top-level commands defined directly in src/cli-main.ts (not ops): derive from source
     try {
-      const cliSrc = readFileSync('src/cli.ts', 'utf8');
+      const cliSrc = readFileSync('src/cli-main.ts', 'utf8');
       for (const m of cliSrc.matchAll(/(?:command === |case )'([a-z][a-z0-9-]*)'/g)) known.add(m[1]);
     } catch {}
     // ops cliHints that --tools-json does not serialize: read them from source.

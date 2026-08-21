@@ -21,6 +21,7 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Local brain (PGLite) | `~/.gbrain/` (never in the repo) | while a session's MCP serve is open |
 | MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (no scope flag); opencode: user-global by default (project scope is an explicit opt-in — see the degradation matrix) | spawned by your harness per session |
 | Hooks (Claude Code, ON by default) | local installs: `.claude/settings.local.json` (gitignored); cloud sandboxes: the COMMITTED `.claude/settings.json` (PATH-resolved, fail-open commands) | each prompt; fail-open; `--no-hooks` opts out at install, `GBRAIN_HOOKS=0` disables at runtime |
+| Machine-wide cross-agent hooks (explicit repair) | Claude Code, Codex, TraeCLI, Trae Desktop, and Trae CN user config | opt-in via `bootstrap hooks --harness all --repair`; hooks only, MCP registration unchanged |
 | Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it |
 | Session persistence | SessionEnd hook → scan-gated commit+push | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that) |
 | Compaction checkpoints | PreCompact hook → secret-scanned boundary segment banked to the corpus dir; a live serve harvests it into facts + `brain://` links (see `docs/guides/checkpoint-compaction.md`) | at each Claude Code compaction; links render as `## Compaction checkpoints` on the post-compaction session start |
@@ -32,6 +33,52 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 **What does NOT run:** anything while the harness is closed. Session-triggered
 schedules fire at turn/session boundaries only. True 24/7 operation is what a
 hosted brain provides — this is the honest desktop contract.
+
+### Five-host lifecycle hook repair
+
+Use the explicit repair path when one machine should share gbrain lifecycle
+hooks across Claude Code, Codex, TraeCLI, Trae Desktop, and Trae CN. Preview
+the complete migration first:
+
+```bash
+gbrain bootstrap hooks --harness all --repair --dry-run \
+  --source default --brain host
+```
+
+If the current workspace has an initialized `agent.json`, `--source` may be
+omitted. `--brain` is optional when the ambient brain resolver already selects
+the intended brain. If gbrain cannot resolve its own absolute executable, add
+`--gbrain-bin /absolute/path/to/gbrain`.
+
+Apply the same preflighted plan by removing only `--dry-run`:
+
+```bash
+gbrain bootstrap hooks --harness all --repair \
+  --source default --brain host
+```
+
+| Host | User-level carrier | Events |
+|---|---|---|
+| Claude Code | Existing sole gbrain carrier in `~/.claude/settings.json` or `~/.claude/settings.local.json`; otherwise `settings.json` | `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd`, `PreCompact` |
+| Codex | `$CODEX_HOME/hooks.json`, otherwise `~/.codex/hooks.json` | `SessionStart`, `UserPromptSubmit`, `Stop` |
+| TraeCLI | `~/.trae/traecli.toml` | `SessionStart`, `UserPromptSubmit`, `Stop` |
+| Trae Desktop | `~/.trae/hooks.json` | `SessionStart`, `UserPromptSubmit`, `Stop` |
+| Trae CN | `~/.trae-cn/hooks.json` | `SessionStart`, `UserPromptSubmit`, `Stop` |
+
+The dry-run validates all five rendered configs before any target write and
+does not write hook configs, gbrain state, or MCP registrations. Apply writes
+marker-owned entries atomically, creates timestamped backups for existing
+files, preserves foreign hooks and unrelated config, and is idempotent.
+`--repair` adopts only a strict legacy gbrain command whose event, source, and
+host match. Ambiguous entries are refused instead of appending a second hook.
+If both Claude user carriers already contain gbrain hooks, repair also refuses
+until one carrier is removed, preventing double fire.
+
+This command is deliberately hooks-only. It neither creates nor changes MCP
+registrations, and opencode remains MCP-only until its plugin/event lifecycle
+contract is verified. Every installed command continues to call the public
+`gbrain hook <event>` surface; newer binaries therefore pick up the lightweight
+hook startup path without another config migration.
 
 ## Cloud sandboxes (claude.ai/code and similar)
 
@@ -156,7 +203,7 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | API keys | everything (keyless mode) | semantic search, auto-extraction |
 | GitHub / `gh` | full local agent | off-machine durability (repo re-runnable later) |
 | Hooks (Claude Code) | pull protocol via AGENTS.md gates | automatic per-turn context + session-end persistence |
-| Codex (no wired hooks, no MCP scope flag) | pull protocol + MCP tools | per-turn push (stated plainly; not oversold — codex 0.147+ ships a hook system, but gbrain does not wire it yet) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
+| Codex without the explicit five-host hook repair (and no MCP scope flag) | pull protocol + MCP tools | automatic lifecycle hook context/persistence; run `bootstrap hooks --harness all --repair` to wire the verified user-level hook carrier. `codex mcp add` remains user-global and cannot confine MCP reach to one folder |
 | opencode (no wired hooks; scope INVERTED: user-global by default) | pull protocol (opencode reads AGENTS.md natively) + MCP tools; project scope available as an explicit opt-in | per-turn push (opencode ships a plugin/event system, but gbrain does not wire it yet). The project-scope default is deliberately NOT offered: opencode spawns project-config servers with no trust prompt, so a committed entry would auto-execute on every collaborator machine |
 | Bootstrap at all (plugin-only install) | MCP tools (`starter` surface, `--source-guard`) + the curated skill set via the codex/claude plugin (docs/mcp/CODEX.md) | identity files, hooks/push protocol, the private-repo body — the plugin is the lightweight lane; bootstrap is the full agent |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
@@ -286,7 +333,8 @@ that changed shape, a harness that stopped calling our MCP server):
   keyless-`init` → interview → render → `gbrain bootstrap hooks --harness codex`
   path (executing the real `codex mcp add` into a hermetic `~/.codex/config.toml`),
   asserts the rendered `AGENTS.md` carries the Gate-3 brain-first pull protocol
-  (gbrain does not wire Codex hooks yet, so the pull protocol is its per-turn seam), then
+  (the single-host workspace bootstrap does not wire Codex hooks; the separate
+  five-host machine repair does), then
   spends one live `codex exec` turn to prove real codex → gbrain MCP → brain →
   a seeded, brain-only fact (falling back to a shell `gbrain query` if headless
   stdio-MCP is unavailable).

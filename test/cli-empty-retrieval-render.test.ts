@@ -9,7 +9,7 @@
  */
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli.ts';
+import { formatResult, captureRetrievalMeta, resetRetrievalMetaForTests } from '../src/cli-main.ts';
 import { unpackToolResult, extractResponseMeta } from '../src/core/mcp-client.ts';
 
 afterEach(() => resetRetrievalMetaForTests());

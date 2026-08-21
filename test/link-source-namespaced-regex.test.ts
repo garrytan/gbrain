@@ -25,7 +25,7 @@ import {
   MANAGED_LINK_SOURCES,
 } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
-import { cliAliases, printOpHelp } from '../src/cli.ts';
+import { cliAliases, printOpHelp } from '../src/cli-main.ts';
 
 const V = 114;
 

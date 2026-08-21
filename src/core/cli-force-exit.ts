@@ -13,7 +13,7 @@
  *
  *   op handler returns / throws (catch sets the verdict: setCliExitVerdict(1))
  *           │
- *           ▼  (per call site, in its finally — nine sites in cli.ts)
+ *           ▼  (per call site, in its finally — nine sites in cli-main.ts)
  *   finishCliTeardown({ engine, drainTimeoutMs? })   ← teardown ONLY, never exits*
  *           │
  *           ├─ arm ref'd backstop timer; deadline COMPUTED from the bounds
@@ -30,7 +30,7 @@
  *           ▼
  *     clear backstop, RETURN to caller
  *           │
- *           ▼  (exactly ONE place: cli.ts import.meta.main main().then/catch)
+ *           ▼  (exactly ONE place: cli-main.ts runCliMain().then/catch)
  *   shouldForceExitAfterMain() && flushThenExit(currentExitCode())
  *     — fence stdout+stderr (write-fence raced with an unref'd guard,
  *       EPIPE-safe), hold a short REF'D aliveness grace for non-TTY stdio

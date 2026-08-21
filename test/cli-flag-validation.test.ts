@@ -22,7 +22,7 @@ import {
   findUnknownFlag,
   findUnknownOpFlag,
   CLI_ONLY,
-} from '../src/cli.ts';
+} from '../src/cli-main.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { operations, operationsByName } from '../src/core/operations.ts';
 import { buildFlagRegistry } from '../scripts/generate-flag-registry.ts';
@@ -137,7 +137,7 @@ describe('#2185 acceptance — real usage stays legal', () => {
   });
 
   test('--json=<v> is coherent between validator and parser (no positional corruption)', async () => {
-    const { parseOpArgs } = await import('../src/cli.ts');
+    const { parseOpArgs } = await import('../src/cli-main.ts');
     const search = operationsByName.search;
     // Validator accepts any --json form.
     expect(findUnknownOpFlag(search, ['--json=true', 'needle'])).toBeNull();
@@ -155,7 +155,7 @@ describe('#2185 acceptance — real usage stays legal', () => {
 
 describe('#2185 parseOpArgs inline = form (regression rule: changed token consumption)', () => {
   test('string and number params via =, positional untouched', async () => {
-    const { parseOpArgs } = await import('../src/cli.ts');
+    const { parseOpArgs } = await import('../src/cli-main.ts');
     const search = operationsByName.search;
     const p = parseOpArgs(search, ['needle', '--limit=5']);
     expect(p.query).toBe('needle');
@@ -163,7 +163,7 @@ describe('#2185 parseOpArgs inline = form (regression rule: changed token consum
   });
 
   test('boolean =false negates; =0 keeps the raw!==false rule (pinned semantics)', async () => {
-    const { parseOpArgs } = await import('../src/cli.ts');
+    const { parseOpArgs } = await import('../src/cli-main.ts');
     const withBool = operations.find(o =>
       o.cliHints && Object.values(o.params).some(pp => pp.type === 'boolean'))!;
     const key = Object.entries(withBool.params).find(([, pp]) => pp.type === 'boolean')![0];
@@ -173,7 +173,7 @@ describe('#2185 parseOpArgs inline = form (regression rule: changed token consum
   });
 
   test('undeclared =-form key keeps the historical junk-fallthrough (validator rejects it first)', async () => {
-    const { parseOpArgs } = await import('../src/cli.ts');
+    const { parseOpArgs } = await import('../src/cli-main.ts');
     const search = operationsByName.search;
     // The validator is the strict gate; the parser's legacy behavior for
     // undeclared keys is unchanged — pinned so a refactor can't silently
@@ -196,7 +196,7 @@ describe('#2185 red-team regressions', () => {
   });
 
   test('--dry-run is a real CLI-local boolean on op commands (trailing position sets it)', async () => {
-    const { parseOpArgs } = await import('../src/cli.ts');
+    const { parseOpArgs } = await import('../src/cli-main.ts');
     // An op WITHOUT a declared dry_run param — pre-fix, trailing --dry-run
     // set NOTHING (ctx.dryRun stayed false → the REAL destructive action
     // ran despite the rehearsal request), and leading --dry-run consumed

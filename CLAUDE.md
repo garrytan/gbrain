@@ -44,7 +44,7 @@ dynamically imports the configured engine (`'pglite'` or `'postgres'`). Skills a
 markdown files (tool-agnostic, work with both CLI and plugin contexts).
 
 **Trust boundary:** `OperationContext.remote` distinguishes trusted local CLI callers
-(`remote: false` set by `src/cli.ts`) from untrusted agent-facing callers
+(`remote: false` set by `src/cli-main.ts`) from untrusted agent-facing callers
 (`remote: true` set by `src/mcp/server.ts`). Security-sensitive operations like
 `file_upload` tighten filesystem confinement when `remote=true` and default to
 strict behavior when unset.

@@ -59,6 +59,8 @@ afterEach(() => {
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
+// Each case cold-starts the public dispatcher and then the full CLI graph.
+// Keep the budget above source-mode dynamic-import compilation on shared CI.
 describe('gbrain skillpack-check', () => {
   test('healthy fresh install → exit 0, healthy:true, empty actions', () => {
     const result = run(['skillpack-check']);
@@ -69,7 +71,7 @@ describe('gbrain skillpack-check', () => {
     expect(report.summary).toBe('gbrain skillpack healthy');
     expect(report.version).toBeTruthy();
     expect(report.ts).toBeTruthy();
-  });
+  }, 30_000);
 
   test('half-migrated (partial completed.jsonl) → exit 1, apply-migrations in actions', () => {
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
@@ -91,7 +93,7 @@ describe('gbrain skillpack-check', () => {
     const minions = doctorChecks.find(c => c.name === 'minions_migration');
     expect(minions).toBeDefined();
     expect(minions!.status).toBe('fail');
-  });
+  }, 30_000);
 
   test('--quiet → no stdout, same exit code', () => {
     // Healthy path quiet
@@ -109,7 +111,7 @@ describe('gbrain skillpack-check', () => {
     const broken = run(['skillpack-check', '--quiet']);
     expect(broken.exitCode).toBe(1);
     expect(broken.stdout).toBe('');
-  });
+  }, 30_000);
 
   test('--help → exit 0, prints usage', () => {
     const result = run(['skillpack-check', '--help']);
@@ -117,7 +119,7 @@ describe('gbrain skillpack-check', () => {
     expect(result.stdout).toContain('skillpack-check');
     expect(result.stdout).toContain('healthy');
     expect(result.stdout).toContain('Exit codes');
-  });
+  }, 30_000);
 
   test('summary includes top action when multiple present', () => {
     // Partial record creates apply-migrations action + the migrations count
@@ -133,5 +135,5 @@ describe('gbrain skillpack-check', () => {
     const report = JSON.parse(result.stdout);
     expect(report.summary).toMatch(/\d+ action\(s\)/);
     expect(report.summary).toContain(report.actions[0]);
-  });
+  }, 30_000);
 });

@@ -125,7 +125,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
-});
+}, 30_000);
 
 describe('--brain routes the CLI to the named mounted brain', () => {
   test('control: no brain signal → host brain (default unchanged)', async () => {
@@ -175,7 +175,7 @@ describe('untrusted callers cannot cross brains', () => {
   });
 
   test('makeContext ignores caller-supplied params.brain (stays on the connected engine)', async () => {
-    const { makeContext } = await import('../src/cli.ts');
+    const { makeContext } = await import('../src/cli-main.ts');
     const stub = {
       kind: 'pglite',
       executeRaw: async () => [],

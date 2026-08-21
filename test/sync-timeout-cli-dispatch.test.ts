@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolveReadOnlyDispatchTimeoutMs } from '../src/cli.ts';
+import { resolveReadOnlyDispatchTimeoutMs } from '../src/cli-main.ts';
 import { parseGlobalFlags } from '../src/core/cli-options.ts';
 
 // #3013 — `gbrain sync --timeout <s>` was unreachable: the global option

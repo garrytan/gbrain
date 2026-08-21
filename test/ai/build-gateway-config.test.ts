@@ -19,7 +19,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { buildGatewayConfig } from '../../src/cli.ts';
+import { buildGatewayConfig } from '../../src/cli-main.ts';
 import { KNOWN_CONFIG_KEYS, type GBrainConfig } from '../../src/core/config.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -320,7 +320,7 @@ describe('buildGatewayConfig import side effect guard', () => {
     // already ran by the time describe() executes. Re-importing here is
     // belt-and-suspenders: any future test that splits the suite would still
     // exercise the side-effect contract from a fresh module record.
-    const mod = await import('../../src/cli.ts');
+    const mod = await import('../../src/cli-main.ts');
     expect(typeof mod.buildGatewayConfig).toBe('function');
 
     // Build a synthetic config and call it. Pre-fix behavior: importing the
@@ -341,7 +341,7 @@ describe('buildGatewayConfig import side effect guard', () => {
     // Post-fix: stdout is empty; only the bun runtime header / warnings may
     // appear on stderr.
     const inline = `
-      import { buildGatewayConfig } from './src/cli.ts';
+      import { buildGatewayConfig } from './src/cli-main.ts';
       const cfg = buildGatewayConfig({});
       // Touch the result so the engine does not dead-code-eliminate the call.
       if (!cfg) process.exit(2);

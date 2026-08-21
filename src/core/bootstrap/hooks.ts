@@ -35,6 +35,8 @@ import {
   CLAUDE_SETTINGS_FILE_RELPATH,
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
+  GBRAIN_HARNESS_MARKER_VALUE,
+  type CrossHostHookHarness,
   type ClaudeHookEvent,
 } from './host-specs.ts';
 
@@ -52,6 +54,10 @@ export interface ClaudeHookEnv {
    * the same event never fires twice (Claude Code merges settings scopes).
    */
   GBRAIN_HOOK_LANE?: string;
+  /** Host identity for the shared hook runtime / IPC endpoint. */
+  GBRAIN_HARNESS?: 'claude-code' | 'codex' | 'traecli' | 'traecode' | 'traecode-cn';
+  /** Explicit brain routing for machines with more than one mounted brain. */
+  GBRAIN_BRAIN_ID?: string;
 }
 
 export interface WriteClaudeHooksOpts {
@@ -94,6 +100,16 @@ export interface WriteClaudeHooksOpts {
    * Claude Code's own convention for that file [X11].
    */
   freshMode?: number;
+  /** Root keys required by a host on a newly-created JSON hook file. */
+  rootDefaults?: Record<string, unknown>;
+  /** Strictly adopt an older manually-wired gbrain command during --repair. */
+  legacyAdoption?: {
+    repair: boolean;
+    harness: CrossHostHookHarness;
+    sourceId: string;
+  };
+  /** Validate and return the planned merge without touching disk. */
+  dryRun?: boolean;
 }
 
 export interface WriteClaudeHooksResult {
@@ -156,9 +172,12 @@ export function buildClaudeHookCommand(
   env: ClaudeHookEnv,
 ): string {
   const assignments: string[] = [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`];
+  if (env.GBRAIN_BRAIN_ID) assignments.push(`GBRAIN_BRAIN_ID=${env.GBRAIN_BRAIN_ID}`);
   if (env.GBRAIN_HOME) assignments.push(`GBRAIN_HOME=${env.GBRAIN_HOME}`);
   if (env.GBRAIN_HOOK_LANE) assignments.push(`GBRAIN_HOOK_LANE=${env.GBRAIN_HOOK_LANE}`);
+  if (env.GBRAIN_HARNESS) assignments.push(`GBRAIN_HARNESS=${env.GBRAIN_HARNESS}`);
   const parts = ['env', ...assignments, gbrainBin, 'hook', CLAUDE_HOOK_SUBCOMMAND[event]];
+  if (env.GBRAIN_HARNESS) parts.push('--harness', env.GBRAIN_HARNESS);
   return parts.map(shellQuote).join(' ');
 }
 
@@ -243,6 +262,71 @@ function isForeignGbrainMarked(entry: unknown, marker: string): boolean {
   if (typeof entry !== 'object' || entry === null) return false;
   const v = (entry as Record<string, unknown>)[GBRAIN_HOOK_MARKER_KEY];
   return typeof v === 'string' && v !== marker;
+}
+
+function regexEscape(value: string): string {
+  return value.replace(/[.*+?^$()|[\]\\]/g, '\\$&');
+}
+
+/** Strict legacy-adoption predicate: one plain command only, with matching
+ * event, source and host. Ambiguous shell compositions are never adopted. */
+export function isAdoptableLegacyHookCommand(
+  command: string,
+  event: ClaudeHookEvent,
+  harness: CrossHostHookHarness,
+  sourceId: string,
+): boolean {
+  if (/[;&|]/.test(command) || command.includes('$(') || command.includes(String.fromCharCode(96))) return false;
+  if (/[\n\r\0]/.test(command)) return false;
+  const source = regexEscape(sourceId);
+  if (!new RegExp('(?:^|\\s)GBRAIN_SOURCE=(?:[\"\']?)' + source + '(?:[\"\']?)(?=\\s|$)').test(command)) return false;
+  const harnessMatch = /(?:^|\s)GBRAIN_HARNESS=(?:["']?)([^"'\s]+)(?:["']?)(?=\s|$)/.exec(command);
+  // Historical Claude hooks predate explicit harness attribution; Claude is
+  // the runtime default, so that one missing-value shape is safe to adopt.
+  if (harnessMatch ? harnessMatch[1] !== harness : harness !== 'claude-code') return false;
+  const subcommand = regexEscape(CLAUDE_HOOK_SUBCOMMAND[event]);
+  const sourceCli = '(?:\'[^\']*/src/cli\\.ts\'|\"[^\"]*/src/cli\\.ts\"|/[^\\s\'\"]*/src/cli\\.ts)';
+  const absoluteBin = '(?:\'[^\']*/gbrain\'|\"[^\"]*/gbrain\"|/[^\\s\'\"]*/gbrain)';
+  return new RegExp('(?:' + sourceCli + '|' + absoluteBin + ')\\s+hook\\s+' + subcommand + '(?:\\s|$)').test(command);
+}
+
+function stripLegacyEntries(
+  groups: unknown[],
+  event: ClaudeHookEvent,
+  adoption: NonNullable<WriteClaudeHooksOpts['legacyAdoption']>,
+  settingsPath: string,
+): { kept: unknown[]; found: number } {
+  let found = 0;
+  const kept: unknown[] = [];
+  for (const group of groups) {
+    if (typeof group !== 'object' || group === null || !Array.isArray((group as HookMatcherGroup).hooks)) {
+      kept.push(group);
+      continue;
+    }
+    const g = group as HookMatcherGroup;
+    const remaining = g.hooks!.filter((entry) => {
+      if (typeof entry !== 'object' || entry === null) return true;
+      const candidate = entry as Record<string, unknown>;
+      const marker = candidate[GBRAIN_HOOK_MARKER_KEY];
+      const command = typeof candidate.command === 'string' ? candidate.command : '';
+      const knownLegacyMarker = marker === 'manual-v1' || marker === GBRAIN_HOOK_MARKER_VALUE ||
+        marker === GBRAIN_HARNESS_MARKER_VALUE || marker === undefined;
+      const gbrainLike = /(?:\/src\/cli\.ts["']?|\/gbrain["']?|(?:^|\s)gbrain)\s+hook\s+/.test(command);
+      const matches = candidate.type === 'command' && knownLegacyMarker &&
+        isAdoptableLegacyHookCommand(command, event, adoption.harness, adoption.sourceId);
+      if (!matches && candidate.type === 'command' && gbrainLike) {
+        throw new Error(
+          `${settingsPath} contains an ambiguous gbrain hook for hooks.${event}; ` +
+            'its source, harness, event, or ownership marker does not match this repair. ' +
+            'Refusing to append a duplicate; inspect or remove that entry explicitly.',
+        );
+      }
+      if (matches) found++;
+      return !matches;
+    });
+    if (remaining.length > 0) kept.push({ ...g, hooks: remaining });
+  }
+  return { kept, found };
 }
 
 /**
@@ -368,7 +452,9 @@ export function writeClaudeHooksAt(
   const marker = opts.marker ?? GBRAIN_HOOK_MARKER_VALUE;
   const backupStrategy = opts.backupStrategy ?? 'fixed';
 
-  const { settings, existed, brokenBackupPath, notes } = loadSettings(settingsPath);
+  const loaded = loadSettings(settingsPath);
+  const { existed, brokenBackupPath, notes } = loaded;
+  const settings = { ...(opts.rootDefaults ?? {}), ...loaded.settings };
 
   // hooks key: merge into an object; a structurally-foreign value is backed
   // up via the .bak below and replaced (we cannot merge into a non-object).
@@ -435,6 +521,29 @@ export function writeClaudeHooksAt(
     }
   }
 
+  if (opts.legacyAdoption) {
+    for (const event of events) {
+      const groups = hooks[event];
+      if (!Array.isArray(groups)) continue;
+      const legacy = stripLegacyEntries(groups, event, opts.legacyAdoption, settingsPath);
+      if (legacy.found === 0) continue;
+      if (!opts.legacyAdoption.repair) {
+        throw new Error(
+          settingsPath + ' contains ' + legacy.found + ' legacy gbrain hooks.' + event + ' ' +
+            (legacy.found === 1 ? 'entry' : 'entries') + ' for ' + opts.legacyAdoption.harness +
+            '; re-run with --repair to adopt it without double-firing.',
+        );
+      }
+      removedPrior += legacy.found;
+      if (legacy.kept.length === 0) delete hooks[event];
+      else hooks[event] = legacy.kept;
+      notes.push(
+        'adopted ' + legacy.found + ' legacy manual-v1/unmarked ' + event + ' hook ' +
+          (legacy.found === 1 ? 'entry' : 'entries'),
+      );
+    }
+  }
+
   for (const event of events) {
     let groups = hooks[event];
     if (!Array.isArray(groups)) {
@@ -470,11 +579,11 @@ export function writeClaudeHooksAt(
   settings.hooks = hooks;
 
   let backupPath: string | null = null;
-  if (existed && brokenBackupPath === null) {
+  if (!opts.dryRun && existed && brokenBackupPath === null) {
     backupPath = backupPathFor(settingsPath, backupStrategy);
     copyFileSync(settingsPath, backupPath);
   }
-  atomicWriteJson(settingsPath, settings, opts.freshMode);
+  if (!opts.dryRun) atomicWriteJson(settingsPath, settings, opts.freshMode);
 
   return { settingsPath, installed, removedPrior, backupPath, brokenBackupPath, notes };
 }

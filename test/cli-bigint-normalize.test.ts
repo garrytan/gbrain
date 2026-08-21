@@ -13,7 +13,7 @@
  *    doesn't crash the serializer the moment a query matches. (#2450 comments)
  */
 import { describe, test, expect } from 'bun:test';
-import { bigintToStringReplacer, CLI_ONLY } from '../src/cli.ts';
+import { bigintToStringReplacer, CLI_ONLY } from '../src/cli-main.ts';
 import { takeHitRowToHit } from '../src/core/utils.ts';
 import { runCall } from '../src/commands/call.ts';
 import type { BrainEngine } from '../src/core/engine.ts';

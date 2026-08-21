@@ -6,7 +6,7 @@
 // sites are two-liners.
 
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { maybePrintConceptNudge } from '../src/cli.ts';
+import { maybePrintConceptNudge } from '../src/cli-main.ts';
 import {
   DEFAULT_CLI_OPTIONS,
   setCliOptions,

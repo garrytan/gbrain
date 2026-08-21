@@ -130,7 +130,8 @@ test/fix-wave-structural.test.ts	v0.41.8.0 #1340 — PGLite WASM init classifier
 test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains every sink before disconnect	9	readFileSync
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	readFileSync
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync
-test/hook-command.serial.test.ts	user-prompt	14	readFileSync
+test/hook-command.serial.test.ts	user-prompt	18	readFileSync
+test/hook-fastpath.serial.test.ts	gbrain hook executable fast path	3	readFileSync
 test/integrations-install.test.ts	installRecipeIntoHostRepo — happy path	6	readFileSync
 test/integrations.test.ts	CLI integration	3	readFileSync
 test/jobs-embed-background-parity.serial.test.ts	embed job background parity (D7)	2	readFileSync

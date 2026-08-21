@@ -39,7 +39,7 @@ cd "$ROOT"
 # Files allowed to import `operations` directly. Each entry must be
 # accompanied by a one-line rationale (the comment on the same line).
 ALLOWED=(
-  "src/cli.ts"                                  # local CLI; user owns the machine, no trust boundary
+  "src/cli-main.ts"                             # local full CLI; user owns the machine, no trust boundary
   "src/mcp/dispatch.ts"                         # shared dispatch; sets ctx.remote from caller, handlers self-gate
   "src/mcp/server.ts"                           # stdio MCP; local-trusted (binary on user's box)
   "src/mcp/http-transport.ts"                   # superseded by serve-http.ts; kept for back-compat tests

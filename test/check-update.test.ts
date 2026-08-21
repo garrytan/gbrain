@@ -166,7 +166,7 @@ describe('extractChangelogBetween', () => {
 describe('check-update CLI', () => {
   test('check-update is in CLI_ONLY set', async () => {
     const source = await Bun.file(
-      new URL('../src/cli.ts', import.meta.url).pathname
+      new URL('../src/cli-main.ts', import.meta.url).pathname
     ).text();
     expect(source).toContain("'check-update'");
   });

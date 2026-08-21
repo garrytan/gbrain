@@ -39,6 +39,9 @@ export interface HostSpecTarget {
 
 export const CLAUDE_CODE_SPEC_ID = 'claude-code-2026-08';
 export const CODEX_SPEC_ID = 'codex-2026-08';
+export const TRAECLI_SPEC_ID = 'traecli-0.201.1-2026-08';
+export const TRAE_DESKTOP_SPEC_ID = 'trae-desktop-2026-08';
+export const TRAE_CN_SPEC_ID = 'trae-cn-2026-08';
 export const OPENCODE_SPEC_ID = 'opencode-2026-08';
 
 export const TARGETS: Record<string, HostSpecTarget> = {
@@ -103,14 +106,49 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'direct config.toml writer. One owner per server name: `codex mcp ' +
       'remove` rewrites config.toml wholesale and drops comments, so the ' +
       'stdio lane (runHooks) must never manage a name the harness block ' +
-      'owns, and vice versa. Codex 0.147.0 also ships a real hook system ' +
-      '(hooks.json; PreToolUse…SessionEnd) — CODEX_HAS_HOOKS=false means ' +
-      '"gbrain does not wire codex hooks yet" (follow-up filed), NOT "codex ' +
-      'has no hooks". Some codex builds gate HTTP MCP servers behind ' +
+      'owns, and vice versa. Codex 0.147.0 also ships a real hook system in ' +
+      '(CODEX_HOME || ~/.codex)/hooks.json. Gbrain wires SessionStart / ' +
+      'UserPromptSubmit / Stop with the shared structural JSON shape and leaves ' +
+      'every foreign event and entry intact. Some codex builds gate HTTP MCP servers behind ' +
       '`experimental_use_rmcp_client = true` — probe at wiring time. Skills: ' +
       'no attested native skills DIR for direct file installs (the plugin ' +
       'lane serves codex skills); a direct-copy target needs an observation ' +
       'run before a default ships (harness-bridge requires an explicit dest).',
+  },
+  [TRAECLI_SPEC_ID]: {
+    id: TRAECLI_SPEC_ID,
+    status: 'verified',
+    verifiedAt: '2026-08-20',
+    references: [
+      'traecli 0.201.1 local binary and ~/.trae/traecli.toml observation',
+      'src/core/transcripts/traecli-rollout-jsonl.ts',
+    ],
+    note:
+      'TraeCLI reads hooks from ~/.trae/traecli.toml when features.hooks is enabled. ' +
+      'Command hooks use [[hooks.<Event>]] / [[hooks.<Event>.hooks]] tables with ' +
+      'type, command, and timeout fields. Gbrain owns one comment-marker-delimited ' +
+      'block at EOF and wires SessionStart / UserPromptSubmit / Stop; everything ' +
+      'outside the block, including hooks.state trust hashes, survives byte-for-byte.',
+  },
+  [TRAE_DESKTOP_SPEC_ID]: {
+    id: TRAE_DESKTOP_SPEC_ID,
+    status: 'verified',
+    verifiedAt: '2026-08-20',
+    references: ['local Trae Desktop ~/.trae/hooks.json observation'],
+    note:
+      'Trae Desktop reads ~/.trae/hooks.json version 1 with the same structural ' +
+      'hooks.<Event> matcher-group shape used by Codex. Gbrain wires SessionStart / ' +
+      'UserPromptSubmit / Stop and stamps each owned command with _gbrain.',
+  },
+  [TRAE_CN_SPEC_ID]: {
+    id: TRAE_CN_SPEC_ID,
+    status: 'verified',
+    verifiedAt: '2026-08-20',
+    references: ['local Trae CN ~/.trae-cn/hooks.json observation'],
+    note:
+      'Trae CN reads ~/.trae-cn/hooks.json version 1 with the same structural ' +
+      'hooks.<Event> matcher-group shape used by Trae Desktop. Gbrain wires ' +
+      'SessionStart / UserPromptSubmit / Stop and stamps each owned command with _gbrain.',
   },
   [OPENCODE_SPEC_ID]: {
     id: OPENCODE_SPEC_ID,
@@ -232,6 +270,21 @@ export const GBRAIN_HOOK_MARKER_VALUE = 'bootstrap-v1';
  */
 export const GBRAIN_HARNESS_MARKER_VALUE = 'bootstrap-harness-v1';
 
+/** Marker for the explicit machine-wide five-host hook repair lane. */
+export const GBRAIN_MULTI_HOST_HOOK_MARKER_VALUE = 'bootstrap-hooks-v1';
+
+export const CROSS_HOST_HOOK_HARNESSES = [
+  'claude-code',
+  'codex',
+  'traecli',
+  'traecode',
+  'traecode-cn',
+] as const;
+export type CrossHostHookHarness = (typeof CROSS_HOST_HOOK_HARNESSES)[number];
+
+/** Verified common subset. Claude Code additionally keeps SessionEnd/PreCompact. */
+export const COMMON_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const;
+
 /**
  * User-scope Claude Code settings file (harness-mode hook + permissions
  * target). Resolution mirrors Claude Code itself: CLAUDE_CONFIG_DIR (its
@@ -321,16 +374,43 @@ export function claudeProjectSkillsDir(workspaceDir: string): string {
  */
 export function codexConfigPath(): string {
   const codexHome = process.env.CODEX_HOME?.trim();
-  return join(codexHome || join(homedir(), '.codex'), 'config.toml');
+  const home = process.env.HOME?.trim();
+  return join(codexHome || join(home || homedir(), '.codex'), 'config.toml');
 }
 
-/**
- * Whether gbrain WIRES codex hooks. False = not yet: codex 0.147.0 ships a
- * real hook system (hooks.json; PreToolUse…SessionEnd — see the TARGETS
- * note), but gbrain's codex hook lane is a filed follow-up; per-turn context
- * on codex remains the pull-protocol AGENTS.md gates (plan D5).
- */
-export const CODEX_HAS_HOOKS = false;
+/** Codex lifecycle hooks are a sibling of config.toml in CODEX_HOME. */
+export function codexHooksPath(): string {
+  return join(dirname(codexConfigPath()), 'hooks.json');
+}
+
+/** Whether gbrain wires Codex's verified hooks.json lifecycle surface. */
+export const CODEX_HAS_HOOKS = true;
+
+function envHome(): string {
+  return process.env.HOME?.trim() || homedir();
+}
+
+export function traeCliConfigPath(): string {
+  return join(envHome(), '.trae', 'traecli.toml');
+}
+
+export function traeDesktopHooksPath(): string {
+  return join(envHome(), '.trae', 'hooks.json');
+}
+
+export function traeCnHooksPath(): string {
+  return join(envHome(), '.trae-cn', 'hooks.json');
+}
+
+export function crossHostHookConfigPath(harness: CrossHostHookHarness): string {
+  switch (harness) {
+    case 'claude-code': return claudeUserSettingsPath();
+    case 'codex': return codexHooksPath();
+    case 'traecli': return traeCliConfigPath();
+    case 'traecode': return traeDesktopHooksPath();
+    case 'traecode-cn': return traeCnHooksPath();
+  }
+}
 
 /**
  * Managed-block markers for the harness lane's direct config.toml writes

@@ -4,7 +4,7 @@
  * the empty-result message, and the approximate stats summary.
  */
 import { describe, test, expect } from 'bun:test';
-import { formatResult } from '../src/cli.ts';
+import { formatResult } from '../src/cli-main.ts';
 
 describe('formatResult — volunteer_context', () => {
   test('renders pointer lines with confidence, arm, rationale, and synopsis', () => {

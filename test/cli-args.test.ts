@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseOpArgs } from '../src/cli.ts';
+import { parseOpArgs } from '../src/cli-main.ts';
 import { operationsByName } from '../src/core/operations.ts';
 
 describe('parseOpArgs', () => {

@@ -131,7 +131,7 @@ describe('v0.41.37.0 #1605 — v0.11.0 phaseASchema routes in-process for ALL en
 
 describe('v0.36.1.x #1124 — query --no-expand actually negates expand', () => {
   test("cli.ts parseOpArgs handles --no-<key> as boolean negation", () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = readFileSync('src/cli-main.ts', 'utf8');
     expect(src).toMatch(/arg\.startsWith\(['"]--no-['"]\)/);
     expect(src).toMatch(/positiveDef\?\.type\s*===\s*'boolean'/);
     expect(src).toMatch(/params\[positiveKey\]\s*=\s*false/);
@@ -283,7 +283,7 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     // awaited literal, so this is comment-proof — eng-review D13.2). A bare
     // disconnect skips the bounded drain + computed-deadline backstop and
     // reopens the lingering-socket hang class.
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = readFileSync('src/cli-main.ts', 'utf8');
     expect(src).not.toContain('await engine.disconnect()');
     expect(src).not.toContain('await eng.disconnect()');
   });
@@ -293,12 +293,12 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     // slower than 10s was force-killed mid-run with exit 0 and truncated
     // output. The deadline now arms inside finishCliTeardown, at teardown
     // start only.
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = readFileSync('src/cli-main.ts', 'utf8');
     expect(src).not.toContain('DISCONNECT_HARD_DEADLINE_MS');
   });
 
   test('all nine swept sites route through finishCliTeardown; one exit seam', () => {
-    const src = readFileSync('src/cli.ts', 'utf8');
+    const src = readFileSync('src/cli-main.ts', 'utf8');
     const calls = src.match(/await finishCliTeardown\(/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(9);
     // The single process-exit seam: flushThenExit in the import.meta.main
@@ -322,7 +322,7 @@ describe('#2084 — cli.ts owns process-exit teardown via finishCliTeardown', ()
     expect(helper).toMatch(/let cliVerdict: number \| null = null/);
     expect(helper).toMatch(/return cliVerdict \?\? 0/);
     // The op-dispatch catch must set the verdict through the owned channel.
-    const cli = readFileSync('src/cli.ts', 'utf8');
+    const cli = readFileSync('src/cli-main.ts', 'utf8');
     expect(cli).toMatch(/setCliExitVerdict\(1\);/);
   });
 });

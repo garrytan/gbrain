@@ -12,7 +12,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { CLI_ONLY } from '../src/cli.ts';
+import { CLI_ONLY } from '../src/cli-main.ts';
 
 describe('CLI_ONLY command reachability (#2900)', () => {
   test('`reconcile-links` is in CLI_ONLY so dispatch reaches its handler', () => {

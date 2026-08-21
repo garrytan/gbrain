@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import { runBootstrap } from '../src/commands/bootstrap.ts';
 
-import { CLI_ONLY, THIN_CLIENT_REFUSED_COMMANDS } from '../src/cli.ts';
+import { CLI_ONLY, THIN_CLIENT_REFUSED_COMMANDS } from '../src/cli-main.ts';
 import { VERSION } from '../src/version.ts';
 import {
   BOOTSTRAP_PHASE_IDS,

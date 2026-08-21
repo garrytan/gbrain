@@ -15,7 +15,7 @@ import { describe, test, expect } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { applyThinClientSourceScope, parseOpArgs } from '../src/cli.ts';
+import { applyThinClientSourceScope, parseOpArgs } from '../src/cli-main.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withEnv } from './helpers/with-env.ts';
 

@@ -3,8 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-// Read cli.ts source for structural checks
-const cliSource = readFileSync(new URL('../src/cli.ts', import.meta.url), 'utf-8');
+// Read the lazily loaded full CLI implementation for structural checks.
+const cliSource = readFileSync(new URL('../src/cli-main.ts', import.meta.url), 'utf-8');
 const repoRoot = new URL('..', import.meta.url).pathname;
 
 function isolatedEnv(home: string): Record<string, string> {
@@ -37,7 +37,7 @@ describe('CLI structure', () => {
   });
 
   // v0.41.11 #1451 regression — `reindex` had a `case 'reindex':` handler
-  // at src/cli.ts:1334 but was missing from CLI_ONLY, so the dispatcher
+  // in src/cli-main.ts but was missing from CLI_ONLY, so the dispatcher
   // rejected `gbrain reindex` with "Unknown command: reindex" before the
   // handler ever ran. Cherry-picked from kylma-code-adjacent PR #1354.
   test('reindex is in CLI_ONLY (does not get "Unknown command")', () => {
@@ -102,7 +102,7 @@ describe('BigInt-safe output normalization (#2450)', () => {
   });
 
   test('normalizeLocalResult serializes bigint → string without throwing', async () => {
-    const { normalizeLocalResult } = await import('../src/cli.ts');
+    const { normalizeLocalResult } = await import('../src/cli-main.ts');
     const out = normalizeLocalResult({
       id: 42n,
       nested: { count: 7n },
@@ -118,19 +118,19 @@ describe('BigInt-safe output normalization (#2450)', () => {
   });
 
   test('bigint past Number.MAX_SAFE_INTEGER keeps full precision as a string', async () => {
-    const { normalizeLocalResult } = await import('../src/cli.ts');
+    const { normalizeLocalResult } = await import('../src/cli-main.ts');
     const big = 9007199254740993n; // MAX_SAFE_INTEGER + 2
     const out = normalizeLocalResult({ id: big }) as Record<string, unknown>;
     expect(out.id).toBe('9007199254740993');
   });
 
   test("formatResult's default renderer is bigint-safe", async () => {
-    const { formatResult } = await import('../src/cli.ts');
+    const { formatResult } = await import('../src/cli-main.ts');
     expect(() => formatResult('__no_such_op__', { id: 5n })).not.toThrow();
     expect(formatResult('__no_such_op__', { id: 5n })).toContain('"5"');
   });
 
-  test('cli.ts no longer uses a replacer-less stringify on the normalize path', () => {
+  test('cli-main.ts no longer uses a replacer-less stringify on the normalize path', () => {
     expect(cliSource).toContain('normalizeLocalResult(rawResult)');
     expect(cliSource).not.toContain('JSON.parse(JSON.stringify(rawResult))');
   });

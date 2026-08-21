@@ -109,7 +109,7 @@ describe('R4 — cross-platform stdin via fd 0 (PR #1325 regression pin)', () =>
     // Belt-and-suspenders source-grep guard. The behavior of fd 0 is OS-level
     // and hard to unit-test deterministically across platforms; this guard
     // catches a future contributor reverting the cross-platform fix.
-    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli.ts');
+    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli-main.ts');
     const src = readFileSync(path, 'utf-8');
 
     // The exact pattern the PR replaced. If anyone reintroduces it, R4 fires.
@@ -131,7 +131,7 @@ describe('R4 — cross-platform stdin via fd 0 (PR #1325 regression pin)', () =>
     // the surrounding shape of the parseOpArgs stdin-reading branch hasn't
     // drifted (existence of the branch + 5MB cap), since the branch itself
     // is what was modified by PR #1325.
-    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli.ts');
+    const path = join(import.meta.dir ?? '.', '..', '..', 'src', 'cli-main.ts');
     const src = readFileSync(path, 'utf-8');
 
     // Stdin reading branch still exists in parseOpArgs.

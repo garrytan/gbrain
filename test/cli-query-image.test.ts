@@ -6,7 +6,7 @@ import { describe, expect, test, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { resolveQueryImage } from '../src/cli.ts';
+import { resolveQueryImage } from '../src/cli-main.ts';
 
 let tmp: string;
 

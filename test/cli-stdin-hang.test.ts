@@ -18,6 +18,7 @@ import { dirname, join } from 'path';
 
 const REPO = dirname(import.meta.dir);
 const CLI = join(REPO, 'src', 'cli.ts');
+const CLI_MAIN = join(REPO, 'src', 'cli-main.ts');
 
 interface CliRun {
   exited: boolean;
@@ -109,7 +110,7 @@ describe('#3513 — applyStdinParam content preservation (subprocess driver)', (
   // Drive the exported helper in a child process so we control the child's
   // real fd 0 — bun test's own stdin is not a reliable fixture.
   const DRIVER = `
-    const { applyStdinParam } = await import(${JSON.stringify(CLI)});
+    const { applyStdinParam } = await import(${JSON.stringify(CLI_MAIN)});
     const op = { name: 'put', params: { content: { type: 'string', required: true } }, cliHints: { stdin: 'content' } };
     const params = {};
     await applyStdinParam(op, params);

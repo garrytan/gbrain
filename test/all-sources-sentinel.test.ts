@@ -149,14 +149,14 @@ describe('__all__ is never narrower than an unqualified read', () => {
 
 describe('cli makeContext — no silent default fallback for explicit --source', () => {
   test('--source __all__ produces ctx.sourceId __all__ (was: silent default)', async () => {
-    const { makeContext } = await import('../src/cli.ts');
+    const { makeContext } = await import('../src/cli-main.ts');
     const ctx = await makeContext(makeStub(['default']), { source: '__all__' });
     expect(ctx.sourceId).toBe('__all__');
     expect(ctx.remote).toBe(false);
   });
 
   test('an explicit --source that fails to resolve throws instead of becoming default', async () => {
-    const { makeContext } = await import('../src/cli.ts');
+    const { makeContext } = await import('../src/cli-main.ts');
     await expect(makeContext(makeStub(['default']), { source: 'ghost' }))
       .rejects.toThrow(/not found/);
     await expect(makeContext(makeStub(['default']), { source: 'my_source' }))
@@ -164,7 +164,7 @@ describe('cli makeContext — no silent default fallback for explicit --source',
   });
 
   test('ambient resolution failure still falls back silently (pre-init brains)', async () => {
-    const { makeContext } = await import('../src/cli.ts');
+    const { makeContext } = await import('../src/cli-main.ts');
     const broken = {
       kind: 'pglite',
       executeRaw: async () => { throw new Error('relation "sources" does not exist'); },

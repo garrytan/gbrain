@@ -3,11 +3,11 @@
  *
  * gbrain's CLI_ONLY commands read flags ad hoc (`args.includes('--force')`,
  * per-command parseFlags helpers), so there is no parser to make strict. The
- * pre-dispatch validator in src/cli.ts needs to know each command's legal
+ * pre-dispatch validator in src/cli-main.ts needs to know each command's legal
  * flags; this script derives them from the source instead of a hand-typed
  * list that would rot.
  *
- * How: parse handleCliOnly's top-level `case 'X': {` blocks out of src/cli.ts,
+ * How: parse handleCliOnly's top-level `case 'X': {` blocks out of src/cli-main.ts,
  * collect every `import('./commands/Y.ts')` inside each block, then scan the
  * case-block text plus each imported module (plus one level of that module's
  * ./relative same-directory imports) for `--flag` string literals — including
@@ -120,13 +120,13 @@ function facadeExpansion(p: string): string[] {
 }
 
 export function buildFlagRegistry(): Record<string, string[]> {
-  const cliSource = readFileSync(join(ROOT, 'src/cli.ts'), 'utf-8');
+  const cliSource = readFileSync(join(ROOT, 'src/cli-main.ts'), 'utf-8');
 
-  // CLI_ONLY membership (the single source of truth in src/cli.ts). Strip
+  // CLI_ONLY membership (the single source of truth in src/cli-main.ts). Strip
   // line comments first — the set literal carries commentary whose quoted
   // words ('Unknown command', 'pages') must not parse as members.
   const onlyMatch = cliSource.match(/const CLI_ONLY = new Set(?:<string>)?\(\[([\s\S]*?)\]\)/);
-  if (!onlyMatch) throw new Error('CLI_ONLY set not found in src/cli.ts');
+  if (!onlyMatch) throw new Error('CLI_ONLY set not found in src/cli-main.ts');
   const onlyBody = onlyMatch[1].replace(/\/\/[^\n]*/g, '');
   const commands = [...onlyBody.matchAll(/'([^']+)'/g)].map(m => m[1]);
 
@@ -136,7 +136,7 @@ export function buildFlagRegistry(): Record<string, string[]> {
   // command sits last in the switch a ~100-flag junk allowlist that made
   // strict validation a no-op for it.
   const fnStart = cliSource.indexOf('async function handleCliOnly');
-  if (fnStart < 0) throw new Error('handleCliOnly not found in src/cli.ts');
+  if (fnStart < 0) throw new Error('handleCliOnly not found in src/cli-main.ts');
   const fnTail = cliSource.slice(fnStart);
   const fnEndRel = fnTail.search(/\n\}\n/);
   const fnSrc = fnEndRel > 0 ? fnTail.slice(0, fnEndRel) : fnTail;

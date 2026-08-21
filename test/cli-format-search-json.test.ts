@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatResult } from '../src/cli.ts';
+import { formatResult } from '../src/cli-main.ts';
 
 describe('formatResult - search/query --json', () => {
   test('search --json renders the raw result array as parseable JSON', () => {

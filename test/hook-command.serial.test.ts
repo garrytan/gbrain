@@ -507,18 +507,15 @@ describe('user-prompt', () => {
     expect(seen[2].channel).toBe('claude-code'); // fail-open to the default
   });
 
-  test('hook ∈ STARTUP_HOOK_SKIP_COMMANDS (source grep — maybeEmitUpdateMarker no-ops under NODE_ENV=test, so no runtime test can pin this)', () => {
+  test('hook fast path bypasses the full CLI startup/update graph', () => {
     const cliSrc = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
-    const m = cliSrc.match(/const STARTUP_HOOK_SKIP_COMMANDS = new Set\(\[[\s\S]*?\]\);/);
-    expect(m).not.toBeNull();
-    // user-prompt fires once per user PROMPT: a stale update cache would
-    // otherwise spawn a detached check-update child per prompt.
-    expect(m![0]).toContain("'hook'");
+    expect(cliSrc).toContain("await import('./commands/hook.ts')");
+    expect(cliSrc).not.toContain('maybeEmitUpdateMarker');
   });
 
   test('CLI hook dispatch exits explicitly after the one-shot hook completes', () => {
     const cliSrc = readFileSync(join(import.meta.dir, '..', 'src', 'cli.ts'), 'utf8');
-    expect(cliSrc).toContain('process.exit(await runHook(args))');
+    expect(cliSrc).toContain('process.exit(await runHook(rest.slice(1)))');
   });
 
   test('confinement rejection aborts: heartbeat + exit 0 empty [S3#8]', async () => {

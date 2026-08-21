@@ -23,7 +23,7 @@ import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const CLI_TS_PATH = join(import.meta.dir, '..', 'src', 'cli.ts');
+const CLI_TS_PATH = join(import.meta.dir, '..', 'src', 'cli-main.ts');
 const CLI_SOURCE = readFileSync(CLI_TS_PATH, 'utf8');
 
 // Codex round 2 #4 + audit table: every member of this list must be in
@@ -46,7 +46,7 @@ describe('thin-client routing audit — v0.32 REFUSE additions stay in the table
   for (const command of V032_REFUSE_ADDITIONS) {
     test(`'${command}' is in THIN_CLIENT_REFUSED_COMMANDS`, () => {
       // We look for the literal in the set declaration. The set is plain
-      // text in src/cli.ts so a simple string check is honest: a future
+      // text in src/cli-main.ts so a simple string check is honest: a future
       // refactor that drops the entry would also drop the literal.
       const setStart = CLI_SOURCE.indexOf('const THIN_CLIENT_REFUSED_COMMANDS = new Set([');
       const setEnd = CLI_SOURCE.indexOf(']);', setStart);

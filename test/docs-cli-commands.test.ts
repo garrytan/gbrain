@@ -23,7 +23,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { dirname, join, relative } from 'path';
-import { CLI_ONLY, cliAliases } from '../src/cli.ts';
+import { CLI_ONLY, cliAliases } from '../src/cli-main.ts';
 import { operations } from '../src/core/operations.ts';
 
 const ROOT = dirname(import.meta.dir);

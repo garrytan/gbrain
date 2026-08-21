@@ -62,6 +62,9 @@ import {
   removeClaudeHooks,
 } from '../core/bootstrap/hooks.ts';
 import {
+  runCrossHostHookRepair,
+} from '../core/bootstrap/cross-host-hooks.ts';
+import {
   guardReceiptOverwrite,
   readHarnessReceiptState,
   readManifest,
@@ -91,6 +94,7 @@ import {
   writeOpencodeMcpEntry,
 } from '../core/bootstrap/opencode-json.ts';
 import { promptLine } from '../core/cli-util.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import {
   appendInstallLog,
   gitOriginUrl,
@@ -123,6 +127,10 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   written directly into its JSONC config (user-global
                                   by default; MCP_SCOPE=project is an explicit opt-in
                                   with a sharing warning).
+  hooks --harness all --repair [--dry-run] [--source ID] [--gbrain-bin <path>]
+                                  Repair machine-global lifecycle hooks for Claude Code,
+                                  Codex, TraeCLI, Trae Desktop, and Trae CN. This path is
+                                  hooks-only; MCP registrations are unchanged.
   repo                            Create the dedicated PRIVATE GitHub repo (or adopt
                                   an EMPTY private repo you created under your own
                                   account), verify the privacy bit via the API, push.
@@ -175,7 +183,8 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  under your own account), verify the privacy bit via the API, push.',
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
-    '  Register MCP (+ per-turn hooks on Claude Code, ON by default; --no-hooks opts out).',
+    'gbrain bootstrap hooks --harness all --repair [--dry-run] [--source ID] [--gbrain-bin <path>]\n' +
+    '  Register MCP for one host, or repair machine-global lifecycle hooks for the five verified hook hosts.',
   verify:
     'gbrain bootstrap verify [--json]\n' +
     '  The whole install contract (round-trip, graph floor, magic moment, scans, hooks smoke). Exit 0 or not done.',
@@ -930,6 +939,15 @@ async function runHooks(
   probeSpawn?: OpencodeProbeSpawn,
 ): Promise<number> {
   const harnessFlag = flagValue(rest, '--harness');
+  if (harnessFlag === 'all') {
+    return runCrossHostHookRepair({
+      workspaceDir: ws,
+      lockRoot: home,
+      rest,
+      brainId: getCliOptions().brain,
+      resolveGbrainBin,
+    });
+  }
   const harness = isHarness(harnessFlag) ? harnessFlag : harnessFlag ? null : detectHarness();
   if (!harness) {
     console.error(
@@ -1892,7 +1910,9 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
       default:
         return 2; // unreachable
     }
-    logPhase(logCtx, logPhaseName, code === 0 ? 'ok' : 'error', t0);
+    if (!(sub === 'hooks' && rest.includes('--dry-run'))) {
+      logPhase(logCtx, logPhaseName, code === 0 ? 'ok' : 'error', t0);
+    }
     return code;
   } catch (e) {
     if (e instanceof BootstrapAbortInjected) {

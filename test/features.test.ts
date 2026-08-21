@@ -127,12 +127,12 @@ describe('brain_score calculation', () => {
 // CLI routing
 describe('CLI routing', () => {
   it('features is in CLI_ONLY set', async () => {
-    const cliSource = await Bun.file('src/cli.ts').text();
+    const cliSource = await Bun.file('src/cli-main.ts').text();
     expect(cliSource).toContain("'features'");
   });
 
   it('help text mentions features', async () => {
-    const cliSource = await Bun.file('src/cli.ts').text();
+    const cliSource = await Bun.file('src/cli-main.ts').text();
     expect(cliSource).toContain('features [--json] [--auto-fix]');
   });
 });
