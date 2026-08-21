@@ -682,6 +682,9 @@ export class PostgresEngine implements BrainEngine {
             ? tx`AND source_id = ${sourceId}`
             : tx``;
       const deletedCondition = includeDeleted ? tx`` : tx`AND deleted_at IS NULL`;
+      // #3931: anchor on sourceIds[0] (caller's own resolved source, see
+      // localFederatedSourceIds) instead of a hardcoded 'default'.
+      const anchorSourceId = sourceIds && sourceIds.length > 0 ? sourceIds[0] : 'default';
       const rows = await tx`
         SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
                effective_date, effective_date_source,
@@ -689,14 +692,11 @@ export class PostgresEngine implements BrainEngine {
                contextual_retrieval_mode
         FROM pages
         WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
-        ORDER BY (source_id = 'default') DESC, source_id ASC
+        ORDER BY (source_id = ${anchorSourceId}) DESC, source_id ASC
         LIMIT 1
       `;
-      // Deterministic multi-source tiebreak: without an ORDER BY, LIMIT 1 on a
-      // slug that exists in several sources returned an ARBITRARY row.
-      // Default-source-first (then stable alpha) — plain alpha would prefer
-      // e.g. 'archive' over 'default'. Engine parity: pglite-engine.ts carries
-      // the identical clause.
+      // Deterministic multi-source tiebreak: anchor-source-first, then stable
+      // alpha. Engine parity: pglite-engine.ts carries the identical clause.
       if (rows.length === 0) return null;
       return rowToPage(rows[0]);
     });

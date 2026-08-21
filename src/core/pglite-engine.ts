@@ -1650,17 +1650,23 @@ export class PGLiteEngine implements BrainEngine {
     if (!includeDeleted) {
       where.push('deleted_at IS NULL');
     }
+    // #3931: anchor the tiebreak on sourceIds[0] (the caller's own resolved
+    // source — see localFederatedSourceIds) instead of a hardcoded 'default',
+    // so a shadowed slug resolves to the caller's own copy.
+    const anchorSourceId = sourceIds && sourceIds.length > 0 ? sourceIds[0] : 'default';
+    params.push(anchorSourceId);
+    const anchorParamIdx = params.length;
     const { rows } = await this.db.query(
       `SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
               effective_date, effective_date_source,
               source_kind, source_uri, ingested_via, ingested_at,
               contextual_retrieval_mode
        FROM pages WHERE ${where.join(' AND ')}
-       ORDER BY (source_id = 'default') DESC, source_id ASC
+       ORDER BY (source_id = $${anchorParamIdx}) DESC, source_id ASC
        LIMIT 1`,
       params
     );
-    // Deterministic multi-source tiebreak — default-source-first, then stable
+    // Deterministic multi-source tiebreak: anchor-source-first, then stable
     // alpha. Engine parity: postgres-engine.ts carries the identical clause.
     if (rows.length === 0) return null;
     return rowToPage(rows[0] as Record<string, unknown>);
