@@ -216,6 +216,43 @@ const get_page: Operation = {
   cliHints: { name: 'get', positional: ['slug'] },
 };
 
+/**
+ * #4039 - OpenAI deep-research `fetch` contract: retrieve one document by the
+ * `id` that `search` returns and shape it the way ChatGPT deep research and
+ * company knowledge integrations expect ({id, title, text, metadata}).
+ * The id is the page slug, so the search/fetch pair round-trips with zero
+ * translation. Implemented as a thin adapter over the get_page handler:
+ * same scope resolution (federated grant, per-call source_id), same
+ * privacy fences (takes/facts stripped for remote callers), same
+ * page_not_found error. Just a different response envelope.
+ */
+const fetch: Operation = {
+  name: 'fetch',
+  description: `OpenAI deep-research fetch contract: retrieve one document by id (the page slug, as returned in \`search\` results) and return it as {id, title, text, metadata}. Thin adapter over get_page: same source scoping and the same privacy fences for remote callers. Use get_page for richer reads (fuzzy matching, include_content, deleted pages); use fetch when a ChatGPT deep research / company knowledge integration asks for documents by id.`,
+  params: {
+    id: { type: 'string', required: true, description: 'Document id, the page slug as returned in search results' },
+    source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
+  },
+  handler: async (ctx, p) => {
+    const page = (await get_page.handler(ctx, {
+      slug: p.id as string,
+      ...(p.source_id !== undefined ? { source_id: p.source_id } : {}),
+    })) as Record<string, unknown>;
+    return {
+      id: page.slug,
+      title: page.title,
+      text: (page.content as string) ?? (page.compiled_truth as string) ?? '',
+      metadata: {
+        type: page.type,
+        ...(page.source_id !== undefined ? { source_id: page.source_id } : {}),
+        ...(Array.isArray(page.tags) ? { tags: page.tags } : {}),
+      },
+    };
+  },
+  scope: 'read',
+  cliHints: { name: 'fetch', positional: ['id'] },
+};
+
 const put_page: Operation = {
   name: 'put_page',
   description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
@@ -1197,6 +1234,6 @@ const capture: Operation = {
 // (Page CRUD quartet first, then the v0.26.5 destructive-guard ops:
 // page-level soft-delete recovery + admin purge, then capture.)
 export const pagesOperations: Operation[] = [
-  get_page, put_page, delete_page, list_pages,
+  get_page, fetch, put_page, delete_page, list_pages,
   restore_page, purge_deleted_pages, capture,
 ];
