@@ -10,7 +10,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
-
+import { verifySealedPageReceiptsMigration } from './migrations/verify-sealed-page-receipts.ts';
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
  * what this migration changed" lines that specific handlers write to stderr)
@@ -6266,49 +6266,7 @@ export const MIGRATIONS: Migration[] = [
         BEFORE INSERT OR UPDATE OR DELETE ON content_chunks
         FOR EACH ROW EXECUTE FUNCTION protect_sealed_chunk_fn();
     `,
-    verify: async (engine) => {
-      const columns = await engine.executeRaw<{ column_name: string; is_nullable: string }>(
-        `SELECT column_name, is_nullable
-           FROM information_schema.columns
-          WHERE table_schema = 'public' AND table_name = 'sealed_page_receipts'`,
-      );
-      const requiredColumns = [
-        'protocol_version', 'operation_id', 'source_id', 'slug', 'request_sha256',
-        'page_id', 'page_revision', 'canonical_page_sha256', 'canonical_projection',
-        'committed_at', 'server_build_commit', 'receipt_id',
-      ];
-      if (columns.length !== requiredColumns.length
-        || requiredColumns.some((name) => !columns.some((column) => column.column_name === name && column.is_nullable === 'NO'))) {
-        return false;
-      }
-      const constraints = await engine.executeRaw<{ contype: string; definition: string }>(
-        `SELECT c.contype::text, pg_get_constraintdef(c.oid) AS definition
-           FROM pg_constraint c
-           JOIN pg_class t ON t.oid = c.conrelid
-           JOIN pg_namespace n ON n.oid = t.relnamespace
-          WHERE n.nspname = 'public' AND t.relname = 'sealed_page_receipts'`,
-      );
-      const definitions = constraints.map((constraint) => constraint.definition).join('\n');
-      if (!constraints.some((constraint) => constraint.contype === 'p')
-        || constraints.filter((constraint) => constraint.contype === 'f').length !== 2
-        || constraints.filter((constraint) => constraint.contype === 'u').length !== 3
-        || !definitions.includes('{64}')
-        || !definitions.includes('{40}')
-        || !definitions.includes('gbrain.create_page.v1')) {
-        return false;
-      }
-      const triggers = await engine.executeRaw<{ tgname: string }>(
-        `SELECT tgname FROM pg_trigger
-          WHERE NOT tgisinternal
-            AND tgname IN ('protect_sealed_page_trg', 'protect_sealed_receipt_trg', 'protect_sealed_chunk_trg')`,
-      );
-      if (new Set(triggers.map((trigger) => trigger.tgname)).size !== 3) return false;
-      const table = await engine.executeRaw<{ relrowsecurity: boolean }>(
-        `SELECT relrowsecurity FROM pg_class
-          WHERE oid = 'public.sealed_page_receipts'::regclass`,
-      );
-      return table.length === 1 && table[0].relrowsecurity === true;
-    },
+    verify: verifySealedPageReceiptsMigration,
   },
 ];
 

@@ -3,7 +3,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { operations, OperationError, type OperationContext } from '../../src/core/operations.ts';
 import { __setServerBuildCommitForTests } from '../../src/core/sealed-page.ts';
-import { runMigrations } from '../../src/core/migrate.ts';
+import { MigrationDriftError, runMigrations } from '../../src/core/migrate.ts';
 import {
   assertSafeE2eDatabaseUrl,
   getConn,
@@ -256,6 +256,46 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
       await expect(runMigrations(engine)).rejects.toThrow(/post-condition|schema does not match/i);
       expect(await engine.getConfig('version')).toBe('132');
     } finally {
+      await conn.unsafe('DROP TABLE IF EXISTS sealed_page_receipts');
+      await engine.setConfig('version', '132');
+      await runMigrations(engine);
+    }
+  }, 30_000);
+
+  test('migration rejects exact-shape drift and preserves version 132', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await dropAppPolicies();
+    await conn.unsafe('DROP TABLE sealed_page_receipts');
+    await conn.unsafe(`CREATE TABLE sealed_page_receipts (
+      protocol_version varchar(99) NOT NULL CHECK (protocol_version = 'gbrain.create_page.v1'),
+      operation_id varchar(64) PRIMARY KEY CHECK (operation_id ~ '^[a-f0-9]{64}$'),
+      source_id text NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      slug text NOT NULL,
+      request_sha256 text NOT NULL CHECK (request_sha256 ~ '^[a-f0-9]{64}$'),
+      page_id bigint NOT NULL UNIQUE REFERENCES pages(id) ON DELETE CASCADE,
+      page_revision integer NOT NULL CHECK (page_revision >= 0),
+      canonical_page_sha256 text NOT NULL CHECK (canonical_page_sha256 ~ '^[a-f0-9]{64}$'),
+      canonical_projection json NOT NULL CHECK (json_typeof(canonical_projection) = 'object'),
+      committed_at timestamp NOT NULL DEFAULT now(),
+      server_build_commit text NOT NULL CHECK (server_build_commit ~ '^[a-f0-9]{40}$'),
+      receipt_id text NOT NULL UNIQUE CHECK (receipt_id ~ '^[a-f0-9]{64}$'),
+      UNIQUE (source_id, slug)
+    )`);
+    await conn.unsafe(`CREATE FUNCTION wrong_sealed_trigger_fn() RETURNS trigger AS $$
+      BEGIN RETURN NEW; END;
+      $$ LANGUAGE plpgsql`);
+    await conn.unsafe(`CREATE TRIGGER protect_sealed_chunk_trg
+      BEFORE UPDATE ON timeline_entries
+      FOR EACH ROW EXECUTE FUNCTION wrong_sealed_trigger_fn()`);
+    await engine.setConfig('version', '132');
+
+    try {
+      await expect(runMigrations(engine)).rejects.toBeInstanceOf(MigrationDriftError);
+      expect(await engine.getConfig('version')).toBe('132');
+    } finally {
+      await conn.unsafe('DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON timeline_entries');
+      await conn.unsafe('DROP FUNCTION IF EXISTS wrong_sealed_trigger_fn()');
       await conn.unsafe('DROP TABLE IF EXISTS sealed_page_receipts');
       await engine.setConfig('version', '132');
       await runMigrations(engine);
