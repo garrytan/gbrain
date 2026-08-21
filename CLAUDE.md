@@ -738,7 +738,14 @@ before considering the ship complete.
 
 Files that MUST be checked on every ship:
 - README.md — does it reflect new features, commands, or setup steps?
-- CLAUDE.md — does it reflect new files, test files, or architecture changes?
+- `docs/architecture/KEY_FILES.md` — new or changed files in `src/`, and their
+  invariants, are recorded HERE. This is the on-demand layer behind the Reference
+  map, and it is where per-file and per-version detail belongs.
+- CLAUDE.md — only if an always-loaded rule, the Reference map, or the dispatcher
+  changed. **CLAUDE.md is a map, not a log**: it is read in full at the start of every
+  session, so entries are condensed or deleted as they go stale, never appended to.
+  If an update adds a file inventory, a test inventory, or an "as of vX.Y.Z" note,
+  it belongs in the on-demand layer above instead.
 - CHANGELOG.md — does it cover every commit?
 - TODOS.md — are completed items marked done?
 - docs/ — do any guides need updating?
