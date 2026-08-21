@@ -290,7 +290,9 @@ export function autoDetectSkillsDirReadOnly(
     if (env.OPENCLAW_WORKSPACE) {
       const workspace = isAbsolute(env.OPENCLAW_WORKSPACE)
         ? env.OPENCLAW_WORKSPACE
-        : resolvePath(startDir, env.OPENCLAW_WORKSPACE);
+        // OPENCLAW_WORKSPACE is an explicit operator override; the resolved
+        // skills dir is still validated by resolver markers and confinement.
+        : resolvePath(startDir, env.OPENCLAW_WORKSPACE); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       const workspaceResolved = resolveWorkspaceSkillsDir(
         workspace,
         'openclaw_workspace_env',
@@ -298,7 +300,9 @@ export function autoDetectSkillsDirReadOnly(
       );
       if (
         workspaceResolved?.dir &&
-        resolvePath(workspaceResolved.dir) === resolvePath(explicit)
+        // Normalize both absolute candidates before comparing the explicit
+        // skills-dir override with the workspace-derived skills sibling.
+        resolvePath(workspaceResolved.dir) === resolvePath(explicit) // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
       ) {
         return workspaceResolved;
       }
