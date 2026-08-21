@@ -28,7 +28,7 @@ src/core/minions/queue.ts	2130	ratchet	grown v0.46.11.0 five-issue wave
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
 src/commands/integrations.ts	1675	ratchet
 src/core/minions/handlers/subagent.ts	1818	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches
-src/commands/bootstrap.ts	1923	ratchet	grandfathered at merge (grew past the 1500 cap on master)
+src/commands/bootstrap.ts	1928	ratchet	grandfathered at merge (grew past the 1500 cap on master); +5 for the harnessDetect test seam (bulk lives in core/bootstrap/harness.ts)
 src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
 src/commands/sources.ts	1790	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
 src/core/link-extraction.ts	1504	ratchet	new row: crossed the 1500 unlisted cap in v0.46.22.0 phone wave (relative-link resolution, #3804)
