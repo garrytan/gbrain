@@ -5906,13 +5906,14 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 133,
+    version: 134,
     name: 'takes_embedding_dimension_matches_config',
     // #2089: takes was created with a hard-coded vector(1536), while the
     // configured embedding model can emit another width (for example the
     // default zembed-1 2560d). The vector writer cannot be useful until the
     // column shares the configured dimension with content_chunks/facts.
-    // Renumbered after upstream migrations 131 and 132 landed.
+    // Renumbered to v134 because the integration wave reserves v133 for
+    // content_chunks_embedded_text_hash.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
