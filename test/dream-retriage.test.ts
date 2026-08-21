@@ -221,16 +221,19 @@ describe('dream retriage — reconcile matrix', () => {
       expect(await jobStatus(rig, aboveStale)).toBe('cancelled'); // converted_for_resubmit
       expect(await jobStatus(rig, unscoredJob)).toBe('waiting');
       expect(await jobStatus(rig, unmatchedJob)).toBe('waiting');
-      expect(await jobStatus(rig, legacyJob)).toBe('waiting');   // legacy grammar → unmatched, untouched
+      // #4250: a legacy-grammar row stranded in a provably-DEAD inline queue
+      // is exactly the never-claimable orphan class doctor now flags — it
+      // converts for resubmit instead of being invisibly stranded (pre-fix it
+      // wasn't even selected). Legacy rows in live/non-inline queues stay out
+      // of scope (the SELECT's queue arm only adds dream-inline rows).
+      expect(await jobStatus(rig, legacyJob)).toBe('cancelled');
       expect(await jobStatus(rig, completedJob)).toBe('completed'); // terminal rows never selected
 
       expect(summary.queue.cancelled).toBe(1);
-      expect(summary.queue.converted_for_resubmit).toBe(1);
+      expect(summary.queue.converted_for_resubmit).toBe(2); // aboveStale + legacy dead-queue row
       expect(summary.queue.kept_unscored).toBe(1);
-      // deleted-file only: the legacy dream:synth: key is excluded at the SQL
-      // LIKE 'dream:synth-v2:%' filter — it never even becomes a candidate.
-      expect(summary.queue.unmatched).toBe(1);
-      expect(summary.queue.candidates).toBe(4); // completed row is status-excluded as well
+      expect(summary.queue.unmatched).toBe(1); // deleted-file synth-v2 key with no corpus match
+      expect(summary.queue.candidates).toBe(5); // completed row is status-excluded
       expect(process.exitCode ?? 0).toBe(0);
     } finally {
       await rig.cleanup();
@@ -474,16 +477,18 @@ describe('dream retriage — reconcile matrix', () => {
     }
   }, 30_000);
 
-  test('SR-P2: a live cycle lock marks even OLD inline queues possibly-live (no conversions)', async () => {
+  test('SR-P2/#4250: a live lock that could OWN the queue (acquired before its birth) keeps it possibly-live', async () => {
     const rig = await setupRig();
     try {
       const above = writeTranscript(rig.corpusDir, '2026-08-28-locked.txt');
       await seedScore(rig, above.filePath, above.hash, 0.9);
-      const job = await seedJob(rig, { key: synthKey('default', basename(above.filePath), above.hash16) });
-      // Simulate a running cycle: an unexpired cycle-lock row.
+      // Queue born 2h ago (past the liveness grace); the running cycle's lock
+      // was acquired BEFORE that, so it could own the queue — never convert.
+      const queue = `dream-inline-${Date.now() - 2 * 3600_000}-deadbee1`;
+      const job = await seedJob(rig, { key: synthKey('default', basename(above.filePath), above.hash16), queue });
       await rig.engine.executeRaw(
-        `INSERT INTO gbrain_cycle_locks (id, holder_pid, ttl_expires_at)
-         VALUES ('gbrain-cycle:default', 12345, NOW() + interval '10 minutes')`,
+        `INSERT INTO gbrain_cycle_locks (id, holder_pid, acquired_at, ttl_expires_at)
+         VALUES ('gbrain-cycle:default', 12345, NOW() - interval '3 hours', NOW() + interval '10 minutes')`,
       );
       const { out } = await captureStdout(() => withoutAnthropicKey(() =>
         runDreamRetriage(rig.engine, ['--reconcile-queue', '--json'])));
@@ -491,6 +496,49 @@ describe('dream retriage — reconcile matrix', () => {
       expect(await jobStatus(rig, job)).toBe('waiting');
       expect(summary.queue.kept_live_queue).toBe(1);
       expect(summary.queue.converted_for_resubmit).toBe(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('#4250: a live lock acquired AFTER the queue was born cannot own it — the old orphan converts', async () => {
+    // The doctor↔retriage alignment fix: doctor flags a pre-lock orphan, so
+    // retriage must be able to repair it even while a NEW cycle runs.
+    const rig = await setupRig();
+    try {
+      const above = writeTranscript(rig.corpusDir, '2026-08-28-prelock.txt');
+      await seedScore(rig, above.filePath, above.hash, 0.9);
+      const queue = `dream-inline-${Date.now() - 2 * 3600_000}-deadbee2`;
+      const job = await seedJob(rig, { key: synthKey('default', basename(above.filePath), above.hash16), queue });
+      await rig.engine.executeRaw(
+        `INSERT INTO gbrain_cycle_locks (id, holder_pid, acquired_at, ttl_expires_at)
+         VALUES ('gbrain-cycle:default', 12345, NOW() - interval '30 minutes', NOW() + interval '10 minutes')`,
+      );
+      const { out } = await captureStdout(() => withoutAnthropicKey(() =>
+        runDreamRetriage(rig.engine, ['--reconcile-queue', '--json'])));
+      const summary = JSON.parse(out) as { queue: { kept_live_queue: number; converted_for_resubmit: number } };
+      expect(await jobStatus(rig, job)).toBe('cancelled');
+      expect(summary.queue.converted_for_resubmit).toBe(1);
+      expect(summary.queue.kept_live_queue).toBe(0);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('#4250: a NON-synth child (patterns-style key) in a provably-dead inline queue converts for resubmit', async () => {
+    // Doctor's orphaned_private_queue check flags patterns queues too; the
+    // advertised retriage repair must select and convert them, not report
+    // unmatched.
+    const rig = await setupRig();
+    try {
+      const queue = `dream-inline-${Date.now() - 2 * 3600_000}-deadbee3`;
+      const job = await seedJob(rig, { key: 'patterns:child:not-a-synth-key', queue });
+      const { out } = await captureStdout(() => withoutAnthropicKey(() =>
+        runDreamRetriage(rig.engine, ['--reconcile-queue', '--json'])));
+      const summary = JSON.parse(out) as { queue: { converted_for_resubmit: number; unmatched: number } };
+      expect(await jobStatus(rig, job)).toBe('cancelled');
+      expect(summary.queue.converted_for_resubmit).toBe(1);
+      expect(summary.queue.unmatched).toBe(0);
     } finally {
       await rig.cleanup();
     }

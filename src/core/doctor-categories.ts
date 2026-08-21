@@ -161,6 +161,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_serve_lock',
   'batch_retry_health',
   'brainstorm_health',
+  'chat_fallback_chain_inert',
   'connection',
   'db_only_collector_collision',
   'federation_health',
@@ -193,6 +194,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'supervisor_singleton',
   'sync_consolidation',
   'wedged_queue',
+  'orphaned_private_queue',
   'worker_oom_loop',
   'ze_embedding_health',
 ]);

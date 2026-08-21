@@ -72,14 +72,18 @@ the playbook at `skills/migrations/v0.46.3.0.md` — one command migrates both.
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding + reranker (one key covers both)
-export OPENAI_API_KEY=sk-...          # alternative for vector search; also used for chat models
-export ANTHROPIC_API_KEY=sk-ant-...   # optional, improves search quality via query expansion
+export OPENAI_API_KEY=sk-...          # alternative for vector search; also powers automatic fact extraction + chat models
+export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models; also improves search via query expansion
 ```
 
 Save to shell profile or `.env`, or store in `~/.gbrain/config.json` (file plane). Do
-NOT use `gbrain config set` for API keys — it writes the DB plane, which the embedding
+NOT use `gbrain config set` for API keys — it writes the DB plane, which the provider
 pipeline never reads. Without any embedding provider, keyword search still works.
-Without Anthropic, search works but skips query expansion.
+Chat-shaped features (automatic fact extraction, enrichment, synthesis, query
+expansion) route to whichever supported chat key is present (Anthropic or OpenAI) —
+Anthropic when both are set, OpenAI when it is the only one; other chat providers
+need an explicit `models.*` pin. With neither key, extraction stays off and memory
+comes from agent-authored `## Facts` fences and the `remember` verb.
 
 ## Step 3: Create the Brain
 

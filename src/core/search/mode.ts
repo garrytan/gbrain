@@ -284,6 +284,17 @@ export interface ModeBundle {
    */
   autocut_min_top: number;
   /**
+   * Autocut floor: never trim the returned set below this many results when
+   * candidates exist. Default 1 (the never-empty failsafe — the previous
+   * hardcoded behavior, so nothing changes unless an operator opts in).
+   * Raising it protects "deep but present" answers on score curves without a
+   * dramatic cliff (a reranker whose scores decay smoothly makes the largest
+   * gap a noisy cut signal) — useful when the consumer is an LLM that reads
+   * the whole returned list, where "deep but visible" beats "trimmed away".
+   * Override: `search.autocut_min_keep` config → mode bundle.
+   */
+  autocut_min_keep: number;
+  /**
    * v0.43 — relational recall arm. When on, a relational query ("who invested
    * in widget-co", "what connects fund-a and fund-b") resolves its seed
    * entity and walks the typed-edge graph, injecting edge-derived candidates
@@ -350,6 +361,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -410,6 +422,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -463,6 +476,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
 });
 
@@ -520,6 +534,7 @@ export interface SearchKeyOverrides {
   relational_retrieval_depth?: number;
   autocut_jump?: number;
   autocut_min_top?: number;
+  autocut_min_keep?: number;
 }
 
 /**
@@ -569,6 +584,7 @@ export interface SearchPerCallOpts {
   autocut?: boolean;
   autocut_jump?: number;
   autocut_min_top?: number;
+  autocut_min_keep?: number;
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
@@ -666,6 +682,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     autocut: pick('autocut'),
     autocut_jump: pick('autocut_jump'),
     autocut_min_top: pick('autocut_min_top'),
+    autocut_min_keep: pick('autocut_min_keep'),
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
@@ -835,7 +852,14 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
 // (Merge note: both this wave and master's #3515 wave claimed v=16 in
 // flight; the merge sequences them as 16 then 17.)
-export const KNOBS_HASH_VERSION = 18;
+//
+// bump 18→19 (#3621): `ack=` (autocut minKeep floor) joins the key. The
+// floor changes how many rows survive the cut, so a minKeep=1 write
+// (trimmed to the cliff) must NOT be served to a minKeep=6 lookup (which
+// expects the floor) — same contamination class as ac=/acj=. The PR
+// authored this as v=16; master had already reached 18, so it sequences
+// here per the D8 convention. Same one-time global cold-miss pattern.
+export const KNOBS_HASH_VERSION = 19;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -997,6 +1021,13 @@ export function knobsHash(
     // a low write (compiled-truth-only set) must never be served to a
     // medium/high lookup. Undefined falls back to 'medium' (the default).
     `det=${ctx?.detail ?? 'medium'}`,
+    // v=19 addition (#3621, append-only): autocut minKeep floor. Changing the
+    // floor changes how many rows survive the cut, so a write under one floor
+    // must not serve a lookup under another — same contamination class as
+    // ac=/acj=. Token is `ack=`, not the PR's original `acm=`: master's
+    // weak-top floor (v=18) already owns `acm=`. `?? 1` mirrors the defensive
+    // read of acj= above for partial-knobs callers.
+    `ack=${Math.max(1, Math.floor(knobs.autocut_min_keep ?? 1))}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1178,6 +1209,15 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 0 && n <= 1) out.autocut_min_top = n;
   }
 
+  // `search.autocut_min_keep` floors the cut (integer ≥ 1; 1 = the previous
+  // hardcoded failsafe). Out-of-range/non-numeric falls through to the bundle
+  // — mirrors autocutFromConfig's validation in autocut.ts.
+  const ack = get('search.autocut_min_keep');
+  if (ack !== undefined) {
+    const n = parseInt(ack, 10);
+    if (Number.isFinite(n) && n >= 1) out.autocut_min_keep = n;
+  }
+
   // v0.43 — relational recall arm.
   const rel = get('search.relational_retrieval');
   if (rel !== undefined) {
@@ -1233,6 +1273,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.relational_retrieval_depth',
   'search.autocut_jump',
   'search.autocut_min_top',
+  'search.autocut_min_keep',
 ]);
 
 /**

@@ -100,6 +100,20 @@ describe('put_page empty-overwrite guard — rejection', () => {
     );
     expect(err.code).toBe('invalid_params');
   });
+
+  test('frontmatter-only content (blank parsed body) is refused by the engine guard', async () => {
+    // Raw content is non-empty so the op-level check above can't see it, but
+    // the parsed compiled_truth is blank — the engine's putPage guard is the
+    // backstop, and put_page does NOT pass its escape hatch without
+    // allow_empty.
+    await seedPage('inbox/guarded-fm-only');
+    await expect(
+      putPage.handler(makeCtx(), { slug: 'inbox/guarded-fm-only', content: '---\ntitle: Guarded\n---\n\n' }),
+    ).rejects.toThrow(/refusing to overwrite non-empty page/);
+
+    const page = await engine.getPage('inbox/guarded-fm-only', { sourceId: 'default' });
+    expect(page!.compiled_truth).toContain('Content that must survive.');
+  });
 });
 
 describe('put_page empty-overwrite guard — allowed paths', () => {
@@ -112,6 +126,18 @@ describe('put_page empty-overwrite guard — allowed paths', () => {
     })) as { status: string };
     expect(result.status).toBe('created_or_updated');
     const page = await engine.getPage('inbox/blank-me', { sourceId: 'default' });
+    expect((page!.compiled_truth ?? '').trim()).toBe('');
+  });
+
+  test('allow_empty: true also clears via frontmatter-only content (engine escape hatch threaded)', async () => {
+    await seedPage('inbox/blank-me-fm');
+    const result = (await putPage.handler(makeCtx(), {
+      slug: 'inbox/blank-me-fm',
+      content: '---\ntitle: Guarded\n---\n\n',
+      allow_empty: true,
+    })) as { status: string };
+    expect(result.status).toBe('created_or_updated');
+    const page = await engine.getPage('inbox/blank-me-fm', { sourceId: 'default' });
     expect((page!.compiled_truth ?? '').trim()).toBe('');
   });
 

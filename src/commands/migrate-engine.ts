@@ -212,6 +212,9 @@ export async function copyPageToTarget(
 
   // Copy page (preserve source_id). v0.32.8 F8: thread source_id end-to-end
   // so multi-source pages migrate intact.
+  // Verbatim copy — the source engine's row is authoritative, so a
+  // legitimately blank body (image page, deliberate clear) must land even
+  // when a re-run's target row already holds an older non-empty body.
   await target.putPage(page.slug, nullifyUndefinedColumns({
     type: page.type,
     title: page.title,
@@ -219,7 +222,7 @@ export async function copyPageToTarget(
     timeline: page.timeline,
     frontmatter: page.frontmatter,
     content_hash: page.content_hash,
-  }), sourceOpts);
+  }), { ...sourceOpts, allowEmptyOverwrite: true });
 
   // Copy chunks with embeddings.
   const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);

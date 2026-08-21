@@ -26,6 +26,7 @@ import {
 } from '../src/core/bootstrap/verify.ts';
 import { listVerifyRuns } from '../src/core/bootstrap/status.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { loadCorpusPages, loadCorpusQueries } from './helpers/bootstrap-corpus.ts';
 
@@ -284,6 +285,33 @@ describe('verifyWorkspace — keyless pass', () => {
       rmSync(githubPath, { force: true });
       writeFileSync(userPath, userOriginal);
       writeFileSync(soulPath, soulOriginal);
+    }
+  }, 240_000);
+});
+
+describe('verifyWorkspace — write-through disabled by config', () => {
+  test('sync.write_through=false → roundtrip WARNs naming the config key; the rest of the family still runs', async () => {
+    await engine.setConfig('sync.write_through', 'false');
+    _resetWriteThroughCacheForTest(); // prior verify runs primed the ~30s per-engine cache
+    try {
+      const res = await verifyWorkspace(engine, ws, {
+        sourceId: 'workspace',
+        gbrainHomeDir: home,
+        capabilities: KEYLESS,
+      });
+      const wtWarn = check(res.checks, 'roundtrip').find((c) => c.detail.includes('sync.write_through'));
+      expect(wtWarn).toBeDefined();
+      expect(wtWarn!.ok).toBe(true);
+      expect(wtWarn!.warn).toBe(true);
+      // The remaining roundtrip-family checks still ran off the DB row.
+      expect(check(res.checks, 'graph_floor')[0].ok).toBe(true);
+      expect(check(res.checks, 'magic_moment')[0].ok).toBe(true);
+      expect(res.ok).toBe(true);
+      // No file materialized under brain/ (DB-only by operator choice).
+      expect(existsSync(join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`))).toBe(false);
+    } finally {
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
     }
   }, 240_000);
 });

@@ -468,10 +468,13 @@ gbrain sync --no-schema-pack --no-pull --no-embed --yes
 `gbrain schema lint` warns on the classic nested-quantifier ReDoS
 shapes (`(a+)+`, `(a*)*`, …) in pack regexes, and the runtime caps
 inference-regex input length (override via `GBRAIN_MAX_REGEX_INPUT_CHARS`).
-Third, on a PGLite brain, stop `gbrain serve` before a large sync —
-PGLite is single-writer and a live MCP server contends for the write
-lock. See [`docs/architecture/serve-sync-concurrency.md`](docs/architecture/serve-sync-concurrency.md)
-for the full triage.
+Third, on a PGLite brain with a live `gbrain serve` (your agent's MCP
+server), `gbrain sync` delegates the run to the serve process over its
+local IPC socket — the lock owner does the work, your agent stays up,
+and Ctrl-C aborts to a checkpoint the next sync resumes from. Embeds
+defer to the serve's background sweep. See
+[`docs/architecture/serve-sync-concurrency.md`](docs/architecture/serve-sync-concurrency.md)
+for the limits (unsupported flags, `serve --http`) and the full triage.
 
 **`gbrain init --migrate-only` / a schema migration fails on Windows
 with `getaddrinfo ENOTFOUND`?** Upgrade — schema bring-up now runs its

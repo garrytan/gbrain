@@ -266,6 +266,11 @@ const put_page: Operation = {
       source_kind: provenanceKind,
       source_uri: provenanceUri,
       ingested_via: provenanceVia,
+      // Only an EXPLICIT allow_empty reaches the engine's empty-overwrite
+      // escape hatch; the default put_page path stays guarded end-to-end
+      // (including frontmatter-only content the raw-content check above
+      // can't see — the parsed body is blank even though content isn't).
+      ...(p.allow_empty === true ? { allowEmptyOverwrite: true } : {}),
     });
 
     // The dedup pre-check in importFromContent can resolve the write to a

@@ -49,6 +49,8 @@ interface ReindexOpts {
    * Useful for offline / no-API-key brains and for tests.
    */
   noEmbed?: boolean;
+  /** Optional open-world page type scope, e.g. atom. */
+  type?: string;
   /**
    * v0.41.15.0 (T10, D9): in-process per-batch parallel workers.
    * Default 1. PGLite clamps to 1. Recommended 4-8 for large brains.
@@ -60,11 +62,61 @@ interface ReindexOpts {
 
 export interface ReindexResult {
   pending: number;
+  pendingAfter: number;
   reindexed: number;
   skipped: number;
   failed: number;
   dryRun: boolean;
   chunkerVersion: number;
+  type: string | null;
+}
+
+const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency']);
+
+export function normalizeReindexArgs(args: string[]): string[] {
+  return args.flatMap((arg) => {
+    const equals = arg.indexOf('=');
+    if (equals <= 0) return [arg];
+    const flag = arg.slice(0, equals);
+    return REINDEX_VALUE_FLAGS.has(flag) ? [flag, arg.slice(equals + 1)] : [arg];
+  });
+}
+
+function parsePageType(raw: string | undefined): string | null {
+  // PageType is open-world at runtime. Only reject an absent/empty value or a
+  // following CLI flag; SQL receives the exact remaining value as a bind.
+  if (raw == null || raw.trim().length === 0 || raw.trimStart().startsWith('--')) return null;
+  return raw;
+}
+
+function pendingDriftPredicate(noEmbed: boolean): string {
+  return noEmbed
+    ? 'chunker_version < $1'
+    : '(chunker_version < $1 OR contextual_retrieval_mode IS NULL)';
+}
+
+export function validateReindexModeScope(args: string[]): string | null {
+  args = normalizeReindexArgs(args);
+  if (!args.includes('--type')) return null;
+  if (args.includes('--multimodal')) return '--type is only supported with reindex --markdown, not --multimodal';
+  if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
+  return null;
+}
+
+function invalidPositiveIntegerFlag(args: string[], flag: string): boolean {
+  return args.some((arg, index) => {
+    if (arg !== flag) return false;
+    const raw = args[index + 1];
+    return raw == null || raw.startsWith('--') || !/^\d+$/.test(raw) || Number(raw) <= 0;
+  });
+}
+
+function invalidRequiredValueFlag(args: string[], flag: string): boolean {
+  return args.some((arg, index) => {
+    if (arg !== flag) return false;
+    const raw = args[index + 1];
+    return raw == null || raw.trim().length === 0 || raw.startsWith('--');
+  });
 }
 
 function parseArgs(args: string[]): ReindexOpts {
@@ -80,6 +132,9 @@ function parseArgs(args: string[]): ReindexOpts {
       if (Number.isFinite(v) && v > 0) out.limit = v;
     } else if (a === '--repo') {
       out.repoPath = args[++i];
+    } else if (a === '--type') {
+      const type = parsePageType(args[++i]);
+      if (type) out.type = type;
     } else if (a === '--workers' || a === '--concurrency') {
       // v0.41.15.0 (T10, D9): per-batch parallel workers.
       const v = parseInt(args[++i] ?? '', 10);
@@ -110,12 +165,26 @@ function parseArgs(args: string[]): ReindexOpts {
  * hook for post-v81 brains. The simple `chunker_version OR mode IS NULL`
  * predicate covers the headline upgrade case the wave is shipping.
  */
-async function countPending(engine: BrainEngine): Promise<number> {
+async function countPending(engine: BrainEngine, type: string | null = null, noEmbed = false): Promise<number> {
+  const driftPredicate = pendingDriftPredicate(noEmbed);
+  if (type) {
+    const rows = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*)::bigint AS count
+         FROM pages
+        WHERE page_kind = 'markdown'
+          AND ${driftPredicate}
+          AND deleted_at IS NULL
+          AND type = $2`,
+      [MARKDOWN_CHUNKER_VERSION, type],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
   const rows = await engine.executeRaw<{ count: string | number }>(
     `SELECT COUNT(*)::bigint AS count
        FROM pages
       WHERE page_kind = 'markdown'
-        AND (chunker_version < $1 OR contextual_retrieval_mode IS NULL)
+        AND ${driftPredicate}
         AND deleted_at IS NULL`,
     [MARKDOWN_CHUNKER_VERSION],
   );
@@ -127,21 +196,84 @@ async function countPending(engine: BrainEngine): Promise<number> {
  * partial completion pick up where they left off without re-doing pages
  * whose chunker_version was already bumped.
  */
-async function readBatch(engine: BrainEngine, batchSize: number): Promise<Array<{ slug: string; source_path: string | null; compiled_truth: string; source_id: string }>> {
+async function readBatch(
+  engine: BrainEngine,
+  batchSize: number,
+  type: string | null = null,
+  noEmbed = false,
+  afterId: number | null = null,
+): Promise<Array<{ id: number; slug: string; source_path: string | null; compiled_truth: string; source_id: string }>> {
+  const driftPredicate = pendingDriftPredicate(noEmbed);
+  if (type) {
+    return engine.executeRaw(
+      `SELECT id, slug, source_path, compiled_truth, source_id
+         FROM pages
+        WHERE page_kind = 'markdown'
+          AND ${driftPredicate}
+          AND deleted_at IS NULL
+          AND type = $2
+          AND ($4::integer IS NULL OR id > $4)
+        ORDER BY id ASC
+        LIMIT $3`,
+      [MARKDOWN_CHUNKER_VERSION, type, batchSize, afterId],
+    );
+  }
+
   return engine.executeRaw(
-    `SELECT slug, source_path, compiled_truth, source_id
+    `SELECT id, slug, source_path, compiled_truth, source_id
        FROM pages
       WHERE page_kind = 'markdown'
-        AND (chunker_version < $1 OR contextual_retrieval_mode IS NULL)
+        AND ${driftPredicate}
         AND deleted_at IS NULL
+        AND ($3::integer IS NULL OR id > $3)
       ORDER BY id ASC
       LIMIT $2`,
-    [MARKDOWN_CHUNKER_VERSION, batchSize],
+    [MARKDOWN_CHUNKER_VERSION, batchSize, afterId],
   );
 }
 
 export async function runReindex(engine: BrainEngine, args: string[]): Promise<ReindexResult> {
+  args = normalizeReindexArgs(args);
+  const invalidType = args.some((arg, index) =>
+    arg === '--type' && !parsePageType(args[index + 1]));
+  if (invalidType) {
+    const payload = { error: 'invalid --type: expected a non-empty value, not another flag' };
+    if (args.includes('--json')) {
+      process.stdout.write(JSON.stringify(payload) + '\n');
+    } else {
+      process.stderr.write(`[reindex] ${payload.error}\n`);
+    }
+    setCliExitVerdict(2);
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: args.includes('--dry-run'), chunkerVersion: MARKDOWN_CHUNKER_VERSION, type: null };
+  }
+  if (invalidPositiveIntegerFlag(args, '--limit')) {
+    const payload = { error: 'invalid --limit: expected a positive integer' };
+    if (args.includes('--json')) {
+      process.stdout.write(JSON.stringify(payload) + '\n');
+    } else {
+      process.stderr.write(`[reindex] ${payload.error}\n`);
+    }
+    setCliExitVerdict(2);
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: args.includes('--dry-run'), chunkerVersion: MARKDOWN_CHUNKER_VERSION, type: null };
+  }
+  const invalidWorkerFlag = ['--workers', '--concurrency'].find((flag) =>
+    invalidPositiveIntegerFlag(args, flag));
+  const invalidRepo = invalidRequiredValueFlag(args, '--repo');
+  if (invalidWorkerFlag || invalidRepo) {
+    const error = invalidWorkerFlag
+      ? `invalid ${invalidWorkerFlag}: expected a positive integer`
+      : 'invalid --repo: expected a path';
+    const payload = { error };
+    if (args.includes('--json')) {
+      process.stdout.write(JSON.stringify(payload) + '\n');
+    } else {
+      process.stderr.write(`[reindex] ${error}\n`);
+    }
+    setCliExitVerdict(2);
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: args.includes('--dry-run'), chunkerVersion: MARKDOWN_CHUNKER_VERSION, type: null };
+  }
   const opts = parseArgs(args);
+  const type = opts.type ?? null;
 
   // Require `--markdown` explicitly. Future modes (e.g. --code) get their
   // own routing here.
@@ -149,33 +281,35 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
     if (opts.json) {
       process.stdout.write(JSON.stringify({ error: 'gbrain reindex requires a target flag, e.g. --markdown' }) + '\n');
     } else {
-      process.stderr.write('Usage: gbrain reindex --markdown [--limit N] [--dry-run] [--json] [--repo PATH]\n');
+      process.stderr.write('Usage: gbrain reindex --markdown [--type PAGE_TYPE] [--limit N] [--dry-run] [--json] [--repo PATH]\n');
     }
     setCliExitVerdict(2);
-    return { pending: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
-  const pending = await countPending(engine);
+  const pending = await countPending(engine, type, !!opts.noEmbed);
 
   if (opts.json && pending === 0) {
-    process.stdout.write(JSON.stringify({ pending: 0, reindexed: 0, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION }) + '\n');
-    return { pending: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
+    process.stdout.write(JSON.stringify({ pending: 0, pending_after: 0, reindexed: 0, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION, type }) + '\n');
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
   if (pending === 0) {
-    process.stderr.write(`[reindex] All markdown pages already at chunker_version ${MARKDOWN_CHUNKER_VERSION}. Nothing to do.\n`);
-    return { pending: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
+    const scope = type ? ` type=${type}` : '';
+    process.stderr.write(`[reindex] All markdown pages${scope} already at chunker_version ${MARKDOWN_CHUNKER_VERSION}. Nothing to do.\n`);
+    return { pending: 0, pendingAfter: 0, reindexed: 0, skipped: 0, failed: 0, dryRun: !!opts.dryRun, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
   const target = typeof opts.limit === 'number' ? Math.min(opts.limit, pending) : pending;
 
   if (opts.dryRun) {
     if (opts.json) {
-      process.stdout.write(JSON.stringify({ pending, would_reindex: target, dry_run: true, chunker_version: MARKDOWN_CHUNKER_VERSION }) + '\n');
+      process.stdout.write(JSON.stringify({ pending, pending_after: pending, would_reindex: target, dry_run: true, chunker_version: MARKDOWN_CHUNKER_VERSION, type }) + '\n');
     } else {
-      process.stderr.write(`[reindex] DRY-RUN: would re-chunk ${target} of ${pending} pending markdown pages.\n`);
+      const scope = type ? ` (type=${type})` : '';
+      process.stderr.write(`[reindex] DRY-RUN: would re-chunk ${target} of ${pending} pending markdown pages${scope}.\n`);
     }
-    return { pending, reindexed: 0, skipped: 0, failed: 0, dryRun: true, chunkerVersion: MARKDOWN_CHUNKER_VERSION };
+    return { pending, pendingAfter: pending, reindexed: 0, skipped: 0, failed: 0, dryRun: true, chunkerVersion: MARKDOWN_CHUNKER_VERSION, type };
   }
 
   const reporter = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -184,14 +318,18 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
   let reindexed = 0;
   let skipped = 0;
   let failed = 0;
+  let afterId: number | null = null;
   const BATCH = 100;
   const repoPath = opts.repoPath ? resolve(opts.repoPath) : null;
 
   while (reindexed + skipped + failed < target) {
     const remaining = target - (reindexed + skipped + failed);
     const batchSize = Math.min(BATCH, remaining);
-    const batch = await readBatch(engine, batchSize);
+    const batch = await readBatch(engine, batchSize, type, !!opts.noEmbed, afterId);
     if (batch.length === 0) break;
+    // Advance before processing so a failed row cannot be selected again in
+    // this invocation and starve later IDs.
+    afterId = batch[batch.length - 1]!.id;
 
     // v0.41.15.0 (T10, D9): per-batch sliding pool. Counters are JS-
     // single-thread atomic so reindexed++ / failed++ are race-free
@@ -212,13 +350,23 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
           if (row.source_path && repoPath) {
             const absPath = resolve(repoPath, row.source_path);
             if (existsSync(absPath)) {
-              await importFromFile(engine, absPath, row.source_path, {
+              const imported = await importFromFile(engine, absPath, row.source_path, {
                 noEmbed: !!opts.noEmbed,
                 sourceId: row.source_id,
                 inferFrontmatter: false,
                 forceRechunk: true,
               });
-              reindexed++;
+              if (imported.status === 'imported') {
+                reindexed++;
+              } else if (imported.status === 'error') {
+                process.stderr.write(`[reindex] ${row.slug}: ${imported.error ?? 'import failed'}\n`);
+                failed++;
+              } else if (imported.error) {
+                process.stderr.write(`[reindex] ${row.slug}: ${imported.error}\n`);
+                failed++;
+              } else {
+                skipped++;
+              }
               return;
             }
           }
@@ -239,12 +387,22 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
             page.timeline ?? '',
             { type: page.type, title: page.title, tags },
           );
-          await importFromContent(engine, row.slug, fullMarkdown, {
+          const imported = await importFromContent(engine, row.slug, fullMarkdown, {
             sourceId: row.source_id,
             noEmbed: !!opts.noEmbed,
             forceRechunk: true,
           });
-          reindexed++;
+          if (imported.status === 'imported') {
+            reindexed++;
+          } else if (imported.status === 'error') {
+            process.stderr.write(`[reindex] ${row.slug}: ${imported.error ?? 'import failed'}\n`);
+            failed++;
+          } else if (imported.error) {
+            process.stderr.write(`[reindex] ${row.slug}: ${imported.error}\n`);
+            failed++;
+          } else {
+            skipped++;
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           process.stderr.write(`[reindex] ${row.slug}: ${msg}\n`);
@@ -256,22 +414,29 @@ export async function runReindex(engine: BrainEngine, args: string[]): Promise<R
 
   reporter.finish();
 
+  const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
+  if (failed > 0) setCliExitVerdict(1);
+
   const result: ReindexResult = {
     pending,
+    pendingAfter,
     reindexed,
     skipped,
     failed,
     dryRun: false,
     chunkerVersion: MARKDOWN_CHUNKER_VERSION,
+    type,
   };
 
   if (opts.json) {
     process.stdout.write(JSON.stringify({
-      pending, reindexed, skipped, failed,
+      pending, pending_after: pendingAfter, reindexed, skipped, failed,
       chunker_version: MARKDOWN_CHUNKER_VERSION,
+      type,
     }) + '\n');
   } else {
-    process.stderr.write(`[reindex] Done. reindexed=${reindexed} failed=${failed} pending=${Math.max(0, pending - reindexed - failed)}\n`);
+    const scope = type ? ` type=${type}` : '';
+    process.stderr.write(`[reindex] Done.${scope} reindexed=${reindexed} skipped=${skipped} failed=${failed} pending_before=${pending} pending_after=${pendingAfter}\n`);
   }
 
   return result;

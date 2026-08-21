@@ -41,6 +41,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
 import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -171,6 +172,18 @@ export interface ProposeTakesResult {
   budget_exhausted: boolean;
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
+  /**
+   * Set when the page loop broke on a whole-run LLM failure (#3044):
+   * auth/billing on the first hit, rate_limit after RATE_LIMIT_HALT_STREAK
+   * consecutive hits. The phase reports 'warn' ('fail' when NO extractor
+   * call succeeded) and the rollup records a halt so the condition can't
+   * hide behind a green summary.
+   */
+  aborted_global_error?: GlobalLlmErrorClass;
+  /** Extractor calls that returned (idempotency cache hits don't count). */
+  llm_calls_succeeded: number;
+  /** Extractor calls that threw (global or per-page alike). */
+  llm_calls_failed: number;
   warnings: string[];
 }
 
@@ -568,6 +581,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
       proposals_inserted: 0,
       tombstones_written: 0,
       budget_exhausted: false,
+      llm_calls_succeeded: 0,
+      llm_calls_failed: 0,
       warnings: [],
       deadline_hit: false,
     };
@@ -591,6 +606,11 @@ class ProposeTakesPhase extends BaseCyclePhase {
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
+
+    // #3044 — shared halt policy: auth/billing halt on the first hit, a
+    // rate_limit streak halts after RATE_LIMIT_HALT_STREAK consecutive
+    // failures. A successful call resets the streak.
+    const llmHalt = createGlobalLlmHaltTracker();
 
     for (const page of pages) {
       // Phase deadline check. Break (not throw) so the phase returns a
@@ -645,7 +665,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
         break;
       }
 
-      // Call the extractor. Errors on a single page log a warning but do not abort.
+      // Call the extractor. Per-page errors log a warning and continue —
+      // UNLESS they classify as a whole-run condition (#3044): auth/billing
+      // halts on the first hit (a revoked key or exhausted spend limit fails
+      // identically on every remaining page); a bare rate_limit halts only
+      // after RATE_LIMIT_HALT_STREAK consecutive hits (a burst 429 can clear
+      // between pages).
       let proposals: ProposedTake[];
       try {
         proposals = await extractor({
@@ -655,10 +680,23 @@ class ProposeTakesPhase extends BaseCyclePhase {
           modelHint: opts.model,
         });
       } catch (err) {
+        result.llm_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
-        result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        const detail = `extractor failed on ${page.slug}: ${msg}`;
+        const decision = llmHalt.observe(err);
+        if (decision !== 'continue') {
+          result.aborted_global_error = haltedClassOf(decision)!;
+          result.warnings.push(
+            `aborting phase at page ${result.pages_scanned}/${pages.length}: ` +
+            `${llmHalt.note()} (${detail})`,
+          );
+          break;
+        }
+        result.warnings.push(detail);
         continue;
       }
+      result.llm_calls_succeeded += 1;
+      llmHalt.reset();
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
@@ -751,8 +789,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
       }
     }
     // A deadline-hit run halted mid-list the same way a budget-exhausted one
-    // does — record it as a halt, not a completed round.
-    const halted = result.budget_exhausted || result.deadline_hit === true;
+    // does — record it as a halt, not a completed round. A global-error
+    // abort (#3044) is the same posture: the round did not complete.
+    const halted =
+      result.budget_exhausted ||
+      result.deadline_hit === true ||
+      result.aborted_global_error !== undefined;
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
@@ -760,10 +802,25 @@ class ProposeTakesPhase extends BaseCyclePhase {
       halt_delta: halted ? 1 : 0,
     });
 
+    // Status folds warnings in (the extract_facts precedent from #1928): a
+    // run with swallowed per-page failures must not read as a clean 'ok'.
+    // Severity split (#3044): a global halt with ZERO successful extractor
+    // calls means the whole LLM lane is down — that is a phase 'fail', not a
+    // 'warn' (deriveStatus turns one failed phase into a 'partial' cycle;
+    // the autopilot handler deliberately does not throw on partial). A halt
+    // after some successes is a partial run → 'warn'.
+    const warningCount = result.warnings.length;
+    const phaseFailed =
+      result.aborted_global_error !== undefined && result.llm_calls_succeeded === 0;
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
-      status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
+      summary:
+        `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})` +
+        (result.aborted_global_error
+          ? `; aborted on ${result.aborted_global_error} error after ${result.pages_scanned} page(s)`
+          : '') +
+        (warningCount > 0 ? ` (${warningCount} warning(s))` : ''),
+      details: { ...result, halted, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      status: phaseFailed ? 'fail' : halted || warningCount > 0 ? 'warn' : 'ok',
     };
   }
 }

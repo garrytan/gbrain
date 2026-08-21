@@ -184,7 +184,8 @@ export async function writeSingleFact(
         degraded_dedup: degradedDedup,
       };
     }
-    // stubGuardBlocked / defensive legacyFallback → DB-only path below.
+    // stubGuardBlocked / legacyFallback (sync.write_through off, or the
+    // defensive null-localPath echo) → DB-only path below.
   }
 
   const inserted = await engine.insertFact(newFact, { // gbrain-allow-direct-insert: writeSingleFact legacy path for unparented / thin-client / stub-guarded facts (mirrors the pipeline's fallback buckets)

@@ -301,3 +301,57 @@ describe('runFactsBackstop — stub guard routing (v0.34.5)', () => {
     }
   });
 });
+
+describe('runFactsBackstop — sync.write_through opt-out', () => {
+  test('flag disabled routes fence-eligible facts to DB-only (no fence file, fact still lands)', async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { _resetWriteThroughCacheForTest } = await import('../src/core/write-through.ts');
+
+    const brainDir = mkdtempSync(join(tmpdir(), 'backstop-write-through-flag-'));
+    try {
+      // Fence-eligible setup: local_path set AND a prefixed entity slug —
+      // without the flag this would stub-create people/flag-test.md.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(
+        `UPDATE sources SET local_path = $1 WHERE id = 'default'`,
+        [brainDir],
+      );
+      await engine.setConfig('sync.write_through', 'false');
+      _resetWriteThroughCacheForTest();
+
+      chatStub([
+        { fact: 'joined widget-co as cto', kind: 'event', notability: 'high', entity: 'people/flag-test' },
+      ]);
+
+      const r = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline' }));
+
+      expect(r.mode).toBe('inline');
+      if (r.mode === 'inline') {
+        // The fact MUST persist via the DB-only route, not get dropped.
+        expect(r.inserted).toBe(1);
+        expect(r.fact_ids.length).toBe(1);
+
+        // No fence file, no stub page, not even the directory.
+        expect(existsSync(join(brainDir, 'people/flag-test.md'))).toBe(false);
+        expect(existsSync(join(brainDir, 'people'))).toBe(false);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rows = await (engine as any).db.query(
+          `SELECT entity_slug, source_markdown_slug FROM facts WHERE id = $1`,
+          [r.fact_ids[0]],
+        );
+        expect(rows.rows[0].entity_slug).toBe('people/flag-test');
+        // DB-only rows have no .md of record.
+        expect(rows.rows[0].source_markdown_slug).toBeNull();
+      }
+    } finally {
+      await engine.unsetConfig('sync.write_through');
+      _resetWriteThroughCacheForTest();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (engine as any).db.query(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  });
+});

@@ -165,6 +165,10 @@ Stable phase names shipped in v0.15.2:
 - `transcripts.ingest` (one tick per session-log file; sessions inside a
   multi-session file — the hermes store, consumer exports — don't get their
   own ticks, so total = file count; each session emits a heartbeat instead)
+- `sync.github_materialize` (github-kind source sweep: the phase restarts
+  once per repo with that repo's item count as total — counts are only
+  known after each repo's enumeration — and every item ticks exactly once;
+  scope resolution, per-repo listing and detail fetches emit heartbeats)
 
 Sub-phases exposed via `child()`:
 

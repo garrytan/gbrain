@@ -54,6 +54,41 @@
  */
 export type BackgroundWorkDrainMode = 'exit' | 'disconnect';
 
+/**
+ * Shared teardown budgets (#4284). This module is the natural home: it is the
+ * zero-import leaf that every teardown participant (both engines,
+ * cli-force-exit, process-watchdog) already imports, so budget numbers defined
+ * here cannot drift between the components that must agree on them.
+ */
+
+/**
+ * setTimeout delay ceiling: Node/Bun overflow-clamp anything above 2^31−1 to
+ * ~1ms (TimeoutOverflowWarning), so an oversized delay must be clamped to
+ * mean "longer bound", never an instant spurious fire.
+ */
+export const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
+/** Per-sink bound for one drain pass (the `runDrainers` default below). */
+export const SINK_DRAIN_TIMEOUT_MS = 2000;
+
+/**
+ * #4143/#4284 — the in-loop bound for PGlite.close() inside disconnect().
+ * Read per call (not module load) so tests and incident responders can set
+ * GBRAIN_PGLITE_CLOSE_TIMEOUT_MS without subprocess gymnastics; floor 1s,
+ * ceiling 2^31−1. Lives here (not in the engine) so cli-force-exit's
+ * computed teardown deadline budgets the SAME bound the engine will actually
+ * honor — a hardcoded copy drifted the moment the bound became tunable.
+ * HONEST SCOPE lives at the close site in pglite-engine.ts: this bound
+ * catches a close that still YIELDS; a wedged loop needs the out-of-band
+ * watchdog.
+ */
+export function pgliteCloseTimeoutMs(): number {
+  return Math.min(
+    MAX_TIMER_DELAY_MS,
+    Math.max(1000, Number(process.env.GBRAIN_PGLITE_CLOSE_TIMEOUT_MS ?? '') || 5000),
+  );
+}
+
 export interface BackgroundWorkDrainer {
   /** Stable identity; also the Map key (idempotent registration). */
   name: string;
@@ -122,7 +157,7 @@ export function __listDrainerNamesForTest(): string[] {
  * the subsequent disconnect.
  */
 export async function drainAllBackgroundWorkForCliExit(opts?: { timeoutMs?: number }): Promise<void> {
-  await runDrainers(opts?.timeoutMs ?? 2000, { allowAbort: true, mode: 'exit' });
+  await runDrainers(opts?.timeoutMs ?? SINK_DRAIN_TIMEOUT_MS, { allowAbort: true, mode: 'exit' });
 }
 
 /**
@@ -141,7 +176,7 @@ export async function drainAllBackgroundWorkForCliExit(opts?: { timeoutMs?: numb
  * hooks.
  */
 export async function drainBackgroundWorkBeforeDisconnect(opts?: { timeoutMs?: number }): Promise<void> {
-  await runDrainers(opts?.timeoutMs ?? 2000, { allowAbort: false, mode: 'disconnect' });
+  await runDrainers(opts?.timeoutMs ?? SINK_DRAIN_TIMEOUT_MS, { allowAbort: false, mode: 'disconnect' });
 }
 
 const warnedOnce = new Set<string>();

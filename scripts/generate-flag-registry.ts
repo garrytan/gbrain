@@ -170,6 +170,14 @@ export function buildFlagRegistry(): Record<string, string[]> {
   // `=== '--dry-run'`). Prose bleed embeds the flag inside a longer string, so
   // it never has quotes on both sides of the bare flag.
   const SAFETY_FLAGS = new Set(['--dry-run']);
+  // Reindex scope/mode flags can bleed through upgrade's imported modules even
+  // though upgrade does not forward them. Require direct consumption on the
+  // affected dispatch surfaces so callers never get silently ignored selectors.
+  const SCOPING_FLAGS_BY_COMMAND: Record<string, string[]> = {
+    reindex: ['--type'],
+    upgrade: ['--type', '--aliases'],
+    'post-upgrade': ['--type', '--aliases'],
+  };
   const consumes = (text: string, flag: string): boolean =>
     new RegExp(`['"\`]${flag}['"\`]`).test(text);
 
@@ -203,6 +211,9 @@ export function buildFlagRegistry(): Record<string, string[]> {
 
     for (const f of EXTRA_FLAGS[command] ?? []) { flags.add(f); depthZero.add(f); }
     for (const f of SAFETY_FLAGS) {
+      if (flags.has(f) && !consumes(depthZeroText, f)) flags.delete(f);
+    }
+    for (const f of SCOPING_FLAGS_BY_COMMAND[command] ?? []) {
       if (flags.has(f) && !consumes(depthZeroText, f)) flags.delete(f);
     }
     registry[command] = [...flags].sort();

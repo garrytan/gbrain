@@ -867,6 +867,22 @@ export interface SearchResult {
    */
   alias_resolved_boost?: number;
   /**
+   * supersession — set when this page is the target of a `supersedes` link
+   * (a newer/canon page supersedes it). The page-level analogue of the
+   * `superseded_by`/`expired_at` temporal awareness recall.ts already applies
+   * to the facts table: the post-fusion supersession stage stamps
+   * `superseded=true`, records the superseding (canon) page's slug in
+   * `superseded_by`, and multiplies score by `supersede_penalty` (<1.0) so
+   * current canon out-scores stale material. Absent when the page is current.
+   * Consumers (`gbrain search --explain`, the contradiction probe, agent
+   * renderers) surface a SUPERSEDED flag. The flag is authoritative even in
+   * reranked modes where the cross-encoder owns the final head order.
+   */
+  superseded?: boolean;
+  superseded_by?: string;
+  /** Multiplier applied by the supersession stage (<1.0; absent = unchanged). */
+  supersede_penalty?: number;
+  /**
    * T2 (retrieval-maxpool incident) — multiplier applied by applyTitleBoost
    * (1.0 = unchanged; default ~1.25x). Fires when the normalized query is a
    * contiguous token-run inside the page title (or an exact full-title match).

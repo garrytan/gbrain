@@ -14,7 +14,7 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     const caps = getProviderCapabilities('openai:gpt-5.2');
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false); // OpenAI implicit caching doesn't get marked
-    expect(caps.maxContext).toBe(200000);
+    expect(caps.maxContext).toBe(1_050_000); // gpt-5.6 family window (recipe-driven)
   });
 
   it('returns capabilities for Google Gemini', () => {
@@ -22,6 +22,13 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsToolCalling).toBe(true);
     expect(caps.supportsPromptCaching).toBe(false);
     expect(caps.maxContext).toBe(1000000); // Gemini 1.5 Pro
+  });
+
+  it('returns full capabilities for a local llama-server model', () => {
+    const caps = getProviderCapabilities('llama-server:qwen-local-cache-probe');
+    expect(caps.supportsToolCalling).toBe(true);
+    expect(caps.supportsPromptCaching).toBe(true);
+    expect(caps.supportsParallelTools).toBe(true);
   });
 
   it('marks OpenRouter OpenAI/Anthropic routes as cache-capable (per-model predicate)', () => {
@@ -64,6 +71,10 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
   it('returns ok for fully-capable Anthropic models', () => {
     expect(classifyCapabilities('anthropic:claude-sonnet-4-6')).toBe('ok');
     expect(classifyCapabilities('anthropic:claude-opus-4-7')).toBe('ok');
+  });
+
+  it('returns ok for a cache-capable local llama-server model', () => {
+    expect(classifyCapabilities('llama-server:qwen-local-cache-probe')).toBe('ok');
   });
 
   it('returns degraded:no_caching for OpenAI (tools yes, caching no)', () => {

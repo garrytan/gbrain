@@ -64,7 +64,14 @@ describe('facts extractor candidate salvage (#3866)', () => {
       { fact: null, kind: 'fact' },
     ]);
 
-    expect(await extract()).toEqual({ ok: false, reason: 'malformed_output' });
+    const outcome = await extract();
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('malformed_output');
+      // The outcome names the resolved model so failure surfaces (absorb log,
+      // warn lines) can tell the operator WHICH model misbehaved.
+      expect(typeof outcome.model).toBe('string');
+    }
   });
 
   test('keeps an explicitly empty array as a successful empty result', async () => {

@@ -4,7 +4,7 @@
  * test/process-watchdog.serial.test.ts (Bun-pinned, real processes).
  */
 import { describe, test, expect } from 'bun:test';
-import { watchdogDecision, installProcessWatchdog } from '../src/core/process-watchdog.ts';
+import { watchdogDecision, installProcessWatchdog, clampWatchdogTimers, MAX_WATCHDOG_TIMER_MS } from '../src/core/process-watchdog.ts';
 
 describe('watchdogDecision', () => {
   const deadline = 1000;
@@ -56,6 +56,62 @@ describe('installProcessWatchdog (handle contract)', () => {
     // inline worker string). We dispose immediately so nothing fires.
     const h = installProcessWatchdog({ deadlineMs: 60_000, label: "evil'; \n process.exit(1) //" });
     expect(h.active).toBe(true);
+    h.dispose();
+  });
+});
+
+describe('clampWatchdogTimers (#4284 joint-overflow clamp)', () => {
+  // Pure-function tests ONLY: setTimeout overflow-fires above 2^31−1, so a
+  // buggy clamp armed on a REAL worker would SIGTERM this test process at
+  // ~1ms (process.kill(process.pid)). Never arm a max-deadline worker here.
+  test('normal values pass through floored', () => {
+    expect(clampWatchdogTimers(5000.9, 600.2)).toEqual({ deadlineMs: 5000, graceMs: 600 });
+  });
+
+  test('a max deadline forces grace to zero so the SUM timer cannot overflow', () => {
+    const { deadlineMs, graceMs } = clampWatchdogTimers(MAX_WATCHDOG_TIMER_MS, 30_000);
+    expect(deadlineMs).toBe(MAX_WATCHDOG_TIMER_MS);
+    expect(graceMs).toBe(0);
+    expect(deadlineMs + graceMs).toBeLessThanOrEqual(MAX_WATCHDOG_TIMER_MS);
+  });
+
+  test('an oversized deadline clamps to the ceiling; the sum still fits', () => {
+    const { deadlineMs, graceMs } = clampWatchdogTimers(Number.MAX_SAFE_INTEGER, 30_000);
+    expect(deadlineMs).toBe(MAX_WATCHDOG_TIMER_MS);
+    expect(deadlineMs + graceMs).toBeLessThanOrEqual(MAX_WATCHDOG_TIMER_MS);
+  });
+
+  test('a near-ceiling deadline trims grace to exactly fit the sum', () => {
+    const { deadlineMs, graceMs } = clampWatchdogTimers(MAX_WATCHDOG_TIMER_MS - 10_000, 30_000);
+    expect(deadlineMs).toBe(MAX_WATCHDOG_TIMER_MS - 10_000);
+    expect(graceMs).toBe(10_000);
+  });
+
+  test('negative grace clamps to zero; NaN deadline flows through for the inert-check', () => {
+    expect(clampWatchdogTimers(5000, -1).graceMs).toBe(0);
+    // installProcessWatchdog's Number.isFinite inert-check must still see NaN.
+    expect(Number.isFinite(clampWatchdogTimers(Number.NaN, 100).deadlineMs)).toBe(false);
+  });
+
+  test('NaN grace is coerced to 0, never armed as a ~1ms overflow SIGKILL', () => {
+    // setTimeout(deadline + NaN) = setTimeout(NaN) fires at ~1ms — the exact
+    // failure class this clamp exists to prevent (multi-specialist finding).
+    const { deadlineMs, graceMs } = clampWatchdogTimers(5000, Number.NaN);
+    expect(deadlineMs).toBe(5000);
+    expect(graceMs).toBe(0);
+  });
+
+  test('Infinity deadline clamps to the ceiling and arms (documented contract)', () => {
+    // Deliberate: "oversized means longer bound" — an infinite deadline
+    // becomes ~24.8 days armed, not inert (see the clamp docstring).
+    const { deadlineMs, graceMs } = clampWatchdogTimers(Number.POSITIVE_INFINITY, 30_000);
+    expect(deadlineMs).toBe(MAX_WATCHDOG_TIMER_MS);
+    expect(deadlineMs + graceMs).toBeLessThanOrEqual(MAX_WATCHDOG_TIMER_MS);
+  });
+
+  test('installProcessWatchdog stays inert on NaN and non-positive deadlines post-clamp', () => {
+    const h = installProcessWatchdog({ deadlineMs: Number.NaN });
+    expect(h.active).toBe(false);
     h.dispose();
   });
 });

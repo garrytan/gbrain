@@ -162,6 +162,84 @@ describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
   });
 });
 
+// #3044 adoption — a whole-run LLM outage (revoked key, exhausted spend
+// limit, sustained 429s) halts the phase instead of failing every item one
+// by one, and must NOT pre-charge the per-page tombstone counters: the
+// content did nothing wrong, so a restored provider must retry every page
+// with a clean failure streak.
+describe('runPhaseExtractAtoms — global-error halt (#3044)', () => {
+  const mkPages = (slugs: string[]) =>
+    slugs.map((slug, i) => ({ slug, content: 'prose', contentHash: String(i).repeat(16) }));
+
+  test('auth error halts on the FIRST hit without charging the per-page failure counter', async () => {
+    await seedPage('note/g1');
+    await seedPage('note/g2');
+    let calls = 0;
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [],
+      _pages: mkPages(['note/g1', 'note/g2']),
+      _chat: async (_o: ChatOpts) => {
+        calls++;
+        throw Object.assign(new Error('invalid x-api-key'), { status: 401 });
+      },
+    });
+    expect(calls).toBe(1); // page 2 never called the LLM
+    expect(result.details.aborted_global_error).toBe('auth');
+    expect(result.status).toBe('warn');
+    const failures = result.details.failures as Array<{ error: string }>;
+    expect(failures).toHaveLength(1);
+    expect(failures[0].error).toContain('whole-run condition');
+    // The global outage did not pre-charge the tombstone counter.
+    for (const slug of ['note/g1', 'note/g2']) {
+      const fm = await frontmatterOf(slug);
+      expect(fm.atoms_fail_count).toBeUndefined();
+      expect(fm.atoms_scan_hash).toBeUndefined();
+    }
+  });
+
+  test('bare 429s halt only after 3 CONSECUTIVE hits; no page is counted or tombstoned', async () => {
+    for (const slug of ['note/r1', 'note/r2', 'note/r3', 'note/r4']) await seedPage(slug);
+    let calls = 0;
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [],
+      _pages: mkPages(['note/r1', 'note/r2', 'note/r3', 'note/r4']),
+      _chat: async (_o: ChatOpts) => {
+        calls++;
+        throw Object.assign(new Error('rate limited'), { status: 429 });
+      },
+    });
+    expect(calls).toBe(3); // page 4 never called the LLM
+    expect(result.details.aborted_global_error).toBe('rate_limit');
+    const failures = result.details.failures as Array<{ error: string }>;
+    expect(failures).toHaveLength(3); // 2 transient warnings + 1 abort entry
+    expect(failures[2].error).toContain('3 consecutive rate_limit errors');
+    for (const slug of ['note/r1', 'note/r2', 'note/r3', 'note/r4']) {
+      expect((await frontmatterOf(slug)).atoms_fail_count).toBeUndefined();
+    }
+  });
+
+  test('a successful call between 429s resets the streak (no halt)', async () => {
+    for (const slug of ['note/s1', 'note/s2', 'note/s3', 'note/s4']) await seedPage(slug);
+    let calls = 0;
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [],
+      _pages: mkPages(['note/s1', 'note/s2', 'note/s3', 'note/s4']),
+      _chat: async (_o: ChatOpts) => {
+        calls++;
+        // 429, 429, success, 429 — never 3 in a row.
+        if (calls === 3) return okChatResult('[]');
+        throw Object.assign(new Error('rate limited'), { status: 429 });
+      },
+    });
+    expect(calls).toBe(4);
+    expect(result.details.aborted_global_error).toBeUndefined();
+    expect((result.details.failures as unknown[])).toHaveLength(3);
+  });
+});
+
 describe('runPhaseExtractAtoms — completion receipt (gbrain#4148)', () => {
   test('full success flips atoms to the real source_hash and stamps the page', async () => {
     await seedPage('note/ok1');

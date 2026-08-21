@@ -720,7 +720,13 @@ export interface BrainEngine {
    * DO UPDATE actually targets the intended row instead of fabricating a
    * duplicate at (default, slug). Multi-source brains MUST pass sourceId.
    */
-  putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page>;
+  /**
+   * `allowEmptyOverwrite` (default false) opts out of the data-loss guard that
+   * refuses to overwrite an existing non-empty page body with a blank one (see
+   * `isBlankBody`). Pass it only when clearing a body is the deliberate intent;
+   * deleting a page goes through `deletePage`/`softDeletePage`, not this path.
+   */
+  putPage(slug: string, page: PageInput, opts?: { sourceId?: string; allowEmptyOverwrite?: boolean }): Promise<Page>;
   /**
    * v0.41.13 (#1309) — identity-based dedup pre-check for the import pipeline.
    *

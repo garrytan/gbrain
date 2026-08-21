@@ -22,6 +22,7 @@ import {
   checkPgliteScratchProbe,
   computeQueueHealthCheck,
   computeWedgedQueueCheck,
+  computeOrphanedPrivateQueueCheck,
   computeAutopilotFanoutConcurrencyCheck,
   checkSubagentHealth,
   checkBatchRetryHealth,
@@ -33,6 +34,7 @@ import {
   checkSyncConsolidation,
   checkPoolBudget,
   checkLinksExtractionLag,
+  checkChatFallbackChainInert,
   checkSearchMode,
   checkEvalDrift,
   checkRerankerHealth,
@@ -312,6 +314,7 @@ export async function doctorReportRemote(
 
   // issue #1801 — wedged_queue (cross-surface parity with buildChecks).
   checks.push(await computeWedgedQueueCheck(engine));
+  checks.push(await computeOrphanedPrivateQueueCheck(engine));
 
   // #2194 fix #5 — warn when autopilot fan-out exceeds worker concurrency.
   checks.push(await computeAutopilotFanoutConcurrencyCheck(engine));
@@ -372,6 +375,8 @@ export async function doctorReportRemote(
   checks.push(await checkSchemaPackSourceDrift(engine));
 
   // 7. v0.32.3 search-lite mode + per-key drift surface.
+  const inertFallbackChain = await checkChatFallbackChainInert(engine);
+  if (inertFallbackChain) checks.push(inertFallbackChain);
   checks.push(await checkSearchMode(engine));
 
   // 8. v0.32.3 eval_drift: retrieval-affecting files changed since last

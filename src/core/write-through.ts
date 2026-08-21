@@ -66,6 +66,11 @@ export interface WriteThroughResult {
   lastPushStatus?: PushLogOutcome;
   /**
    * Non-error reasons the file was not written:
+   *   - disabled_by_config: `sync.write_through` is set to an off value
+   *     ('false'/'0'/'off'/'no', case-insensitive) — the brain is DB-only by
+   *     operator choice (e.g. the host repo is a shared working tree where
+   *     stray root-level `.md` artifacts are unwanted). Checked before any FS
+   *     or DB work.
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
    *     sole-source brain, `sync.repo_path`) is unset (DB-only by design).
    *   - repo_not_found: target set but missing / not a directory.
@@ -81,7 +86,7 @@ export interface WriteThroughResult {
    *     differently-cased entry that the FS folds onto this page's file, so
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -146,6 +151,50 @@ function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot:
 }
 
 /**
+ * Off-value predicate for `sync.write_through`. Mirrors the falsy-config
+ * convention in minions/admission.ts (`isOffValue`): an operator typing
+ * 'FALSE', '0', 'Off', or 'no' means OFF — an opt-out that only matches the
+ * exact lowercase 'false' silently stays ON.
+ */
+function isOffValue(v: string): boolean {
+  const t = v.trim().toLowerCase();
+  return t === 'false' || t === '0' || t === 'off' || t === 'no';
+}
+
+// ~30s per-engine cache: writePageThrough and the facts fence lane run once
+// per page in bulk loops (sync, embed catch-up, dream cycle); a config SELECT
+// per page for a value that changes at human speed is pure overhead.
+type WriteThroughCacheEntry = { at: number; disabled: boolean };
+let writeThroughCache = new WeakMap<BrainEngine, WriteThroughCacheEntry>();
+const WRITE_THROUGH_CACHE_MS = 30_000;
+
+/** Test seam: drop the cache so config changes are visible immediately. */
+export function _resetWriteThroughCacheForTest(): void {
+  writeThroughCache = new WeakMap();
+}
+
+/**
+ * True when `sync.write_through` is set to an off value — the operator chose
+ * a DB-only brain (no `.md` artifacts, no fence files, no write-through
+ * commits). Fail-open to enabled: a config read error must never silently
+ * turn the disk sink off. Shared by writePageThrough and the facts fence
+ * lane (fence-write.ts) so both disk sinks honor one flag.
+ */
+export async function isWriteThroughDisabled(engine: BrainEngine): Promise<boolean> {
+  const cached = writeThroughCache.get(engine);
+  if (cached && Date.now() - cached.at < WRITE_THROUGH_CACHE_MS) return cached.disabled;
+  let disabled = false;
+  try {
+    const v = await engine.getConfig('sync.write_through');
+    disabled = v != null && isOffValue(v);
+  } catch {
+    disabled = false;
+  }
+  writeThroughCache.set(engine, { at: Date.now(), disabled });
+  return disabled;
+}
+
+/**
  * Render the DB row for `slug` to markdown and atomically write it under
  * `sync.repo_path`. Never throws — failures are reported via the result's
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
@@ -158,6 +207,14 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
+    // Opt-out flag: `sync.write_through=false` (or '0'/'off'/'no', any case)
+    // makes every page write DB-only, for brains whose host repo is a shared
+    // working tree where per-page `.md` artifacts are unwanted. Unset or any
+    // other value keeps the default. Memoized per engine (~30s TTL) so bulk
+    // loops don't pay one config SELECT per page.
+    if (await isWriteThroughDisabled(engine)) {
+      return { written: false, skipped: 'disabled_by_config' };
+    }
     // #2018: pick the disk target so a page is NEVER written into a different
     // source's working tree. Two legitimate topologies, plus the leak guard:
     //   1. The assigned source has its OWN `local_path` (a separate working

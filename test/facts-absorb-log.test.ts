@@ -118,7 +118,14 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
     expect(FACTS_ABSORB_REASONS).toContain('queue_shutdown');
     expect(FACTS_ABSORB_REASONS).toContain('embed_failure');
     expect(FACTS_ABSORB_REASONS).toContain('pipeline_error');
-    expect(FACTS_ABSORB_REASONS.length).toBe(6);
+    // Extraction-outcome codes (keyed-but-failing states; keyless writes no row).
+    expect(FACTS_ABSORB_REASONS).toContain('chat_unavailable');
+    expect(FACTS_ABSORB_REASONS).toContain('refusal');
+    expect(FACTS_ABSORB_REASONS).toContain('content_filter');
+    expect(FACTS_ABSORB_REASONS).toContain('malformed_output');
+    expect(FACTS_ABSORB_REASONS).toContain('non_terminal_stop');
+    expect(FACTS_ABSORB_REASONS).toContain('truncated_output');
+    expect(FACTS_ABSORB_REASONS.length).toBe(12);
   });
 });
 

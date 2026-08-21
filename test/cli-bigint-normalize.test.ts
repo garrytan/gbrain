@@ -82,16 +82,12 @@ describe('runCall output exit is bigint-safe (#2450)', () => {
       getStats: async () => ({ pages: 42n, chunks: 7 }),
     } as unknown as BrainEngine;
 
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (msg?: unknown) => { lines.push(String(msg)); };
-    try {
-      // --source pins tier 1 of resolveSourceId so the test is hermetic
-      // against GBRAIN_SOURCE / .gbrain-source on the host machine.
-      await runCall(stub, ['--source', 'default', 'get_stats']);
-    } finally {
-      console.log = orig;
-    }
-    expect(JSON.parse(lines.join('\n'))).toEqual({ pages: '42', chunks: 7 });
+    const chunks: string[] = [];
+    // --source pins tier 1 of resolveSourceId so the test is hermetic
+    // against GBRAIN_SOURCE / .gbrain-source on the host machine. The
+    // collector rides runCall's output seam (production uses the awaited
+    // stdout writer, #3423).
+    await runCall(stub, ['--source', 'default', 'get_stats'], async (p) => { chunks.push(p); });
+    expect(JSON.parse(chunks.join(''))).toEqual({ pages: '42', chunks: 7 });
   });
 });

@@ -5,12 +5,19 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import {
   resolveModel,
+  resolveModelDetailed,
   resolveAlias,
+  resolveTierDefault,
+  resolveEffectiveChatModel,
+  providerKeyReady,
+  openaiStaticTierFallback,
   DEFAULT_ALIASES,
   TIER_DEFAULTS,
+  PROVIDER_TIER_DEFAULTS,
   isAnthropicProvider,
   _resetDeprecationWarningsForTest,
 } from '../src/core/model-config.ts';
+import type { GBrainConfig } from '../src/core/config.ts';
 
 class StubEngine {
   readonly kind = 'pglite' as const;
@@ -25,6 +32,15 @@ let stub: StubEngine;
 let stderrCapture: string;
 const origWrite = process.stderr.write.bind(process.stderr);
 
+// Hermetic-env pinning (TODOS:1200 class): the key-aware tier default reads
+// provider keys from process.env AND ~/.gbrain/config.json. Without pinning,
+// every default-path assertion below would flip on a dev shell that exports
+// only OPENAI_API_KEY (or carries keys in config.json). Save/delete the key
+// envs and point GBRAIN_HOME at a nonexistent dir so the config read misses —
+// local runs then match keyless CI byte-for-byte.
+const PINNED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GBRAIN_HOME'] as const;
+let savedEnv: Record<string, string | undefined>;
+
 beforeEach(() => {
   stub = new StubEngine();
   stderrCapture = '';
@@ -33,11 +49,21 @@ beforeEach(() => {
     return true;
   }) as typeof process.stderr.write;
   delete process.env.GBRAIN_MODEL;
+  savedEnv = {};
+  for (const k of PINNED_ENV_KEYS) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+  process.env.GBRAIN_HOME = '/nonexistent-gbrain-home-for-model-config-tests';
   _resetDeprecationWarningsForTest();
 });
 
 afterEach(() => {
   process.stderr.write = origWrite;
+  for (const k of PINNED_ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
 });
 
 describe('resolveAlias', () => {
@@ -242,5 +268,169 @@ describe('resolveModel — v0.31.12 tier system', () => {
     const result = await resolveAlias(stub as never, 'claude-sonnet-4-6');
     expect(typeof result).toBe('string');
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+describe('resolveTierDefault — key-aware matrix (injected env used exclusively)', () => {
+  test('anthropic-only → anthropic tier defaults (unchanged behavior)', () => {
+    const env = { ANTHROPIC_API_KEY: 'sk-ant-test' };
+    expect(resolveTierDefault('reasoning', env)).toBe(TIER_DEFAULTS.reasoning);
+    expect(resolveTierDefault('utility', env)).toBe(TIER_DEFAULTS.utility);
+    expect(resolveTierDefault('deep', env)).toBe(TIER_DEFAULTS.deep);
+    expect(resolveTierDefault('subagent', env)).toBe(TIER_DEFAULTS.subagent);
+  });
+
+  test('openai-only → recipe-ranked openai tier defaults (no literal pins anywhere)', () => {
+    const env = { OPENAI_API_KEY: 'sk-test' };
+    const fallback = openaiStaticTierFallback();
+    // Behavioral, not literal: the expected ids derive from the openai
+    // recipe's chat list through the shared ranking grammar — updating the
+    // recipe at a release updates this test's expectations automatically.
+    expect(resolveTierDefault('reasoning', env)).toBe(fallback.reasoning);
+    expect(resolveTierDefault('utility', env)).toBe(fallback.utility);
+    expect(resolveTierDefault('deep', env)).toBe(fallback.deep);
+    expect(resolveTierDefault('subagent', env)).toBe(fallback.subagent);
+    // Shape sanity: all openai-prefixed, cheap ≠ top unless the recipe list
+    // collapses to one family member.
+    for (const id of Object.values(fallback)) expect(id.startsWith('openai:')).toBe(true);
+  });
+
+  test('both keys → anthropic wins (first table entry; zero change for keyed installs)', () => {
+    const env = { ANTHROPIC_API_KEY: 'sk-ant-test', OPENAI_API_KEY: 'sk-test' };
+    expect(resolveTierDefault('reasoning', env)).toBe(TIER_DEFAULTS.reasoning);
+  });
+
+  test('no keys → TIER_DEFAULTS unchanged (keyless shape preserved)', () => {
+    expect(resolveTierDefault('reasoning', {})).toBe(TIER_DEFAULTS.reasoning);
+  });
+
+  test('empty-string keys treated absent (#1249 posture)', () => {
+    const env = { ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '' };
+    expect(resolveTierDefault('reasoning', env)).toBe(TIER_DEFAULTS.reasoning);
+    const openaiOnly = { ANTHROPIC_API_KEY: '', OPENAI_API_KEY: 'sk-test' };
+    expect(resolveTierDefault('reasoning', openaiOnly)).toBe(openaiStaticTierFallback().reasoning);
+  });
+
+  test('table order is the precedence contract: anthropic first, openai second', () => {
+    expect(PROVIDER_TIER_DEFAULTS[0].provider).toBe('anthropic');
+    expect(PROVIDER_TIER_DEFAULTS[1].provider).toBe('openai');
+  });
+});
+
+describe('resolveModelDetailed — sources + key-aware step 7', () => {
+  test('tier default resolves key-aware with source tier_default (openai-only env)', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const r = await resolveModelDetailed(null, { tier: 'reasoning', fallback: 'sonnet' });
+      expect(r.model).toBe(openaiStaticTierFallback().reasoning);
+      expect(r.source).toBe('tier_default');
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  test('GBRAIN_MODEL env still beats the key-aware tier default (source env)', async () => {
+    process.env.GBRAIN_MODEL = 'haiku';
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const r = await resolveModelDetailed(null, { tier: 'reasoning', fallback: 'sonnet' });
+      expect(r.model).toBe(DEFAULT_ALIASES.haiku);
+      expect(r.source).toBe('env');
+    } finally {
+      delete process.env.GBRAIN_MODEL;
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  test('models.tier.<tier> config still beats the key-aware default (source tier_config)', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      stub.set('models.tier.reasoning', 'opus');
+      const r = await resolveModelDetailed(stub as never, { tier: 'reasoning', fallback: 'sonnet' });
+      expect(r.model).toBe(DEFAULT_ALIASES.opus);
+      expect(r.source).toBe('tier_config');
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+
+  test('config key wins with source config_key; fallback labels fallback', async () => {
+    stub.set('facts.extraction_model', 'openai:gpt-4o-mini');
+    const withKey = await resolveModelDetailed(stub as never, {
+      configKey: 'facts.extraction_model', tier: 'reasoning', fallback: 'sonnet',
+    });
+    expect(withKey).toEqual({ model: 'openai:gpt-4o-mini', source: 'config_key' });
+    const noTier = await resolveModelDetailed(null, { fallback: 'sonnet' });
+    expect(noTier.source).toBe('fallback');
+    expect(noTier.model).toBe(DEFAULT_ALIASES.sonnet);
+  });
+
+  test('subagent + openai-only: returns openai with once-per-process no-caching warn', async () => {
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const r = await resolveModelDetailed(null, { tier: 'subagent', fallback: 'sonnet' });
+      expect(r.model).toBe(openaiStaticTierFallback().subagent);
+      expect(stderrCapture).toContain('caching');
+      const before = stderrCapture.length;
+      await resolveModelDetailed(null, { tier: 'subagent', fallback: 'sonnet' });
+      expect(stderrCapture.length).toBe(before); // warned once
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  });
+});
+
+describe('providerKeyReady + resolveEffectiveChatModel (shared runtime/report resolution)', () => {
+  const fileCfg = (partial: Partial<GBrainConfig>): GBrainConfig =>
+    ({ engine: 'pglite', ...partial }) as GBrainConfig;
+
+  test('providerKeyReady: recipe auth_env drives readiness; bare/unknown ids are not servable', () => {
+    expect(providerKeyReady('openai:gpt-5.2', { OPENAI_API_KEY: 'sk-test' })).toBe(true);
+    expect(providerKeyReady('openai:gpt-5.2', {})).toBe(false);
+    expect(providerKeyReady('claude-sonnet-4-6', { ANTHROPIC_API_KEY: 'x' })).toBe(false); // bare id
+    expect(providerKeyReady('not-a-provider:x', { OPENAI_API_KEY: 'sk-test' })).toBe(false);
+    // No required keys + a chat touchpoint (the CLI owns auth) → ready.
+    expect(providerKeyReady('claude-cli:claude-sonnet-4-6', {})).toBe(true);
+    // A keyed/keyless but CHAT-LESS recipe is NOT ready: honoring an
+    // embedding-only pin as chat_model would install a model
+    // isAvailable('chat') rejects instead of falling back to the key-aware
+    // default. (ollama is embedding-only in this repo's recipe, hence false
+    // despite requiring no keys.)
+    expect(providerKeyReady('voyage:voyage-4-large', { VOYAGE_API_KEY: 'x' })).toBe(false);
+    expect(providerKeyReady('ollama:llama3', {})).toBe(false);
+  });
+
+  test('servable file pin wins (init-era openai pin + live key)', () => {
+    const r = resolveEffectiveChatModel(
+      fileCfg({ chat_model: 'openai:gpt-5.2', openai_api_key: 'sk-file' }), {});
+    expect(r).toEqual({ model: 'openai:gpt-5.2', source: 'file_pin' });
+  });
+
+  test('unservable pin falls through to key-aware default with one warn (provider switch)', () => {
+    // Stale init-era openai pin, but the only live key is Anthropic.
+    const cfg = fileCfg({ chat_model: 'openai:gpt-5.2' });
+    const env = { ANTHROPIC_API_KEY: 'sk-ant-test' };
+    const r = resolveEffectiveChatModel(cfg, env);
+    expect(r).toEqual({ model: TIER_DEFAULTS.reasoning, source: 'tier_default' });
+    expect(stderrCapture).toContain('openai:gpt-5.2');
+    const before = stderrCapture.length;
+    resolveEffectiveChatModel(cfg, env);
+    expect(stderrCapture.length).toBe(before); // warned once per pin per process
+  });
+
+  test('GBRAIN_MODEL beats the file pin (env_model source)', () => {
+    const r = resolveEffectiveChatModel(
+      fileCfg({ chat_model: 'openai:gpt-5.2', openai_api_key: 'sk-file' }),
+      { GBRAIN_MODEL: 'anthropic:claude-sonnet-4-6' });
+    expect(r).toEqual({ model: 'anthropic:claude-sonnet-4-6', source: 'env_model' });
+  });
+
+  test('no pin, no env model → key-aware tier default (keyless → anthropic shape)', () => {
+    expect(resolveEffectiveChatModel(null, {})).toEqual({
+      model: TIER_DEFAULTS.reasoning, source: 'tier_default',
+    });
+    expect(resolveEffectiveChatModel(null, { OPENAI_API_KEY: 'sk-test' })).toEqual({
+      model: openaiStaticTierFallback().reasoning, source: 'tier_default',
+    });
   });
 });

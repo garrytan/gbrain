@@ -215,20 +215,59 @@ const EXTRACTOR_SYSTEM = [
 
 const MAX_TURN_TEXT_CHARS = 8000;
 
+export type ExtractFailureReason =
+  | 'chat_unavailable'
+  | 'provider_error'
+  | 'refusal'
+  | 'content_filter'
+  | 'non_terminal_stop'
+  | 'malformed_output'
+  | 'truncated_output';
+
 export type ExtractFactsOutcome =
   | { ok: true; facts: ExtractedFact[] }
   | {
       ok: false;
-      reason:
-        | 'chat_unavailable'
-        | 'provider_error'
-        | 'refusal'
-        | 'content_filter'
-        | 'non_terminal_stop'
-        | 'malformed_output'
-        | 'truncated_output';
+      reason: ExtractFailureReason;
+      /** The resolved extraction model the failure is about (when known). */
+      model?: string;
       error?: unknown;
     };
+
+/**
+ * Typed carrier for extraction failures that must PROPAGATE (throw) rather
+ * than collapse to zero counts — `truncated_output` has no underlying error
+ * object to rethrow and `provider_error.error` is optional, so a synthesized
+ * typed error is the only implementable carrier. The facts backstop throws it
+ * for transport-class failures (queue-mode catch maps it to precise
+ * absorb-log codes; the durable facts-absorb minion gets retry/backoff), and
+ * the facts-absorb job handler throws it for execution-time
+ * `chat_unavailable` so config drift retries instead of consuming the job.
+ */
+export class FactsExtractionError extends Error {
+  readonly reason: ExtractFailureReason;
+  readonly model?: string;
+  constructor(reason: ExtractFailureReason, model?: string, cause?: unknown) {
+    // The MESSAGE deliberately carries only reason + model — never
+    // `cause.message`. This error's message flows to remote MCP callers
+    // (dispatch returns e.message) and into persisted logs (ingest_log,
+    // mcp_request_log), and provider 4xx bodies echo partially-redacted API
+    // keys / org ids. The full cause stays attached for local debugging.
+    super(`[facts-extract] ${reason}${model ? ` (model=${model})` : ''}`);
+    this.name = 'FactsExtractionError';
+    this.reason = reason;
+    this.model = model;
+    // NON-ENUMERABLE cause (matching `new Error(msg, { cause })` semantics):
+    // a plain property assignment would be enumerable, so a future
+    // JSON.stringify(err) / {...err} / own-prop structured logger would ship
+    // the raw provider body — exactly what the message discipline excludes.
+    if (cause !== undefined) {
+      Object.defineProperty(this, 'cause', {
+        value: cause, enumerable: false, writable: true, configurable: true,
+      });
+    }
+  }
+}
 
 /** Strict extraction contract for callers that persist completion authority. */
 export async function extractFactsFromTurnWithOutcome(
@@ -243,22 +282,32 @@ export async function extractFactsFromTurnWithOutcome(
   cleaned = cleaned.trim();
   if (!cleaned) return { ok: true, facts: [] };
 
-  if (!isAvailable('chat')) {
-    // No chat gateway → no extraction. Caller still inserts facts via direct
-    // `gbrain take add` paths.
-    return { ok: false, reason: 'chat_unavailable' };
-  }
-
+  // Resolve the model FIRST, then gate on the model extraction will ACTUALLY
+  // call. The bare isAvailable('chat') probes the GLOBAL chat model, which can
+  // disagree with the extraction model in both directions (a servable
+  // facts.extraction_model behind an unservable global, and vice versa).
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
-  const defaultModel = await getFactsExtractionModel(input.engine);
+  // When the caller (the backstop availability gate) already resolved the
+  // model, honor it — resolving again costs up to 3 engine.getConfig
+  // round-trips per gated page write.
+  const model = input.model ?? await getFactsExtractionModel(input.engine);
   const maxTokens = await getFactsExtractionMaxTokens(input.engine);
-  const model = input.model ?? defaultModel;
+
+  if (!isAvailable('chat', model)) {
+    // No servable chat model → no extraction. Caller still inserts facts via
+    // agent-authored `## Facts` fences and the `remember` verb.
+    return { ok: false, reason: 'chat_unavailable', model };
+  }
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
       : ''
   }`;
   let result: ChatResult;
+  // The cap the last call was actually sent at. When the truncation retry
+  // escalates to maxTokens*2, the malformed-output retry below must re-send
+  // at the escalated cap — re-sending at 1x would just re-truncate.
+  let effectiveMaxTokens = maxTokens;
   try {
     result = await chat({
       model,
@@ -276,11 +325,12 @@ export async function extractFactsFromTurnWithOutcome(
         `[facts-extract] WARN: extractor output truncated at maxTokens=${maxTokens} ` +
         `(model=${model}); retrying once at ${maxTokens * 2}\n`,
       );
+      effectiveMaxTokens = maxTokens * 2;
       result = await chat({
         model,
         system: EXTRACTOR_SYSTEM,
         messages: [{ role: 'user', content: userContent }],
-        maxTokens: maxTokens * 2,
+        maxTokens: effectiveMaxTokens,
         abortSignal: input.abortSignal,
       });
       if (result.stopReason === 'length') {
@@ -289,28 +339,61 @@ export async function extractFactsFromTurnWithOutcome(
           `(model=${model}); facts for this turn are likely lost. ` +
           `Raise the cap: gbrain config set facts.extraction_max_tokens <n>\n`,
         );
-        return { ok: false, reason: 'truncated_output' };
+        return { ok: false, reason: 'truncated_output', model };
       }
     }
   } catch (err) {
     // Re-throw aborts. Strict callers receive a failure outcome; the historical
     // wrapper below converts that outcome to [] for best-effort call sites.
     if (isAbort(err)) throw err;
-    return { ok: false, reason: 'provider_error', error: err };
+    return { ok: false, reason: 'provider_error', model, error: err };
   }
 
-  if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal' };
+  if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal', model };
   if (result.stopReason === 'content_filter') {
-    return { ok: false, reason: 'content_filter' };
+    return { ok: false, reason: 'content_filter', model };
   }
   if (result.stopReason !== 'end') {
-    return { ok: false, reason: 'non_terminal_stop' };
+    return { ok: false, reason: 'non_terminal_stop', model };
   }
 
-  const parsedShape = parseExtractorJsonDetailed(result.text);
+  let parsedShape = parseExtractorJsonDetailed(result.text);
   if (!parsedShape ||
       (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
-    return { ok: false, reason: 'malformed_output' };
+    process.stderr.write(
+      `[facts-extract] WARN: extractor returned malformed output (model=${model}); ` +
+      'retrying once with an explicit JSON-only reminder\n',
+    );
+    try {
+      result = await chat({
+        model,
+        system: `${EXTRACTOR_SYSTEM}\nThe previous attempt returned invalid JSON or an invalid facts schema. ` +
+          'Return exactly one valid JSON object and no prose.',
+        messages: [{ role: 'user', content: userContent }],
+        maxTokens: effectiveMaxTokens,
+        abortSignal: input.abortSignal,
+      });
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      return { ok: false, reason: 'provider_error', model, error: err };
+    }
+
+    if (result.stopReason === 'refusal') return { ok: false, reason: 'refusal', model };
+    if (result.stopReason === 'content_filter') {
+      return { ok: false, reason: 'content_filter', model };
+    }
+    if (result.stopReason === 'length') {
+      return { ok: false, reason: 'truncated_output', model };
+    }
+    if (result.stopReason !== 'end') {
+      return { ok: false, reason: 'non_terminal_stop', model };
+    }
+
+    parsedShape = parseExtractorJsonDetailed(result.text);
+    if (!parsedShape ||
+        (parsedShape.invalidCandidates > 0 && parsedShape.facts.length === 0)) {
+      return { ok: false, reason: 'malformed_output', model };
+    }
   }
   if (parsedShape.invalidCandidates > 0) {
     process.stderr.write(
@@ -383,10 +466,31 @@ export async function extractFactsFromTurnWithOutcome(
   return { ok: true, facts };
 }
 
+// Once-per-(reason, process) memo for the best-effort wrapper below — its
+// remaining callers (sweep corpus pass, transcripts ingest) previously
+// converted every failure into an invisible []. One warn per reason keeps
+// keyless installs calm while making keyed failures visible.
+const _wrapperWarningsEmitted = new Set<string>();
+/** @internal — test seam */
+export function _resetExtractWrapperWarningsForTests(): void {
+  _wrapperWarningsEmitted.clear();
+}
+
 /** Historical best-effort API retained for interactive callers. */
 export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
   const outcome = await extractFactsFromTurnWithOutcome(input);
-  return outcome.ok ? outcome.facts : [];
+  if (!outcome.ok) {
+    if (!_wrapperWarningsEmitted.has(outcome.reason)) {
+      _wrapperWarningsEmitted.add(outcome.reason);
+      process.stderr.write(
+        `[facts-extract] WARN: extraction skipped (${outcome.reason}` +
+        `${outcome.model ? `, model=${outcome.model}` : ''}); facts for this turn were not captured. ` +
+        `Further '${outcome.reason}' skips this process are silent.\n`,
+      );
+    }
+    return [];
+  }
+  return outcome.facts;
 }
 
 interface RawExtracted {

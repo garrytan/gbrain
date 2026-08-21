@@ -168,4 +168,3 @@ describe('splitCJKQueryTerms', () => {
     ]);
   });
 });
-

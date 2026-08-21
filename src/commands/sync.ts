@@ -300,6 +300,11 @@ export interface SyncOpts {
    * pre-v0.17 global-config path unchanged.
    */
   sourceId?: string;
+  /**
+   * github source kind: refresh exactly one item (webhook path).
+   * When set, sync skips the sweep and re-fetches this single issue/PR.
+   */
+  githubItem?: { repo: string; number: number; kind: 'issue' | 'pr'; deleted?: boolean };
   /** Multi-repo: sync strategy override (markdown, code, auto). */
   strategy?: 'markdown' | 'code' | 'auto';
   /**
@@ -407,6 +412,14 @@ export interface SyncOpts {
    * Precedent: CycleOpts.signal at src/core/cycle.ts (v0.22.1 #403).
    */
   signal?: AbortSignal;
+  /**
+   * Serve-delegated sync progress seam: fired at phase boundaries and on every
+   * durable checkpoint flush (cumulative bankedFiles). Sync-fire, never
+   * awaited — the delegated-job runner mirrors these into the record that
+   * `sync_status` IPC polls read. Absent for direct CLI runs (stderr
+   * breadcrumbs already cover that surface).
+   */
+  onProgress?: (p: { phase: string; bankedFiles?: number }) => void;
 }
 
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,
@@ -558,6 +571,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   // report names WHICH phase spun. Doesn't fix #1342 but converts
   // "hung with no output" into actionable diagnostic data.
   serr(`[gbrain phase] sync.resolve_repo`);
+  opts.onProgress?.({ phase: 'resolve_repo' });
   // Resolve repo path
   const repoPath = opts.repoPath || await readSyncAnchor(engine, opts.sourceId, 'repo_path');
   if (!repoPath) {
@@ -591,6 +605,40 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     syncActivePack = { page_types: resolved.manifest.page_types };
   } catch {
     syncActivePack = undefined;
+  }
+
+  // v0.46: github source kind. A source registered with kind=github is
+  // API-backed, not git-backed: the sync engine materializes issues/PRs
+  // into the managed dir and hands off to the standard import pipeline.
+  // Everything below (git anchors, diff, reconcile) is git-specific and
+  // does not apply. Also handles opts.githubItem (webhook single-item
+  // refresh) when the source is github-kind.
+  if (opts.sourceId || opts.githubItem) {
+    const srcId = opts.sourceId ?? 'default';
+    const cfgRows = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+      `SELECT local_path, config FROM sources WHERE id = $1`,
+      [srcId],
+    );
+    if (cfgRows.length > 0) {
+      const rawCfg = typeof cfgRows[0].config === 'string'
+        ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
+        : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+      if (rawCfg.kind === 'github') {
+        serr(`[gbrain phase] sync.github_materialize`);
+        const { parseGitHubSourceConfig, runGitHubSync } = await import('../core/github-source.ts');
+        const { defaultCloneDir } = await import('../core/sources-ops.ts');
+        const fallbackDir = cfgRows[0].local_path ?? defaultCloneDir(`${srcId}-github`);
+        const cfg = parseGitHubSourceConfig(rawCfg, fallbackDir);
+        return await runGitHubSync(engine, srcId, cfg, opts);
+      }
+      if (opts.githubItem) {
+        throw new Error(
+          `github_item refresh requires a github-kind source, but "${srcId}" is not github-kind.`,
+        );
+      }
+    } else if (opts.githubItem) {
+      throw new Error(`github_item refresh requires a github-kind source; source "${srcId}" not found.`);
+    }
   }
 
   // v0.28: source-aware re-clone branch. When the source has a remote_url
@@ -804,6 +852,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   if (!opts.dryRun && !opts.noPull && !detachedHead && originRemotePresent) {
     const _t0 = Date.now();
     serr(`[gbrain phase] sync.git_pull start`);
+    opts.onProgress?.({ phase: 'git_pull' });
     try {
       const { pullRepo } = await import('../core/git-remote.ts');
       // v0.41.13.0 (T3 / D-V4-mech-7): if the operator set --timeout,
@@ -1368,6 +1417,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       if (ok) {
         consecutiveFlushFailures = 0;
         bankedFiles += batch.length;
+        opts.onProgress?.({ phase: 'import', bankedFiles });
       } else {
         // Not durably banked — re-merge so the next flush retries this batch.
         for (const p of batch) pendingCheckpointPaths.add(p);
@@ -2644,6 +2694,7 @@ async function performFullSync(
   // #753/#774: thread exclude (--exclude CLI) + slugRoot (monorepo subdir).
   const _fullImportT0 = Date.now();
   serr(`[gbrain phase] sync.fullsync.import start strategy=${opts.strategy ?? 'markdown'}`);
+  opts.onProgress?.({ phase: 'full_import' });
   const result = await runImport(engine, importArgs, {
     commit: headCommit,
     strategy: opts.strategy,
@@ -3005,11 +3056,15 @@ Options:
   --watch              Re-sync continuously on an interval.
   --interval N         Watch-mode interval in seconds (default 60).
   --no-pull            Skip 'git pull' before the sync (useful for tests).
+  --no-delegate        On a PGLite brain with a live 'gbrain serve', sync
+                       normally delegates the run to the serve process over
+                       its IPC socket (the lock owner does the work; embeds
+                       defer to serve's background sweep). This flag (or
+                       GBRAIN_SYNC_NO_DELEGATE=1) opts out — sync then fails
+                       fast if a live serve holds the brain.
   --no-schema-pack     Skip loading the active schema pack (no per-file pack
                        regex runs; pages use legacy prefix typing). Escape
                        hatch if a suspect pack regex is wedging sync.
-                       PGLite is single-writer: stop 'gbrain serve' before a
-                       large sync (see docs/architecture/serve-sync-concurrency.md).
                        GBRAIN_SYNC_TRACE=1 names the file being imported (hang triage).
   --all                Sync every registered source instead of just the
                        default (multi-source brains).
@@ -4222,7 +4277,7 @@ async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Pro
  * when `--json` is set, so banners stay off stdout and the JSON envelope
  * pipes cleanly through `jq` (D4).
  */
-function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
+export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
   const write = (line: string) => sink.write(line + '\n');
   switch (result.status) {
     case 'up_to_date':

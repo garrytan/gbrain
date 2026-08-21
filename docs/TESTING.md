@@ -383,6 +383,23 @@ discipline as the database-URL vars — so a dev shell configured for a real
 brain can't ride through. `GBRAIN_DEBUG_PRELOAD=1` prints the allocated
 scratch home for debugging.
 
+**Provider-key strip preload.** `test/helpers/provider-keys-preload.ts` (bunfig
+`[test]` preload) strips the ambient provider credentials the canonical fold
+recognizes (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Gemini/Google, Voyage,
+OpenRouter, ZeroEntropy, DashScope, and the Azure OpenAI endpoint fields) and
+defaults `GBRAIN_MODEL_DISCOVERY=off` (respecting an explicit operator
+override), so key-aware model routing (`resolveTierDefault`) resolves
+identically to keyless CI and latest-model discovery never makes a real
+network call from a test. Without it, a chat key exported in the dev shell
+flips default-model assertions AND turns gated paths into live provider calls
+(observed: 183 unit failures + 15-minute retry hangs on an
+`OPENAI_API_KEY`-exporting shell). Tests that want keys inject them explicitly
+(`configureGateway({env})`, `withEnv`, serial-file `process.env`) — the
+preload removes ambient shell state only, before any test file loads. The e2e
+wrapper (`scripts/run-e2e.sh`) opts back in at its boundary via
+`GBRAIN_TEST_KEEP_PROVIDER_KEYS=1` — e2e is the lane where real keys are
+deliberate (live embed/parity tests skip-gate on them).
+
 **Database-URL run guard (#3485).** A `bun test` invocation REFUSES to start while
 `DATABASE_URL` or `GBRAIN_DATABASE_URL` is ambient in the environment, because some
 tests run destructive SQL against whatever those URLs point at (a bare `bun test`

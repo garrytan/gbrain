@@ -112,3 +112,34 @@ describe('classifyAgainstCandidates', () => {
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
   });
 });
+
+describe('classify gate — key-aware, engine-free (CX10)', () => {
+  test('unservable classifier model degrades to cosine fallback, never throws', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    // Deterministic gate: clear any gateway/transport state a sibling file in
+    // this shard's process left behind — the test must exercise the
+    // unavailability gate, not a leftover stub or a network failure.
+    const { resetGateway, __setChatTransportForTests } = await import('../src/core/ai/gateway.ts');
+    resetGateway();
+    __setChatTransportForTests(null);
+    await withEnv({
+      ANTHROPIC_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+      GBRAIN_MODEL: undefined,
+      GBRAIN_HOME: '/nonexistent-gbrain-home-classify-test',
+    }, async () => {
+      const existing = makeFact({ id: 1, embedding: vec(1, 0, 0) });
+      // Keyless env → resolveTierDefault('utility') yields the Anthropic
+      // default whose key is absent → gate fails (or, if a sibling test file
+      // left a transport stub, the call itself fails) → cosine fallback at
+      // ≥0.92 → duplicate. Either path must land on cosine_fallback.
+      const r = await classifyAgainstCandidates(
+        { fact: 'x', kind: 'fact', embedding: vec(0.93, Math.sqrt(1 - 0.93 * 0.93), 0) },
+        [existing],
+      );
+      expect(r.reason).toBe('cosine_fallback');
+      expect(r.decision).toBe('duplicate');
+      if (r.decision === 'duplicate') expect(r.matched_id).toBe(1);
+    });
+  });
+});

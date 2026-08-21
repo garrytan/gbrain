@@ -80,8 +80,27 @@ describe('canonicalLookup — id normalization', () => {
     expect(canonicalLookup('gpt-5')).toBeUndefined();
   });
 
-  test('nested OpenRouter id → MISS (markup ≠ native pricing)', () => {
+  test('nested OpenRouter id with NO declared entry → MISS (markup ≠ native pricing)', () => {
     expect(canonicalLookup('openrouter:anthropic/claude-sonnet-4-6')).toBeUndefined();
+  });
+
+  test('OpenRouter id WITH a declared static entry → hit on its own rate, not the vendor alias', () => {
+    // deepseek/deepseek-v4-flash-0731 happens to match deepseek:deepseek-v4-flash
+    // to the cent, but this must resolve via its OWN canonical key, not by
+    // falling through to the bare vendor tail — that fallthrough is exactly
+    // what canonicalLookup's nested-id miss (case above) exists to prevent.
+    expect(canonicalLookup('openrouter:deepseek/deepseek-v4-flash-0731')).toEqual({
+      input: 0.14,
+      output: 0.28,
+    });
+    expect(canonicalLookup('openrouter:qwen/qwen3.7-flash')).toEqual({
+      input: 0.03,
+      output: 0.13,
+    });
+    expect(canonicalLookup('openrouter:qwen/qwen3.6-plus')).toEqual({
+      input: 0.325,
+      output: 1.95,
+    });
   });
 
   test('slash-bearing model tail kept as exact key (together Llama)', () => {

@@ -339,6 +339,15 @@ export async function importFromContent(
      * leave it unset → markers preserved (the gate + CLI own them).
      */
     remote?: boolean;
+    /**
+     * Threaded to `tx.putPage` as its empty-overwrite escape hatch (the
+     * engine refuses to blank a non-empty body otherwise). Only two callers
+     * may set it: `importFromFile` (the disk file IS the source of truth, so
+     * an emptied file is a deliberate clear) and the `put_page` op with an
+     * explicit `allow_empty: true`. Agent/LLM writers, capture, quarantine,
+     * and reindex leave it unset so the guard stays armed.
+     */
+    allowEmptyOverwrite?: boolean;
   } = {},
 ): Promise<ImportResult> {
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
@@ -901,7 +910,9 @@ export async function importFromContent(
       ingested_via: opts.ingested_via ?? null,
       // ingested_at is server-stamped at the engine layer when any
       // provenance write fires; never client-controlled.
-    }, txOpts);
+      // Empty-overwrite escape hatch only when the caller vouched (file
+      // import / explicit allow_empty); otherwise the engine guard stays on.
+    }, opts.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
 
     // v0.40.3.0: stamp the contextual retrieval state columns alongside
     // the page write. updatePageContextualRetrievalState is a narrow
@@ -1273,6 +1284,9 @@ export async function importFromFile(
     ...opts,
     filename: fileBasename,
     sourcePath: relativePath,
+    // The disk file IS the source of truth: a file the user emptied is a
+    // deliberate clear, so it passes putPage's empty-overwrite guard.
+    allowEmptyOverwrite: true,
   });
 }
 
@@ -1430,7 +1444,9 @@ export async function importCodeFile(
       timeline: '',
       frontmatter: { language: lang, file: relativePath },
       content_hash: hash,
-    }, txOpts);
+      // `content` is authoritative source text (disk file, or the row's own
+      // body via reindex-code): an emptied file is a deliberate clear.
+    }, { ...txOpts, allowEmptyOverwrite: true });
 
     await tx.addTag(slug, 'code', txOpts);
     await tx.addTag(slug, lang, txOpts);
@@ -1584,6 +1600,12 @@ export interface ImportTransactionSpec {
   chunks?: ChunkInput[];
   /** Optional file-row insert (image ingest). Page link injected automatically. */
   file?: FileSpec;
+  /**
+   * putPage empty-overwrite escape hatch. Set only when the page body is
+   * derived from an authoritative file (image ingest: OCR text of the current
+   * bytes may legitimately be blank where the prior import's wasn't).
+   */
+  allowEmptyOverwrite?: boolean;
   /** Inside-transaction hook for type-specific work (tags, links). */
   after?: (tx: BrainEngine) => Promise<void>;
 }
@@ -1596,7 +1618,8 @@ export async function withImportTransaction(
   const txOpts = spec.sourceId ? { sourceId: spec.sourceId } : undefined;
   await engine.transaction(async (tx) => {
     if (spec.hadExisting) await tx.createVersion(spec.slug, txOpts);
-    await tx.putPage(spec.slug, spec.page, txOpts);
+    await tx.putPage(spec.slug, spec.page,
+      spec.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
     if (spec.file) {
       // page_id resolution after putPage so the new row's id is available.
       const stored = await tx.getPage(spec.slug, txOpts);
@@ -1938,6 +1961,9 @@ export async function importImageFile(
       frontmatter,
       content_hash: hash,
     },
+    // The image bytes are the source of truth and the body is OCR-derived:
+    // a changed image whose OCR yields nothing legitimately blanks the body.
+    allowEmptyOverwrite: true,
     chunks: [chunk],
     file: fileSpec,
     after: async (tx) => {

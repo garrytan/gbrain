@@ -811,7 +811,11 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
   // reporting an availability error (#2590).
   if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
-    console.error('Chat gateway unavailable. Configure a chat model (e.g. `gbrain config set chat_model anthropic:claude-haiku-4-5`), or pass --dry-run to preview candidates.');
+    console.error(
+      'Chat gateway unavailable. Set a provider key (OPENAI_API_KEY or ANTHROPIC_API_KEY — ' +
+      'chat routes to whichever is present), or configure a model explicitly ' +
+      '(`gbrain config set models.chat <provider:model>`), or pass --dry-run to preview candidates.',
+    );
     process.exit(1);
   }
 

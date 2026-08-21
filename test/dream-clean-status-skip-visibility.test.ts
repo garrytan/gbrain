@@ -170,3 +170,38 @@ describe('printHuman — a clean cycle still surfaces skip reasons', () => {
     expect(lines.some(l => l.includes('synth_transcripts=1'))).toBe(true);
   });
 });
+
+describe('printHuman — synthesize_concepts failures are named', () => {
+  test('a failure carrying `concept` (no `source`) prints the concept slug, not an anonymous "?"', () => {
+    const totals = emptyTotals();
+    const phases: PhaseResult[] = [{
+      phase: 'synthesize_concepts',
+      status: 'warn',
+      duration_ms: 100,
+      summary: '2 concept(s), 1 LLM-failed → template fallback',
+      details: { failures: [{ concept: 'concepts/agent-memory', error: 'empty model response' }] },
+    }];
+    const r = report(phases, totals);
+    const lines = captureLog(() => printHuman(r));
+    const failLine = lines.find((l) => l.includes('empty model response'));
+    expect(failLine).toBeDefined();
+    expect(failLine!).toContain('concepts/agent-memory');
+    expect(failLine!).not.toContain('✗ ?:');
+  });
+
+  test('sync-shaped failures (`source`) keep printing the source id', () => {
+    const totals = emptyTotals();
+    const phases: PhaseResult[] = [{
+      phase: 'sync',
+      status: 'warn',
+      duration_ms: 100,
+      summary: 'sync partial',
+      details: { failures: [{ source: 'wiki', error: 'clone missing' }] },
+    }];
+    const r = report(phases, totals);
+    const lines = captureLog(() => printHuman(r));
+    const failLine = lines.find((l) => l.includes('clone missing'));
+    expect(failLine).toBeDefined();
+    expect(failLine!).toContain('wiki');
+  });
+});

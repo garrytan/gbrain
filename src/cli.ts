@@ -23,7 +23,7 @@ import { operations, OperationError } from './core/operations.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
-import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict } from './core/cli-force-exit.ts';
+import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
@@ -402,7 +402,7 @@ async function main() {
 
   if (command === '--tools-json') {
     const { printToolsJson } = await import('./commands/tools-json.ts');
-    printToolsJson();
+    await printToolsJson();
     return;
   }
 
@@ -712,7 +712,10 @@ async function main() {
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const result = normalizeLocalResult(rawResult);
     const output = formatResult(op.name, result, params);
-    if (output) process.stdout.write(output);
+    // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
+    // tail to a slow pipe reader when the exit grace lapses — see
+    // writeStdoutFinal.
+    if (output) await writeStdoutFinal(output);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     // v0.42.20.0 (codex D4): on error, set exitCode + return so the `finally`
@@ -800,7 +803,8 @@ async function runThinClientRouted(
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     const result = unpackToolResult(raw);
     const output = formatResult(op.name, result, params);
-    if (output) process.stdout.write(output);
+    // Awaited delivery (#3423) — same contract as the local-engine path.
+    if (output) await writeStdoutFinal(output);
     maybePrintConceptNudge(op.name, params);
   } catch (e: unknown) {
     if (e instanceof RemoteMcpError) {
@@ -2479,6 +2483,19 @@ async function handleCliOnly(command: string, args: string[]) {
     }
   }
 
+  // Serve-delegated sync preflight (PGLite host brains only): a live `gbrain
+  // serve` owns the single-writer lock, so connectEngine below would throw
+  // LiveServeLockError — instead the sync runs INSIDE the serve over its IPC
+  // socket (commands/sync-delegate.ts). Handled === delegated or politely
+  // refused (exit verdict set inside); false falls through unchanged.
+  if (command === 'sync') {
+    const cfgSync = loadConfig();
+    if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
+      const { maybeDelegateSyncToServe } = await import('./commands/sync-delegate.ts');
+      if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return;
+    }
+  }
+
   // Thin-client `jobs` dispatch: `list` and `get` route over MCP (v0.32
   // routing branches in commands/jobs.ts) and never touch a local engine —
   // but falling through to connectEngine() below fabricates an empty
@@ -2702,10 +2719,10 @@ async function handleCliOnly(command: string, args: string[]) {
         await runMaintain(engine, args);
         break;
       }
-      // v0.32.7 CJK wave — post-upgrade markdown re-chunk sweep.
-      // v0.36 Phase 3 wave — `gbrain reindex --multimodal` re-embeds content_chunks
-      // into the unified Voyage multimodal-3 column.
       case 'reindex': {
+        const reindex = await import('./commands/reindex.ts'); args = reindex.normalizeReindexArgs(args);
+        const scopeError = reindex.validateReindexModeScope(args);
+        if (scopeError) { process.stderr.write(`[reindex] ${scopeError}\n`); setCliExitVerdict(2); break; }
         if (args.includes('--multimodal')) {
           const { runReindexMultimodal } = await import('./commands/reindex-multimodal.ts');
           const { parseWorkers } = await import('./core/sync-concurrency.ts');

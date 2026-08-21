@@ -15,6 +15,10 @@
 
 import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { gbrainPath } from '../src/core/config.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -744,5 +748,59 @@ describe('formatters (display helpers)', () => {
     expect(out).toContain('archived');
     expect(out).toContain('restore src-a');
     expect(out).toContain('72');
+  });
+});
+
+// ── Purge clone-cleanup containment ─────────────────────────
+// gh_managed cleanup must never rm -rf the clone root itself (a corrupt row
+// with local_path = the root would wipe every mirror), and only deletes the
+// exact defaultCloneDir('<id>-github') shape the creation path pins.
+
+describe('purgeExpiredSources — clone cleanup containment', () => {
+  function purgeStubFor(id: string, localPath: string) {
+    return {
+      executeRaw: async (sql: string) => {
+        if (sql.trimStart().startsWith('SELECT')) {
+          return [{ id, config: { kind: 'github', gh_managed: true }, local_path: localPath }];
+        }
+        return [{ id }];
+      },
+    } as never;
+  }
+
+  test('a corrupt row whose local_path IS the clone root never deletes sibling mirrors; the pinned shape still cleans up', async () => {
+    const prevHome = process.env.GBRAIN_HOME;
+    const homeParent = mkdtempSync(join(tmpdir(), 'gb-purge-guard-'));
+    process.env.GBRAIN_HOME = homeParent;
+    try {
+      const cloneRoot = gbrainPath('clones');
+      const sibling = join(cloneRoot, 'sibling-mirror-github');
+      mkdirSync(sibling, { recursive: true });
+      writeFileSync(join(sibling, 'page.md'), 'survives');
+
+      // Corrupt row: local_path = the managed clone root itself. Pre-fix this
+      // passed isPathContained (equality accepted) and rm -rf'd every mirror.
+      const r1 = await purgeExpiredSources(purgeStubFor('corrupt-src', cloneRoot));
+      expect(r1.purged).toEqual(['corrupt-src']);
+      expect(existsSync(join(sibling, 'page.md'))).toBe(true);
+
+      // Strictly contained but NOT the pinned '<id>-github' shape → refused.
+      const r2 = await purgeExpiredSources(purgeStubFor('other-src', sibling));
+      expect(r2.purged).toEqual(['other-src']);
+      expect(existsSync(sibling)).toBe(true);
+
+      // The exact gh_managed creation shape still gets cleaned up.
+      const owned = join(cloneRoot, 'gone-src-github');
+      mkdirSync(owned, { recursive: true });
+      writeFileSync(join(owned, 'page.md'), 'removed');
+      const r3 = await purgeExpiredSources(purgeStubFor('gone-src', owned));
+      expect(r3.purged).toEqual(['gone-src']);
+      expect(existsSync(owned)).toBe(false);
+      expect(existsSync(cloneRoot)).toBe(true);
+    } finally {
+      if (prevHome === undefined) delete process.env.GBRAIN_HOME;
+      else process.env.GBRAIN_HOME = prevHome;
+      rmSync(homeParent, { recursive: true, force: true });
+    }
   });
 });

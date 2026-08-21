@@ -33,13 +33,16 @@
  * sees the constraint.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
 import { resolvePageFilePath } from '../markdown.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
+import { isWriteThroughDisabled } from '../write-through.ts';
+import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
@@ -119,6 +122,74 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
   }
 }
 
+type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | 'unknown';
+
+function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState {
+  try {
+    const rel = relative(repoPath, filePath);
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) return 'unknown';
+    const status = execFileSync(
+      'git',
+      ['-C', repoPath, 'status', '--porcelain=v1', '--untracked-files=all', '--', rel],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: process.env },
+    );
+    const lines = status.split('\n').filter((l) => l.length > 0);
+    if (lines.length === 0) return 'clean';
+    // Distinguish dirt that IS the target fence file (safe for the
+    // path-limited commit to sweep — a prior gbrain fence-commit that failed
+    // leaves exactly this shape) from genuinely foreign dirt: unmerged
+    // conflict states, rename entries naming a second path, or any entry the
+    // parse can't positively attribute to `rel` (git quotes special chars).
+    for (const line of lines) {
+      const xy = line.slice(0, 2);
+      if (xy.includes('U') || xy === 'AA' || xy === 'DD') return 'foreign_dirty';
+      const pathField = line.slice(3);
+      if (pathField !== rel && pathField !== `"${rel}"`) return 'foreign_dirty';
+    }
+    return 'self_dirty';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function commitFactFenceFile(
+  repoPath: string,
+  filePath: string,
+  slug: string,
+  sourceId: string,
+  prewriteState: FactFenceGitPathState,
+): Promise<void> {
+  // Self-dirt does NOT block the commit: a prior fence-commit failure
+  // (index.lock contention, kill mid-commit) leaves the fence file itself
+  // dirty, and refusing on that shape latched the page's durability off
+  // permanently. The locked read-modify-write already incorporated the
+  // file's pre-write content, and the commit below is path-limited to this
+  // one file, so sweeping self-dirt is the recovery — only genuinely foreign
+  // dirt (or an unreadable state) keeps the audit-and-skip behavior.
+  if (prewriteState === 'foreign_dirty' || prewriteState === 'unknown') {
+    recordWriteFailure(
+      slug,
+      sourceId,
+      [prewriteState === 'foreign_dirty'
+        ? 'git_durability_preexisting_dirty'
+        : 'git_durability_prewrite_state_unknown'],
+      filePath,
+    );
+    return;
+  }
+
+  for (const delayMs of [0, 50, 200] as const) {
+    if (delayMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    if (commitWriteThroughFile(repoPath, filePath, slug) && gitPathState(repoPath, filePath) === 'clean') {
+      return;
+    }
+  }
+
+  recordWriteFailure(slug, sourceId, ['git_durability_commit_failed'], filePath);
+}
+
 /**
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
@@ -172,6 +243,13 @@ export async function writeFactsToFence(
   if (facts.length === 0) {
     return { inserted: 0, ids: [] };
   }
+  // `sync.write_through` off values make the brain DB-only by operator
+  // choice: no fence file, no stub entity page, no git commit. Same
+  // legacyFallback contract as a missing local_path — the caller's DB-only
+  // path still records the facts.
+  if (await isWriteThroughDisabled(engine)) {
+    return { inserted: 0, ids: [], legacyFallback: true };
+  }
 
   // Local patch 2026-06-11: route through resolvePageFilePath so non-default
   // sources fence into `<local_path>/.sources/<id>/<slug>.md` — the same path
@@ -180,6 +258,7 @@ export async function writeFactsToFence(
   // tree), polluting ~/brain with stray root-level fence files.
   const filePath = resolvePageFilePath(target.localPath, target.slug, target.sourceId);
   const tmpPath = `${filePath}.tmp`;
+  const durabilityEnabled = isDurabilityHardened(target.localPath);
 
   return withPageLock(
     target.slug,
@@ -287,6 +366,14 @@ export async function writeFactsToFence(
         assignedRowNums.push(rowNum);
       }
 
+      // Snapshot the prewrite git state INSIDE the lock, immediately before
+      // the write: an out-of-lock snapshot raced concurrent fence writers — a
+      // waiter observed the holder's not-yet-committed rename as pre-existing
+      // dirt and mis-attributed it in the audit.
+      const durabilityPrewriteState: FactFenceGitPathState = durabilityEnabled
+        ? gitPathState(target.localPath!, filePath)
+        : 'clean';
+
       // 3. Atomic write: .tmp first, then parse-validate, then rename.
       writeFileSync(tmpPath, body, 'utf-8');
 
@@ -325,6 +412,15 @@ export async function writeFactsToFence(
       }));
 
       const result = await engine.insertFacts(enriched, { source_id: target.sourceId }); // gbrain-allow-direct-insert: writeFactsToFence is the markdown-first reconcile path; runs only after the atomic fence write commits
+      if (durabilityEnabled) {
+        await commitFactFenceFile(
+          target.localPath!,
+          filePath,
+          target.slug,
+          target.sourceId,
+          durabilityPrewriteState,
+        );
+      }
       return { inserted: result.inserted, ids: result.ids };
     },
     { timeoutMs: 5_000 },

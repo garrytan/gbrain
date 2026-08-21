@@ -2,6 +2,384 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.24.0] - 2026-08-20
+
+**`gbrain sync` now works while your agent's brain is live.** On a PGLite
+brain, a running `gbrain serve` (the MCP server your agent harness spawns)
+owns the database's single-writer connection, and a sync used to require
+stopping the serve — killing your agent's memory to feed it. Sync now
+delegates the run to the serve process over its local IPC socket: the lock
+owner does the work, the CLI streams progress, and your agent stays up the
+whole time.
+
+### Added
+- Serve-delegated sync: `gbrain sync` under a live `gbrain serve` runs inside
+  the serve process (secret-gated `sync_start`/`sync_status`/`sync_abort`
+  kinds on the existing resolve-IPC socket; never raw SQL). The CLI prints a
+  delegation banner with the job id, polls progress (phases, banked-file
+  counts), and prints the same result a direct sync would. Ctrl-C aborts to a
+  durable checkpoint the next sync resumes from; a second Ctrl-C exits
+  without waiting.
+- Embeds under delegation are always deferred and drained by the serve's idle
+  maintenance sweep afterwards (the serve's environment/API keys apply);
+  `--no-embed` also suppresses the drain. The inline embed cost gate is never
+  silently bypassed.
+- Bounded by construction: the client always sends its resolved hard deadline
+  (interactive default 3600s) so a job whose client died still ends;
+  `--no-hard-deadline` is the only unbounded encoding. A serve shutdown
+  mid-sync aborts the job and waits a bounded settle
+  (`GBRAIN_SERVE_SYNC_SETTLE_MS`, default 3000ms) for the checkpoint flush
+  before disconnecting.
+- Safety posture: unsupported sync flags (`--repo`, `--all`, `--watch`,
+  `--exclude`, `--workers`, `--json`, …) refuse BY NAME under delegation
+  (default-deny — a silently dropped flag would perform the wrong sync), with
+  three remediations in every message. Opt-outs: `--no-delegate` /
+  `GBRAIN_SYNC_NO_DELEGATE=1` (client) and `GBRAIN_SERVE_SYNC_IPC=0` (serve).
+  `serve --http` exposes no IPC and keeps the stop-the-serve behavior.
+
+### Changed
+- The `LiveServeLockError` message now says sync runs through the live serve
+  automatically; stopping the serve remains the remedy for OTHER CLI write
+  commands.
+- `docs/architecture/serve-sync-concurrency.md` rewritten around delegation
+  (limits table, crash/resume notes, unchanged hang-triage recipes).
+
+To take advantage of v0.46.24.0:
+- `gbrain upgrade` (or reinstall the binary), then restart any running
+  `gbrain serve` so it registers the sync IPC kinds — a serve from an older
+  version answers with a typed "restart the serve" refusal instead of
+  delegating.
+- If a serve dies mid-delegated-sync, re-run `gbrain sync` to resume from the
+  checkpoint; a dead-PID sync lock younger than 60s can be cleared with
+  `gbrain sync --force-break-lock`.
+
+## [0.46.23.0] - 2026-08-19
+
+**A 23-contribution community wave, plus an end to silently lost pages.**
+If your agent ever "saved" a page and a re-read came back without the change,
+or a page you were editing came back blanked, this release closes both halves
+of that story: large piped reads no longer lose their tail on process exit,
+and the store itself now refuses to overwrite a page's real content with an
+empty body. Beyond that, the wave spans dream-pipeline correctness, budget
+and pricing coverage, search and link quality, transcript and reindex
+resilience, provider error surfacing, and a set of long-tail adoptions from
+older PRs — including a new GitHub source kind that puts issues and PRs in
+the brain.
+
+### Added
+- `putPage` refuses to overwrite a non-empty page body with a blank one.
+  A page edit is a read-modify-write; when the read comes back empty for any
+  reason, the write used to blank the page silently. It now fails loudly with
+  a clear error instead. Genuinely new empty pages still save, file-sourced
+  syncs of a deliberately emptied file still clear, and a deliberate clear
+  passes `allow_empty` / `allowEmptyOverwrite: true`. Contributed by
+  @JamisonMercurio.
+- GitHub is now a source kind: `gbrain sources add --kind github` mirrors
+  issues and PRs into the brain, with webhook refresh, a demo fixture, and
+  a guide at `docs/guides/github-source.md`. Contributed by @veltri-23.
+- Superseded pages are down-ranked and flagged `SUPERSEDED` in rerank
+  results, so a stale answer no longer outranks the page that replaced it.
+  Contributed by @rspinabellaagent.
+- `search.autocut_min_keep` is wired end to end — the documented autocut
+  floor was declared but never read, so raising it did nothing. It now flows
+  through the mode bundles, the resolver, and the cache key. Contributed by
+  @paul-0320.
+- `sync.write_through` opt-out flag for DB-only brains: set it to `false`
+  and page writes stay in the database instead of dual-writing to disk.
+  Contributed by @DanCanadian.
+- A standalone exporter writes conversation pages back to envelope-v0,
+  closing the round trip. Contributed by @SeanGearin.
+- Dart code intelligence: the bundled grammar now matches the pinned
+  tree-sitter runtime (ABI 15) and Dart files produce a call graph.
+  Contributed by @Jey2311.
+- llama-server declares chat prompt caching, so local deployments get the
+  same cache accounting as hosted providers. Contributed by
+  @erionjuniordeandrade-a11y.
+- Canonical pricing rows for GLM-5.2 (Z.ai) — contributed by @SomeUserName1 —
+  and static rates for router-prefixed OpenRouter ids, which previously fell
+  through to a no-pricing refusal. Contributed by @kweiner.
+
+### Changed
+- Concept synthesis gets budget priority and falls back to labels instead of
+  dropping work when the budget runs short. Contributed by @calebhicks.
+- LLM cycle phases (propose, grade, atom extraction, and concept synthesis)
+  halt on global billing, auth, and rate-limit errors instead of swallowing
+  them per page, so one bad credential fails loudly once rather than quietly
+  on every page — and a global outage no longer counts against per-page
+  failure budgets or overwrites concept pages with fallback stubs.
+  Contributed by @Masashi-Ono0611.
+- The claude-cli provider surfaces `api_error_status` as a typed error rather
+  than a raw exit blob. Contributed by @Masashi-Ono0611.
+- `dream extract-atoms` failure details name the provider and model that
+  failed. Contributed by @proprieties.
+- Reserve failures caused by missing pricing are recorded in the budget audit
+  trail instead of vanishing. Contributed by @herove.
+
+### Fixed
+- Piped CLI output larger than 64KiB no longer truncates with exit 0 when the
+  reader drains slowly (#3423). This was the root cause of agents reporting
+  that saves "didn't stick": a verify-read of a big page lost its tail, which
+  is exactly where the fresh edit lives, and feeding that truncated read back
+  through an edit could shrink or blank the page. Output delivery is now
+  awaited to the last byte before exit — `get_page`, `gbrain call`, and
+  `--tools-json` all return complete payloads at any reader pace.
+- claude-cli auth and configuration failures (401/403/400) now classify as
+  configuration errors instead of retryable transients, so callers stop
+  re-billing a revoked credential.
+- An invalid configured timezone degrades to "unknown" instead of breaking
+  context assembly on every turn.
+- Pattern excerpts split UTF-16 surrogate pairs, which could make Postgres
+  reject the subagent job payload; excerpts now use the shared UTF-16-safe
+  truncator. Contributed by @calebhicks.
+- Reindex repairs are scoped and advance past failures instead of stalling on
+  the first one; `reindex --type` reaches the flag registry. Contributed by
+  @calebhicks.
+- Oversized codex rollouts import instead of throwing, and `--max-bytes`
+  reaches the transcript adapters; a truncated scan never advances the
+  ingest watermark over unscanned content. Contributed by @mweber82.
+- Malformed extractor output is retried once with an explicit JSON-only
+  reminder before the turn's facts are given up on. Contributed by @herove.
+- Fence writes are committed durably. Contributed by @herove.
+- Reflex telemetry writes register before the CLI drain, so they are no
+  longer lost at shutdown. Contributed by @monkeygold.
+- International home locations are supported in context resolution.
+  Contributed by @arisgysel-design.
+- Relative markdown links resolve against the linking page's directory
+  instead of the brain root. Contributed by @alexey-metaengage.
+
+To take advantage of v0.46.23.0:
+- `gbrain upgrade` (or reinstall the binary).
+- If your agent harness ever reported pages that "didn't save" or reads that
+  came back incomplete on large pages, upgrading is the fix: reads deliver
+  fully, and the store refuses a blank body over real content (a deliberate
+  clear passes `allow_empty` on the `put_page` op).
+- **Search cache cold-miss:** the knobs hash moves 18 → 19 to fold the
+  autocut floor into the cache key. Existing `query_cache` rows become
+  unreachable on first re-query and refill within `cache.ttl_seconds`. No
+  action needed.
+- To mirror a GitHub repo's issues and PRs into your brain, see
+  `docs/guides/github-source.md`.
+- DB-only brains can now skip disk dual-writes with
+  `gbrain config set sync.write_through false`.
+## [0.46.22.0] - 2026-08-18
+**A wedged database shutdown can now die fast and loud instead of hanging
+forever.** Issue #4284 (analysis and measurements by @cheRoma — thank you)
+proved that the time-bound around the embedded database's close could never
+fire against the exact deadlock it was written for: a wedge starves the
+event loop, and no timer on a starved loop ever runs. The bound is now
+honest about what it covers, and a new opt-in out-of-band watchdog covers
+what it can't.
+
+### Fixed
+
+- **The in-loop close bound is now honest and correctly armed.** The timer
+  arms *before* the close begins (not after), stays referenced so a quiet
+  process can't exit before the warning and lock release fire, reads its
+  override per call, and clamps oversized values so a huge
+  `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS` means a longer bound — never an instant
+  spurious timeout. Its warning now states plainly that a close which wedges
+  the event loop cannot be caught in-process, and names the watchdog knob
+  that can catch it. Code comments and docs describe the layered defense
+  truthfully: the pre-close drain *prevents* the known wedge, the in-loop
+  bound covers a close that still yields, and only the watchdog observes a
+  wedged one.
+- **The CLI teardown backstop now budgets the real close bound.** Raising
+  the close timeout widens the teardown deadline with it, instead of the
+  backstop force-exiting mid-honest-close against a stale hardcoded copy.
+- **Watchdog timer arithmetic can never overflow into an instant kill.**
+  Deadline, grace, and their sum are clamped below the platform timer
+  ceiling (an overflowed timer fires at ~1ms — for the kill timer that
+  would have meant SIGKILLing a healthy process), and a non-numeric grace
+  is coerced safely instead of arming a ~1ms kill.
+
+### Added
+
+- **Opt-in out-of-band disconnect watchdog** — a diagnostic instrument for
+  CI lanes and wedge hunts, off by default. Set
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS` (and optionally
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS`, default 30000; an explicit 0
+  means SIGKILL at the deadline) and a worker-thread watchdog arms around
+  each embedded-database disconnect: SIGTERM at the deadline, SIGKILL at
+  deadline+grace, firing even while the main event loop is completely
+  wedged — converting a silent 10-minute CI kill into a fast, loud,
+  attributed death. A drain-aware floor clamps a too-small deadline UP
+  (with a warning) so a units typo can never kill a healthy slow teardown,
+  garbage values warn instead of silently disarming, and the armed
+  breadcrumb re-fires whenever the effective deadline changes in a
+  long-lived process.
+- **A regression pin that genuinely wedges an event loop.** A new spawned-
+  fixture test suite starves a real Bun loop the way the measured incident
+  did, proving the watchdog SIGKILLs it at deadline+grace, that nothing
+  in-process can fire without the watchdog, and that a healthy disconnect
+  is never harmed. The heavy read-latency reproducer now arms the watchdog
+  as a canary.
+
+### To take advantage of v0.46.22.0
+
+- Nothing changes by default — teardown behavior with the env knobs unset
+  is the same layered defense that already shipped, now honestly
+  documented.
+- In CI lanes or when hunting a suspected shutdown wedge, export
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS=30000` (optionally
+  `GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS=10000`): a wedge then dies loudly
+  with a `pglite-disconnect-watchdog` stderr label at ~40s instead of
+  hanging until an outer timeout. Values below the safe floor are clamped
+  up with a warning, never applied literally.
+- If you previously raised `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`, the CLI
+  teardown backstop now automatically widens to match — no action needed.
+
+## [0.46.21.0] - 2026-08-18
+
+**Fact extraction no longer requires an Anthropic key — and OpenAI defaults
+never go stale.** Model routing now honors whichever provider key you have:
+an OpenAI-only install gets automatic fact extraction, query expansion,
+synthesis, and dream cycles routed to OpenAI instead of silently failing
+against Anthropic defaults. On OpenAI-keyed installs, gbrain discovers the
+newest usable models from your own account (priced-only, cached, fail-open)
+so nothing is ever pinned to a model generation that has since been
+superseded. Keyless installs stay useful and honest: `extract_facts` tells
+the calling agent to extract facts itself via the `remember` verb, and
+doctor/bootstrap-verify report the real state instead of certifying a dead
+pipeline.
+
+### Added
+- Key-aware tier defaults: model resolution's final step consults which
+  provider keys are actually present (config-file keys folded with the
+  environment) instead of assuming Anthropic. Anthropic still wins when both
+  keys exist — zero change for working installs.
+- Latest-model discovery for OpenAI (`GET /v1/models` on your own account):
+  per-tier defaults follow the newest model family that has a pricing row,
+  with a conservative id grammar so unfamiliar future names degrade safely.
+  24h cache with atomic writes; stale cache beats static fallback; failures
+  back off across process boundaries; `GBRAIN_MODEL_DISCOVERY=off` disables.
+- Keyless `extract_facts` returns a structured `extraction_unavailable`
+  envelope instructing the agent to self-extract (one `remember` call per
+  fact, visibility pinned so facts stay private); other extractor failures
+  return their specific reason instead of a lying `inserted: 0`.
+- One canonical provider-key/env fold (`src/core/ai/provider-env.ts`) shared
+  by the gateway, capability report, and model routing — the Gemini alias
+  and Azure OpenAI fields now reach every consumer identically.
+
+### Changed
+- An explicit `chat_model` pin in `~/.gbrain/config.json` survives engine
+  reconnect when its provider key is present; a pin whose key is gone falls
+  back to the key-aware default with one clear stderr note (prefix-less pins
+  get their own diagnosis). `gbrain init` no longer persists auto-detected
+  chat pins — runtime resolution replaced install-time pinning.
+- `bootstrap verify` and `gbrain doctor` report extraction health against
+  the model extraction will actually call, per provider; keyless installs
+  read as "keyless" with the fence/`remember` guidance, not as healthy
+  automatic extraction.
+- The jobs worker re-reads file-plane config before facts-absorb jobs, so an
+  API key added to `~/.gbrain/config.json` reaches a long-lived worker at the
+  next job without a restart.
+- Config writes are atomic (temp file + rename), so concurrent readers never
+  see a torn `config.json`.
+- Install/bootstrap copy states per-provider truth: OpenAI = semantic search
+  + automatic fact extraction; Voyage = semantic search; Anthropic =
+  fact extraction.
+
+### Fixed
+- Fact extraction gated on the wrong model: it probed the global chat model,
+  then called the extraction model — the two can disagree in both
+  directions. It now gates on the model it actually calls (classification
+  same fix).
+- Extraction failures were silently swallowed as "0 facts": provider errors
+  and truncation now raise typed errors that the durable job lane retries
+  visibly (5 attempts, 60s backoff, parked as re-runnable failed jobs — a
+  page write never fails because its facts backstop threw); refusals and
+  malformed output are logged with the resolved model named. Keyless
+  installs write no log spam — one calm stderr note.
+- Provider error bodies (which can echo partial credentials) no longer flow
+  into MCP responses or persisted logs from extraction failures.
+
+To take advantage of v0.46.21.0:
+- `gbrain upgrade` (or reinstall the binary), then restart any long-running
+  `gbrain jobs work` daemons so workers pick up the new routing.
+- **Spend note:** if you have an `OPENAI_API_KEY` (env or config), features
+  that previously no-oped without an Anthropic key now actually run against
+  your OpenAI account: automatic fact extraction on eligible page writes,
+  query expansion (only in the `tokenmax` search mode), and LLM dream-cycle
+  phases you invoke. Controls: `gbrain config set facts.extraction_enabled
+  false` (extraction kill switch), `models.*` pins for explicit routing, and
+  your search mode's expansion knob. Anthropic-keyed installs see no routing
+  change.
+- OpenAI-only installs: run `gbrain bootstrap verify` — extraction should
+  report available via openai. Nothing else to configure.
+- Keyless installs: nothing breaks; `extract_facts` now hands your agent
+  explicit self-extraction instructions, and doctor explains the keyless
+  state honestly.
+
+## [0.46.20.0] - 2026-08-17
+
+**Source freshness decoupled from synthesis.** A per-source maintenance cycle
+used to drag brain-wide synthesis and hours of LLM-backed enrichment along
+with it; on multi-source brains the fanout could enqueue a thousand-plus
+sequential synthesis jobs per source, the job keeper would kill the cycle
+before the freshness stamp landed, and the abandoned private queues were then
+misdiagnosed as a wedged default worker. Freshness is now stamped by the
+deterministic (non-LLM) phases alone, so `gbrain dream --source X` finishes
+in seconds instead of hours.
+
+### Changed
+- Implicit `dream --source X` and autopilot per-source cycles run only the
+  deterministic freshness phases (lint, backlinks, sync, extract,
+  extract_facts, recompute_emotional_weight). Mixed brain-wide work
+  (synthesize, patterns) runs once in the global-maintenance lane, never once
+  per source. The phase-scope taxonomy lives in
+  `src/core/cycle/phase-scope.ts`.
+- LLM-backed source enrichment (extract_atoms, consolidate, propose_takes,
+  enrich_thin, schema-suggest) no longer runs inside per-source freshness
+  cycles. Atom extraction keeps its existing autopilot auto-drain lane; the
+  others run on explicit invocation until the scheduled background lane
+  lands — e.g. `gbrain dream --source X --phase extract_atoms` per source,
+  while consolidate/enrich_thin/conversation_facts_backfill sweep the whole
+  brain in one invocation regardless of `--source`, so run those once, not
+  per source. A full implicit cycle still runs via plain `gbrain dream`
+  (no source flag), via `--source default`, and on brains with no sources
+  table.
+- Explicit phase requests on a named source (`dream --source X --phase …`,
+  and `--input <file>`, which implies synthesize) are honored verbatim; only
+  the implicit no-flag path is freshness-scoped.
+- Queued per-source cycle jobs are normalized at the worker boundary to the
+  freshness phase set, so jobs queued before this release can't replay the
+  old heavyweight behavior once per source. An all-rejected payload is an
+  explicit no-op with a visible reason, never a silent full run.
+
+### Fixed
+- Doctor no longer misdiagnoses parent-owned private dream queues as a wedged
+  default worker. `wedged_queue` excludes them, and a new
+  `orphaned_private_queue` check identifies dead private queues with the
+  correct repair path (the retriage queue-reconciliation dry run) — consulting
+  live cycle locks with ownership correlation (including starved-but-alive
+  holders within the lock steal grace, and tolerant of host-vs-DB clock skew)
+  so a running cycle is never flagged and an older crashed cycle's queue is
+  never hidden behind a new cycle's lock. Paused rows surface in details
+  instead of failing the check without a repair path, and a check that cannot
+  run reports a warning instead of reading as healthy.
+- The retriage queue reconciliation can now repair everything the doctor
+  check flags: it selects and converts any row stranded in a provably-dead
+  private dream queue (patterns children and legacy-grammar rows included,
+  not just current-generation synthesis rows), using the same
+  lock-ownership correlation, so doctor can never point at a queue the
+  repair refuses to touch.
+- A per-source cycle whose attempted phases ALL fail now reports `failed`
+  and does not stamp source freshness (the scope filter's bookkeeping
+  records previously diluted the status to a stampable `partial`, marking a
+  broken source permanently fresh).
+
+### To take advantage of v0.46.20.0
+
+Upgrade and restart your `gbrain jobs work` daemons so queued cycle jobs pick
+up the new phase handling (jobs queued by the previous version are normalized
+safely either way). Stale sources unstick on the next autopilot tick — or run
+`gbrain dream --source <id>` and watch it finish in seconds. Run
+`gbrain doctor` to see the wedged-queue vs orphaned-private-queue split; if it
+reports orphaned private queues, follow the printed retriage dry-run
+instructions. Schedule the heavier enrichment explicitly where you want it —
+`gbrain dream --source <id> --phase extract_atoms` per source, plus one
+brain-wide `gbrain dream --phase consolidate` — or wait for the scheduled
+background lane (tracked in TODOS).
 ## [0.46.19.0] - 2026-08-17
 
 Dream-cycle synthesis is now fast by default: transcript synthesis runs as a
@@ -275,7 +653,9 @@ open community PRs by @Masashi-Ono0611 — thank you.
   shutdown permanently (observed as a 10-minute CI kill; a workload that
   took 19 seconds before the regression). Both engines now settle in-flight
   background work before closing, the close itself is time-bounded
-  (override: `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`), and a clean CLI exit now
+  (override: `GBRAIN_PGLITE_CLOSE_TIMEOUT_MS`; the bound covers a close
+  that still yields to the event loop — a wedged close cannot be caught
+  in-process, see #4284), and a clean CLI exit now
   also flushes buffered search telemetry — short-lived CLI calls finally
   show up in `gbrain search stats`.
 - **Mixed-case embedding model ids work.** `litellm:Qwen/Qwen3-Embedding-4B`

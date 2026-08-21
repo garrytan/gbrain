@@ -393,6 +393,10 @@ Options:
                       completion. When omitted, gbrain derives the
                       source from --dir / the configured checkout
                       when it matches a source's local_path (#1869).
+                      A named non-default source runs the deterministic
+                      freshness phases unless --phase is given
+                      (explicit phases are honored verbatim);
+                      --source default still runs the full cycle.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
@@ -488,6 +492,17 @@ function printHuman(report: CycleReport) {
       p.status === 'skipped' ? '-' : '✗';
     const line = `  ${icon} ${p.phase.padEnd(10)}  ${p.summary}`;
     console.log(line);
+    const details = p.details as Record<string, unknown> | undefined;
+    const failures = Array.isArray(details?.failures) ? details.failures : [];
+    if (failures.length > 0) {
+      for (const f of failures) {
+        // sync failures carry `source`; synthesize_concepts failures carry
+        // `concept` — name whichever is present so a concept-synthesis
+        // failure isn't printed as an anonymous '?'.
+        const { source, concept, error } = f as { source?: string; concept?: string; error?: string };
+        console.log(`      ✗ ${source ?? concept ?? '?'}: ${error ?? 'unknown error'}`);
+      }
+    }
     if (p.error) {
       const hint = p.error.hint ? ` (${p.error.hint})` : '';
       console.log(`      [${p.error.class}/${p.error.code}] ${p.error.message}${hint}`);

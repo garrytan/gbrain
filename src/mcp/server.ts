@@ -17,6 +17,7 @@ import {
   startResolveIpcServer,
   cleanupStaleSocket,
   ensureIpcSecret,
+  type IpcHandlers,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 import { lexicalArmsEnabled } from '../core/context/reflex.ts';
@@ -196,6 +197,30 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       try {
         ipcSecret = ensureIpcSecret(cfg.database_path);
       } catch { /* turn_context disabled; resolve unaffected */ }
+      // Serve-delegated sync kinds — built in their OWN try/catch so a
+      // runner import/registration failure can never take resolve /
+      // turn_context / context_pack down with it (this whole block's shared
+      // catch would otherwise swallow the error and start NO listener).
+      // Kill switch: GBRAIN_SERVE_SYNC_IPC=0 → the kinds are simply not
+      // registered and clients get 'unsupported_kind' (the polite refusal).
+      let syncHandlers: Pick<IpcHandlers, 'sync_start' | 'sync_status' | 'sync_abort'> = {};
+      if (process.env.GBRAIN_SERVE_SYNC_IPC !== '0') {
+        try {
+          const runner = await import('../core/serve-sync-runner.ts');
+          syncHandlers = {
+            sync_start: (req) =>
+              runner.startDelegatedSync(engine, req.options, req.clientToken, {
+                boundSourceId: defaultSource,
+              }),
+            sync_status: (req) => runner.getDelegatedSyncStatus(req.jobId),
+            sync_abort: (req) => runner.abortDelegatedSync(req.jobId),
+          };
+        } catch (e) {
+          process.stderr.write(
+            `[serve-sync] handlers unavailable: ${e instanceof Error ? e.message : String(e)}\n`,
+          );
+        }
+      }
       resolveServer = await startResolveIpcServer(
         resolveSocket,
         {
@@ -244,6 +269,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
           // the runtime owns entity merge, banking, the since-cursor, and the
           // complete-pack-only monotonic cursor advance.
           context_pack: makeContextPackIpcHandler(engine, defaultSource),
+          ...syncHandlers,
         },
         {
           // The IPC resolve path IS the ambient reflex channel. Logging happens
@@ -306,6 +332,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // disconnect busy-loops the single-writer lock (the #1762 hazard class).
     import('../core/context/checkpoint-harvest.ts')
       .then((m) => m.shutdownCheckpointHarvest())
+      .catch(() => {})
+      // Delegated-sync settle BEFORE disconnect (idempotent shared promise —
+      // serve.ts's beginShutdown races here on the same signals): the job's
+      // final checkpoint flush and row-lock release need the live engine.
+      .then(() => import('../core/serve-sync-runner.ts').then((m) => m.shutdownDelegatedSync()))
       .catch(() => {})
       .then(() => Promise.resolve(engine.disconnect?.()))
       .catch(() => {})
