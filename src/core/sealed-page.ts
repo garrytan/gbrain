@@ -254,6 +254,74 @@ function receiptFromRow(row: Record<string, unknown>): SealedPageReceipt {
   return receipt;
 }
 
+interface PersistedSealedChunk {
+  chunk_index: number;
+  chunk_text: string;
+  chunk_source: string;
+  token_count: number | null;
+  embedding_is_null: boolean;
+  embedded_at: unknown;
+  language: string | null;
+  symbol_name: string | null;
+  symbol_type: string | null;
+  start_line: number | null;
+  end_line: number | null;
+  parent_symbol_path: string[] | null;
+  doc_comment: string | null;
+  symbol_name_qualified: string | null;
+  search_vector_exact: boolean;
+  modality: string;
+  embedding_image_is_null: boolean;
+  embedding_multimodal_is_null: boolean;
+}
+
+async function assertPersistedChunksExact(
+  engine: BrainEngine,
+  pageId: number,
+  compiledTruth: string,
+): Promise<void> {
+  const expected = compiledTruth.trim()
+    ? chunkText(compiledTruth).map((chunk, chunkIndex): PersistedSealedChunk => ({
+        chunk_index: chunkIndex,
+        chunk_text: chunk.text,
+        chunk_source: 'compiled_truth',
+        token_count: null,
+        embedding_is_null: true,
+        embedded_at: null,
+        language: null,
+        symbol_name: null,
+        symbol_type: null,
+        start_line: null,
+        end_line: null,
+        parent_symbol_path: null,
+        doc_comment: null,
+        symbol_name_qualified: null,
+        search_vector_exact: true,
+        modality: 'text',
+        embedding_image_is_null: true,
+        embedding_multimodal_is_null: true,
+      }))
+    : [];
+  const actual = await engine.executeRaw<PersistedSealedChunk>(
+    `SELECT chunk_index, chunk_text, chunk_source, token_count,
+            embedding IS NULL AS embedding_is_null, embedded_at,
+            language, symbol_name, symbol_type, start_line, end_line,
+            parent_symbol_path, doc_comment, symbol_name_qualified,
+            search_vector = setweight(to_tsvector('english', COALESCE(doc_comment, '')), 'A')
+              || setweight(to_tsvector('english', COALESCE(symbol_name_qualified, '')), 'A')
+              || setweight(to_tsvector('english', chunk_text), 'B') AS search_vector_exact,
+            modality, embedding_image IS NULL AS embedding_image_is_null,
+            embedding_multimodal IS NULL AS embedding_multimodal_is_null
+       FROM content_chunks
+      WHERE page_id = $1
+      ORDER BY chunk_index, id`,
+    [pageId],
+  );
+  if (canonicalJson(actual) !== canonicalJson(expected)) {
+    throw integrityError('persisted chunks differ from deterministic page chunks');
+  }
+}
+
 async function findReceipt(engine: BrainEngine, operationId: string): Promise<SealedPageReceipt | null> {
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT r.protocol_version, r.operation_id, r.source_id, r.slug, r.request_sha256,
@@ -269,7 +337,10 @@ async function findReceipt(engine: BrainEngine, operationId: string): Promise<Se
       WHERE r.operation_id = $1`,
     [operationId],
   );
-  return rows.length === 0 ? null : receiptFromRow(rows[0]);
+  if (rows.length === 0) return null;
+  const receipt = receiptFromRow(rows[0]);
+  await assertPersistedChunksExact(engine, receipt.page_id, receipt.canonical_projection.compiled_truth);
+  return receipt;
 }
 
 function sameRequest(receipt: SealedPageReceipt, input: PreparedSealedPage): boolean {

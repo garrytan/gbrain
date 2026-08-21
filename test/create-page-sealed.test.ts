@@ -7,6 +7,7 @@ import {
   canonicalJson,
   __setServerBuildCommitForTests,
 } from '../src/core/sealed-page.ts';
+import { MIGRATIONS } from '../src/core/migrate.ts';
 
 let engine: PGLiteEngine;
 const TEST_BUILD_COMMIT = '1'.repeat(40);
@@ -213,6 +214,34 @@ describe('create_page sealed contract', () => {
     await expect(create(slug, content(), 'forged-receipt')).rejects.toThrow(/integrity/i);
   });
 
+  test('every receipt read rejects altered deterministic chunk fields', async () => {
+    const mutations = [
+      "chunk_index = 77",
+      "chunk_text = 'tampered chunk'",
+      "chunk_source = 'timeline'",
+      'token_count = 77',
+      "modality = 'image'",
+    ];
+
+    for (const [index, mutation] of mutations.entries()) {
+      const label = `forged-chunk-${index}`;
+      const slug = syntheticSlug(label);
+      const markdown = content(`Forged chunk ${index}`);
+      await create(slug, markdown, label);
+      const page = await engine.getPage(slug, { sourceId: 'default' });
+      expect(page).not.toBeNull();
+
+      await engine.executeRaw('ALTER TABLE content_chunks DISABLE TRIGGER protect_sealed_chunk_trg');
+      await engine.executeRaw(
+        `UPDATE content_chunks SET ${mutation} WHERE page_id = $1 AND chunk_index = 0`,
+        [page!.id],
+      );
+      await engine.executeRaw('ALTER TABLE content_chunks ENABLE TRIGGER protect_sealed_chunk_trg');
+
+      await expect(create(slug, markdown, label)).rejects.toThrow(/integrity/i);
+    }
+  });
+
   test('receipt schema enforces exact protocol and SHA forms', async () => {
     const slug = syntheticSlug('receipt-shapes');
     await create(slug, content(), 'receipt-shapes');
@@ -321,5 +350,26 @@ describe('create_page sealed contract', () => {
     await put.handler(context({ remote: false }), { slug: 'normal/update', content: content('Before') });
     await put.handler(context({ remote: false }), { slug: 'normal/update', content: content('After') });
     expect((await engine.getPage('normal/update', { sourceId: 'default' }))?.title).toBe('After');
+  });
+
+  test('v133 verifier rejects disabled triggers and unsafe function search paths on PGLite', async () => {
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 133);
+    expect(migration?.verify).toBeDefined();
+    expect(await migration!.verify!(engine)).toBe(true);
+
+    await engine.executeRaw('ALTER TABLE content_chunks DISABLE TRIGGER protect_sealed_chunk_trg');
+    try {
+      expect(await migration!.verify!(engine)).toBe(false);
+    } finally {
+      await engine.executeRaw('ALTER TABLE content_chunks ENABLE TRIGGER protect_sealed_chunk_trg');
+    }
+
+    await engine.executeRaw('ALTER FUNCTION protect_sealed_chunk_fn() SET search_path = public');
+    try {
+      expect(await migration!.verify!(engine)).toBe(false);
+    } finally {
+      await engine.executeRaw("ALTER FUNCTION protect_sealed_chunk_fn() SET search_path = pg_catalog, public");
+    }
+    expect(await migration!.verify!(engine)).toBe(true);
   });
 });
