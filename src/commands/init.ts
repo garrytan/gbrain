@@ -1551,7 +1551,8 @@ async function initPostgres(opts: {
     }
 
     console.log('Running schema migration...');
-    await engine.initSchema();
+    const { runInitSchemaWithRetry } = await import('../core/init-schema-retry.ts');
+    await runInitSchemaWithRetry(engine);
 
     // v0.37.10.0 T6 (D11): post-initSchema invariant assertion guardrail.
     if (resolvedDim) {
