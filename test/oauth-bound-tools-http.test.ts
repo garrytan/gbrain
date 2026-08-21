@@ -1,37 +1,35 @@
 import { describe, expect, test } from 'bun:test';
-import { operations } from '../src/core/operations.ts';
-import {
-  filterMcpOperationsByToolBinding,
-  isMcpToolAllowedByBinding,
-} from '../src/commands/serve-http.ts';
+import { opAllowedForBoundClient, operations } from '../src/core/operations.ts';
 
 describe('OAuth bound_tools HTTP enforcement', () => {
   const mcpOperations = operations.filter(op => !op.localOnly);
+  const filterBound = (boundTools: string[] | undefined) => mcpOperations.filter(op =>
+    opAllowedForBoundClient({ boundTools }, op),
+  );
+  const allowed = (name: string, boundTools: string[] | undefined) =>
+    opAllowedForBoundClient({ boundTools }, operations.find(op => op.name === name)!);
 
   test('a binding exposes exactly its listed tools', () => {
-    const visible = filterMcpOperationsByToolBinding(
-      mcpOperations,
-      ['create_page', 'get_page'],
-    );
+    const visible = filterBound(['create_page', 'get_page']);
 
     expect(visible.map(op => op.name).sort()).toEqual(['create_page', 'get_page']);
     expect(visible.some(op => op.name === 'put_page')).toBe(false);
   });
 
   test('an empty binding denies every tool', () => {
-    expect(filterMcpOperationsByToolBinding(mcpOperations, [])).toEqual([]);
-    expect(isMcpToolAllowedByBinding('get_page', [])).toBe(false);
+    expect(filterBound([])).toEqual([]);
+    expect(allowed('get_page', [])).toBe(false);
   });
 
   test('an absent binding preserves the existing MCP surface', () => {
-    expect(filterMcpOperationsByToolBinding(mcpOperations, undefined)).toEqual(mcpOperations);
-    expect(isMcpToolAllowedByBinding('put_page', undefined)).toBe(true);
+    expect(filterBound(undefined)).toEqual(mcpOperations);
+    expect(allowed('put_page', undefined)).toBe(true);
   });
 
   test('call authorization is exact and independent from OAuth write scope', () => {
     const binding = ['create_page', 'get_page'];
-    expect(isMcpToolAllowedByBinding('create_page', binding)).toBe(true);
-    expect(isMcpToolAllowedByBinding('get_page', binding)).toBe(true);
-    expect(isMcpToolAllowedByBinding('put_page', binding)).toBe(false);
+    expect(allowed('create_page', binding)).toBe(true);
+    expect(allowed('get_page', binding)).toBe(true);
+    expect(allowed('put_page', binding)).toBe(false);
   });
 });

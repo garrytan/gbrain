@@ -38,3 +38,4 @@ src/core/bootstrap/harness.ts	1947	ratchet
 src/commands/hook.ts	1559	ratchet	cathedral-5 heartbeat extraction offsets part of the BrainBench-seam growth; grown v0.46.26.0 megawave hooks-ipc (#4245)
 src/core/chunkers/code.ts	1556	ratchet	new row: crossed the 1500 unlisted cap in v0.46.26.0 megawave (decorated-python defs #3821, version-gate + timeout chunker fixes)
 src/core/config.ts	1503	ratchet	new row: crossed the 1500 unlisted cap in v0.46.26.0 megawave (spend-controls hint #3703, config-set validation)
+src/core/schema-embedded.generated.ts	1605	ratchet	generated from src/schema.sql with sealed receipt RLS guards
