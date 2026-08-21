@@ -199,6 +199,47 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(body).toContain('result');
   }, 15_000);
 
+  test('bound_tools is exact for tools/list and tools/call despite write scope', async () => {
+    const { execSync } = await import('child_process');
+    const registration = execSync(
+      `bun run src/cli.ts auth register-client e2e-bound-tools-${Date.now()} --grant-types client_credentials --scopes "read write" --bound-tools create_page,get_page --bound-source default --bound-slug-prefixes synthetic/`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const boundClientId = registration.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    const boundClientSecret = registration.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    expect(boundClientId).toBeTruthy();
+    expect(boundClientSecret).toBeTruthy();
+    dcrClientIds.push(boundClientId!);
+
+    const tokenResponse = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=client_credentials&client_id=${boundClientId}&client_secret=${boundClientSecret}&scope=read%20write`,
+    });
+    expect(tokenResponse.ok).toBe(true);
+    const { access_token } = await tokenResponse.json() as { access_token: string };
+
+    const listResponse = await mcpCall(access_token, 'tools/list');
+    expect(listResponse.ok).toBe(true);
+    const listText = await listResponse.text();
+    const listPayload = listText.startsWith('event:')
+      ? JSON.parse(listText.split('\n').find(line => line.startsWith('data: '))!.slice(6))
+      : JSON.parse(listText);
+    const listedNames = listPayload.result.tools.map((tool: { name: string }) => tool.name).sort();
+    expect(listedNames).toEqual(['create_page', 'get_page']);
+    expect(listedNames).not.toContain('put_page');
+
+    const denied = await mcpCall(access_token, 'tools/call', {
+      name: 'put_page',
+      arguments: { slug: 'synthetic/blocked', content: 'blocked' },
+    });
+    expect(denied.ok).toBe(true);
+    const deniedBody = await denied.text();
+    expect(deniedBody).toContain('permission_denied');
+    expect(deniedBody).toContain('bound_tools');
+  }, 20_000);
+
+
   test('expired/invalid token is rejected at /mcp', async () => {
     const res = await mcpCall('gbrain_at_totally_fake_token', 'tools/list');
     // Invalid tokens should not return 200 with tool results

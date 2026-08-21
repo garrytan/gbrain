@@ -329,9 +329,10 @@ export const BOUND_CLIENT_META_OPS: ReadonlySet<string> = new Set(['request_tool
  * rather than running unguarded).
  */
 export function opAllowedForBoundClient(
-  auth: Pick<AuthInfo, 'boundSlugPrefixes' | 'fenceProjectionDegraded'> | undefined,
+  auth: Pick<AuthInfo, 'boundSlugPrefixes' | 'fenceProjectionDegraded' | 'boundTools'> | undefined,
   op: Pick<Operation, 'name' | 'scope' | 'mutating'>,
 ): boolean {
+  if (auth?.boundTools !== undefined && !auth.boundTools.includes(op.name)) return false;
   const degraded = auth?.fenceProjectionDegraded === true;
   if (!degraded && !auth?.boundSlugPrefixes) return true;
   const isRead = op.scope === 'read' && op.mutating !== true;

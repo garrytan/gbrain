@@ -735,7 +735,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     try {
       oauthRows = await this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-               c.source_id, c.federated_read, c.bound_slug_prefixes,
+               c.source_id, c.federated_read, c.bound_tools, c.bound_slug_prefixes,
                c.surface, c.surface_set_by
         FROM oauth_tokens t
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
@@ -743,7 +743,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       `;
     } catch (err) {
       // Degrade ladder for brains that haven't run apply-migrations yet:
-      // surface/surface_set_by (v127) → bound_slug_prefixes (v85) →
+      // surface/surface_set_by (v127) → bound_tools/bound_slug_prefixes (v85) →
       // federated_read (v61) → source_id (v60) → pre-v0.34 base projection.
       // Auth must keep working the whole way down.
       //
@@ -763,6 +763,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const missingOAuthColumn = (e: unknown): boolean =>
         isUndefinedColumnError(e, 'surface') ||
         isUndefinedColumnError(e, 'surface_set_by') ||
+        isUndefinedColumnError(e, 'bound_tools') ||
         isUndefinedColumnError(e, 'bound_slug_prefixes') ||
         isUndefinedColumnError(e, 'federated_read') ||
         isUndefinedColumnError(e, 'source_id');
@@ -775,7 +776,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // surface applies", never a widened catalog.
         oauthRows = await this.sql`
           SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-                 c.source_id, c.federated_read, c.bound_slug_prefixes
+                 c.source_id, c.federated_read, c.bound_tools, c.bound_slug_prefixes
           FROM oauth_tokens t
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
           WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -783,10 +784,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       } catch (errS) {
         if (!missingOAuthColumn(errS)) throw errS;
         try {
-          // v85 missing: keep source_id + federated_read, drop the fence column.
+          // v85 partial/missing: retain bound_tools when available and drop the slug fence.
           oauthRows = await this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name,
-                   c.source_id, c.federated_read
+                   c.source_id, c.federated_read, c.bound_tools
             FROM oauth_tokens t
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
             WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
@@ -855,6 +856,10 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       const boundSlugPrefixes = Array.isArray(boundRaw)
         ? (boundRaw as string[])
         : undefined;
+      const boundToolsRaw = row.bound_tools;
+      const boundTools = Array.isArray(boundToolsRaw)
+        ? (boundToolsRaw as string[])
+        : undefined;
       // Fail CLOSED on the fence axis. If the projection degraded, we do not
       // know whether this client carries a binding, and "column absent" is
       // indistinguishable from "no binding" downstream. On a genuinely
@@ -886,6 +891,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // operations.ts prefers this array over scalar sourceId when set
         // and non-empty.
         allowedSources,
+        boundTools,
         // v0.42.72.0: write fence — consumed by enforceClientSlugFence in
         // operations.ts on every direct slug-mutating write op.
         boundSlugPrefixes,
