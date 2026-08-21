@@ -54,7 +54,11 @@ const EXTRA_FLAGS: Record<string, string[]> = {
 const EXCLUDED_MODULES = ['thin-client-routing.ts'];
 
 function isExcludedModule(p: string): boolean {
-  return EXCLUDED_MODULES.some(m => p.endsWith(`/${m}`));
+  // Basename comparison is path-separator agnostic: on Windows p ends in
+  // '\\thin-client-routing.ts' so endsWith('/thin-client-routing.ts') is
+  // false and the skip silently no-ops, inflating every command that
+  // imports the router with its flags.
+  return EXCLUDED_MODULES.some(m => p.split(/[\\/]/).pop() === m);
 }
 
 /** Universal helper flags every command may see (parsed or short-circuited upstream). */
@@ -96,7 +100,11 @@ function relativeImports(src: string, fromDir: string): string[] {
  * modules back in so a peel can never silently shrink a command's flag set.
  */
 function facadeExpansion(p: string): string[] {
-  const rel = p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p;
+  // Compare in forward-slash space: on Windows p uses '\\' separators and
+  // would never match the relative-path constants below, silently skipping
+  // the peeled-module expansion. Same cross-platform drift class as the
+  // isExcludedModule separator check above.
+  const rel = (p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p).replace(/\\/g, '/');
   const collect = (dir: string): string[] => {
     if (!existsSync(dir)) return [];
     const out: string[] = [];
