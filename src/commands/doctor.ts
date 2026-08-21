@@ -2785,24 +2785,20 @@ export async function buildChecks(
   const fullContentAudit = args.includes('--content-audit');
   progress.heartbeat('oversized_pages');
   try {
-    const sql = db.getConnection();
     // Read effective bytes_block from the cached effectiveCfg loaded
     // earlier in this doctor run if available; otherwise default.
-    // (We re-read here per-check to avoid threading config through
-    // every check — bytes_block is read once per doctor run via
-    // loadConfig which caches in module-level config layer.)
     const { loadConfig: _loadCfg } = await import('../core/config.ts');
     const _cfg = _loadCfg();
     const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
-    const rows = await sql`
+    const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number | string }>(`
       SELECT p.slug, p.source_id,
              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
       FROM pages p
       WHERE p.deleted_at IS NULL
-        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > ${bytesBlock}
+        AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1
       ORDER BY bytes DESC
       LIMIT 100
-    `;
+    `, [bytesBlock]);
     if (rows.length === 0) {
       checks.push({
         name: 'oversized_pages',
@@ -2810,9 +2806,8 @@ export async function buildChecks(
         message: `No pages exceed ${bytesBlock} bytes`,
       });
     } else {
-      const oversizeRows = rows as unknown as Array<{ slug: string; source_id: string; bytes: number }>;
-      const top = oversizeRows.slice(0, 3)
-        .map(r => `${r.slug} (${r.bytes}b, src=${r.source_id})`)
+      const top = rows.slice(0, 3)
+        .map(r => `${r.slug} (${Number(r.bytes)}b, src=${r.source_id})`)
         .join('; ');
       checks.push({
         name: 'oversized_pages',
@@ -2831,13 +2826,13 @@ export async function buildChecks(
 
   progress.heartbeat('scraper_junk_pages');
   try {
-    const sql = db.getConnection();
     const { assessContentSanity } = await import('../core/content-sanity.ts');
     const { loadOperatorLiterals } = await import('../core/content-sanity-literals.ts');
     const literals = loadOperatorLiterals();
     const scanLimit = fullContentAudit ? null : 1000;
-    const rows = scanLimit
-      ? await sql`
+    const rows = await engine.executeRaw<{ slug: string; source_id: string; title: string; body_head: string | null; tl_head: string | null; frontmatter: Record<string, unknown> | null }>(
+      scanLimit
+        ? `
           SELECT p.slug, p.source_id, p.title,
                  LEFT(p.compiled_truth, 2048) AS body_head,
                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
@@ -2845,19 +2840,20 @@ export async function buildChecks(
             FROM pages p
            WHERE p.deleted_at IS NULL
            ORDER BY p.updated_at DESC
-           LIMIT ${scanLimit}
+           LIMIT $1
         `
-      : await sql`
+        : `
           SELECT p.slug, p.source_id, p.title,
                  LEFT(p.compiled_truth, 2048) AS body_head,
                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
                  p.frontmatter
             FROM pages p
            WHERE p.deleted_at IS NULL
-        `;
+        `,
+      scanLimit ? [scanLimit] : [],
+    );
     const hits: Array<{ slug: string; matched: string[] }> = [];
-    const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
-    for (const r of scanRows) {
+    for (const r of rows) {
       const sanity = assessContentSanity({
         compiled_truth: r.body_head ?? '',
         timeline: r.tl_head ?? '',

@@ -164,6 +164,27 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(checks.length).toBeGreaterThan(30);
   });
 
+  test('content sanity checks query the live PGLite engine', async () => {
+    await engine.putPage('imports/cloudflare-dump', {
+      type: 'article',
+      title: 'Attention Required! | Cloudflare',
+      compiled_truth: 'Cloudflare Ray ID: abc123\n' + 'a'.repeat(510_000),
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const checks = await buildChecks(engine, []);
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    const junk = checks.find(c => c.name === 'scraper_junk_pages');
+
+    expect(oversized?.status).toBe('warn');
+    expect(oversized?.message).toContain('imports/cloudflare-dump');
+    expect(oversized?.message).not.toContain('Skipped');
+    expect(junk?.status).toBe('warn');
+    expect(junk?.message).toContain('imports/cloudflare-dump');
+    expect(junk?.message).not.toContain('Skipped');
+  });
+
   test('--fast skips DB-dependent checks; filesystem checks still run', async () => {
     // Fast-mode bails out of the DB section entirely. When an engine is
     // available, the early-return skips pushing a connection check (no
