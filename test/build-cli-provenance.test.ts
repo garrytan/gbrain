@@ -84,6 +84,11 @@ afterEach(() => {
 });
 
 describe("procedencia del build CLI", () => {
+  test("las raíces Windows confiables no vienen del entorno heredado", () => {
+    const source = readFileSync(buildScript, "utf8");
+    expect(source).not.toContain("process.env.ProgramFiles");
+    expect(source).not.toContain("process.env['ProgramFiles(x86)']");
+  });
   test("ignora un git falso al principio de PATH", () => {
     if (process.platform === "win32") return;
     const repo = createRepository();
