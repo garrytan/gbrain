@@ -388,8 +388,8 @@ describe('create_page sealed contract', () => {
     expect((await engine.getPage('normal/update', { sourceId: 'default' }))?.title).toBe('After');
   });
 
-  test('v137 verifier rejects disabled triggers and unsafe function search paths on PGLite', async () => {
-    const migration = MIGRATIONS.find((candidate) => candidate.version === 137);
+  test('v141 verifier rejects disabled triggers and unsafe function search paths on PGLite', async () => {
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 141);
     expect(migration?.verify).toBeDefined();
     expect(await migration!.verify!(engine)).toBe(true);
 
@@ -409,8 +409,8 @@ describe('create_page sealed contract', () => {
     expect(await migration!.verify!(engine)).toBe(true);
   });
 
-  test('v137 verifier rejects a permissive trigger function body on PGLite', async () => {
-    const migration = MIGRATIONS.find((candidate) => candidate.version === 137);
+  test('v141 verifier rejects a permissive trigger function body on PGLite', async () => {
+    const migration = MIGRATIONS.find((candidate) => candidate.version === 141);
     expect(migration?.verify).toBeDefined();
     expect(await migration!.verify!(engine)).toBe(true);
 
