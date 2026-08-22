@@ -59,6 +59,7 @@ export const ollama: Recipe = {
       supports_tools: false,
       supports_subagent_loop: false,
       supports_prompt_cache: false,
+      supports_structured_outputs: false,
       // Provider-wide routing ceiling only; Ollama still enforces each loaded
       // model's actual context window at request time.
       max_context_tokens: 128_000,

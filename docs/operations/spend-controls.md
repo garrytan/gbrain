@@ -57,6 +57,13 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 2 | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
 | Image-OCR per-run ceiling (#3973) | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
+| Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker | — | **not** consulted (phase budget enforces regardless) |
+
+The `extract_atoms` cap is enforced only for models in the pricing maps. A model
+the tracker cannot price — e.g. a local Ollama model selected via
+`models.dream.extract_atoms` — runs without a cost gate after a one-line stderr
+warning (a USD cap cannot be enforced on an unpriced model; local models incur
+no API spend).
 
 ### Sync inline-embed cost gate
 
@@ -65,7 +72,12 @@ Fires only when sync embeds **inline** (federated_v2 off, or `--serial` without
 jobs and the gate is informational. The estimate prices the **delta** — the files this
 sync will actually import (fetched-first, so it sees commits the run is about to pull) —
 not the whole tree. A busy brain with a dirty working tree but caught-up commits
-estimates `$0`, because an attached-HEAD sync imports only the committed diff.
+estimates `$0`, because an attached-HEAD sync imports only the committed diff by
+default. The `--working-tree` / `sync.include_working_tree` opt-in is the one
+exception: it imports uncommitted files that the estimator deliberately does not
+price (pricing dirty files on every attached repo would bring back the
+phantom-cost class the delta estimate exists to kill), so the gate can
+underestimate an explicit working-tree run.
 
 Behavior above the floor:
 - **TTY:** prompts `[y/N]`.

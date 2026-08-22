@@ -42,13 +42,15 @@ gbrain sync --repo /path/to/brain && gbrain embed --stale
 ```
 
 - `gbrain sync --repo <path>` -- one-shot incremental sync. Detects changes via
-  `git diff`, imports only what changed. For small changesets (<= 100 files),
-  embeddings are generated inline during import — unless the inline cost gate
-  intervenes: when the estimated embedding spend crosses the configured floor
-  in a non-interactive session (cron, `--json`), sync auto-defers embeds to a
-  capped `embed-backfill` job instead of spending silently. Either way the
-  chunks get embedded; a deferred run just finishes asynchronously. See
-  [spend controls](../operations/spend-controls.md).
+  `git diff`, imports only what changed. **Commit-driven:** it imports
+  *committed* changes; uncommitted edits and untracked files are counted and
+  reported as drift, not silently ignored (see Tricky Spot 6). For small
+  changesets (<= 100 files), embeddings are generated inline during import —
+  unless the inline cost gate intervenes: when the estimated embedding spend
+  crosses the configured floor in a non-interactive session (cron, `--json`),
+  sync auto-defers embeds to a capped `embed-backfill` job instead of spending
+  silently. Either way the chunks get embedded; a deferred run just finishes
+  asynchronously. See [spend controls](../operations/spend-controls.md).
 - `gbrain embed --stale` -- backfill embeddings for any chunks that don't have
   them. Safety net for large syncs (>100 files) or prior `--no-embed` runs.
   On a keyless brain (installed with `--no-embedding`), a bare stale embed
@@ -174,6 +176,22 @@ vars — incident-time escape hatches, not everyday knobs.
    gbrain include `schema_version: 1`, `owner: "gbrain"`, and
    `kind: "import"` so downstream tools can validate the contract before
    deciding whether to resume.
+
+6. **Sync imports commits, not your working tree.** Files written into the
+   brain repo but never committed are invisible to incremental sync. Sync
+   won't stay silent about them: it prints a NOTE with the drift counts
+   (`N uncommitted file(s) not synced`), the sync result object carries an
+   `uncommitted` summary (surfaced via `sync_brain` over MCP and in
+   `gbrain dream --json` phase details), and the nightly dream cycle reports
+   the sync phase as `warn` instead of a clean run. The fix is to commit the files. If your
+   workflow legitimately writes without committing, opt in to importing
+   uncommitted state with `gbrain sync --working-tree` (one run) or
+   `gbrain config set sync.include_working_tree true` (standing config,
+   honored by every caller including the dream cycle). Caution before making
+   it standing config: untracked means everything `git status` lists as
+   untracked — unignored scratch files and secrets included — so review
+   `git status` first. Gitignored files stay excluded either way (use
+   `--include-gitignored` for those).
 
 ## How to Verify
 

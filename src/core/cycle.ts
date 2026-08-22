@@ -1271,15 +1271,24 @@ async function runPhaseSync(
     // doesn't report a clean run over a wedged source. Timeout-class partials
     // keep the pre-existing 'ok' mapping (they converge on retry by design).
     const pullFailedPartial = result.status === 'partial' && result.reason === 'pull_failed';
+    // Untracked-gap fix: uncommitted working-tree drift (files invisible to
+    // commit-driven sync) surfaces as 'warn', not a clean 'ok +0' — a nightly
+    // cycle over a dirty vault otherwise reports convergence it never achieved.
+    const uncommittedTotal = result.uncommitted
+      ? result.uncommitted.added + result.uncommitted.modified + result.uncommitted.deleted
+      : 0;
+    const uncommittedNote = uncommittedTotal > 0
+      ? `; ${uncommittedTotal} uncommitted file(s) invisible to commit-driven sync — commit them or set sync.include_working_tree=true`
+      : '';
     return {
       phase: 'sync',
-      status: result.status === 'blocked_by_failures' || pullFailedPartial ? 'warn' : 'ok',
+      status: result.status === 'blocked_by_failures' || pullFailedPartial || uncommittedTotal > 0 ? 'warn' : 'ok',
       duration_ms: 0,
       summary: dryRun
         ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
         : pullFailedPartial
           ? `git pull failed, nothing imported — source may be behind its remote (sync anchor unchanged)`
-          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted`,
+          : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted${uncommittedNote}`,
       details: {
         added: result.added,
         modified: result.modified,
@@ -1289,6 +1298,7 @@ async function runPhaseSync(
         failedFiles: result.failedFiles ?? 0,
         syncStatus: result.status,
         ...(result.reason ? { syncReason: result.reason } : {}),
+        ...(result.uncommitted ? { uncommitted: result.uncommitted } : {}),
         dryRun,
       },
       pagesAffected: result.pagesAffected,

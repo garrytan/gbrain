@@ -3103,6 +3103,69 @@ Every scoreboard row carries a `seam` label: the `openclaw` row exercises the sh
 - CLI exit codes for the new command route through the shared write-fence + aliveness-grace exit seam, so PGLite's WASM exit-code stomping and Bun's exit-time stdout discard can't corrupt the CI contract.
 
 To take advantage of v0.44.0.0: run `gbrain eval brainbench` — no setup, no keys, no brain required. If it ever reports something broken after an upgrade, `bun evals/brainbench/generator/gen.ts` rebuilds the corpus byte-identically and `gbrain eval brainbench --update-baseline` re-derives the baseline from an actual run; both are safe to re-run any time.
+
+## [0.43.1.0] - 2026-08-10
+
+**Sync no longer stays silent about files you haven't committed.**
+
+Incremental sync is commit-driven: files written into a brain repo but never
+committed were invisible — sync printed "Already up to date." while the pages
+sat outside the brain (observed in the wild: 100+ notes missing for weeks, and
+a nightly cycle reporting a clean "+0 added" over them every night). Sync now
+counts that uncommitted drift through the exact filters imports use, reports
+it in results and on stderr, and the nightly dream cycle flags it as a warning
+instead of clean convergence. Uncommitted renames count too (as an add plus a
+delete), so a rename-only dirty tree can't slip back into silence.
+
+### Added
+- **`gbrain sync --working-tree`** — opt-in import of uncommitted working-tree
+  state (untracked files plus uncommitted edits and deletes) through the same
+  merge path detached-HEAD syncs have always used. Persist it with
+  `gbrain config set sync.include_working_tree true`; the config is honored by
+  every caller — CLI, nightly dream cycle, and background sync jobs alike.
+  The help text carries a caution: untracked means *everything* untracked, so
+  review `git status` before enabling it as standing config.
+- **Local models for atom extraction.** The dream cycle's `extract_atoms`
+  phase can now run on a config-selected local model (e.g. Ollama) without
+  hosted API keys, with two new tuning knobs:
+  `cycle.extract_atoms.page_discovery_budget` and
+  `cycle.extract_atoms.max_source_chars`.
+
+### Changed
+- Sync results carry an `uncommitted` drift summary (surfaced via `sync_brain`
+  over MCP and in `gbrain dream --json` phase details), and `gbrain sync`
+  prints a NOTE naming the counts and the remedy on both "up to date" and
+  synced runs.
+- The dream cycle's sync phase reports `warn` with the drift count when a
+  brain repo has uncommitted syncable files.
+
+### Fixed
+- The silent untracked-file gap described above.
+- Working-tree imports respect the mass-delete safety valve: an uncommitted
+  tree that would delete more than half a source's pages (a mid-rebase
+  checkout, an accidental `rm -rf`) is refused loudly instead of swept, with
+  the same escape hatch as the reconcile valve.
+- The working-tree probe fails open: if git can't produce the manifest within
+  budget, drift counting skips with a note instead of erroring the sync
+  (an explicit `--working-tree` request still fails closed with the reason).
+
+### To take advantage of v0.43.1.0
+
+```bash
+gbrain upgrade
+```
+
+The sync fix needs no configuration. If sync starts warning about uncommitted
+files, that is the fix working — commit them, or opt in with
+`gbrain config set sync.include_working_tree true` after reviewing what's
+untracked.
+
+To run atom extraction on a local model, point the phase at it:
+`gbrain config set models.dream.extract_atoms ollama:llama3.2:3b` (any local
+tag works), then tune `cycle.extract_atoms.page_discovery_budget` (pages
+considered per run, default 50) and `cycle.extract_atoms.max_source_chars`
+(per-page prompt cap, default 50000) to taste.
+
 ## [0.43.0.0] - 2026-08-08
 
 **Your agent now has five memory verbs it can actually reach.** Cathedral 1 freezes

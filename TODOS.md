@@ -1698,6 +1698,41 @@ Deferred from the BrainBench wave (eng-reviewed; plan + GSTACK REVIEW REPORT at
   dev shells match keyless CI by definition; tests that want keys inject them
   explicitly. Escape hatch `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1` (set by
   scripts/run-e2e.sh).
+
+## sync --working-tree follow-ups (filed v0.43.1.0)
+
+Deferred findings from the v0.43.1.0 ship reviews (adversarial + specialists).
+The shipped fix is safe without them; these harden the opt-in further.
+
+- [ ] **P1 — doctor.test.ts subagent_capability test is not hermetic.** `checkSubagentCapability`'s ANTHROPIC_API_KEY drift check reads the real `~/.gbrain/config.json` via `loadConfig()`, so the "ok path" unit test fails on any dev machine with a non-Anthropic chat_model and no ANTHROPIC_API_KEY env (passes in CI). Pre-existing on master (files identical); stub the file-config read in the test or inject it into the check.
+- [ ] **P2 — estimator blind spot.** The inline cost estimator prices attached
+  working-tree files at $0 by design (#2139 phantom-cost class), so a
+  persisted `sync.include_working_tree` + inline embed can spend past
+  `sync.cost_gate_min_usd` on a large dirty tree. Price the working-tree
+  manifest when the opt-in is resolved true.
+- [ ] **P2 — checkpoint/resume vs the workingTree flag.** `op_checkpoint` is
+  keyed (sourceId, lastCommit) and records neither the flag nor a working-tree
+  fingerprint: a killed `--working-tree` run resumed as a plain sync completes
+  commit-only and reports clean `synced` over a mixed snapshot; a working-tree
+  path banked pre-kill then edited before resume keeps the stale content.
+  Record the flag in the checkpoint key or invalidate on mismatch.
+- [ ] **P3 — perpetually-dirty trees vs --ff-only pull.** include_working_tree
+  users run dirty trees by definition; any remote change touching a dirty file
+  wedges pull → partial/pull_failed until manually resolved. Consider
+  auto-stash-pull-pop or a clearer remedy in the pull_failed message.
+- [ ] **P3 — drift missing from dry_run/partial results.** `uncommitted` rides
+  only up_to_date/synced; dry-run and partial JSON consumers see stderr only.
+  The `sync --all --json` per-source envelope also omits it (explicit field
+  projection in sync.ts) — add `uncommitted` there when fixing this.
+- [ ] **P3 — collapse the two working-tree git subprocesses** into one
+  `git status --porcelain=v2 -z` pass (halves per-sync probe overhead), and
+  memoize the manifest per (gitContextRoot, headCommit) for `--all` sweeps
+  over monorepo-scoped sources.
+- [ ] **P4 — warn fatigue.** A perpetually-dirty vault now warns every night;
+  consider a dampener (warn on count change, re-warn weekly) so
+  blocked_by_failures/pull_failed stay visible.
+
+
 ## #2416 follow-ups (query-steering wave)
 
 - [x] **P2 — MCP-envelope `hint` field for concept-shaped `search` calls.**
@@ -1860,6 +1895,40 @@ master before starting, several fixes landed independently).
   means the repair feature silently dies). Any future pglite upgrade wave must revisit BOTH
   together and re-derive the ControlFileData offset table for the new PG major.
 
+## synthesize_concepts mints orphans the orphan check then penalizes (filed v0.42.74.0)
+
+The `synthesize_concepts` dream phase writes concept pages that nothing links to,
+and the `orphans` phase in the same cycle counts them against the brain score. One
+cycle creates the pages, another docks you for them, and the count grows every night
+the phase runs. Observed on a real brain: the phase reported N concepts synthesized
+and the orphan report listed exactly N orphaned `concepts/` slugs — a 1:1 match, all
+of them machine-generated in that run.
+
+This reads to an operator as a curation failure ("I wrote concept pages and never
+linked them") when nothing was hand-authored at all. It also makes the brain-score
+orphan component drift downward as a direct function of how often the cycle runs,
+which inverts the intent of the metric.
+
+- [ ] **P1 — decide whether synthesized concepts belong in the orphan denominator.**
+  Two candidate fixes, and they are not equivalent. (a) Wire concepts into the graph
+  at synthesis time: when the phase extracts a concept from a set of pages, link those
+  pages to the concept node. This is the better outcome — a concept page nothing can
+  reach is close to useless for retrieval too, so the orphan signal is telling the
+  truth and the synthesis step is what's incomplete. (b) Add `concepts/` to
+  `DENY_PREFIXES` in `src/core/orphan-policy.ts`, the way `extracts/` and `atoms/`
+  already are. Cheap, but it silences a real reachability problem rather than fixing
+  it. Prefer (a); fall back to (b) only if concept nodes are deliberately
+  retrieval-only and never meant to be graph-reachable.
+- [ ] **P2 — near-duplicate concepts suggest the extractor needs a merge step.**
+  The same run produced several near-synonym concept nodes (three variants of one
+  adjectival stem, four of one noun stem). Whatever the orphan decision, an extractor
+  emitting near-duplicates inflates the node count and splits inbound links across
+  synonyms. Consider a similarity merge before write.
+- [ ] **P3 — imported calendar days are a separate leaf class.** `meetings/calendar/
+  <year>/<date>` pages are dated machine imports with no expected inbound links, the
+  same class as the `daily` first-segment exclusion but not matched by it. Either
+  broaden the convention defaults or document that calendar-import prefixes want a
+  per-brain `orphans.exclude_prefixes` entry.
 ## serve --http takes-holders + agent-voice hardening follow-ups (filed v0.42.74.0)
 
 Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside
@@ -1889,7 +1958,38 @@ voice CLEARED). None block the wave.
   clause (`src/mcp/http-transport.ts` validateToken). Apply the same pattern —
   one fewer write per request on the `serve --http` hot path.
   Where: `src/core/oauth-provider.ts`.
+## nightly dream digest (filed v0.42.73.1)
 
+Operators wire `gbrain dream --json` into a notifier (Telegram, Slack, email) through a
+hand-rolled shell wrapper, then `jq` the counters out of it. That shape is fragile and
+produces a low-signal report. Both problems are ours to fix, not the operator's.
+
+- [ ] **P1 — `gbrain dream --digest` — a notification-ready summary gbrain owns.**
+  Today every operator re-implements the same `jq` pipeline against `.totals` and
+  `.phases[]`. Three failure modes follow. (a) The wrapper guesses at our schema, so a
+  field rename degrades it silently. (b) Deltas are impossible — a wrapper has nowhere to
+  persist last night's totals, so it can only print levels, and an orphan count carries no
+  information without a trend. (c) Wrappers redirect with `2>&1`, which merges our stderr
+  progress stream into the `--json` stdout payload and makes the report unparseable; the
+  usual `|| echo '?'` fallback then renders a dead monitor as a healthy one. Emit a
+  formatted digest directly so none of this is the caller's problem.
+- [ ] **P1 — report by exception, with deltas.** A quiet night is `synced=0 extracted=0
+  embedded=0` — three zeros in the headline while the `warn` phases and the
+  needs-a-human items go unmentioned. Invert it: collapse healthy phases into a single
+  status line, lead with `warn`/`error` phases, and render every counter as a delta
+  against the prior run. Persist prior-run totals so the delta is real. A phase reporting
+  `0 fixes applied` for N consecutive nights while its backlog grows is the signal worth
+  paging on, and no level-only report can express it.
+- [ ] **P2 — fold `advisor` into the digest's action section.** Every number in a nightly
+  report should carry the command that acts on it. `src/core/advisor/` already computes a
+  ranked action list from brain state across its collectors; the digest's
+  "waiting on you" section should call it rather than grow a second ranking heuristic.
+- [ ] **P2 — surface skipped-because-disabled phases.** A dream run can skip many phases
+  purely on config flags. That is invisible in the totals, so a brain can quietly do far
+  less work than its operator believes for months. Name the disabled phases in the digest.
+- [ ] **P3 — document the stdout/stderr contract at the point of use.** `--json` callers
+  must not merge streams. Say so in the `dream` help text and in the cron/scheduling
+  guide, next to the example wrapper.
 ## v0.42.67.0 follow-ups (Windows build tooling)
 
 Filed as follow-ups from v0.42.67.0 (`.gitattributes` LF pin for `*.sh` +
