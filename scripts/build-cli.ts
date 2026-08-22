@@ -25,8 +25,7 @@ import { tmpdir } from "node:os";
 import { which } from "bun";
 
 function executableCandidate(label: "git" | "tar"): string {
-  const windowsRoots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]
-    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const windowsRoots = ['C:\\Program Files', 'C:\\Program Files (x86)'];
   const systemCandidates = process.platform === "win32"
     ? windowsRoots.flatMap((root) => label === 'git'
       ? [join(root, 'Git', 'cmd', 'git.exe'), join(root, 'Git', 'bin', 'git.exe')]
@@ -72,7 +71,7 @@ function cleanEnvironment(): NodeJS.ProcessEnv {
   return {
     ...env,
     PATH: process.platform === "win32"
-      ? (process.env.PATH ?? "")
+      ? [...new Set([dirname(GIT), dirname(TAR), 'C:\\Windows\\System32'])].join(';')
       : [...new Set([dirname(GIT), dirname(TAR), "/usr/bin", "/bin"])].join(":"),
     LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1",

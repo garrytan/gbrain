@@ -56,7 +56,7 @@ function safeProcessEnvironment(gitDirectory: string): NodeJS.ProcessEnv {
   }
   return {
     ...env,
-    PATH: process.platform === 'win32' ? (process.env.PATH ?? '') : `${gitDirectory}:/usr/bin:/bin`,
+    PATH: process.platform === 'win32' ? `${gitDirectory};C:\\Windows\\System32` : `${gitDirectory}:/usr/bin:/bin`,
     LC_ALL: 'C',
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null',
@@ -80,8 +80,7 @@ function protectedExecutable(candidate: string, label: string): string {
 }
 
 function protectedGitCandidate(): string {
-  const windowsRoots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]
-    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const windowsRoots = ['C:\\Program Files', 'C:\\Program Files (x86)'];
   const systemCandidates = process.platform === 'win32'
     ? windowsRoots.flatMap((root) => [
       join(root, 'Git', 'cmd', 'git.exe'),

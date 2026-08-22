@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -22,6 +22,11 @@ afterEach(() => {
 });
 
 describe('runtime build provenance', () => {
+  test('Windows trusted Git roots do not come from inherited environment variables', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'src', 'core', 'build-provenance.ts'), 'utf8');
+    expect(source).not.toContain('process.env.ProgramFiles');
+    expect(source).not.toContain("process.env['ProgramFiles(x86)']");
+  });
   test('resolves the exact commit for a Bun GitHub install and caches it', async () => {
     const root = temporaryDirectory('gbrain-installed-provenance-');
     writeFileSync(join(root, '.bun-tag'), 'ljcarreira-galaico-gbrain-124880f\n');
