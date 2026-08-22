@@ -83,7 +83,8 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // #3995 relational page-1 slot, #3783 keyword_hit, #4220 status).
     // #4352 follow-up: 22→23 excludePrivate posture fold (xp=) — replaces
     // the wholesale cache skip that disabled caching for remote callers.
-    expect(KNOBS_HASH_VERSION).toBe(23);
+    // #4358 residual: 23→24 negative-offset cache-skip gap.
+    expect(KNOBS_HASH_VERSION).toBe(24);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

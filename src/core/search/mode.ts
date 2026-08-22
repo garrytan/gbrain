@@ -896,7 +896,20 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // ~50% cache savings back. Same contamination class as detail (v=16) and
 // hardExcludes (v=12); same one-time global cold-miss pattern as the bumps
 // above, refills within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 23;
+//
+// bump 23→24 (#4358 residual): hybrid.ts's `pagedRequest` skip-cache gate
+// only bypassed the cache for offset>0 (the #4368 wave absorbed the
+// positive-offset half of the original #4358 fix, which used `!== 0`, as
+// `> 0`). A negative offset re-slices an already-sliced stored page just as
+// badly as a positive one, and — since offset isn't part of this hash — a
+// negative-offset request could read OR write the same cache row an
+// offset=0 (or any other offset) request shares. Any row written while that
+// gap was live may hold a wrong page under a knobsHash a clean request can
+// still reach. No new key part; the bump alone invalidates (the PR authored
+// this as v=22; master had already reached 23, so it sequences here per the
+// D8 convention). Same one-time global cold-miss pattern as the bumps
+// above; refills within cache.ttl_seconds (3600s).
+export const KNOBS_HASH_VERSION = 24;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The

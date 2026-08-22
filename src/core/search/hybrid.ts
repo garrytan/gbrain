@@ -2361,8 +2361,18 @@ export async function hybridSearchCached(
   // floor), making offset a result-affecting input that sits OUTSIDE the
   // knobs hash. Bypass the cache entirely (lookup AND store — the store is
   // gated on cacheStatus === 'miss' below, so 'disabled' covers both) for
-  // offset>0 requests; offset===0 semantics are unchanged.
-  const pagedRequest = (opts?.offset ?? 0) > 0;
+  // any nonzero offset; offset===0 semantics are unchanged. #4358 residual
+  // gap (this condition landed via #4368's wave as `> 0`, which absorbed
+  // the positive-offset half of the original fix but not this one): a
+  // negative offset re-slices the stored page just as badly as a positive
+  // one (Array.prototype.slice treats a negative start as counting from
+  // the array's end) — e.g. for offset=-21/limit=9 on a 21-row pool, the
+  // store-time slice correctly returns the pool's first 9 rows, but
+  // re-applying that same negative offset a second time (hit path, now
+  // against the already-9-row stored page) clamps both bounds to the
+  // array's start and returns nothing — so `> 0` let those requests
+  // read/write the cache anyway.
+  const pagedRequest = (opts?.offset ?? 0) !== 0;
   // #4352 follow-up — excludePrivate no longer skips the cache: the posture
   // is folded into knobsHash (xp=, v=23), so a private-included (trusted)
   // write can never serve a private-excluding lookup and vice versa. The

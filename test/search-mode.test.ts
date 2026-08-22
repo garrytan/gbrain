@@ -442,7 +442,10 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // semantic cache for every remote MCP caller (excludePrivate=true is
     // their default). A private-included write must not serve a
     // private-excluding lookup and vice versa.
-    expect(KNOBS_HASH_VERSION).toBe(23);
+    // #4358 residual: bumped 23→24 — negative-offset requests could
+    // read/write the same cache row an offset=0 request shares
+    // (pagedRequest previously skipped only offset>0).
+    expect(KNOBS_HASH_VERSION).toBe(24);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -464,7 +467,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // 19→20 pool floor (#3002); 20→21 recency fallback re-key (#895).
     // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
     // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
-    expect(KNOBS_HASH_VERSION).toBe(23);
+    // #4358 residual: 23→24 negative-offset cache-skip gap.
+    expect(KNOBS_HASH_VERSION).toBe(24);
   });
 
   test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -646,8 +650,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 23 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(23);
+  test('KNOBS_HASH_VERSION is 24 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 negative-offset cache-skip gap #4358 residual)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(24);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

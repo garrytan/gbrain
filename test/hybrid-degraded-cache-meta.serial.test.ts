@@ -169,6 +169,16 @@ describe('cache-hit stamping', () => {
     expect(meta.cache?.status).toBe('disabled');
     expect(typeof meta.retrieved_count).toBe('number');
   });
+
+  test('offset<0 also bypasses the cache entirely (#4358 residual — negative offsets re-slice a stored page just as badly as positive ones)', async () => {
+    const { results: missResults } = await cachedRun('builder', { limit: 5 });
+    expect(missResults.length).toBeGreaterThan(0);
+    await awaitPendingSearchCacheWrites();
+
+    const { meta } = await cachedRun('builder', { limit: 5, offset: -50 });
+    expect(meta.cache?.status).toBe('disabled');
+    expect(typeof meta.retrieved_count).toBe('number');
+  });
 });
 
 describe('cache_prestamp — pre-upgrade rows cannot claim clean', () => {
