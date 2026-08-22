@@ -22,22 +22,34 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { which } from "bun";
 
-const TRUSTED_GIT_CANDIDATE = "/usr/bin/git";
-const TRUSTED_TAR_CANDIDATE = "/usr/bin/tar";
+function executableCandidate(label: "git" | "tar"): string {
+  const systemCandidates = process.platform === "win32"
+    ? []
+    : [`/usr/bin/${label}`, `/opt/homebrew/bin/${label}`, `/usr/local/bin/${label}`];
+  const candidate = systemCandidates.find((path) => {
+    try { return lstatSync(path).isFile(); } catch { return false; }
+  }) ?? which(label);
+  if (!candidate) throw new Error(`no se encontró ${label} en este sistema`);
+  return candidate;
+}
 
 function trustedExecutable(candidate: string, label: string): string {
   const executable = realpathSync(candidate);
   const stat = lstatSync(executable);
-  if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
-    throw new Error(`${label} no es un ejecutable raíz protegido: ${executable}`);
+  const trustedOwner = process.platform === "win32"
+    || stat.uid === 0
+    || stat.uid === process.getuid?.();
+  if (!stat.isFile() || !trustedOwner || (process.platform !== "win32" && (stat.mode & 0o022) !== 0)) {
+    throw new Error(`${label} no es un ejecutable protegido: ${executable}`);
   }
   accessSync(executable, constants.X_OK);
   return executable;
 }
 
-const GIT = trustedExecutable(TRUSTED_GIT_CANDIDATE, "Git");
-const TAR = trustedExecutable(TRUSTED_TAR_CANDIDATE, "tar");
+const GIT = trustedExecutable(executableCandidate("git"), "Git");
+const TAR = trustedExecutable(executableCandidate("tar"), "tar");
 
 function cleanEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -55,10 +67,12 @@ function cleanEnvironment(): NodeJS.ProcessEnv {
   }
   return {
     ...env,
-    PATH: "/usr/bin:/bin",
+    PATH: process.platform === "win32"
+      ? (process.env.PATH ?? "")
+      : [...new Set([dirname(GIT), dirname(TAR), "/usr/bin", "/bin"])].join(":"),
     LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
     GIT_CONFIG_COUNT: "0",
     GIT_TERMINAL_PROMPT: "0",
     GIT_OPTIONAL_LOCKS: "0",
