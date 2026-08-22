@@ -25,12 +25,16 @@ import { tmpdir } from "node:os";
 import { which } from "bun";
 
 function executableCandidate(label: "git" | "tar"): string {
+  const windowsRoots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
   const systemCandidates = process.platform === "win32"
-    ? []
+    ? windowsRoots.flatMap((root) => label === 'git'
+      ? [join(root, 'Git', 'cmd', 'git.exe'), join(root, 'Git', 'bin', 'git.exe')]
+      : [join(root, 'Git', 'usr', 'bin', 'tar.exe')])
     : [`/usr/bin/${label}`, `/opt/homebrew/bin/${label}`, `/usr/local/bin/${label}`];
   const candidate = systemCandidates.find((path) => {
     try { return lstatSync(path).isFile(); } catch { return false; }
-  }) ?? which(label);
+  }) ?? (process.platform === 'win32' ? null : which(label));
   if (!candidate) throw new Error(`no se encontró ${label} en este sistema`);
   return candidate;
 }
@@ -248,8 +252,7 @@ function acquireBuildLock(path: string): void {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const record = readBuildLock(path);
-      const ageMs = Date.now() - Date.parse(record.started_at);
-      if (processIsAlive(record.pid) && ageMs <= 6 * 60 * 60 * 1000) {
+      if (processIsAlive(record.pid)) {
         throw new Error(`otro build conserva el bloqueo ${path}`);
       }
       const unchanged = readBuildLock(path);

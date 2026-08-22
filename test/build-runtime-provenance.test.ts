@@ -61,6 +61,22 @@ describe('runtime build provenance', () => {
     expect(requested).toBe(false);
   });
 
+  test('invalidates a cached commit when the Bun tag changes', async () => {
+    const root = temporaryDirectory('gbrain-installed-provenance-upgrade-');
+    writeFileSync(join(root, '.bun-tag'), 'garrytan-gbrain-aaaaaaa\n');
+    await resolveInstalledBuildCommit(root, async () => (
+      new Response(JSON.stringify({ sha: 'a'.repeat(40) }), { status: 200 })
+    ));
+    writeFileSync(join(root, '.bun-tag'), 'garrytan-gbrain-bbbbbbb\n');
+    let fetched = false;
+    const upgraded = await resolveInstalledBuildCommit(root, async () => {
+      fetched = true;
+      return new Response(JSON.stringify({ sha: 'b'.repeat(40) }), { status: 200 });
+    });
+    expect(fetched).toBe(true);
+    expect(upgraded).toBe('b'.repeat(40));
+  });
+
   test('resolves only a clean source checkout', () => {
     const root = temporaryDirectory('gbrain-source-provenance-');
     mkdirSync(join(root, 'src'));

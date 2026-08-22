@@ -210,6 +210,18 @@ describe("procedencia del build CLI", () => {
     expect(runBinary(repo.output)).toBe(repo.commit);
   }, 120_000);
 
+  test("nunca recupera un bloqueo cuyo proceso sigue vivo por antigüedad", () => {
+    const repo = createRepository();
+    const lock = join(repo.root, ".git", "gbrain-build.lock");
+    const record = { pid: process.pid, started_at: '2000-01-01T00:00:00.000Z', token: 'active-old-test' };
+    writeFileSync(lock, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+
+    const result = runBuild(repo.root, repo.output);
+
+    expect(result.status).not.toBe(0);
+    expect(readFileSync(lock, "utf8")).toBe(`${JSON.stringify(record)}\n`);
+  }, 120_000);
+
   test("conserva el build normal para un commit limpio", () => {
     const repo = createRepository();
 

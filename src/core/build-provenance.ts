@@ -80,12 +80,17 @@ function protectedExecutable(candidate: string, label: string): string {
 }
 
 function protectedGitCandidate(): string {
+  const windowsRoots = [process.env.ProgramFiles, process.env['ProgramFiles(x86)']]
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
   const systemCandidates = process.platform === 'win32'
-    ? []
+    ? windowsRoots.flatMap((root) => [
+      join(root, 'Git', 'cmd', 'git.exe'),
+      join(root, 'Git', 'bin', 'git.exe'),
+    ])
     : ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'];
   const candidate = systemCandidates.find((path) => {
     try { return lstatSync(path).isFile(); } catch { return false; }
-  }) ?? which('git');
+  }) ?? (process.platform === 'win32' ? null : which('git'));
   if (!candidate) throw new Error('Git is required to verify a source checkout');
   return candidate;
 }
@@ -115,7 +120,13 @@ export function resolveSourceCheckoutCommit(packageRoot: string, gitCandidate?: 
   return commit;
 }
 
-function readCachedCommit(packageRoot: string): string | null {
+interface InstalledCommitCache {
+  owner: string;
+  short_commit: string;
+  commit: string;
+}
+
+function readCachedCommit(packageRoot: string, owner: string, shortCommit: string): string | null {
   const path = join(packageRoot, CACHE_NAME);
   if (!existsSync(path)) return null;
   const stat = lstatSync(path);
@@ -126,16 +137,20 @@ function readCachedCommit(packageRoot: string): string | null {
       throw new Error('installed build commit cache is not protected');
     }
   }
-  const commit = readFileSync(path, 'utf8').trim();
-  assertExactCommit(commit, 'cached installed build commit');
-  return commit;
+  const cached = JSON.parse(readFileSync(path, 'utf8')) as Partial<InstalledCommitCache>;
+  if (cached.owner !== owner || cached.short_commit !== shortCommit) return null;
+  assertExactCommit(cached.commit, 'cached installed build commit');
+  if (!cached.commit.startsWith(shortCommit)) {
+    throw new Error('cached installed build commit does not match its Bun tag');
+  }
+  return cached.commit;
 }
 
-function cacheCommit(packageRoot: string, commit: string): void {
+function cacheCommit(packageRoot: string, cached: InstalledCommitCache): void {
   const path = join(packageRoot, CACHE_NAME);
   const temporary = `${path}.tmp-${process.pid}`;
   try {
-    writeFileSync(temporary, `${commit}\n`, { mode: 0o600, flag: 'wx' });
+    writeFileSync(temporary, `${JSON.stringify(cached)}\n`, { mode: 0o600, flag: 'wx' });
     if (process.platform !== 'win32') chmodSync(temporary, 0o600);
     renameSync(temporary, path);
   } catch {
@@ -147,9 +162,6 @@ export async function resolveInstalledBuildCommit(
   packageRoot: string,
   fetchCommit: FetchCommit = fetchGitHubCommit,
 ): Promise<string> {
-  const cached = readCachedCommit(packageRoot);
-  if (cached) return cached;
-
   const tag = readFileSync(join(packageRoot, '.bun-tag'), 'utf8').trim();
   const match = tag.match(BUN_TAG_RE);
   if (!match) throw new Error('Bun install lacks a verifiable GitHub commit tag');
@@ -157,6 +169,8 @@ export async function resolveInstalledBuildCommit(
   if (!GITHUB_OWNER_RE.test(owner)) {
     throw new Error('Bun install has an invalid GitHub owner');
   }
+  const cached = readCachedCommit(packageRoot, owner, shortCommit);
+  if (cached) return cached;
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/gbrain/commits/${shortCommit}`;
   const response = await fetchCommit(url);
   if (!response.ok) throw new Error(`GitHub could not resolve installed commit (${response.status})`);
@@ -165,7 +179,7 @@ export async function resolveInstalledBuildCommit(
   if (!body.sha.startsWith(shortCommit)) {
     throw new Error('GitHub commit does not match the installed Bun tag');
   }
-  cacheCommit(packageRoot, body.sha);
+  cacheCommit(packageRoot, { owner, short_commit: shortCommit, commit: body.sha });
   return body.sha;
 }
 
