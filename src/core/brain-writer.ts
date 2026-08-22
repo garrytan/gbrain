@@ -28,9 +28,14 @@ import {
   type ParseValidationCode,
   type ParseValidationError,
 } from './markdown.ts';
-import { isSyncable, pruneDir, slugifyPath } from './sync.ts';
+import { isMarkdownFilePath, isSyncable, pruneDir, slugifyPath } from './sync.ts';
 
 export type { ParseValidationCode };
+
+/** Frontmatter validation is defined only for Markdown page files. */
+export function isFrontmatterScannablePath(path: string): boolean {
+  return isMarkdownFilePath(path) && isSyncable(path, { strategy: 'markdown' });
+}
 
 export interface AuditFix {
   code: ParseValidationCode;
@@ -622,7 +627,10 @@ function scanOneSource(
     // visitDir is consulted from walkDir directly (passed below). The
     // per-file visit closure doesn't need it.
     const relPath = relative(rootResolved, absPath);
-    if (!isSyncable(relPath, { strategy: 'markdown' })) return true;
+    // Frontmatter is a Markdown-only contract. Multimodal sync deliberately
+    // admits images under the markdown strategy, but parsing JPEG/PNG bytes as
+    // UTF-8 turns ordinary binary NULs into false NULL_BYTES findings.
+    if (!isFrontmatterScannablePath(relPath)) return true;
     scanned++;
     let content: string;
     try {

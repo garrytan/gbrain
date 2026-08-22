@@ -24,6 +24,7 @@ import { join, sep } from 'path';
 import { tmpdir } from 'os';
 import { scanBrainSources, walkDir } from '../src/core/brain-writer.ts';
 import { collectFiles } from '../src/commands/frontmatter.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 /**
  * Build a separator-prefixed path fragment for suffix/substring predicates.
@@ -43,6 +44,8 @@ beforeAll(() => {
   writeFileSync(join(root, 'people', 'alice.md'), '---\ntitle: Alice\n---\n\nbody\n');
   mkdirSync(join(root, 'concepts', 'subdir'), { recursive: true });
   writeFileSync(join(root, 'concepts', 'subdir', 'thing.md'), '---\ntitle: Thing\n---\n\nbody\n');
+  writeFileSync(join(root, 'index.md'), '---\ntitle: Structural index\n---\n\nbody\n');
+  writeFileSync(join(root, 'photo.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x01, 0xd9]));
   // Vendor / hidden / generated trees — walker MUST NOT descend.
   mkdirSync(join(root, 'node_modules', 'fake-pkg'), { recursive: true });
   writeFileSync(join(root, 'node_modules', 'fake-pkg', 'README.md'), '# Should not be visited\n');
@@ -169,10 +172,30 @@ describe('collectFiles (frontmatter.ts) — descent-time pruning parity', () => 
     const files = collectFiles(target);
     expect(files).toEqual([target]);
   });
+
+  test('explicit structural Markdown target remains valid operator intent', () => {
+    const target = join(root, 'index.md');
+    expect(collectFiles(target)).toEqual([target]);
+  });
+
+  test('multimodal mode does not admit image assets for directory validation', async () => {
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+      const files = collectFiles(root);
+      expect(files.some(f => f.endsWith(seg('photo.jpg')))).toBe(false);
+      expect(files.some(f => f.endsWith(seg('people', 'alice.md')))).toBe(true);
+    });
+  });
+
+  test('single-file validation refuses a non-Markdown target in multimodal mode', async () => {
+    const target = join(root, 'photo.jpg');
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+      expect(collectFiles(target)).toEqual([]);
+    });
+  });
 });
 
 describe('frontmatter walkers — git-visible file parity', () => {
-  test('collectFiles respects .git/info/exclude like sync/import', () => {
+  test('collectFiles respects .git/info/exclude like sync/import', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'frontmatter-git-visible-'));
     try {
       execFileSync('git', ['init'], { cwd: repo, stdio: 'ignore' });
@@ -181,10 +204,14 @@ describe('frontmatter walkers — git-visible file parity', () => {
       writeFileSync(join(repo, '.git', 'info', 'exclude'), 'local-skills/\n');
       writeFileSync(join(repo, 'people', 'alice.md'), '---\ntitle: Alice\n---\n\nbody\n');
       writeFileSync(join(repo, 'local-skills', 'SKILL.md'), '---\nname: bad\n# malformed frontmatter\n');
+      writeFileSync(join(repo, 'photo.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0x00, 0x01, 0xd9]));
 
-      const files = collectFiles(repo).map((f) => f.replace(repo + sep, ''));
-      expect(files).toContain(join('people', 'alice.md'));
-      expect(files).not.toContain(join('local-skills', 'SKILL.md'));
+      await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+        const files = collectFiles(repo).map((f) => f.replace(repo + sep, ''));
+        expect(files).toContain(join('people', 'alice.md'));
+        expect(files).not.toContain(join('local-skills', 'SKILL.md'));
+        expect(files).not.toContain('photo.jpg');
+      });
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
