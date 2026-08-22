@@ -82,7 +82,14 @@ const providers = new Map<string, GuardrailProvider>();
 export function registerGuardrailProvider(provider: GuardrailProvider): void {
   if (!provider || typeof provider.classify !== 'function' || !provider.id) return;
   providers.set(provider.id, provider);
+  // #3688 residual: the env loader counts registration EVENTS, not map
+  // growth — a same-id replacement (explicitly supported above) keeps
+  // providers.size constant and a size delta would misread it as zero.
+  registrationEvents++;
 }
+
+/** Monotonic count of accepted registerGuardrailProvider calls (see above). */
+let registrationEvents = 0;
 
 /** Remove a previously-registered provider. Returns true if one was removed. */
 export function unregisterGuardrailProvider(id: string): boolean {
@@ -163,6 +170,15 @@ export async function loadGuardrailProvidersFromEnv(
     target = pathToFileURL(resolve(expanded)).href;
   }
 
+  // #3688 residual: snapshot BEFORE the import, not after. A module that
+  // registers its providers as a top-level side effect (calling
+  // registerGuardrailProvider at import time) does so DURING the import —
+  // an after-import baseline counted those registrations as zero and the
+  // fail-closed zero-provider check below then rejected a module whose
+  // guardrails were in fact registered and active. Counting EVENTS (not
+  // providers.size) also keeps a same-id replacement — supported by
+  // registerGuardrailProvider — from reading as zero.
+  const before = registrationEvents;
   let mod: Record<string, unknown>;
   try {
     mod = (await import(target)) as Record<string, unknown>;
@@ -171,8 +187,6 @@ export async function loadGuardrailProvidersFromEnv(
       `GBRAIN_GUARDRAILS_MODULE=${spec} failed to load: ${(err as Error)?.message ?? String(err)}`,
     );
   }
-
-  const before = providers.size;
   const candidates: unknown[] = [];
   if (Array.isArray(mod.default)) candidates.push(...mod.default);
   else if (mod.default) candidates.push(mod.default);
@@ -184,7 +198,7 @@ export async function loadGuardrailProvidersFromEnv(
     await (mod.register as (r: typeof registerGuardrailProvider) => unknown)(registerGuardrailProvider);
   }
 
-  const loaded = providers.size - before;
+  const loaded = registrationEvents - before;
   if (loaded <= 0) {
     throw new GuardrailLoadError(
       `GBRAIN_GUARDRAILS_MODULE=${spec} loaded but registered no guardrail provider ` +
