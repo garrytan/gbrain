@@ -51,9 +51,12 @@ function makeStub(
         return sources.filter(s => s.local_path !== null && s.id !== 'default')
           .map(s => ({ id: s.id })) as unknown as T[];
       }
-      if (sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL')) {
+      if (
+        sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL') ||
+        sql.includes(', archived FROM sources WHERE local_path IS NOT NULL')
+      ) {
         return sources.filter(s => s.local_path !== null)
-          .map(s => ({ id: s.id, local_path: s.local_path })) as unknown as T[];
+          .map(s => ({ id: s.id, local_path: s.local_path, archived: s.archived === true })) as unknown as T[];
       }
       if (sql.includes('SELECT id FROM sources WHERE id =')) {
         const id = (_params as string[])?.[0];

@@ -377,7 +377,13 @@ export async function addSource(
   // phantom `C:\c\Users\x` and sync/write-through silently miss the real
   // directory. Identity on POSIX and for already-native paths.
   if (opts.localPath) {
-    opts = { ...opts, localPath: msysToNativePath(opts.localPath) };
+    // #3696: resolve to ABSOLUTE before the overlap check and the INSERT.
+    // A relative `--path .` used to be stored verbatim; every later consumer
+    // that runs from a different cwd (launchd daemon at cwd=/, autopilot
+    // dispatch, sync anchors) then join-resolved a phantom path and silently
+    // missed the real directory.
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- localPath only flows here from the trusted local CLI: the sources_add op hard-rejects `path` unless ctx.remote === false (remote callers get null), so this is the operator registering their own directory; absolutizing it is the #3696 fix
+    opts = { ...opts, localPath: resolvePath(msysToNativePath(opts.localPath)) };
   }
 
   // Q4: pre-flight collision check before any clone work.

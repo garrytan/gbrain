@@ -31,14 +31,19 @@ import {
   type AdaptiveReturnDecision,
 } from './return-policy.ts';
 import { applyAutocut, type AutocutDecision } from './autocut.ts';
-import { buildRelationalArm } from './relational-recall.ts';
+import {
+  buildRelationalArm,
+  ensureRelationalEvidenceSlot,
+  type RelationalEvidenceSlotDecision,
+} from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
 import { applyReranker } from './rerank.ts';
 import { autoDetectDetail, classifyQuery, isAmbiguousModalityQuery } from './query-intent.ts';
 import { isTitlePhraseMatch } from './title-match.ts';
 import { normalizeAlias } from './alias-normalize.ts';
-import { stampEvidence } from './evidence.ts';
+import { stampEvidence, markKeywordHits } from './evidence.ts';
+import { applyExactLookupTier } from './exact-lookup.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget, searchSalvageEnabled, type TokenBudgetMeta } from './token-budget.ts';
 import { warnOncePerProcess } from '../utils.ts';
@@ -128,6 +133,11 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
  * One batched query over the candidate arms' page_ids. Fail-open on the
  * fetch (a marker-fetch failure must not break retrieval) — the boost then
  * applies, but the SQL-side source-boost guard still holds.
+ *
+ * #4220: the same batched query now surfaces the page's raw
+ * `frontmatter.status` value, stamped on `SearchResult.status` for EVERY
+ * result whose page carries one (draft/superseded/restricted/verified/...).
+ * `unverified` remains the special case requiring the full quarantine pair.
  */
 export async function stampUnverifiedExtractions(
   engine: BrainEngine,
@@ -139,10 +149,13 @@ export async function stampUnverifiedExtractions(
       results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
     )];
     if (ids.length === 0) return;
-    const unverified = await engine.getUnverifiedExtractionPageIds(ids);
-    if (unverified.size === 0) return;
+    const marks = await engine.getUnverifiedExtractionPageIds(ids);
+    if (marks.size === 0) return;
     for (const r of results) {
-      if (unverified.has(r.page_id)) r.unverified = true;
+      const m = marks.get(r.page_id);
+      if (!m) continue;
+      r.status = m.status;
+      if (m.unverified) r.unverified = true;
     }
   } catch {
     // best-effort: never break retrieval.
@@ -838,7 +851,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: { sourceId?: string; sourceIds?: string[] },
+  opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
 ): Promise<SearchResult[]> {
   if (!query) return results;
   const qNorm = normalizeAlias(query);
@@ -878,6 +891,13 @@ export async function applyAliasHop(
       continue;
     }
     if (!page) continue;
+    // #4352 — the alias inject path bypasses the engines' SQL visibility
+    // clause (getPage, not search); re-apply the private predicate here so
+    // an untrusted caller can't hop into a `visibility: private` page.
+    if (
+      opts.excludePrivate &&
+      ((page.frontmatter as Record<string, unknown> | null | undefined)?.visibility === 'private')
+    ) continue;
     injectScore += 1e-6;
     out.push({
       // #2339-sibling: include page_id. The `as SearchResult` cast hid its
@@ -1219,6 +1239,11 @@ export async function hybridSearch(
     // ordering means we can't lazy-spread the full opts).
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
+    // #4352 — page-level private-visibility enforcement is trust-scoped
+    // state, same leak class as source scoping above: dropping it here would
+    // let an untrusted caller read `visibility: private` pages through the
+    // hybrid hot path.
+    excludePrivate: opts?.excludePrivate,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
@@ -1333,6 +1358,12 @@ export async function hybridSearch(
             return [] as SearchResult[];
           }),
         ]);
+  // #3783 — stamp lexical-arm membership pre-fusion so evidence's
+  // keyword_exact label is earned by an actual FTS hit, never by a solid
+  // blended score alone. Both arms are the lexical-evidence class (chunk
+  // FTS + title FTS); vector/relational arms are deliberately NOT marked.
+  markKeywordHits(keywordResults);
+  markKeywordHits(titleResults);
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
@@ -1396,6 +1427,10 @@ export async function hybridSearch(
       sourceIds: opts?.sourceIds,
       depth: resolvedMode.relational_retrieval_depth,
       limit: opts?.limit ?? resolvedMode.searchLimit,
+      // #4352 remediation: the arm hydrates titles + compiled_truth snippets
+      // straight from pages — thread the caller's private-page gate or a
+      // remote relational query bypasses the keyword/vector visibility clause.
+      excludePrivate: opts?.excludePrivate,
       onMeta: opts?.onRelationalMeta,
     });
   }
@@ -1455,12 +1490,32 @@ export async function hybridSearch(
     }
     // T3/T4 — alias hop + evidence stamp even without an embedding provider
     // (the named-thing fix is most valuable exactly when vector is unavailable).
-    const noEmbedHopped = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
+    const noEmbedPreExact = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
+      excludePrivate: opts?.excludePrivate,
+    });
+    // #1663 — structural exact-lookup tier (slug / exact-title identity).
+    const noEmbedHopped = await applyExactLookupTier(engine, noEmbedPreExact, query, {
+      sourceId: opts?.sourceId,
+      sourceIds: opts?.sourceIds,
+      titleCandidates: titleResults,
     });
     stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-    const noEmbedSliced = noEmbedHopped.slice(offset, offset + limit);
+    // #3995 — guaranteed page-1 relational evidence: a fired arm's answer is
+    // often lexically unrecoverable, so its single-arm fused row can land
+    // beyond the limit slice on keyword-heavy corpora. Promote/inject before
+    // slicing (first page only; pure no-op when the arm didn't fire).
+    let noEmbedPool = noEmbedHopped;
+    let noEmbedRelSlot: RelationalEvidenceSlotDecision | undefined;
+    if (relationalList.length > 0) {
+      const r = ensureRelationalEvidenceSlot(noEmbedHopped, relationalList, limit, offset, {
+        cosineFloor: resolvedMode.evidence_cosine_floor,
+      });
+      noEmbedPool = r.pool;
+      noEmbedRelSlot = r.decision;
+    }
+    const noEmbedSliced = noEmbedPool.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, noEmbedBudgeted);
@@ -1470,6 +1525,23 @@ export async function hybridSearch(
     // vector didn't run, and whether the keyword arm itself came up empty
     // (skipped-by-modality is not a keyword miss, hence the image gate).
     pushDegraded(degraded, 'embed_unavailable', 'no_provider');
+    // #3808: meta names the degradation for programmatic callers, but a CLI
+    // human never saw it — mirror the embed-failure warn (once per process,
+    // stderr) with the diagnose reason so a silently keyword-only brain is
+    // visible the first time it ships results.
+    try {
+      const { diagnoseEmbedding } = await import('../ai/gateway.ts');
+      const diag = diagnoseEmbedding(providerProbe);
+      const reason = diag.ok ? 'provider_unreachable' : (diag.reason ?? 'provider_unreachable');
+      warnOncePerProcess(
+        'search-vector-leg-unavailable',
+        `[gbrain] vector search unavailable (${reason}) — results are keyword-only. Run \`gbrain doctor\` to diagnose.`,
+      );
+    } catch {
+      // Fail-open like every sibling stage: the warning is best-effort and a
+      // gateway import/diagnose throw must never fail the already-computed
+      // keyword-only degraded results it exists to explain.
+    }
     if (keywordResults.length === 0 && earlyModality !== 'image') {
       pushDegraded(degraded, 'keyword_zero');
     }
@@ -1486,6 +1558,7 @@ export async function hybridSearch(
       ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
         ? { token_budget: noEmbedBudgetMeta }
         : {}),
+      ...(noEmbedRelSlot ? { relational_evidence_slot: noEmbedRelSlot } : {}),
     });
     return noEmbedBudgeted;
   }
@@ -1804,9 +1877,16 @@ export async function hybridSearch(
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
       fallbackResults.sort((a, b) => b.score - a.score);
     }
-    const kwHopped = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
+    const kwPreExact = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
+      excludePrivate: opts?.excludePrivate,
+    });
+    // #1663 — structural exact-lookup tier (slug / exact-title identity).
+    const kwHopped = await applyExactLookupTier(engine, kwPreExact, query, {
+      sourceId: opts?.sourceId,
+      sourceIds: opts?.sourceIds,
+      titleCandidates: titleResults,
     });
     stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
     const kwSliced = kwHopped.slice(offset, offset + limit);
@@ -1999,9 +2079,22 @@ export async function hybridSearch(
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const aliasHopped = await applyAliasHop(engine, reranked, query, {
+  const preExact = await applyAliasHop(engine, reranked, query, {
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
+    excludePrivate: opts?.excludePrivate,
+  });
+
+  // #1663 — structural exact-lookup tier: a query that IS a page identity
+  // (slug / exact normalized title) gets that page at rank-1 regardless of
+  // how the scorers ranked body chunks. Supersession-filtered inside; reuses
+  // the already-fetched title arm (no extra queries); pure no-op for
+  // non-lookup-shaped queries. Runs after the alias hop so all three
+  // identity surfaces (alias, slug, title) share the same injection shape.
+  const aliasHopped = await applyExactLookupTier(engine, preExact, query, {
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
+    titleCandidates: titleResults,
   });
 
   // T4 — stamp evidence + create_safety so the agent's don't-duplicate
@@ -2064,10 +2157,28 @@ export async function hybridSearch(
       // Preserve alias-hop exact matches: applyAliasHop injects the canonical
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
-      (x) => x.alias_hit === true,
+      // #1663: same guarantee for structural exact-lookup tier hits (slug /
+      // exact-title identity matches also arrive post-rerank, unscored).
+      (x) => x.alias_hit === true || x.exact_lookup !== undefined,
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
+  }
+
+  // #3995 — guaranteed page-1 relational evidence. A fired arm's answer is
+  // often lexically unrecoverable (unverified entity stub, single-arm RRF
+  // score), so its fused row can land beyond the limit slice on multi-arm
+  // corpora, and autocut's preserve predicate only covers alias hits — the
+  // relational row (no rerank_score) is exactly what a cut drops. Promote the
+  // fused row into the page-1 window, or re-inject the arm's top candidate
+  // when it was dropped entirely. First page only; pure no-op otherwise.
+  let relationalSlotDecision: RelationalEvidenceSlotDecision | undefined;
+  if (relationalList.length > 0 && effectiveModality !== 'image') {
+    const r = ensureRelationalEvidenceSlot(returnPool, relationalList, limit, offset, {
+      cosineFloor: resolvedMode.evidence_cosine_floor,
+    });
+    returnPool = r.pool;
+    relationalSlotDecision = r.decision;
   }
 
   const sliced = returnPool.slice(offset, offset + limit);
@@ -2095,6 +2206,7 @@ export async function hybridSearch(
     ...(vectorPoolUnderfill ? { vector_pool_underfilled: vectorPoolUnderfill } : {}),
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
+    ...(relationalSlotDecision ? { relational_evidence_slot: relationalSlotDecision } : {}),
   });
   return budgeted;
 }
@@ -2198,6 +2310,13 @@ export async function hybridSearchCached(
     // bare hybridSearch does (opts.detail ?? autoDetectDetail(query)) so an
     // auto-detected `high` query keys like an explicit `high` one.
     detail: opts?.detail ?? autoDetectDetail(query),
+    // #4352 follow-up — fold the private-visibility posture into the key
+    // (xp=, v=23) for BOTH the lookup and the write below (they share this
+    // one hash), instead of the original wholesale skipCache bypass. A
+    // remote-default (excludePrivate=true) caller now caches normally, on
+    // rows that can never be served to (or written by) a trusted
+    // private-included call.
+    excludePrivate: opts?.excludePrivate === true,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
@@ -2230,6 +2349,10 @@ export async function hybridSearchCached(
   // now-relative timestamp, which a persisted cache row can't express.
   const dateFiltered =
     Boolean(opts?.since ?? opts?.afterDate) || Boolean(opts?.until ?? opts?.beforeDate);
+  // #3985: type-filtered requests skip the cache — `types` is not part of
+  // knobsHash, so a filtered result set could be served to an unfiltered
+  // lookup (and vice versa). Mirrors the #3442 date-filter bypass.
+  const typeFiltered = (opts?.types?.length ?? 0) > 0;
   // Offset pages are cache-hostile until the pre-slice POOL itself is what's
   // stored: the cache holds the already offset/limit-sliced page (bare
   // hybridSearch slices before returning), so a hit for any other offset
@@ -2240,6 +2363,12 @@ export async function hybridSearchCached(
   // gated on cacheStatus === 'miss' below, so 'disabled' covers both) for
   // offset>0 requests; offset===0 semantics are unchanged.
   const pagedRequest = (opts?.offset ?? 0) > 0;
+  // #4352 follow-up — excludePrivate no longer skips the cache: the posture
+  // is folded into knobsHash (xp=, v=23), so a private-included (trusted)
+  // write can never serve a private-excluding lookup and vice versa. The
+  // original wholesale skip disabled the semantic cache for every remote MCP
+  // caller (excludePrivate=true is their default) — exactly the
+  // highest-volume beneficiaries of the ~50% cache savings.
   const skipCache =
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
@@ -2247,6 +2376,7 @@ export async function hybridSearchCached(
     isNonDefaultColumn ||
     adaptiveReturnOn ||
     dateFiltered ||
+    typeFiltered ||
     pagedRequest;
 
   let cacheStatus: 'hit' | 'miss' | 'disabled' = skipCache ? 'disabled' : 'miss';
@@ -2554,7 +2684,7 @@ export function rrfFusionWeighted(
   lists: Array<{ list: SearchResult[]; k: number }>,
   applyBoost = true,
 ): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; score: number }>();
+  const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
 
   for (const { list, k } of lists) {
     for (let rank = 0; rank < list.length; rank++) {
@@ -2565,8 +2695,12 @@ export function rrfFusionWeighted(
 
       if (existing) {
         existing.score += rrfScore;
+        // #3783 — OR-propagate lexical-arm membership: a row that fusion
+        // first saw via a vector list must still read keyword_hit when the
+        // keyword arm ALSO surfaced it.
+        if (r.keyword_hit === true) existing.keywordHit = true;
       } else {
-        scores.set(key, { result: r, score: rrfScore });
+        scores.set(key, { result: r, score: rrfScore, keywordHit: r.keyword_hit === true });
       }
     }
   }
@@ -2587,7 +2721,10 @@ export function rrfFusionWeighted(
 
   return entries
     .sort((a, b) => b.score - a.score)
-    .map(({ result, score }) => ({ ...result, score }));
+    .map(({ result, score, keywordHit }) =>
+      keywordHit && result.keyword_hit !== true
+        ? { ...result, score, keyword_hit: true }
+        : { ...result, score });
 }
 
 /**
@@ -2596,7 +2733,7 @@ export function rrfFusionWeighted(
  * After accumulation: normalize to 0-1, then boost compiled_truth chunks.
  */
 export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true): SearchResult[] {
-  const scores = new Map<string, { result: SearchResult; score: number }>();
+  const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
 
   for (const list of lists) {
     for (let rank = 0; rank < list.length; rank++) {
@@ -2607,8 +2744,10 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
 
       if (existing) {
         existing.score += rrfScore;
+        // #3783 — OR-propagate lexical-arm membership across merge order.
+        if (r.keyword_hit === true) existing.keywordHit = true;
       } else {
-        scores.set(key, { result: r, score: rrfScore });
+        scores.set(key, { result: r, score: rrfScore, keywordHit: r.keyword_hit === true });
       }
     }
   }
@@ -2637,7 +2776,10 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
   // Sort by boosted score descending
   return entries
     .sort((a, b) => b.score - a.score)
-    .map(({ result, score }) => ({ ...result, score }));
+    .map(({ result, score, keywordHit }) =>
+      keywordHit && result.keyword_hit !== true
+        ? { ...result, score, keyword_hit: true }
+        : { ...result, score });
 }
 
 /**

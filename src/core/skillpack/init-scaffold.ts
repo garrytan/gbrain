@@ -178,7 +178,9 @@ export function runInitScaffold(opts: InitScaffoldOptions): InitScaffoldResult {
       'The agent reads it and walks per-step at its own discretion.',
       '',
       `1. show user: "${opts.name} is installed. Try one of the trigger phrases from skills/${firstSlug}/SKILL.md."`,
-      `2. (edit me) agent: gbrain put_page wiki/_${opts.name}-config --frontmatter type=config`,
+      // #3697: `gbrain put_page ... --frontmatter` never resolved (CLI name is
+      // `put`, content arrives on stdin, and no --frontmatter flag exists).
+      `2. (edit me) agent: printf -- '---\\ntype: config\\n---\\n\\nconfig body\\n' | gbrain put wiki/_${opts.name}-config`,
       '',
     ].join('\n'),
   });

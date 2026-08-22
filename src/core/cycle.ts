@@ -572,6 +572,15 @@ export interface CycleOpts {
  * existing dispatch + every existing minion job in flight at upgrade
  * time use this row in `gbrain_cycle_locks`.
  */
+/**
+ * #4062 review: wall-clock cap for the extract phase's IN-CYCLE stale drain.
+ * Deliberately small — the drain is a backlog nibbler that must not starve
+ * the phases behind it; the full STALE_TIME_BUDGET_MS (~30 min) belongs to
+ * the explicit `gbrain extract --stale` command. A backlog bigger than one
+ * cap's worth drains incrementally across cycles (staleRemaining reports it).
+ */
+export const CYCLE_STALE_DRAIN_BUDGET_MS = 3 * 60 * 1000;
+
 const LEGACY_CYCLE_LOCK_ID = 'gbrain-cycle';
 // v0.41.19.0 (T2 of ops-fix-wave): dropped from 30 min to 5 min so a
 // crashed cycle releases the lock within 5 min instead of holding it for
@@ -1366,6 +1375,40 @@ async function runPhaseExtract(
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
     const incremental = changedSlugs !== undefined;
+    // #4062: the targeted pass above only covers what sync reported (or the
+    // fs walk found) — pages left stale for any OTHER reason (extractor
+    // version bump, DB-only writes, a prior aborted sweep) never re-extracted
+    // on the cycle, so the links_extracted_at backlog grew unboundedly until
+    // someone hand-ran `gbrain extract --stale`. Drain it here: DB-source,
+    // source-scoped, capped at CYCLE_STALE_DRAIN_BUDGET_MS per cycle (the
+    // full ~30-min STALE_TIME_BUDGET_MS stays with the explicit
+    // `gbrain extract --stale` command — an unbounded in-cycle drain would
+    // starve every later phase behind a big backlog; the remainder drains
+    // across subsequent cycles), no-op when nothing is stale. Failures
+    // degrade to details (the targeted pass already succeeded — a drain
+    // hiccup must not fail the phase).
+    let staleRemaining: number | undefined;
+    let staleDetails: Record<string, unknown> = {};
+    try {
+      const { extractStaleFromDB } = await import('../commands/extract.ts');
+      const drained = await extractStaleFromDB(engine, {
+        dryRun: false,
+        jsonMode: false,
+        includeFrontmatter,
+        sourceIdFilter: sourceId,
+        catchUp: false,
+        timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS,
+      });
+      staleRemaining = drained.staleRemaining;
+      staleDetails = {
+        stale_pages_drained: drained.pagesProcessed,
+        stale_links_created: drained.linksCreated,
+        stale_timeline_created: drained.timelineCreated,
+        staleRemaining: drained.staleRemaining,
+      };
+    } catch (e) {
+      staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };
+    }
     return {
       phase: 'extract',
       status: 'ok',
@@ -1378,6 +1421,8 @@ async function runPhaseExtract(
         pages_processed: result?.pages_processed ?? 0,
         incremental,
         ...(incremental ? { slugs_targeted: changedSlugs.length } : {}),
+        ...staleDetails,
+        ...(staleRemaining !== undefined && staleRemaining > 0 ? { stale_backlog: true } : {}),
       },
     };
   } catch (e) {
@@ -2569,7 +2614,10 @@ export async function runCycle(
           // clean partial-exit fires before the worker's kill switch (same
           // literal shape as the patterns call above so the structural guard
           // matches both).
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
+          // #4102: `once` bypasses the cycle.propose_takes.enabled off switch
+          // for `gbrain dream --phase propose_takes --once` (same semantics as
+          // conversation_facts_backfill / enrich_thin above).
+          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.onceForPhase === 'propose_takes' }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();

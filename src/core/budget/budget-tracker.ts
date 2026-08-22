@@ -78,6 +78,85 @@ export interface BudgetTrackerOpts {
   label: string;
   /** Override the audit file path (tests + custom installers). */
   auditPath?: string;
+  /**
+   * #4312 — operator config-plane price overrides (`pricing.overrides`),
+   * normalized via parsePricingOverrides. Consulted BEFORE the shipped
+   * pricing tables in every cost computation, so an operator routing through
+   * a proxy (LiteLLM fronting a paid provider — chat AND embed) can declare
+   * their real rate instead of TX2 no_pricing hard-failing under --max-cost.
+   * Models with neither a table row nor an override stay fail-closed.
+   */
+  pricingOverrides?: PricingOverrides;
+}
+
+/**
+ * #4312 — normalized operator price overrides: model string (lowercased) →
+ * per-1M-token pricing. Declared in the config plane as JSON, e.g.
+ *   gbrain config set pricing.overrides '{"litellm:gpt-4o": {"input": 2.5, "output": 10}, "litellm:text-embedding-3-large": 0.13}'
+ * A bare number means one rate for input AND output tokens (embeddings only
+ * ever bill input, so a scalar is the natural spelling there).
+ */
+export type PricingOverrides = Record<string, ModelPricing>;
+
+/**
+ * Parse the raw `pricing.overrides` config value (JSON string or object) into
+ * a normalized PricingOverrides map. Invalid entries are DROPPED (the model
+ * stays unpriced → the TX2 fail-closed contract still applies to it); a
+ * wholly-unparseable value yields undefined. Never throws.
+ */
+export function parsePricingOverrides(raw: unknown): PricingOverrides | undefined {
+  let value: unknown = raw;
+  if (value == null) return undefined;
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return undefined;
+    try {
+      value = JSON.parse(s);
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const isRate = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+  const out: PricingOverrides = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    const key = k.trim().toLowerCase();
+    if (!key) continue;
+    if (isRate(v)) {
+      out[key] = { input: v, output: v };
+      continue;
+    }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const obj = v as { input?: unknown; output?: unknown; pricePerMTok?: unknown };
+      const input = obj.input ?? obj.pricePerMTok;
+      if (isRate(input) && (obj.output === undefined || isRate(obj.output))) {
+        out[key] = { input, output: (obj.output as number | undefined) ?? input };
+      }
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Load + parse operator price overrides from the DB config plane
+ * (`pricing.overrides`). Fail-open to undefined — a config read failure must
+ * never block a run; the affected models simply keep the fail-closed
+ * no-pricing behavior.
+ */
+export async function loadPricingOverrides(
+  engine: { getConfig(key: string): Promise<string | null> },
+): Promise<PricingOverrides | undefined> {
+  try {
+    return parsePricingOverrides(await engine.getConfig('pricing.overrides'));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Exact-key override lookup (keys normalized to lowercase at parse time). */
+function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
+  if (!overrides) return null;
+  return overrides[modelId.trim().toLowerCase()] ?? null;
 }
 
 export class BudgetExhausted extends Error {
@@ -259,12 +338,21 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
  * `reserve()` hard-fails with BudgetExhausted(reason:'no_pricing') and the
  * caller silently does no work.
  */
-export function isModelPriceable(modelId: string, kind: BudgetKind): boolean {
-  return lookupPricing(modelId, kind) !== null;
+export function isModelPriceable(modelId: string, kind: BudgetKind, overrides?: PricingOverrides): boolean {
+  return overrideFor(modelId, overrides) !== null || lookupPricing(modelId, kind) !== null;
 }
 
-function costForUsage(modelId: string, inputTokens: number, outputTokens: number, kind: BudgetKind): number | null {
-  const p = lookupPricing(modelId, kind);
+function costForUsage(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  kind: BudgetKind,
+  overrides?: PricingOverrides,
+): number | null {
+  // #4312: operator overrides win — the operator owns their bill (negotiated
+  // rates, proxy routes the shipped tables can't know about). Missing both →
+  // null, and the TX2 fail-closed contract in reserve() still applies.
+  const p = overrideFor(modelId, overrides) ?? lookupPricing(modelId, kind);
   if (!p) return null;
   return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
 }
@@ -326,6 +414,7 @@ export class BudgetTracker {
       estimate.estimatedInputTokens,
       estimate.maxOutputTokens,
       estimate.kind,
+      this.opts.pricingOverrides,
     );
 
     if (projected === null) {
@@ -335,7 +424,9 @@ export class BudgetTracker {
         // void the contract.
         const pricingFile = estimate.kind === 'chat' ? 'model-pricing.ts' : 'embedding-pricing.ts';
         const msg = `${this.opts.label}: no pricing entry for model "${estimate.modelId}" (kind=${estimate.kind}). ` +
-          `Add it to src/core/${pricingFile} or drop --max-cost.`;
+          `Add it to src/core/${pricingFile}, declare an operator rate via ` +
+          `\`gbrain config set pricing.overrides '{"${estimate.modelId}": <usd-per-1M-tokens>}'\` (#4312), ` +
+          `or drop --max-cost.`;
         appendAuditLine(this.auditPath, {
           schema_version: 1,
           ts: new Date().toISOString(),
@@ -431,7 +522,13 @@ export class BudgetTracker {
   record(actual: BudgetActualUsage & { kind?: BudgetKind }): void {
     this.callsRecorded++;
     const kind: BudgetKind = actual.kind ?? 'chat';
-    const cost = costForUsage(actual.modelId, actual.inputTokens, actual.outputTokens ?? 0, kind);
+    const cost = costForUsage(
+      actual.modelId,
+      actual.inputTokens,
+      actual.outputTokens ?? 0,
+      kind,
+      this.opts.pricingOverrides,
+    );
 
     if (cost === null) {
       // Unpriced model: record audit but skip cumulative math. Cap (if set)

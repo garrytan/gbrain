@@ -522,7 +522,12 @@ export async function runPhaseSynthesize(
 
     // Fan-out: submit one subagent per worth-processing transcript (or one
     // per chunk for transcripts that exceed the model's per-prompt budget).
-    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine);
+    // #4117: the validated per-lane namespaces derive extra allow-list globs
+    // so a custom reflections/originals prefix is actually writable.
+    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine, {
+      reflectionsPrefix: config.reflectionsPrefix,
+      originalsPrefix: config.originalsPrefix,
+    });
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
@@ -724,6 +729,9 @@ export async function runPhaseSynthesize(
             buildTriageMapBlock(triageVerdict, chunks[i], chunks.length),
             manifestBlock,
             allowedSlugPrefixes,
+            // #4117: validated per-lane namespaces.
+            config.reflectionsPrefix,
+            config.originalsPrefix,
           ),
           model: subagentModel,
           max_turns: config.maxTurns,
@@ -1228,6 +1236,13 @@ export interface SynthConfig {
    * grammar; invalid values fall back to 'wiki' with a stderr warning.
    */
   outputRoot: string;
+  /**
+   * #4117: per-lane namespaces (see loadDreamNamespaces). Defaults derive
+   * from outputRoot; config keys dream.synthesize.reflections_slug_prefix /
+   * dream.synthesize.originals_slug_prefix override them individually.
+   */
+  reflectionsPrefix: string;
+  originalsPrefix: string;
   subagentTimeoutMs: number;
   subagentWaitTimeoutMs: number;
   /**
@@ -1272,6 +1287,47 @@ export async function loadOutputRoot(engine: BrainEngine): Promise<string> {
     `[dream] dream.synthesize.output_root "${raw}" is not a valid slug prefix; falling back to "wiki".\n`,
   );
   return 'wiki';
+}
+
+/**
+ * #4117: per-lane output namespaces. `dream.synthesize.output_root` moves
+ * the whole tree; these two keys move the REFLECTIONS and ORIGINALS lanes
+ * individually (brains whose schema has no `personal/reflections` /
+ * `originals/ideas` convention). SUMMARY_SLUG_RE-validated with a stderr
+ * warning + default fallback — an invalid value can never leak an
+ * unvalidated prefix into the prompt or the write allow-list (fail-closed:
+ * the derived allow-list glob only ever comes from a validated prefix).
+ * Mirrors the `dream.patterns.{source,output}_slug_prefix` shape.
+ */
+export interface DreamNamespaces {
+  /** Where reflections land. Config `dream.synthesize.reflections_slug_prefix`; default `<output_root>/personal/reflections`. */
+  reflectionsPrefix: string;
+  /** Where originals land. Config `dream.synthesize.originals_slug_prefix`; default `<output_root>/originals/ideas`. */
+  originalsPrefix: string;
+}
+
+export async function loadDreamNamespaces(
+  engine: BrainEngine,
+  outputRoot: string,
+): Promise<DreamNamespaces> {
+  const resolvePrefix = async (key: string, fallback: string): Promise<string> => {
+    const raw = await engine.getConfig(key);
+    if (!raw) return fallback;
+    const trimmed = raw.trim().replace(/^\/+|\/+$/g, '');
+    if (SUMMARY_SLUG_RE.test(trimmed)) return trimmed;
+    process.stderr.write(
+      `[dream] ${key} "${raw}" is not a valid slug prefix; falling back to "${fallback}".\n`,
+    );
+    return fallback;
+  };
+  return {
+    reflectionsPrefix: await resolvePrefix(
+      'dream.synthesize.reflections_slug_prefix', `${outputRoot}/personal/reflections`,
+    ),
+    originalsPrefix: await resolvePrefix(
+      'dream.synthesize.originals_slug_prefix', `${outputRoot}/originals/ideas`,
+    ),
+  };
 }
 
 export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -1377,6 +1433,10 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     }
   }
 
+  // #4117: resolve the root once, then the per-lane namespaces from it.
+  const outputRoot = await loadOutputRoot(engine);
+  const namespaces = await loadDreamNamespaces(engine, outputRoot);
+
   return {
     enabled,
     corpusDir: corpusDir ?? null,
@@ -1397,7 +1457,9 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     cooldownHours,
     maxPromptTokens,
     maxChunksPerTranscript,
-    outputRoot: await loadOutputRoot(engine),
+    outputRoot,
+    // #4117: per-lane namespaces derived from outputRoot unless overridden.
+    ...namespaces,
     subagentTimeoutMs,
     subagentWaitTimeoutMs,
     inlineConcurrency,
@@ -2284,6 +2346,11 @@ function buildSynthesisPrompt(
   triageMapBlock = '',
   linkManifestBlock = '',
   allowedSlugPrefixes: string[] = [],
+  // #4117: per-lane namespaces. Defaults derive from outputRoot so existing
+  // callers/tests are byte-identical; loadSynthConfig passes the validated
+  // config-resolved values.
+  reflectionsPrefix = `${outputRoot}/personal/reflections`,
+  originalsPrefix = `${outputRoot}/originals/ideas`,
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -2325,10 +2392,10 @@ OUTPUT POLICY (ALL of these are required)
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
-   slug: \`${outputRoot}/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
+   slug: \`${reflectionsPrefix}/${dateHint}-<topic-slug>-${hashSuffix}\`
 
 B. Originals (new ideas, frames, theses, mental models):
-   slug: \`${outputRoot}/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
+   slug: \`${originalsPrefix}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
 C. People mentions: ${linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available'}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 

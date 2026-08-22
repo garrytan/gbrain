@@ -554,7 +554,10 @@ CREATE INDEX IF NOT EXISTS idx_timeline_date ON timeline_entries(date);
 -- v0.41.18.0 (codex finding #11): widened from (page_id, date, summary) to
 -- include `source` so distinct meeting provenance survives. Legacy rows
 -- have source='' (schema default) so legacy dedup behavior is preserved.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id, date, summary, source);
+-- #3737: keyed on md5(summary) — a raw long/incompressible summary overflowed
+-- the btree v4 row cap (~2704 bytes) and aborted the whole timeline insert.
+-- Both insert sites infer ON CONFLICT (page_id, date, md5(summary), source).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup ON timeline_entries(page_id, date, md5(summary), source);
 -- v0.42.x (Life Chronicle): event-projection lookup + dedup. Partial
 -- (event_page_id IS NOT NULL) so ordinary timeline rows are unaffected.
 CREATE INDEX IF NOT EXISTS idx_timeline_event_page ON timeline_entries(event_page_id) WHERE event_page_id IS NOT NULL;
@@ -786,6 +789,28 @@ CREATE TABLE IF NOT EXISTS session_context_state (
 );
 CREATE INDEX IF NOT EXISTS session_context_state_updated_idx
   ON session_context_state (updated_at);
+
+-- chat_usage_log (#4218 / migration v140): durable per-call chat usage
+-- ledger. One row per SUCCESSFUL gateway.chat() call, written fire-and-forget
+-- by the chat-usage sink (src/core/ai/chat-usage.ts). cost_usd is a
+-- canonical-table estimate; NULL when the model has no pricing (never a fake
+-- 0). Read back by the `get_usage` op with explicit coverage fields.
+CREATE TABLE IF NOT EXISTS chat_usage_log (
+  id                 BIGSERIAL PRIMARY KEY,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  model              TEXT NOT NULL,
+  provider           TEXT,
+  phase              TEXT,
+  input_tokens       INTEGER NOT NULL DEFAULT 0,
+  output_tokens      INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd           DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_chat_usage_log_created
+  ON chat_usage_log (created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_usage_log_model
+  ON chat_usage_log (model, created_at);
 
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its `job_id BIGINT REFERENCES minion_jobs(id)` FK requires
@@ -1408,8 +1433,8 @@ CREATE INDEX IF NOT EXISTS take_nudge_log_proposal_cooldown_idx
 CREATE INDEX IF NOT EXISTS take_nudge_log_wave_idx
   ON take_nudge_log (wave_version, fired_at DESC);
 
--- think_ab_results (v0.36.1.0 T18 / D19): A/B harness data for
--- `gbrain think --ab`. One row per side-by-side comparison.
+-- think_ab_results (v0.36.1.0 T18 / D19): A/B harness data for the think
+-- A/B harness (runAbTrial). One row per side-by-side comparison.
 CREATE TABLE IF NOT EXISTS think_ab_results (
   id              BIGSERIAL PRIMARY KEY,
   source_id       TEXT         NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

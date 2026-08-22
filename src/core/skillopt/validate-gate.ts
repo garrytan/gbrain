@@ -42,10 +42,24 @@ export interface ValidateGateOpts extends Omit<GateInput, 'selSet'> {
    */
   runsPerTask?: number;
   abortSignal?: AbortSignal;
+  /**
+   * #4119 — wall-clock deadline (epoch ms) observed INSIDE the rollout loop:
+   * checked before every individual rollout, not just between orchestrator
+   * steps. A breach throws `skillopt_runtime_exceeded` (surfaced loudly, never
+   * swallowed as a score-0 task) so a long batch can't blow past
+   * --max-runtime by a whole gate's worth of rollouts.
+   */
+  deadlineMs?: number;
   /** Test seam — substitute rollout. */
   rolloutFn?: typeof runRollout;
   /** Test seam — substitute scoreTrajectory. */
   scoreFn?: typeof scoreTrajectory;
+}
+
+/** #4119 — the runtime-deadline breach error, shared with the orchestrator. */
+export const SKILLOPT_RUNTIME_EXCEEDED = 'skillopt_runtime_exceeded';
+function isRuntimeExceeded(e: unknown): boolean {
+  return e instanceof Error && e.message === SKILLOPT_RUNTIME_EXCEEDED;
 }
 
 /**
@@ -75,6 +89,10 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
       const runs: number[] = [];
       const rollouts: ScoredRollout[] = [];
       for (let i = 0; i < runsPerTask; i++) {
+        // #4119: in-rollout-loop deadline — see ValidateGateOpts.deadlineMs.
+        if (opts.deadlineMs !== undefined && Date.now() > opts.deadlineMs) {
+          throw new Error(SKILLOPT_RUNTIME_EXCEEDED);
+        }
         const rolloutOpts: RolloutOpts = {
           engine: opts.engine,
           skillText: opts.candidateSkillText,
@@ -99,7 +117,11 @@ export async function runValidationGate(opts: ValidateGateOpts): Promise<GateRes
   // (the bug the SkillOpt eval surfaced: a Haiku run with --max-cost hit
   // no_pricing on every rollout and the whole gate reported a vacuous 0). Surface
   // them loudly so the caller aborts instead of recording a hollow measurement.
-  const aborter = settled.find((s) => s && !s.ok && isMustAbortError(s.error));
+  // #4119: a deadline breach is not scoring noise either — it must surface as
+  // the orchestrator's runtime-exceeded abort, never a fake 0-score task.
+  const aborter = settled.find(
+    (s) => s && !s.ok && (isMustAbortError(s.error) || isRuntimeExceeded(s.error)),
+  );
   if (aborter && !aborter.ok) throw aborter.error;
 
   // SettledItem<TOut>[] — extract successful results; treat (non-abort) errors as
@@ -136,6 +158,8 @@ export interface ScoreOnTasksOpts {
   judgeModel?: string;
   /** Median-of-N runs per task. Defaults to `VALIDATION_RUNS_PER_TASK` (3). */
   runsPerTask?: number;
+  /** #4119 — in-rollout-loop deadline (epoch ms); see ValidateGateOpts. */
+  deadlineMs?: number;
   abortSignal?: AbortSignal;
   rolloutFn?: typeof runRollout;
   scoreFn?: typeof scoreTrajectory;
@@ -158,6 +182,7 @@ export async function scoreSkillOnTasks(opts: ScoreOnTasksOpts): Promise<number>
     targetModel: opts.targetModel,
     ...(opts.judgeModel !== undefined ? { judgeModel: opts.judgeModel } : {}),
     ...(opts.runsPerTask !== undefined ? { runsPerTask: opts.runsPerTask } : {}),
+    ...(opts.deadlineMs !== undefined ? { deadlineMs: opts.deadlineMs } : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
     ...(opts.rolloutFn ? { rolloutFn: opts.rolloutFn } : {}),
     ...(opts.scoreFn ? { scoreFn: opts.scoreFn } : {}),

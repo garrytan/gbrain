@@ -16,8 +16,10 @@
  *   - take_nudge_log records every fire keyed on (take_id|proposal_id,
  *     nudge_pattern). The cooldown probe checks "was this same pattern fired
  *     on this same take in the last NUDGE_COOLDOWN_DAYS?" If yes, silently skip.
- *   - Reset via `gbrain takes nudge --reset <take_id>` clears the cooldown
- *     for that take so the next sync re-fires fresh nudges.
+ *   - No CLI reset shim exists (#3697: an earlier draft named
+ *     `gbrain takes nudge --reset`, which never shipped). Deleting the
+ *     take's take_nudge_log rows clears the cooldown so the next sync
+ *     re-fires fresh nudges.
  *
  * Output channel:
  *   v0.36.1.0 ship state: STDERR only. Multi-channel routing (webhook,

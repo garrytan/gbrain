@@ -14,6 +14,8 @@
  * same process).
  */
 
+import { installPid1OrphanReaper } from './pid1-reaper.ts';
+
 const reapHandler = () => {};
 
 export function installSigchldHandler(): void {
@@ -24,6 +26,12 @@ export function installSigchldHandler(): void {
   if (!process.listeners('SIGCHLD').includes(reapHandler)) {
     process.on('SIGCHLD', reapHandler);
   }
+  // #2443: the handler above only reaps Bun-TRACKED children. When gbrain
+  // runs as PID 1 in a container (no tini / --init), orphaned grandchildren
+  // re-parent to us and their exits are never reaped — install the /proc
+  // scanning orphan reaper too. Self-gates (linux + pid==1 +
+  // GBRAIN_PID1_REAP off-switch); a pure no-op everywhere else.
+  installPid1OrphanReaper();
 }
 
 /**

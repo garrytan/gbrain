@@ -262,7 +262,14 @@ function isMultimodalEnabled(): boolean {
 }
 
 function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {
-  if (strategy === 'markdown') return isMarkdownFilePath(path);
+  // #2683: mirror import.ts's isCollectibleForWalker — the full-sync walker
+  // admits images under the (default) 'markdown' strategy when multimodal is
+  // on, but this incremental gate used to be markdown-only, so a committed
+  // image NEVER imported incrementally (it only landed via `sync --full`).
+  // Full and incremental must agree on the admission set.
+  if (strategy === 'markdown') {
+    return isMarkdownFilePath(path) || (isMultimodalEnabled() && isImageFilePath(path));
+  }
   if (strategy === 'code') return isCodeFilePath(path);
   // 'auto' / default: markdown + code, plus images when multimodal is on.
   return (
@@ -568,6 +575,14 @@ export function slugifySegment(segment: string): string {
   return segment
     .normalize('NFD')                     // Decompose accented chars
     .replace(/[\u0300-\u036f]/g, '')      // Strip accent marks
+    // #3700: Hebrew niqqud (vowel points) + cantillation are optional
+    // diacritics \u2014 the same word appears pointed and bare across filenames
+    // and must land on ONE slug (the Hebrew analog of caf\u00e9 \u2192 cafe). Scoped
+    // to U+0591\u2013U+05C7 only; \p{M} stays in SLUG_WORD_CHARS so Devanagari
+    // matras, Thai vowels, Arabic text etc. keep their #3417 behavior.
+    // Runs in NFD space so precomposed presentation forms (U+FB1D\u2013FB4F)
+    // are already decomposed and their points strip too.
+    .replace(/[\u0591-\u05c7]/g, '')      // Strip Hebrew niqqud + cantillation
     .normalize('NFC')                     // Recompose Hangul Jamo back to Syllables (v0.32.7)
     .toLowerCase()
     .replace(SLUGIFY_KEEP_RE, '')         // Keep alnum, dots, spaces, _-, and CJK (v0.32.7)
@@ -667,6 +682,8 @@ export {
   resolveAutoSkipThreshold,
   isSkippablePath,
   decideGateAction,
+  EMBEDDING_INFRA_CODES,
+  isEmbeddingInfraCode,
   decideSyncFailureSeverity,
   applySyncFailureGate,
   DEFAULT_SOURCE_ID,

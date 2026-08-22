@@ -48,7 +48,10 @@ Modes:
 
 Safety:
   --max-cost-usd N              Hard cap. Default 5.00. Preflight refuses
-                                if estimate exceeds.
+                                if estimate exceeds. 0 disables the cap
+                                (unpriced model ids then warn-once instead
+                                of aborting with no_pricing).
+  --no-max-cost                 Shorthand for --max-cost-usd 0.
   --max-runtime-min N           Wall-clock cap. Default 30
   --force                       Bypass dirty-working-tree refusal (rare)
   --resume <run-id>             Resume a prior interrupted run

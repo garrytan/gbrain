@@ -241,6 +241,31 @@ is the whole story for them.
   source. The flags are for when you want to query across the boundary
   deliberately.
 
+## Entity identity across sources (#4224, v1)
+
+**The identity key for a page is `(source_id, slug)`.** Slugs are only
+unique per source, so `people/alice` in your `wiki` source and
+`people/alice-chen` in a mounted team source are, by default, two unrelated
+pages — even when they describe the same person. Nothing merges them
+automatically.
+
+When they ARE the same entity, say so explicitly with the manual-only
+identity ops (v1 — no auto-matching, no name-similarity heuristics):
+
+```
+gbrain entity-identity-link   --entity-id alice-chen --slug people/alice --source-id wiki
+gbrain entity-identity-link   --entity-id alice-chen --slug people/alice-chen --source-id team-brain --canonical
+gbrain entity-identity-list   --entity-id alice-chen
+gbrain entity-identity-unlink --entity-id alice-chen --slug people/alice --source-id wiki
+```
+
+Members live in the `entity_identities` table (one identity per page;
+re-linking moves the page; at most one canonical member per group). The
+write ops are local-only in v1. Retrieval-side union — `get_links` /
+`get_backlinks` merging edges from a page's identity co-members — is gated
+by the `entity_identity.union` config key (default off) and never widens a
+federated caller's source grant.
+
 ## Further reading
 
 - [`topologies.md`](./topologies.md) — where the DB lives (operator recipes

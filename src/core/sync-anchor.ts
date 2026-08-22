@@ -347,3 +347,110 @@ export async function writeChunkerVersion(
     [version, sourceId],
   );
 }
+
+// ─── #4342 — sticky per-source slug-root mode ─────────────────────────────
+//
+// When a source's local_path is a SUBDIRECTORY of a git repo, sync has two
+// possible slug namespaces:
+//   'git-root'    — slugs carry the subdir prefix (git-diff-path shaped; the
+//                   historical #774 behavior, and the only sane shape when
+//                   the user explicitly scoped with --src-subpath)
+//   'source-root' — slugs are local_path-relative (matches what a plain
+//                   `gbrain import <dir>` of the same tree produces)
+//
+// The choice used to be IMPLICIT (whatever the first sync inferred), and a
+// later sync from a different spelling silently re-namespaced every slug.
+// The mode is now decided ONCE, persisted (sources.config.slug_root_mode for
+// scoped sources, `sync.slug_root_mode` config for the legacy no-source
+// path), and every subsequent sync obeys the pin.
+
+export type SlugRootMode = 'git-root' | 'source-root';
+
+function asSlugRootMode(raw: unknown): SlugRootMode | null {
+  return raw === 'git-root' || raw === 'source-root' ? raw : null;
+}
+
+export async function readSlugRootMode(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+): Promise<SlugRootMode | null> {
+  if (sourceId) {
+    const rows = await engine.executeRaw<{ mode: string | null }>(
+      `SELECT config->>'slug_root_mode' AS mode FROM sources WHERE id = $1`,
+      [sourceId],
+    );
+    return asSlugRootMode(rows[0]?.mode);
+  }
+  return asSlugRootMode(await engine.getConfig('sync.slug_root_mode'));
+}
+
+export async function writeSlugRootMode(
+  engine: BrainEngine,
+  sourceId: string | undefined,
+  mode: SlugRootMode,
+): Promise<void> {
+  if (sourceId) {
+    // jsonb_set on a bound ::text — never JSON.stringify into ::jsonb.
+    await engine.executeRaw(
+      `UPDATE sources
+          SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{slug_root_mode}', to_jsonb($2::text))
+        WHERE id = $1`,
+      [sourceId, mode],
+    );
+    return;
+  }
+  await engine.setConfig('sync.slug_root_mode', mode);
+}
+
+/** Escape LIKE metacharacters so a slug prefix can't wildcard-match. */
+function escapeLike(s: string): string {
+  return s.replace(/([\\%_])/g, '\\$1');
+}
+
+/**
+ * Resolve (and PIN) the slug-root mode for a scoped sync. Precedence:
+ *   1. the stored pin (sticky forever — a live install never re-slugs)
+ *   2. explicit --src-subpath → 'git-root' (the #774 contract: the caller
+ *      named the git root as the slug base)
+ *   3. auto-pin 'git-root' when existing pages already carry the inferred
+ *      git-root prefix (this install has lived with git-root slugs; flipping
+ *      would strand every page + its links/takes under the old namespace)
+ *   4. else 'source-root' (local_path-relative — what `gbrain import <dir>`
+ *      of the same tree produces, and the least surprising default)
+ * The decision is persisted before returning so every later sync agrees.
+ *
+ * `slugPrefix` is the SLUGIFIED git-root-relative scope prefix WITHOUT a
+ * trailing slash (callers derive it via resolveSlugForPath so the probe
+ * matches slug spelling, not raw path spelling).
+ *
+ * `dryRun: true` resolves the mode in-memory only and skips the persist —
+ * a `sync --dry-run` must never mutate config (#4342 review fix). The pin
+ * is written by the first REAL sync instead.
+ */
+export async function resolveSlugRootMode(
+  engine: BrainEngine,
+  opts: {
+    sourceId: string | undefined;
+    explicitGitRoot: boolean;
+    slugPrefix: string;
+    dryRun?: boolean;
+  },
+): Promise<SlugRootMode> {
+  const stored = await readSlugRootMode(engine, opts.sourceId);
+  if (stored) return stored;
+  let mode: SlugRootMode;
+  if (opts.explicitGitRoot) {
+    mode = 'git-root';
+  } else {
+    const rows = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2 LIMIT 1`,
+      [opts.sourceId ?? 'default', `${escapeLike(opts.slugPrefix)}/%`],
+    );
+    mode = rows.length > 0 ? 'git-root' : 'source-root';
+  }
+  if (opts.dryRun !== true) {
+    await writeSlugRootMode(engine, opts.sourceId, mode);
+  }
+  return mode;
+}

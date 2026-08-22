@@ -68,3 +68,48 @@ describe('RRF key is source-aware', () => {
     expect(out.length).toBe(2);
   });
 });
+
+describe('#3783 — keyword_hit OR-propagation through fusion', () => {
+  test('rrfFusionWeighted: vector copy seen FIRST, keyword copy merges later → fused row keeps the flag', () => {
+    const vectorCopy = makeResult({ slug: 'a', chunk_id: 1, source_id: 'default' });
+    const keywordCopy = makeResult({ slug: 'a', chunk_id: 1, source_id: 'default', keyword_hit: true });
+    const out = rrfFusionWeighted([
+      { list: [vectorCopy], k: 60 },
+      { list: [keywordCopy], k: 60 },
+    ]);
+    expect(out.length).toBe(1);
+    expect(out[0].keyword_hit).toBe(true);
+  });
+
+  test('rrfFusionWeighted: keyword copy seen FIRST also keeps the flag', () => {
+    const keywordCopy = makeResult({ slug: 'a', chunk_id: 1, keyword_hit: true });
+    const vectorCopy = makeResult({ slug: 'a', chunk_id: 1 });
+    const out = rrfFusionWeighted([
+      { list: [keywordCopy], k: 60 },
+      { list: [vectorCopy], k: 60 },
+    ]);
+    expect(out.length).toBe(1);
+    expect(out[0].keyword_hit).toBe(true);
+  });
+
+  test('rrfFusionWeighted: a vector-only row does NOT gain the flag', () => {
+    const vectorOnly = makeResult({ slug: 'v', chunk_id: 2 });
+    const out = rrfFusionWeighted([{ list: [vectorOnly], k: 60 }]);
+    expect(out[0].keyword_hit).not.toBe(true);
+  });
+
+  test('rrfFusion: OR-propagation across plain lists too', () => {
+    const vectorCopy = makeResult({ slug: 'a', chunk_id: 1 });
+    const keywordCopy = makeResult({ slug: 'a', chunk_id: 1, keyword_hit: true });
+    const out = rrfFusion([[vectorCopy], [keywordCopy]], 60);
+    expect(out.length).toBe(1);
+    expect(out[0].keyword_hit).toBe(true);
+  });
+
+  test('fusion does not mutate the input list rows (flag lands on the fused copy)', () => {
+    const vectorCopy = makeResult({ slug: 'a', chunk_id: 1 });
+    const keywordCopy = makeResult({ slug: 'a', chunk_id: 1, keyword_hit: true });
+    rrfFusionWeighted([{ list: [vectorCopy], k: 60 }, { list: [keywordCopy], k: 60 }]);
+    expect(vectorCopy.keyword_hit).toBeUndefined();
+  });
+});

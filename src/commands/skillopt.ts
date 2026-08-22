@@ -314,6 +314,16 @@ export async function runSkillOptCommand(engine: BrainEngine | null, args: strin
       }) + '\n');
     } else {
       process.stderr.write(`[skillopt] Outcome: ${result.outcome}\n`);
+      // #3516: never a silent failure — say WHY the run aborted/errored.
+      if (result.outcome === 'aborted' || result.outcome === 'errored') {
+        const reason = result.receipt.abort_reason ?? 'unknown';
+        const detail = result.receipt.abort_detail ?? '(no detail captured)';
+        process.stderr.write(`[skillopt] Failure reason: ${reason}\n`);
+        process.stderr.write(`[skillopt] Detail: ${detail}\n`);
+        if (detail.includes('no_pricing')) {
+          process.stderr.write(`[skillopt] Hint: model has no pricing entry; pass --no-max-cost (or --max-cost-usd 0) to run uncapped with a warn-once.\n`);
+        }
+      }
       process.stderr.write(`[skillopt] Best sel-score: ${(result.receipt.best_sel_score ?? 0).toFixed(3)}\n`);
       process.stderr.write(`[skillopt] Final cost: $${(result.receipt.final_cost_usd ?? 0).toFixed(2)}\n`);
       if (result.mutatedSkillFile) {
@@ -398,7 +408,11 @@ export function parseFlags(args: string[]): ParsedFlags {
     if (a === '--allow-mutate-bundled') { allowMutateBundled = true; i += 1; continue; }
     if (a === '--held-out') { heldOutPath = args[++i]; i += 1; continue; }
     if (a === '--json') { json = true; i += 1; continue; }
-    if (a === '--max-cost-usd') { maxCostUsd = mustFloat(args[++i], '--max-cost-usd'); i += 1; continue; }
+    // #3516: 0 is accepted and means UNCAPPED — pricing misses for unpriced
+    // model ids (openrouter:*, litellm:*) then warn-once instead of aborting
+    // the run with BudgetExhausted(no_pricing).
+    if (a === '--max-cost-usd') { maxCostUsd = mustNonNegFloat(args[++i], '--max-cost-usd'); i += 1; continue; }
+    if (a === '--no-max-cost') { maxCostUsd = 0; i += 1; continue; }
     if (a === '--max-runtime-min') { maxRuntimeMin = mustInt(args[++i], '--max-runtime-min'); i += 1; continue; }
     if (a === '--force') { force = true; i += 1; continue; }
     if (a === '--resume') { resumeRunId = args[++i]; i += 1; continue; }
@@ -499,6 +513,15 @@ function mustFloat(v: string | undefined, flag: string): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) {
     throw new Error(`${flag} requires a positive number (got '${v}')`);
+  }
+  return n;
+}
+
+/** #3516: like mustFloat but 0 is allowed (0 = uncapped for --max-cost-usd). */
+function mustNonNegFloat(v: string | undefined, flag: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new Error(`${flag} requires a non-negative number (got '${v}'; 0 disables the cap)`);
   }
   return n;
 }

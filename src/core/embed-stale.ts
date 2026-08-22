@@ -19,7 +19,7 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { Chunk, ChunkInput } from './types.ts';
-import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from '../commands/embed.ts';
+import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from './embedding-invalidation.ts';
 import {

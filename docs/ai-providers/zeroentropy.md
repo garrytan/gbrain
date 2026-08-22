@@ -153,7 +153,7 @@ Two probes run for reranker:
 |---|---|---|
 | `search.reranker.enabled` | `true` for balanced/tokenmax, `false` for conservative | One-flip opt-in/out |
 | `search.reranker.model` | `zeroentropyai:zerank-2` (legacy fallback; new installs write `voyage:rerank-2.5`) | The recommended replacement is `voyage:rerank-2.5` |
-| `search.reranker.top_n_in` | `30` | Candidates sent to reranker (caps API spend) |
+| `search.reranker.top_n_in` | per mode: `30` conservative / `25` balanced / `50` tokenmax (tracks each bundle's `searchLimit`) | Candidates sent to reranker (caps API spend) |
 | `search.reranker.top_n_out` | `null` (no truncate) | Truncate reranked output to this many; `null` preserves full length |
 | `search.reranker.timeout_ms` | `5000` | HTTP timeout; long stalls degrade UX worse than RRF fallback |
 

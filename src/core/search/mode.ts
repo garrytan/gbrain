@@ -878,7 +878,25 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // unreachable. Both bumps ship in the same release; no new key parts —
 // the version bump alone invalidates. Same one-time global cold-miss
 // pattern as the bumps above; refills within cache.ttl_seconds (3600s).
-export const KNOBS_HASH_VERSION = 21;
+//
+// bump 21→22 (mw2 wave): result-affecting stamp/injection changes for
+// identical knobs — #1663 exact-lookup injection, #3995 relational page-1
+// evidence slot, #3783 keyword_hit stamps, #4220 status. Pre-upgrade rows
+// (≤1h TTL) would be served missing the injected identity page + honesty
+// stamps, and CRAG then mis-grades them weak_semantic. Version-only
+// invalidation; one-time cold-miss spike on upgrade.
+//
+// bump 22→23 folds excludePrivate (#4352): the private-visibility posture
+// joins the key via ctx.excludePrivate (xp=). #4352 originally shipped a
+// wholesale cache skip for excludePrivate=true — but that posture is the
+// DEFAULT for every remote MCP caller, so the skip disabled the semantic
+// cache for exactly the highest-volume beneficiaries. Folding it instead
+// means cache rows written with private rows included can never serve a
+// private-excluding lookup and vice versa, and remote callers get their
+// ~50% cache savings back. Same contamination class as detail (v=16) and
+// hardExcludes (v=12); same one-time global cold-miss pattern as the bumps
+// above, refills within cache.ttl_seconds (3600s default).
+export const KNOBS_HASH_VERSION = 23;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -928,6 +946,16 @@ export interface KnobsHashContext {
    * as col=/prov=. Undefined falls back to 'medium' (the documented default).
    */
   detail?: 'low' | 'medium' | 'high';
+  /**
+   * v=23 (#4352 follow-up): the private-visibility posture for this call.
+   * `excludePrivate=true` (the default for every remote MCP caller) filters
+   * `visibility: private` pages out of every recall arm, so the result set
+   * differs from a trusted private-included run. Lives in ctx (not
+   * ResolvedSearchKnobs) because it's per-call trust posture, not a mode
+   * knob — same path as detail/hardExcludes. Undefined hashes like `false`
+   * (private included), matching enforcement's strict `=== true` semantics.
+   */
+  excludePrivate?: boolean;
 }
 
 export function knobsHash(
@@ -1047,6 +1075,14 @@ export function knobsHash(
     // weak-top floor (v=18) already owns `acm=`. `?? 1` mirrors the defensive
     // read of acj= above for partial-knobs callers.
     `ack=${Math.max(1, Math.floor(knobs.autocut_min_keep ?? 1))}`,
+    // v=23 addition (#4352 follow-up, append-only): private-visibility
+    // posture. A private-included (trusted) write must never serve a
+    // private-excluding (remote-default) lookup and vice versa. Replaces
+    // #4352's wholesale skipCache bypass, which disabled the semantic cache
+    // for every remote MCP caller (excludePrivate=true is their default).
+    // Strict `=== true` mirrors the enforcement predicate so undefined and
+    // false (both private-included) hash identically.
+    `xp=${ctx?.excludePrivate === true ? 1 : 0}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

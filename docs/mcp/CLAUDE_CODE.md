@@ -58,6 +58,18 @@ claude mcp add gbrain -- gbrain serve --surface verbs
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
 
+> **PGLite brains are single-process.** PGLite is a single-writer embedded
+> Postgres: the first running `gbrain serve` owns the brain's data directory
+> via the data-dir lock, for its whole lifetime. A second `serve` (e.g. a
+> second harness or session registering the same stdio command) — or any CLI
+> command that opens the DB — fails on the lock while that serve is live
+> (`gbrain sync` is the one exception: it delegates to the live serve). If
+> more than one process needs the brain at once, run ONE shared
+> `gbrain serve --http` and point every client at it (Options 2/3 below), or
+> migrate to the Postgres/Supabase engine, which tolerates concurrent
+> connections. Details:
+> [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
+
 `--surface verbs` exposes the seven-verb memory protocol (`recall`, `remember`,
 `entity`, `synthesize`, `forget`, `context_pack`, `delta` —
 [MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)),

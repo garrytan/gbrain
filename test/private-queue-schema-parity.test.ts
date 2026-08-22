@@ -4,7 +4,7 @@
  * Three schema blobs must carry the dream-inline private-queue lifecycle
  * surface in lockstep:
  *   - src/schema.sql              (authoring source; build:schema input)
- *   - src/core/schema-embedded.ts (generated Postgres blob)
+ *   - src/core/schema-embedded.generated.ts (generated Postgres blob)
  *   - src/core/pglite-schema.ts   (PGLite blob)
  *
  * A blob missing the columns re-introduces the v121 wedge class (its own
@@ -26,7 +26,7 @@ import { resolve as resolvePath } from 'path';
 
 const BLOBS = [
   'src/schema.sql',
-  'src/core/schema-embedded.ts',
+  'src/core/schema-embedded.generated.ts',
   'src/core/pglite-schema.ts',
 ] as const;
 

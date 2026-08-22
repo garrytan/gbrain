@@ -51,10 +51,10 @@ import { ensureGbrainHome, resolveGbrainHome } from '../core/gbrain-home.ts';
 import { loadConfig, type GBrainConfig } from '../core/config.ts';
 import {
   IPC_UNAVAILABLE,
-  readIpcSecret,
+  readIpcSecretForConfig,
   requestTurnContext,
   requestContextPack,
-  resolveSocketPath,
+  resolveSocketPathForConfig,
   CONTEXT_PACK_CLIENT_TIMEOUT_MS,
   type TurnContextResponse,
   type ContextPackResponse,
@@ -491,8 +491,12 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       //    digest above must never be hostage to the brain being down.
       try {
         const cfg = loadConfig();
-        if (cfg?.engine === 'pglite' && cfg.database_path) {
-          const secret = readIpcSecret(cfg.database_path);
+        // Engine-uniform (#4245): same config-keyed socket/secret resolution
+        // as the user-prompt and compact arms (PGLite data dir; Postgres
+        // hash12(database_url) run-dir). Null → silent skip, as before.
+        const packSocket = resolveSocketPathForConfig(cfg);
+        if (packSocket) {
+          const secret = readIpcSecretForConfig(cfg);
           if (secret) {
             // Same sanitizer as the compact banking path — a raw vs sanitized
             // id would split the cursor key and the warm pack would miss the
@@ -504,7 +508,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
             // that blows SESSION_START_DEADLINE_MS.
             const remaining = SESSION_START_DEADLINE_MS - (Date.now() - t0) - 100;
             if (remaining > 100) {
-              const res = await requestContextPack(resolveSocketPath(cfg.database_path), {
+              const res = await requestContextPack(packSocket, {
                 secret,
                 ...(sessionId ? { sessionId } : {}),
                 ...(process.env.GBRAIN_SOURCE ? { sourceId: process.env.GBRAIN_SOURCE } : {}),
@@ -1061,13 +1065,15 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     if (turns.length === 0) return { outcome: 'ok', reason: 'empty_window' };
 
     const cfg = io.configOverride !== undefined ? io.configOverride : loadConfig();
-    if (!cfg?.database_path) {
-      // No config, or a Postgres brain (no PGLite data dir → no IPC socket).
-      // ENGINE-FREE means no direct-engine fallback here; pull-mode covers it.
+    // Engine-uniform (#4245): PGLite keys the socket off the data dir,
+    // Postgres off hash12(database_url) under ~/.gbrain/run. Null = no
+    // keying material at all (no config, thin-client remote) — ENGINE-FREE
+    // means no direct-engine fallback here; pull-mode covers it.
+    const socketPath = resolveSocketPathForConfig(cfg);
+    if (!socketPath) {
       return { outcome: 'degraded', reason: 'no_pglite_path' };
     }
-    const socketPath = resolveSocketPath(cfg.database_path);
-    const secret = readIpcSecret(cfg.database_path);
+    const secret = readIpcSecretForConfig(cfg);
     if (!secret) return { outcome: 'degraded', reason: 'no_serve' };
 
     const sessionId = typeof j.session_id === 'string' ? j.session_id : undefined;
@@ -1256,15 +1262,18 @@ async function hookCompact(io: HookIo): Promise<number> {
     segment = banked.segment;
     const flushCorpusFile = banked.flushCorpusFile;
 
-    // Same engine gate as the session-start pack arm (v0.45.7 symmetry): a
-    // Postgres config carrying a leftover database_path must not probe the
-    // PGLite socket — there is no serve behind it for this brain.
-    if (cfg?.engine !== 'pglite' || !cfg.database_path) { outcome = 'degraded'; reason = 'no_pglite_path'; return; }
-    const secret = readIpcSecret(cfg.database_path);
+    // Same engine-uniform resolution as the session-start pack arm (v0.45.7
+    // symmetry, engine-uniform since #4245): a Postgres config carrying a
+    // leftover database_path must not probe the PGLite socket (the resolver
+    // checks engine first); a Postgres brain probes its hash12(database_url)
+    // run-dir socket instead. Null = no keying material → degrade.
+    const compactSocket = resolveSocketPathForConfig(cfg);
+    if (!compactSocket) { outcome = 'degraded'; reason = 'no_pglite_path'; return; }
+    const secret = readIpcSecretForConfig(cfg);
     if (!secret) { outcome = 'degraded'; reason = 'no_serve'; return; }
     if (remaining() < COMPACT_IPC_MIN_BUDGET_MS) { outcome = 'degraded'; reason = 'deadline'; return; }
 
-    const res = await requestContextPack(resolveSocketPath(cfg.database_path), {
+    const res = await requestContextPack(compactSocket, {
       secret,
       sessionId,
       window: turns,

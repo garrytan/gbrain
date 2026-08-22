@@ -150,7 +150,8 @@ export function estimateCost(opts: PreflightOpts): PreflightEstimate {
       [opts.optimizerModel]: cachedReflectCost,
       [opts.judgeModel]: cachedJudgeCost,
     },
-    exceeds_cap: total > opts.maxCostUsd,
+    // #3516: maxCostUsd === 0 means uncapped (--no-max-cost) — never refuse.
+    exceeds_cap: opts.maxCostUsd > 0 && total > opts.maxCostUsd,
   };
 }
 
@@ -165,7 +166,7 @@ export function formatPreflightReport(est: PreflightEstimate, opts: PreflightOpt
     `  Reflects:   ${est.reflect_calls.toLocaleString()} calls`,
     `  Judges:     ${est.judge_calls.toLocaleString()} calls`,
     `  Tokens:     ~${(est.est_input_tokens / 1000).toFixed(0)}K in / ~${(est.est_output_tokens / 1000).toFixed(0)}K out`,
-    `  Est. cost:  $${est.est_cost_usd.toFixed(2)} (cap: $${opts.maxCostUsd.toFixed(2)})`,
+    `  Est. cost:  $${est.est_cost_usd.toFixed(2)} (cap: ${opts.maxCostUsd > 0 ? `$${opts.maxCostUsd.toFixed(2)}` : 'uncapped'})`,
     est.exceeds_cap ? `  WARNING:    estimate exceeds --max-cost-usd cap.` : '',
   ].filter(Boolean).join('\n');
 }

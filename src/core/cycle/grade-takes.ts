@@ -20,15 +20,15 @@
  *   flag because relaxing after data accumulates silently shifts which
  *   historical resolutions count as auto-applied.
  *
- * Evidence retrieval status (v0.36.1.0 ship state):
- *   The default evidence retriever returns an "evidence-retrieval not yet
- *   wired" placeholder. Most verdicts produced by the stub-judge against
- *   the stub-evidence will be 'unresolvable'. Real retrieval (hybrid search
- *   over pages newer than the take's since_date, optionally augmented by a
- *   gateway web-search recipe in v0.37+) lands as a follow-up. The phase
- *   ships now so the wiring is real and the cache table accumulates
- *   verdicts even if early ones are conservative; operators get the
- *   end-to-end loop running ahead of the tuned-prompt arrival.
+ * Evidence retrieval (#2811):
+ *   The default evidence retriever runs a real hybrid search on the take's
+ *   claim (expansion off, source-scoped, the take's own page excluded) and
+ *   formats the hits via the pure `formatEvidenceBlock` — each item carries
+ *   its slug + effective_date and is annotated relative to the take's
+ *   since_date (evidence dated BEFORE the claim is context, not outcome).
+ *   Items clamp at ~500 chars; the whole block caps at 4k. Zero hits and
+ *   retrieval failures fall back to explicit notes steering the judge to
+ *   'unresolvable' rather than fabricating.
  *
  * Test seam: opts.judge + opts.evidenceRetriever are injected so the
  * phase runs hermetically in unit tests.
@@ -36,6 +36,8 @@
 
 import { createHash } from 'node:crypto';
 import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { hybridSearch } from '../search/hybrid.ts';
+import type { SearchResult } from '../types.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { splitProviderModelId } from '../model-id.ts';
@@ -49,9 +51,9 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
+export const GRADE_TAKES_PROMPT_VERSION = 'hybrid-evidence-v1';
 
-export const GRADE_TAKE_PROMPT = `[v0.36.1.0-stub] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[hybrid-evidence-v1] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)
@@ -309,17 +311,101 @@ export function parseJudgeOutput(raw: string): JudgeVerdict | null {
   return { verdict, confidence, reasoning };
 }
 
+/** #2811 — evidence retrieval knobs. */
+export const EVIDENCE_SEARCH_LIMIT = 8;
+export const EVIDENCE_ITEM_CLAMP_CHARS = 500;
+export const EVIDENCE_BLOCK_CAP_CHARS = 4000;
+
+/** The narrow slice of a SearchResult the evidence formatter reads. */
+export type EvidenceHit = Pick<SearchResult, 'slug' | 'title' | 'chunk_text' | 'effective_date'>;
+
 /**
- * Default evidence retriever — v0.36.1.0 ship-state placeholder. Real
- * retrieval lands in v0.37+ via hybrid search over pages newer than the
- * take's since_date. Documented limitation per CDX-8 + D17.
+ * #2811 — pure evidence-block formatter (unit-testable, no engine).
+ *
+ * Each hit renders as one item carrying its slug + effective_date, annotated
+ * relative to the take's since_date: evidence dated BEFORE the claim can only
+ * be context (it cannot prove an outcome), evidence dated on/after can. Items
+ * clamp at EVIDENCE_ITEM_CLAMP_CHARS; the whole block caps at
+ * EVIDENCE_BLOCK_CAP_CHARS. Zero hits produce an explicit no-evidence note
+ * that steers the judge toward 'unresolvable'.
  */
-export async function defaultEvidenceRetriever(take: Take, _scope: ScopedReadOpts): Promise<string> {
-  return `[evidence retrieval not yet wired — v0.36.1.0 ship-state]
-Take claim text (the only "evidence" available pre-T-retrieval-impl):
-  ${take.claim}
-Made on: ${take.since_date ?? 'unknown'}
-`;
+export function formatEvidenceBlock(take: Take, hits: EvidenceHit[]): string {
+  const sinceDate = take.since_date ?? 'unknown';
+  if (hits.length === 0) {
+    return (
+      `No evidence found in the brain for this claim (hybrid search returned zero results).\n` +
+      `The claim was made on: ${sinceDate}. With nothing in the brain mentioning the ` +
+      `subject, grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
+  const lines: string[] = [];
+  for (const h of hits) {
+    const itemDate = h.effective_date ? String(h.effective_date).slice(0, 10) : null;
+    let recency = '';
+    if (itemDate && take.since_date) {
+      // Lexicographic compare works for ISO prefixes (YYYY-MM vs YYYY-MM-DD:
+      // compare on the shorter's length so a same-month hit counts as after).
+      const cmpLen = Math.min(itemDate.length, take.since_date.length);
+      recency = itemDate.slice(0, cmpLen) >= take.since_date.slice(0, cmpLen)
+        ? ' (dated after the claim)'
+        : ' (dated BEFORE the claim — context only, not outcome evidence)';
+    }
+    const text = (h.chunk_text ?? '').replace(/\s+/g, ' ').trim().slice(0, EVIDENCE_ITEM_CLAMP_CHARS);
+    if (!text) continue;
+    lines.push(`- [${h.slug} • ${itemDate ?? 'undated'}]${recency}\n  ${text}`);
+  }
+  if (lines.length === 0) {
+    return (
+      `No usable evidence text found in the brain for this claim.\n` +
+      `The claim was made on: ${sinceDate}. Grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
+  let block = lines.join('\n');
+  if (block.length > EVIDENCE_BLOCK_CAP_CHARS) {
+    block = block.slice(0, EVIDENCE_BLOCK_CAP_CHARS) + '\n[evidence truncated]';
+  }
+  return block;
+}
+
+/**
+ * Default evidence retriever (#2811) — real hybrid search on the take's
+ * claim text: expansion off (deterministic, no extra LLM spend), source
+ * scope threaded (federated array beats scalar per sourceScopeOpts), and
+ * the take's OWN page excluded (its body restates the claim — feeding it
+ * back in would let the judge grade a claim against itself). Fail-open:
+ * a retrieval error degrades to a claim-only note steering the judge to
+ * 'unresolvable' rather than aborting the phase.
+ *
+ * Takes the engine explicitly; process() binds it so the injected-seam
+ * type (EvidenceRetrieverFn) is unchanged.
+ */
+export async function defaultEvidenceRetriever(
+  engine: BrainEngine,
+  take: Take,
+  scope: ScopedReadOpts,
+): Promise<string> {
+  try {
+    const hits = await hybridSearch(engine, take.claim, {
+      limit: EVIDENCE_SEARCH_LIMIT,
+      expansion: false,
+      ...(scope.sourceIds && scope.sourceIds.length > 0
+        ? { sourceIds: scope.sourceIds }
+        : scope.sourceId
+          ? { sourceId: scope.sourceId }
+          : {}),
+      ...(take.page_slug ? { exclude_slugs: [take.page_slug] } : {}),
+    });
+    // Belt-and-suspenders on top of exclude_slugs.
+    const filtered = hits.filter((h) => h.slug !== take.page_slug);
+    return formatEvidenceBlock(take, filtered);
+  } catch (err) {
+    return (
+      `[evidence retrieval failed: ${(err as Error).message}]\n` +
+      `Claim: ${take.claim}\n` +
+      `Made on: ${take.since_date ?? 'unknown'}\n` +
+      `With no retrievable evidence, grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
 }
 
 /**
@@ -414,7 +500,11 @@ class GradeTakesPhase extends BaseCyclePhase {
     opts: GradeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const judge = opts.judge ?? defaultJudge;
-    const evidenceRetriever = opts.evidenceRetriever ?? defaultEvidenceRetriever;
+    // #2811: bind the engine here so the injected-seam type stays
+    // (take, scope) => Promise<string>.
+    const evidenceRetriever: EvidenceRetrieverFn =
+      opts.evidenceRetriever ??
+      ((take: Take, takeScope: ScopedReadOpts) => defaultEvidenceRetriever(engine, take, takeScope));
     const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
     const minAgeMonths = opts.minAgeMonths ?? 6;
     const takeLimit = opts.takeLimit ?? 50;
@@ -533,10 +623,14 @@ class GradeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Budget pre-check.
+      // Budget pre-check. #2811: the input estimate is size-derived — real
+      // evidence blocks vary from a one-line no-evidence note to the 4k cap,
+      // and the old fixed 1200 underestimated a full block by ~2x.
       const budget = this.checkBudget({
         modelId: judgeModelId,
-        estimatedInputTokens: 1200,
+        estimatedInputTokens: Math.ceil(
+          (GRADE_TAKE_PROMPT.length + take.claim.length + evidence.length) / 4,
+        ),
         maxOutputTokens: 400,
       });
       if (!budget.allowed) {

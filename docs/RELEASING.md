@@ -345,7 +345,7 @@ canonical.
 
 ## Schema state tracking
 
-`~/.gbrain/update-state.json` tracks which recommended schema directories the user
+`~/.gbrain/upgrade-state.json` tracks which recommended schema directories the user
 adopted, declined, or added custom. The auto-update agent
 (`docs/guides/upgrades-auto-update.md`) reads this during upgrades to suggest new schema additions without re-suggesting
 things the user already declined. The setup skill writes the initial state during

@@ -120,6 +120,17 @@ export async function runEvalCommand(engine: BrainEngine, args: string[]): Promi
     const { runEvalCompare } = await import('./eval-compare.ts');
     return runEvalCompare(args.slice(1));
   }
+  if (sub === 'synthesize-concepts') {
+    // #4198: honest not-implemented scaffold. The user-facing path routes
+    // through the cli.ts pre-engine branch; this re-entry branch exists so
+    // the generic qrels flow below can never recapture the subcommand.
+    const { runEvalSynthesizeConceptsCli } = await import('./eval-synthesize-concepts.ts');
+    const { setCliExitVerdict } = await import('../core/cli-force-exit.ts');
+    // Exit-verdict ownership: never assign process.exitCode raw — PGLite
+    // teardown can scribble over it; the owned verdict survives (cli-force-exit).
+    setCliExitVerdict(await runEvalSynthesizeConceptsCli(args.slice(1)));
+    return;
+  }
 
   const opts = parseArgs(args);
 
@@ -404,6 +415,26 @@ gbrain eval — measure and compare retrieval quality
 USAGE
   gbrain eval --qrels <path>
   gbrain eval --qrels <path> --config-a <path> --config-b <path>
+  gbrain eval <subcommand> [flags]     (run \`gbrain eval <subcommand> --help\` where available)
+
+SUBCOMMANDS (#3686 — each has its own flag surface)
+  replay                     Re-run captured production queries against the current config
+  retrieval-quality          Retrieval-quality suite over the calibration corpus
+  gate                       CI pass/fail gate over a saved baseline
+  compare                    Compare two saved eval runs
+  run-all                    Orchestrate every suite (works with no brain configured)
+  brainbench                 Cross-harness memory conformance suite (hermetic)
+  longmemeval                LongMemEval benchmark (brings its own in-memory brain)
+  cross-modal                Cross-modal quality gate (pure API calls, no DB)
+  code-retrieval             Code-retrieval benchmark
+  brainstorm                 Brainstorm-quality eval
+  whoknows                   whoknows ranking eval
+  suspected-contradictions   Contradiction-probe eval
+  trajectory                 Chronological claim trajectory for an entity
+  conversation-parser        Fixture-corpus CI gate for the parser registry
+  chronicle                  Chronicle suite
+  takes-quality              {run,trend,regress,replay} takes-quality harness
+  export / prune             Export or prune recorded eval results
 
 OPTIONS
   --qrels <path|json>         Path to qrels JSON file (required)

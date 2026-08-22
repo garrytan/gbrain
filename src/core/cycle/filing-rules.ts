@@ -115,6 +115,7 @@ function loadFromCandidates(candidates: string[], outputRoot: string): string[] 
 export async function loadAllowedSlugPrefixes(
   outputRoot = 'wiki',
   engine?: BrainEngine,
+  namespaces?: DreamNamespaceGlobs,
 ): Promise<string[]> {
   const candidates = [join(process.cwd(), 'skills', '_brain-filing-rules.json')];
   if (engine) {
@@ -122,8 +123,39 @@ export async function loadAllowedSlugPrefixes(
     if (repo) candidates.push(join(repo, 'skills', '_brain-filing-rules.json'));
   }
   candidates.push(join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'));
-  return loadFromCandidates(candidates, outputRoot);
+  return appendNamespaceGlobs(loadFromCandidates(candidates, outputRoot), namespaces);
 }
 
-/** Test seam for the candidate-ladder semantics (both fail arms). */
-export const __filingRulesTesting = { loadFromCandidates };
+/**
+ * #4117: per-lane namespace prefixes (already SUMMARY_SLUG_RE-validated by
+ * loadDreamNamespaces in synthesize.ts — this module never sees raw config).
+ */
+export interface DreamNamespaceGlobs {
+  reflectionsPrefix?: string;
+  originalsPrefix?: string;
+}
+
+/**
+ * #4117: derive allow-list globs from the configured per-lane namespaces so
+ * a custom `dream.synthesize.{reflections,originals}_slug_prefix` is
+ * actually writable (the prompt tells the subagent to write there; put_page
+ * enforces this list server-side). FAIL-CLOSED on both edges:
+ *   - an empty base list stays empty — the NO_ALLOWLIST hard failure in the
+ *     phases must survive, a namespace config can never resurrect a broken
+ *     operator file into a partial allow-list;
+ *   - only validated prefixes reach this function, so a garbage config value
+ *     can never mint a glob.
+ */
+function appendNamespaceGlobs(globs: string[], ns?: DreamNamespaceGlobs): string[] {
+  if (!ns || globs.length === 0) return globs;
+  const out = [...globs];
+  for (const prefix of [ns.reflectionsPrefix, ns.originalsPrefix]) {
+    if (!prefix) continue;
+    const glob = `${prefix}/*`;
+    if (!out.includes(glob)) out.push(glob);
+  }
+  return out;
+}
+
+/** Test seam for the candidate-ladder semantics (both fail arms) + #4117 glob derivation. */
+export const __filingRulesTesting = { loadFromCandidates, appendNamespaceGlobs };

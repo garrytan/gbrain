@@ -54,6 +54,7 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/extract', canary: [] },
   { subpath: 'gbrain/ingestion', canary: ['INGESTION_SOURCE_API_VERSION', 'validateIngestionEvent', 'computeContentHash'] },
   { subpath: 'gbrain/ingestion/test-harness', canary: ['IngestionTestHarness', 'expectEvent'] },
+  { subpath: 'gbrain/core/guardrails', canary: ['registerGuardrailProvider', 'runGuardrails', 'loadGuardrailProvidersFromEnv'] },
 ];
 
 function readPackageExports(): Record<string, string> {
@@ -69,7 +70,7 @@ describe('public exports — package.json exports map', () => {
     // Adding new exports: increment this + add to EXPECTED_EXPORTS below.
     // Removing exports: see CLAUDE.md "Removing any of these is a
     // breaking change going forward" — bump minor and update this count.
-    expect(count).toBe(21);
+    expect(count).toBe(22);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

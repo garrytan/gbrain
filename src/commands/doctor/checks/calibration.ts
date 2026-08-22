@@ -55,7 +55,10 @@ export async function checkContextualRetrievalCoverage(engine: BrainEngine): Pro
     const rows = await engine.executeRaw<{ chunker_drift: number; mode_null: number }>(
       `SELECT
          COUNT(*) FILTER (WHERE chunker_version < $1)::int AS chunker_drift,
-         COUNT(*) FILTER (WHERE contextual_retrieval_mode IS NULL)::int AS mode_null
+         -- #4009 belt+braces: extract receipts are audit artifacts stamped
+         -- mode 'none' at write time, but a reindex DB fallback can clear
+         -- the stamp — never count them as "never evaluated".
+         COUNT(*) FILTER (WHERE contextual_retrieval_mode IS NULL AND type <> 'extract_receipt')::int AS mode_null
        FROM pages
        WHERE page_kind = 'markdown'
          AND deleted_at IS NULL`,

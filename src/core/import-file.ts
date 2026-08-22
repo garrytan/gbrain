@@ -9,7 +9,12 @@ import { chunkCodeText, chunkCodeTextFull, detectCodeLanguage, CHUNKER_VERSION }
 import { findChunkForOffset } from './chunkers/edge-extractor.ts';
 import { planEmbeddingReuse } from './embed-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
-import { embedBatch, embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
+import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
+// #3374 — import-path embeds ride the shared retry loop (429 retry-after +
+// transient network backoff) instead of bare embedBatch, so one socket blip
+// mid-sync no longer aborts the whole file import. Same core→commands edge
+// precedent as embed-stale.ts.
+import { embedBatchWithBackoff } from './embed-retry.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import type { ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
@@ -37,9 +42,9 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess, validateSlug } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHash, contentHashLegacy } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
-import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from './facts-fence.ts';
@@ -642,28 +647,24 @@ export async function importFromContent(
     }
   }
 
-  const HASH_EPHEMERAL_FRONTMATTER_KEYS = [
-    'captured_at',
-    'ingested_at',
-    QUARANTINE_KEY,
-    CONTENT_FLAG_KEY,
-    EMBED_SKIP_KEY,
-  ];
-  const stableFrontmatter: Record<string, unknown> = { ...parsed.frontmatter };
-  for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) {
-    delete stableFrontmatter[k];
-  }
-  // Hash includes all meaningful fields for idempotency.
-  const hash = createHash('sha256')
-    .update(JSON.stringify({
-      title: parsed.title,
-      type: parsed.type,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
-      frontmatter: stableFrontmatter,
-      tags: parsed.tags.sort(),
-    }))
-    .digest('hex');
+  // #3694: the hash formula lives in ONE place — utils.contentHash — shared
+  // with both engines' putPage fallback, so a page written via putPage and
+  // the same page re-imported by sync produce the SAME hash (pre-fix they
+  // diverged and every putPage→sync roundtrip re-chunked + re-embedded).
+  // The helper strips HASH_EPHEMERAL_FRONTMATTER_KEYS + the tags key from a
+  // frontmatter copy and folds sorted tags in — the exact former inline
+  // formula (byte-parity pinned by test/content-hash-parity-3694.test.ts).
+  // Sort tags in place first to preserve the pre-#3694 downstream behavior
+  // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
+  parsed.tags.sort();
+  const hash = contentHash({
+    title: parsed.title,
+    type: parsed.type,
+    compiled_truth: parsed.compiled_truth,
+    timeline: parsed.timeline,
+    frontmatter: parsed.frontmatter,
+    tags: parsed.tags,
+  });
 
   const parsedPage: ParsedPage = {
     type: parsed.type,
@@ -676,6 +677,31 @@ export async function importFromContent(
 
   if (existing?.content_hash === hash && !opts.forceRechunk) {
     return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
+  }
+
+  // #3694 one-time reconcile: a row written by the PRE-fix putPage formula
+  // carries the legacy hash. When the parsed file matches that legacy hash,
+  // the content is unchanged — stamp the canonical hash via the narrow
+  // refreshPageBody UPDATE (no chunk churn, no re-embed, no version snapshot)
+  // and skip. The next import then hits the fast path above.
+  if (existing && !opts.forceRechunk && typeof engine.refreshPageBody === 'function') {
+    const legacyHash = contentHashLegacy({
+      title: parsed.title,
+      type: parsed.type,
+      compiled_truth: parsed.compiled_truth,
+      timeline: parsed.timeline,
+      frontmatter: parsed.frontmatter,
+    });
+    if (existing.content_hash === legacyHash) {
+      await engine.refreshPageBody(
+        slug,
+        sourceId ?? 'default',
+        parsed.compiled_truth,
+        parsed.timeline || '',
+        hash,
+      );
+      return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}) };
+    }
   }
 
   // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
@@ -791,15 +817,36 @@ export async function importFromContent(
   if (!opts.noEmbed) {
     const searchInput = await loadSearchModeConfig(engine);
     const knobs = resolveSearchMode(searchInput);
-    // Look up the source row for this import; default to host trust when
-    // the engine's getConfig path doesn't surface a source row (most calls).
+    // #3885: load the REAL source row so a stored `gbrain sources
+    // set-cr-mode <id> <mode>` (and the mount trust flag) applies on the
+    // inline import path — capture + reindex --markdown — not just the
+    // Minion backfill. The prior hardcoded stub (contextual_retrieval_mode:
+    // null / trust_frontmatter_overrides: false) silently ignored the
+    // per-source override. Unknown source id / pre-sources-table brains
+    // keep the stub (host-trust defaults).
+    let sourceRow: {
+      id: string;
+      contextual_retrieval_mode?: string | null;
+      trust_frontmatter_overrides?: boolean;
+    } = {
+      id: sourceId ?? 'default',
+      contextual_retrieval_mode: null,
+      trust_frontmatter_overrides: false,
+    };
+    try {
+      const row = await loadSourceRow(engine, sourceId ?? 'default');
+      sourceRow = {
+        id: row.id,
+        contextual_retrieval_mode: row.contextual_retrieval_mode ?? null,
+        trust_frontmatter_overrides: row.trust_frontmatter_overrides === true,
+      };
+    } catch {
+      // Source row missing ('default' not seeded on a fresh brain) — the
+      // stub stands, matching pre-#3885 behavior.
+    }
     const resolution = resolveContextualRetrievalMode({
       pageFrontmatter: parsed.frontmatter,
-      source: {
-        id: sourceId ?? 'default',
-        contextual_retrieval_mode: null,
-        trust_frontmatter_overrides: false,
-      },
+      source: sourceRow,
       globalMode: knobs.contextual_retrieval,
       killSwitchDisabled: knobs.contextual_retrieval_disabled,
     });
@@ -819,7 +866,7 @@ export async function importFromContent(
     const wrappedTexts = prefix
       ? chunks.map((c) => wrapChunkForEmbedding(c.chunk_text, prefix, c.chunk_source))
       : chunks.map((c) => c.chunk_text);
-    const embeddings = await embedBatch(wrappedTexts);
+    const embeddings = await embedBatchWithBackoff(wrappedTexts);
     for (let i = 0; i < chunks.length; i++) {
       chunks[i].embedding = embeddings[i];
       // token_count tracks the wrapped string length so cost reporting
@@ -1223,6 +1270,8 @@ export async function importFromFile(
   const expectedSlug = slugifyPath(relativePath);
   let resolvedSlug = expectedSlug;
   let usedFrontmatterFallback = false;
+  let fallbackReason: 'path slugified empty' | 'normalization-equivalent identity restore' =
+    'path slugified empty';
 
   if (frontmatterError) {
     return {
@@ -1254,22 +1303,36 @@ export async function importFromFile(
       };
     }
   } else if (parsed.slug !== expectedSlug) {
-    // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
-    // claims a different one. Reject.
-    return {
-      slug: expectedSlug,
-      status: 'skipped',
-      chunks: 0,
-      error:
-        `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
-        `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
-    };
+    if (slugifyPath(parsed.slug) === expectedSlug) {
+      // #3772: normalization-equivalent — the frontmatter slug is a stored
+      // identity whose slugified spelling IS the path-derived slug. Export
+      // writes files at <slug>.md and stamps the original slug whenever it
+      // isn't a slugifyPath fixed point (legacy/hand-keyed slugs with case,
+      // apostrophes, accents…); accepting it here is what makes an
+      // export → import round-trip preserve page keys instead of silently
+      // re-keying. Anti-spoof holds: a slug claiming a DIFFERENT page
+      // normalizes to a different path and still rejects below.
+      resolvedSlug = parsed.slug;
+      usedFrontmatterFallback = true;
+      fallbackReason = 'normalization-equivalent identity restore';
+    } else {
+      // Anti-spoof preserved: path DOES derive a slug, but the frontmatter slug
+      // claims a different one. Reject.
+      return {
+        slug: expectedSlug,
+        status: 'skipped',
+        chunks: 0,
+        error:
+          `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expectedSlug}" ` +
+          `(from ${relativePath}). Remove the frontmatter "slug:" line or move the file.`,
+      };
+    }
   }
 
   // Emit the dual-channel audit entry AFTER we know we're not going to
   // short-circuit, so we don't log noise for failed imports.
   if (usedFrontmatterFallback) {
-    logSlugFallback(resolvedSlug, relativePath);
+    logSlugFallback(resolvedSlug, relativePath, fallbackReason);
   }
 
   // Pass the resolved slug explicitly so that any future change to
@@ -1413,7 +1476,7 @@ export async function importCodeFile(
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatch(textsToEmbed);
+      const embeddings = await embedBatchWithBackoff(textsToEmbed);
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
@@ -1761,6 +1824,7 @@ async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
  * - the embedding_image_ocr config flag is off (default)
  * - the configured expansion model is unavailable (no API key)
  * - the OCR call itself fails (logged once per session)
+ * - the per-run OCR budget is exhausted (#3973 — see _ocrRunBudget below)
  *
  * Eng-1B: per-call result is reflected in counters the doctor `ocr_health`
  * check reads. Counter writes are best-effort; never fail the import.
@@ -1769,6 +1833,59 @@ async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
  * embedded in the image (mitigation for the OCR-as-prompt-injection vector).
  */
 let _ocrWarnedThisSession = false;
+
+// #3973: per-run OCR ceiling. A bulk import over a large image corpus with
+// OCR opted-in is an unbounded per-image LLM spend; cap it per process run.
+// Config keys (both finite by default; <= 0 disables that cap):
+//   embedding_image_ocr_max_images — max OCR calls per run (default 200)
+//   embedding_image_ocr_max_usd    — estimated-USD ceiling per run (default 1.0,
+//     estimated at OCR_EST_USD_PER_IMAGE per call — a documented constant,
+//     not a billing read; actual spend lands on the budget tracker (#4121)).
+// Over-cap: skip OCR (import continues with filename-only chunk text), warn
+// once, bump the persistent `ocr_skipped_budget` counter that doctor's
+// ocr_health check surfaces.
+const OCR_EST_USD_PER_IMAGE = 0.002;
+const OCR_MAX_IMAGES_DEFAULT = 200;
+const OCR_MAX_USD_DEFAULT = 1.0;
+const _ocrRunBudget = { images: 0, estUsd: 0, warned: false };
+
+/** Test seam: reset (and optionally preset) the per-run OCR budget state. */
+export function _resetOcrRunBudgetForTests(preset?: { images?: number; estUsd?: number }): void {
+  _ocrRunBudget.images = preset?.images ?? 0;
+  _ocrRunBudget.estUsd = preset?.estUsd ?? 0;
+  _ocrRunBudget.warned = false;
+}
+
+/** Test seam: read the per-run OCR budget state. */
+export function _getOcrRunBudgetForTests(): { images: number; estUsd: number; warned: boolean } {
+  return { ..._ocrRunBudget };
+}
+
+/** Returns a human reason when this run's OCR cap is exhausted, else null. */
+async function ocrBudgetExceeded(engine: BrainEngine): Promise<string | null> {
+  let maxImages = OCR_MAX_IMAGES_DEFAULT;
+  let maxUsd = OCR_MAX_USD_DEFAULT;
+  try {
+    const rawImages = await engine.getConfig('embedding_image_ocr_max_images');
+    if (rawImages != null && rawImages !== '') {
+      const n = Number(rawImages);
+      if (Number.isFinite(n)) maxImages = n;
+    }
+    const rawUsd = await engine.getConfig('embedding_image_ocr_max_usd');
+    if (rawUsd != null && rawUsd !== '') {
+      const n = Number(rawUsd);
+      if (Number.isFinite(n)) maxUsd = n;
+    }
+  } catch { /* config unavailable → finite defaults still apply */ }
+  if (maxImages > 0 && _ocrRunBudget.images >= maxImages) {
+    return `per-run image cap reached (${_ocrRunBudget.images}/${maxImages}; raise embedding_image_ocr_max_images to OCR more)`;
+  }
+  if (maxUsd > 0 && _ocrRunBudget.estUsd >= maxUsd) {
+    return `per-run estimated-USD cap reached (~$${_ocrRunBudget.estUsd.toFixed(3)} of $${maxUsd}; raise embedding_image_ocr_max_usd to OCR more)`;
+  }
+  return null;
+}
+
 async function maybeOcr(
   engine: BrainEngine,
   imgBuf: Buffer,
@@ -1776,6 +1893,23 @@ async function maybeOcr(
 ): Promise<string> {
   const opt = process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
   if (opt !== 'true') return '';
+  return maybeOcrGated(engine, imgBuf, mime);
+}
+
+/** #3973: body of maybeOcr past the opt-in check; exported for budget tests. */
+export async function _maybeOcrGatedForTests(
+  engine: BrainEngine,
+  imgBuf: Buffer,
+  mime: string,
+): Promise<string> {
+  return maybeOcrGated(engine, imgBuf, mime);
+}
+
+async function maybeOcrGated(
+  engine: BrainEngine,
+  imgBuf: Buffer,
+  mime: string,
+): Promise<string> {
 
   // Counter helpers — quiet failure if config table is unavailable.
   async function bump(key: string) {
@@ -1784,6 +1918,20 @@ async function maybeOcr(
       await engine.setConfig(key, String((Number.isFinite(cur) ? cur : 0) + 1));
     } catch { /* non-fatal */ }
   }
+
+  // #3973: budget gate fires BEFORE the attempt counter — a budget skip is
+  // not an attempt, and the skip has its own counter for doctor ocr_health.
+  const overBudget = await ocrBudgetExceeded(engine);
+  if (overBudget) {
+    if (!_ocrRunBudget.warned) {
+      console.warn(`[gbrain] OCR skipped for the rest of this run: ${overBudget}`);
+      _ocrRunBudget.warned = true;
+    }
+    await bump('ocr_skipped_budget');
+    return '';
+  }
+  _ocrRunBudget.images += 1;
+  _ocrRunBudget.estUsd += OCR_EST_USD_PER_IMAGE;
 
   await bump('ocr_attempted');
   try {

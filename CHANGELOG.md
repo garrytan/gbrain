@@ -2,6 +2,98 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.28.0] - 2026-08-21
+
+The megawave: 111 verified issues fixed in one release — every remaining
+fixable item from the full-backlog triage, implemented reproduce-first with
+failing-first tests and two-lens adversarial review per area. Fully
+reconciled with v0.46.26.0–27.0 (the daemon env file supersedes interim key
+channels; both rc files now source independently on top of it).
+
+### Security & visibility
+- Private-page visibility (`visibility: private` frontmatter) is now enforced
+  uniformly across every remote read surface — search arms, page reads, link
+  and graph traversal, chunk/version/timeline/raw reads, and slug resolution —
+  with one shared predicate so engines and ops can't drift. Private pages read
+  exactly like missing ones to untrusted callers (no existence oracle). Trusted
+  local CLI use is unchanged; operators keep a config opt-out
+  (`search.remote_private_pages`) and an incident escape hatch
+  (`GBRAIN_REMOTE_PRIVATE_PAGES=1`), documented in the MCP surface runbook.
+- Query caching stays fully effective for remote callers: the visibility
+  posture folds into the cache key (knobs_hash v=23) instead of skipping the
+  cache — one-time cold-miss on upgrade, cross-posture contamination is
+  structurally impossible (pinned at hash, cache-store, and hybrid levels).
+- Untrusted frontmatter can no longer point conversation ingestion at
+  arbitrary host files (absolute-path traversal guard, fail-closed).
+- Trust-gate hardening: tombstone payloads and code-graph readiness rechecks
+  now fail closed on unset trust.
+
+### Retrieval
+- CJK queries recover keyword matches on both engines (bigram fallback parity,
+  #3986); relational-arm results carry evidence stamps and monotone scores.
+- CRAG-style escalation seam (config-gated, default off, experimental) — a
+  degraded search can escalate to a deeper re-run (#1663).
+- Degradation visibility: searches that fall back now say so in `_meta`
+  (#3873 note: model-tier config now takes precedence over `models.default` —
+  set your tier explicitly if you relied on the old order).
+- Multi-type filters, snippet caps, and deep-research ids thread through every
+  search leg uniformly (#3985 #3800).
+
+### Sync, ingestion & timeline
+- Legacy timeline rows are repaired one-time by migration (content-anchored,
+  idempotent) so re-extraction dedups instead of duplicating (#3957); the
+  dedup index re-keys on md5(summary) so long summaries can't abort timeline
+  writes (#3737).
+- `sync --dry-run` is pure again (no config writes, #4342); image files import
+  incrementally (#2683); FS-walk stamps snapshot page state before reading so
+  concurrent edits stay stale-visible (#3875).
+- Entity identity groups (manual cross-source linking, v1) respect source
+  scope in both directions (#4224).
+
+### Jobs, cycle & operations
+- Durable per-call chat usage ledger (`chat_usage_log`, read via `get_usage`,
+  now admin-scoped) with canonical-table cost estimates (#4218).
+- Probe-liveness wedge in the LLM halt/cooldown path unlatched — a deferred
+  probe can no longer freeze a worker queue until restart; strikes escalate
+  per halted probe, not per concurrent failure.
+- Cycle stale-drain is time-budgeted; lock refreshers feature-detect signal
+  shapes; PID-1 zombie reaping under container/daemon use (#2443 #2308).
+- Embed retry/backoff cluster peeled into core (`core/embed-retry.ts`) fixing
+  a core→commands layering hazard; Voyage/OpenAI embedding prices re-verified.
+
+### Release-gate hardening (caught by this release's own gate battery)
+- Schema-pack regex inference no longer uses a `node:vm` watchdog — it could
+  wedge the event loop in embedded-engine processes (silent hangs during
+  large imports); replaced with input caps + a nested-quantifier refusal
+  shared with the lint rule (#3190 follow-up).
+- Autopilot launchd installs survive repo deletion: the job's working
+  directory no longer pins the repo, so the self-disable guard actually runs
+  (previously every respawn died before reaching it).
+
+### Doctor, CLI & DX
+- Doctor: silent-death checks, self-upgrade honesty, dead-check pruning, and
+  quieter output on healthy brains (#3944 #3925 #3958).
+- CLI: silent-failure surfacing on exit paths, confirm-race gate on
+  destructive prompts, Bun.which PATH fix for bootstrap detection (#4325).
+- Decorated Python defs chunk correctly for code-def resolution (#3821).
+- Note for RTL users: pointed-Hebrew (niqqud) slugs re-key under the
+  normalized scheme — existing links self-heal on next sync (#3700).
+
+### Historical CHANGELOG corrections
+- v0.13.1 entry: corrected the budget figure (#3748).
+- v0.46.x entry: `gbrain migrate-engine` → `gbrain migrate --to` (#3697).
+
+### To take advantage of v0.46.26.0
+```bash
+gbrain upgrade         # or: bun install -g gbrain@latest
+gbrain migrate         # runs migrations v137–v140 (identity groups, timeline
+                       # dedup re-key + one-time repair, chat usage ledger)
+gbrain doctor          # confirms the new checks pass on your brain
+```
+First queries after upgrade re-warm the semantic cache (knobs v=23). If you
+relied on `models.default` overriding tier config, re-check `gbrain search
+modes` output (#3873 precedence change).
+
 ## [0.46.27.0] - 2026-08-21
 
 **The autopilot daemon can no longer lose your API keys silently.** The

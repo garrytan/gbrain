@@ -189,7 +189,7 @@ command -v gbrain || { echo "gbrain not on PATH. Install, then retry."; exit 1; 
 #    (Supervisor is Postgres-only. PGLite's exclusive file lock blocks the
 #    separate worker process. If `config.engine === 'pglite'` the CLI rejects
 #    with a clear error.)
-gbrain doctor --fast --json | jq '.checks[] | select(.name=="db_connectivity")'
+gbrain doctor --fast --json | jq '.checks[] | select(.name=="connection")'
 
 # 3. Schema is up to date. If version=0 or status=="fail":
 #    gbrain apply-migrations --yes
@@ -423,8 +423,14 @@ gbrain jobs list --status active --limit 10
 # Dead-lettered jobs.
 gbrain jobs list --status dead --limit 10
 
-# Shell handler registered? (check supervisor audit log or worker stderr.)
-gbrain jobs supervisor status --json | jq '.worker_config.allow_shell_jobs'
+# Shell jobs enabled on the worker? There is no supervisor-status JSON field
+# for this — the gate is the GBRAIN_ALLOW_SHELL_JOBS=1 env var on the worker
+# process (the handler is always registered but guarded). Inspect the
+# supervisor's environment directly:
+ps eww -p "$(gbrain jobs supervisor status --json | jq -r '.supervisor_pid')" \
+  | grep -o 'GBRAIN_ALLOW_SHELL_JOBS=[^ ]*' || echo "flag not set"
+# An unflagged worker that claims a shell job dead-letters it instantly:
+gbrain jobs list --status dead --name shell --limit 3
 ```
 
 ## Uninstall

@@ -8,6 +8,7 @@
 
 import type { Operation } from './contract.ts';
 import { enforceSubagentSlugFence, enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import { slugHiddenFromCaller } from '../search/private-visibility.ts';
 import { writeTimelineEntryThrough } from '../timeline-write-through.ts';
 
 // --- Timeline ---
@@ -133,11 +134,16 @@ const get_timeline: Operation = {
   handler: async (ctx, p) => {
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
+    const scope = sourceScopeOpts(ctx);
+    // #4352 remediation: a `visibility: private` page's timeline reads
+    // exactly like a missing page's ([]) for untrusted callers — no
+    // existence oracle.
+    if (await slugHiddenFromCaller(ctx.engine, ctx.remote, p.slug as string, scope)) return [];
     const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
     const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
     const limit = typeof p.limit === 'number' ? p.limit : undefined;
     return ctx.engine.getTimeline(p.slug as string, {
-      ...sourceScopeOpts(ctx),
+      ...scope,
       ...(after ? { after } : {}),
       ...(before ? { before } : {}),
       ...(limit !== undefined ? { limit } : {}),

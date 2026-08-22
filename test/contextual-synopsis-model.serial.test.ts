@@ -101,16 +101,17 @@ describe('contextual synopsis model resolution', () => {
       );
 
       engine.unset('contextual_retrieval.haiku_model');
-      expect(await resolveContextualSynopsisModel(engine as never)).toBe(
-        'codex-proxy:global-default',
-      );
-
-      engine.unset('models.default');
+      // #3873: models.tier.utility (specific) now beats models.default (generic).
       expect(await resolveContextualSynopsisModel(engine as never)).toBe(
         'codex-proxy:utility-tier',
       );
 
       engine.unset('models.tier.utility');
+      expect(await resolveContextualSynopsisModel(engine as never)).toBe(
+        'codex-proxy:global-default',
+      );
+
+      engine.unset('models.default');
       expect(await resolveContextualSynopsisModel(engine as never)).toBe(
         'codex-proxy:env-model',
       );

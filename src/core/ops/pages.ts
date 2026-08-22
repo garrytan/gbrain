@@ -14,6 +14,8 @@ import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { writePageThrough, type WriteThroughResult } from '../write-through.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
+// #3190: pack-aware link typing on the put_page auto-link path.
+import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { isFactsBackstopEligible } from '../facts/eligibility.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import type { WriterLintPayload } from '../output/post-write.ts';
@@ -21,6 +23,7 @@ import { stripFactsFence } from '../facts-fence.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { isValidSourceId, ALL_SOURCES } from '../source-id.ts';
+import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
@@ -96,6 +99,26 @@ function assertSourceInWriteGrant(ctx: OperationContext, sourceId: string): void
   );
 }
 
+/**
+ * #4352 remediation — filter fuzzy-resolution candidates so get_page's
+ * ambiguous_slug candidate list can't enumerate private slugs to an
+ * untrusted caller. Probe SQL lives ONCE in findPrivateOnlySlugs (a slug
+ * with at least one non-private in-scope page stays visible; candidates
+ * come from resolveSlugs, so every slug has a live page row).
+ * Order-preserving (resolveSlugs returns ranked candidates). Read-only,
+ * scope-threaded — not a getPage/putPage pair (no unscoped-check/scoped-write
+ * hazard).
+ */
+async function dropPrivateSlugs(
+  engine: BrainEngine,
+  candidates: string[],
+  scope: { sourceId?: string; sourceIds?: string[] },
+  includeDeleted: boolean,
+): Promise<string[]> {
+  const hidden = await findPrivateOnlySlugs(engine, candidates, scope, { includeDeleted });
+  return candidates.filter(c => !hidden.has(c));
+}
+
 const get_page: Operation = {
   name: 'get_page',
   description: 'Read a page by slug (supports optional fuzzy matching). To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
@@ -126,14 +149,32 @@ const get_page: Operation = {
     const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
+    // #4352 remediation: untrusted callers never read `visibility: private`
+    // bodies — the same resolveExcludePrivatePages gate search/recall/entity
+    // already apply (trusted local + the operator opt-outs resolve to false).
+    // A gated private page behaves exactly like a missing one (no existence
+    // oracle), composing with — not replacing — the source-grant scope above.
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+
     let page = await ctx.engine.getPage(slug, { includeDeleted, ...sourceOpts });
+    if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
-      const candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
+      let candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
+      // #4352: the ambiguous_slug candidate list must not enumerate private slugs.
+      if (excludePrivate && candidates.length > 0) {
+        candidates = await dropPrivateSlugs(ctx.engine, candidates, fuzzyScope, includeDeleted);
+      }
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
-        resolved_slug = candidates[0];
+        const fuzzyPage = await ctx.engine.getPage(candidates[0], { includeDeleted, ...sourceOpts });
+        // Multi-source backstop: the slug may still resolve to a private
+        // variant (same slug private in one source, world in another —
+        // getPage returns the first in-scope match).
+        if (fuzzyPage && !(excludePrivate && isPrivatePage(fuzzyPage.frontmatter))) {
+          page = fuzzyPage;
+          resolved_slug = candidates[0];
+        }
       } else if (candidates.length > 1) {
         return { error: 'ambiguous_slug', candidates };
       }
@@ -214,6 +255,75 @@ const get_page: Operation = {
   },
   scope: 'read',
   cliHints: { name: 'get', positional: ['slug'] },
+};
+
+/**
+ * #4039: OpenAI deep-research adapter. ChatGPT's deep research mode requires
+ * an MCP server to expose a `search`/`fetch` PAIR with a fixed contract:
+ * search results carry an `id`, and `fetch(id)` returns
+ * `{ id, title, text, url, metadata }`. gbrain had `search` but no `fetch`,
+ * so the connector worked in normal chat and failed in deep research. This
+ * is a thin get_page adapter: id = slug (the `search` op stamps `id: slug`
+ * on every result so the pair round-trips), same source scoping and
+ * remote-reader privacy fences as get_page, no fuzzy resolution (deep
+ * research always echoes back an id it was handed).
+ */
+const fetch_page: Operation = {
+  name: 'fetch',
+  description: "Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). `id` is the page slug stamped on every `search` result. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For the richer gbrain-native read (fuzzy slugs, soft-delete recovery, lossless edit round-trips), use get_page.",
+  params: {
+    id: { type: 'string', required: true, description: 'Result id from a prior `search` call (= the page slug).' },
+  },
+  handler: async (ctx, p) => {
+    const id = p.id as string;
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new OperationError('invalid_params', 'fetch requires a non-empty id', 'Pass the `id` field from a `search` result.');
+    }
+    const slug = id.trim();
+    // Same scope ladder as get_page's unqualified read: federated array >
+    // scalar > nothing — a remote caller only fetches what its grant spans.
+    const sourceOpts = federatedSearchScope(ctx);
+    let page = await ctx.engine.getPage(slug, sourceOpts);
+    // #4352 remediation: a `visibility: private` page reads as missing for
+    // untrusted callers (same resolveExcludePrivatePages gate as get_page —
+    // fetch is remote-facing by design, every MCP transport). Cheap row
+    // check first; the resolver short-circuits for trusted local callers.
+    if (page && isPrivatePage(page.frontmatter) && (await resolveExcludePrivatePages(ctx.engine, ctx.remote))) {
+      page = null;
+    }
+    if (!page) {
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Pass an id returned by a `search` call.');
+    }
+    bumpLastRetrievedAt(ctx.engine, [page.id]);
+    const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
+    // Same privacy boundary as get_page: untrusted readers (ctx.remote ===
+    // true — every MCP transport) never see takes or private facts fences.
+    const visibleBody = ctx.remote === false
+      ? page
+      : {
+          ...page,
+          compiled_truth: stripFactsFence(
+            stripTakesFence(page.compiled_truth),
+            { keepVisibility: ['world'] },
+          ),
+        };
+    return {
+      id: page.slug,
+      title: page.title,
+      text: serializePageToMarkdown(visibleBody as Page, tags),
+      // Pages have no public http home; a stable brain-local URI satisfies
+      // the contract's citation slot without inventing a fake web URL.
+      url: `gbrain://page/${page.source_id}/${page.slug}`,
+      metadata: {
+        type: page.type,
+        source_id: page.source_id,
+        updated_at: page.updated_at,
+        tags,
+      },
+    };
+  },
+  scope: 'read',
+  cliHints: { name: 'fetch', positional: ['id'] },
 };
 
 const put_page: Operation = {
@@ -498,11 +608,20 @@ const put_page: Operation = {
           const fullContent = result.parsedPage.compiled_truth + '\n' + result.parsedPage.timeline;
           const entries = parseTimelineEntries(fullContent);
           if (entries.length > 0) {
+            // #3957: thread source_id — the batch JOIN maps a missing
+            // source_id to 'default', so a put_page against a named source
+            // silently dropped every timeline row (or attached them to a
+            // same-slug page in 'default'). Also carry the parsed source
+            // label so the row shape matches the FS/db extract paths and
+            // the (page_id, date, summary, source) dedup collapses
+            // re-extractions of the same bullet.
             const batch = entries.map(e => ({
               slug,
               date: e.date,
+              source: e.source,
               summary: e.summary,
               detail: e.detail || '',
+              ...(ctx.sourceId ? { source_id: ctx.sourceId } : {}),
             }));
             // v0.41.18.0: engine self-retries on Supavisor circuit-breaker
             // recovery. auditSite label routes the audit JSONL emission so
@@ -628,10 +747,35 @@ const put_page: Operation = {
       writerLint = { status: 'lint_error' };
     }
 
+    // #2822: a 0-chunk put looks like success but the page is unsearchable —
+    // say WHY instead of leaving the caller to discover it at query time.
+    let chunkSkipReason: string | undefined;
+    if (result.chunks === 0) {
+      if (result.status === 'skipped') {
+        chunkSkipReason = 'write_skipped'; // dedup / unchanged content — prior chunks stand
+      } else if (result.parsedPage) {
+        const { isQuarantined } = await import('../quarantine.ts');
+        const { isEmbedSkipped } = await import('../embed-skip.ts');
+        const fm = result.parsedPage.frontmatter as Record<string, unknown> | undefined;
+        const bodyBlank = `${result.parsedPage.compiled_truth ?? ''}${result.parsedPage.timeline ?? ''}`.trim() === '';
+        chunkSkipReason = isQuarantined(fm) ? 'quarantined'
+          : isEmbedSkipped(fm) ? 'embed_skip'
+          : bodyBlank ? 'empty_body'
+          : 'unknown';
+      }
+    }
+
     return {
       slug: result.slug,
       status: result.status === 'imported' ? 'created_or_updated' : result.status,
       chunks: result.chunks,
+      // #3984: a skipped/error status without the reason is a silent no-op to
+      // MCP callers (e.g. the >5MB size guard returned bare status 'skipped'
+      // and the agent had no idea why the page never appeared). Thread
+      // importFromContent's error text through. capture delegates here, so
+      // it inherits the reason too.
+      ...(result.error ? { error: result.error } : {}),
+      ...(chunkSkipReason ? { chunk_skip_reason: chunkSkipReason } : {}),
       ...(autoLinks ? { auto_links: autoLinks } : {}),
       ...(autoTimeline ? { auto_timeline: autoTimeline } : {}),
       ...(writerLint ? { writer_lint: writerLint } : {}),
@@ -739,18 +883,42 @@ async function runAutoLink(
   const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
   // Issue #972: opt-in bare-wikilink basename resolution. Off by default.
   const globalBasename = await isGlobalBasenameEnabled(engine);
+  // #3190: pack-aware link typing + pack frontmatter_links on the put_page
+  // auto-link path. Loaded via the local-engine best-effort resolver (this
+  // hook only runs for trusted-local / trusted-workspace writes); null keeps
+  // the legacy in-code inference.
+  const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
   const { candidates, unresolved } = await extractPageLinks(
     slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-    { globalBasename },
+    { globalBasename, pack },
   );
 
   // Resolve which targets exist (skip refs to non-existent pages to avoid FK
-  // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
-  // v0.31.8 (D12): scoped to the source when opts.sourceId is set so wikilink
-  // resolution doesn't span unrelated sources.
-  const allSlugs = await engine.getAllSlugs(sourceOpts);
+  // violation churn in addLink). #2544: targeted membership probe over just
+  // the candidate target/from slugs instead of materializing the whole slug
+  // set — getAllSlugs was a full-table scan on EVERY put_page while the
+  // candidates are typically a handful. Mirrors the proven oneshot probe
+  // (subagent-oneshot.ts). Deliberately does NOT filter deleted_at: the
+  // getAllSlugs it replaces included soft-deleted pages, and changing link
+  // visibility is out of scope here. Skips the query entirely when there are
+  // no candidates. v0.31.8 (D12): scoped to the source when opts.sourceId is
+  // set so wikilink resolution doesn't span unrelated sources.
+  const candidateSlugs = [...new Set(candidates.flatMap(c => (c.fromSlug ? [c.targetSlug, c.fromSlug] : [c.targetSlug])))];
+  let existingSlugs = new Set<string>();
+  if (candidateSlugs.length > 0) {
+    const rows = opts?.sourceId
+      ? await engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2`,
+          [candidateSlugs, opts.sourceId],
+        )
+      : await engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages WHERE slug = ANY($1::text[])`,
+          [candidateSlugs],
+        );
+    existingSlugs = new Set(rows.map(r => r.slug));
+  }
   const valid = candidates.filter(c =>
-    allSlugs.has(c.targetSlug) && (!c.fromSlug || allSlugs.has(c.fromSlug))
+    existingSlugs.has(c.targetSlug) && (!c.fromSlug || existingSlugs.has(c.fromSlug))
   );
 
   // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
@@ -1035,6 +1203,12 @@ const list_pages: Operation = {
     // as search/query's sourceIdParam.
     const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
     const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4352 remediation: untrusted listing never enumerates
+    // `visibility: private` pages (slugs + titles are the leak surface here).
+    // Composes with the #4400 per-call source_id and the v0.34.1 grant scope
+    // above — an ADDITIONAL predicate threaded into PageFilters, never a
+    // replacement for the source filter. Trusted local enumeration unchanged.
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     // The 100-row cap exists to protect remote MCP/OAuth transports from
     // unbounded result dumps. Local CLI callers (ctx.remote === false — the
     // same trust boundary that already bypasses scope enforcement, see the
@@ -1074,6 +1248,7 @@ const list_pages: Operation = {
       includeDeleted: (p.include_deleted as boolean) === true,
       updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
       sort,
+      excludePrivate,
       ...scope,
     });
     const truncated = rows.length > limit;
@@ -1199,4 +1374,5 @@ const capture: Operation = {
 export const pagesOperations: Operation[] = [
   get_page, put_page, delete_page, list_pages,
   restore_page, purge_deleted_pages, capture,
+  fetch_page,
 ];

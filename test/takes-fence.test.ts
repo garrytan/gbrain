@@ -66,6 +66,29 @@ describe('parseTakesFence', () => {
     expect(warnings).toEqual([]);
   });
 
+  // #3769 — a fence written with the standard TWO-dash HTML comment form
+  // (`<!-- gbrain:takes:begin -->`) is a fence the author MEANT to write;
+  // pre-fix it parsed as "no fence at all" with zero warnings.
+  test('warns TAKES_FENCE_NEAR_MISS on the two-dash comment form', () => {
+    const body = `## Takes
+
+<!-- gbrain:takes:begin -->
+| # | claim | kind | who | weight | since | source |
+|---|-------|------|-----|--------|-------|--------|
+| 1 | Some claim | fact | world | 1.0 | 2026-01 | source |
+<!-- gbrain:takes:end -->
+`;
+    const { takes, warnings } = parseTakesFence(body);
+    expect(takes).toEqual([]);
+    expect(warnings.some(w => w.includes('TAKES_FENCE_NEAR_MISS'))).toBe(true);
+  });
+
+  test('no near-miss warning for prose that merely mentions takes', () => {
+    const { takes, warnings } = parseTakesFence('# Prose\n\nI have hot takes about fences.');
+    expect(takes).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
   test('warns on unbalanced fence (missing end)', () => {
     const body = `## Takes\n\n${TAKES_FENCE_BEGIN}\n| # | claim | kind | who | weight | since | source |\n`;
     const { takes, warnings } = parseTakesFence(body);

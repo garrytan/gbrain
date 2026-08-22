@@ -100,3 +100,26 @@ describe('onMeta callback omitted', () => {
     expect(Array.isArray(out)).toBe(true);
   });
 });
+
+describe('#3808 — keyword-only degradation is visible on stderr (once per process)', () => {
+  test('the no-provider branch warns with the diagnose reason and a doctor hint', async () => {
+    delete process.env.OPENAI_API_KEY;
+    const { _resetWarnOnceForTests } = await import('../src/core/utils.ts');
+    _resetWarnOnceForTests();
+    const warns: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
+    try {
+      await hybridSearch(engine, 'alice');
+      await hybridSearch(engine, 'alice example person');
+    } finally {
+      console.warn = orig;
+    }
+    const hits = warns.filter((w) => w.includes('vector search unavailable'));
+    // Fires exactly once per process regardless of how many degraded
+    // searches run — pre-#3808 this was silent (meta-only).
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toContain('keyword-only');
+    expect(hits[0]).toContain('gbrain doctor');
+  });
+});

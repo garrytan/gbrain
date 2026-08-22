@@ -1381,7 +1381,9 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   console.log('→ Do this next — give your agent memory (copy these three commands):');
   console.log('  claude mcp add gbrain -- gbrain serve --surface verbs');
   console.log('  gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me');
-  console.log('  gbrain recall --entity people/me');
+  // #3697: recall takes the entity as a positional (there is no --entity flag;
+  // the old form only worked because recall skips unknown flags silently).
+  console.log('  gbrain recall people/me');
   console.log('Then ask your agent in a NEW session — it remembers.');
   console.log('');
   console.log('Note: memories agents save are readable by every agent connected to');

@@ -73,6 +73,32 @@ surface area.
 Recommended ChatGPT scope: `read write`. Leave `admin` for your local CLI
 and the admin dashboard.
 
+## Deep research
+
+ChatGPT's **deep research** mode has a stricter MCP contract than normal
+chat: the server must expose a `search`/`fetch` tool PAIR, where every
+`search` result carries an `id` and `fetch(id)` returns
+`{ id, title, text, url, metadata }`. GBrain ships both:
+
+- `search` results carry `id` (the page slug) alongside the native fields.
+- `fetch` takes that `id` and returns the OpenAI shape — `text` is the
+  page's full canonical markdown, `url` is a stable `gbrain://page/...`
+  URI for the citation slot, and `metadata` carries type/source/tags.
+
+`fetch` is a thin read-only adapter over the same page read as `get_page`
+(same source scoping, same privacy fences for remote readers). Normal chat
+keeps using the richer gbrain-native tools; deep research uses the pair.
+
+**DCR zero-scope gotcha.** If the connector registers itself via dynamic
+client registration (`--enable-dcr`) and the registration request omits
+`scope`, the client is registered with an EMPTY scope — and every token it
+mints is zero-scope. The connector then connects fine but every tool call
+(including deep research's `search`/`fetch`) fails with
+`insufficient_scope`. Fix: rescope the client to `read` (or `read write`)
+from the `/admin` dashboard or the CLI, then reconnect. Manual
+registration per step 2 above never hits this — you pick the scopes
+explicitly.
+
 ## Troubleshooting
 
 **"Invalid redirect_uri" during the ChatGPT connector OAuth handshake**

@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { embedBatch, currentEmbeddingSignature } from '../core/embedding.ts';
+import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
@@ -23,8 +23,39 @@ import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
 import { AITransientError } from '../core/ai/errors.ts';
 import { wrapChunkTextsForStoredMode } from '../core/embedding-context.ts';
-import { titleTierCorpusGeneration } from '../core/contextual-retrieval-service.ts';
-import type { Page } from '../core/types.ts';
+import {
+  restampIfDemotedToTitleTier,
+  embedBatchWithBackoff,
+  isEmbedRetriableError,
+  isTransientNetworkEmbedError,
+  type EmbedBatchWithBackoffOpts,
+} from '../core/embed-retry.ts';
+
+// Peeled to src/core/embed-retry.ts (core→commands layering fix: core modules
+// import-file.ts / embed-stale.ts consume these, and a commands module in
+// their value closure risks a real ESM cycle). Façade rule: embed.ts keeps
+// re-exporting its historical surface so import sites and tests never chase
+// the peel.
+export {
+  restampIfDemotedToTitleTier,
+  MAX_RATE_LIMIT_RETRIES,
+  RATE_LIMIT_FALLBACK_MS,
+  RATE_LIMIT_PAD_MS,
+  RATE_LIMIT_JITTER,
+  detect429FromCause,
+  detectGatewayErrorFromCause,
+  parseRetryDelayMs,
+  RATE_LIMIT_ATTEMPT_FLOOR_MS,
+  _setRateLimitFloorsForTests,
+  rateLimitDelayMs,
+  abortableSleep,
+  embedBatchWithBackoff,
+  TRANSIENT_NET_BASE_MS,
+  TRANSIENT_NET_MAX_MS,
+  transientBackoffMs,
+  isTransientNetworkEmbedError,
+} from '../core/embed-retry.ts';
+export type { EmbedBatchWithBackoffOpts } from '../core/embed-retry.ts';
 
 /** #3037: cap failure samples so a corpus-wide outage doesn't bloat --json. */
 const FAILURE_SAMPLE_CAP = 10;
@@ -39,23 +70,6 @@ function recordFailure(result: EmbedResult, chunkCount: number, slug: string, e:
   if (result.failure_samples.length < FAILURE_SAMPLE_CAP) {
     result.failure_samples.push(`${slug}: ${e instanceof Error ? e.message : String(e)}`);
   }
-}
-
-/**
- * #3507 — after a plain re-embed fully re-embedded a `per_chunk_synopsis`
- * page at the title-only tier (see wrapChunkTextsForStoredMode), restamp the
- * page's CR state to 'title' so `contextual_retrieval_mode` keeps describing
- * the vectors actually in the column. The reindex sweep restores the synopsis
- * tier later. No-op for every other mode.
- */
-export async function restampIfDemotedToTitleTier(
-  engine: BrainEngine,
-  page: Pick<Page, 'contextual_retrieval_mode'> | null | undefined,
-  slug: string,
-  sourceId: string,
-): Promise<void> {
-  if (page?.contextual_retrieval_mode !== 'per_chunk_synopsis') return;
-  await engine.updatePageContextualRetrievalState(slug, sourceId, 'title', titleTierCorpusGeneration());
 }
 
 export interface EmbedOpts {
@@ -1807,172 +1821,6 @@ async function embedAllStale(
   }
 }
 
-/**
- * v0.33.3: rate-limit-aware embedBatch wrapper.
- * #3966: also retries transient gateway errors (502/503/504) that NIM and
- * similar providers emit under sustained bulk load.
- *
- * The OpenAI SDK has built-in retry with exponential backoff, but its
- * backoff window (max ~4s) is too short for TPM (tokens-per-minute)
- * rate limits on large pages (~90K tokens).  This wrapper catches
- * 429-shaped and gateway-overload errors, parses the retry delay from
- * the error message (e.g. "Please try again in 248ms"), and sleeps before retrying.
- *
- * v0.33.4 hardening (codex + re-review findings):
- *   - D4: detect 429 via the wrapped error's `cause.status` (the gateway's
- *     normalizeAIError stores the original error there). Bare `e.status`
- *     never fires against an `AITransientError` wrap. Message-match stays
- *     as a fallback.
- *   - D4a: pass `maxRetries: 0` through `embedBatch` so the AI SDK's
- *     default 2-retry stack doesn't multiply this wrapper's 5 attempts.
- *   - D2: jitter the parsed delay ±30% so 20 concurrent workers don't
- *     resynchronize on the next 429 wave.
- *   - D3a/D8: when an external AbortSignal fires (wall-clock budget), the
- *     sleep wakes up early AND the abortSignal is threaded into the gateway
- *     embed call so an in-flight HTTP request cancels too.
- *
- * Up to MAX_RATE_LIMIT_RETRIES attempts with the parsed (jittered) delay
- * (or a 60s fallback when the message can't be parsed).
- *
- * @internal Exported for unit tests; not part of the public surface.
- */
-export const MAX_RATE_LIMIT_RETRIES = 5;
-export const RATE_LIMIT_FALLBACK_MS = 60_000;
-export const RATE_LIMIT_PAD_MS = 500;
-export const RATE_LIMIT_JITTER = 0.3;
-
-export interface EmbedBatchWithBackoffOpts {
-  abortSignal?: AbortSignal;
-}
-
-/**
- * Walk the cause chain looking for a 429 status. The current
- * `normalizeAIError` wraps once into `AITransientError` with `cause = original`,
- * so one level is sufficient — but iterate to handle future wrap layers
- * defensively (max 5 levels to bound a malformed cyclic chain).
- *
- * @internal exported for unit tests.
- */
-export function detect429FromCause(e: unknown): boolean {
-  let cur: unknown = e;
-  for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {
-    const obj = cur as { status?: unknown; statusCode?: unknown; cause?: unknown };
-    if (obj.status === 429 || obj.statusCode === 429) return true;
-    cur = obj.cause;
-  }
-  return false;
-}
-
-/** Gateway overload statuses retried with the same backoff as 429 (#3966). */
-const RETRIABLE_GATEWAY_STATUSES = new Set([502, 503, 504]);
-
-/**
- * Walk the cause chain looking for 502/503/504. Same depth bound as
- * detect429FromCause — one normalizeAIError wrap is typical.
- *
- * @internal exported for unit tests.
- */
-export function detectGatewayErrorFromCause(e: unknown): boolean {
-  let cur: unknown = e;
-  for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {
-    const obj = cur as { status?: unknown; statusCode?: unknown; cause?: unknown };
-    const status = obj.status ?? obj.statusCode;
-    if (typeof status === 'number' && RETRIABLE_GATEWAY_STATUSES.has(status)) return true;
-    cur = obj.cause;
-  }
-  return false;
-}
-
-/**
- * Parse a Retry-After hint out of an OpenAI-style 429 message. Falls back
- * to `RATE_LIMIT_FALLBACK_MS` when the message can't be parsed. Adds
- * `RATE_LIMIT_PAD_MS` padding and `RATE_LIMIT_JITTER` randomization so
- * concurrent workers don't resynchronize.
- *
- * @internal exported for unit tests.
- */
-export function parseRetryDelayMs(msg: string, rng: () => number = Math.random): number {
-  let delayMs = RATE_LIMIT_FALLBACK_MS;
-  const msMatch = msg.match(/try again in (\d+)ms/i);
-  const secMatch = msg.match(/try again in ([\d.]+)s/i);
-  if (msMatch) delayMs = parseInt(msMatch[1], 10) + RATE_LIMIT_PAD_MS;
-  else if (secMatch) delayMs = Math.ceil(parseFloat(secMatch[1]) * 1000) + RATE_LIMIT_PAD_MS;
-  // D2: ±30% jitter to decorrelate the herd of 20 workers.
-  const jitterFactor = 1 + (rng() * 2 - 1) * RATE_LIMIT_JITTER;
-  return Math.max(1, Math.floor(delayMs * jitterFactor));
-}
-
-/**
- * Sleep for `ms` milliseconds. Resolves early (not rejects) when `signal`
- * fires, so the retry loop's caller can re-check `signal.aborted` and
- * exit cleanly without an unhandled rejection.
- *
- * @internal exported for unit tests.
- */
-export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-export async function embedBatchWithBackoff(
-  texts: string[],
-  opts: EmbedBatchWithBackoffOpts = {},
-): Promise<Float32Array[]> {
-  const signal = opts.abortSignal;
-  for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
-    if (signal?.aborted) throw new Error('embed budget aborted');
-    try {
-      // D4a + D8: maxRetries:0 disables the SDK's stacked retries (so this
-      // wrapper is the single source of truth) and abortSignal threads
-      // through to the gateway so an in-flight HTTP request cancels mid-fetch.
-      return await embedBatch(texts, { maxRetries: 0, ...(signal && { abortSignal: signal }) });
-    } catch (e: unknown) {
-      // If the budget fired we may have been aborted mid-fetch; bubble out.
-      if (signal?.aborted) throw e;
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!isEmbedRetriableError(e) || attempt === MAX_RATE_LIMIT_RETRIES) throw e;
-
-      const delayMs = parseRetryDelayMs(msg);
-      // One label for every retriable class — 429 and gateway blips share the loop.
-      serr(`  [embed-retry] attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}, waiting ${delayMs}ms...`);
-      await abortableSleep(delayMs, signal);
-    }
-  }
-  // Unreachable, but TypeScript needs it.
-  return embedBatch(texts);
-}
-
-/**
- * Retriable embed errors: 429 rate limits plus transient gateway overload
- * (502/503/504). Shared by embedBatchWithBackoff (retry decision) and
- * embedPageTexts (fan-out decision). D4: structured detection first
- * (gateway-wrapped errors via cause chain); message-match as fallback for
- * providers whose wrappers strip `cause.status`.
- */
-function isEmbedRetriableError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e);
-  return (
-    detect429FromCause(e) ||
-    detectGatewayErrorFromCause(e) ||
-    /rate.?limit|429/i.test(msg) ||
-    /bad gateway|502|503|504|service unavailable|gateway timeout/i.test(msg)
-  );
-}
-
 /** Walk the cause chain (like detect429FromCause) for the first HTTP status. */
 function statusFromCause(e: unknown): number | undefined {
   let cur: unknown = e;
@@ -2021,7 +1869,9 @@ async function embedPageTexts(
   } catch (e: unknown) {
     if (opts.abortSignal?.aborted) throw e; // shutdown, not a chunk problem
     if (texts.length <= 1) throw e; // nothing to isolate
-    if (isEmbedRetriableError(e) || e instanceof AITransientError) throw e;
+    // #3374 — network-transient exhaustion isn't chunk-specific either:
+    // fanning out during an outage multiplies failing calls per page.
+    if (isEmbedRetriableError(e) || isTransientNetworkEmbedError(e) || e instanceof AITransientError) throw e;
     const status = statusFromCause(e);
     if (status === 401 || status === 403) throw e;
 

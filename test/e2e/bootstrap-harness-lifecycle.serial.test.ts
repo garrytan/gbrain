@@ -34,6 +34,7 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
   let parent: string; // GBRAIN_HOME parent for the brain
   let sandboxHome: string; // HOME for user-scope writes
   let codexHome: string;
+  let stubBin: string; // sandbox bin dir carrying a no-op `claude` (#4325)
   let server: ChildProcess | null = null;
   let token = '';
   let serverReady = false;
@@ -75,6 +76,12 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     HOME: sandboxHome,
     CLAUDE_CONFIG_DIR: join(sandboxHome, '.claude'),
     CODEX_HOME: codexHome,
+    // #4325: detectClaude() probes PATH via Bun.which('claude'); CI runners
+    // don't ship the claude CLI, so the claude lane silently un-wires and the
+    // apply test's `claude add` assertions fail. Prepend a sandbox bin dir
+    // carrying an executable no-op `claude` stub — the recording runner seam
+    // intercepts every real exec, so the stub only ever satisfies detection.
+    PATH: `${stubBin}:${process.env.PATH ?? ''}`,
     // The e2e lane exports DATABASE_URL; the IN-PROCESS runBootstrap calls
     // (unlike the spawned children scrubbed in beforeAll) would otherwise
     // resolve it via loadConfig's env>file precedence and mint tokens
@@ -91,6 +98,10 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
     codexHome = mkdtempSync(join(tmpdir(), 'gb-harness-codex-'));
     // codex "installed" for detection purposes: the config file exists.
     writeFileSync(codexConfig(), '# preexisting codex config\nmodel = "o5"\n');
+    // #4325: claude "installed" for detection purposes — executable no-op
+    // stub on a sandbox PATH entry (see envFor). Never actually executed.
+    stubBin = mkdtempSync(join(tmpdir(), 'gb-harness-bin-'));
+    writeFileSync(join(stubBin, 'claude'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
     const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: parent };
     delete env.DATABASE_URL;
@@ -129,7 +140,7 @@ describe('bootstrap harness lifecycle E2E (PGLite + real serve --http)', () => {
 
   afterAll(() => {
     if (server) { try { server.kill('SIGTERM'); } catch { /* best-effort */ } }
-    for (const d of [parent, sandboxHome, codexHome]) {
+    for (const d of [parent, sandboxHome, codexHome, stubBin]) {
       try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
   });

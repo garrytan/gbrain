@@ -438,9 +438,12 @@ function collectValidationErrors(
   }
 
   // 7. SLUG_MISMATCH — only when expectedSlug was provided and a slug field exists.
+  //    #3772: a declared slug whose slugified spelling equals the path-derived
+  //    slug is normalization-equivalent (export stamps these to preserve
+  //    legacy page identities across a round-trip) — not a mismatch.
   if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
     const declared = ctx.parsedFrontmatter.slug as string;
-    if (declared !== ctx.expectedSlug) {
+    if (declared !== ctx.expectedSlug && slugifyPath(declared) !== ctx.expectedSlug) {
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,

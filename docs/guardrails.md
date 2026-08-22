@@ -68,8 +68,35 @@ registerGuardrailProvider({
 });
 ```
 
-Register once at process init (e.g. from a plugin entry or an operator boot
-hook). Registration is idempotent by `id`, so a re-init won't double-fire.
+Registration is idempotent by `id`, so a re-init won't double-fire. There are
+exactly two real wiring paths (#3688):
+
+### Path 1 — embedding gbrain as a library
+
+Import `registerGuardrailProvider` from the public `gbrain/core/guardrails`
+subpath (in the package `exports` map) and register at your process init,
+before any ingest/query runs. This is the path for programs that construct a
+gbrain engine themselves.
+
+### Path 2 — the gbrain CLI: `GBRAIN_GUARDRAILS_MODULE`
+
+Point the env var at a provider module; the CLI imports it at startup, before
+any command dispatch:
+
+```bash
+export GBRAIN_GUARDRAILS_MODULE=/opt/guardrails/my-firewall.ts
+gbrain import notes/   # every seam now consults my-firewall
+```
+
+The module may export any of: a default-exported provider, a default-exported
+provider array, a named `guardrailProviders` array, or a
+`register(registerGuardrailProvider)` function (sync or async).
+
+**Loading is fail-closed.** If `GBRAIN_GUARDRAILS_MODULE` is set but the module
+fails to import or registers zero providers, the CLI exits 1 instead of
+silently running without the firewall you configured. (The *classify* path
+stays fail-open — a registered provider that throws never breaks an ingest.)
+Unset, the variable costs nothing and gbrain stays inert.
 
 ### Provider responsibilities
 

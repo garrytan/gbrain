@@ -110,6 +110,8 @@ export interface HeldOutGateOpts {
   heldOutTasks: BenchmarkTask[];
   targetModel: string;
   judgeModel: string;
+  /** #4119 — in-rollout-loop deadline (epoch ms); see ValidateGateOpts. */
+  deadlineMs?: number;
   abortSignal?: AbortSignal;
 }
 
@@ -138,6 +140,7 @@ export async function runHeldOutGate(opts: HeldOutGateOpts): Promise<HeldOutGate
     tasks: opts.heldOutTasks,
     targetModel: opts.targetModel,
     judgeModel: opts.judgeModel,
+    ...(opts.deadlineMs !== undefined ? { deadlineMs: opts.deadlineMs } : {}),
     ...(opts.abortSignal ? { abortSignal: opts.abortSignal } : {}),
   };
   const baselineScore = await scoreSkillOnTasks({ ...scoreOpts, skillText: opts.baselineSkillText });

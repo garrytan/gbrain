@@ -281,7 +281,9 @@
   self-containedness) on a synthetic fixture corpus, following the
   takes-quality 3-judge template + the eval-chronicle deterministic-gold
   pattern; wire `details.synthesis.fallback_reasons` into the receipt.
-  Adjacent: #4198 (synthesize-concepts evaluator stub). **Why:** the
+  Adjacent: #4198 (synthesize-concepts evaluator — v0.46.28.0 made the stub
+  an honest not-implemented exit-1 scaffold; the parity-baseline evaluator
+  itself is still unbuilt). **Why:** the
   oneshot default currently leans on the soak + fallback telemetry; CI
   should catch a quality regression, not output review. **Effort:** L.
   **Priority:** P2.
@@ -501,10 +503,12 @@
 - [ ] **P3 — Re-eval community #717 (graph-hop wikilink rerank, claimed +2.6/+2.8
   P@5/R@5) against the post-v0.46.15 ranker** — the concept intent + dedup scope fix
   may have absorbed part of its headroom.
-- [ ] **P2 — #1663 remainder (issue REOPENED at ship): query-shape routing,
-  structural exact-lookup tier, CRAG confidence escalation.** The issue was closed
-  with these three unbuilt; the wave shipped the adjacent pieces (concept intent,
-  autocut weak-top floor, evidence-on-cosine) but deliberately deferred these.
+- [x] **P2 — #1663 remainder: query-shape routing, structural exact-lookup
+  tier, CRAG confidence escalation.** DONE (v0.46.28.0, #4475): all three
+  shipped — `src/core/search/query-intent.ts` (query-shape routing),
+  `src/core/search/exact-lookup.ts` (structural exact-lookup tier), and
+  `src/core/search/crag.ts` (CRAG escalation seam, config-gated, default off,
+  experimental). Issue closed.
 - [ ] **P3 — Positive underfill-event coverage for searchVector escalation.** The
   two NEGATIVE paths are pinned (no event on genuine short corpus / offset past
   end); the positive fire-at-cap assertion needs a >1000-chunk fixture that pushes
@@ -621,25 +625,28 @@
   **Context:** reporter offered the PR (green-lit in the issue thread with the
   three-label reproducer as tests); keep phase `regex_match`; a decline
   threshold is a follow-on decision. **Effort:** M. **P2.**
-- [ ] **P2 — skillopt field-report items (#4119, all verified at HEAD).**
-  **What:** (a) in-loop runtime-deadline check (orchestrator.ts:440 is
-  step-granular); (b) output-size-aware cost estimate (preflight.ts fixed
-  800-token constant); (c) validation-gate n-gram overlap detector vs judge
-  definitions; (d) stronger bootstrap judges; (e) opt-in `--hermetic-config`
-  (CLAUDE_CONFIG_DIR) for claude-cli children — default-on needs its own
-  security decision (the provider deliberately rides the operator's ~/.claude
-  OAuth session); (f) docs: rule judges as a gameable optimizer target, D13
-  limitation, cap sizing, human review of proposed.md is load-bearing.
-  **Context:** issue thread carries the full analysis; CLAUDE_CONFIG_DIR is
-  the documented interim mitigation. **Effort:** M spread. **P2.**
+- [ ] **P2 — skillopt field-report remainder (#4119, issue closed
+  v0.46.28.0/#4475 with these arms still open):** (b) output-size-aware cost
+  estimate (preflight.ts fixed 800-token constant); (c) validation-gate
+  n-gram overlap detector vs judge definitions; (d) stronger bootstrap
+  judges. Shipped in v0.46.28.0: (a) in-rollout-loop runtime deadline
+  (`SKILLOPT_RUNTIME_EXCEEDED` in validate-gate.ts), (e) opt-in
+  `--hermetic-config` (CLAUDE_CONFIG_DIR) for claude-cli children —
+  default-on still needs its own security decision (the provider
+  deliberately rides the operator's ~/.claude OAuth session), (f) the docs
+  arm (`docs/guides/skillopt.md` hardening notes: rule judges gameable, D13
+  prompt-surface-only, cap sizing, human review of proposed.md is
+  load-bearing). The guide names (b) and (c) as tracked follow-ups — this
+  entry is the tracker. **Effort:** M spread. **P2.**
 - [ ] **P3 — orphans.exclude_domains (feature, #4157).** Third exclusion axis
   on the shared orphan policy, matched on the derived domain; must thread the
   orphans denominator query AND both engines' getHealth page-scope rows
   (engine parity). **Effort:** S. **P3.**
-- [ ] **P3 — dream.synthesize flat/root output_root (feature, #4117).**
-  Per-family prefix shape (reflections/originals prefixes derived into prompts
-  AND the fail-closed allow-list; default preserves wiki/). No config-registry
-  drift to fix (`dream.` prefix already accepted). **Effort:** M. **P3.**
+- [x] **P3 — dream.synthesize flat/root output_root (feature, #4117).** DONE
+  (v0.46.28.0, #4475): `dream.synthesize.output_root` +
+  `reflections_slug_prefix`/`originals_slug_prefix` ship as per-lane output
+  namespaces (prefixes derived into prompts AND the fail-closed allow-list;
+  default preserves wiki/).
 - [ ] **P2 — test debt from the chennai wave's pre-landing review (deferred
   with rationale, not skipped).** (a) `/mcp` SDK-transport integration test:
   spin the serve-http surface with a legacy no-grant token end-to-end and
@@ -909,7 +916,7 @@
   install would want `CONCURRENTLY` (which needs the migration runner to
   support non-transactional steps). **Effort:** M. **Priority:** P3.
 - [ ] **P3 — full 3-way schema-blob parity test.** **What:**
-  `pglite-schema.ts` / `schema-embedded.ts` / `schema.sql` have no general
+  `pglite-schema.ts` / `schema-embedded.generated.ts` / `schema.sql` have no general
   drift guard; v0.46.25.0 added a private-queue-scoped parity pin
   (test/private-queue-schema-parity.test.ts) — generalize it to the whole
   blob surface (normalized statement diff). **Effort:** M. **Priority:** P3.
@@ -1771,11 +1778,11 @@ master before starting, several fixes landed independently).
   guard. Decide the intended surface alongside PR #2509 (whoknows --explain
   per-result factor breakdown) and delete whichever lane loses. Where:
   `src/cli.ts`, `src/commands/whoknows.ts`, PR #2509.
-- [ ] **P3 — #2544 second half: per-put_page `getAllSlugs` full scan.** The
-  getChunks egress half shipped in this wave (explicit non-vector column
-  list). The remaining Postgres-egress cost is put_page's per-call
-  `getAllSlugs` table scan — needs a targeted existence probe or cached slug
-  set. Where: `src/core/operations.ts` put_page path, both engines.
+- [x] **P3 — #2544 second half: per-put_page `getAllSlugs` full scan.** DONE
+  (v0.46.28.0, #4475): `runAutoLink`'s existence check is now a targeted
+  probe instead of hydrating the whole slug set on every put_page. (The
+  getChunks egress half had already shipped: explicit non-vector column
+  list.) Issue closed.
 - [ ] **P3 — #1558 admin-UI register form.** The `/admin/api/register-client`
   API now accepts `source` + `federatedRead` (this wave, PR #2016 absorbed);
   the admin SPA form fields + `/admin/api/sources` picker are the UI layer.
@@ -2197,10 +2204,16 @@ events at the IPC delivery point and dedupes via the transcript's
   plus user reports of "it only noticed on my next message". **Start:**
   `src/commands/hook.ts` (the event already has a dispatch slot pattern),
   `src/core/bootstrap/hooks.ts` registration writers.
-- [ ] **P3 — engine-uniform IPC listener (Postgres serves).** serve's resolve/turn_context
-  socket is PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
-  Postgres brain `gbrain hook user-prompt` short-circuits (`no_pglite_path`) and the
-  hook lane is PGLite-only. Extending the listener needs (a) a canonical per-connection
+- [x] **P3 — engine-uniform IPC listener (Postgres serves).** DONE (#4245): serve now
+  listens for Postgres brains too — socket + turn_context secret key off
+  `hash12(database_url)` under `~/.gbrain/run` (0700) via
+  `resolveSocketPathForConfig`/`ipcSecretPathForConfig` in
+  `src/core/context/resolve-ipc.ts`; the hook lane's user-prompt/compact/
+  session-start arms route through the same resolver. Original filing:
+  serve's resolve/turn_context
+  socket was PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
+  Postgres brain `gbrain hook user-prompt` short-circuited (`no_pglite_path`) and the
+  hook lane was PGLite-only. Extending the listener needs (a) a canonical per-connection
   socket path for brains with no data dir (e.g. `~/.gbrain/run/resolve-<hash12(database_url)>.sock`,
   0700 dir) and (b) a secret-file home for `turn_context` auth (same hash-keyed run dir).
   The cathedral-3 branch prototyped (a) as `resolveSocketPathForConfig` (see branch
@@ -7560,3 +7573,38 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
 - [ ] P2 (adversarial F3): a chronically-failing transcript (always times out / deterministic all-writes-failed) releases its key on dead AND suppresses the cooldown stamp — re-triaged and re-paid every nightly. Add a bounded per-content-hash failure counter (N strikes → skip + surface in doctor/advisor).
 - [ ] P3 (adversarial F6): legacy direct-Anthropic path with the CDX-6 32k thinking default can exceed the SDK's 10-min default request timeout on slow generations (flag-off deployments only; surfaces as a retryable conn error at full token cost). Set an explicit SDK timeout or cap legacy maxTokens.
 - [ ] P3: phase-end `embedStalePages` runs outside BudgetTracker (bounded to the phase's own writes + 120s; fold under the tracker if spend telemetry wants it).
+
+### Recipe routing follow-up (#4292)
+- [ ] **P3 — install-time MECE warn for resolver rows.** `gbrain integrations
+  install` appends `resolver_rows_to_append` blindly; when an appended row
+  shares trigger phrases with an existing resolver row in the host repo
+  (e.g. "who is" claimed by both a recipe skill and the query skill), routing
+  goes ambiguous with no signal. Warn at install time when a to-append row's
+  quoted phrases already appear in the target RESOLVER.md/AGENTS.md. Effort: S.
+
+## Megawave follow-ups (filed from v0.46.28.0, #4475)
+
+- [ ] **P2 — #4477: db.ts initSchema legacy blob-replay path lacks
+  forward-reference bootstrap.** The legacy schema-blob replay in
+  `src/core/db.ts` doesn't run the bootstrap probe set, so an
+  upgrade-boundary DB can wedge when a migration builds an index on a column
+  the replayed blob predates. Bring the replay path under the same
+  forward-reference probes `initSchema` uses. Effort: M.
+- [ ] **P3 — #4478: subagent-crash-replay-multi-provider openrouter matrix
+  rows stale.** The matrix rows have been stale since
+  `supports_subagent_loop: false` enforcement landed; re-derive or prune the
+  openrouter rows so the suite tests what the gateway actually allows.
+  Effort: S.
+- [ ] **P3 — #4479: ci-local hardening.** (a) pin the `oven/bun` image to the
+  host bun version (drift between host and container bun has produced
+  container-only results); (b) fix the upload-path fuzz depth-1 `/app` mount
+  expectation. Effort: S.
+- [ ] **P2 — #4480: deferred review findings from the megawave** (each
+  >10-line, needs its own design pass): (a) `take-proposals.ts` TOCTOU —
+  claim-first CAS restructure (local CLI, low concurrency, but the
+  check-then-write window is real); (b) `cjk-keyword-sql.ts` doesn't honor
+  `types`/`exclude_slugs` filters — builder-param plumbing across BOTH
+  engines + exact-lookup gating; (c) `get_usage` per-engine sink —
+  last-engine-wins when multiple engines are live (the read→admin scope
+  tightening landed in v0.46.28.0; the sink unification did not). Effort: M
+  spread.

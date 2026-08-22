@@ -13,7 +13,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importCodeFile } from '../src/core/import-file.ts';
-import { findCodeDef } from '../src/commands/code-def.ts';
+import { findCodeDef, probeFilteredSymbolTypes, DEF_TYPES } from '../src/commands/code-def.ts';
 import { findCodeRefs } from '../src/commands/code-refs.ts';
 
 let engine: PGLiteEngine;
@@ -144,7 +144,32 @@ export async function performDump(engine: BrainEngine, slug: string): Promise<Br
 `;
   await importCodeFile(engine, 'src/engine.ts', brainEngineSrc, { noEmbed: true });
   await importCodeFile(engine, 'src/sync.ts', consumerSrc, { noEmbed: true });
-});
+
+  // #3821: decorated Python defs parse as decorated_definition wrappers.
+  // Pre-fix they emitted zero chunks, so code-def could never resolve them.
+  const pythonDecoratedSrc = `import functools
+
+@functools.lru_cache(maxsize=64)
+def cached_lookup(key):
+    """Resolve a pricing key from the canonical table with memoization."""
+    table = {"base": 100, "premium": 250, "enterprise": 900}
+    if key not in table:
+        raise KeyError("unknown pricing key: " + key)
+    return table[key]
+
+@dataclass
+class PricingConfig:
+    currency: str = "usd"
+
+    def describe(self):
+        return self.currency.upper()
+
+    @property
+    def symbol(self):
+        return "$" if self.currency == "usd" else "?"
+`;
+  await importCodeFile(engine, 'src/pricing.py', pythonDecoratedSrc, { noEmbed: true });
+}, 120_000);
 
 afterAll(async () => {
   await engine.disconnect();
@@ -182,6 +207,22 @@ describe('findCodeDef', () => {
     const results = await findCodeDef(engine, 'BrainEngine', { language: 'python' });
     expect(results).toEqual([]);
   });
+
+  test('resolves a decorated python function definition (#3821)', async () => {
+    const results = await findCodeDef(engine, 'cached_lookup', { language: 'python' });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    const match = results.find((r) => r.slug === 'src-pricing-py');
+    expect(match).toBeDefined();
+    expect(match!.symbol_type).toBe('function');
+  });
+
+  test('resolves a decorated python class definition (#3821)', async () => {
+    const results = await findCodeDef(engine, 'PricingConfig', { language: 'python' });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    const match = results.find((r) => r.slug === 'src-pricing-py');
+    expect(match).toBeDefined();
+    expect(match!.symbol_type).toBe('class');
+  });
 });
 
 describe('findCodeRefs', () => {
@@ -218,5 +259,112 @@ describe('findCodeRefs', () => {
       expect(r.snippet.length).toBeGreaterThan(0);
       expect(r.snippet.length).toBeLessThanOrEqual(500);
     }
+  });
+});
+
+// #3789 residual — normalizeSymbolType fallthroughs invisible to code-def.
+// 56ccc14 covered methods/ctors/fields; records (Java), properties (Kotlin/C#),
+// and the other audited *_declaration/*_definition/*_item fallthroughs were
+// still filtered out by DEF_TYPES, so `code-def` returned
+// {count: 0, ready: true} for symbols the chunker HAD indexed.
+describe('findCodeDef — DEF_TYPES fallthrough residual (#3789)', () => {
+  beforeAll(async () => {
+    const javaRecordSrc = `public record PointFixtureRecord(double x, double y, double z, String label, long recordedAtMillis) {
+  public double distanceFromOrigin() {
+    return Math.sqrt(x * x + y * y + z * z);
+  }
+
+  public String describeForHumans() {
+    return label + " at (" + x + ", " + y + ", " + z + ") recorded at " + recordedAtMillis;
+  }
+}
+`;
+    const kotlinPropertySrc = `val fixtureKotlinBannerProperty: String = "a deliberately long top-level Kotlin property value that keeps this chunk comfortably above the small-sibling merge threshold used by the gbrain code chunker fixtures"
+
+fun fixtureKotlinHelper(input: String): String {
+  return input.trim().lowercase().replace(" ", "-") + "/" + fixtureKotlinBannerProperty.length
+}
+`;
+    await importCodeFile(engine, 'src/PointFixtureRecord.java', javaRecordSrc, { noEmbed: true });
+    await importCodeFile(engine, 'src/fixture.kt', kotlinPropertySrc, { noEmbed: true });
+  }, 30000);
+
+  test('Java record declaration is a definition', async () => {
+    const results = await findCodeDef(engine, 'PointFixtureRecord');
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0]!.symbol_type).toBe('record declaration');
+  });
+
+  test('Kotlin top-level property declaration is a definition', async () => {
+    const results = await findCodeDef(engine, 'fixtureKotlinBannerProperty');
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results[0]!.symbol_type).toBe('property declaration');
+  });
+
+  test('every audited fallthrough spelling is in DEF_TYPES', () => {
+    const audited = [
+      // C# / Kotlin / Java entity members + entities
+      'property declaration', 'record declaration', 'struct declaration',
+      'object declaration', 'namespace declaration', 'file scoped namespace declaration',
+      // PHP / Scala
+      'trait declaration', 'trait definition', 'object definition',
+      // Solidity (bare 'contract' is never produced by normalizeSymbolType)
+      'contract declaration', 'modifier definition', 'event definition',
+      // C / C++
+      'namespace definition', 'template declaration', 'declaration', 'preproc def',
+      // Go
+      'type declaration', 'const declaration', 'var declaration',
+      // Rust *_item fallthroughs
+      'struct item', 'trait item', 'impl item', 'mod item', 'type item',
+      'const item', 'static item',
+      // TS/JS top-level const/let/var + Lua local
+      'lexical declaration', 'variable declaration', 'local declaration',
+    ];
+    for (const t of audited) {
+      expect(DEF_TYPES).toContain(t);
+    }
+  });
+});
+
+// #3789 aside — a count:0 that was FILTERED by the allowlist must not read as
+// a bare "ready, symbol does not exist". The probe surfaces the symbol types
+// that exist for the name but were excluded by DEF_TYPES.
+describe('probeFilteredSymbolTypes (#3789)', () => {
+  beforeAll(async () => {
+    await engine.putPage('code/exotic-fixture', {
+      type: 'note',
+      title: 'exotic fixture',
+      compiled_truth: 'exotic fixture page',
+    } as any, { sourceId: 'default' });
+    await engine.executeRaw(
+      `UPDATE pages SET page_kind = 'code' WHERE slug = 'code/exotic-fixture' AND source_id = 'default'`,
+      [],
+    );
+    const rows = await engine.executeRaw<{ id: string }>(
+      `SELECT id FROM pages WHERE slug = 'code/exotic-fixture' AND source_id = 'default'`,
+      [],
+    );
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, symbol_name, symbol_type, language)
+       VALUES ($1, 0, 'exotic fixture chunk body', 'ExoticFixtureSymbol', 'exotic gizmo kind', 'typescript')`,
+      [rows[0]!.id],
+    );
+  }, 30000);
+
+  test('returns the allowlist-filtered symbol types for a name', async () => {
+    const results = await findCodeDef(engine, 'ExoticFixtureSymbol');
+    expect(results).toEqual([]);
+    const filtered = await probeFilteredSymbolTypes(engine, 'ExoticFixtureSymbol');
+    expect(filtered).toEqual(['exotic gizmo kind']);
+  });
+
+  test('returns empty for a truly absent symbol', async () => {
+    const filtered = await probeFilteredSymbolTypes(engine, 'ThisSymbolDoesNotExist');
+    expect(filtered).toEqual([]);
+  });
+
+  test('language filter applies to the probe', async () => {
+    const filtered = await probeFilteredSymbolTypes(engine, 'ExoticFixtureSymbol', { language: 'python' });
+    expect(filtered).toEqual([]);
   });
 });

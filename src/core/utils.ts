@@ -1,6 +1,10 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind, TakeHit } from './engine.ts';
+// Leaf modules (no imports) — safe here without a cycle. Single source of
+// truth for the hash-ephemeral frontmatter keys shared with the importer.
+import { QUARANTINE_KEY, CONTENT_FLAG_KEY } from './quarantine.ts';
+import { EMBED_SKIP_KEY } from './embed-skip.ts';
 
 /**
  * SHA-256 hash a token/secret for storage. Never store plaintext tokens.
@@ -53,10 +57,64 @@ export function validateSlug(slug: string): string {
 }
 
 /**
+ * Frontmatter keys excluded from the content hash. Timestamp-bearing keys
+ * (`captured_at`/`ingested_at`, stamped per capture call) and gate-derived
+ * sanity markers (quarantine / content_flag / embed_skip, re-derived
+ * deterministically on every import) would otherwise churn the hash on
+ * every write and defeat the import skip — full rationale at the CV8/#1699
+ * comment in `src/core/import-file.ts`.
+ */
+export const HASH_EPHEMERAL_FRONTMATTER_KEYS: readonly string[] = [
+  'captured_at',
+  'ingested_at',
+  QUARANTINE_KEY,
+  CONTENT_FLAG_KEY,
+  EMBED_SKIP_KEY,
+];
+
+/**
  * SHA-256 hash of page content, used for import idempotency.
- * Hashes all PageInput fields to match importFromContent's hash algorithm.
+ *
+ * #3694: this is now THE canonical formula, byte-identical to the importer's
+ * (`importFromContent`). Pre-fix, this helper (used by both engines' putPage
+ * fallback) hashed a different shape — no ephemeral-key strip, no tags — so
+ * the same logical page got one hash from `putPage` and another from
+ * `gbrain sync`/import, and every putPage→sync roundtrip re-chunked +
+ * re-embedded unchanged content (real, unbounded embedding spend).
+ *
+ * Shape (field order is load-bearing — JSON.stringify serializes insertion
+ * order and the digest is over the bytes):
+ *   { title, type, compiled_truth, timeline||'', frontmatter*, tags* }
+ * where frontmatter* is a copy stripped of HASH_EPHEMERAL_FRONTMATTER_KEYS
+ * and the `tags` key, and tags* is `page.tags ?? frontmatter.tags` sorted
+ * (importer parity: parseMarkdown hoists tags out of frontmatter; putPage
+ * callers usually leave them inside — both now hash identically).
  */
 export function contentHash(page: PageInput): string {
+  const fm: Record<string, unknown> = { ...(page.frontmatter || {}) };
+  for (const k of HASH_EPHEMERAL_FRONTMATTER_KEYS) delete fm[k];
+  const rawTags = page.tags ?? fm.tags;
+  delete fm.tags;
+  const tags = Array.isArray(rawTags) ? rawTags.map(t => String(t)).sort() : [];
+  return createHash('sha256')
+    .update(JSON.stringify({
+      title: page.title,
+      type: page.type,
+      compiled_truth: page.compiled_truth,
+      timeline: page.timeline || '',
+      frontmatter: fm,
+      tags,
+    }))
+    .digest('hex');
+}
+
+/**
+ * The pre-#3694 putPage-side formula (no ephemeral strip, no tags array).
+ * Kept ONLY so the importer can recognize a DB row written by the old
+ * formula whose content is actually unchanged, stamp it with the canonical
+ * hash, and skip the pointless re-chunk/re-embed. Do not use in new code.
+ */
+export function contentHashLegacy(page: PageInput): string {
   return createHash('sha256')
     .update(JSON.stringify({
       title: page.title,

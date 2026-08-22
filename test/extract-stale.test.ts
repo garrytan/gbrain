@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runExtract } from '../src/commands/extract.ts';
+import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import type { PageInput } from '../src/core/types.ts';
 
@@ -360,6 +360,29 @@ describe('gbrain extract --stale', () => {
     // The gate lives in extractPageLinks opts now, not in a resolver swap —
     // the page is still stamped either way.
     expect(await stampOf('concepts/knowledge-graph')).not.toBeNull();
+  });
+
+  test('#4062 review: timeBudgetMs caps the sweep between batches (in-cycle drain stays bounded)', async () => {
+    // 26 stale pages > STALE_BATCH_SIZE (25): the first keyset batch drains
+    // 25, the 0ms budget trips, and the sweep exits with the remainder still
+    // stale — exactly how the cycle's in-line drain nibbles a big backlog
+    // instead of consuming the whole cycle.
+    for (let i = 0; i < 26; i++) {
+      await engine.putPage(`people/budget-${String(i).padStart(2, '0')}`, personPage(`Budget ${i}`));
+    }
+    const r = await extractStaleFromDB(engine, {
+      dryRun: false, jsonMode: true, includeFrontmatter: false, catchUp: false,
+      timeBudgetMs: 0,
+    });
+    expect(r.pagesProcessed).toBe(25);
+    expect(r.staleRemaining).toBe(1);
+
+    // Default budget (~30 min) finishes the remainder.
+    const r2 = await extractStaleFromDB(engine, {
+      dryRun: false, jsonMode: true, includeFrontmatter: false, catchUp: false,
+    });
+    expect(r2.pagesProcessed).toBe(1);
+    expect(r2.staleRemaining).toBe(0);
   });
 
 });

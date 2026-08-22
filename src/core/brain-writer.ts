@@ -312,7 +312,11 @@ export function autoFixFrontmatter(
     // the slug field is present and mismatched.
     const re = /^slug:\s*(.+?)\s*$/m;
     const m = working.match(re);
-    if (m && m[1].replace(/^["']|["']$/g, '') !== expectedSlug) {
+    // #3772: keep a normalization-equivalent slug (its slugified spelling IS
+    // the path-derived slug) — export stamps these to preserve legacy page
+    // identities, and stripping it here would re-key the page on next import.
+    const declaredSlug = m ? m[1].replace(/^["']|["']$/g, '') : '';
+    if (m && declaredSlug !== expectedSlug && slugifyPath(declaredSlug) !== expectedSlug) {
       working = working.replace(re, '').replace(/\n{3,}/g, '\n\n');
       fixes.push({
         code: 'SLUG_MISMATCH',
@@ -756,7 +760,16 @@ async function listSources(engine: BrainEngine, sourceId?: string): Promise<Sour
     );
     return rows;
   }
-  return engine.executeRaw<SourceRow>(
-    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
-  );
+  // #3880: archived sources are excluded from automatic all-source scanning.
+  // The archived column is v34+ — fall back on older brains (house style per
+  // pickSoleNonDefaultSource).
+  try {
+    return await engine.executeRaw<SourceRow>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+    );
+  } catch {
+    return engine.executeRaw<SourceRow>(
+      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL ORDER BY id`,
+    );
+  }
 }

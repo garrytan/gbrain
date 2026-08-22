@@ -238,6 +238,17 @@ diff against gbrain's bundle when you want upstream improvements. (The legacy
 `gbrain skillpack install` managed-block model was removed in v0.33 — run
 `gbrain skillpack migrate-fence` once if upgrading from an older release.)
 
+> **PGLite brains are single-process (applies to every MCP registration
+> below).** PGLite is a single-writer embedded Postgres: the first running
+> `gbrain serve` owns the brain's data directory via the data-dir lock. A
+> second `serve` (gbrain registered in two harnesses on the same machine) —
+> or any CLI command that opens the DB — fails on the lock while that serve
+> is live (`gbrain sync` is the one exception: it delegates to the live
+> serve). If multiple processes need the brain at once, run ONE shared
+> `gbrain serve --http` and point every client at it, or migrate to the
+> Postgres/Supabase engine, which tolerates concurrent connections. Details:
+> [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
+
 **If you are Hermes:** register gbrain as your MCP server:
 
 ```bash

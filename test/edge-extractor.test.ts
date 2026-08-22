@@ -177,6 +177,42 @@ fun caller(input: String): String {
   });
 });
 
+describe('#3602 — C# invocation extraction', () => {
+  test('captures bare method invocations', async () => {
+    const src = `namespace Demo
+{
+    public class Svc
+    {
+        public int Helper() { return 1; }
+        public int Caller() { return Helper(); }
+    }
+}
+`;
+    const result = await chunkCodeTextFull(src, 'src/Svc.cs');
+    expect(result.edges.map(e => e.toSymbol)).toContain('Helper');
+  });
+
+  test('captures member-access invocations (obj.Method())', async () => {
+    const src = `namespace Demo
+{
+    public class Svc
+    {
+        public int Run(Other other) { return other.Compute(); }
+    }
+}
+`;
+    const result = await chunkCodeTextFull(src, 'src/Svc.cs');
+    expect(result.edges.map(e => e.toSymbol)).toContain('Compute');
+  });
+
+  test('all C# edges typed as calls', async () => {
+    const src = 'public class C { int F() { return G(); } int G() { return 1; } }';
+    const result = await chunkCodeTextFull(src, 'src/C.cs');
+    expect(result.edges.length).toBeGreaterThanOrEqual(1);
+    for (const e of result.edges) expect(e.edgeType).toBe('calls');
+  });
+});
+
 describe('Layer 5 (A1) — findChunkForOffset mapping', () => {
   test('finds innermost chunk for a given offset', () => {
     const source = [

@@ -89,7 +89,9 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 21 (17→18 autocut weak-top floor #1863; 18→19 ack= autocut minKeep floor #3621; 19→20 pre-fusion pool floor #3002; 20→21 recency fallback re-key #895)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(21);
+  it('is 23 (20→21 recency fallback re-key #895; 21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352)', () => {
+    // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
+    // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
+    expect(KNOBS_HASH_VERSION).toBe(23);
   });
 });

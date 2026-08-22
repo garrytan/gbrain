@@ -17,8 +17,47 @@
  */
 
 import type { GBrainConfig } from '../config.ts';
+import { loadConfig } from '../config.ts';
 import type { AIGatewayConfig } from './types.ts';
 import { mergedProviderEnv } from './provider-env.ts';
+
+/**
+ * #3350: fold FILE-plane `provider_base_urls.{anthropic,openai}` into the
+ * gateway env as `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`, same shape as the
+ * credential folds (env wins for keys carrying a real value). Native
+ * providers read their base URL exclusively from env via
+ * `resolveNativeBaseUrl` (which also normalizes the `/v1` suffix), so before
+ * this fold a config.json `provider_base_urls.anthropic` was silently ignored
+ * by native chat/embed calls.
+ *
+ * MOUNT SAFETY (gateway.ts `reconfigureGatewayWithEngine` rationale): the
+ * fold takes the FILE config explicitly — never a DB-merged config — so
+ * DB-plane `provider_base_urls.*` (which can be merged from a shared brain)
+ * can never steer this process's native bearer keys to an attacker URL.
+ * `buildGatewayConfig` therefore re-reads `loadConfig()` for this fold even
+ * when its caller passed a DB-merged config.
+ *
+ * @internal exported for tests + gateway's file-plane env refresh.
+ */
+export function foldNativeBaseUrlsFromFilePlane(
+  fileCfg: Pick<GBrainConfig, 'provider_base_urls'> | null,
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const urls = fileCfg?.provider_base_urls;
+  if (!urls) return env;
+  const out = { ...env };
+  for (const [provider, envKey] of [
+    ['anthropic', 'ANTHROPIC_BASE_URL'],
+    ['openai', 'OPENAI_BASE_URL'],
+  ] as const) {
+    const fileUrl = urls[provider];
+    // Env wins: only fold when the env carries no real value.
+    if (fileUrl && fileUrl.trim() && !(out[envKey] && out[envKey]!.trim())) {
+      out[envKey] = fileUrl.trim();
+    }
+  }
+  return out;
+}
 
 export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   // The file-plane key fold + env merge live in mergedProviderEnv
@@ -45,6 +84,16 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
   if (process.env.LITELLM_BASE_URL) envBaseUrls['litellm'] = process.env.LITELLM_BASE_URL;
   if (process.env.OPENROUTER_BASE_URL) envBaseUrls['openrouter'] = process.env.OPENROUTER_BASE_URL;
 
+  // #3350: native base-URL fold — MUST read the file plane directly, not `c`
+  // (callers can pass a DB-merged config; see foldNativeBaseUrlsFromFilePlane's
+  // mount-safety note). Fail-open: an unreadable config folds nothing.
+  let fileCfg: GBrainConfig | null = null;
+  try {
+    fileCfg = loadConfig();
+  } catch {
+    fileCfg = null;
+  }
+
   return {
     embedding_model: c.embedding_model,
     embedding_dimensions: c.embedding_dimensions,
@@ -55,6 +104,7 @@ export function buildGatewayConfig(c: GBrainConfig): AIGatewayConfig {
     base_urls: { ...envBaseUrls, ...(c.provider_base_urls ?? {}) }, // config wins over env
     provider_chat_options: c.provider_chat_options,
     // #1249 empty-string drop + GEMINI alias applied inside mergedProviderEnv.
-    env: mergedProviderEnv(c, process.env),
+    // #3350 file-plane native base-URL fold layered on top (env wins).
+    env: foldNativeBaseUrlsFromFilePlane(fileCfg, mergedProviderEnv(c, process.env)),
   };
 }

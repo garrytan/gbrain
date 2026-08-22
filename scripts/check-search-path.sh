@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
-FILES="src/schema.sql src/core/pglite-schema.ts src/core/schema-embedded.ts"
+FILES="src/schema.sql src/core/pglite-schema.ts src/core/schema-embedded.generated.ts"
 
 # A hardened header reads `... RETURNS trigger SET search_path = ... AS $tag$`.
 # An UNHARDENED one reads `... RETURNS trigger AS $tag$` — match that form and

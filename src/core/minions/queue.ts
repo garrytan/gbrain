@@ -701,6 +701,13 @@ export class MinionQueue {
     name?: string;
     limit?: number;
     offset?: number;
+    /**
+     * #4098 — agent-lane ownership fence: restrict to jobs whose
+     * `data->>'__owner_client_id'` equals this OAuth client id (the JSONB
+     * predicate submit_agent stamps at enqueue). SQL-side WHERE, never a
+     * post-fetch JS filter, so a fenced list can't leak foreign rows.
+     */
+    ownerClientId?: string;
   }): Promise<MinionJob[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -717,6 +724,10 @@ export class MinionQueue {
     if (opts?.name) {
       conditions.push(`name = $${idx++}`);
       params.push(opts.name);
+    }
+    if (opts?.ownerClientId) {
+      conditions.push(`data->>'__owner_client_id' = $${idx++}`);
+      params.push(opts.ownerClientId);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -754,8 +765,8 @@ export class MinionQueue {
    *
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
-  async cancelJob(id: number): Promise<MinionJob | null> {
-    const cancelled = await this.cancelJobs([id]);
+  async cancelJob(id: number, opts?: { ownerClientId?: string }): Promise<MinionJob | null> {
+    const cancelled = await this.cancelJobs([id], opts?.ownerClientId ? { ownerClientId: opts.ownerClientId } : undefined);
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
   }
@@ -1013,7 +1024,7 @@ export class MinionQueue {
    * every surface keyed on a reason prefix (jobs stats, doctor) would
    * silently report zero without this parameter.
    */
-  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[] }): Promise<MinionJob[]> {
+  async cancelJobs(ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string }): Promise<MinionJob[]> {
     if (ids.length === 0) return [];
     // opts.rootStatuses re-checks each ROOT id's status ATOMICALLY inside the
     // cancel UPDATE's CTE seed. The waiting-TTL sweep passes ['waiting'] to
@@ -1022,13 +1033,21 @@ export class MinionQueue {
     // SELECT and this UPDATE would be cancelled while ACTIVE (lock_token
     // NULLed under the running handler). Operator cancels omit it — killing
     // an active job is exactly what `jobs cancel` means.
+    //
+    // opts.ownerClientId (#4098) fences the CTE SEED on
+    // `data->>'__owner_client_id'`: an agent-scoped caller can cancel only
+    // roots it owns. Descendants of an owned root cascade regardless of their
+    // own data payload — the recursion follows the owned root, which is the
+    // semantic the delegating agent expects (its job tree, not per-row tags).
     const rootStatuses = opts?.rootStatuses ?? null;
+    const ownerClientId = opts?.ownerClientId ?? null;
     return this.engine.transaction(async (tx) => {
       const rows = await tx.executeRaw<Record<string, unknown>>(
         `WITH RECURSIVE descendants AS (
           SELECT id, 0 AS d FROM minion_jobs
            WHERE id = ANY($1::int[])
              AND ($3::text[] IS NULL OR status = ANY($3::text[]))
+             AND ($4::text IS NULL OR data->>'__owner_client_id' = $4::text)
           UNION ALL
           SELECT m.id, descendants.d + 1
             FROM minion_jobs m
@@ -1050,7 +1069,7 @@ export class MinionQueue {
          WHERE id IN (SELECT id FROM descendants)
            AND status IN ('waiting','active','delayed','waiting-children','paused')
          RETURNING *`,
-        [ids, opts?.reason ?? null, rootStatuses]
+        [ids, opts?.reason ?? null, rootStatuses, ownerClientId]
       );
       if (rows.length === 0) return [];
 

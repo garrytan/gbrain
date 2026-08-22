@@ -80,6 +80,7 @@ import { syncStatusOperations } from './ops/sync-status.ts';
 import { rawDataOperations } from './ops/raw-data.ts';
 import { chunksOperations } from './ops/chunks.ts';
 import { ingestLogOperations } from './ops/ingest-log.ts';
+import { usageOperations } from './ops/usage.ts';
 import { filesOperations } from './ops/files.ts';
 import { jobsOperations } from './ops/jobs.ts';
 import { orphansOperations } from './ops/orphans.ts';
@@ -107,6 +108,7 @@ import { schemaPacksOperations } from './ops/schema-packs.ts';
 import { skilloptOperations } from './ops/skillopt.ts';
 import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
+import { entityIdentityOperations } from './ops/entity-identity.ts';
 import { requestToolsOperations } from './ops/request-tools.ts';
 
 // parseTtlParam moved to ops/facts.ts with the facts cluster; the `remember`
@@ -151,6 +153,8 @@ export const operations: Operation[] = [
   ...chunksOperations,
   // Ingest log (log_ingest, get_ingest_log) — ops/ingest-log.ts
   ...ingestLogOperations,
+  // Usage accounting (get_usage, #4218) — ops/usage.ts
+  ...usageOperations,
   // Files (file_list, file_upload, file_url) — ops/files.ts
   ...filesOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
@@ -181,6 +185,9 @@ export const operations: Operation[] = [
   // Extraction quarantine lane (#160): gated entity extraction + review
   // queue — ops/extraction.ts
   ...extractionOperations,
+  // #4224: cross-source entity identity groups (v1 manual-only) —
+  // ops/entity-identity.ts
+  ...entityIdentityOperations,
   // v0.31: hot memory (extract_facts, recall, context_pack, delta,
   // forget_fact) — ops/facts.ts
   ...factsOperations,
@@ -227,6 +234,7 @@ const OP_AREAS: Record<string, string> = {
   get_versions: 'pages', revert_version: 'pages',
   resolve_slugs: 'pages', get_chunks: 'pages',
   put_raw_data: 'pages', get_raw_data: 'pages',
+  fetch: 'pages', // #4039 deep-research read adapter (search/fetch pair)
   // search
   search: 'search', query: 'search', search_by_image: 'search',
   // tags
@@ -261,6 +269,7 @@ const OP_AREAS: Record<string, string> = {
   sync_brain: 'sync',
   // ingest log
   log_ingest: 'ingest', get_ingest_log: 'ingest',
+  get_usage: 'admin',
   // files (localOnly)
   file_list: 'files', file_upload: 'files', file_url: 'files',
   // jobs (Minions + agent lane)
@@ -276,6 +285,9 @@ const OP_AREAS: Record<string, string> = {
   // entity extraction lane
   extract_entities: 'entities', extraction_pending: 'entities',
   extraction_review: 'entities',
+  // #4224 cross-source entity identity (v1 manual-only)
+  entity_identity_link: 'entities', entity_identity_unlink: 'entities',
+  entity_identity_list: 'entities',
   // insight / signal reads
   get_recent_salience: 'insights', find_anomalies: 'insights',
   find_contradictions: 'insights', find_experts: 'insights',

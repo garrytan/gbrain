@@ -258,9 +258,15 @@ export function cloneRepo(url: string, destDir: string, opts: CloneOpts = {}): v
   }
 }
 
-/** Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo. */
+/**
+ * Pull a repo with --ff-only and the same SSRF-defensive flags as cloneRepo.
+ * #3836: global flags build via durableSsrfFlags() so the documented
+ * GBRAIN_GIT_ALLOW_FILE_TRANSPORT=1 escape hatch reaches sync's pull —
+ * self-hosted local-filesystem remotes could clone but never pull. Default
+ * stays `never`; the origin was already validated at clone time.
+ */
 export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
+  const args: string[] = ['-C', repoPath, ...durableSsrfFlags(), 'pull', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--ff-only'];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -285,7 +291,9 @@ export function pullRepo(repoPath: string, opts: { timeoutMs?: number } = {}): v
  * the estimator catches and falls back to local HEAD.
  */
 export function fetchRemote(repoPath: string, branch: string, opts: { timeoutMs?: number } = {}): void {
-  const args: string[] = ['-C', repoPath, ...GIT_SSRF_FLAGS, 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch];
+  // #3836: durableSsrfFlags (not the hardcoded GIT_SSRF_FLAGS) so the
+  // file-transport escape hatch applies to the estimator's fetch too.
+  const args: string[] = ['-C', repoPath, ...durableSsrfFlags(), 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', branch];
   try {
     execFileSync('git', args, {
       stdio: ['ignore', 'pipe', 'pipe'],

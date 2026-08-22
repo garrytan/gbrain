@@ -111,10 +111,14 @@ describe('sync monorepo subdir-source support (#753/#774)', () => {
     });
     expect(result.status).toBe('first_sync');
     expect(result.added).toBe(2); // only wiki/page1 + wiki/page2
-    // Slugs are git-root-relative in BOTH spellings (subdir repoPath and
-    // --src-subpath) so full and incremental syncs of the same scope agree.
-    expect(await engine.getPage('wiki/page1')).not.toBeNull();
-    expect(await engine.getPage('page1')).toBeNull();
+    // #4342: a FRESH subdir source (no --src-subpath, no already-prefixed
+    // pages) pins slug_root_mode='source-root' — slugs are local_path-
+    // relative, matching what `gbrain import wiki/` produces. Full and
+    // incremental syncs of the scope agree via the sticky pin (a live
+    // install with git-root-prefixed pages auto-pins 'git-root' instead —
+    // covered by test/sync-slug-root-mode-4342.test.ts).
+    expect(await engine.getPage('page1')).not.toBeNull();
+    expect(await engine.getPage('wiki/page1')).toBeNull();
   });
 
   // ─────────────────────────────────────────────────────────────────────────

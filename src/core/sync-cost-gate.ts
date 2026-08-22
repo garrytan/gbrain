@@ -5,7 +5,7 @@
  */
 import { readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { createInterface } from 'readline';
+import { promptYesNo } from './confirm-prompt.ts';
 import type { BrainEngine } from './engine.ts';
 import { collectSyncableFiles } from '../commands/import.ts';
 import { isSyncable } from './sync.ts';
@@ -312,18 +312,6 @@ async function resolveBackfillCapUsd(engine: BrainEngine): Promise<number> {
   } catch {
     return 25;
   }
-}
-
-/** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
-async function promptYesNo(question: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes');
-    });
-    rl.on('close', () => resolve(false));
-  });
 }
 
 // v0.42.42.0 (#2139): paste-ready knobs appended to every gate message so the

@@ -32,8 +32,9 @@ Override priority (highest first):
 1. CLI flag (`--model opus`)
 2. Per-task config (`gbrain config set models.dream.synthesize opus`)
 3. Deprecated per-task config (stderr-warns once, then honored)
-4. **Global default** (`gbrain config set models.default opus`) — single hammer
-5. **Tier override** (`gbrain config set models.tier.reasoning opus`)
+4. **Tier override** (`gbrain config set models.tier.reasoning opus`) —
+   tier-specific beats the generic default (#3873)
+5. **Global default** (`gbrain config set models.default opus`) — single hammer
 6. Env var (`GBRAIN_MODEL=opus`)
 7. Key-aware tier default (the table above; provider chosen by which keys exist)
 8. Hardcoded caller fallback

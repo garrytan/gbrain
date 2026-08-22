@@ -97,4 +97,31 @@ describe('runPhaseEnrichThin', () => {
     expect(r.details.max_cost_usd).toBe(0.5);
     expect(r.details.max_total_cost_usd).toBe(5.0); // brain-wide default unchanged
   });
+
+  test("#2504: max_cost_usd accepts 'off' (uncapped per-source; brain-wide still governs)", async () => {
+    // parseFloat('off') is NaN — the operator's explicit opt-out used to be
+    // silently replaced with the $1 default. Same off/unlimited/none spellings
+    // as `gbrain enrich --max-usd`.
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
+    await engine.setConfig('cycle.enrich_thin.max_cost_usd', 'off');
+    const r = await runPhaseEnrichThin(engine, { dryRun: true });
+    expect(r.status).toBe('ok');
+    // Details report the operator's spelling, never Infinity→null.
+    expect(r.details.max_cost_usd).toBe('off');
+    expect(r.details.max_total_cost_usd).toBe(5.0);
+  });
+
+  test("#2504: both cost knobs 'off' still runs (fully uncapped tick)", async () => {
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
+    await engine.setConfig('cycle.enrich_thin.max_cost_usd', 'off');
+    await engine.setConfig('cycle.enrich_thin.max_total_cost_usd', 'unlimited');
+    const r = await runPhaseEnrichThin(engine, { dryRun: true });
+    expect(r.status).toBe('ok');
+    expect(r.details.max_cost_usd).toBe('off');
+    expect(r.details.max_total_cost_usd).toBe('off');
+    // The per-source loop actually processed the default source (Infinity
+    // remaining never breaks the loop before work happens).
+    const perSource = r.details.per_source as Record<string, unknown>;
+    expect(perSource['default']).toBeTruthy();
+  });
 });

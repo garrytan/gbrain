@@ -23,7 +23,10 @@
  *                       on Darwin, more on Linux CI)
  *   NUM_QUERIES        queries per phase (default 200)
  *   NUM_WRITERS        parallel writer tasks during phase B (default 4)
- *   WRITES_PER_WRITER  pages each writer inserts during phase B (default 25)
+ *   WRITES_PER_WRITER  safety-cap sizing: each writer loops until the query
+ *                       loop finishes, capped at 4x this value (#4285; the
+ *                       fixed per-writer exit made phase B lie when writers
+ *                       finished before the queries did)
  *   STRICT             1 = exit non-zero on delta_pct > THRESHOLD_PCT (default 0)
  *   THRESHOLD_PCT      regression threshold (default 50)
  *
@@ -31,12 +34,18 @@
  *   {
  *     ok, platform, brain_page_count,
  *     phase_a: { p50_ms, p95_ms, p99_ms, queries_run },
- *     phase_b: { p50_ms, p95_ms, p99_ms, queries_run, writes_completed, writes_failed },
+ *     phase_b: { p50_ms, p95_ms, p99_ms, queries_run, writes_completed,
+ *                writes_failed, writer_end_ms },
  *     delta_p50_pct, delta_p95_pct, delta_p99_pct,
+ *     overlap_pct,            // % of the phase B query window with >=1 live writer
  *     elapsed_ms, threshold_pct,
  *     verdict: 'pass' | 'fail' | 'informational',
  *     note?, error?
  *   }
+ *
+ * Honesty guard (#4285): a `pass` verdict requires overlap_pct >= 90 — if the
+ * writers stopped early (safety cap or crash) the numbers measured mostly
+ * uncontended reads, so `pass` degrades to `informational` with a note.
  */
 
 import { platform } from 'node:os';
@@ -48,6 +57,8 @@ interface Phase {
   queries_run: number;
   writes_completed?: number;
   writes_failed?: number;
+  /** ms from phase B query start until the LAST writer stopped (#4285). */
+  writer_end_ms?: number;
 }
 
 interface Result {
@@ -59,6 +70,8 @@ interface Result {
   delta_p50_pct: number | null;
   delta_p95_pct: number | null;
   delta_p99_pct: number | null;
+  /** % of the phase B query window during which >=1 writer was live (#4285). */
+  overlap_pct: number | null;
   elapsed_ms: number;
   threshold_pct: number;
   verdict: 'pass' | 'fail' | 'informational';
@@ -111,6 +124,7 @@ async function main(): Promise<void> {
     delta_p50_pct: null,
     delta_p95_pct: null,
     delta_p99_pct: null,
+    overlap_pct: null,
     elapsed_ms: 0,
     threshold_pct: THRESHOLD_PCT,
     verdict: 'informational',
@@ -165,41 +179,47 @@ async function main(): Promise<void> {
     };
 
     // ---- Phase B: under load (parallel writers)
+    // #4285: writers loop on a stop flag the query loop raises after
+    // NUM_QUERIES, instead of exiting after a fixed WRITES_PER_WRITER count.
+    // Pre-fix, fast writers finished early and the tail of phase B measured
+    // UNCONTENDED reads while still being reported as "under load". The 4x
+    // WRITES_PER_WRITER safety cap bounds a wedged query loop.
     process.stderr.write(`[_read_latency] phase B: ${NUM_QUERIES} queries with ${NUM_WRITERS} writers...\n`);
     let writesCompleted = 0;
     let writesFailed = 0;
-    let writersDone = 0;
+    let stopWriters = false;
+    const WRITER_SAFETY_CAP = 4 * WRITES_PER_WRITER;
+    const writerEndTimes: number[] = [];
 
+    const phaseBStart = Date.now();
     const writers: Promise<void>[] = [];
     for (let w = 0; w < NUM_WRITERS; w += 1) {
       writers.push((async () => {
-        const base = BRAIN_PAGES + w * WRITES_PER_WRITER;
-        for (let i = 0; i < WRITES_PER_WRITER; i += 1) {
-          const p = generatePage(base + i, `WriterW${w}`);
-          try {
-            await engine.putPage(p.slug, {
-              type: 'note',
-              title: p.title,
-              compiled_truth: p.body,
-              timeline: '',
-              frontmatter: { writer: w, tags: ['writer-load'] },
-            });
-            writesCompleted += 1;
-          } catch {
-            writesFailed += 1;
+        const base = BRAIN_PAGES + w * WRITER_SAFETY_CAP;
+        try {
+          for (let i = 0; !stopWriters && i < WRITER_SAFETY_CAP; i += 1) {
+            const p = generatePage(base + i, `WriterW${w}`);
+            try {
+              await engine.putPage(p.slug, {
+                type: 'note',
+                title: p.title,
+                compiled_truth: p.body,
+                timeline: '',
+                frontmatter: { writer: w, tags: ['writer-load'] },
+              });
+              writesCompleted += 1;
+            } catch {
+              writesFailed += 1;
+            }
           }
+        } finally {
+          writerEndTimes.push(Date.now());
         }
-        writersDone += 1;
       })());
     }
 
     const phaseBMs: number[] = [];
-    // Run queries until we hit NUM_QUERIES OR all writers finish, whichever
-    // is LATER. Goal: every query in phase B is during sustained writer
-    // pressure. If queries are too few and writers haven't finished, keep
-    // going past NUM_QUERIES for fairness.
-    let queryIdx = 0;
-    while (queryIdx < NUM_QUERIES || writersDone < NUM_WRITERS) {
+    for (let queryIdx = 0; queryIdx < NUM_QUERIES; queryIdx += 1) {
       const q = queries[queryIdx % queries.length]!;
       const t = Date.now();
       try {
@@ -207,14 +227,20 @@ async function main(): Promise<void> {
       } catch {
         /* tolerated */
       }
-      if (queryIdx < NUM_QUERIES) {
-        phaseBMs.push(Date.now() - t);
-      }
-      queryIdx += 1;
-      // Safety stop: don't blow past 4x NUM_QUERIES if writers are wedged
-      if (queryIdx >= 4 * NUM_QUERIES) break;
+      phaseBMs.push(Date.now() - t);
     }
+    const phaseBQueriesEnd = Date.now();
+    stopWriters = true;
     await Promise.allSettled(writers);
+
+    // Overlap: fraction of the query window during which at least one writer
+    // was still running. With the stop-flag design this is ~100% unless the
+    // writers hit the safety cap (or crashed) before the queries finished.
+    const lastWriterEnd = writerEndTimes.length > 0 ? Math.max(...writerEndTimes) : phaseBStart;
+    const windowMs = Math.max(1, phaseBQueriesEnd - phaseBStart);
+    const coveredMs = Math.max(0, Math.min(lastWriterEnd, phaseBQueriesEnd) - phaseBStart);
+    result.overlap_pct = NUM_WRITERS > 0 ? Math.round((coveredMs / windowMs) * 100) : 0;
+
     phaseBMs.sort((a, b) => a - b);
     result.phase_b = {
       p50_ms: percentile(phaseBMs, 50),
@@ -223,6 +249,7 @@ async function main(): Promise<void> {
       queries_run: phaseBMs.length,
       writes_completed: writesCompleted,
       writes_failed: writesFailed,
+      writer_end_ms: Math.max(0, lastWriterEnd - phaseBStart),
     };
 
     // Delta math: ((B - A) / A) * 100, integer percent. Guard divide-by-zero.
@@ -248,6 +275,16 @@ async function main(): Promise<void> {
       result.verdict = (result.delta_p99_pct ?? 0) > THRESHOLD_PCT ? 'fail' : 'pass';
     } else {
       result.verdict = 'informational';
+    }
+
+    // #4285 honesty guard: a low-overlap phase B measured mostly uncontended
+    // reads. A `fail` under partial pressure is still valid evidence (full
+    // pressure is at least as bad); a `pass` is not — degrade it.
+    if ((result.overlap_pct ?? 0) < 90) {
+      result.note =
+        `writer pressure covered only ${result.overlap_pct ?? 0}% of the phase B query window (<90%); ` +
+        `under-load numbers are unreliable`;
+      if (result.verdict === 'pass') result.verdict = 'informational';
     }
 
     result.ok = true;

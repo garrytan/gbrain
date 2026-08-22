@@ -28,10 +28,12 @@ describe('v0.41 T11: eval command surfaces', () => {
     expect(result.details.sample_size).toBe(500);
   });
 
-  test('runEvalSynthesizeConcepts returns stable schema_version=1 envelope', async () => {
+  test('runEvalSynthesizeConcepts returns an HONEST not_implemented envelope (#4198)', async () => {
     const result = await runEvalSynthesizeConcepts({});
     expect(result.schema_version).toBe(1);
-    expect(result.status).toBe('not_yet_implemented');
+    // #4198: an eval that ran nothing must not read as a pass.
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe('not_implemented');
   });
 
   test('runEvalSynthesizeConcepts preserves --parity-baseline + --sample', async () => {
@@ -58,12 +60,14 @@ describe('v0.41 T11: eval command surfaces', () => {
     expect(result.details.repo_path).toBe('~/git/brain');
   });
 
-  test('all 3 commands include v0_41_1_followup pointer in details', async () => {
+  test('all 3 commands include a follow-up pointer in details', async () => {
     const r1 = await runEvalExtractAtoms({});
     const r2 = await runEvalSynthesizeConcepts({});
     const r3 = await runEvalMarkdownGreenfield({});
     expect(r1.details.v0_41_1_followup).toBeDefined();
-    expect(r2.details.v0_41_1_followup).toBeDefined();
+    // #4198: synthesize-concepts renamed its pointer when the envelope
+    // flipped to the honest not_implemented shape.
+    expect(r2.details.planned).toBeDefined();
     expect(r3.details.v0_41_1_followup).toBeDefined();
   });
 });

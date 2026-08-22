@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **Starter** marks membership in the ~27-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 118 tools across 22 areas. **Starter** marks membership in the ~27-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -13,6 +13,7 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 | `get_health` | Brain health dashboard (embed coverage, stale pages, orphans). | admin |  |  |
 | `get_stats` | Brain statistics (page count, chunk count, etc.) | admin |  |  |
 | `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
+| `get_usage` | Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields. | admin |  |  |
 | `quarantine_list` | List quarantined (hidden) and optionally content-flagged pages by scanning page frontmatter, newest-updated first. | admin |  |  |
 | `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
@@ -55,6 +56,7 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `entity_identity_list` | List cross-source entity identity groups and their member pages. | read |  |  |
 | `extract_entities` | Extract entity names (people, companies) from text and create/update their brain stub pages. | write |  |  |
 | `extraction_pending` | List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). | read |  |  |
 
@@ -88,12 +90,12 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `cancel_job` | Cancel a waiting, active, or delayed job | admin |  |  |
+| `cancel_job` | Cancel a waiting, active, or delayed job. | admin |  |  |
 | `get_agent_job` | Poll an agent job submitted via submit_agent. | agent | yes |  |
-| `get_job` | Get job status and details by ID | admin |  |  |
-| `get_job_progress` | Get structured progress for a running job | admin |  |  |
+| `get_job` | Get job status and details by ID. | admin |  |  |
+| `get_job_progress` | Get structured progress for a running job. | admin |  |  |
 | `get_job_stats` | Job queue statistics. | admin |  |  |
-| `list_jobs` | List jobs with optional filters | admin |  |  |
+| `list_jobs` | List jobs with optional filters. | admin |  |  |
 | `pause_job` | Pause a waiting, active, or delayed job | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
 | `resume_job` | Resume a paused job back to waiting | admin |  |  |
@@ -148,6 +150,7 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 |---|---|---|---|---|
 | `capture` | Capture a quick note into the brain — the "just remember this" write. | write | yes |  |
 | `delete_page` | Soft-delete a page. | write |  |  |
+| `fetch` | Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Get content chunks for a page | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page | read |  |  |

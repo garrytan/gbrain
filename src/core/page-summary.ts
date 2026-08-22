@@ -35,11 +35,16 @@ import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.t
 import { sanitizeSynopsis } from './embedding-context.ts';
 
 /**
- * Hard cap on synopsis output tokens. ~200 tokens gives 50-100 token
+ * Default cap on synopsis output tokens. ~200 tokens gives 50-100 token
  * synopsis with some headroom; the wrapper layer caps the final
  * synopsis at SUMMARY_HARD_CAP_CHARS (300) regardless.
+ *
+ * #3883: overridable per call via `GeneratePerChunkSynopsisArgs.maxTokens`,
+ * threaded from the `models.synopsis_max_tokens` config by the service
+ * layer (this module stays DB-free). Exported so the service's config
+ * resolver and tests share the default.
  */
-const SYNOPSIS_MAX_TOKENS = 200;
+export const SYNOPSIS_MAX_TOKENS = 200;
 
 /** Default model when caller doesn't override. Resolves through the gateway. */
 export const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
@@ -112,6 +117,12 @@ export interface GeneratePerChunkSynopsisArgs {
   model?: string;
   /** Optional abort signal threaded through gateway.chat. */
   abortSignal?: AbortSignal;
+  /**
+   * #3883: output-token cap for the synopsis call. Defaults to
+   * SYNOPSIS_MAX_TOKENS (200). The service layer threads the
+   * `models.synopsis_max_tokens` config here.
+   */
+  maxTokens?: number;
 }
 
 /**
@@ -144,12 +155,13 @@ export async function generatePerChunkSynopsis(
   args: GeneratePerChunkSynopsisArgs,
 ): Promise<GeneratePerChunkSynopsisResult> {
   const userPrompt = buildUserPrompt(args.pageTitle, args.documentText, args.chunkText);
+  const maxTokens = args.maxTokens ?? SYNOPSIS_MAX_TOKENS;
 
   const chatOpts: ChatOpts = {
     model: args.model ?? DEFAULT_SYNOPSIS_MODEL,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
-    maxTokens: SYNOPSIS_MAX_TOKENS,
+    maxTokens,
     abortSignal: args.abortSignal,
     cacheSystem: true,
   };
@@ -188,6 +200,24 @@ export async function generatePerChunkSynopsis(
     return { kind: 'refusal', detail: `stop_reason=${result.stopReason}` };
   }
 
+  // #3883: stop_reason 'length' means the model hit maxTokens mid-sentence —
+  // the text is a truncated fragment, not a synopsis. Embedding it would bake
+  // the truncation artifact into the vector; classify as malformed so the
+  // service demotes the page to the title-only fall-back (same lane as an
+  // unparseable response), instead of silently embedding truncated text.
+  if (result.stopReason === 'length') {
+    const detail = `stop_reason=length (maxTokens=${maxTokens} exhausted; raise models.synopsis_max_tokens)`;
+    logSynopsisFailure({
+      pageSlug: args.pageSlug,
+      sourceId: args.sourceId,
+      chunkIndex: args.chunkIndex,
+      kind: 'malformed',
+      detail,
+      pageLevelFallback: true,
+    });
+    return { kind: 'malformed', detail };
+  }
+
   const synopsis = sanitizeSynopsis(result.text);
   if (!synopsis) {
     logSynopsisFailure({
@@ -201,10 +231,11 @@ export async function generatePerChunkSynopsis(
     return { kind: 'empty', detail: `length=${result.text.length}` };
   }
 
-  // No malformed detection in v0.40.3.0: synopses are plain text by
-  // prompt contract. Future extension could parse a JSON-shaped
-  // response with `{synopsis, confidence}` for richer signals; for now
-  // any non-empty text after sanitization counts as success.
+  // Content-shape malformed detection stays minimal: synopses are plain
+  // text by prompt contract, so any non-empty text after sanitization
+  // counts as success (truncation is caught structurally via the
+  // stop_reason==='length' check above, #3883). Future extension could
+  // parse a JSON-shaped response with `{synopsis, confidence}`.
 
   return { kind: 'success', synopsis };
 }

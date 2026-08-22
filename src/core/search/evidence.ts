@@ -17,7 +17,9 @@
  *   alias_hit          — query exactly matched the page's declared chosen name
  *   exact_title_match  — query is a phrase in the page title (title boost fired)
  *   high_vector_match  — base (pre-boost) score >= HIGH_MATCH_FLOOR
- *   keyword_exact      — surfaced with a solid score but no title/alias/vector tag
+ *   keyword_exact      — surfaced by a lexical arm (keyword/title FTS,
+ *                        keyword_hit=true) with a solid score (#3783 — a solid
+ *                        blended score alone no longer earns this label)
  *   weak_semantic      — everything else (low-confidence tail)
  *
  * create_safety:
@@ -71,9 +73,30 @@ export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evid
   if (typeof r.cosine === 'number' && Number.isFinite(r.cosine) && r.cosine >= floor) {
     return 'high_vector_match';
   }
+  // #3783 — keyword_exact requires ACTUAL lexical-arm membership
+  // (keyword_hit stamped pre-fusion by markKeywordHits, OR-propagated
+  // through RRF). Pre-fix, any base_score >= SOLID_MATCH_FLOOR was labeled
+  // keyword_exact with zero keyword verification, so a pure-vector row with
+  // a solid blended score lied to the agent about WHY it matched. Rows
+  // without the flag (incl. legacy cached rows) honestly degrade to
+  // weak_semantic — create_safety 'unknown', the safe look-closer direction.
   const base = typeof r.base_score === 'number' ? r.base_score : r.score;
-  if (Number.isFinite(base) && base >= SOLID_MATCH_FLOOR) return 'keyword_exact';
+  if (r.keyword_hit === true && Number.isFinite(base) && base >= SOLID_MATCH_FLOOR) {
+    return 'keyword_exact';
+  }
   return 'weak_semantic';
+}
+
+/**
+ * #3783 — stamp lexical-arm membership on rows a keyword/title FTS query
+ * surfaced. Called on the raw arm output BEFORE fusion (hybrid pipeline) or
+ * before stampEvidence (direct keyword-only consumers: MCP keyword-only
+ * opt-out, no-embedding fallbacks, entity near-miss suggestions). Mutates in
+ * place, idempotent. RRF fusion OR-propagates the flag so a row that also
+ * appeared in a vector list keeps it regardless of merge order.
+ */
+export function markKeywordHits(results: SearchResult[]): void {
+  for (const r of results) r.keyword_hit = true;
 }
 
 export function createSafetyFor(evidence: Evidence): CreateSafety {

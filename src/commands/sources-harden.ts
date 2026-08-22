@@ -42,7 +42,16 @@ function configHost(config: unknown): string | null {
 
 async function loadSourceRows(engine: BrainEngine, id: string | undefined, all: boolean): Promise<SourceRow[]> {
   if (all) {
-    return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+    // #3880: `--all` skips archived sources (v34 legacy fallback, house
+    // style per pickSoleNonDefaultSource). Explicit <id> below stays
+    // deliberate (recovery ops may target archived rows).
+    try {
+      return await engine.executeRaw<SourceRow>(
+        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+      );
+    } catch {
+      return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+    }
   }
   if (!id) throw new Error('Usage: gbrain sources harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]');
   return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE id = $1`, [id]);

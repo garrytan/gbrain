@@ -23,6 +23,9 @@ import { quarantineMarkers } from './extraction-review.ts';
 import { importFromContent } from './import-file.ts';
 import { serializeMarkdown } from './markdown.ts';
 import { isAvailable } from './ai/gateway.ts';
+// #4222: shared generic-token reject list — same list gates the by-mention
+// gazetteer and drives the junk_entity_hubs doctor check.
+import { isJunkEntityName } from './entity-name-quality.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,6 +129,25 @@ export async function enrichEntity(
     // UPDATE path — add timeline entry
     action = 'updated';
   } else {
+    // #4222: refuse to MINT a page for a junk entity name — a single
+    // generic token ("Will", "Info", "Chief", "Unknown") or a bare
+    // @handle. These come from over-eager extractors and become
+    // near-empty mega-hubs that accrete thousands of mention edges.
+    // Existing pages are user-visible and stay trusted (CK12 precedent);
+    // only creation is gated — no auto-delete, ever.
+    if (isJunkEntityName(request.entityName)) {
+      return {
+        slug,
+        action: 'skipped',
+        tier,
+        backlinkCreated: false,
+        timelineAdded: false,
+        mentionCount,
+        mentionSources,
+        suggestedTier,
+        tierEscalated,
+      };
+    }
     // CREATE path — new entity page
     const title = request.entityName;
     const type = request.entityType;

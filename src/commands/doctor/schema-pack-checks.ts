@@ -18,8 +18,18 @@ import type { Check } from '../doctor.ts';
 export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check> {
   try {
     const { loadActivePack } = await import('../../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../../core/config.ts');
-    const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const { loadConfigFileOnly } = await import('../../core/config.ts');
+    // #3792: thread the DB-plane schema_pack (tier 4) so doctor resolves the
+    // SAME pack as the engine/onboard checks on brains whose active pack was
+    // flipped via `gbrain config set schema_pack` / unify-types — without it,
+    // doctor reported the home-config pack while every query ran the DB one.
+    // File-only config preserves tier-6 without merging transient env/db
+    // state (matches onboard/checks.ts's checkPackUpgradeAvailable).
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    const pack = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig });
     return {
       name: 'schema_pack_active',
       status: 'ok',

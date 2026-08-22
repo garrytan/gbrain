@@ -140,8 +140,16 @@ export function lintContent(content: string, filePath: string, opts: LintContent
     });
   }
 
-  // Rule: Placeholder dates
+  // Rule: Placeholder dates. #3958: skip lines inside fenced code blocks —
+  // a page DOCUMENTING date formats (```\ncreated: YYYY-MM-DD\n```) is not a
+  // page with an unfilled placeholder. Both ``` and ~~~ fences toggle.
+  let inFence = false;
   for (let i = 0; i < lines.length; i++) {
+    if (/^\s{0,3}(```|~~~)/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
     if (lines[i].match(/\bYYYY-MM-DD\b/) || lines[i].match(/\bXX-XX\b/) || lines[i].match(/\b\d{4}-XX-XX\b/)) {
       issues.push({
         file: filePath, line: i + 1, rule: 'placeholder-date',
@@ -171,10 +179,16 @@ export function lintContent(content: string, filePath: string, opts: LintContent
         });
       }
       if (!fm.match(/^created:/m)) {
+        // #3958: when the page's own frontmatter carries a capture timestamp
+        // (captured_at / ingested_at), `--fix` can promote it to `created` —
+        // mark the finding fixable so the operator knows --fix will heal it.
+        const promotable = /^(?:captured_at|ingested_at):/m.test(fm);
         issues.push({
           file: filePath, line: 1, rule: 'missing-created',
-          message: 'Frontmatter missing required field: created',
-          fixable: false,
+          message: promotable
+            ? 'Frontmatter missing required field: created (promotable from captured_at/ingested_at)'
+            : 'Frontmatter missing required field: created',
+          fixable: promotable,
         });
       }
     }
@@ -286,6 +300,25 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   return issues;
 }
 
+/**
+ * #3958: promote `captured_at:` (preferred) or `ingested_at:` to `created:`
+ * when the frontmatter has no `created:` of its own. The value is copied
+ * verbatim (quoting preserved) and inserted directly below the source line.
+ * No-op when there is no frontmatter, `created:` already exists, or neither
+ * capture field is present. Pure + exported for tests.
+ */
+export function promoteCreatedFromCapture(content: string): string {
+  if (!content.startsWith('---')) return content;
+  const fmEnd = content.indexOf('---', 3);
+  if (fmEnd <= 0) return content;
+  const fm = content.slice(3, fmEnd);
+  if (fm.match(/^created:/m)) return content;
+  const src = fm.match(/^captured_at:[ \t]*(\S.*)$/m) ?? fm.match(/^ingested_at:[ \t]*(\S.*)$/m);
+  if (!src || src.index === undefined) return content;
+  const insertAt = 3 + src.index + src[0].length;
+  return content.slice(0, insertAt) + `\ncreated: ${src[1].trim()}` + content.slice(insertAt);
+}
+
 /** Auto-fix fixable issues */
 export function fixContent(content: string): string {
   let fixed = content;
@@ -299,6 +332,11 @@ export function fixContent(content: string): string {
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
   fixed = fixed.replace(/\n```\s*$/, '');
+
+  // #3958: missing-created is fixable when the page's own frontmatter
+  // carries a capture timestamp. Runs after the fence unwrap so a wrapped
+  // page's frontmatter is visible to the promotion.
+  fixed = promoteCreatedFromCapture(fixed);
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');
@@ -465,6 +503,10 @@ export interface LintResult {
   pages_scanned: number;
   pages_with_issues: number;
   total_issues: number;
+  /** #3958: how many of total_issues are fixable — the CLI's "Run with
+   *  --fix" hint only prints when this is non-zero, so an all-unfixable
+   *  report can't send the operator on a no-op --fix run. */
+  total_fixable: number;
   total_fixed: number;
   dryRun: boolean;
   applied_fix: boolean;
@@ -495,6 +537,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const lintOpts: LintContentOpts = { contentSanity };
 
   let totalIssues = 0;
+  let totalFixable = 0;
   let totalFixed = 0;
   let pagesWithIssues = 0;
 
@@ -515,6 +558,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     if (issues.length === 0) continue;
     pagesWithIssues++;
     totalIssues += issues.length;
+    totalFixable += issues.filter(i => i.fixable).length;
 
     let fixCount = 0;
     if (opts.fix && issues.some(i => i.fixable)) {
@@ -534,6 +578,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
     pages_scanned: pages.length,
     pages_with_issues: pagesWithIssues,
     total_issues: totalIssues,
+    total_fixable: totalFixable,
     total_fixed: totalFixed,
     dryRun: !!opts.dryRun,
     applied_fix: !!opts.fix,
@@ -608,7 +653,10 @@ export async function runLint(args: string[]) {
   console.log(`\n${result.pages_scanned} pages scanned. ${result.total_issues} issue(s) in ${result.pages_with_issues} page(s).`);
   if (doFix) {
     console.log(`${dryRun ? '(dry run) ' : ''}${result.total_fixed} auto-fixed.`);
-  } else if (result.total_issues > 0) {
-    console.log(`Run with --fix to auto-fix fixable issues.`);
+  } else if (result.total_fixable > 0) {
+    // #3958: only advertise --fix when at least one finding is actually
+    // fixable — an all-unfixable report used to send operators on a no-op
+    // `--fix` run that changed nothing.
+    console.log(`Run with --fix to auto-fix ${result.total_fixable} fixable issue(s).`);
   }
 }

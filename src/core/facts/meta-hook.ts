@@ -148,6 +148,9 @@ export async function getBrainHotMemoryMeta(
         // last wake" filters on WHEN the fact was learned, not its semantic
         // validity date (a fact recorded today about last month is NEW).
         created_at: r.created_at.toISOString(),
+        // #4206: provenance context (e.g. the source_slug extract_facts threaded
+        // in) rides the pack/delta projections instead of being recall-only.
+        context: r.context ?? null,
         confidence: Number(effectiveConfidence(r, now).toFixed(3)),
       })),
     },

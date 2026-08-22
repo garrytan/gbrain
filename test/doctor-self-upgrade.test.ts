@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
-import { checkSelfUpgradeHealth } from '../src/commands/doctor.ts';
+import { buildChecks, checkSelfUpgradeHealth } from '../src/commands/doctor.ts';
 import { writeUpdateCache } from '../src/core/self-upgrade.ts';
 import { logSelfUpgrade } from '../src/core/audit/self-upgrade-audit.ts';
 import { VERSION } from '../src/version.ts';
@@ -76,6 +76,31 @@ describe('checkSelfUpgradeHealth', () => {
       const c = checkSelfUpgradeHealth();
       expect(c.message).toContain('known-bad');
       expect(c.message).toContain('0.50.0');
+    });
+  });
+});
+
+describe('#3747: LOCAL doctor emits self_upgrade_health', () => {
+  // Pre-fix, only the remote report (doctor/report-remote.ts) pushed this
+  // check — `gbrain doctor` on the host machine, the surface an operator
+  // actually diagnoses upgrade problems from, never showed it.
+  test('buildChecks includes self_upgrade_health (engine-free, --fast)', async () => {
+    await withHome(async () => {
+      const checks = await buildChecks(null, ['--scope=brain', '--fast']);
+      const c = checks.find((ch) => ch.name === 'self_upgrade_health');
+      expect(c).toBeDefined();
+      expect(c!.status).toBe('ok');
+    });
+  });
+
+  test('buildChecks surfaces a recent failed auto-upgrade as warn', async () => {
+    await withHome(async () => {
+      logSelfUpgrade({ channel: 'autopilot', action: 'apply', current: '0.42.0', latest: '0.99.0', outcome: 'failed', error: 'boom' });
+      const checks = await buildChecks(null, ['--scope=brain', '--fast']);
+      const c = checks.find((ch) => ch.name === 'self_upgrade_health');
+      expect(c).toBeDefined();
+      expect(c!.status).toBe('warn');
+      expect(c!.message).toContain('self-upgrade failure');
     });
   });
 });

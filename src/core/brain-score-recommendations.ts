@@ -55,6 +55,23 @@ export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
  * Uses the recipe registry (pure data), not the gateway runtime, so this
  * module stays free of AI-SDK coupling and works before engine.connect().
  */
+/**
+ * #3944: chat-key presence for the remediation planner, judged on the planes
+ * both planner surfaces can rely on — process env + the FILE config plane.
+ * NOT `engine.getConfig()`: a DB-only `anthropic_api_key` is only usable on
+ * paths that ran the loadConfigWithEngine DB merge before configuring the
+ * gateway, and doctor's planner (remediation/context.ts) judges the file
+ * plane (#2662 is the same rule for embed keys). Pre-fix, autopilot read the
+ * DB plane here while doctor read the file plane, so autopilot dispatched
+ * chat jobs doctor classified as blocked. Shared by
+ * loadRecommendationContext and the autopilot dispatch loop.
+ */
+export function chatApiKeyConfigured(
+  fileCfg: { anthropic_api_key?: unknown } | null | undefined,
+): boolean {
+  return !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key);
+}
+
 export function embeddingProviderConfigured(
   embeddingModel: string | undefined,
   resolveKey: (envVar: string) => boolean,
@@ -303,7 +320,10 @@ export function computeRecommendations(
   // and noExtract:true after T5 lands → extract job is the materializer).
   // ---------------------------------------------------------------------
   if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { mode: 'all', dir: ctx.repoPath };
+    // #3957: carry the source id so the extract job's fs-walk rows land in
+    // (and its watermark stamp targets) the brain source that owns repoPath —
+    // not the 'default' fallback that silently no-ops on federated brains.
+    const params = { mode: 'all', dir: ctx.repoPath, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
     out.push({
       id: 'extract.all',
       job: 'extract',
