@@ -1902,8 +1902,20 @@ export async function buildChecks(
   try {
     const version = await engine.getConfig('version');
     schemaVersion = parseInt(version || '0', 10);
-    if (schemaVersion >= LATEST_VERSION) {
+    if (schemaVersion === LATEST_VERSION) {
       checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
+    } else if (schemaVersion > LATEST_VERSION) {
+      // Forward skew: another node migrated the shared DB past what this
+      // client knows (multi-node brain, hub + spokes on one Postgres). This
+      // client will read/write tables, columns, and indexes it doesn't know
+      // about — more dangerous than backward skew, which at least blocks on
+      // the next `apply-migrations`. See #2036.
+      checks.push({
+        name: 'schema_version',
+        status: 'warn',
+        message: `Version ${schemaVersion} is AHEAD of this client's latest known version (${LATEST_VERSION}). ` +
+                 `Another node migrated this DB past what this client knows — upgrade this client before writing.`,
+      });
     } else if (schemaVersion === 0) {
       checks.push({
         name: 'schema_version',

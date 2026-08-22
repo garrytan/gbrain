@@ -3,7 +3,7 @@
 # Raising a ceiling is a conscious, reviewer-visible act. Lower ceilings in
 # the same commit as any peel (the guard fails on >50 lines of stale slack).
 # Columns: path	max_lines	policy	note
-src/commands/doctor.ts	4422	ratchet	grown v0.46.26.0 megawave: silent-death checks, self-upgrade honesty, noise pruning (#3944 #3925 #3958)
+src/commands/doctor.ts	4434	ratchet	grown v0.46.26.0 megawave: silent-death checks, self-upgrade honesty, noise pruning (#3944 #3925 #3958) + PR#4484 rebase onto current master
 src/core/operations.ts	315	ratchet	peel target: containment sprint C4-C7; grown v0.46.26.0 megawave op wiring
 src/core/postgres-engine.ts	6166	ratchet	grown v0.46.26.0 megawave (#4218 #3986 #4352) + master v0.46.26.0 private-queue token bootstrap probe
 src/core/pglite-engine.ts	6062	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns
