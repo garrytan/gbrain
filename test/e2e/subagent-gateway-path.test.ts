@@ -195,6 +195,27 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(messages[1].message_idx).toBe(1);
   });
 
+  it('openrouter:anthropic/… auto-routes through the gateway when the flag is off', async () => {
+    await engine.unsetConfig('agent.use_gateway_loop');
+    __setChatTransportForTests(async () => ({
+      text: 'or-anthropic done',
+      blocks: [{ type: 'text', text: 'or-anthropic done' }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 8, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'openrouter:anthropic/claude-haiku-4.5',
+      providerId: 'openrouter',
+    } satisfies ChatResult));
+
+    const handler = buildHandler(makeStubTools([]));
+    const { ctx } = await makeFakeJob({
+      prompt: 'hello',
+      model: 'openrouter:anthropic/claude-haiku-4.5',
+    });
+    const result = await handler(ctx);
+    expect(result.result).toBe('or-anthropic done');
+    expect(result.stop_reason).toBe('end_turn');
+  });
+
   it('happy path 2-turn with tool: dispatches, persists v2 stable ID, returns final text', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {

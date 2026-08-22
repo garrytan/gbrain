@@ -305,6 +305,19 @@ export function isAnthropicProvider(modelString: string): boolean {
   return model.toLowerCase().startsWith('claude-');
 }
 
+/**
+ * OpenRouter Anthropic routes (`openrouter:anthropic/…`). These are NOT
+ * native Anthropic (`isAnthropicProvider` stays false — the Messages SDK
+ * cannot speak OR). The legacy `!useGatewayLoop && !isAnthropicProvider`
+ * pin treats them as an exception and auto-routes through gateway.toolLoop().
+ */
+export function isOpenRouterAnthropic(modelString: string): boolean {
+  if (!modelString) return false;
+  const { provider, model } = splitProviderModelId(modelString);
+  return provider?.trim().toLowerCase() === 'openrouter'
+    && model.toLowerCase().startsWith('anthropic/');
+}
+
 const _subagentTierWarningsEmitted = new Set<string>();
 
 // Module-level set of deprecated config keys we've already warned about.

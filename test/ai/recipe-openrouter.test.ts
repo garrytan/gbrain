@@ -69,10 +69,14 @@ describe('recipe: openrouter', () => {
     const r = getRecipe('openrouter')!;
     expect(r.touchpoints.chat).toBeDefined();
     expect(r.touchpoints.chat!.supports_tools).toBe(true);
-    // supports_subagent_loop: false is enforced — classifyCapabilities()
-    // refuses the subagent tier on it (unusable:no_subagent_loop). Field
-    // stays false per the recipe docstring.
-    expect(r.touchpoints.chat!.supports_subagent_loop).toBe(false);
+    const loop = r.touchpoints.chat!.supports_subagent_loop;
+    expect(typeof loop).toBe('function');
+    if (typeof loop === 'function') {
+      expect(loop('anthropic/claude-haiku-4.5')).toBe(true);
+      expect(loop('anthropic/claude-sonnet-4.6')).toBe(true);
+      expect(loop('openai/gpt-5.2')).toBe(false);
+      expect(loop('deepseek/deepseek-chat')).toBe(false);
+    }
     expect(() =>
       assertTouchpoint(r, 'chat', 'some/provider-model'),
     ).not.toThrow();

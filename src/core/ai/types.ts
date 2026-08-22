@@ -272,9 +272,11 @@ export interface ChatTouchpoint {
   supports_tools: boolean;
   /**
    * Stable enough across crashes/replays to drive a Minions subagent loop.
-   * Strictly stronger than supports_tools.
+   * Strictly stronger than supports_tools. Boolean for recipe-wide behavior;
+   * predicate when only some routed model ids are loop-safe (OpenRouter
+   * Anthropic routes vs other proxied families).
    */
-  supports_subagent_loop: boolean;
+  supports_subagent_loop: boolean | ((modelId: string) => boolean);
   /**
    * Prompt caching honored for this chat touchpoint. Static booleans cover
    * native providers; openai-compatible aggregators may decide per model id

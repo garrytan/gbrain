@@ -122,12 +122,13 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
     expect(classifyCapabilities('google:gemini-1.5-pro')).toBe('degraded:no_caching');
   });
 
-  it('returns unusable:no_subagent_loop for OpenRouter routes (recipe declares the loop unsupported)', () => {
-    // Pre-fix these classified 'ok' / 'degraded:no_caching' even though the
-    // recipe declares supports_subagent_loop: false — the loop-stability gate
-    // was silently bypassed for every openai-compat aggregator route.
+  it('allows OpenRouter Anthropic routes for the subagent loop and refuses other OR families', () => {
+    // Anthropic-via-OR shares the Anthropic tool envelope; replay keys off
+    // gbrain_tool_use_id. Other proxied families stay refused until they get
+    // their own live abort/retry pin.
+    expect(classifyCapabilities('openrouter:anthropic/claude-sonnet-4.6')).toBe('ok');
+    expect(classifyCapabilities('openrouter:anthropic/claude-haiku-4.5')).toBe('ok');
     expect(classifyCapabilities('openrouter:openai/gpt-5.2')).toBe('unusable:no_subagent_loop');
-    expect(classifyCapabilities('openrouter:anthropic/claude-sonnet-4.6')).toBe('unusable:no_subagent_loop');
     expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('unusable:no_subagent_loop');
   });
 

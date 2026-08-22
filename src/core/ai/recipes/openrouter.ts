@@ -48,6 +48,16 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
 }
 
 /**
+ * OpenRouter Anthropic routes share Anthropic's tool-call envelope (and the
+ * gateway loop already keys replay on gbrain_tool_use_id, not the raw
+ * provider id). Other proxied families stay refused until they get their
+ * own live abort/retry evidence (TODOS.md OpenRouter follow-up).
+ */
+export function openrouterSupportsSubagentLoop(modelId: string): boolean {
+  return modelId.trim().toLowerCase().startsWith('anthropic/');
+}
+
+/**
  * Rewrite the last system message's string content into OpenRouter's
  * documented Anthropic caching shape: a content-part array carrying
  * `cache_control: { type: 'ephemeral' }` on the text block. (A top-level
@@ -147,14 +157,12 @@ export const openrouterCompatFetch = (async (
  * downstream agent stacks (OpenClaw deployments, etc.) get their own
  * attribution on OR's leaderboard instead of polluting gbrain's.
  *
- * Subagent loops: `supports_subagent_loop: false` is enforced by
- * `classifyCapabilities()` in `src/core/ai/capabilities.ts` — the subagent
- * tier refuses OR-proxied models at submit or handler dispatch because tool_use_id
- * stability across crashes/replays can't be guaranteed through the proxy.
- * (The legacy Anthropic-direct path additionally gates on
- * `isAnthropicProvider()` in `src/core/model-config.ts` when
- * `agent.use_gateway_loop` is off.) Relaxing this is a deeper architectural
- * change tracked in TODOS.md.
+ * Subagent loops: Anthropic routes (`anthropic/…`) declare
+ * `supports_subagent_loop` so classifyCapabilities() allows them. The
+ * handler still refuses the Anthropic-direct SDK for `openrouter:*` and
+ * auto-routes those jobs through `gateway.toolLoop()` — OR is not a native
+ * Anthropic provider. Other OR families stay refused until they get a live
+ * abort/retry pin (TODOS.md).
  */
 export const openrouter: Recipe = {
   id: 'openrouter',
@@ -240,8 +248,7 @@ export const openrouter: Recipe = {
         'deepseek/deepseek-chat',
       ],
       supports_tools: true,
-      // Enforced — classifyCapabilities() refuses the subagent tier on this flag.
-      supports_subagent_loop: false,
+      supports_subagent_loop: openrouterSupportsSubagentLoop,
       // Family-scoped: OpenAI routes cache automatically; Anthropic routes
       // cache via the compat fetch shim's cache_control rewrite.
       supports_prompt_cache: openrouterSupportsPromptCache,
