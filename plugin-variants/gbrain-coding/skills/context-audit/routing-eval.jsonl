@@ -1,0 +1,18 @@
+// Routing eval fixtures for skills/context-audit. Each positive intent
+// contains at least one trigger string as substring (structural matcher
+// requirement). Negatives guard the soul-audit boundary: identity CONTENT
+// routes to soul-audit; token/structure hygiene routes here.
+{"intent":"Run a context audit — my always-loaded files keep growing","expected_skill":"context-audit"}
+{"intent":"Do a system prompt audit and tell me what to cut","expected_skill":"context-audit"}
+{"intent":"Put my agent on a context diet, CLAUDE.md is enormous","expected_skill":"context-audit"}
+{"intent":"Can you reduce context size? The startup files feel bloated and contradictory","expected_skill":"context-audit"}
+{"intent":"Audit my context stack for redundancy and stale rules","expected_skill":"context-audit"}
+{"intent":"Time for some token hygiene — what's wasting tokens every turn?","expected_skill":"context-audit"}
+// Ambiguous: mentions an identity file, but the ask is size/structure, not persona content.
+{"intent":"SOUL.md got huge — audit my context stack and rank what to compress","expected_skill":"context-audit","ambiguous_with":["soul-audit"]}
+// Negative: identity CONTENT change — the interview owns this, not the token auditor.
+{"intent":"Re-run the identity interview, I want to change my agent's personality","expected_skill":"soul-audit","ambiguous_with":["context-audit"]}
+// Negative: install/runtime health, not context size.
+{"intent":"Check the brain and jobs — is everything still running fine?","expected_skill":"skillpack-check"}
+// Negative: adjacent (tokens) but out of scope — a one-off cost estimate, not an audit of the always-loaded stack.
+{"intent":"Estimate the token count of this single prompt before I send it","expected_skill":null}
