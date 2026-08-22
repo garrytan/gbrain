@@ -382,6 +382,10 @@ export async function createSealedPageTransactional(
   engine: BrainEngine,
   input: PreparedSealedPage,
 ): Promise<{ status: 'created' | 'matched'; receipt: SealedPageReceipt }> {
+  const receiptBeforeTransaction = await findReceipt(engine, input.operationId);
+  const verifiedBuildCommit = receiptBeforeTransaction === null
+    ? await serverBuildCommit()
+    : null;
   try {
     return await engine.transaction(async (tx) => {
       const existingReceipt = await findReceipt(tx, input.operationId);
@@ -432,7 +436,10 @@ export async function createSealedPageTransactional(
       }
 
       const committedAt = new Date().toISOString();
-      const buildCommit = await serverBuildCommit();
+      if (verifiedBuildCommit === null) {
+        throw new Error('sealed receipt disappeared before its identical retry');
+      }
+      const buildCommit = verifiedBuildCommit;
       const receiptId = receiptIdFor({
         protocol_version: CREATE_PAGE_PROTOCOL_VERSION,
         operation_id: input.operationId,

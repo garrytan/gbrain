@@ -16,11 +16,23 @@ declare const __GBRAIN_BUILD_COMMIT__: string | undefined;
 
 const GIT_SHA1_RE = /^[a-f0-9]{40}$/;
 const BUN_TAG_RE = /^(.+)-gbrain-([a-f0-9]{7,40})$/;
+const GITHUB_OWNER_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$/;
 const CACHE_NAME = '.gbrain-build-commit';
 let buildCommitForTests: string | null = null;
 let resolvedBuildCommit: string | null = null;
 
 type FetchCommit = (url: string) => Promise<Response>;
+
+function fetchGitHubCommit(url: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'gbrain-build-provenance',
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(10_000),
+  });
+}
 
 function assertExactCommit(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || !GIT_SHA1_RE.test(value)) {
@@ -67,6 +79,17 @@ function protectedExecutable(candidate: string, label: string): string {
   return executable;
 }
 
+function protectedGitCandidate(): string {
+  const systemCandidates = process.platform === 'win32'
+    ? []
+    : ['/usr/bin/git', '/opt/homebrew/bin/git', '/usr/local/bin/git'];
+  const candidate = systemCandidates.find((path) => {
+    try { return lstatSync(path).isFile(); } catch { return false; }
+  }) ?? which('git');
+  if (!candidate) throw new Error('Git is required to verify a source checkout');
+  return candidate;
+}
+
 function runGit(root: string, executable: string, args: string[]): string {
   const result = spawnSync(executable, ['-C', root, ...args], {
     encoding: 'utf8',
@@ -81,8 +104,7 @@ function runGit(root: string, executable: string, args: string[]): string {
 }
 
 export function resolveSourceCheckoutCommit(packageRoot: string, gitCandidate?: string): string {
-  const candidate = gitCandidate ?? which('git');
-  if (!candidate) throw new Error('Git is required to verify a source checkout');
+  const candidate = gitCandidate ?? protectedGitCandidate();
   const executable = protectedExecutable(candidate, 'Git');
   const status = runGit(packageRoot, executable, ['status', '--porcelain=v1', '--untracked-files=all']);
   if (status !== '') {
@@ -123,7 +145,7 @@ function cacheCommit(packageRoot: string, commit: string): void {
 
 export async function resolveInstalledBuildCommit(
   packageRoot: string,
-  fetchCommit: FetchCommit = fetch,
+  fetchCommit: FetchCommit = fetchGitHubCommit,
 ): Promise<string> {
   const cached = readCachedCommit(packageRoot);
   if (cached) return cached;
@@ -132,6 +154,9 @@ export async function resolveInstalledBuildCommit(
   const match = tag.match(BUN_TAG_RE);
   if (!match) throw new Error('Bun install lacks a verifiable GitHub commit tag');
   const [, owner, shortCommit] = match;
+  if (!GITHUB_OWNER_RE.test(owner)) {
+    throw new Error('Bun install has an invalid GitHub owner');
+  }
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/gbrain/commits/${shortCommit}`;
   const response = await fetchCommit(url);
   if (!response.ok) throw new Error(`GitHub could not resolve installed commit (${response.status})`);
