@@ -273,6 +273,9 @@ const fetch_page: Operation = {
   description: "Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). `id` is the page slug stamped on every `search` result. Returns { id, title, text, url, metadata } — `text` is the page's canonical markdown. For the richer gbrain-native read (fuzzy slugs, soft-delete recovery, lossless edit round-trips), use get_page.",
   params: {
     id: { type: 'string', required: true, description: 'Result id from a prior `search` call (= the page slug).' },
+    // #4329 parity with get_page: honor a per-call source_id (pre-fix it was
+    // silently dropped and the read scoped to ctx.sourceId only).
+    source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
     const id = p.id as string;
@@ -280,9 +283,10 @@ const fetch_page: Operation = {
       throw new OperationError('invalid_params', 'fetch requires a non-empty id', 'Pass the `id` field from a `search` result.');
     }
     const slug = id.trim();
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'fetch', { allowAll: true });
     // Same scope ladder as get_page's unqualified read: federated array >
     // scalar > nothing — a remote caller only fetches what its grant spans.
-    const sourceOpts = federatedSearchScope(ctx);
+    const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
     let page = await ctx.engine.getPage(slug, sourceOpts);
     // #4352 remediation: a `visibility: private` page reads as missing for
     // untrusted callers (same resolveExcludePrivatePages gate as get_page —
