@@ -326,13 +326,8 @@ export interface TakeHit {
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 
-/** v0.28 stale-takes row (mirrors StaleChunkRow shape). Embedding column intentionally omitted. */
-export interface StaleTakeRow {
-  take_id: number;
-  page_slug: string;
-  row_num: number;
-  claim: string;
-}
+import type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
+export type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
@@ -1708,6 +1703,9 @@ export interface BrainEngine {
    * for parser validation upstream.
    */
   addTakesBatch(rows: TakeBatchInput[], opts?: BatchOpts): Promise<number>;
+
+  /** Persist embeddings for active take rows; inactive rows are ignored. */
+  updateTakeEmbeddings(rows: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number>;
 
   /** List takes filtered by holder/kind/active/etc. Resolves page_slug via JOIN. */
   listTakes(opts?: TakesListOpts): Promise<Take[]>;

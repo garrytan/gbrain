@@ -20,6 +20,7 @@ import {
   resolveTakesRepoDir,
   TakesWriteError,
 } from '../takes-write.ts';
+import { embedQuery } from '../embedding.ts';
 
 // --- v0.28: Takes ---
 
@@ -207,6 +208,8 @@ const think: Operation = {
     const { runThink, persistSynthesis } = await import('../think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
+      // #3734: MCP think must populate the question vector for takes retrieval.
+      embedQuestion: (q) => embedQuery(q),
       anchor: p.anchor ? String(p.anchor) : undefined,
       rounds: typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
       save: safeSave,

@@ -10,6 +10,7 @@ type PgSql = ReturnType<typeof postgres>;
 import type {
   BatchOpts,
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
 } from '../engine.ts';
@@ -421,6 +422,52 @@ export async function listStaleTakes(deps: PgTakesDeps): Promise<StaleTakeRow[]>
     `;
     return rows as unknown as StaleTakeRow[];
   }
+
+export async function updateTakeEmbeddings(
+  deps: PgTakesDeps,
+  rowsIn: TakeEmbeddingInput[],
+  opts?: BatchOpts,
+): Promise<number> {
+  if (rowsIn.length === 0) return 0;
+  return deps.batchRetry(
+    opts?.auditSite ?? 'updateTakeEmbeddings',
+    opts?.signal,
+    () => _updateTakeEmbeddingsOnce(deps, rowsIn),
+    rowsIn.length,
+  );
+}
+
+async function _updateTakeEmbeddingsOnce(
+  deps: PgTakesDeps,
+  rowsIn: TakeEmbeddingInput[],
+): Promise<number> {
+  const seen = new Set<number>();
+  const rows = rowsIn.map(({ take_id, embedding }) => {
+    if (!Number.isInteger(take_id) || take_id <= 0) throw new Error(`invalid take_id: ${take_id}`);
+    if (seen.has(take_id)) throw new Error(`duplicate take_id in embedding batch: ${take_id}`);
+    seen.add(take_id);
+    const values = Array.from(embedding);
+    if (values.length === 0 || values.some(v => !Number.isFinite(v))) {
+      throw new Error(`invalid embedding for take_id=${take_id}`);
+    }
+    return { take_id, embedding: `[${values.join(',')}]` };
+  });
+  const result = await deps.executeRawJsonb(
+    `WITH updated AS (
+       UPDATE takes AS t
+          SET embedding = v.embedding::vector,
+              embedded_at = now(),
+              updated_at = now()
+         FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(take_id bigint, embedding text)
+        WHERE t.id = v.take_id AND t.active
+        RETURNING t.id
+     )
+     SELECT id FROM updated`,
+    [],
+    [{ rows }],
+  );
+  return result.length;
+}
 
 export async function updateTake(
   deps: PgTakesDeps,

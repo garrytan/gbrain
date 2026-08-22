@@ -6,7 +6,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
@@ -5263,6 +5263,8 @@ export class PostgresEngine implements BrainEngine {
   async listStaleTakes(): Promise<StaleTakeRow[]> {
     return takesImpl.listStaleTakes(this.takesDeps);
   }
+
+  async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> { return takesImpl.updateTakeEmbeddings(this.takesDeps, rowsIn, opts); }
 
   async updateTake(
     pageId: number,
