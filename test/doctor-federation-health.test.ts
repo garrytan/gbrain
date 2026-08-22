@@ -7,11 +7,13 @@
  *   fail  — lag > 24h, OR coverage < 50% with chunks > 1000
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway } from '../src/core/ai/gateway.ts';
 import { checkFederationHealth } from '../src/commands/doctor.ts';
 
 let engine: PGLiteEngine;
+let workerBackedEngine: BrainEngine;
 
 beforeAll(async () => {
   // Pin the legacy OpenAI/1536 embedding shape BEFORE initSchema builds the
@@ -29,6 +31,13 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  workerBackedEngine = new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'kind') return 'postgres';
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as BrainEngine;
 }, 30000);
 
 afterAll(async () => {
@@ -102,7 +111,11 @@ describe('checkFederationHealth', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('uncovered');
     expect(check.message).toContain('embed coverage');
-    expect(check.message).toContain('gbrain jobs submit embed-backfill');
+    expect(check.message).toContain('gbrain embed --stale --source uncovered');
+    expect(check.message).not.toContain('gbrain jobs submit embed-backfill');
+
+    const workerBackedCheck = await checkFederationHealth(workerBackedEngine);
+    expect(workerBackedCheck.message).toContain('gbrain jobs submit embed-backfill');
   });
 
   test('synced + zero pages → ok (vacuous truth, no coverage warn)', async () => {

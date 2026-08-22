@@ -11,6 +11,12 @@ import type { Operation, OperationContext } from './contract.ts';
 import { OperationError } from './contract.ts';
 import { normalizeSlugPrefix } from './context.ts';
 import { hasScope } from '../scope.ts';
+import {
+  assertEmbedBackfillQueueAdmission,
+  embedBackfillManualDrainCommand,
+  InvalidEmbedBackfillSourceIdError,
+  NoEmbedBackfillWorkerSurfaceError,
+} from '../minions/embed-backfill-admission.ts';
 
 // --- Jobs (Minions) ---
 
@@ -81,6 +87,28 @@ const submit_job: Operation = {
   scope: 'admin',
   handler: async (ctx, p) => {
     const name = typeof p.name === 'string' ? p.name.trim() : '';
+    const jobData = (p.data as Record<string, unknown>) || {};
+    const translateAdmissionError = (e: unknown): never => {
+      if (e instanceof InvalidEmbedBackfillSourceIdError) {
+        throw new OperationError('invalid_params', e.message);
+      }
+      if (e instanceof NoEmbedBackfillWorkerSurfaceError) {
+        throw new OperationError(
+          'no_worker_surface',
+          e.message,
+          `Run \`${embedBackfillManualDrainCommand(e.sourceId)}\` to drain embeddings inline.`,
+        );
+      }
+      throw e;
+    };
+
+    // Dry-run is a feasibility preview, not an admission bypass. Evaluate the
+    // read-only worker-surface gate before returning so MCP and CLI agree.
+    try {
+      assertEmbedBackfillQueueAdmission(ctx.engine, name, jobData);
+    } catch (e) {
+      translateAdmissionError(e);
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name };
 
     // Submit-side MCP guard: reject protected job names from untrusted callers
@@ -103,8 +131,6 @@ const submit_job: Operation = {
     // name. Strict `=== false` so an untyped/cast context can't escalate.
     const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
 
-    const jobData = (p.data as Record<string, unknown>) || {};
-
     // v0.35.8.0: pre-enqueue shell-job validation, parity with the CLI submit
     // path. Closes the bug class where shell.ts handler-time validation ran
     // AFTER queue.add() persisted the row (codex F-CDX-1). Note: this branch
@@ -117,17 +143,23 @@ const submit_job: Operation = {
       validateShellJobParams(jobData);
     }
 
-    const job = await queue.add(name, jobData, {
-      queue: (p.queue as string) || 'default',
-      priority: (p.priority as number) || 0,
-      max_attempts: (p.max_attempts as number) || 3,
-      delay: (p.delay as number) || undefined,
-      timeout_ms: (p.timeout_ms as number) || undefined,
-      // #4145 [CEO-F7/R2-6]: range enforcement lives in queue.add's
-      // clampLockDurationMs (ParamDef has no min/max support; wrong TYPE is
-      // rejected by the shared number validation upstream of this handler).
-      lock_duration_ms: (p.lock_duration_ms as number) || undefined,
-    }, trusted);
+    const job = await (async () => {
+      try {
+        return await queue.add(name, jobData, {
+          queue: (p.queue as string) || 'default',
+          priority: (p.priority as number) || 0,
+          max_attempts: (p.max_attempts as number) || 3,
+          delay: (p.delay as number) || undefined,
+          timeout_ms: (p.timeout_ms as number) || undefined,
+          // #4145 [CEO-F7/R2-6]: range enforcement lives in queue.add's
+          // clampLockDurationMs (ParamDef has no min/max support; wrong TYPE is
+          // rejected by the shared number validation upstream of this handler).
+          lock_duration_ms: (p.lock_duration_ms as number) || undefined,
+        }, trusted);
+      } catch (e) {
+        return translateAdmissionError(e);
+      }
+    })();
 
     // v0.35.8.0: submit_job audit-log parity with the CLI path (codex F-CDX-4).
     // Pre-v0.35.8.0 the op handler bypassed the shell-audit JSONL writer

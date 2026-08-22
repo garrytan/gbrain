@@ -27,7 +27,6 @@ import {
   buildDetachedWorkingTreeManifest,
 } from '../core/sync-delta.ts';
 import { CHUNKER_VERSION } from '../core/chunkers/code.ts';
-import { willEmbedSynchronously } from '../core/embedding.ts';
 import type { SyncManifest } from '../core/sync.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -80,7 +79,14 @@ import { AbortError } from '../core/abort-check.ts';
 // below also has a re-export block at its original site in this file so
 // existing importers keep working; these imports are the symbols the code
 // remaining here still uses directly.
-import { runInlineCostGate } from '../core/sync-cost-gate.ts';
+import {
+  buildSingleSyncJsonEnvelope,
+  formatSyncEmbedBackfillOutcome,
+  resolveSingleSyncEmbedPlan,
+  resolveSyncAllEmbedPlan,
+  resolveSyncEmbedBackfill,
+  type SyncEmbedBackfillOutcome,
+} from '../core/sync-embed-backfill.ts';
 import {
   git,
   isPathSafe,
@@ -228,6 +234,7 @@ export interface SyncResult {
   chunksCreated: number;
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
+  embedDeferralReason?: 'large_sync';
   pagesAffected: string[];
   failedFiles?: number; // count of parse failures (Bug 9)
   /**
@@ -2729,6 +2736,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     chunksCreated,
     embedded,
     pagesAffected,
+    ...(totalChanges > 100 && embedSlugs.length > 0 ? { embedDeferralReason: 'large_sync' as const } : {}),
     malformedSkipped: malformedSkipped.length,
     ...(typeWarningsEnabled && typeWarnings.length > 0 ? { type_warnings: typeWarnings } : {}),
   };
@@ -3546,23 +3554,6 @@ See also:
     const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
     const v2Enabled = await isFederatedV2Enabled(engine);
 
-    // v0.42.42.0 (#2139) cost gate — shared `runInlineCostGate`. Under
-    // federated_v2 + parallel, embedding is DEFERRED to per-source backfill
-    // jobs (own spend cap) so the gate is FYI-only. Inline mode (v2 off, or
-    // --serial without --no-embed) gates on the DELTA estimate: below floor
-    // proceeds; above floor in a non-TTY/--json session AUTO-DEFERS embeds
-    // (exit 0, never exit 2 — the wedged-cron fix); a TTY prompts. Skipped
-    // entirely when --no-embed is set.
-    let autoDeferEmbeds = false;
-    if (!noEmbed) {
-      const mode = willEmbedSynchronously({ v2Enabled, serialFlag, noEmbed });
-      const gate = await runInlineCostGate(engine, {
-        sources, mode, dryRun, jsonOut, yesFlag, full, includeGitignored, label: 'sync --all',
-      });
-      if (gate.action === 'stop') return;
-      autoDeferEmbeds = gate.autoDeferEmbeds;
-    }
-
     // v0.40.5.0 Federated Sync v2 (master) + v0.40.6.0 layering (this branch):
     // master added parallel fan-out via pMapAllSettled, embed-backfill auto-
     // submit, --serial / --max-sources / --no-auto-embed flags, and feature-
@@ -3627,6 +3618,20 @@ See also:
       return;
     }
 
+    // v0.42.42.0 (#2139) cost gate — shared with single-source sync. Above
+    // the floor, non-interactive runs keep importing (never exit 2), but the
+    // delivery statement is capability-aware: background queue only when a
+    // worker can drain it, otherwise an exact manual command.
+    const embedPlan = await resolveSyncAllEmbedPlan(engine, runnableSources, {
+      v2Enabled, serialFlag, noEmbed, noAutoEmbed, dryRun, jsonOut, yesFlag, full, includeGitignored,
+    });
+    if (embedPlan.stop) return;
+    const {
+      workerSurface: backfillSurface, fanOutEligible, effectiveNoEmbed, shouldBackfill,
+    } = embedPlan;
+
+    const embedBackfillBySource = new Map<string, SyncEmbedBackfillOutcome>();
+
     // Per-source result accumulator for the optional --json envelope.
     type PerSourceResult = {
       sourceId: string;
@@ -3655,13 +3660,8 @@ See also:
 
     const runOne = async (src: typeof sources[number]): Promise<SyncResult> => {
       const cfg = (src.config || {}) as { strategy?: 'markdown' | 'code' | 'auto' };
-      // D18: parallel path defers embed; auto-enqueue embed-backfill after.
-      // v0.42.42.0 (#2139): `autoDeferEmbeds` (the inline gate tripped in a
-      // non-TTY session) ALSO forces deferral — global by design (the gate's
-      // decision unit is the aggregate estimate; deferral strictly dominates
-      // the exit-2 it replaced for every source).
-      const effectiveNoEmbed =
-        (v2Enabled && !serialFlag && !noEmbed ? true : noEmbed) || autoDeferEmbeds;
+      // D18/#2139: planned fan-out or a cost-gate auto-defer skips inline
+      // embedding; the post-run delivery below reports/queues each source.
       // v0.41.13.0 (T6 / D-V3-3 / D-V4-mech-6) — per-source AbortController.
       //
       // When the user passes --timeout, each source gets its OWN
@@ -3721,40 +3721,31 @@ See also:
       ) {
         manageGitignoreAtGitRoot(src.local_path!, engine.kind);
       }
-      // D18: auto-enqueue embed-backfill per source (unless opted out).
-      // v0.41.13.0 (T7 / D-V3-5): partial excluded — the next clean sync
-      // re-walks the diff and re-decides whether to enqueue embed for
-      // pages whose content actually changed.
-      // v0.42.42.0 (#2139): `autoDeferEmbeds` enqueues even on the v2-OFF
-      // legacy path — otherwise the gate's auto-defer would strand
-      // NULL-embedded chunks with no queued job to embed them.
+      // Deliver planned or intrinsic >100-file deferrals. Intrinsic delivery
+      // is v2-only on worker-backed engines; no-worker engines still need a
+      // manual outcome. This preserves the worker-backed v2-off rollback.
       if (
-        (v2Enabled || autoDeferEmbeds) &&
-        !noAutoEmbed &&
+        (shouldBackfill || (
+          result.embedDeferralReason === 'large_sync' &&
+          (v2Enabled || backfillSurface.status === 'no_worker_surface')
+        )) &&
         !dryRun &&
         result.status !== 'dry_run' &&
         result.status !== 'up_to_date' &&
         result.status !== 'partial'
       ) {
         try {
-          const { submitEmbedBackfill } = await import('../core/embed-backfill-submit.ts');
-          const sub = await submitEmbedBackfill(engine, src.id, { reason: 'sync_all' });
-          if (sub.status === 'submitted') {
-            writeHuman(`  → embed-backfill job ${sub.jobId} queued for ${src.name}`);
-          } else if (sub.status === 'cooldown') {
-            writeHuman(`  → embed-backfill skipped (cooldown) for ${src.name}`);
-          } else if (sub.status === 'spend_capped') {
-            writeHuman(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd}) for ${src.name}`);
-          }
+          const outcome = await resolveSyncEmbedBackfill(engine, src.id, {
+            reason: 'sync_all', autoSubmitDisabled: noAutoEmbed,
+          });
+          embedBackfillBySource.set(src.id, outcome);
+          writeHuman(`  → ${formatSyncEmbedBackfillOutcome(outcome, src.name)}`);
         } catch (e) {
           process.stderr.write(`  → embed-backfill submission failed for ${src.name}: ${e instanceof Error ? e.message : String(e)}\n`);
         }
       }
       return result;
     };
-
-    const parallelEligible =
-      v2Enabled && !serialFlag && engine.kind !== 'pglite' && runnableSources.length > 1;
 
     // v0.42.42.0 (#2139, D13C): the v0.40.6.0 (D15) refusal of --skip-failed /
     // --retry-failed under parallel sync is LIFTED. It existed because the
@@ -3767,13 +3758,13 @@ See also:
     // Effective parallelism — surfaced in the --json envelope so consumers
     // know how the run was actually dispatched. 1 in the serial fallback,
     // capped at min(sourceCount, --max-sources, 8) in the parallel path.
-    const effectiveParallel = parallelEligible
+    const effectiveParallel = fanOutEligible
       ? Math.min(runnableSources.length, maxSources ?? 8)
       : 1;
 
     process.on('SIGINT', onAllSigint);
     try {
-    if (parallelEligible) {
+    if (fanOutEligible) {
       const { pMapAllSettled } = await import('../core/parallel.ts');
       const cap = effectiveParallel;
 
@@ -3880,6 +3871,9 @@ See also:
             ...(r.result.type_warnings ? { type_warnings: r.result.type_warnings } : {}),
           } : {}),
           ...(r.error ? { error: r.error } : {}),
+          ...(embedBackfillBySource.has(r.sourceId)
+            ? { embed_backfill: embedBackfillBySource.get(r.sourceId) }
+            : {}),
         }));
       console.log(JSON.stringify({
         schema_version: 1,
@@ -3938,22 +3932,25 @@ See also:
   // the gate can never wedge an existing cron; it converts silent ungated
   // inline spend into informed inline-or-deferred spend.
   let singleSourceAutoDefer = false;
+  let singleSourceNoWorkerSurface = false;
   if (!noEmbed && !dryRun && !watch) {
     const gateRows = await engine.executeRaw<{ local_path: string | null; config: Record<string, unknown>; last_commit: string | null; chunker_version: string | null }>(
       `SELECT local_path, config, last_commit, chunker_version FROM sources WHERE id = $1`,
       [sourceId],
     );
     if (gateRows.length > 0) {
-      const gateSources = [{
+      const gate = await resolveSingleSyncEmbedPlan(engine, {
+        sourceId,
         local_path: gateRows[0].local_path ?? repoPath ?? null,
         config: gateRows[0].config ?? {},
         last_commit: gateRows[0].last_commit,
         chunker_version: gateRows[0].chunker_version,
-      }];
-      const gate = await runInlineCostGate(engine, {
-        sources: gateSources, mode: 'inline', dryRun: false, jsonOut, yesFlag, full, includeGitignored, label: 'sync',
+      }, {
+        dryRun: false,
+        jsonOut, yesFlag, full, includeGitignored, noAutoEmbed,
       });
-      if (gate.action === 'stop') return;
+      singleSourceNoWorkerSurface = gate.workerSurface.status === 'no_worker_surface';
+      if (gate.stop) return;
       if (gate.autoDeferEmbeds) {
         opts.noEmbed = true;
         singleSourceAutoDefer = true;
@@ -3989,7 +3986,7 @@ See also:
       if (singleSourceTimer !== undefined) clearTimeout(singleSourceTimer);
       process.off('SIGINT', onSingleSourceSigint);
     }
-    printSyncResult(result);
+    printSyncResult(result, jsonOut ? process.stderr : process.stdout);
     // #3068: a pull_failed partial is NOT a success — unlike timeout-class
     // partials (which converge on retry), a failing pull will not self-heal.
     // Exit non-zero so cron/monitoring sees the wedge instead of a green run.
@@ -4025,23 +4022,26 @@ See also:
     // v0.42.42.0 (#2139, Step 4b): the inline gate auto-deferred this run's
     // embeds (non-TTY, above floor) — enqueue a capped backfill job so the
     // NULL-embedded chunks get embedded out of band instead of being stranded.
+    let singleEmbedBackfill: SyncEmbedBackfillOutcome | undefined;
     if (
-      singleSourceAutoDefer &&
+      (singleSourceAutoDefer || (
+        singleSourceNoWorkerSurface && result.embedDeferralReason === 'large_sync'
+      )) &&
       result.status !== 'dry_run' &&
       result.status !== 'up_to_date' &&
       result.status !== 'partial'
     ) {
       try {
-        const { submitEmbedBackfill } = await import('../core/embed-backfill-submit.ts');
-        const sub = await submitEmbedBackfill(engine, sourceId, { reason: 'sync_autodefer' });
-        if (sub.status === 'submitted') {
-          process.stderr.write(`  → embed-backfill job ${sub.jobId} queued (deferred inline embed).\n`);
-        } else if (sub.status === 'cooldown') {
-          process.stderr.write(`  → embed-backfill skipped (cooldown); run \`gbrain embed --stale\` to drain now.\n`);
-        }
+        singleEmbedBackfill = await resolveSyncEmbedBackfill(engine, sourceId, {
+          reason: 'sync_autodefer', autoSubmitDisabled: noAutoEmbed,
+        });
+        process.stderr.write(`  → ${formatSyncEmbedBackfillOutcome(singleEmbedBackfill)}.\n`);
       } catch (e) {
         process.stderr.write(`  → embed-backfill submission failed: ${e instanceof Error ? e.message : String(e)}\n`);
       }
+    }
+    if (jsonOut) {
+      console.log(JSON.stringify(buildSingleSyncJsonEnvelope(sourceId, result, singleEmbedBackfill)));
     }
     return;
   }
@@ -4446,9 +4446,9 @@ async function maybeExtractionNudge(engine: BrainEngine, sourceId?: string): Pro
  * Render a SyncResult to a Writable sink.
  *
  * `sink` defaults to `process.stdout` so existing single-source callers
- * see identical output. The `--all` parallel path passes `process.stderr`
- * when `--json` is set, so banners stay off stdout and the JSON envelope
- * pipes cleanly through `jq` (D4).
+ * see identical output. The `--all` and single-source paths pass
+ * `process.stderr` when `--json` is set, so banners stay off stdout and the
+ * JSON envelope pipes cleanly through `jq` (D4).
  */
 export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = process.stdout) {
   const write = (line: string) => sink.write(line + '\n');

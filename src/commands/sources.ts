@@ -1009,7 +1009,6 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   try {
     const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
     if (!(await isFederatedV2Enabled(engine))) return;
-
     const { loadAllSources } = await import('../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../core/source-health.ts');
     const sources = await loadAllSources(engine, { includeArchived: false });
@@ -1026,7 +1025,9 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       console.log(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       console.log(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
-    }
+    } else if (sub.status === 'no_worker_surface') {
+      console.log(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
+    } else { sub satisfies never; }
   } catch (err) {
     // Federation flip already succeeded; embed-backfill is a follow-up nicety.
     console.error(`  → embed-backfill submission failed (flip succeeded): ${err instanceof Error ? err.message : String(err)}`);

@@ -193,9 +193,9 @@ export function currentEmbeddingSignature(): string | null {
 export type SyncEmbedMode = 'deferred' | 'inline';
 
 /**
- * Resolve the embed mode from the same three signals sync.ts uses to
- * compute `effectiveNoEmbed`. Single source of truth so the cost gate and
- * the actual embed decision can never drift.
+ * Resolve the embed mode from the original public v2/serial contract.
+ * `./embedding` is a package export, so keep this call shape stable for
+ * downstream TypeScript and JavaScript consumers.
  *
  *   effectiveNoEmbed = v2Enabled && !serialFlag && !noEmbed ? true : noEmbed
  *
@@ -213,6 +213,15 @@ export function willEmbedSynchronously(opts: {
 }): SyncEmbedMode {
   const effectiveNoEmbed =
     opts.v2Enabled && !opts.serialFlag && !opts.noEmbed ? true : opts.noEmbed;
+  return effectiveNoEmbed ? 'deferred' : 'inline';
+}
+
+/** Internal worker-capability-aware mode used by the sync command boundary. */
+export function resolveWorkerBackedSyncEmbedMode(opts: {
+  deferEligible: boolean;
+  noEmbed: boolean;
+}): SyncEmbedMode {
+  const effectiveNoEmbed = opts.deferEligible || opts.noEmbed;
   return effectiveNoEmbed ? 'deferred' : 'inline';
 }
 
