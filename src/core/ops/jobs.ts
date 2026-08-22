@@ -10,8 +10,59 @@
 import type { Operation, OperationContext } from './contract.ts';
 import { OperationError } from './contract.ts';
 import { normalizeSlugPrefix } from './context.ts';
+import { hasScope } from '../scope.ts';
 
 // --- Jobs (Minions) ---
+
+/**
+ * #4098 — agent-lane ownership fence for the generic jobs ops.
+ *
+ * get_job / list_jobs / get_job_progress / cancel_job are `scope: 'admin'`
+ * ops that gained `agentCallable: true` so an agent-scoped OAuth client can
+ * monitor + cancel the jobs it submitted via submit_agent — WITHOUT admin.
+ * Returns the owner client id to fence on, or null when the caller is
+ * unfenced (full visibility):
+ *
+ *   - trusted local CLI (ctx.remote === false): unfenced (today's behavior)
+ *   - token with admin scope: unfenced (satisfied the op's declared scope)
+ *   - stdio MCP (remote, transport 'stdio', no per-token auth): unfenced —
+ *     the local-pipe surface ceiling governs there, same posture as today
+ *   - anything else (the agentCallable carve-out, i.e. agent scope without
+ *     admin): MUST carry ctx.auth.clientId; fenced on
+ *     `data->>'__owner_client_id'`. Missing identity → permission_denied
+ *     (fail closed, mirroring get_agent_job).
+ */
+function agentOwnerFence(ctx: OperationContext, opName: string): string | null {
+  if (ctx.remote === false) return null;
+  const scopes = ctx.auth?.scopes;
+  if (scopes && hasScope(scopes, 'admin')) return null;
+  if (!ctx.auth && ctx.transport === 'stdio') return null;
+  const clientId = ctx.auth?.clientId;
+  if (!clientId || typeof clientId !== 'string') {
+    throw new OperationError(
+      'permission_denied',
+      `${opName} without admin scope requires an authenticated OAuth client identity.`,
+      'Call over HTTP MCP with an `agent`-scoped token, or use an admin-scope token for unfenced access.',
+    );
+  }
+  return clientId;
+}
+
+/**
+ * #4098 — SQL-side ownership check (the get_agent_job predicate, uniform
+ * not-found). Foreign-owned and nonexistent ids are indistinguishable by
+ * design (anti-enumeration): both throw the SAME error the unfenced path
+ * throws for a missing id.
+ */
+async function assertJobOwned(ctx: OperationContext, id: number, owner: string): Promise<void> {
+  const rows = await ctx.engine.executeRaw<{ id: number }>(
+    `SELECT id FROM minion_jobs WHERE id = $1 AND data->>'__owner_client_id' = $2`,
+    [id, owner],
+  );
+  if (rows.length === 0) {
+    throw new OperationError('invalid_params', `Job not found: ${id}`);
+  }
+}
 
 const submit_job: Operation = {
   name: 'submit_job',
@@ -108,7 +159,7 @@ const submit_job: Operation = {
     // Amendments 24/25: post-enqueue queue-state probe (time-bounded,
     // fail-open). The job is already persisted; a probe failure degrades to
     // {probe_failed: true}, never an error on a successful submission.
-    return { ...job, queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
+    return { ...job, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]', queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
   },
 };
 
@@ -488,23 +539,28 @@ const get_agent_job: Operation = {
 
 const get_job: Operation = {
   name: 'get_job',
-  description: 'Get job status and details by ID',
+  description: 'Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
   scope: 'admin',
+  agentCallable: true,
   handler: async (ctx, p) => {
+    const owner = agentOwnerFence(ctx, 'get_job');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const job = await queue.getJob(p.id as number);
     if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
-    return job;
+    // private_queue_owner_token is a capability credential (lease renewal /
+    // attach), not job data — never expose it over MCP envelopes.
+    return { ...job, private_queue_owner_token: job.private_queue_owner_token == null ? null : '[redacted]' };
   },
 };
 
 const list_jobs: Operation = {
   name: 'list_jobs',
-  description: 'List jobs with optional filters',
+  description: 'List jobs with optional filters. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
     status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
     queue: { type: 'string', description: 'Filter by queue name' },
@@ -512,31 +568,43 @@ const list_jobs: Operation = {
     limit: { type: 'number', description: 'Max results (default: 50)' },
   },
   scope: 'admin',
+  agentCallable: true,
   handler: async (ctx, p) => {
+    const owner = agentOwnerFence(ctx, 'list_jobs');
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    return queue.getJobs({
+    const jobs = await queue.getJobs({
       status: p.status as string | undefined,
       queue: p.queue as string | undefined,
       name: p.name as string | undefined,
       limit: (p.limit as number) || 50,
+      // #4098: SQL-side ownership fence for agent-scoped callers.
+      ...(owner !== null ? { ownerClientId: owner } : {}),
     } as Parameters<typeof queue.getJobs>[0]);
+    // private_queue_owner_token is a capability credential (lease renewal /
+    // attach), not job data — never expose it over MCP envelopes.
+    return jobs.map(j => ({ ...j, private_queue_owner_token: j.private_queue_owner_token == null ? null : '[redacted]' }));
   },
 };
 
 const cancel_job: Operation = {
   name: 'cancel_job',
-  description: 'Cancel a waiting, active, or delayed job',
+  description: 'Cancel a waiting, active, or delayed job. Agent-scoped tokens (no admin) can cancel only jobs they own.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
   mutating: true,
   scope: 'admin',
+  agentCallable: true,
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'cancel_job', id: p.id };
+    const owner = agentOwnerFence(ctx, 'cancel_job');
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    const cancelled = await queue.cancelJob(p.id as number);
+    // #4098: the owner predicate rides the recursive cancel's CTE seed — a
+    // fenced caller can cancel only roots it owns (descendants of an owned
+    // root cascade as usual). Foreign and missing ids share one envelope.
+    const cancelled = await queue.cancelJob(p.id as number, owner !== null ? { ownerClientId: owner } : undefined);
     if (!cancelled) throw new OperationError('invalid_params', `Cannot cancel job ${p.id} (may already be in terminal status)`);
     return cancelled;
   },
@@ -562,12 +630,15 @@ const retry_job: Operation = {
 
 const get_job_progress: Operation = {
   name: 'get_job_progress',
-  description: 'Get structured progress for a running job',
+  description: 'Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.',
   params: {
     id: { type: 'number', required: true, description: 'Job ID' },
   },
   scope: 'admin',
+  agentCallable: true,
   handler: async (ctx, p) => {
+    const owner = agentOwnerFence(ctx, 'get_job_progress');
+    if (owner !== null) await assertJobOwned(ctx, p.id as number, owner);
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
     const job = await queue.getJob(p.id as number);
@@ -660,6 +731,9 @@ const get_job_stats: Operation = {
     '(unfiltered); by_type is windowed by since_hours; only the wedge block is scoped to ' +
     'the queue param. wedged: true is the silent-halt signal (a worker is alive but claiming ' +
     'nothing while work waits) — suggest restarting the jobs supervisor on the brain host. ' +
+    'private_queue: true means the queue is a parent-owned dream-inline queue: wedged is ' +
+    'NEVER true for it and a worker restart cannot help — recovery runs automatically at ' +
+    'worker spawn / dream-cycle start; suggest gbrain doctor for the per-queue verdict. ' +
     'Host-process diagnostics (renice, backpressure hints) stay on the gbrain jobs stats CLI.',
   params: {
     queue: { type: 'string', required: false, description: "Queue for the wedge signature (default 'default'). The other blocks stay global/windowed." },
@@ -678,8 +752,10 @@ const get_job_stats: Operation = {
         since: new Date(Date.now() - hours * 3_600_000),
         queue: typeof p.queue === 'string' && p.queue.length > 0 ? p.queue : 'default',
       });
-      const { wedged, wedge_threshold_minutes } = deriveWedgeSignal(stats.wedge);
-      return { schema_version: 1, window_hours: hours, ...stats, wedged, wedge_threshold_minutes };
+      const { wedged, wedge_threshold_minutes, private_queue } = deriveWedgeSignal(stats.wedge);
+      // private_queue tells the MCP consumer "restart the worker" is dead-end
+      // advice for this queue — it is parent-owned and needs reconciliation.
+      return { schema_version: 1, window_hours: hours, ...stats, wedged, wedge_threshold_minutes, private_queue };
     }, 'Job queue statistics (minions schema)');
   },
 };

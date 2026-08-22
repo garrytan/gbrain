@@ -236,8 +236,18 @@ export interface HotPage {
   max_severity: Severity;
 }
 
+/**
+ * #3889: run-level status. 'judge_failed' when the run produced no verdicts
+ * at all (verdict_breakdown sums to 0) while judge_errors.total > 0 — every
+ * judge call errored, so the "0 contradictions" headline would be a lie.
+ * Optional (append-only): reports persisted before this field lack it.
+ */
+export type RunStatus = 'ok' | 'judge_failed';
+
 export interface ProbeReport {
   schema_version: typeof SCHEMA_VERSION;
+  /** #3889: absent on pre-field persisted rows; treat absent as 'ok'. */
+  run_status?: RunStatus;
   run_id: string;
   judge_model: string;
   prompt_version: string;

@@ -214,6 +214,18 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
 });
 
 describe('#3037 — cost bounding: no per-chunk fan-out on transient failures', () => {
+  // #3796: sustained-429 exhaustion now deliberately spans a rolling TPM
+  // minute (~120s of floors); shrink the ladder so these tests stay fast
+  // while still exercising every retry.
+  beforeEach(async () => {
+    const { _setRateLimitFloorsForTests } = await import('../src/commands/embed.ts');
+    _setRateLimitFloorsForTests([1, 1, 1, 1, 1]);
+  });
+  afterEach(async () => {
+    const { _setRateLimitFloorsForTests } = await import('../src/commands/embed.ts');
+    _setRateLimitFloorsForTests(null);
+  });
+
   test('sustained 429 does not fan out into single-chunk calls', async () => {
     embedBatchBehavior = async () => {
       const err = new Error('Rate limit reached. Please try again in 0ms.');

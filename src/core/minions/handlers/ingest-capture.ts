@@ -37,7 +37,7 @@ import { importFromContent } from '../../import-file.ts';
 
 export interface IngestCaptureResult {
   slug: string;
-  status: 'imported' | 'skipped' | 'error';
+  status: 'imported' | 'skipped' | 'deleted' | 'error';
   chunks: number;
   untrusted_payload: boolean;
   source_kind: string;
@@ -70,10 +70,14 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       throw new Error(`ingest_capture: invalid event payload: ${validationErr.message}`);
     }
 
-    // Slug resolution.
+    // Slug resolution. #3756 added the top-level event.slug (required for
+    // tombstones, optional upsert hint) between the caller-provided job slug
+    // and the legacy metadata.slug channel.
     let slug: string;
     if (typeof data.slug === 'string' && data.slug.length > 0) {
       slug = data.slug;
+    } else if (typeof event.slug === 'string' && event.slug.length > 0) {
+      slug = event.slug;
     } else if (
       event.metadata &&
       typeof (event.metadata as Record<string, unknown>).slug === 'string'
@@ -99,7 +103,26 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       event.content_type === 'application/json' ||
       event.content_type === 'unknown';
 
-    if (!isText) {
+    // #3756: tombstones carry no importable content — they name a page to
+    // delete. Content-type gating below is an import concern; skip it.
+    const isTombstone = event.kind === 'tombstone';
+
+    if (isTombstone && event.untrusted_payload !== false) {
+      // Trusted-source gate: an untrusted channel (webhook payload, URL
+      // fetcher) must never be able to delete pages. FAIL-CLOSED: deletes
+      // require the EXPLICIT trusted marker (untrusted_payload: false) —
+      // rejecting only `=== true` left an omitted flag treated as trusted,
+      // so any emitter that forgot the field could tombstone pages. Fail
+      // the job loud so the attempt is visible in the jobs ledger, not
+      // silently dropped.
+      throw new Error(
+        'ingest_capture: refusing tombstone without an explicit trusted marker — ' +
+          'deletes are only honored from trusted local emitters that set ' +
+          'untrusted_payload: false on the event',
+      );
+    }
+
+    if (!isText && !isTombstone) {
       // Binary content without a processor would land as a path-string
       // page, which isn't useful. Surface as job-level error so the
       // operator sees the gap in `gbrain doctor` and can decide whether
@@ -171,6 +194,29 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
         [event.source_id],
       );
       if (rows.length > 0) sourceId = event.source_id;
+    }
+
+    // #3756: tombstone → reconciler-style soft-delete (deleted_at stamp, page
+    // restorable), scoped to the resolved source — never unscoped, so a
+    // same-slug page in another source is untouched. Idempotent: a missing or
+    // already-deleted page reports 'skipped'.
+    if (isTombstone) {
+      const deleted = await engine.softDeletePage(slug, { sourceId: sourceId ?? 'default' });
+      if (sourceFallback) {
+        console.error(
+          `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
+            `(${sourceFallback.reason}); tombstone applied under default`,
+        );
+      }
+      return {
+        slug,
+        status: deleted ? 'deleted' : 'skipped',
+        chunks: 0,
+        untrusted_payload: untrustedPayload,
+        source_kind: event.source_kind,
+        source_uri: event.source_uri,
+        ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
+      };
     }
 
     // Shared across the write and its FK-violation retry so provenance can't

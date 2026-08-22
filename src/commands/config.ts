@@ -309,13 +309,23 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const isKnown = KNOWN_CONFIG_KEYS.includes(key);
       const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
       if (!isKnown && !matchesPrefix) {
-        const { suggestNearest } = await import('../core/levenshtein.ts');
-        const suggestion = suggestNearest(key, KNOWN_CONFIG_KEYS, 3);
         console.error(`[config] Unknown config key "${key}".`);
-        if (suggestion) {
-          console.error(`[config] Did you mean "${suggestion}"?`);
+        // #3748: `budget.*` (e.g. budget.daily_cap_usd) appeared once in old
+        // release notes but was never registered and has NO readers — a
+        // --force write would set a "cap" that caps nothing, which for a
+        // spend control is worse than a rejection. Route the operator to the
+        // controls that actually exist.
+        if (key === 'budget' || key.startsWith('budget.')) {
+          console.error(`[config] budget.* keys are not live controls — nothing in gbrain reads them, so a cap written here caps nothing.`);
+          console.error(`[config] The live spend controls are \`gbrain config set spend.posture <gated|tokenmax>\` and the per-command gates in docs/operations/spend-controls.md.`);
         } else {
-          console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+          const { suggestNearest } = await import('../core/levenshtein.ts');
+          const suggestion = suggestNearest(key, KNOWN_CONFIG_KEYS, 3);
+          if (suggestion) {
+            console.error(`[config] Did you mean "${suggestion}"?`);
+          } else {
+            console.error(`[config] No similar known key. Run \`gbrain config show\` to see currently-set keys.`);
+          }
         }
         console.error(`[config] If this is intentional (downstream tooling, forward-compat), re-run with --force.`);
         process.exit(1);
@@ -327,6 +337,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const matchesPrefix = KNOWN_CONFIG_KEY_PREFIXES.some(p => key.startsWith(p));
       if (!isKnown && !matchesPrefix) {
         console.error(`[config] WARN: writing unknown key "${key}" with --force. Nothing in gbrain reads this.`);
+        if (key === 'budget' || key.startsWith('budget.')) {
+          // #3748: an operator who believes this caps spend has NO cap at all.
+          console.error(`[config] WARN: budget.* is NOT a spend cap — the live controls are spend.posture + docs/operations/spend-controls.md.`);
+        }
       }
     }
 

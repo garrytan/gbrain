@@ -1,5 +1,55 @@
 # TODOS
 
+## Daemon env-file lane follow-ups (#2608 / #4443 takeover, filed 2026-08-21)
+
+- [ ] **P3 — Fix the stale `config set` DB-plane claim in the install docs.**
+  **What:** `INSTALL_FOR_AGENTS.md` and `docs/INSTALL.md` say `gbrain config set`
+  "writes the DB plane, which the provider pipeline never reads" — but
+  `src/commands/config.ts` (FILE_PLANE_API_KEYS, ~line 259) routes API keys to
+  the file plane (routed, not refused), which `mergedProviderEnv` folds.
+  **Why:** the docs teach a prohibition whose stated rationale is no longer
+  true; either document the routing or remove the scare. **Where to start:**
+  `src/commands/config.ts` FILE_PLANE_API_KEYS; both install docs; regen
+  `bun run build:llms`. **Effort:** S.
+
+- [ ] **P3 — Refresh file-plane keys in the autopilot tick.** **What:** call
+  `refreshGatewayEnvFromFilePlane()` (`src/core/ai/gateway.ts:~497`, today only
+  called from `src/commands/jobs.ts`) from the autopilot tick so a key added to
+  `~/.gbrain/config.json` after boot is picked up without a daemon reload.
+  **Why:** shrinks the restart-required window the #2608 boot warning documents.
+  **Where to start:** autopilot tick body next to the existing health probe.
+  **Effort:** S.
+
+- [ ] **P3 — Doctor check for a stale (pre-env-lane) daemon wrapper.** **What:**
+  a doctor check that reads `<gbrainDir>/autopilot-run.sh` and warns when it
+  lacks the env-file sourcing line (installed before v0.46.2x, binary upgraded,
+  wrapper never regenerated). **Why:** self-upgrade swaps the binary but never
+  the wrapper; the boot warning covers the no-key case, doctor should cover the
+  wrapper-drift case. **Where to start:** `src/commands/doctor.ts` filesystem
+  checks; `writeWrapperScript` in `src/commands/autopilot.ts`. **Effort:** S.
+
+- [ ] **P3 — launchd/systemd log paths ignore `GBRAIN_HOME`.** **What:**
+  `generateLaunchdPlist` and `generateSystemdUnit` hardcode
+  `~/.gbrain/autopilot.{log,err}` (`src/commands/autopilot.ts` plist/unit
+  templates) while the wrapper, lock, and env file all resolve through
+  `gbrainPath()`. **Why:** on a `GBRAIN_HOME` install the daemon's diagnostics
+  land in a different directory than every doc and status command names —
+  pre-existing, but the #2608 boot warning is the first feature whose
+  remediation depends on users finding autopilot.log. **Where to start:** the
+  two generators + `showStatus` log-tail readers. **Effort:** M (migration for
+  existing installs).
+
+- [ ] **P3 — In-process env-file fold for foreground/doctor parity.** **What:**
+  parse simple `KEY=value` lines of `<gbrainDir>/env` before `configureGateway`
+  (`src/cli.ts:~3298`) so foreground runs and doctor see the same keys the
+  daemon wrapper sources. **Why:** today an env-file-only key makes doctor
+  report keyless while the daemon is keyed — the inverse of #2608's trap.
+  Rejected as the PRIMARY fix because process-level vars
+  (`NODE_EXTRA_CA_CERTS`) must exist before boot, which only wrapper sourcing
+  delivers; a parity fold is additive. **Where to start:** `src/cli.ts`
+  connectEngine preamble; reuse the template's grammar (export-optional
+  KEY=value). **Effort:** M.
+
 ## Serve-delegated sync follow-ups (v0.46.24.0)
 
 - [ ] **P3 — `sync --all` under delegation.** **What:** delegate a multi-source
@@ -829,8 +879,54 @@
   prefix `waiting_ttl_expired`) that turns out to have been wanted needs a
   `jobs requeue` (or a retry carve-out gated on that prefix) instead of
   hand-resubmitting. The data survives (cancelled rows keep payloads +
-  free their idempotency keys), so this is purely a CLI surface. **Effort:**
+  free their idempotency keys), so this is purely a CLI surface. v0.46.25.0
+  adds a SECOND machine-readable family to gate on: private-queue reconcile
+  cancellations are stamped `private_queue_reconciled: <detail>`
+  (PRIVATE_QUEUE_RECONCILE_REASON_PREFIX, minions/queue.ts). A requeue of
+  those rows must strip parent/ownership metadata (parent_job_id,
+  private_queue_owner_*) and resubmit into a CLAIMABLE queue — never flip
+  status in place inside a dead dream-inline-* queue. **Effort:**
   S. **Priority:** P2. (Pre-landing data-migration review, five-issue wave.)
+- [ ] **P2 — private-queue FK `ON DELETE SET NULL` erases owner evidence.**
+  **What:** purging/pruning an owner job nulls every child's
+  `private_queue_owner_job_id` (migrate.ts v136 FK), so its queue silently
+  degrades from the fast owner-terminal recovery path to legacy-unowned —
+  recovery's scan still sees the lease, but once that expires the queue needs
+  manual retriage instead of auto-cancel. Consider stamping a tombstone
+  (e.g. keep the id, mark owner_missing) or having prune reconcile the queue
+  first. Deferred from the v0.46.25.0 review (behavior change, not coverage).
+  **Effort:** M. **Priority:** P2.
+- [ ] **P2 — retry-shadow: a same-job-id retry shadows the crashed attempt's
+  private queue.** **What:** `jobs retry` reuses the job id; if the prior
+  attempt crashed owning a dream-inline queue, the retried (non-terminal)
+  owner makes the stale queue classify `live_owner` and recovery skips it
+  until the new attempt terminalizes. Options: retry clears/reconciles the
+  old private queue on transition, or recovery keys on attempt rather than
+  id. Deferred from the v0.46.25.0 review. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — v136 `CREATE INDEX` is non-concurrent.** **What:** on a large
+  hosted-Postgres `minion_jobs`, migration v136's two partial indexes take a
+  write lock for the build. Fine for typical brains; a busy multi-tenant
+  install would want `CONCURRENTLY` (which needs the migration runner to
+  support non-transactional steps). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — full 3-way schema-blob parity test.** **What:**
+  `pglite-schema.ts` / `schema-embedded.ts` / `schema.sql` have no general
+  drift guard; v0.46.25.0 added a private-queue-scoped parity pin
+  (test/private-queue-schema-parity.test.ts) — generalize it to the whole
+  blob surface (normalized statement diff). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — `jobs work` daemon-level e2e + global stats discovery.**
+  **What:** the worker-startup recovery lane is covered at the extracted-
+  function level (maybeRunWorkerStartupRecovery); a daemon-level e2e (spawn
+  real `gbrain jobs work`, observe recovery, stop it) would close the last
+  gap, and `jobs stats` without `--queue` could surface abandoned private
+  queues globally (today doctor is the discovery surface). **Effort:** M.
+  **Priority:** P3.
+- [ ] **P3 — consider ChildWorkerSupervisor.run() catching beforeSpawn
+  errors.** **What:** today a rejecting `beforeSpawn` propagates out of
+  `run()` with no crash accounting or respawn (documented contract;
+  composers must try/catch — MinionSupervisor does). A cross-model review
+  dissent argues run() should catch hook errors so one recovery failure can
+  never stop a worker silently. Behavior change; needs its own review.
+  **Effort:** S. **Priority:** P3.
 - [ ] **P2 — dream-path quota-degradation integration tests.** **What:**
   live-queue integration tests for the QueueQuotaExceededError consumers:
   cycle patterns → `skipped('admission_quota')`, synthesize → quota latch
@@ -2101,10 +2197,16 @@ events at the IPC delivery point and dedupes via the transcript's
   plus user reports of "it only noticed on my next message". **Start:**
   `src/commands/hook.ts` (the event already has a dispatch slot pattern),
   `src/core/bootstrap/hooks.ts` registration writers.
-- [ ] **P3 — engine-uniform IPC listener (Postgres serves).** serve's resolve/turn_context
-  socket is PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
-  Postgres brain `gbrain hook user-prompt` short-circuits (`no_pglite_path`) and the
-  hook lane is PGLite-only. Extending the listener needs (a) a canonical per-connection
+- [x] **P3 — engine-uniform IPC listener (Postgres serves).** DONE (#4245): serve now
+  listens for Postgres brains too — socket + turn_context secret key off
+  `hash12(database_url)` under `~/.gbrain/run` (0700) via
+  `resolveSocketPathForConfig`/`ipcSecretPathForConfig` in
+  `src/core/context/resolve-ipc.ts`; the hook lane's user-prompt/compact/
+  session-start arms route through the same resolver. Original filing:
+  serve's resolve/turn_context
+  socket was PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
+  Postgres brain `gbrain hook user-prompt` short-circuited (`no_pglite_path`) and the
+  hook lane was PGLite-only. Extending the listener needs (a) a canonical per-connection
   socket path for brains with no data dir (e.g. `~/.gbrain/run/resolve-<hash12(database_url)>.sock`,
   0700 dir) and (b) a secret-file home for `turn_context` auth (same hash-keyed run dir).
   The cathedral-3 branch prototyped (a) as `resolveSocketPathForConfig` (see branch
@@ -7464,3 +7566,11 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
 - [ ] P2 (adversarial F3): a chronically-failing transcript (always times out / deterministic all-writes-failed) releases its key on dead AND suppresses the cooldown stamp — re-triaged and re-paid every nightly. Add a bounded per-content-hash failure counter (N strikes → skip + surface in doctor/advisor).
 - [ ] P3 (adversarial F6): legacy direct-Anthropic path with the CDX-6 32k thinking default can exceed the SDK's 10-min default request timeout on slow generations (flag-off deployments only; surfaces as a retryable conn error at full token cost). Set an explicit SDK timeout or cap legacy maxTokens.
 - [ ] P3: phase-end `embedStalePages` runs outside BudgetTracker (bounded to the phase's own writes + 120s; fold under the tracker if spend telemetry wants it).
+
+### Recipe routing follow-up (#4292)
+- [ ] **P3 — install-time MECE warn for resolver rows.** `gbrain integrations
+  install` appends `resolver_rows_to_append` blindly; when an appended row
+  shares trigger phrases with an existing resolver row in the host repo
+  (e.g. "who is" claimed by both a recipe skill and the query skill), routing
+  goes ambiguous with no signal. Warn at install time when a to-append row's
+  quoted phrases already appear in the target RESOLVER.md/AGENTS.md. Effort: S.

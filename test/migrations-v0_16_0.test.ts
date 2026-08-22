@@ -78,7 +78,7 @@ describe('v0.16.0 migration', () => {
 
 describe('schema-embedded.ts contains subagent tables', () => {
   test('embedded schema references all three subagent tables', async () => {
-    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.ts');
+    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.generated.ts');
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_messages');
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_tool_executions');
     expect(SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS subagent_rate_leases');

@@ -88,6 +88,15 @@ export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
   'event', 'preference', 'commitment', 'belief', 'fact',
 ] as const;
 
+/**
+ * #4209 — max entity hints forwarded to the extractor prompt. Anything past
+ * this is silently dropped by the prompt builder, so the cap is NAMED here
+ * (single source of truth) and surfaced in the extract_facts op contract
+ * (param description + entity_hints_used / entity_hints_dropped response
+ * fields) instead of living as an anonymous inline slice.
+ */
+export const ENTITY_HINTS_CAP = 5;
+
 export interface ExtractInput {
   turnText: string;
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
@@ -300,7 +309,7 @@ export async function extractFactsFromTurnWithOutcome(
   }
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
-      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
+      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`
       : ''
   }`;
   let result: ChatResult;

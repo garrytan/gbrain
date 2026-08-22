@@ -60,6 +60,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'calibration_freshness',
   'child_table_orphans',
   'chronicle_projection_health',
+  'code_chunk_metadata',
   'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
@@ -94,6 +95,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'image_assets',
   'integrity',
   'jsonb_integrity',
+  // #4222 — near-empty entity pages that accreted huge edge counts (junk
+  // hubs polluting the graph): a data-quality signal, sibling of
+  // scraper_junk_pages / graph_coverage.
+  'junk_entity_hubs',
   'link_resolution_opportunity',
   'links_extraction_lag',
   'markdown_body_completeness',
@@ -109,6 +114,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'scraper_junk_pages',
   'source_config_shape',
   'source_routing_health',
+  'stale_mentions',
   'stub_guard_24h',
   'sync_failures',
   'sync_freshness',
@@ -209,6 +215,10 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'minions_migration',
   'multi_source_drift',
   'pack_upgrade_available',
+  // #550 — pages UNIQUE(source_id, slug) upsert arbiter presence: schema
+  // coherence healed by `gbrain apply-migrations` (sibling of
+  // timeline_dedup_index / schema_version).
+  'pages_upsert_arbiter',
   'schema_pack_active',
   'schema_pack_consistency',
   'schema_pack_source_drift',

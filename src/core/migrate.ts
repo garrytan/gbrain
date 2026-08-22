@@ -8,7 +8,8 @@ import {
   isStatementTimeoutError,
   isRetryableConnError,
 } from './retry-matcher.ts';
-import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
+import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
+import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -634,12 +635,24 @@ export const MIGRATIONS: Migration[] = [
         // 0b. Swap pages.UNIQUE(slug) → UNIQUE(source_id, slug).
         //     Deferred from v21 so PR #356 closes the integrity
         //     window. PGLite already did this swap in its v21 path.
+        //     #550: guard by index SHAPE (any non-partial unique index on
+        //     exactly {source_id, slug}), not by constraint NAME — a
+        //     name-only guard skips the ADD when the name is squatted by a
+        //     misshapen constraint, leaving every putPage ON CONFLICT broken.
         await tx.runMigration(23, `
           ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
           DO $$ BEGIN
             IF NOT EXISTS (
-              SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+              SELECT 1 FROM pg_index i
+               WHERE i.indrelid = 'pages'::regclass
+                 AND i.indisunique
+                 AND i.indpred IS NULL
+                 AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                        FROM pg_attribute a
+                       WHERE a.attrelid = i.indrelid
+                         AND a.attnum = ANY (i.indkey::int2[])) = ARRAY['slug','source_id']
             ) THEN
+              ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
               ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
                 UNIQUE (source_id, slug);
             END IF;
@@ -791,10 +804,19 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+        -- #550: guard by index SHAPE, not constraint NAME (see v23 twin).
         DO $$ BEGIN
           IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+            SELECT 1 FROM pg_index i
+             WHERE i.indrelid = 'pages'::regclass
+               AND i.indisunique
+               AND i.indpred IS NULL
+               AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                      FROM pg_attribute a
+                     WHERE a.attrelid = i.indrelid
+                       AND a.attnum = ANY (i.indkey::int2[])) = ARRAY['slug','source_id']
           ) THEN
+            ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
             ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
               UNIQUE (source_id, slug);
           END IF;
@@ -5236,7 +5258,7 @@ export const MIGRATIONS: Migration[] = [
     // v110/v115 tables); pinned by the volunteer-context Postgres e2e.
     // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY needed.
     // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
-    // src/core/schema-embedded.ts.
+    // src/core/schema-embedded.generated.ts.
     idempotent: true,
     sql: `
       CREATE TABLE IF NOT EXISTS context_volunteer_events (
@@ -6008,6 +6030,160 @@ export const MIGRATIONS: Migration[] = [
         WHERE expired_at IS NULL;
     `,
   },
+  {
+    version: 136,
+    name: 'minion_private_queue_owner_metadata',
+    // issue #4332: durable ownership/liveness metadata for parent-owned
+    // dream-inline queues. Startup recovery uses these columns to cancel only
+    // orphaned private queues (terminal/missing owner or expired lease), never
+    // live queues and never legacy unowned rows.
+    idempotent: true,
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_recovery
+        ON minion_jobs (queue, private_queue_lease_until)
+        WHERE queue LIKE 'dream-inline-%'
+          AND status IN ('waiting','active','delayed','waiting-children','paused');
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_owner
+        ON minion_jobs (private_queue_owner_job_id)
+        WHERE private_queue_owner_job_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 137,
+    name: 'entity_identities',
+    // #4224 — cross-source entity identity groups (federation v1).
+    //
+    // The identity KEY for a page is (source_id, slug): the same real-world
+    // entity can exist as `people/alice` in the `wiki` source AND
+    // `people/alice-chen` in a mounted team source, and NOTHING today says
+    // they are the same entity. This table groups member pages (by page_id,
+    // resolved from (source_id, slug) at link time) under an opaque
+    // `entity_id` handle.
+    //
+    // v1 is MANUAL-ONLY: rows are created exclusively by the
+    // entity_identity_link op (localOnly write) — no auto-matching, no
+    // similarity heuristics. `established_by` records the linking actor
+    // ('manual' for v1; a future auto-matcher would stamp its own tag and
+    // a sub-1.0 confidence).
+    //
+    // Shape invariants:
+    //   - UNIQUE (source_id, page_id): a page belongs to at most ONE
+    //     identity group (re-linking moves it — explicit manual intent).
+    //   - At most one canonical member per identity (partial unique index):
+    //     the canonical member is the identity's display/primary page.
+    //   - page_id FK ON DELETE CASCADE: deleting a page dissolves its
+    //     membership, never dangles.
+    //
+    // Consumed by src/core/entity-identity.ts (helpers + the flag-gated
+    // retrieval union) and the entity_identity_* ops. Same DDL on both
+    // engines via this shared migration.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS entity_identities (
+        id             BIGSERIAL PRIMARY KEY,
+        entity_id      TEXT NOT NULL,
+        source_id      TEXT NOT NULL,
+        page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        confidence     DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+        established_by TEXT NOT NULL DEFAULT 'manual',
+        established_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        canonical      BOOLEAN NOT NULL DEFAULT false,
+        CONSTRAINT entity_identities_page_uniq UNIQUE (source_id, page_id)
+      );
+      CREATE INDEX IF NOT EXISTS entity_identities_entity_idx
+        ON entity_identities (entity_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS entity_identities_canonical_uniq
+        ON entity_identities (entity_id) WHERE canonical;
+    `,
+  },
+  {
+    version: 138,
+    name: 'timeline_dedup_md5_summary',
+    // #3737 — idx_timeline_dedup keyed the RAW summary, so any incompressible
+    // summary over the btree v4 row cap ("index row size N exceeds btree
+    // version 4 maximum 2704") aborted the whole timeline insert — long
+    // transcript-derived summaries broke timeline writes brain-wide. Re-key
+    // the dedup tuple on md5(summary): fixed 32-char datum, same dedup
+    // semantics (md5-equal ⟺ summary-equal modulo negligible collisions).
+    // Both insert sites infer ON CONFLICT (page_id, date, md5(summary),
+    // source) against this expression index. Existing rows were unique on
+    // the raw tuple, so the md5 tuple is unique too — no pre-dedupe needed.
+    // The #2038 shape self-heal (timeline-dedup-repair.ts) expects the SAME
+    // md5 shape, so it converges drifted brains instead of reverting this.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS idx_timeline_dedup;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup
+        ON timeline_entries(page_id, date, md5(summary), source);
+    `,
+  },
+  {
+    version: 139,
+    name: 'timeline_legacy_source_split_repair',
+    // #3957 follow-up — one-time legacy-row shape repair. The pre-#3957
+    // DB-path parser wrote timeline rows with source='' and the UNSPLIT
+    // `Source — Summary` bullet text as summary; the parser now emits the
+    // split (source, summary) shape (source='markdown' / the parsed label),
+    // so the (page_id, date, md5(summary), source) dedup index can never
+    // collapse a re-extraction onto a legacy row — every re-extract would
+    // duplicate it. Rewrite legacy rows to the shape the next re-extract
+    // will emit, content-anchored per page (see
+    // timeline-dedup-repair.ts:repairLegacyTimelineSourceRows). Rows whose
+    // bullet no longer exists in content are left as-is (they can't
+    // duplicate); rows whose new-shape duplicate already landed are deleted.
+    // Idempotent: rewritten rows no longer match source=''. Handler-only
+    // (runs outside a transaction; every statement is individually safe to
+    // re-run). Both engines share one SQL text via executeRaw.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      const r = await repairLegacyTimelineSourceRows(engine);
+      if (r.rowsRewritten > 0 || r.rowsDeleted > 0) {
+        migrationNotice(
+          `  NOTICE: v139 rewrote ${r.rowsRewritten} legacy timeline row(s) to the split ` +
+          `(source, summary) shape` +
+          (r.rowsDeleted > 0 ? ` and removed ${r.rowsDeleted} already-duplicated row(s)` : '') +
+          ` across ${r.pagesScanned} page(s), so re-extraction dedups instead of duplicating (#3957).\n`,
+        );
+      }
+    },
+  },
+  {
+    version: 140,
+    name: 'chat_usage_log',
+    // #4218 (revives the #3392 shape): durable per-call chat usage ledger.
+    // gateway.chat() inserts one row per SUCCESSFUL call (fire-and-forget via
+    // the chat-usage sink; see src/core/ai/chat-usage.ts) with the answering
+    // model, best-effort phase attribution, token counts incl. prompt-cache
+    // reads/writes, and a canonical-table cost estimate (NULL when the model
+    // has no pricing — never a fake 0). Read back by the `get_usage` op.
+    // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY. RLS:
+    // covered by the v35 auto_rls_on_create_table event trigger on Postgres.
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.generated.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS chat_usage_log (
+        id                 BIGSERIAL PRIMARY KEY,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        model              TEXT NOT NULL,
+        provider           TEXT,
+        phase              TEXT,
+        input_tokens       INTEGER NOT NULL DEFAULT 0,
+        output_tokens      INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd           DOUBLE PRECISION
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_usage_log_created
+        ON chat_usage_log (created_at);
+      CREATE INDEX IF NOT EXISTS idx_chat_usage_log_model
+        ON chat_usage_log (model, created_at);
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -6358,8 +6534,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     if (r.repaired) {
       console.error(
         `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
-        `→ page_id,date,summary,source` +
+        `→ page_id,date,md5(summary),source` +
         (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #550: same drift class for the pages upsert arbiter. When the
+  // UNIQUE(source_id, slug) constraint vanishes (partial restore, manual DDL,
+  // name-only migration guards), EVERY putPage fails with "no unique or
+  // exclusion constraint" and neither re-initSchema nor the version counter
+  // can see it. ADD-only self-heal; refuses (loudly) on duplicate rows.
+  try {
+    const p = await repairPagesUpsertArbiter(engine);
+    if (p.repaired) {
+      console.error(`[migrate] restored pages_source_slug_key UNIQUE(source_id, slug) (#550)`);
+    } else if (p.reason === 'duplicates') {
+      console.error(
+        `[migrate] cannot restore pages_source_slug_key: ${p.duplicateGroups} duplicate ` +
+        `(source_id, slug) group(s) exist — page upserts will keep failing until the ` +
+        `duplicates are resolved (#550). See \`gbrain doctor\`.`,
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }

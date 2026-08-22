@@ -71,6 +71,48 @@ export interface ReindexResult {
   type: string | null;
 }
 
+// #3686: real usage, reachable via `gbrain reindex --help` (the generic
+// one-line CLI_ONLY stub used to shadow every target flag). The --multimodal
+// flags are parsed by the cli.ts dispatcher (reindex-multimodal routing) but
+// documented here so the whole surface lives in one block.
+const REINDEX_HELP = `gbrain reindex — re-chunk / re-embed existing pages after a pipeline upgrade
+
+USAGE
+  gbrain reindex --markdown   [--type PAGE_TYPE] [--limit N] [--dry-run] [--no-embed] [--json] [--repo PATH]
+  gbrain reindex --multimodal [--limit N] [--workers N] [--dry-run] [--cost-estimate] [--no-embed] [--yes] [--json]
+  gbrain reindex --aliases    [--limit N] [--dry-run] [--json] [--source <id>]
+
+TARGETS (exactly one required)
+  --markdown        Re-chunk markdown pages whose chunker_version lags the
+                    current chunker (or whose contextual-retrieval state is
+                    unset when embedding is on).
+  --multimodal      Re-embed image/PDF chunks through the multimodal
+                    embedding pipeline (Voyage batches).
+  --aliases         Backfill the free-text alias layer (page_aliases) for
+                    pages whose frontmatter aliases predate the projection.
+
+OPTIONS
+  --type <t>        --markdown only: restrict to one page type
+  --limit N         Cap pages/chunks processed this run
+  --workers N       --multimodal only: parallel UPDATEs per batch
+                    (--concurrency is an alias)
+  --dry-run         Report what would change; write nothing
+  --cost-estimate   --multimodal only: print the embed cost estimate and stop
+  --no-embed        Skip re-embedding (chunk-only reindex)
+  --yes             --multimodal only: skip the cost confirm
+  --source <id>     --aliases only: restrict to one source
+  --repo PATH       --markdown only: brain repo override
+  --json            Machine-readable output
+  --help, -h        Show this help
+
+Related: \`gbrain reindex-code --help\`, \`gbrain reindex-frontmatter --help\`,
+\`gbrain reindex-search-vector --help\`.
+`;
+
+export function printReindexHelp(): void {
+  console.log(REINDEX_HELP);
+}
+
 const REINDEX_VALUE_FLAGS = new Set(['--type', '--limit', '--repo', '--workers', '--concurrency']);
 
 export function normalizeReindexArgs(args: string[]): string[] {

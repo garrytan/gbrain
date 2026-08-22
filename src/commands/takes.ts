@@ -27,6 +27,12 @@ import {
 } from '../core/takes-write.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
+import {
+  listPendingProposals,
+  acceptProposal,
+  rejectProposal,
+  TakeProposalError,
+} from '../core/take-proposals.ts';
 
 // --- Helpers ---
 
@@ -461,6 +467,93 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
   }
 }
 
+/**
+ * #2411 / #4102 — `gbrain takes propose` drains the take_proposals queue the
+ * propose_takes cycle phase fills. Bare invocation lists pending proposals;
+ * --accept promotes one into the page's takes fence via the shared
+ * write-through core (D17: the ONLY queue→canonical path); --reject dismisses.
+ * Before this command existed the dispatcher parsed `propose` as a page slug
+ * and printed "No takes on propose." with exit 0 — a dead-end queue.
+ */
+async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string): Promise<void> {
+  const json = flagPresent(args, '--json');
+  const acceptRaw = flagValue(args, '--accept');
+  const rejectRaw = flagValue(args, '--reject');
+  if (acceptRaw !== undefined && rejectRaw !== undefined) {
+    console.error('Error: --accept and --reject are mutually exclusive (choose one).');
+    process.exit(1);
+  }
+
+  const parseId = (raw: string, flag: string): number => {
+    const id = parseInt(raw, 10);
+    if (!Number.isFinite(id) || id <= 0 || String(id) !== raw.trim()) {
+      console.error(`Invalid ${flag} "${raw}". Expected a proposal id (from \`gbrain takes propose\`).`);
+      process.exit(1);
+    }
+    return id;
+  };
+
+  const actedBy = resolveOwnerHolder({
+    configValue: await engine.getConfig('emotional_weight.user_holder'),
+  });
+
+  if (acceptRaw !== undefined) {
+    const id = parseId(acceptRaw, '--accept');
+    const dirArg = flagValue(args, '--dir');
+    const brainDir = await resolveBrainDir(engine, dirArg ?? null);
+    try {
+      const { proposal, rowNum } = await acceptProposal({ engine, brainDir, sourceId, actedBy }, id);
+      console.log(`Accepted proposal #${id} → take #${rowNum} on ${proposal.page_slug}.`);
+    } catch (err) {
+      if (err instanceof TakeProposalError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      exitTakesError(err);
+    }
+    return;
+  }
+
+  if (rejectRaw !== undefined) {
+    const id = parseId(rejectRaw, '--reject');
+    try {
+      const proposal = await rejectProposal({ engine, sourceId, actedBy }, id);
+      console.log(`Rejected proposal #${id} (${proposal.page_slug}).`);
+    } catch (err) {
+      if (err instanceof TakeProposalError) {
+        console.error(err.message);
+        process.exit(1);
+      }
+      throw err;
+    }
+    return;
+  }
+
+  // Bare `takes propose` — list the pending queue (source-scoped).
+  const limitRaw = flagValue(args, '--limit');
+  const limit = limitRaw !== undefined ? parseInt(limitRaw, 10) : 20;
+  if (!Number.isFinite(limit) || limit <= 0) {
+    console.error(`Invalid --limit "${limitRaw}". Expected a positive integer.`);
+    process.exit(1);
+  }
+  const pending = await listPendingProposals(engine, { sourceId, limit });
+  if (json) {
+    console.log(JSON.stringify(pending, null, 2));
+    return;
+  }
+  if (pending.length === 0) {
+    console.log('No pending take proposals. The propose_takes cycle phase fills this queue.');
+    return;
+  }
+  console.log(`# Pending take proposals (${pending.length})\n`);
+  for (const p of pending) {
+    const w = Number(p.weight).toFixed(2);
+    const domain = p.domain ? ` • ${p.domain}` : '';
+    console.log(`#${p.id} ${p.page_slug} [${p.kind} • ${p.holder} • w=${w}${domain}]\n  ${p.claim_text}\n`);
+  }
+  console.log('Accept with `gbrain takes propose --accept <id>`; reject with `--reject <id>`.');
+}
+
 // --- Dispatcher ---
 
 export async function runTakes(engine: BrainEngine, args: string[]): Promise<void> {
@@ -485,6 +578,10 @@ Subcommands:
                        [--evidence "..."] [--value N --unit usd|pct|count] [--by <slug>]
                                           Record bet resolution (immutable, v0.30.0)
                                           Back-compat: --outcome true|false (deprecated alias)
+  takes propose [--limit N] [--json]      List pending LLM-proposed takes (propose_takes queue)
+  takes propose --accept <id> [--dir <path>]
+                                          Promote a proposal into the page's takes fence
+  takes propose --reject <id>             Dismiss a proposal
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
   takes calibration [<holder>] [--bucket-size 0.1] [--json]
@@ -509,6 +606,9 @@ Common flags:
     case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
     case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));
     case 'resolve':     return cmdResolve(engine, rest, await resolveTakesSourceId(engine));
+    // #2411: `takes propose` used to fall through to the slug path and print
+    // "No takes on propose." — the LLM proposal queue had no drain surface.
+    case 'propose':     return cmdPropose(engine, rest, await resolveTakesSourceId(engine));
     case 'scorecard':   return cmdScorecard(engine, rest);
     case 'calibration': return cmdCalibration(engine, rest);
     case 'revisit':     return cmdRevisit(engine, rest);

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 export type AutopilotLockHolder =
   | { state: 'dead' }
@@ -22,8 +23,27 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
-export function readProcessCommand(pid: number): string | null {
+export interface ProcessCommandProbeDeps {
+  /** Injected for tests; defaults to fs.readFileSync of /proc/<pid>/cmdline. */
+  readCmdlineFile?: (path: string) => Buffer | string;
+}
+
+/**
+ * Best-effort process command lookup. On Linux, /proc/<pid>/cmdline is read
+ * first (no subprocess, works even when `ps` is unavailable or restricted —
+ * e.g. minimal containers), falling back to `ps -o args=` elsewhere (#4300).
+ */
+export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = {}): string | null {
   if (!Number.isFinite(pid) || pid <= 0) return null;
+  const readCmdline = deps.readCmdlineFile ?? readFileSync;
+  try {
+    const raw = readCmdline(`/proc/${pid}/cmdline`);
+    // argv is NUL-separated with a trailing NUL; normalize to a space-joined line.
+    const cmd = raw.toString().split('\0').filter((part) => part.length > 0).join(' ').trim();
+    if (cmd.length > 0) return cmd;
+  } catch {
+    // Not Linux (no /proc) or unreadable — fall through to ps.
+  }
   try {
     const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
       encoding: 'utf8',

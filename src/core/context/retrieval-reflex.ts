@@ -25,6 +25,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
+import { CJK_SLUG_CHARS } from '../cjk.ts';
 import { escapeLikePattern } from '../search/sql-ranking.ts';
 import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
@@ -39,8 +40,15 @@ export { reflexPointerRationale } from './reflex-rationale.ts';
 export const DEFAULT_MAX_POINTERS = 3;
 const SYNOPSIS_MAX = 160;
 
+// #3746 — pure-CJK norm (every char in the shared Han/kana/hangul ranges).
+// These norms get the extra exact-title/exact-slug arm: CJK candidates are
+// n-grams with no capitalization signal, `slugify()` strips CJK entirely (so
+// the generic slug arm can never fire for them), and the alias table alone
+// covers only explicitly registered aliases.
+const PURE_CJK_RE = new RegExp(`^[${CJK_SLUG_CHARS}]+$`, 'u');
+
 /** Which resolution arm produced a pointer (provenance → honest confidence). */
-export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname';
+export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname' | 'cjk-title';
 
 /**
  * v0.43 (#2095) — arm → confidence. Lives HERE, next to the arm definitions,
@@ -52,11 +60,17 @@ export type ResolveArm = 'alias' | 'title' | 'slug-suffix' | 'title-surname';
  * the volunteer layer's 0.70 default gate (a 0.6x score would be silently
  * discarded there) and below 'title' (an exact-title hit is stronger
  * evidence than a surname-tail match).
+ *
+ * 'cjk-title' (#3746) also sits at 0.72: a pure-CJK weak n-gram that exactly
+ * matches a unique page title/slug. Exact evidence, but the gram lacks the
+ * capitalization signal a strong 'title' candidate carries — score it with
+ * the surname class, above the volunteer gate.
  */
 export const ARM_CONFIDENCE: Record<ResolveArm, number> = {
   alias: 0.9,
   title: 0.8,
   'title-surname': 0.72,
+  'cjk-title': 0.72,
   'slug-suffix': 0.6,
 };
 
@@ -424,6 +438,48 @@ export async function resolveEntitiesToPointers(
     // holder including title/slug-claimed namesakes. Both must be 1.
     if (hits.length === 1 && (surnameCoverage.get(token) ?? 0) === 1) {
       push(hits[0].slug, hits[0].source_id, 'title-surname', surnameTokenToNorm.get(token));
+    }
+  }
+
+  // Arm 2.5 — pure-CJK weak exact-title/exact-slug (#3746, 'cjk-title').
+  // CJK weak n-grams may probe EXACT title/slug equality on top of the alias
+  // arm: slugify() strips CJK so the generic slug arm can never fire, and CJK
+  // pages routinely have no registered alias. Never suffix/surname (an n-gram
+  // tail-matching slugs would over-match wildly). Gated by the same
+  // lexicalArms kill switch as the other weak arms; GLOBAL uniqueness across
+  // the considered sources (mirror of the weak-alias fold) — an ambiguous
+  // gram injects nothing.
+  if (lexicalArms && weakNorms.size) {
+    const armResolvedNorms = new Set(resolved.map((r) => r.matchedNorm).filter(Boolean));
+    const cjkNorms = [...weakNorms].filter((n) => PURE_CJK_RE.test(n) && !armResolvedNorms.has(n));
+    if (cjkNorms.length) {
+      try {
+        const cjkRows = await engine.executeRaw<PageRow>(
+          `SELECT slug, source_id, title, type, frontmatter, compiled_truth
+             FROM pages
+            WHERE deleted_at IS NULL
+              AND source_id = ANY($1::text[])
+              AND ( lower(title) = ANY($2::text[]) OR slug = ANY($3::text[]) )`,
+          [sourceIds, cjkNorms, cjkNorms],
+        );
+        const cjkHits = new Map<string, Array<{ slug: string; source_id: string }>>();
+        for (const r of cjkRows) {
+          rowByKey.set(keyOf(r.source_id, r.slug), r); // hydrate for synopsis
+          const titleLc = (r.title ?? '').toLowerCase();
+          for (const n of cjkNorms) {
+            if (titleLc === n || r.slug === n) {
+              const list = cjkHits.get(n) ?? [];
+              list.push({ slug: r.slug, source_id: r.source_id });
+              cjkHits.set(n, list);
+            }
+          }
+        }
+        for (const [n, hits] of cjkHits) {
+          if (hits.length === 1) push(hits[0].slug, hits[0].source_id, 'cjk-title', n);
+        }
+      } catch {
+        /* fail-open — the alias arm already ran */
+      }
     }
   }
 

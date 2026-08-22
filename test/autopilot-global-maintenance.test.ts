@@ -319,7 +319,9 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const repoPath = mkdtempSync(join(tmpdir(), 'gbrain-global-default-'));
     const handlers = await captureHandlers();
     const handler = handlers.get('autopilot-global-maintenance');
-    const result = await handler!({ data: { repoPath }, signal: undefined });
+    // id present so the handler threads a real privateQueueOwnerJobId into
+    // runCycle (worker jobs always carry one).
+    const result = await handler!({ id: 4101, data: { repoPath }, signal: undefined });
     const ranPhases = result.report.phases.map((p: any) => p.phase);
     for (const p of MAINTENANCE_PHASES) expect(ranPhases).toContain(p);
     expect(ranPhases).toContain('synthesize');
@@ -339,7 +341,10 @@ describe('autopilot-global-maintenance handler stamps last_global_at (PGLite)', 
     const handler = handlers.get('autopilot-global-maintenance');
     expect(handler).toBeTruthy();
 
+    // id present so the handler threads a real privateQueueOwnerJobId into
+    // runCycle (worker jobs always carry one).
     const result = await handler!({
+      id: 4102,
       data: { phases: ['orphans', 'embed'], repoPath },
       signal: undefined,
     });

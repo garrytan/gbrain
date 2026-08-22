@@ -178,6 +178,23 @@ export function titleTierCorpusGeneration(): string {
 }
 
 /**
+ * #3883: resolve the synopsis output-token cap from the
+ * `models.synopsis_max_tokens` config key. Returns undefined when unset or
+ * invalid so generatePerChunkSynopsis falls back to its SYNOPSIS_MAX_TOKENS
+ * default (200). Clamped to a sane range (16..8192); fail-open on config
+ * errors (a config read failure must never block a re-embed).
+ */
+export async function resolveSynopsisMaxTokens(engine: BrainEngine): Promise<number | undefined> {
+  try {
+    const raw = await engine.getConfig('models.synopsis_max_tokens');
+    if (raw == null || raw === '') return undefined;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 16 && n <= 8192) return Math.floor(n);
+  } catch { /* fail-open to the page-summary default */ }
+  return undefined;
+}
+
+/**
  * Compute source_text_hash for D27 P1-4 cache key composition. The
  * synopsis cache invalidates correctly when adjacent text changes (page
  * content edit, frontmatter change, fallback chain different source).
@@ -244,6 +261,12 @@ export interface ReembedPageArgs {
   killSwitchDisabled?: boolean;
   /** Resolved provider-neutral model used for per-chunk synopsis generation. */
   synopsisModel?: string;
+  /**
+   * #3883: output-token cap for each synopsis call. When omitted, the
+   * `models.synopsis_max_tokens` config is read once per page; when that is
+   * unset too, page-summary's SYNOPSIS_MAX_TOKENS default (200) applies.
+   */
+  synopsisMaxTokens?: number;
   /**
    * @deprecated Use `synopsisModel`. Retained for callers compiled against
    * the pre-provider-neutral service shape.
@@ -333,6 +356,10 @@ export async function reembedPageWithContextualRetrieval(
   // single bad chunk demotes the whole page to title-only so all
   // chunks on the page share the same wrapper shape.
   const synopsisModel = args.synopsisModel ?? args.haikuModel ?? DEFAULT_SYNOPSIS_MODEL;
+  // #3883: explicit arg wins; else the models.synopsis_max_tokens config;
+  // else undefined → page-summary's SYNOPSIS_MAX_TOKENS default (200).
+  const synopsisMaxTokens =
+    args.synopsisMaxTokens ?? (await resolveSynopsisMaxTokens(args.engine));
   let attemptMode: CRMode = resolution.mode;
   let fallbackReason: SynopsisFailureKind | null = null;
 
@@ -344,6 +371,7 @@ export async function reembedPageWithContextualRetrieval(
       chunks: chunks as ChunkInput[],
       args,
       synopsisModel,
+      synopsisMaxTokens,
     });
 
     if (phase1.kind === 'success') {
@@ -445,8 +473,10 @@ async function tryBuildPhase1(opts: {
   chunks: ChunkInput[];
   args: ReembedPageArgs;
   synopsisModel: string;
+  /** #3883: resolved output-token cap (undefined → page-summary default). */
+  synopsisMaxTokens?: number;
 }): Promise<Phase1Result> {
-  const { attemptMode, page, chunks, args, synopsisModel } = opts;
+  const { attemptMode, page, chunks, args, synopsisModel, synopsisMaxTokens } = opts;
 
   // Build the wrapper prefix for THIS page. Title-only tier: one prefix
   // reused across all chunks. per_chunk_synopsis tier: prefix is built
@@ -506,6 +536,7 @@ async function tryBuildPhase1(opts: {
         page,
         args,
         synopsisModel,
+        synopsisMaxTokens,
       });
     },
   });
@@ -553,8 +584,10 @@ async function buildWrappedChunkText(opts: {
   page: Page;
   args: ReembedPageArgs;
   synopsisModel: string;
+  /** #3883: resolved output-token cap (undefined → page-summary default). */
+  synopsisMaxTokens?: number;
 }): Promise<string> {
-  const { chunk: c, sourceText, safeTitle, page, args, synopsisModel } = opts;
+  const { chunk: c, sourceText, safeTitle, page, args, synopsisModel, synopsisMaxTokens } = opts;
 
   // Code chunks always bypass the wrapper (D20-T4) — pass through.
   if (c.chunk_source === 'fenced_code') {
@@ -591,6 +624,7 @@ async function buildWrappedChunkText(opts: {
       chunkIndex: c.chunk_index,
       model: synopsisModel,
       abortSignal: args.abortSignal,
+      maxTokens: synopsisMaxTokens,
     });
   } finally {
     if (leaseAcquired && args.releaseSynopsisLease) {
@@ -672,7 +706,14 @@ function readSourceTextWithFallback(page: Page, chunks: ChunkInput[]): string {
     .join('\n\n');
 }
 
-async function loadSourceRow(engine: BrainEngine, sourceId: string): Promise<SourceRow> {
+/**
+ * Load one source row with the CR-relevant columns. Exported for reuse by
+ * the import path (#3885: stored `sources set-cr-mode` must apply on
+ * capture/reindex, not just the Minion backfill) and the conversation-parser
+ * body reader (#3911: relative raw_transcript resolves against the OWNING
+ * source's local_path). Throws when the source id is unknown.
+ */
+export async function loadSourceRow(engine: BrainEngine, sourceId: string): Promise<SourceRow> {
   const rows = await engine.executeRaw<SourceRow>(
     `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at,
             contextual_retrieval_mode, trust_frontmatter_overrides

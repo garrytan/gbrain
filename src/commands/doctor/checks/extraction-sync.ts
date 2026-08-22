@@ -21,7 +21,7 @@ import {
   DERIVE_PHASE_DB_ONLY_DEFAULTS,
   findDbOnlyCollisions,
 } from '../../../core/storage-config.ts';
-import { slugifyPath } from '../../../core/sync.ts';
+import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath } from '../../../core/markdown.ts';
 import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import type { Check } from '../../doctor.ts';
@@ -215,6 +215,13 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
   const name = 'content_hash_duplicates';
   const fix = 'Fix: gbrain pages delete <bare-slug> for each pair, then gbrain pages purge-deleted --older-than 0';
   try {
+    // #3946: no shape predicates — EVERY same-source duplicate-content group
+    // surfaces (HAVING count(*) > 1 alone). Classification happens at render:
+    // a group holding BOTH a bare and a path-prefixed slug is the wrong-root
+    // import pattern (the bare slug is the accident, so the delete hint is
+    // safe); a group WITHOUT that shape (all-nested, or distinct bare slugs)
+    // is listed with NO delete hint (#3942 — either copy may be the canonical
+    // one that links point at, so deleting one automatically is a guess).
     const rows = await engine.executeRaw<{ source_id: string; content_hash: string; slugs: string }>(
       `SELECT source_id, content_hash,
               string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
@@ -222,32 +229,101 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
         WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
         GROUP BY source_id, content_hash
        HAVING count(*) > 1
-          AND count(*) FILTER (WHERE strpos(slug, '/') = 0) > 0
-          AND count(*) FILTER (WHERE strpos(slug, '/') > 0) > 0
         LIMIT 50`,
     );
     if (rows.length === 0) {
-      return { name, status: 'ok', message: 'No content-hash duplicate pairs (bare vs path-prefixed slugs)' };
+      return { name, status: 'ok', message: 'No same-source content-hash duplicate groups' };
     }
     let pairCount = 0;
     const samples: string[] = [];
+    let otherGroupCount = 0;
+    const otherSamples: string[] = [];
     for (const r of rows) {
       const slugs = String(r.slugs).split('|');
+      const bare = slugs.filter(s => !s.includes('/'));
       const prefixed = slugs.filter(s => s.includes('/'));
-      for (const bare of slugs.filter(s => !s.includes('/'))) {
-        const twin = prefixed.find(p => p.endsWith('/' + bare)) ?? prefixed[0];
-        pairCount++;
-        if (samples.length < 5) samples.push(`${bare} <-> ${twin}`);
+      if (bare.length > 0 && prefixed.length > 0) {
+        for (const b of bare) {
+          const twin = prefixed.find(p => p.endsWith('/' + b)) ?? prefixed[0];
+          pairCount++;
+          if (samples.length < 5) samples.push(`${b} <-> ${twin}`);
+        }
+      } else {
+        otherGroupCount++;
+        if (otherSamples.length < 5) otherSamples.push(slugs.join(' == '));
       }
+    }
+    const parts: string[] = [];
+    if (pairCount > 0) {
+      parts.push(
+        `${pairCount} content-hash duplicate pair(s) detected (same content, differing slug forms — ` +
+        `usually an import run from the wrong root, which drops the path prefix). ` +
+        `Sample: ${samples.join('; ')}. ${fix}`,
+      );
+    }
+    if (otherGroupCount > 0) {
+      parts.push(
+        `${otherGroupCount} duplicate-content group(s) with distinct slugs (no bare/nested wrong-root shape). ` +
+        `Sample: ${otherSamples.join('; ')}. Review which slug is canonical and consolidate manually — ` +
+        `no automatic delete hint (either copy may be the one links point at).`,
+      );
     }
     return {
       name,
       status: 'warn',
-      message: `${pairCount} content-hash duplicate pair(s) detected (same content, differing slug forms — usually an import run from the wrong root, which drops the path prefix). Sample: ${samples.join('; ')}. ${fix}`,
-      details: { pair_count: pairCount, hash_groups: rows.length, sample_pairs: samples },
+      message: parts.join(' '),
+      details: {
+        pair_count: pairCount,
+        hash_groups: rows.length,
+        sample_pairs: samples,
+        distinct_slug_group_count: otherGroupCount,
+        sample_distinct_slug_groups: otherSamples,
+      },
     };
   } catch (e) {
     return { name, status: 'warn', message: `Could not check content-hash duplicates: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * issue #3970 — code_chunk_metadata.
+ *
+ * Code pages whose chunks carry NO symbol metadata (symbol_name IS NULL AND
+ * language IS NULL) were chunked before the v0.19/v0.21 code chunker or
+ * re-imported through the markdown path — `code-def`, `code-refs`, and
+ * `query --lang/--symbol-kind` silently miss them. A plain sync or
+ * `reindex-code` never heals them (importCodeFile's content_hash
+ * short-circuit skips unchanged pages), so the cure is
+ * `gbrain reindex-code --force`. Raw SQL only (works on both engines).
+ */
+export async function checkCodeChunkMetadata(engine: BrainEngine): Promise<Check> {
+  const name = 'code_chunk_metadata';
+  try {
+    const rows = await engine.executeRaw<{ chunks: string | number; pages: string | number }>(
+      `SELECT COUNT(*)::text AS chunks, COUNT(DISTINCT c.page_id)::text AS pages
+         FROM content_chunks c
+         JOIN pages p ON p.id = c.page_id
+        WHERE p.type = 'code' AND p.deleted_at IS NULL
+          AND c.symbol_name IS NULL AND c.language IS NULL`,
+    );
+    const chunks = Number(rows[0]?.chunks ?? 0);
+    const pages = Number(rows[0]?.pages ?? 0);
+    if (chunks === 0) {
+      return { name, status: 'ok', message: 'All code-page chunks carry symbol metadata' };
+    }
+    return {
+      name,
+      status: 'warn',
+      message:
+        `${chunks} chunk(s) on ${pages} code page(s) have no symbol metadata ` +
+        `(symbol_name and language both NULL) — code-def/code-refs and ` +
+        `--lang/--symbol-kind filters miss them. A plain sync/reindex skips ` +
+        `unchanged pages via the content_hash short-circuit. ` +
+        `Fix: gbrain reindex-code --force`,
+      details: { chunks_missing_metadata: chunks, pages_affected: pages },
+    };
+  } catch (e) {
+    return { name, status: 'warn', message: `Could not check code chunk metadata: ${(e as Error).message}` };
   }
 }
 
@@ -270,6 +346,11 @@ function collectMarkdownSlugs(root: string): Set<string> {
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) stack.push(childRel);
       else if (/\.mdx?$/i.test(e.name)) out.add(slugifyPath(childRel).toLowerCase());
+      // #3766: code files are pages too (code-slug shape). Legacy code rows
+      // backfilled by migration 25 carry page_kind='markdown' without a
+      // type='code' re-stamp, so their slugs must count as file-backed or
+      // every one of them false-positives as "DB-only".
+      else if (isCodeFilePath(e.name)) out.add(slugifyCodePath(childRel).toLowerCase());
     }
   }
   return out;
@@ -289,9 +370,18 @@ function collectMarkdownSlugs(root: string): Set<string> {
 export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<Check> {
   const name = 'undeclared_db_only_pages';
   try {
-    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
-    );
+    // #3880: archived sources are out of scope for filesystem audits (v34
+    // legacy fallback, house style per pickSoleNonDefaultSource).
+    let sources: Array<{ id: string; local_path: string | null }>;
+    try {
+      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+      );
+    } catch {
+      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+      );
+    }
     const checkable = sources.filter(s => s.local_path && existsSync(s.local_path));
     if (checkable.length === 0) {
       return { name, status: 'ok', message: 'Not applicable (no sources with a local repo path on this host)' };
@@ -308,8 +398,13 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
         // already surfaces the config error itself.
       }
       const dbOnlyDirs = effectiveDbOnlyDirs(declared);
+      // #3766: skip properly-stamped code pages (type='code') — they live on
+      // the code lane, not the markdown backup story. Legacy code rows from
+      // the migration-25 backfill (page_kind='markdown', type never
+      // re-stamped) still flow through and match via the code-slug backed
+      // set collected below.
       const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
-        `SELECT slug, source_path FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND page_kind = 'markdown'`,
+        `SELECT slug, source_path FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND page_kind = 'markdown' AND type IS DISTINCT FROM 'code'`,
         [src.id],
       );
       if (rows.length === 0) continue;
@@ -370,9 +465,17 @@ export async function checkDbOnlyCollectorCollision(
     if (collectors.length === 0) {
       return { name, status: 'ok', message: 'No configured collectors declare output paths' };
     }
-    const sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
-    );
+    // #3880: skip archived sources (v34 legacy fallback).
+    let sources: Array<{ id: string; local_path: string | null }>;
+    try {
+      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+      );
+    } catch {
+      sources = await engine.executeRaw<{ id: string; local_path: string | null }>(
+        `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL`,
+      );
+    }
     const hits: string[] = [];
     for (const src of sources) {
       if (!src.local_path || !existsSync(src.local_path)) continue;
@@ -639,7 +742,11 @@ export async function computeExtractHealthCheck(
       return {
         name,
         status: 'warn',
-        message: `${totalRollupFailures} rollup write failure(s) in last 7d (audit JSONL is source of truth; rebuild via gbrain extract status --rebuild-rollup)`,
+        // #3697: this hint used to name `gbrain extract status --rebuild-rollup`,
+        // which does not exist (the JSONL→rollup rebuild is a planned self-heal,
+        // not a shipped command). Say what is true instead of sending the
+        // operator to a usage error.
+        message: `${totalRollupFailures} rollup write failure(s) in last 7d. The rollup table is a best-effort cache — the audit JSONL under ~/.gbrain/audit/ is the source of truth, and counts here may undercount until the 7-day window rolls past the failures. No action needed unless failures keep accumulating (then check DB connectivity/permissions).`,
         details: {
           schema_version: 1,
           kinds,
@@ -688,7 +795,7 @@ export async function checkSyncFreshness(
     // `gbrain sync`'s up-to-date predicate at sync.ts:1057+1075 checks.
     // Columns existed pre-v0.41 (writeSyncAnchor / writeChunkerVersion);
     // no schema migration needed.
-    const sources = await engine.executeRaw<{
+    type FreshnessSourceRow = {
       id: string;
       name: string;
       local_path: string | null;
@@ -696,11 +803,21 @@ export async function checkSyncFreshness(
       last_commit: string | null;
       chunker_version: string | null;
       newest_content_at: Date | null;
-    }>(
-      // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
-      // doctorReportRemote never shells out to git on a DB-supplied local_path.
-      `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
-    );
+    };
+    // v0.41.32.0: newest_content_at feeds the REMOTE (non-localOnly) lag so
+    // doctorReportRemote never shells out to git on a DB-supplied local_path.
+    // #3880: archived sources don't participate in freshness health (v34
+    // legacy fallback).
+    let sources: FreshnessSourceRow[];
+    try {
+      sources = await engine.executeRaw<FreshnessSourceRow>(
+        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
+      );
+    } catch {
+      sources = await engine.executeRaw<FreshnessSourceRow>(
+        `SELECT id, name, local_path, last_sync_at, last_commit, chunker_version, newest_content_at FROM sources WHERE local_path IS NOT NULL`,
+      );
+    }
 
     if (sources.length === 0) {
       return {

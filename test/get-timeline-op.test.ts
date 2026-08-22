@@ -11,6 +11,10 @@ function makeCtx(): OperationContext {
       calls.push({ slug, opts });
       return [];
     },
+    // #4352 gate surface: remote callers resolve the private-pages config
+    // (no opt-out here) and probe for private-only slugs (none here).
+    getConfig: async () => null,
+    executeRaw: async () => [],
   };
 
   return {

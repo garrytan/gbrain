@@ -435,7 +435,14 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // #3621: bumped 18→19 to fold the autocut minKeep floor (ack=).
     // #895: bumped 19→21 — recency DEFAULT_FALLBACK 0.5→0.3 reorders cached
     // rows (19→20 pool floor #3002, 20→21 recency fallback #895, same release).
-    expect(KNOBS_HASH_VERSION).toBe(21);
+    // mw2: 21→22 — #1663 exact-lookup injection + #3995 relational slot +
+    // #3783/#4220 stamps alter stored rows for identical knobs.
+    // #4352 follow-up: bumped 22→23 to fold the private-visibility posture
+    // (xp=) — replaces the wholesale skipCache bypass that disabled the
+    // semantic cache for every remote MCP caller (excludePrivate=true is
+    // their default). A private-included write must not serve a
+    // private-excluding lookup and vice versa.
+    expect(KNOBS_HASH_VERSION).toBe(23);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -455,7 +462,26 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // v0.46.15 (#1863): 17→18 — autocut weak-top floor folds in (acm=).
     // #3621: 18→19 — autocut minKeep floor folds in (ack=).
     // 19→20 pool floor (#3002); 20→21 recency fallback re-key (#895).
-    expect(KNOBS_HASH_VERSION).toBe(21);
+    // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
+    // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
+    expect(KNOBS_HASH_VERSION).toBe(23);
+  });
+
+  test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
+    // The private-visibility posture folds into the key (xp=) instead of
+    // wholesale-skipping the cache: excludePrivate=true is the DEFAULT for
+    // every remote MCP caller, so the skip disabled the semantic cache for
+    // exactly the highest-volume beneficiaries. A private-included (trusted)
+    // write must never serve a private-excluding lookup and vice versa.
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const excluding = knobsHash(knobs, { excludePrivate: true });
+    const including = knobsHash(knobs, { excludePrivate: false });
+    const unset = knobsHash(knobs);
+    expect(excluding).not.toBe(including);
+    // Undefined hashes like false (private included) — mirrors enforcement's
+    // strict `=== true` predicate, so legacy callers that don't thread the
+    // posture share the trusted (private-included) rows.
+    expect(unset).toBe(including);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -620,8 +646,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 21 (17→18 autocut weak-top floor #1863; 18→19 autocut minKeep floor #3621; 19→21 recency fallback re-key #895, v=20 claimed by wave-D)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(21);
+  test('KNOBS_HASH_VERSION is 23 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(23);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

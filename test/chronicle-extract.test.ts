@@ -128,6 +128,28 @@ describe('runChronicleExtract', () => {
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('judge_parse_failed');
   });
+
+  // #2608: a keyless daemon (no servable chat provider) must NOT be recorded
+  // as a legitimate no_events run — pre-fix the default judge returned a bare
+  // `{events: []}` when isAvailable('chat') was false, indistinguishable from
+  // "the judge read the page and found nothing", so keyless installs reported
+  // clean chronicle runs forever.
+  test('no chat provider → skipped/judge_llm_unavailable, not no_events (#2608)', async () => {
+    const unavailable: ChronicleJudge = async () => ({ events: [], failure: 'llm_unavailable' });
+    const r = await runChronicleExtract(engine, { slug: 'meetings/2026-06-18-sync', judge: unavailable });
+    expect(r.status).toBe('skipped');
+    expect(r.reason).toBe('judge_llm_unavailable');
+    expect(await countEvents()).toBe(0);
+  });
+
+  test('defaultJudge surfaces llm_unavailable (source contract, #2608)', async () => {
+    // The default judge is not exported; pin the load-bearing line so the
+    // bare-`{events: []}` regression can't silently return.
+    const { readFileSync } = await import('fs');
+    // test-reads-source-ok: defaultJudge is module-private and needs a live gateway; the text pin is the only unit-testable seam (#2608)
+    const src = readFileSync('src/core/chronicle/extract-events.ts', 'utf8');
+    expect(src).toMatch(/isAvailable\('chat'\)\)\s*return \{ events: \[\], failure: 'llm_unavailable' \}/);
+  });
 });
 
 describe('parseJudgeJson failure signalling (#2606)', () => {

@@ -131,6 +131,23 @@ export class ImportAbortError extends Error {
   }
 }
 
+/**
+ * #3969 — a poll that changed nothing is not an ingest event. Cron-driven
+ * `import`/`sync` against a mostly-static tree was writing an ingest_log row
+ * every run ("Imported 0 pages, N skipped, 0 chunks" — 93% of rows on a
+ * 15-minute cadence), burying real events past get_ingest_log's default
+ * LIMIT 20. Shared by runImport (directory imports) and performSync (git
+ * syncs). `logNoop` (CLI `--log-noop`) opts back into per-poll rows for
+ * deployments using them as a liveness signal.
+ */
+export function shouldLogIngest(
+  counts: { imported: number; errors: number; chunksCreated: number },
+  logNoop: boolean,
+): boolean {
+  if (logNoop) return true;
+  return counts.imported > 0 || counts.errors > 0 || counts.chunksCreated > 0;
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -176,6 +193,8 @@ export async function runImport(
   const allowNoncanonicalRoot = args.includes('--allow-noncanonical-root');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  // #3969: opt back into per-poll ingest_log rows (default: no-op runs skip the write).
+  const logNoop = args.includes('--log-noop');
   const includeGitignored = args.includes('--include-gitignored') || opts.includeGitignored === true;
 
   // #3637: under --json, stdout belongs to the JSON document alone. The
@@ -719,13 +738,16 @@ export async function runImport(
     }
   }
 
-  // Log the ingest
-  await engine.logIngest({
-    source_type: 'directory',
-    source_ref: dir,
-    pages_updated: importedSlugs,
-    summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
-  });
+  // Log the ingest. #3969: skip the row when the run changed nothing
+  // (imported=0, errors=0, chunks=0) unless --log-noop — see shouldLogIngest.
+  if (shouldLogIngest({ imported, errors, chunksCreated }, logNoop)) {
+    await engine.logIngest({
+      source_type: 'directory',
+      source_ref: dir,
+      pages_updated: importedSlugs,
+      summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
+    });
+  }
 
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently

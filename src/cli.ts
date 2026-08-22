@@ -193,6 +193,12 @@ const CLI_ONLY_SELF_HELP = new Set([
   // ZE interim cleanup: the retired ze-switch shim ships truthful help
   // (sunset refusal + canonical migration command); the generic stub hid it.
   'ze-switch',
+  // #3686 (the #578 residue): eval / storage / reindex each ship real usage —
+  // eval's printHelp (15 subcommands), storage's status usage, reindex's
+  // target-flag usage — that the generic one-line stub was hiding. Their
+  // engine-free --help is answered by pre-engine branches in handleCliOnly
+  // (the sync/capture pattern).
+  'eval', 'storage', 'reindex',
 ]);
 
 /**
@@ -387,6 +393,20 @@ async function main() {
   const rawArgs = process.argv.slice(2);
   const { cliOpts, rest: args } = parseGlobalFlags(rawArgs);
   setCliOptions(cliOpts);
+
+  // #3688: operator-configured guardrail providers load before ANY command
+  // dispatch. Fail-closed by design: when GBRAIN_GUARDRAILS_MODULE is set but
+  // broken, abort rather than silently run without the operator's firewall.
+  // (Unset → zero cost, the OSS distribution stays inert.)
+  if (process.env.GBRAIN_GUARDRAILS_MODULE) {
+    try {
+      const { loadGuardrailProvidersFromEnv } = await import('./core/guardrails.ts');
+      await loadGuardrailProvidersFromEnv();
+    } catch (err) {
+      console.error(`guardrails: ${(err as Error)?.message ?? String(err)}`);
+      process.exit(1);
+    }
+  }
 
   let command = args[0];
 
@@ -1066,8 +1086,25 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // rehearsal request (the resurrected #2185 class the red team caught).
         params[key] = true;
       } else if (i + 1 < args.length) {
+        // #2822: a flag silently overwriting an already-set positional is
+        // almost always an argument-plumbing mistake (e.g. `gbrain put
+        // notes.md --content "..."` — the file path landed in `content`
+        // positionally, then --content clobbered it). Warn to stderr; when
+        // the discarded value names an existing file, point at capture --file.
+        const prevValue = params[key];
         params[key] = args[++i];
         if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        if (prevValue !== undefined && prevValue !== params[key]) {
+          let fileHint = '';
+          try {
+            if (typeof prevValue === 'string' && prevValue && existsSync(prevValue)) {
+              fileHint = ` If '${prevValue}' is a file you meant to ingest, use: gbrain capture --file ${prevValue} --slug <slug>`;
+            }
+          } catch { /* best-effort hint */ }
+          process.stderr.write(
+            `Warning: --${key.replace(/_/g, '-')} overwrites the positional value '${String(prevValue)}'.${fileHint}\n`,
+          );
+        }
       }
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
@@ -1110,6 +1147,12 @@ export async function applyStdinParam(
   if (op.cliHints?.stdin && !params[op.cliHints.stdin] && !process.stdin.isTTY) {
     const content = await readStdinBounded();
     if (content === null) return; // no input arrived — let the required-param check fail fast
+    // #2822: empty/whitespace-only stdin is NO input, not a real value. A CI
+    // step's `< /dev/null`, an agent harness's empty pipe, or a botched
+    // redirect used to land '' in the param and flow into a destructive
+    // empty write; leaving the param unset makes the required-param usage
+    // error fire instead (same fail-fast as the #3513 timeout path).
+    if (content.trim() === '') return;
     const MAX_STDIN = 5_000_000; // 5MB
     if (Buffer.byteLength(content, 'utf-8') > MAX_STDIN) {
       console.error(`Error: stdin content exceeds ${MAX_STDIN} bytes. Split into smaller inputs.`);
@@ -2408,6 +2451,18 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // #4198: `gbrain eval synthesize-concepts` gets a dedicated branch (mirror
+  // of the chronicle branch above) so the generic qrels eval can't recapture
+  // it — pre-fix it fell through to "Error: --qrels <path|json> is required".
+  // The scaffold needs no DB and exits nonzero with an honest
+  // {ok:false, status:'not_implemented'} envelope until the real evaluator
+  // lands.
+  if (command === 'eval' && args[0] === 'synthesize-concepts') {
+    const { runEvalSynthesizeConceptsCli } = await import('./commands/eval-synthesize-concepts.ts');
+    setCliExitVerdict(await runEvalSynthesizeConceptsCli(args.slice(1)));
+    return;
+  }
+
   // v0.41.13.0: `gbrain eval conversation-parser` is pure-function
   // (parses fixture JSONL, runs parseConversation, scores results).
   // No DB access; bypass connectEngine entirely so the CI fixture
@@ -2504,6 +2559,34 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // #3686 (the #578 residue): `eval --help` reaches eval.ts's printHelp
+  // engine-free. Placed AFTER the sub-owned no-DB routes above (brainbench /
+  // longmemeval / run-all / cross-modal / chronicle / conversation-parser /
+  // takes-quality replay / whoknows) so each sub's own usage keeps winning;
+  // every remaining `eval … --help` form prints the full subcommand usage
+  // instead of the old one-line stub (or a "No brain configured" error).
+  if (command === 'eval' && (args.includes('--help') || args.includes('-h'))) {
+    const { runEvalCommand } = await import('./commands/eval.ts');
+    await runEvalCommand(null as never, ['--help']);
+    return;
+  }
+
+  // #3686: `storage --help` — runStorage's help guard returns before the
+  // engine argument is touched.
+  if (command === 'storage' && (args.includes('--help') || args.includes('-h'))) {
+    const { runStorage } = await import('./commands/storage.ts');
+    await runStorage(null as never, args);
+    return;
+  }
+
+  // #3686: `reindex --help` — the usage block (incl. the --multimodal flags
+  // the dispatcher parses) lives in reindex.ts; printing it needs no engine.
+  if (command === 'reindex' && (args.includes('--help') || args.includes('-h'))) {
+    const { printReindexHelp } = await import('./commands/reindex.ts');
+    printReindexHelp();
+    return;
+  }
+
   // v0.41.6.0 D3 (per outside-voice F1): connect-time + dispatch-time wallclock
   // timeouts for read-only commands whose hang would otherwise spin at 100% CPU
   // (the production "10-day zombie gbrain search ping" bug class). The wrap
@@ -2592,6 +2675,18 @@ async function handleCliOnly(command: string, args: string[]) {
     if (cfgSync?.engine === 'pglite' && cfgSync.database_path && !cfgSync.database_url) {
       const { maybeDelegateSyncToServe } = await import('./commands/sync-delegate.ts');
       if (await maybeDelegateSyncToServe(cfgSync.database_path, args)) return;
+    }
+  }
+
+  // Serve-delegated sweep preflight (#677) — same shape as sync above: a live
+  // `gbrain serve` owns the PGLite single-writer lock, so `sweep --once` used
+  // to exit 1 with LiveServeLockError. The lock owner runs the sweep over its
+  // IPC socket instead (commands/sweep-delegate.ts).
+  if (command === 'sweep') {
+    const cfgSweep = loadConfig();
+    if (cfgSweep?.engine === 'pglite' && cfgSweep.database_path && !cfgSweep.database_url) {
+      const { maybeDelegateSweepToServe } = await import('./commands/sweep-delegate.ts');
+      if (await maybeDelegateSweepToServe(cfgSweep.database_path, args)) return;
     }
   }
 
@@ -3538,7 +3633,7 @@ CODE INDEXING (v0.19.0 / v0.20.0 Cathedral II)
   query <q> --lang <l>               Filter hybrid search to one language (v0.20.0)
   query <q> --symbol-kind <k>        Filter to symbol type (function|class|method|...) (v0.20.0)
   reconcile-links [--dry-run]        Batch-recompute doc↔impl edges (v0.20.0)
-  reindex-code [--source id] [--yes] Explicit code-page reindex (v0.20.0)
+  reindex-code [--source id] [--yes] [--force] Explicit code-page reindex (v0.20.0; --force re-chunks unchanged pages)
   reindex-search-vector [--dry-run] [--yes] [--json]
                                 Recreate FTS triggers + backfill under
                                 $GBRAIN_FTS_LANGUAGE (default 'english')

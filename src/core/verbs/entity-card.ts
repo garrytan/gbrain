@@ -23,7 +23,7 @@ import type { BrainEngine, FactRow } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
-import { stampEvidence } from '../search/evidence.ts';
+import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { SearchResult } from '../types.ts';
 
 const EDGE_CAP = 10;
@@ -105,6 +105,16 @@ export async function buildEntityCard(
   const trimmed = (name ?? '').trim();
   if (!trimmed) return { found: false, suggestions: [] };
 
+  // #4352 — untrusted callers never resolve a `visibility: private` page into
+  // a card (or a near-miss suggestion). Trust + config gate resolve through
+  // the shared helper; local (remote:false) callers are unchanged. Covers
+  // entity, context_pack, and delta (all route through buildEntityCard).
+  const { resolveExcludePrivatePages, privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+  const excludePrivate = await resolveExcludePrivatePages(engine, opts.remote ? undefined : false);
+  // Predicate text lives ONCE (private-visibility.ts) — both card queries
+  // below select `FROM pages` unaliased, so qualify with the table name.
+  const privatePredicate = excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '';
+
   const norm = normalizeAlias(trimmed);
   const titleLc = trimmed.toLowerCase();
   // Two exact-slug candidates: the slugified form for free-text names AND the
@@ -142,7 +152,7 @@ export async function buildEntityCard(
           AND source_id = $1
           AND ( lower(title) = $2
              OR slug = ANY($3::text[])
-             OR slug LIKE $4 )`,
+             OR slug LIKE $4 )${privatePredicate}`,
       [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
     );
   } catch {
@@ -162,7 +172,7 @@ export async function buildEntityCard(
       const extra = await engine.executeRaw<CardPageRow>(
         `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at, last_retrieved_at
            FROM pages
-          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])`,
+          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${privatePredicate}`,
         [sourceId, missing],
       );
       for (const r of extra) rowBySlug.set(r.slug, r);
@@ -178,7 +188,7 @@ export async function buildEntityCard(
     .sort((a, b) => a.rank - b.rank || lastTouchedMs(b.row) - lastTouchedMs(a.row));
 
   if (candidates.length === 0) {
-    return { found: false, suggestions: await nearMissSuggestions(engine, sourceId, trimmed) };
+    return { found: false, suggestions: await nearMissSuggestions(engine, sourceId, trimmed, excludePrivate) };
   }
 
   const best = candidates[0];
@@ -317,10 +327,13 @@ async function nearMissSuggestions(
   engine: BrainEngine,
   sourceId: string,
   name: string,
+  excludePrivate = false,
 ): Promise<EntitySuggestion[]> {
   try {
-    const raw = await engine.searchKeyword(name, { limit: SUGGESTION_CAP, sourceId });
+    const raw = await engine.searchKeyword(name, { limit: SUGGESTION_CAP, sourceId, excludePrivate });
     const results = raw as SearchResult[];
+    // #3783 — direct FTS path: every row is a keyword hit by construction.
+    markKeywordHits(results);
     stampEvidence(results);
     return results.map(r => ({
       slug: r.slug,

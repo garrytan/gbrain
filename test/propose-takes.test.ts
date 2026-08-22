@@ -977,3 +977,75 @@ describe('runPhaseProposeTakes — global-error halt (#3044)', () => {
     expect(result.summary).not.toContain('aborted on');
   });
 });
+
+// ─── #4102: cycle.propose_takes.enabled off switch ─────────────────
+
+describe('cycle.propose_takes.enabled gate (#4102)', () => {
+  function stubConfig(engine: BrainEngine, value: string | null): void {
+    (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+      async (k: string) => (k === 'cycle.propose_takes.enabled' ? value : null);
+  }
+
+  function countingExtractor(): { extractor: ProposeTakesExtractor; calls: () => number } {
+    let n = 0;
+    return {
+      extractor: async () => { n += 1; return []; },
+      calls: () => n,
+    };
+  }
+
+  test('explicit false skips before any extractor call or DB write', async () => {
+    const pages = [buildPage({ slug: 'wiki/gated', body: 'Some gated prose.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    stubConfig(engine, 'false');
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(result.status).toBe('skipped');
+    const details = result.details as Record<string, unknown>;
+    expect(details.reason).toBe('disabled');
+    expect(String(details.enable_hint)).toContain('cycle.propose_takes.enabled');
+    expect(calls()).toBe(0);
+    expect(captured.filter(c => c.sql.includes('take_proposals'))).toHaveLength(0);
+  });
+
+  test("'0' and 'off' also skip (isConfigTruthy semantics)", async () => {
+    for (const value of ['0', 'off', 'no']) {
+      const pages = [buildPage({ slug: 'wiki/gated2', body: 'prose' })];
+      const { engine } = buildMockEngine({ pages });
+      stubConfig(engine, value);
+      const { extractor, calls } = countingExtractor();
+      const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+      expect(result.status).toBe('skipped');
+      expect(calls()).toBe(0);
+    }
+  });
+
+  test('unset (null) = default ON: the phase runs', async () => {
+    const pages = [buildPage({ slug: 'wiki/ungated', body: 'Some prose worth scanning.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, null);
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(result.status).not.toBe('skipped');
+    expect(calls()).toBe(1);
+  });
+
+  test("explicit 'true' runs", async () => {
+    const pages = [buildPage({ slug: 'wiki/on', body: 'More prose.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, 'true');
+    const { extractor, calls } = countingExtractor();
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(calls()).toBe(1);
+  });
+
+  test('once:true bypasses an explicit false for this run only', async () => {
+    const pages = [buildPage({ slug: 'wiki/once', body: 'Once-run prose.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, 'false');
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, once: true });
+    expect(result.status).not.toBe('skipped');
+    expect(calls()).toBe(1);
+  });
+});

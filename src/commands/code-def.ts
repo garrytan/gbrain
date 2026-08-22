@@ -49,6 +49,24 @@ export const DEF_TYPES = [
   // type_alias/function_signature already normalize into the list above.
   'mixin declaration', 'extension declaration',
   'getter signature', 'setter signature',
+  // #3789 residual audit — every remaining definition-shaped fallthrough of
+  // normalizeSymbolType across TOP_LEVEL_TYPES + NESTED_EMIT_CONFIG. Without
+  // these, symbols the chunker HAS indexed are invisible to code-def (Java
+  // records, C#/Kotlin properties, Rust structs/traits, Go type declarations,
+  // Solidity contracts — the bare 'contract'/'trait'/'struct' entries above
+  // are never produced by normalizeSymbolType, only these fallthrough forms).
+  'property declaration', 'record declaration',            // C#/Kotlin, Java
+  'struct declaration', 'object declaration',              // C#/Swift, Kotlin
+  'namespace declaration', 'file scoped namespace declaration', // C#
+  'trait declaration',                                     // PHP
+  'trait definition', 'object definition',                 // Scala
+  'contract declaration', 'modifier definition', 'event definition', // Solidity
+  'namespace definition', 'template declaration', 'declaration', 'preproc def', // C/C++
+  'type declaration', 'const declaration', 'var declaration', // Go
+  'struct item', 'trait item', 'impl item', 'mod item',    // Rust
+  'type item', 'const item', 'static item',                // Rust
+  'lexical declaration', 'variable declaration',           // TS/JS top-level const/let/var
+  'local declaration',                                     // Lua
 ];
 
 export async function findCodeDef(
@@ -100,6 +118,42 @@ export async function findCodeDef(
   }));
 }
 
+/**
+ * #3789 aside — when findCodeDef returns 0 rows, distinguish "symbol does not
+ * exist" from "symbol exists but every row's symbol_type is outside the
+ * DEF_TYPES allowlist" (a normalizeSymbolType fallthrough gap, or data chunked
+ * by an older chunker). Returns the distinct filtered-out symbol types for the
+ * name; empty when the symbol genuinely has no named chunks. Runs ONLY on
+ * count:0, rides the symbol_name lookup path the result query already uses.
+ */
+export async function probeFilteredSymbolTypes(
+  engine: BrainEngine,
+  symbol: string,
+  opts: { language?: string } = {},
+): Promise<string[]> {
+  const params: unknown[] = [symbol];
+  let whereLang = '';
+  if (opts.language) {
+    params.push(opts.language);
+    whereLang = `AND cc.language = $${params.length}`;
+  }
+  const rows = await engine.executeRaw<{ symbol_type: string | null }>(
+    `SELECT DISTINCT cc.symbol_type
+     FROM content_chunks cc
+     JOIN pages p ON p.id = cc.page_id
+     WHERE cc.symbol_name = $1
+       ${whereLang}
+       AND p.page_kind = 'code'
+     ORDER BY cc.symbol_type
+     LIMIT 20`,
+    params,
+  );
+  const allow = new Set([...DEF_TYPES, 'export statement']);
+  return rows
+    .map((r) => r.symbol_type)
+    .filter((t): t is string => t != null && !allow.has(t));
+}
+
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
@@ -137,17 +191,37 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
     const results = await findCodeDef(engine, sym, { limit, language });
     // code-def is brain-wide (not source-scoped); readiness is 'symbol' grain.
     const readiness = await resolveCodeReadiness(engine, { kind: 'symbol', count: results.length });
+    // #3789: a count:0 that was filtered by the DEF_TYPES allowlist must not
+    // read as a bare ready:true / "symbol does not exist". Probe the distinct
+    // symbol types the name DOES have and surface the filtered ones.
+    let filteredTypes: string[] = [];
+    if (results.length === 0) {
+      try {
+        filteredTypes = await probeFilteredSymbolTypes(engine, sym, { language });
+      } catch {
+        // Supplementary signal — never fail the command on the probe.
+      }
+    }
+    const filteredHint = filteredTypes.length > 0
+      ? `Symbol "${sym}" IS indexed, but only with symbol type(s) outside the definition allowlist: ` +
+        `${filteredTypes.join(', ')}. Likely a DEF_TYPES gap or pre-upgrade chunk data — ` +
+        'try `gbrain code-refs` for these sites, and consider re-syncing the source.'
+      : null;
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({
         symbol: sym,
         count: results.length,
         status: readiness.status,
         ready: readiness.ready,
+        ...(filteredTypes.length > 0
+          ? { filtered_symbol_types: filteredTypes, hint: filteredHint }
+          : {}),
         results,
       }, null, 2));
     } else {
       if (results.length === 0) {
         console.log(`No definitions found for "${sym}"`);
+        if (filteredHint) console.log(filteredHint);
         const hint = readinessHint(readiness);
         if (hint) console.log(hint);
       } else {

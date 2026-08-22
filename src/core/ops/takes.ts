@@ -234,12 +234,33 @@ const think: Operation = {
       for (const w of persisted.warnings) result.warnings.push(w);
     }
 
+    // #2556: `take` was gated (safeTake) but never EXECUTED — runThink ignores
+    // opts.take, so a local `take: true` silently persisted nothing. Persist
+    // md-first through the canonical takes write-through; refusals surface as
+    // loud machine-stable warnings + take_row:null. Remote stays blocked above.
+    let takeRow: number | null = null;
+    if (safeTake) {
+      if (!p.anchor) {
+        result.warnings.push('TAKE_REQUIRES_ANCHOR');
+      } else {
+        const { persistTakeFromSynthesis } = await import('../think/persist-take.ts');
+        const persisted = await persistTakeFromSynthesis(ctx.engine, result, {
+          anchor: String(p.anchor),
+          sourceId: ctx.sourceId,
+          lockTimeoutMs: 2000,
+        });
+        takeRow = persisted.take_row;
+        for (const w of persisted.warnings) result.warnings.push(w);
+      }
+    }
+
     return {
       ...result,
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any
       // falsy) to null so callers never see an empty-string "slug".
       saved_slug: savedSlug || null,
       evidence_inserted: evidenceInserted,
+      take_row: takeRow,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
     };
   },

@@ -440,7 +440,16 @@ export class IngestionDaemon {
     // 'trickle' for v0.38 back-compat.
     const sourceMode = state.registration.source.mode ?? 'trickle';
     if (sourceMode === 'trickle') {
-      const isNew = this.dedup.mark(sourceKind, effectiveEvent.content_hash);
+      // #3756: tombstones dedup on (source_kind, 'tombstone', slug) — two
+      // deletes of the same slug within the window are one delete, and a
+      // tombstone must never collide with an upsert that happens to carry
+      // the same content_hash. The 'tombstone\0' prefix keeps the two key
+      // spaces disjoint (slugs can't contain NUL — validateSlug rejects
+      // control bytes; hex hashes trivially can't).
+      const dedupKey = effectiveEvent.kind === 'tombstone'
+        ? `tombstone\0${effectiveEvent.slug}`
+        : effectiveEvent.content_hash;
+      const isNew = this.dedup.mark(sourceKind, dedupKey);
       if (!isNew) {
         // Silent dedup hit. dedup.hits counter already incremented.
         return;

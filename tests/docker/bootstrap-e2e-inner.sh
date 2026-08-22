@@ -162,8 +162,14 @@ cat > "$GBRAIN_HOME/.gbrain/config.json" <<EOF
 EOF
 
 # ── Workspace + scripted interview helper ───────────────────────────────────
+# $2 (optional) is the MCP_SCOPE answer; pass "none" to leave the consent
+# UNANSWERED (MCP_SCOPE is optional — confirm still closes). The opencode
+# workspace needs the unanswered form: its user-global default only holds
+# when no explicit scope was recorded, and recording one can't be undone
+# post-confirm without invalidating the read-back hash (A8).
 run_interview() {
   ws="$1"
+  scope="${2:-project}"
   gbrain bootstrap interview --init --workspace "$ws" > /dev/null
   gbrain bootstrap interview --set AGENT_NAME "Lanternfish" --workspace "$ws" > /dev/null
   gbrain bootstrap interview --set PRINCIPAL_NAME "Pat Example" --workspace "$ws" > /dev/null
@@ -173,7 +179,9 @@ run_interview() {
 - meeting prep" --workspace "$ws" > /dev/null
   gbrain bootstrap interview --set PRINCIPAL_CONTEXT "Runs a small research group; builds internal tooling; values signal over noise." --workspace "$ws" > /dev/null
   gbrain bootstrap interview --set VOICE_REGISTER "Direct: three options, the second one wins." --workspace "$ws" > /dev/null
-  gbrain bootstrap interview --set MCP_SCOPE "project" --workspace "$ws" > /dev/null
+  if [ "$scope" != "none" ]; then
+    gbrain bootstrap interview --set MCP_SCOPE "$scope" --workspace "$ws" > /dev/null
+  fi
   gbrain bootstrap interview --set HOOKS_CONSENT "no" --workspace "$ws" > /dev/null
   gbrain bootstrap interview --set PERSIST_CRON "no" --workspace "$ws" > /dev/null
   hash="$(gbrain bootstrap interview --status --workspace "$ws" | sed -n 's/.*read-back hash: \([0-9a-f][0-9a-f]*\).*/\1/p')"
@@ -206,10 +214,15 @@ origin="$(git -C "$WS" remote get-url origin)"
 grep -Fq "$origin" "$WS/GITHUB.md" || fail "GITHUB.md not refreshed with the repo URL"
 
 # ── ABORT_AFTER kill mid-render on a second workspace → status resumes ──────
+# WS2 doubles as the opencode workspace below, so its interview records NO
+# MCP_SCOPE answer — the opencode lane's user-global default only applies
+# when a human never explicitly chose a scope (#4293: pointing the opencode
+# step at WS, whose interview banked MCP_SCOPE=project, made the lane write
+# project scope and fail the user-global assertion).
 step "ABORT_AFTER kill + status resume"
 WS2="$SCRATCH/ws2"
 mkdir -p "$WS2/brain"
-run_interview "$WS2"
+run_interview "$WS2" none
 set +e
 GBRAIN_BOOTSTRAP_ABORT_AFTER=render gbrain bootstrap render --workspace "$WS2"
 rc=$?
@@ -245,13 +258,15 @@ grep -Fq "serve --surface full" "$GB_CODEX_STATE" || fail "codex registration di
 # ── opencode door: direct-writer registration, NO binary at all ─────────────
 # The opencode lane needs no CLI (the JSONC writer is the registration), so
 # the offline container exercises it with nothing faked except the config
-# location (XDG_CONFIG_HOME → scratch). Asserts: user-global default scope
-# (no MCP_SCOPE answer recorded → the sharing-safe inversion), the entry
-# shape (absolute binary, GBRAIN_SOURCE bound, full surface), and no Claude
-# hooks written.
+# location (XDG_CONFIG_HOME → scratch). Runs against WS2 — the workspace
+# whose interview recorded NO MCP_SCOPE answer — because the assertions
+# below prove the sharing-safe inversion: user-global is the DEFAULT, not
+# an echo of a recorded 'project' choice (WS has one; #4293). Asserts:
+# user-global default scope, the entry shape (absolute binary,
+# GBRAIN_SOURCE bound, full surface), and no Claude hooks written.
 step "opencode MCP registration (direct JSONC writer, no binary)"
 export XDG_CONFIG_HOME="$SCRATCH/xdg-config"
-opencode_out="$(gbrain bootstrap hooks --workspace "$WS" --harness opencode --gbrain-bin "$FAKE_GBRAIN" 2>&1)"
+opencode_out="$(gbrain bootstrap hooks --workspace "$WS2" --harness opencode --gbrain-bin "$FAKE_GBRAIN" 2>&1)"
 printf '%s\n' "$opencode_out"
 printf '%s\n' "$opencode_out" | grep -Fq "scope: user-global" \
   || fail "opencode registration did not default to user-global scope"
@@ -260,6 +275,7 @@ OC_CFG="$XDG_CONFIG_HOME/opencode/opencode.jsonc"
 grep -Fq '"GBRAIN_SOURCE"' "$OC_CFG" || fail "opencode registration did not bind GBRAIN_SOURCE"
 grep -Fq '"--surface"' "$OC_CFG" || fail "opencode registration did not pin a surface"
 grep -Fq "\"$FAKE_GBRAIN\"" "$OC_CFG" || fail "opencode user-global entry must carry the absolute binary path"
+[ -f "$WS2/.claude/settings.local.json" ] && fail "opencode path must not write Claude hooks"
 printf '%s\n' "$opencode_out" | grep -Fq "AGENTS.md" \
   || fail "opencode wiring did not state the pull protocol plainly"
 unset XDG_CONFIG_HOME

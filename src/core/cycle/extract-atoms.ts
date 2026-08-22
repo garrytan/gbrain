@@ -49,7 +49,7 @@
 // sourceId arg — atoms always wrote to 'default' regardless of source,
 // which made the NOT EXISTS guard ineffective on federated brains.
 
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -776,6 +776,12 @@ export async function runPhaseExtractAtoms(
         // deterministic slugs upsert instead of duplicating.
         const hash16 = item.contentHash.slice(0, 16);
         const importedSlugs: string[] = [];
+        // #3961: provenance edges source-page → atom, accumulated during the
+        // atom loop and flushed AFTER the completion-receipt flip so a
+        // partially-failed item never banks edges for atoms whose receipt
+        // never flipped. Page-kind items only — transcripts are files, not
+        // pages, so there is no from-endpoint to link.
+        const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
           const slug = atomSlug(atom.title, srcRef);
@@ -817,6 +823,15 @@ export async function runPhaseExtractAtoms(
             noEmbed: !isAvailable('embedding'),
           });
           importedSlugs.push(slug);
+          if (item.kind === 'page') {
+            provenanceLinks.push({
+              from_slug: item.slug,
+              to_slug: slug,
+              link_source: 'atom-provenance',
+              from_source_id: sourceId,
+              to_source_id: sourceId,
+            });
+          }
           totalAtomsExtracted++;
         }
         // Completion receipt: flip provisional → real in one statement, then
@@ -828,6 +843,21 @@ export async function runPhaseExtractAtoms(
             WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
           [hash16, sourceId, importedSlugs],
         );
+        // #3961: bank the provenance edges so `gbrain backlinks <source-page>`
+        // and the graph surface atom lineage. ON CONFLICT-deduped by the
+        // batch write, so the deterministic-slug re-run path upserts instead
+        // of duplicating. Best-effort: a link failure must not fail the item
+        // (the receipt already flipped — atoms are safe) but it logs loudly.
+        if (provenanceLinks.length > 0) {
+          try {
+            await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
+          } catch (linkErr) {
+            console.error(
+              `[extract_atoms] atom-provenance link batch failed for ${item.kind === 'page' ? item.slug : 'item'}: ` +
+              `${(linkErr as Error).message}`,
+            );
+          }
+        }
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }

@@ -488,3 +488,70 @@ export function conceptNudge(query: string): string | null {
     `A nonzero search count is not proof of completeness.`
   );
 }
+
+// ─────────────────────────────────────────────────────────
+// #1663 — query-shape router (factual vs open)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * #1663 — coarse query SHAPE, orthogonal to intent:
+ *
+ *   'factual' — a bounded lookup with a small, checkable answer (who/when/
+ *               where/which, attribute possessives, quoted names, slug-ish
+ *               tokens, short entity lookups). Retrieval either has the row
+ *               or it doesn't; the CRAG gate's retrieval-side escalation is
+ *               worth one re-run here.
+ *   'open'    — synthesis-shaped (how/why/explain/summarize/compare,
+ *               long multi-clause). When retrieval confidence is weak on an
+ *               open query, MORE retrieval rarely fixes it — the honest
+ *               escalation target is `think` (multi-round gather+synthesis).
+ *
+ * Consumed by the CRAG confidence gate (crag.ts + the `query` op) and
+ * surfaced in the retrieval response meta for auditability.
+ */
+export type QueryShape = 'factual' | 'open';
+
+const OPEN_SHAPE_PATTERNS: RegExp[] = [
+  /^\s*(how|why)\b/i,
+  /\b(explain|describe|summariz\w*|overview of|walk me through|brainstorm|compare|contrast|catch me up|tell me about|history of)\b/i,
+  /\bwhat\s+do\s+(i|we|you)\s+know\s+about\b/i,
+  /\b(pros\s+and\s+cons|trade-?offs|implications|open\s+questions)\b/i,
+];
+
+const FACTUAL_SHAPE_PATTERNS: RegExp[] = [
+  /^\s*(who|whom|whose|when|where|which)\b/i,
+  // Attribute possessive / attribute-of lookups ("alice's email", "the url of X").
+  /\b(email|phone|address|birthday|date|deadline|url|link|title|name|number|id|slug|handle)\b/i,
+  /["'“”][^"'“”]+["'“”]/, // quoted phrase — exact-match intent
+  /\b[a-z0-9]+(?:-[a-z0-9]+){1,}\b/i, // slug-like token
+];
+
+/** Word-count threshold above which an unmatched query reads as open-ended. */
+const OPEN_SHAPE_TOKEN_THRESHOLD = 9;
+
+export function classifyQueryShape(query: string): QueryShape {
+  const q = query.trim();
+  if (!q) return 'open';
+  // Explicit factual leads win over embedded open verbs: "who explained the
+  // outage" is still a who-lookup.
+  if (/^\s*(who|whom|whose|when|where|which)\b/i.test(q)) return 'factual';
+  if (matches(OPEN_SHAPE_PATTERNS, q)) return 'open';
+  if (isConceptShapedQuery(q)) return 'open'; // set-by-meaning ≈ open-ended
+  if (matches(FACTUAL_SHAPE_PATTERNS, q)) return 'factual';
+  // Unmatched: short queries are lookups; long multi-clause reads as open.
+  return q.split(/\s+/).length > OPEN_SHAPE_TOKEN_THRESHOLD ? 'open' : 'factual';
+}
+
+/**
+ * #1663 — gate for the structural exact-lookup tier (exact-lookup.ts): a
+ * query short enough to plausibly BE a page identity (slug, exact title,
+ * declared alias). Mirrors the alias hop's ≤6-token guard; slug-shaped
+ * single tokens ('people/alice-example') always qualify. Pure + cheap —
+ * called per query on the hot path.
+ */
+export function isLookupShapedQuery(query: string): boolean {
+  const q = query.trim();
+  if (!q) return false;
+  if (!/\s/.test(q) && q.includes('/')) return true; // slug-shaped
+  return q.split(/\s+/).length <= 6;
+}

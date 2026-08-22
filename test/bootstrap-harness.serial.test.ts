@@ -457,7 +457,7 @@ describe('--status', () => {
     const code = await statusHarness(parseHarnessArgs(['--status']), f.deps);
     expect(code).toBe(0);
     expect(f.out.join('\n')).toMatch(/token: OK .*codex config block/);
-    expect(f.out.join('\n')).toMatch(/degraded on Postgres/);
+    expect(f.out.join('\n')).toMatch(/needs a running gbrain serve on Postgres/);
   });
 
   test('revoked-under-a-green-receipt: token verify fails → exit 1', async () => {

@@ -15,11 +15,15 @@
 import type { Operation } from './contract.ts';
 import { OperationError, verbError } from './contract.ts';
 import { sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { packToBudget, estimateTokens, resultTokens } from '../search/token-budget.ts';
 import { isAvailable } from '../ai/gateway.ts';
+// #4209: the named entity-hints cap — surfaced in the extract_facts param
+// description and the entity_hints_used/_dropped response fields.
+import { ENTITY_HINTS_CAP } from '../facts/extract.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
@@ -34,9 +38,11 @@ const extract_facts: Operation = {
     'v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. Sanitizes turn_text via INJECTION_PATTERNS, calls the configured extraction model (key-aware: any servable provider — OpenAI or Anthropic key both work), runs the cosine fast-path + classifier dedup pipeline, INSERTs into facts. Returns counts by status. With NO servable chat model, returns skipped: extraction_unavailable + an agent_action telling YOU to extract and write via `remember` (visibility: "private"). Skips extraction when the turn is dream-generated content (anti-loop). For agent memory writes of a SINGLE already-formed fact, prefer the `remember` verb (zero LLM, mandatory provenance).',
   params: {
     turn_text: { type: 'string', required: true, description: 'The user message or page body to extract facts from. Sanitized via INJECTION_PATTERNS before the LLM call.' },
-    session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface.' },
-    entity_hints: { type: 'array', items: { type: 'string' }, description: 'Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug.' },
+    session_id: { type: 'string', description: 'Opaque session id (e.g. topic-id from MCP _meta.session_id, or CLI --session). Stored on each fact for the recall --session filter. Not an auth surface. NOTE (#4206): the session survives on the DB row at insert time, but the `## Facts` fence has no session column — a fence rebuild/reconcile re-derives rows session-less. Treat fence-backed facts as session-less across rebuilds.' },
+    entity_hints: { type: 'array', items: { type: 'string' }, description: `Existing canonical entity slugs the agent has already resolved. Helps the extractor pick the right slug. Only the first ${ENTITY_HINTS_CAP} are forwarded to the extractor (#4209) — the response reports entity_hints_used / entity_hints_dropped; pass the most load-bearing slugs first.` },
     is_dream_generated: { type: 'boolean', description: 'When true, extraction is skipped (anti-loop). Caller flips this on for pages with dream_generated:true frontmatter.' },
+    valid_from: { type: 'string', description: '#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().' },
+    source_slug: { type: 'string', description: "#4206: slug of the page/transcript this turn came from (e.g. 'meetings/2026-04-03'). Written to facts.context so recall/context_pack/delta consumers see the provenance." },
     visibility: { type: 'string', description: 'Default visibility for extracted facts. private (default) | world.' },
   },
   mutating: true,
@@ -46,12 +52,21 @@ const extract_facts: Operation = {
     const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
     const { runFactsPipeline } = await import('../facts/backstop.ts');
 
+    // #4209: named-cap accounting. The extractor prompt forwards only the
+    // first ENTITY_HINTS_CAP hints; report used/dropped on EVERY envelope so
+    // over-cap hints are visible in the contract instead of silently eaten.
+    const entityHints = Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined;
+    const hintAccounting = {
+      entity_hints_used: Math.min(entityHints?.length ?? 0, ENTITY_HINTS_CAP),
+      entity_hints_dropped: Math.max(0, (entityHints?.length ?? 0) - ENTITY_HINTS_CAP),
+    };
+
     // D15: kill switch. Operator can disable facts extraction across the
     // brain without binary downgrade by setting `facts.extraction_enabled`
     // to false. Returns zero-counts envelope so callers see a clean
     // success rather than a 'permission_denied' false alarm.
     if (!(await isFactsExtractionEnabled(ctx.engine))) {
-      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'extraction_disabled' };
+      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'extraction_disabled', ...hintAccounting };
     }
 
     // v0.31.2: routed through the shared pipeline (PR1 commit 9). Anti-loop
@@ -59,7 +74,7 @@ const extract_facts: Operation = {
     // an explicit user op without a parsedPage — the eligibility predicate
     // doesn't apply, but the dream-generated guard still does.
     if (p.is_dream_generated === true) {
-      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'dream_generated' };
+      return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], skipped: 'dream_generated', ...hintAccounting };
     }
 
     const sourceId = ctx.sourceId ?? 'default';
@@ -69,13 +84,34 @@ const extract_facts: Operation = {
     const { resolveVisibilityParam } = await import('../facts/visibility.ts');
     const visibility: 'private' | 'world' = await resolveVisibilityParam(ctx.engine, p.visibility);
 
+    // #4206: optional event-time + provenance threading. An unparseable
+    // valid_from fails LOUD — silently defaulting to now() is exactly the
+    // wrong-timestamp bug the param exists to fix.
+    let validFrom: Date | undefined;
+    if (p.valid_from !== undefined && p.valid_from !== null) {
+      const d = new Date(p.valid_from as string);
+      if (!Number.isFinite(d.getTime())) {
+        throw new OperationError(
+          'invalid_params',
+          `invalid valid_from: "${String(p.valid_from)}" — expected a parseable ISO 8601 datetime`,
+        );
+      }
+      validFrom = d;
+    }
+    const sourceSlug =
+      typeof p.source_slug === 'string' && p.source_slug.trim().length > 0
+        ? p.source_slug.trim()
+        : undefined;
+
     const r = await runFactsPipeline(p.turn_text as string, {
       engine: ctx.engine,
       sourceId,
       sessionId: typeof p.session_id === 'string' ? p.session_id : null,
-      entityHints: Array.isArray(p.entity_hints) ? (p.entity_hints as string[]) : undefined,
+      entityHints,
       source: 'mcp:extract_facts',
       visibility,
+      validFrom,
+      sourceSlug,
       mode: 'inline',  // declarative; runFactsPipeline always inline
     });
 
@@ -96,6 +132,7 @@ const extract_facts: Operation = {
     if (r.skipped_reason === 'chat_unavailable') {
       return {
         inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
+        ...hintAccounting,
         skipped: 'extraction_unavailable',
         agent_action:
           'No server-side chat model is available. You are an LLM: extract the facts ' +
@@ -110,6 +147,7 @@ const extract_facts: Operation = {
     if (r.skipped_reason) {
       return {
         inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
+        ...hintAccounting,
         skipped: 'extraction_failed',
         reason: r.skipped_reason,
         agent_action:
@@ -124,6 +162,7 @@ const extract_facts: Operation = {
       duplicate: r.duplicate,
       superseded: r.superseded,
       fact_ids: r.fact_ids,
+      ...hintAccounting,
     };
   },
 };
@@ -139,7 +178,7 @@ const recall: Operation = {
     since: { type: 'string', description: 'ISO 8601 datetime or duration shorthand (e.g. "8 hours ago"). Filters the FACTS arm only.' },
     session_id: { type: 'string', description: 'Source session id (e.g. topic-A). Returns facts captured in that session.' },
     include_expired: { type: 'boolean', description: 'When true, include expired_at IS NOT NULL rows. Default false.' },
-    supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (expired_at + superseded_by both set).' },
+    supersessions: { type: 'boolean', description: 'When true, return only the supersession audit log (facts with superseded_by set), newest first by COALESCE(expired_at, valid_until).' },
     limit: { type: 'number', description: 'Per-arm cap: max fact rows AND max search results. Default 50, cap 100.' },
     grep: { type: 'string', description: 'Substring filter on fact text (case-insensitive). Applied client-side after recall.' },
     include_pending: { type: 'boolean', description: 'v0.32: when true, response includes pending_consolidation_count (facts not yet promoted to takes by the dream-cycle consolidate phase). One round trip; backward-compatible (field omitted when false).' },
@@ -180,7 +219,8 @@ const recall: Operation = {
     type FactRows = Awaited<ReturnType<typeof ctx.engine.listFactsByEntity>>;
     type FactRowItem = FactRows[number];
     // Per-arm merge key: each arm's engine query ORDERs by a different column
-    // (supersessions by expired_at, entity by valid_from, the rest by
+    // (supersessions by COALESCE(expired_at, valid_until) — #3014, entity by
+    // valid_from, the rest by
     // created_at) — the cross-source merge must sort by the SAME key or the
     // truncation at `limit` silently drops the wrong rows. Decorate-sort-
     // undecorate: the key is computed once per row.
@@ -215,7 +255,9 @@ const recall: Operation = {
         await Promise.all(factSources.map(src =>
           ctx.engine.listSupersessions(src, { since: since ?? undefined, limit, visibility }),
         )),
-        (rec) => rec.expired_at ?? rec.created_at,
+        // v0.46 (#3014): matches the engine's ORDER BY COALESCE(expired_at,
+        // valid_until) — ontology supersessions carry valid_until only.
+        (rec) => rec.expired_at ?? rec.valid_until ?? rec.created_at,
       );
     } else if (typeof p.entity === 'string' && p.entity.length > 0) {
       const { resolveEntitySlug } = await import('../entities/resolve.ts');
@@ -320,9 +362,15 @@ const recall: Operation = {
     let searchDegraded: string | undefined;
     if (queryText) {
       const searchScope = sourceScopeOpts(ctx);
+      // #4352 — recall's page-search arm enforces `visibility: private` for
+      // untrusted callers (matches the facts arms' world-only filter above).
+      const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+      const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
       if (!isAvailable('embedding')) {
-        const raw = await ctx.engine.searchKeyword(queryText, { limit, ...searchScope });
+        const raw = await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, ...searchScope });
         searchResults = dedupResults(raw);
+        // #3783 — direct FTS path: every row is a keyword hit by construction.
+        markKeywordHits(searchResults);
         stampEvidenceSafe(searchResults);
         await stampContentFlags(ctx.engine, searchResults);
         searchDegraded = 'keyword_only_no_embedding_provider';
@@ -330,6 +378,7 @@ const recall: Operation = {
         searchResults = await hybridSearchCached(ctx.engine, queryText, {
           limit,
           expansion: false,
+          excludePrivate,
           ...searchScope,
         });
       }
@@ -376,6 +425,9 @@ const recall: Operation = {
         consolidated_into: r.consolidated_into,
         source: r.source,
         source_session: r.source_session,
+        // #4206: provenance context (e.g. extract_facts' source_slug) rides
+        // the recall projection like every other provenance field.
+        context: r.context,
         confidence: r.confidence,
         created_at: r.created_at.toISOString(),
         // MEMORY_VERBS v1 additive fields (G1B). `fact_id` is the opaque
@@ -512,6 +564,8 @@ const context_pack: Operation = {
         kind: f.kind,
         entity_slug: f.entity_slug,
         valid_from: f.valid_from,
+        // #4206: provenance context (parity with the recall projection).
+        context: f.context ?? null,
         confidence: f.confidence,
       })),
       text,
@@ -694,6 +748,8 @@ const delta: Operation = {
         kind: f.kind,
         entity_slug: f.entity_slug,
         valid_from: f.valid_from,
+        // #4206: provenance context (parity with the recall projection).
+        context: f.context ?? null,
         confidence: f.confidence,
       })),
       threads,

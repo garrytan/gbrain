@@ -183,6 +183,15 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // wedges the blob replay exactly like the v121 incident.
   { kind: 'column', table: 'minion_jobs', column: 'timeout_at' },
   { kind: 'column', table: 'minion_jobs', column: 'idempotency_key' },
+  // v0.46.26 private-queue lifecycle: blob indexes
+  // idx_minion_jobs_private_queue_recovery / _owner reference the owner and
+  // lease columns; a pre-upgrade minion_jobs wedges blob replay without the
+  // bootstrap ALTERs (same class as v121).
+  { kind: 'column', table: 'minion_jobs', column: 'private_queue_owner_job_id' },
+  { kind: 'column', table: 'minion_jobs', column: 'private_queue_lease_until' },
+  // Token rides the same bootstrap ALTER; registering it guards any FUTURE
+  // blob index on it against the same wedge.
+  { kind: 'column', table: 'minion_jobs', column: 'private_queue_owner_token' },
 ];
 
 test('applyForwardReferenceBootstrap covers every forward reference declared in REQUIRED_BOOTSTRAP_COVERAGE', async () => {
@@ -284,6 +293,16 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       DROP INDEX IF EXISTS uniq_minion_jobs_idempotency;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS timeout_at;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS idempotency_key;
+
+      -- v136 private-queue strip: owner/token/lease are migration-added and
+      -- blob-indexed; without these drops the three REQUIRED_BOOTSTRAP_COVERAGE
+      -- entries assert on columns initSchema already created (vacuous) and the
+      -- needsMinionJobsPrivateQueue bootstrap branch never executes.
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_recovery;
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_owner;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
     `);
 
     // Note: we don't strip sources.archived* here because they're inline in the
@@ -377,6 +396,15 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       DROP INDEX IF EXISTS uniq_minion_jobs_idempotency;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS timeout_at;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS idempotency_key;
+
+      -- v136 private-queue strip: the SCHEMA_SQL replay would crash on
+      -- idx_minion_jobs_private_queue_recovery / _owner without the bootstrap
+      -- re-adding these migration-added columns (the v121 wedge class).
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_recovery;
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_owner;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
 
       -- WP4 (v127) strip: surface columns + the wedge-signal index; replay
       -- must succeed from the pre-v127 shape.
@@ -1007,6 +1035,50 @@ test('extractAlterAddColumnsFromSql handles representative migration SQL shapes'
   expect(fn('ALTER TABLE IF EXISTS ONLY content_chunks ADD COLUMN language TEXT')).toEqual([
     { table: 'content_chunks', column: 'language' },
   ]);
+});
+
+// ─────────────────────────────────────────────────────────────────
+// v0.46.26 private-queue guard symmetry — Postgres half (#4332).
+// The PGLite bootstrap is exercised live above (strip → bootstrap →
+// assert), but PostgresEngine.applyForwardReferenceBootstrap only runs
+// against real Postgres (test/e2e/postgres-bootstrap.test.ts, DATABASE_URL-
+// gated). Before this pin, deleting the entire Postgres private-queue
+// bootstrap block broke zero locally-runnable tests. This source-text
+// assertion is the local half of the guard; the e2e file is the live half.
+// ─────────────────────────────────────────────────────────────────
+
+test('postgres-engine.ts bootstrap carries the private-queue ALTERs and probes (guard symmetry with pglite-engine.ts)', async () => {
+  const { readFileSync } = await import('fs');
+  const { resolve: resolvePath } = await import('path');
+  const enginePath = resolvePath(process.cwd(), 'src/core/postgres-engine.ts');
+  const engineSrc = readFileSync(enginePath, 'utf-8');
+  const normalized = engineSrc.replace(/\s+/g, ' ');
+
+  // The exact three ALTERs the PGLite bootstrap applies — same statements,
+  // same types, same FK semantics — must exist verbatim in the Postgres
+  // bootstrap (modulo whitespace).
+  for (const stmt of [
+    'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;',
+    'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;',
+    'ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;',
+  ]) {
+    expect(normalized).toContain(stmt);
+  }
+
+  // The token probe (749a7dcb) is load-bearing: neither blob index references
+  // private_queue_owner_token, so a token-only-missing brain (partial
+  // upgrade) is repairable ONLY through this probe triggering the ALTER
+  // block. The owner/lease probes ride the same information_schema query.
+  expect(normalized).toContain('minion_jobs_pq_token_exists');
+  expect(normalized).toContain('minion_jobs_pq_owner_exists');
+  expect(normalized).toContain('minion_jobs_pq_lease_exists');
+
+  // The structural extractor sees the same three ALTERs (keeps this guard
+  // aligned with the parser-based coverage machinery above).
+  const pgBootstrapAdds = parseAlterAddColumns(engineSrc);
+  for (const column of ['private_queue_owner_job_id', 'private_queue_owner_token', 'private_queue_lease_until']) {
+    expect(pgBootstrapAdds).toContainEqual({ table: 'minion_jobs', column });
+  }
 });
 
 test('planted-bug: simulated unprovided column produces a clear failure message', async () => {

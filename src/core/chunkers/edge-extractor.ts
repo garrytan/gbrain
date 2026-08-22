@@ -119,6 +119,11 @@ const CALL_CONFIG: Partial<Record<SupportedCodeLanguage, CallConfig>> = {
   // navigation_expression for `receiver.method(...)` — resolved to the
   // method name by the navigation_expression case in extractCalleeName).
   kotlin:     { callNodeTypes: new Set(['call_expression']), calleeFirstNamedChild: true },
+  // #3602: tree-sitter-c-sharp calls are invocation_expression with a
+  // `function` field. Bare calls hold an identifier; member calls
+  // (`obj.Method(...)`) hold a member_access_expression, which
+  // extractCalleeName resolves via its trailing-identifier fallback.
+  c_sharp:    { callNodeTypes: new Set(['invocation_expression']), calleeFieldName: 'function' },
 };
 
 /**

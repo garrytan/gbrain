@@ -114,6 +114,9 @@ prints what would have been the input (exit 0).
   let result: any;
   let savedSlug: string | undefined;
   let evidenceInserted = 0;
+  // #2556: --take persistence outputs.
+  let takeRow: number | null = null;
+  let takePath: string | undefined;
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     if (save || take) {
@@ -160,6 +163,25 @@ prints what would have been the input (exit 0).
           process.exit(1);
         }
       }
+
+      // #2556: --take was documented (and parsed) since v0.28 but never
+      // executed — runThink ignored opts.take entirely. Persist md-first
+      // through the canonical takes write-through; a refusal (no repo, empty
+      // answer, failed synthesis, write error) exits non-zero (same F2
+      // posture as --save: the user explicitly asked for a persist).
+      if (take && anchor) {
+        const { persistTakeFromSynthesis } = await import('../core/think/persist-take.ts');
+        const persisted = await persistTakeFromSynthesis(engine, result, { anchor });
+        takeRow = persisted.take_row;
+        takePath = persisted.path;
+        for (const w of persisted.warnings) result.warnings.push(w);
+        if (persisted.take_row === null) {
+          console.error(
+            `think: --take requested but no take row was appended (${persisted.warnings.join(', ') || 'unknown reason'}).`,
+          );
+          process.exit(1);
+        }
+      }
     } catch (e) {
       // #1698: an unresolvable explicit --model throws here. Clean non-zero exit
       // with the actionable message, not a stack trace.
@@ -179,6 +201,7 @@ prints what would have been the input (exit 0).
       cost_usd: costUsd ?? null,
       saved_slug: savedSlug ?? null,
       evidence_inserted: evidenceInserted,
+      take_row: takeRow,
     }, null, 2));
     return;
   }
@@ -197,6 +220,9 @@ prints what would have been the input (exit 0).
   console.log(`Model: ${result.modelUsed} | Pages: ${result.pagesGathered} | Takes: ${result.takesGathered} | Graph: ${result.graphHits} | Citations: ${result.citations.length}${costSuffix}`);
   if (savedSlug) {
     console.log(`Saved: ${savedSlug} (${evidenceInserted} evidence rows)`);
+  }
+  if (takeRow !== null) {
+    console.log(`Take: row ${takeRow} appended to ${anchor}${takePath ? ` (${takePath})` : ''}`);
   }
   if (result.warnings.length > 0) {
     console.error(`Warnings: ${result.warnings.join(', ')}`);

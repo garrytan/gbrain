@@ -20,8 +20,13 @@ const patternsSrc = readFileSync(
 
 describe('patterns phase wiring', () => {
   test('imports queue + waitForCompletion + types', () => {
-    expect(patternsSrc).toContain("import { MinionQueue }");
-    expect(patternsSrc).toContain('waitForCompletion');
+    expect(patternsSrc).toContain("import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue }");
+    // The post-drain wait must be the lease-renewing variant — a plain
+    // waitForCompletion would let the private-queue lease lapse mid-wait.
+    expect(patternsSrc).toContain('waitForCompletionRenewing');
+    // The keepalive must come from the shared throttled factory (T0
+    // extraction) — an inline closure here and in synthesize drifts.
+    expect(patternsSrc).toContain('makeThrottledLeaseRenewer');
     expect(patternsSrc).toContain('SubagentHandlerData');
   });
 

@@ -336,7 +336,10 @@ function assertFenceRoundTrips(parsed: ParseResult): void {
     throw new TakesWriteError(
       'fence_unparsed',
       `The page's takes fence has rows this version can't safely round-trip: ${parsed.warnings[0]}`,
-      "Reconcile the page's takes fence (gbrain extract takes --slugs <slug>) before mutating — it contains rows this version can't safely round-trip.",
+      // #3697: this used to name `gbrain extract takes --slugs`, which is not the
+      // command grammar (extract has links/timeline/all; takes extraction lives
+      // under `gbrain takes extract`). Point at surfaces that exist.
+      "Reconcile the page's takes fence before mutating — it contains rows this version can't safely round-trip. Fix the malformed fence rows by hand, or re-extract via `gbrain takes extract --from-pages --include-covered`.",
     );
   }
 }

@@ -32,7 +32,7 @@ frontmatter will read as absent. Refresh it once, from the repository root:
 git rm --cached -r . -q
 git reset --hard
 bash -n scripts/run-unit-parallel.sh          # silence means bash can read the scripts
-git ls-files --eol -- '*.md' | grep -c w/crlf # 0 means Markdown is clean
+git ls-files --eol -- '*.md' | grep -cE 'w/(crlf|mixed)' # 0 means Markdown is clean
 ```
 
 Every `check:*` entry in `package.json` invokes its script as `bash scripts/<name>.sh`
@@ -171,6 +171,46 @@ a paired `afterAll(disconnect)`.
 — read that before writing a new test file.** Files that predate the rules are
 listed in `scripts/check-test-isolation.allowlist`; the allow-list MUST shrink
 over time — never add new entries.
+
+### Discrimination test — required for every fix (#3665)
+
+A fix's test is only worth anything if it **fails without the fix**. A test
+that passes both ways is worse than no test: it inflates reviewer confidence,
+gets weighted into the CI shards forever, and keeps passing after a future
+refactor silently breaks the behavior. (An adversarial review pass found PRs
+where 7 of 8 new tests passed on master.)
+
+Every PR that fixes behavior must fill the **Discrimination test** field in
+the PR template with the actual result of checking this:
+
+> Discrimination test: reverted `<source file(s)>` to `<ref>`, ran
+> `<test file>` → `N pass / M fail`. Restored → all pass.
+
+The helper does the whole dance in one command:
+
+```bash
+bash scripts/check-test-discriminates.sh <test-file> <source-file> [<source-file>...]
+```
+
+It reverts the source files to the pre-fix state (plain file copies, no git
+stash), runs the test file, requires at least one EXECUTED test to fail —
+exit ≠ 0 alone does not count, because a missing file or import crash also
+exits non-zero (exit 3, the vacuous-failure class) — restores, and prints the
+paste-ready field line. Exit 1 means the test passed with the fix reverted:
+tighten the assertions before asking for review.
+
+Vacuous-assertion shapes to avoid (they recur):
+- asserting only `exit ≠ 0` (a missing binary also exits non-zero);
+- asserting membership in a set that covers every reachable value
+  (`['warn','fail']` when those are the only outputs);
+- asserting a substring that would also appear in the broken output —
+  assert parsed structure instead.
+
+Relatedly: a test whose only assertion is a regex over `readFileSync`'d
+source text pins spelling, not behavior. New tests that read `src/` text
+need a `test-reads-source-ok: <why>` comment (or a behavioral assertion
+alongside); `test/test-reads-source-smell.test.ts` enforces this for new
+files and ratchets the pre-existing list down.
 
 ### Local CI gate (recommended before pushing)
 

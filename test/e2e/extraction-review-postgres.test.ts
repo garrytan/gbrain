@@ -52,9 +52,9 @@ d('extraction quarantine lane (live Postgres)', () => {
     const real = await engine.getPage('people/pg-real');
     expect(isUnverifiedExtraction(fake!.frontmatter)).toBe(true);
     expect(isUnverifiedExtraction(real!.frontmatter)).toBe(false);
-    const set = await engine.getUnverifiedExtractionPageIds([fake!.id, real!.id]);
-    expect(set.has(fake!.id)).toBe(true);
-    expect(set.has(real!.id)).toBe(false);
+    const marks = await engine.getUnverifiedExtractionPageIds([fake!.id, real!.id]);
+    expect(marks.get(fake!.id)).toEqual({ unverified: true, status: 'unverified' });
+    expect(marks.has(real!.id)).toBe(false);
   });
 
   test('SQL source-boost guard: unverified stub loses the people/ 1.2x in searchKeyword', async () => {

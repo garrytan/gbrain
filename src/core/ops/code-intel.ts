@@ -54,10 +54,17 @@ const code_callers: Operation = {
       sourceId,
     });
     const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
+    // #4352: thread trust — the out_of_scope brain-wide rerun is local-only.
     const readiness = await resolveCodeReadiness(ctx.engine, {
-      kind: 'edge', count: edges.length, sourceId, allSources,
+      kind: 'edge', count: edges.length, sourceId, allSources, remote: ctx.remote,
     });
-    return { symbol, count: edges.length, status: readiness.status, ready: readiness.ready, callers: edges };
+    return {
+      symbol, count: edges.length, status: readiness.status, ready: readiness.ready,
+      // #3707: out_of_scope names the empty scope so a federated client can see
+      // "grant problem", not "graph never built".
+      ...(readiness.scoped_source_id ? { scoped_source_id: readiness.scoped_source_id } : {}),
+      callers: edges,
+    };
   },
   cliHints: { name: 'code_callers', hidden: true },
 };
@@ -84,10 +91,16 @@ const code_callees: Operation = {
       sourceId,
     });
     const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
+    // #4352: thread trust — see code_callers.
     const readiness = await resolveCodeReadiness(ctx.engine, {
-      kind: 'edge', count: edges.length, sourceId, allSources,
+      kind: 'edge', count: edges.length, sourceId, allSources, remote: ctx.remote,
     });
-    return { symbol, count: edges.length, status: readiness.status, ready: readiness.ready, callees: edges };
+    return {
+      symbol, count: edges.length, status: readiness.status, ready: readiness.ready,
+      // #3707: see code_callers.
+      ...(readiness.scoped_source_id ? { scoped_source_id: readiness.scoped_source_id } : {}),
+      callees: edges,
+    };
   },
   cliHints: { name: 'code_callees', hidden: true },
 };

@@ -61,6 +61,42 @@ describe('mergeOntologyFact + getOntology', () => {
     expect(past[0].value).toBe('founder');
   });
 
+  test('#3014 option B — a forward supersession surfaces in listSupersessions while --asof still sees it', async () => {
+    // The ontology writer closes the prior row via valid_until + superseded_by
+    // but leaves expired_at NULL (so --asof time-travel keeps seeing it). The
+    // pre-fix listSupersessions required expired_at IS NOT NULL, so this row
+    // was invisible. Option B filters on superseded_by alone.
+    await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'founder', source: 'meetings/a', validFrom: '2024-01-01' });
+    const r = await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'advisor', source: 'meetings/b', validFrom: '2026-05-01' });
+    expect(r.action).toBe('superseded_prior');
+
+    const sup = await engine.listSupersessions('default');
+    expect(sup).toHaveLength(1);
+    expect(sup[0].fact).toContain('founder');   // the superseded prior row
+    expect(sup[0].superseded_by).not.toBeNull();
+    expect(sup[0].expired_at).toBeNull();        // ontology closes via valid_until, not expired_at
+
+    // The regression that option A ("writers set both columns") would have
+    // caused: --asof time-travel must still return the superseded value.
+    const past = await engine.getOntology(SARAH, { asof: '2025-01-01' });
+    expect(past[0].value).toBe('founder');
+  });
+
+  test('#3014 — listSupersessions({since}) filters a NULL-expired_at row by COALESCE(expired_at, valid_until)', async () => {
+    // founder row: closed via valid_until = 2026-05-01, expired_at NULL.
+    await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'founder', source: 'meetings/a', validFrom: '2024-01-01' });
+    await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'role', value: 'advisor', source: 'meetings/b', validFrom: '2026-05-01' });
+
+    // since before the close date → COALESCE falls back to valid_until, included.
+    const included = await engine.listSupersessions('default', { since: new Date('2026-01-01T00:00:00Z') });
+    expect(included.some(s => s.fact.includes('founder'))).toBe(true);
+
+    // since after the close date → excluded (a pre-fix `expired_at >= since`
+    // would have dropped it unconditionally since expired_at is NULL).
+    const excluded = await engine.listSupersessions('default', { since: new Date('2026-09-01T00:00:00Z') });
+    expect(excluded.some(s => s.fact.includes('founder'))).toBe(false);
+  });
+
   test('novel dimensions quarantine (excluded from current unless asked)', async () => {
     await engine.mergeOntologyFact({ entitySlug: SARAH, dimension: 'vibe', value: 'chaotic', source: 'meetings/a' });
     expect(await engine.getOntology(SARAH)).toHaveLength(0); // quarantined → hidden

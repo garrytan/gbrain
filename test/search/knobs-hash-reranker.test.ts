@@ -44,7 +44,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 21 (…; 16→17 degradation stamp; 17→18 autocut weak-top floor #1863; 18→19 autocut minKeep floor #3621; 19→20 pre-fusion pool floor #3002; 20→21 recency fallback re-key #895)', () => {
+  test('version is 23 (…; 20→21 recency fallback re-key #895; 21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -79,7 +79,11 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // rows survive the cut, so writes and lookups must agree on it.
     // D-3002: 19→20 pre-fusion pool floor — innerLimit widens the candidate
     // pool for identical knobs (no new key part; version-only invalidation).
-    expect(KNOBS_HASH_VERSION).toBe(21);
+    // mw2: 21→22 result-stamp/injection epoch (#1663 exact-lookup injection,
+    // #3995 relational page-1 slot, #3783 keyword_hit, #4220 status).
+    // #4352 follow-up: 22→23 excludePrivate posture fold (xp=) — replaces
+    // the wholesale cache skip that disabled caching for remote callers.
+    expect(KNOBS_HASH_VERSION).toBe(23);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

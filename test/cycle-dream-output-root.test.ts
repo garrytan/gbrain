@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __testing, loadAllowedSlugPrefixes, loadOutputRoot } from '../src/core/cycle/synthesize.ts';
+import { __testing, loadAllowedSlugPrefixes, loadOutputRoot, loadDreamNamespaces } from '../src/core/cycle/synthesize.ts';
 import { bundledDreamGlobs, __filingRulesTesting } from '../src/core/cycle/filing-rules.ts';
 import { runPhasePatterns } from '../src/core/cycle/patterns.ts';
 import type { DiscoveredTranscript } from '../src/core/cycle/transcript-discovery.ts';
@@ -332,5 +332,95 @@ describe('#4216: buildSynthesisPrompt manifest + allow-list blocks', () => {
     const prompt = buildSynthesisPrompt(transcript, 'chunk', 0, 1);
     expect(prompt).not.toContain('ALLOWED WRITE PATHS\n');
     expect(prompt).toContain('shown in the put_page schema');
+  });
+});
+
+// ── #4117: per-lane dream namespaces ────────────────────────────────────
+
+describe('#4117: dream.synthesize.{reflections,originals}_slug_prefix', () => {
+  let nsEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    nsEngine = new PGLiteEngine();
+    await nsEngine.connect({});
+    await nsEngine.initSchema();
+  }, 120_000);
+
+  afterAll(async () => {
+    if (nsEngine) await nsEngine.disconnect();
+  }, 60_000);
+
+  test('defaults derive from output_root', async () => {
+    const ns = await loadDreamNamespaces(nsEngine, 'wiki');
+    expect(ns.reflectionsPrefix).toBe('wiki/personal/reflections');
+    expect(ns.originalsPrefix).toBe('wiki/originals/ideas');
+    const custom = await loadDreamNamespaces(nsEngine, 'notes');
+    expect(custom.reflectionsPrefix).toBe('notes/personal/reflections');
+    expect(custom.originalsPrefix).toBe('notes/originals/ideas');
+  });
+
+  test('config keys override each lane individually (SUMMARY_SLUG_RE-validated)', async () => {
+    await nsEngine.setConfig('dream.synthesize.reflections_slug_prefix', 'journal/daily');
+    try {
+      const ns = await loadDreamNamespaces(nsEngine, 'wiki');
+      expect(ns.reflectionsPrefix).toBe('journal/daily');
+      // Originals lane untouched — falls back to the root-derived default.
+      expect(ns.originalsPrefix).toBe('wiki/originals/ideas');
+    } finally {
+      await nsEngine.unsetConfig('dream.synthesize.reflections_slug_prefix');
+    }
+  });
+
+  test('an invalid prefix warns and falls back (never leaks into prompt/allow-list)', async () => {
+    await nsEngine.setConfig('dream.synthesize.originals_slug_prefix', 'NOT a/valid slug!!');
+    try {
+      const ns = await loadDreamNamespaces(nsEngine, 'wiki');
+      expect(ns.originalsPrefix).toBe('wiki/originals/ideas');
+    } finally {
+      await nsEngine.unsetConfig('dream.synthesize.originals_slug_prefix');
+    }
+  });
+
+  test('buildSynthesisPrompt uses the per-lane prefixes for the slug templates', () => {
+    const prompt = buildSynthesisPrompt(
+      transcript, 'chunk', 0, 1, '', 'wiki', '', '', [],
+      'journal/daily', 'sparks/ideas',
+    );
+    expect(prompt).toContain('journal/daily/2026-07-17-');
+    expect(prompt).toContain('sparks/ideas/2026-07-17-');
+    expect(prompt).not.toContain('wiki/personal/reflections/');
+    expect(prompt).not.toContain('wiki/originals/ideas/');
+  });
+
+  test('loadAllowedSlugPrefixes derives globs for custom namespaces', async () => {
+    const globs = await loadAllowedSlugPrefixes('wiki', undefined, {
+      reflectionsPrefix: 'journal/daily',
+      originalsPrefix: 'sparks/ideas',
+    });
+    expect(globs).toContain('journal/daily/*');
+    expect(globs).toContain('sparks/ideas/*');
+    // Base globs survive (the filing-rules file stays authoritative).
+    expect(globs).toContain('wiki/personal/reflections/*');
+  });
+
+  test('an empty base allow-list stays empty (fail-closed: NO_ALLOWLIST survives)', () => {
+    const out = __filingRulesTesting.appendNamespaceGlobs([], {
+      reflectionsPrefix: 'journal/daily',
+      originalsPrefix: 'sparks/ideas',
+    });
+    expect(out).toEqual([]);
+  });
+
+  test('default prefixes add no duplicate globs', async () => {
+    const base = await loadAllowedSlugPrefixes('wiki');
+    const withDefaults = await loadAllowedSlugPrefixes('wiki', undefined, {
+      reflectionsPrefix: 'wiki/personal/reflections',
+      originalsPrefix: 'wiki/originals/ideas',
+    });
+    // reflections glob already covered verbatim; originals/ideas nests under
+    // the broader wiki/originals/* base glob but a redundant precise glob is
+    // harmless — assert no DUPLICATES rather than exact equality.
+    expect(new Set(withDefaults).size).toBe(withDefaults.length);
+    for (const g of base) expect(withDefaults).toContain(g);
   });
 });

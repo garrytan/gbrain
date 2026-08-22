@@ -250,7 +250,7 @@ describe('migrate v36 — subagent_provider_neutral_persistence_v0_27', () => {
   });
 
   test('embedded schema (src/core/schema-embedded.ts) reflects v36 columns', async () => {
-    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.ts');
+    const { SCHEMA_SQL } = await import('../src/core/schema-embedded.generated.ts');
     expect(SCHEMA_SQL).toContain('schema_version');
     expect(SCHEMA_SQL).toContain('provider_id');
     expect(SCHEMA_SQL).toContain('idx_subagent_messages_provider');
@@ -2332,8 +2332,8 @@ describe('v117 — context_volunteer_events_table', () => {
     expect(m!.idempotent).toBe(true);
   });
 
-  test('LATEST_VERSION is at or above 117', () => {
-    expect(LATEST_VERSION).toBeGreaterThanOrEqual(117);
+  test('LATEST_VERSION is at or above 136', () => {
+    expect(LATEST_VERSION).toBeGreaterThanOrEqual(136);
   });
 
   test('table exists after initSchema with the documented columns', async () => {

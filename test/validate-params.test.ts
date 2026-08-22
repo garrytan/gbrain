@@ -44,6 +44,8 @@ function stubEngine(strictMode: 'warn' | 'reject' | null): BrainEngine {
     resolveSlugs: async () => [],
     getStats: async () => ({ pages: 0 }),
     getTimeline: async () => [],
+    // #4352 gate surface: remote get_timeline probes for private-only slugs.
+    executeRaw: async () => [],
   } as unknown as BrainEngine;
 }
 

@@ -71,6 +71,18 @@ export interface FactsBackstopCtx {
   visibility?: 'private' | 'world';
   /** Override the chat model (extract_facts forwards user's model param when set). */
   model?: string;
+  /**
+   * #4206: caller-supplied event time. Fallback ONLY — a valid_from the
+   * extractor derives from the turn itself wins; absent both, now(). Lets
+   * historical imports (old transcripts) avoid import-time stamping.
+   */
+  validFrom?: Date;
+  /**
+   * #4206: slug of the page/transcript the turn came from (e.g.
+   * 'meetings/2026-04-03'). Written to facts.context so the recall /
+   * context_pack / delta projections surface the provenance.
+   */
+  sourceSlug?: string;
 }
 
 /** Discriminated return shape based on FactsBackstopCtx.mode. */
@@ -651,6 +663,9 @@ async function runPipelineWithBody(
       source_session: f.source_session ?? null,
       confidence: f.confidence,
       embedding: f.embedding ?? null,
+      // #4206: caller event-time fallback + provenance context.
+      valid_from: f.valid_from ?? ctx.validFrom,
+      context: ctx.sourceSlug ?? null,
     };
     const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
@@ -676,10 +691,14 @@ async function runPipelineWithBody(
       kind: f.kind,
       notability: f.notability,
       source: f.source,
-      context: null,
+      // #4206: the caller's source_slug (which page/transcript the turn came
+      // from) lands in the fence context cell — visible in recall projections.
+      context: ctx.sourceSlug ?? null,
       visibility,
       confidence: f.confidence,
-      validFrom: f.valid_from ?? new Date(),
+      // #4206: extractor-derived date wins; then the caller's event time
+      // (historical imports); then import time.
+      validFrom: f.valid_from ?? ctx.validFrom ?? new Date(),
       embedding: f.embedding ?? null,
       sessionId: f.source_session ?? null,
     }));
@@ -717,6 +736,9 @@ async function runPipelineWithBody(
           source_session: f.source_session ?? null,
           confidence: f.confidence,
           embedding: f.embedding ?? null,
+          // #4206: caller event-time fallback + provenance context.
+          valid_from: f.valid_from ?? ctx.validFrom,
+          context: ctx.sourceSlug ?? null,
         };
         const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback (no fenceable page or usable tree)
         fact_ids.push(legacyResult.id);
@@ -746,6 +768,9 @@ async function runPipelineWithBody(
           source_session: f.source_session ?? null,
           confidence: f.confidence,
           embedding: f.embedding ?? null,
+          // #4206: caller event-time fallback + provenance context.
+          valid_from: f.valid_from ?? ctx.validFrom,
+          context: ctx.sourceSlug ?? null,
         };
         const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
         fact_ids.push(legacyResult.id);

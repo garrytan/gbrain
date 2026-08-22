@@ -18,6 +18,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { getSessionContextState, upsertSessionContextState } from '../../src/core/context/session-state.ts';
+import { linkEntityIdentity, listEntityIdentities } from '../../src/core/entity-identity.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -148,6 +149,40 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteResults = await pgliteEngine.searchVector(queryVec, { limit: 5 });
 
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
+  });
+
+  test('#4304 listAllPageRefs parity: updated_at is a real Date, same (source_id, slug) ordering', async () => {
+    const pg = await pgEngine.listAllPageRefs();
+    const pl = await pgliteEngine.listAllPageRefs();
+    for (const refs of [pg, pl]) {
+      expect(refs.length).toBeGreaterThan(0);
+      for (const r of refs) {
+        expect(r.updated_at instanceof Date).toBe(true);
+        expect(Number.isFinite(r.updated_at.getTime())).toBe(true);
+      }
+    }
+    // Both engines were seeded identically — the ref key list must match.
+    expect(pg.map((r) => `${r.source_id}::${r.slug}`)).toEqual(
+      pl.map((r) => `${r.source_id}::${r.slug}`),
+    );
+  });
+
+  test('#4224 entity identity helpers: one SQL text, identical behavior on both engines', async () => {
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await linkEntityIdentity(eng, {
+        entityId: 'parity-founder', slug: 'people/example-founder', sourceId: 'default', canonical: true,
+      });
+      await linkEntityIdentity(eng, {
+        entityId: 'parity-founder', slug: 'concepts/fat-code-thin-harness', sourceId: 'default',
+      });
+    }
+    const pg = await listEntityIdentities(pgEngine, { entityId: 'parity-founder' });
+    const pl = await listEntityIdentities(pgliteEngine, { entityId: 'parity-founder' });
+    const key = (m: { source_id: string; slug: string; canonical: boolean; established_by: string }) =>
+      `${m.source_id}:${m.slug}:${m.canonical}:${m.established_by}`;
+    expect(pg.map(key)).toEqual(pl.map(key));
+    expect(pg).toHaveLength(2);
+    expect(pg.filter(m => m.canonical)).toHaveLength(1);
   });
 
   test('v0.46.15 searchVector escalation parity: a dense page cannot starve the page result on either engine', async () => {
@@ -591,6 +626,32 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
         timeline: '',
       });
       expect((await engine.getPage(slug, { sourceId: 'default' }))?.title).toBe('After restore');
+    }
+  });
+
+  test('#3754 soft-deleted pages hidden from getLinks/getBacklinks/traversePaths on both engines', async () => {
+    for (const engine of [pgEngine, pgliteEngine]) {
+      await engine.putPage('notes/sdl-from', {
+        type: 'note', title: 'sdl-from', compiled_truth: 'links out', timeline: '',
+      });
+      await engine.putPage('notes/sdl-to', {
+        type: 'note', title: 'sdl-to', compiled_truth: 'target', timeline: '',
+      });
+      await engine.addLink('notes/sdl-from', 'notes/sdl-to', 'ctx', 'wikilink');
+
+      expect((await engine.getBacklinks('notes/sdl-to')).length).toBe(1);
+      expect((await engine.getLinks('notes/sdl-from')).length).toBe(1);
+      expect((await engine.traversePaths('notes/sdl-to', { direction: 'in' })).length).toBe(1);
+
+      await engine.softDeletePage('notes/sdl-from', { sourceId: 'default' });
+
+      expect(await engine.getBacklinks('notes/sdl-to')).toEqual([]);
+      expect(await engine.getBacklinks('notes/sdl-to', { sourceId: 'default' })).toEqual([]);
+      expect(await engine.getBacklinks('notes/sdl-to', { sourceIds: ['default'] })).toEqual([]);
+      expect(await engine.getLinks('notes/sdl-from')).toEqual([]);
+      expect(await engine.traversePaths('notes/sdl-to', { direction: 'in' })).toEqual([]);
+      expect(await engine.traversePaths('notes/sdl-to', { direction: 'both' })).toEqual([]);
+      expect(await engine.traversePaths('notes/sdl-from', { direction: 'out' })).toEqual([]);
     }
   });
 
@@ -1377,5 +1438,147 @@ describeBoth('Engine parity — putPage empty-overwrite guard', () => {
       );
       expect(((await eng.getPage(slug))!.compiled_truth ?? '').trim()).toBe('');
     }
+  });
+});
+
+// #3674 — removeLinksByPagesAndSource must behave identically on both
+// engines: same delete counts, same survivors (typed_ner keep-pairs, other
+// link_sources, other sources untouched).
+describeBoth('Engine parity — removeLinksByPagesAndSource (#3674)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  async function seed(eng: BrainEngine): Promise<void> {
+    await eng.putPage('rlps/from-a', { type: 'note', title: 'a', compiled_truth: 'body a', timeline: '' });
+    await eng.putPage('rlps/to-x', { type: 'person', title: 'x', compiled_truth: 'body x', timeline: '' });
+    await eng.putPage('rlps/to-y', { type: 'person', title: 'y', compiled_truth: 'body y', timeline: '' });
+    await eng.addLinksBatch([
+      // plain mentions rows (one per target)
+      { from_slug: 'rlps/from-a', to_slug: 'rlps/to-x', link_type: 'mentions', link_source: 'mentions', context: 'x', from_source_id: 'default', to_source_id: 'default' },
+      { from_slug: 'rlps/from-a', to_slug: 'rlps/to-y', link_type: 'mentions', link_source: 'mentions', context: 'y', from_source_id: 'default', to_source_id: 'default' },
+      // typed_ner verb rows: to-x kept (still derivable), to-y stale
+      { from_slug: 'rlps/from-a', to_slug: 'rlps/to-x', link_type: 'works_at', link_source: 'mentions', link_kind: 'typed_ner', context: '', from_source_id: 'default', to_source_id: 'default' },
+      { from_slug: 'rlps/from-a', to_slug: 'rlps/to-y', link_type: 'works_at', link_source: 'mentions', link_kind: 'typed_ner', context: '', from_source_id: 'default', to_source_id: 'default' },
+      // a markdown row that must survive
+      { from_slug: 'rlps/from-a', to_slug: 'rlps/to-x', link_type: 'references', link_source: 'markdown', context: '', from_source_id: 'default', to_source_id: 'default' },
+    ]);
+  }
+
+  async function survivors(eng: BrainEngine): Promise<string[]> {
+    const rows = await eng.executeRaw<{ to_slug: string; link_source: string | null; link_kind: string | null }>(
+      `SELECT tp.slug AS to_slug, l.link_source, l.link_kind
+       FROM links l
+       JOIN pages fp ON fp.id = l.from_page_id
+       JOIN pages tp ON tp.id = l.to_page_id
+       WHERE fp.slug = 'rlps/from-a'
+       ORDER BY tp.slug, l.link_source, l.link_kind NULLS FIRST`,
+      [],
+    );
+    return rows.map((r) => `${r.to_slug}|${r.link_source}|${r.link_kind ?? ''}`);
+  }
+
+  test('identical removal counts and survivors on both engines', async () => {
+    const results: Array<{ removed: number; left: string[] }> = [];
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await seed(eng);
+      const removed = await eng.removeLinksByPagesAndSource(
+        [{ slug: 'rlps/from-a', source_id: 'default' }],
+        {
+          linkSource: 'mentions',
+          keepTypedNerPairs: [
+            { from_slug: 'rlps/from-a', from_source_id: 'default', to_slug: 'rlps/to-x', to_source_id: 'default' },
+          ],
+        },
+      );
+      results.push({ removed, left: await survivors(eng) });
+    }
+    // 2 plain mentions + 1 stale typed_ner deleted; kept typed_ner + markdown survive.
+    expect(results[0]!.removed).toBe(3);
+    expect(results[1]!.removed).toBe(3);
+    expect(results[0]!.left).toEqual(results[1]!.left);
+    expect(results[0]!.left).toEqual([
+      'rlps/to-x|markdown|',
+      'rlps/to-x|mentions|typed_ner',
+    ]);
+  });
+});
+
+describeBoth('Engine parity — CJK keyword fallback (#3986)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  const CJK_PAGES = [
+    { slug: 'notes/tokyo-meeting', title: '東京 会議メモ', body: '東京オフィスでの会議メモ。次回の議題は予算です。' },
+    { slug: 'notes/kimdaeri', title: '김대리 미팅', body: '김대리 미팅 노트. 다음 주 일정 조율이 필요합니다.' },
+    { slug: 'notes/ascii-decoy', title: 'ASCII decoy', body: 'plain english content that must not match cjk queries' },
+  ];
+
+  async function seedCJK(eng: BrainEngine) {
+    for (const [i, p] of CJK_PAGES.entries()) {
+      await eng.putPage(p.slug, { type: 'note', title: p.title, compiled_truth: p.body, timeline: '' });
+      await eng.upsertChunks(p.slug, [{
+        chunk_index: 0,
+        chunk_text: p.body,
+        chunk_source: 'compiled_truth' as const,
+        embedding: basisEmbedding(200 + i),
+        token_count: 8,
+      }]);
+    }
+  }
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedCJK(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedCJK(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  // Pre-#3986, Postgres returned [] here (websearch_to_tsquery('english')
+  // can't tokenize CJK) while PGLite's v0.32.7 ILIKE fallback found the page.
+  test('searchKeyword: CJK query recalls the CJK page on BOTH engines', async () => {
+    const pg = await pgEngine.searchKeyword('東京 会議', { limit: 5 });
+    const pglite = await pgliteEngine.searchKeyword('東京 会議', { limit: 5 });
+    expect(pg.map(r => r.slug)).toEqual(pglite.map(r => r.slug));
+    expect(pg[0]?.slug).toBe('notes/tokyo-meeting');
+  });
+
+  test('searchKeyword: term-order-insensitive Korean recall matches across engines', async () => {
+    const pg = await pgEngine.searchKeyword('미팅 김대리', { limit: 5 });
+    const pglite = await pgliteEngine.searchKeyword('미팅 김대리', { limit: 5 });
+    expect(pg.map(r => r.slug)).toEqual(pglite.map(r => r.slug));
+    expect(pg[0]?.slug).toBe('notes/kimdaeri');
+  });
+
+  test('searchKeywordChunks: chunk-grain CJK fallback matches across engines', async () => {
+    const pg = await pgEngine.searchKeywordChunks('予算', { limit: 5 });
+    const pglite = await pgliteEngine.searchKeywordChunks('予算', { limit: 5 });
+    expect(pg.map(r => `${r.slug}#${r.chunk_index}`)).toEqual(pglite.map(r => `${r.slug}#${r.chunk_index}`));
+    expect(pg[0]?.slug).toBe('notes/tokyo-meeting');
+  });
+
+  test('searchKeyword: CJK fallback honors source isolation on both engines', async () => {
+    const pg = await pgEngine.searchKeyword('東京 会議', { limit: 5, sourceIds: ['nonexistent-source'] });
+    const pglite = await pgliteEngine.searchKeyword('東京 会議', { limit: 5, sourceIds: ['nonexistent-source'] });
+    expect(pg).toEqual([]);
+    expect(pglite).toEqual([]);
   });
 });

@@ -90,7 +90,10 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
       // runSync takes (engine, args). With no --source it relies on the
       // resolver to pick sole_non_default. --full to bypass git-diff
       // bookmarking. --no-embed since we have no embedding provider.
-      // --repo points at the synthetic vault.
+      // No --repo: since #3765 an explicit --repo routes via the repo-derived
+      // tier (dotfile/local_path anchored at the repo dir), which would
+      // short-circuit the sole_non_default tier this test pins. The anchor
+      // resolves from the source row's local_path instead.
       // Note: runSync calls process.exit on some paths — guard accordingly.
       const origExit = process.exit;
       let exitCode: number | undefined;
@@ -100,7 +103,7 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
       }) as typeof process.exit;
 
       try {
-        await runSync(engine, ['--full', '--no-embed', '--repo', repoPath]);
+        await runSync(engine, ['--full', '--no-embed']);
       } catch (e) {
         if ((e as Error).message !== '__exit__') throw e;
       } finally {
@@ -168,7 +171,26 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
     // irrelevant to what this test verifies (that 2+ non-default sources
     // disable auto-routing); --force skips #2707's registration-time git
     // validation, which is orthogonal to this test's assertion.
+    //
+    // #3765: --repo now routes via the repo-derived tier when the path
+    // belongs to a registered source, so this test's --repo must point at an
+    // UNREGISTERED repo — otherwise the repo tier (correctly) routes to
+    // studiovault and the seed_default fall-through under test never runs.
     const secondRepo = mkdtempSync(join(tmpdir(), 'gbrain-snd-routing-second-'));
+    const unregisteredRepo = mkdtempSync(join(tmpdir(), 'gbrain-snd-routing-unreg-'));
+    execSync('git init', { cwd: unregisteredRepo, stdio: 'pipe' });
+    execSync('git config user.email "t@t.com"', { cwd: unregisteredRepo, stdio: 'pipe' });
+    execSync('git config user.name "T"', { cwd: unregisteredRepo, stdio: 'pipe' });
+    mkdirSync(join(unregisteredRepo, 'topics'), { recursive: true });
+    writeFileSync(join(unregisteredRepo, 'topics/bar.md'), [
+      '---',
+      'type: concept',
+      'title: Bar',
+      '---',
+      '',
+      'fall-through body.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m initial', { cwd: unregisteredRepo, stdio: 'pipe' });
     await runSources(engine, ['add', 'studiovault', '--path', repoPath, '--no-federated']);
     await runSources(engine, ['add', 'second-vault', '--path', secondRepo, '--no-federated', '--force']);
     const { runSync } = await import('../src/commands/sync.ts');
@@ -188,7 +210,7 @@ describe('#1434 — runSync auto-routes to sole_non_default source', () => {
       const origExit = process.exit;
       process.exit = ((_code?: number) => { throw new Error('__exit__'); }) as typeof process.exit;
       try {
-        await runSync(engine, ['--full', '--no-embed', '--repo', repoPath]);
+        await runSync(engine, ['--full', '--no-embed', '--repo', unregisteredRepo]);
       } catch (e) {
         if ((e as Error).message !== '__exit__') throw e;
       } finally {

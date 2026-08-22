@@ -15,6 +15,7 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { tryParseEmbedding } from '../utils.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 
 /** Narrow slice of PostgresEngine the facts operations use. */
 export interface PgFactsDeps {
@@ -119,27 +120,70 @@ export async function expireFact(deps: PgFactsDeps, id: number, opts?: { superse
 
 export async function insertFacts(
   deps: PgFactsDeps,
-    rows: Array<NewFact & { row_num: number; source_markdown_slug: string }>,
+    rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number }>,
     ctx: { source_id: string },
-  ): Promise<{ inserted: number; ids: number[] }> {
-    if (rows.length === 0) return { inserted: 0, ids: [] };
+    opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean } },
+  ): Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number }> {
+    if (rows.length === 0) return { inserted: 0, ids: [], warnings: [], deleted: 0 };
 
     const sql = deps.sql;
     // v0.41.15.0 (T6, codex #20): resolve the embedding-cast suffix
     // ONCE per process so the cast matches the actual column type
     // (halfvec vs vector). The probe is cached after first call.
     const castSuffix = await deps.resolveFactsEmbeddingCast();
+    const warnings: string[] = [];
+    // v0.46 (#3014): captured inside the transaction below when
+    // deleteForPageFirst runs; stays 0 for the standalone insert path.
+    let deleted = 0;
     // Single transaction so the v51 partial UNIQUE index can roll back
     // the whole batch on constraint violation. Per-row INSERTs (not
     // multi-row VALUES) keep the embedding-vs-no-embedding branching
     // readable; batch sizes are small (5-30 rows per page in practice).
-    // No supersede flow in this path — fence reconciliation is the
-    // canonical source-of-truth direction, not the consolidator path.
+    // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
+    // stamped inline here, and `superseded by #N` references are resolved
+    // to `facts.superseded_by` in a second pass below (same transaction).
     const ids = await sql.begin(async (tx) => {
+      // v0.46 (#3014) — atomic reconcile: wipe the page's fence-owned rows
+      // as the FIRST statement of this transaction so a failing insert
+      // below rolls the delete back too. Inlined (not a deleteFactsForPage
+      // call) so it shares this transaction — deleteFactsForPage runs on
+      // the pool (`deps.sql`), a separate self-committing transaction,
+      // which is exactly the split this fix removes. Scoping mirrors it
+      // exactly (#1928 excludeSourcePrefixes + #2646 preserveExpiredLegacy).
+      const del = opts?.deleteForPageFirst;
+      if (del) {
+        const expiredLegacyFilter = del.preserveExpiredLegacy
+          ? tx`AND NOT (row_num IS NULL AND expired_at IS NOT NULL)`
+          : tx``;
+        const prefixes = del.excludeSourcePrefixes;
+        if (prefixes && prefixes.length > 0) {
+          const patterns = prefixes.map(p => `${p}%`);
+          const r = await tx`
+            DELETE FROM facts
+            WHERE source_id = ${ctx.source_id}
+              AND source_markdown_slug = ${del.slug}
+              AND NOT (COALESCE(source, '') LIKE ANY(${patterns}))
+              ${expiredLegacyFilter}
+          `;
+          deleted = r.count ?? 0;
+        } else {
+          const r = await tx`
+            DELETE FROM facts
+            WHERE source_id = ${ctx.source_id} AND source_markdown_slug = ${del.slug} ${expiredLegacyFilter}
+          `;
+          deleted = r.count ?? 0;
+        }
+      }
       const out: number[] = [];
+      // Per-input inserted id, aligned to `rows` (null when the v51
+      // ON CONFLICT DO NOTHING skipped the row) — the second pass below
+      // must not index `out` positionally, or a skipped row would shift
+      // every later UPDATE onto the wrong fact.
+      const rowIds: Array<number | null> = [];
       for (const input of rows) {
         const validFrom = input.valid_from ?? new Date();
         const validUntil = input.valid_until ?? null;
+        const expiredAt = input.expired_at ?? null;
         const kind = input.kind ?? 'fact';
         const visibility = input.visibility ?? 'private';
         const notability = input.notability ?? 'medium';
@@ -161,14 +205,14 @@ export async function insertFacts(
         const ins = await tx<Array<{ id: number }>>`
           INSERT INTO facts (
             source_id, entity_slug, fact, kind, visibility, notability, context,
-            valid_from, valid_until, source, source_session, confidence,
+            valid_from, valid_until, expired_at, source, source_session, confidence,
             embedding, embedded_at,
             row_num, source_markdown_slug,
             claim_metric, claim_value, claim_unit, claim_period,
             event_type
           ) VALUES (
             ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
-            ${validFrom}, ${validUntil}, ${input.source}, ${sourceSession}, ${confidence},
+            ${validFrom}, ${validUntil}, ${expiredAt}, ${input.source}, ${sourceSession}, ${confidence},
             ${embedLit === null ? null : tx.unsafe(`'${embedLit}'${castSuffix}`)}, ${embeddedAt},
             ${input.row_num}, ${input.source_markdown_slug},
             ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
@@ -180,10 +224,46 @@ export async function insertFacts(
           RETURNING id
         `;
         if (ins[0]) out.push(Number(ins[0].id));
+        rowIds.push(ins[0] ? Number(ins[0].id) : null);
+      }
+
+      // v0.46 (#3014) — second pass: resolve `superseded by #N` page-local
+      // references to fact ids. Same transaction so a target row inserted
+      // above is visible. Keyed on (source_id, source_markdown_slug,
+      // row_num) — the v51 unique index — so a reference also resolves
+      // against a target that already existed before this batch. A target
+      // whose `expired_at` is set is itself struck (chain) and rejected.
+      for (let i = 0; i < rows.length; i++) {
+        const targetRow = rows[i].superseded_by_row;
+        if (targetRow === undefined || rowIds[i] === null) continue;
+        const slug = rows[i].source_markdown_slug;
+        // Only look up an int4-safe target. An absurd `#N` (11+ digits)
+        // would overflow the `row_num` comparison and abort the cycle;
+        // skipping the lookup leaves `target` undefined, so
+        // resolveSupersededByRow treats it as a dangling reference (NULL +
+        // warning) instead of throwing.
+        let target: SupersedeTarget | undefined;
+        if (isInt4RowRef(targetRow)) {
+          const found = await tx<Array<{ id: number; expired_at: Date | null }>>`
+            SELECT id, expired_at FROM facts
+            WHERE source_id = ${ctx.source_id}
+              AND source_markdown_slug = ${slug}
+              AND row_num = ${targetRow}
+            LIMIT 1
+          `;
+          target = found[0]
+            ? { id: Number(found[0].id), struck: found[0].expired_at != null }
+            : undefined;
+        }
+        const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug);
+        if (warning) warnings.push(warning);
+        if (superseded_by !== null) {
+          await tx`UPDATE facts SET superseded_by = ${superseded_by} WHERE id = ${rowIds[i]}`;
+        }
       }
       return out;
     });
-    return { inserted: ids.length, ids };
+    return { inserted: ids.length, ids, warnings, deleted };
   }
 
 export async function deleteFactsForPage(
@@ -313,14 +393,19 @@ export async function listSupersessions(
     const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
     const since = opts?.since ?? null;
     const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+    // v0.46 (#3014) — filter on `superseded_by` alone; the ontology
+    // writer closes a superseded row via `valid_until` (not `expired_at`,
+    // which would break its `--asof` time-travel), so requiring both
+    // columns dropped every ontology supersession AND every fence-authored
+    // one. Order / `since` fall back to `valid_until` when `expired_at` is
+    // NULL.
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
-        AND expired_at IS NOT NULL
         AND superseded_by IS NOT NULL
-        ${since ? sql`AND expired_at >= ${since}` : sql``}
+        ${since ? sql`AND COALESCE(expired_at, valid_until) >= ${since}` : sql``}
         ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
-      ORDER BY expired_at DESC, id DESC
+      ORDER BY COALESCE(expired_at, valid_until) DESC, id DESC
       LIMIT ${limit}
     `;
     return rows.map(rowToFactPg);

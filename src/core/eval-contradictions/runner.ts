@@ -39,6 +39,7 @@ import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.t
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
 import { pairToFinding } from './auto-supersession.ts';
+import { isJudgeFailedRun, sumVerdicts } from './run-health.ts';
 import {
   PROMPT_VERSION,
   SCHEMA_VERSION,
@@ -447,8 +448,16 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const runId = new Date(startedAt).toISOString().replace(/[:.]/g, '-').replace(/-(?=\d{3}Z$)/, '.');
   const durationMs = Date.now() - startedAt;
 
+  // #3889: a run where EVERY judge call errored has zero verdicts — its
+  // "0 contradictions" headline is untrustworthy. Stamp the status so the
+  // CLI + doctor can refuse to render it as a clean green result.
+  const runStatus = isJudgeFailedRun(sumVerdicts(verdictBreakdown), judgeErrors.total)
+    ? ('judge_failed' as const)
+    : ('ok' as const);
+
   const report: ProbeReport = {
     schema_version: SCHEMA_VERSION,
+    run_status: runStatus,
     run_id: runId,
     judge_model: judgeModel,
     prompt_version: PROMPT_VERSION,

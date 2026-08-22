@@ -153,7 +153,13 @@ describe('request_tools catalog (no args)', () => {
       ...HTTP, auth: authFor('agent-client', ['agent']),
     });
     const names = flatNames(parsed(res).catalog).sort();
-    expect(names).toEqual(['get_agent_job', 'request_tools', 'submit_agent']);
+    // #4098: the generic queue ops (get/list/progress/cancel) are
+    // agentCallable with an owner-client fence, so the honest agent-lane
+    // catalog includes them alongside the submit_agent/get_agent_job pair.
+    expect(names).toEqual([
+      'cancel_job', 'get_agent_job', 'get_job', 'get_job_progress',
+      'list_jobs', 'request_tools', 'submit_agent',
+    ]);
   });
 
   test('D9: a slug-bound client keeps discovery; unfenceable writes stay hidden', async () => {

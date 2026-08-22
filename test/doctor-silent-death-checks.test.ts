@@ -55,11 +55,11 @@ async function addSource(id: string, localPath: string | null): Promise<void> {
 
 async function addPage(
   slug: string,
-  opts: { sourceId?: string; hash?: string | null; pageKind?: string; deleted?: boolean; sourcePath?: string | null } = {},
+  opts: { sourceId?: string; hash?: string | null; pageKind?: string; type?: string; deleted?: boolean; sourcePath?: string | null } = {},
 ): Promise<void> {
   await engine.executeRaw(
     `INSERT INTO pages (slug, source_id, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, deleted_at, source_path)
-     VALUES ($1, $2, 'concept', $3, $1, 'body', '', '{}'::jsonb, $4, $5, $6)`,
+     VALUES ($1, $2, $7, $3, $1, 'body', '', '{}'::jsonb, $4, $5, $6)`,
     [
       slug,
       opts.sourceId ?? 'default',
@@ -67,6 +67,7 @@ async function addPage(
       opts.hash === undefined ? `h-${slug}` : opts.hash,
       opts.deleted ? new Date().toISOString() : null,
       opts.sourcePath ?? null,
+      opts.type ?? 'concept',
     ],
   );
 }
@@ -101,11 +102,43 @@ describe('content_hash_duplicates (#2250)', () => {
     expect(c.message).toContain('my-project <-> projects/my-project');
   });
 
-  test('two path-prefixed pages with same hash → ok (not the wrong-root pattern)', async () => {
+  test('#3946: two path-prefixed pages with same hash → warn, listed, NO delete hint', async () => {
+    // Pre-#3946 the shape FILTER predicates hid every all-nested duplicate
+    // group; now it surfaces, but WITHOUT the bare-slug delete hint (#3942 —
+    // either copy may be canonical).
     await addPage('people/alice-example', { hash: 'same' });
     await addPage('archive/people/alice-example', { hash: 'same' });
     const c = await checkContentHashDuplicates(engine);
-    expect(c.status).toBe('ok');
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('people/alice-example == archive/people/alice-example');
+    expect(c.message).not.toContain('gbrain pages delete');
+    expect((c.details as any).pair_count).toBe(0);
+    expect((c.details as any).distinct_slug_group_count).toBe(1);
+  });
+
+  test('#3946: two distinct bare slugs with same hash → warn without delete hint', async () => {
+    await addPage('alice-example', { hash: 'same' });
+    await addPage('alice-copy', { hash: 'same' });
+    const c = await checkContentHashDuplicates(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('alice-copy == alice-example');
+    expect(c.message).not.toContain('gbrain pages delete');
+    expect((c.details as any).pair_count).toBe(0);
+    expect((c.details as any).distinct_slug_group_count).toBe(1);
+  });
+
+  test('#3946: mixed brain — wrong-root pair keeps the delete hint, nested group listed beside it', async () => {
+    await addPage('people/alice-example', { hash: 'h1' });
+    await addPage('alice-example', { hash: 'h1' });
+    await addPage('notes/dup-a', { hash: 'h2' });
+    await addPage('archive/dup-a', { hash: 'h2' });
+    const c = await checkContentHashDuplicates(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('alice-example <-> people/alice-example');
+    expect(c.message).toContain('gbrain pages delete <bare-slug>');
+    expect(c.message).toContain('notes/dup-a == archive/dup-a');
+    expect((c.details as any).pair_count).toBe(1);
+    expect((c.details as any).distinct_slug_group_count).toBe(1);
   });
 
   test('soft-deleted twin is ignored', async () => {
@@ -228,6 +261,40 @@ describe('undeclared_db_only_pages (#2784)', () => {
     await addPage('src-core-thing-ts', { sourceId: 'src-a', pageKind: 'code' });
     const c = await checkUndeclaredDbOnlyPages(engine);
     expect(c.status).toBe('ok');
+  });
+
+  // #3766 — legacy code rows carry page_kind='markdown' (migration-25
+  // backfill never re-stamped type='code'), and the backed set only walked
+  // .mdx? files, so every such row false-positived as "DB-only".
+  test('#3766: legacy code row (page_kind=markdown, no type stamp) backed by a .tsx file → ok', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, 'components'), { recursive: true });
+    writeFileSync(join(repo, 'components', 'App.tsx'), 'export const App = () => null;\n');
+    await addSource('src-a', repo);
+    // slugifyCodePath('components/App.tsx') → 'components-app-tsx'; no
+    // source_path (the pre-v0.32.7 shape) so the walk-derived set decides.
+    await addPage('components-app-tsx', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
+  test("#3766: properly stamped type='code' row is skipped outright", async () => {
+    const repo = makeRepo();
+    await addSource('src-a', repo);
+    await addPage('src-core-thing-ts', { sourceId: 'src-a', type: 'code' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
+  test('#3766: a genuinely DB-only markdown page still warns (no overreach)', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, 'components'), { recursive: true });
+    writeFileSync(join(repo, 'components', 'App.tsx'), 'export const App = () => null;\n');
+    await addSource('src-a', repo);
+    await addPage('people/ghost-page', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('people/ghost-page');
   });
 
   test('source whose local_path is missing on this host is skipped', async () => {

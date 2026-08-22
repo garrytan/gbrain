@@ -23,9 +23,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
-import { MinionQueue } from '../minions/queue.ts';
+import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
-import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
+import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, MinionJobStatus, SubagentHandlerData } from '../minions/types.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
@@ -68,6 +68,8 @@ export interface PatternsPhaseOpts {
    * row. Unset → legacy 'default'. Mirrors synthesize.ts's `sourceId`.
    */
   sourceId?: string;
+  /** Internal: minion owner job id for private dream-inline queue recovery. */
+  privateQueueOwnerJobId?: number | null;
 }
 
 /**
@@ -122,6 +124,7 @@ export async function runPhasePatterns(
   opts: PatternsPhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   try {
     const config = await loadPatternsConfig(engine);
 
@@ -204,6 +207,14 @@ export async function runPhasePatterns(
     // never claim a child this parent is about to run itself. Mirrors
     // synthesize.ts's childQueueName derivation exactly.
     const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    ownedPrivateQueue = { queue, name: childQueueName };
+    const privateQueueOwnerToken = randomUUID();
+    // Same lease posture as synthesize: rolling 10-min default lease renewed
+    // every ≤30s (drain loop + chunked post-drain wait); the whole wrapper is
+    // 30s-throttled so idle polls cost one UPDATE per half-minute.
+    const renewPrivateQueueLease = queue.makeThrottledLeaseRenewer(
+      childQueueName, privateQueueOwnerToken, opts.yieldDuringPhase,
+    );
     const data: SubagentHandlerData = {
       prompt: buildPatternsPrompt(reflections, config.minEvidence, config.sourceSlugPrefix, config.outputSlugPrefix),
       model: config.model,
@@ -221,6 +232,9 @@ export async function runPhasePatterns(
       max_stalled: 3,
       timeout_ms: budgets.timeoutMs,
       queue: childQueueName,
+      private_queue_owner_job_id: opts.privateQueueOwnerJobId ?? null,
+      private_queue_owner_token: privateQueueOwnerToken,
+      private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
     };
     let job: Awaited<ReturnType<typeof queue.add>>;
     try {
@@ -241,13 +255,14 @@ export async function runPhasePatterns(
     // the terminal state instead of polling waitForCompletion until
     // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
     // parent job otherwise deadlocks a fully-occupied worker (#2050).
-    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    await runSubagentsInline(engine, queue, childQueueName, renewPrivateQueueLease);
 
     let outcome: MinionJobStatus | 'timeout';
     try {
-      const final = await waitForCompletion(queue, job.id, {
+      const final = await waitForCompletionRenewing(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
         pollMs: 5 * 1000,
+        renew: renewPrivateQueueLease,
       });
       outcome = final.status;
     } catch (e) {
@@ -326,6 +341,24 @@ export async function runPhasePatterns(
     return failed(makeError('InternalError', 'PATTERNS_PHASE_FAIL',
       e instanceof Error ? (e.message || 'patterns phase threw') : String(e)));
   } finally {
+    if (ownedPrivateQueue) {
+      try {
+        const cancelled = await ownedPrivateQueue.queue.reconcilePrivateQueue(
+          ownedPrivateQueue.name,
+          'private queue owner terminalized: patterns phase ended',
+        );
+        if (cancelled.length > 0) {
+          process.stderr.write(
+            `[dream] patterns reconciled ${cancelled.length} non-terminal child job(s) from ${ownedPrivateQueue.name}\n`,
+          );
+        }
+      } catch (cleanupError) {
+        process.stderr.write(
+          `[dream] patterns private-queue cleanup failed for ${ownedPrivateQueue.name}: ` +
+          `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}\n`,
+        );
+      }
+    }
     void start;
   }
 }

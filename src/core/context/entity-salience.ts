@@ -22,6 +22,7 @@
  */
 
 import { normalizeAlias } from '../search/alias-normalize.ts';
+import { CJK_SLUG_CHARS, hasCJK } from '../cjk.ts';
 
 export interface EntityCandidate {
   /** Surface form for the pointer label, e.g. "Garry Tan" or "@garry". */
@@ -50,6 +51,17 @@ export const MAX_CANDIDATES = 12;
  * batched alias probe size.
  */
 export const MAX_WEAK_CANDIDATES = 32;
+
+/**
+ * Max CJK weak n-gram candidates per turn (#3746). CJK names have no
+ * capitalization signal and no whitespace tokenization, so the strong pass
+ * (\p{Lu}-anchored) and the lowercase weak pass (\p{Ll}-anchored) are both
+ * blind to them — 田中/김철수/王小明 extracted ZERO candidates pre-fix.
+ * Own budget: n-grams are noisier than lowercase words, and the resolver
+ * restricts them to exact-evidence arms (alias / exact-title / exact-slug),
+ * so the cap only bounds probe size.
+ */
+export const MAX_CJK_WEAK_CANDIDATES = 24;
 
 /**
  * HARD stopwords — function words that are never an entity, even capitalized
@@ -121,6 +133,15 @@ function isPureNumber(s: string): boolean {
 // \b misbehaves with unicode property classes). The lookbehind also excludes
 // @handles (step 1 owns those) and the lowercase TAIL of a capitalized word.
 const WEAK_TOKEN_RE = /(?<![\p{L}\p{N}'’@-])\p{Ll}[\p{L}\p{N}'’-]{2,}(?![\p{L}\p{N}'’-])/gu;
+
+// #3746 — CJK runs (Han/hiragana/katakana/hangul, the shared cjk.ts ranges).
+// CJK chars are \p{Lo}: invisible to both the \p{Lu}-anchored strong pass and
+// the \p{Ll}-anchored lowercase weak pass above.
+const CJK_RUN_RE = new RegExp(`[${CJK_SLUG_CHARS}]+`, 'gu');
+// Pure-hiragana grams are overwhelmingly particles/function words (の, して,
+// です) — never emitted as candidates. Names in hiragana-only form are a
+// documented v1 miss (same class as the lowercase-Latin limit above).
+const PURE_HIRAGANA_RE = /^[぀-ゟ]+$/u;
 
 /**
  * Extract candidate entity surface-forms from one turn's text.
@@ -240,6 +261,42 @@ export function extractCandidates(text: string): EntityCandidate[] {
     weakSeen.add(norm);
     weakCount++;
     out.push({ display: raw, query: raw, weak: true });
+  }
+
+  // 4. CJK weak n-gram pass (#3746). CJK scripts carry no capitalization and
+  // (for JA/ZH) no whitespace tokenization, so both passes above are blind to
+  // 田中 / 김철수 / 王小明. Emit 2–4-char n-grams of each CJK run as WEAK
+  // candidates (own budget; position-major, longest-first per position so a
+  // leading name's grams always make the cap). The resolver restricts weak
+  // candidates to exact-evidence arms — alias, plus the pure-CJK
+  // exact-title/exact-slug arm — so junk grams cost only probe size and can
+  // never fabricate a pointer without an exact registered match.
+  if (hasCJK(text)) {
+    let cjkCount = 0;
+    outer: for (const m of text.matchAll(CJK_RUN_RE)) {
+      const run = m[0];
+      if (run.length < 2) continue;
+      const grams: string[] = [];
+      if (run.length <= 4) {
+        grams.push(run); // whole short run (KO/whitespace-tokenized names)
+      } else {
+        for (let i = 0; i < run.length - 1; i++) {
+          for (const n of [4, 3, 2]) {
+            if (i + n <= run.length) grams.push(run.slice(i, i + n));
+          }
+        }
+      }
+      for (const g of grams) {
+        if (cjkCount >= MAX_CJK_WEAK_CANDIDATES) break outer;
+        if (PURE_HIRAGANA_RE.test(g)) continue; // particles/function words
+        const norm = normalizeAlias(g);
+        if (!norm) continue;
+        if (strongNorms.has(norm) || weakSeen.has(norm)) continue;
+        weakSeen.add(norm);
+        cjkCount++;
+        out.push({ display: g, query: g, weak: true });
+      }
+    }
   }
   return out;
 }

@@ -36,8 +36,14 @@ const get_active_schema_pack: Operation = {
     const cfg = loadConfig();
     const sourceOpts: Record<string, unknown> = {};
     if (ctx.sourceId) sourceOpts.sourceId = ctx.sourceId;
-    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, ...sourceOpts });
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, ...sourceOpts });
+    // #3792: thread the DB-plane schema_pack (tier 4) so this identity
+    // packet reports the SAME pack the engine actually queries with.
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
+    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
     const primitiveSummary: Record<string, number> = {};
     for (const t of pack.manifest.page_types) {
       primitiveSummary[t.primitive] = (primitiveSummary[t.primitive] ?? 0) + 1;

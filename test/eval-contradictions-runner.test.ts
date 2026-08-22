@@ -507,6 +507,75 @@ describe('runContradictionProbe', () => {
     expect(out.report.verdict_breakdown.no_contradiction).toBe(1);
   });
 
+  // ---- #3889: all-errors run stamps run_status='judge_failed' ----
+  // Without the stamp, a run where every judge call threw renders as
+  // "0 contradictions" — an untrustworthy green.
+
+  test('#3889: every judge call throwing => run_status=judge_failed', async () => {
+    const idA = await seedPage('a/allfail', 'A');
+    const idB = await seedPage('b/allfail', 'B');
+    const out = await runContradictionProbe({
+      engine,
+      queries: ['q-allfail'],
+      judgeFn: stubJudge({ throwOn: () => true }),
+      searchFn: async () => [
+        mkResult('a/allfail', idA, 1, 'chunk a'),
+        mkResult('b/allfail', idB, 2, 'chunk b'),
+      ],
+      budgetUsd: 5,
+      noCache: true,
+    });
+    expect(out.report.judge_errors.total).toBe(1);
+    expect(out.report.run_status).toBe('judge_failed');
+  });
+
+  test('#3889: clean run (and zero-pair run) stamps run_status=ok', async () => {
+    const idA = await seedPage('a/ok3889', 'A');
+    const idB = await seedPage('b/ok3889', 'B');
+    const clean = await runContradictionProbe({
+      engine,
+      queries: ['q-ok3889'],
+      judgeFn: stubJudge({ verdict: 'no_contradiction' }),
+      searchFn: async () => [
+        mkResult('a/ok3889', idA, 1, 'chunk a'),
+        mkResult('b/ok3889', idB, 2, 'chunk b'),
+      ],
+      budgetUsd: 5,
+      noCache: true,
+    });
+    expect(clean.report.run_status).toBe('ok');
+
+    // Zero pairs attempted (empty search): also 'ok' — nothing failed.
+    const empty = await runContradictionProbe({
+      engine,
+      queries: ['q-empty3889'],
+      judgeFn: stubJudge({}),
+      searchFn: async () => [],
+      budgetUsd: 5,
+    });
+    expect(empty.report.run_status).toBe('ok');
+  });
+
+  test('#3889: partial errors (some verdicts landed) stays run_status=ok', async () => {
+    const idA = await seedPage('a/part3889', 'A');
+    const idB = await seedPage('b/part3889', 'B');
+    const idC = await seedPage('c/part3889', 'C');
+    const out = await runContradictionProbe({
+      engine,
+      queries: ['q-part3889'],
+      judgeFn: stubJudge({ verdict: 'no_contradiction', throwOn: (i) => i === 0 }),
+      searchFn: async () => [
+        mkResult('a/part3889', idA, 1, 'a'),
+        mkResult('b/part3889', idB, 2, 'b'),
+        mkResult('c/part3889', idC, 3, 'c'),
+      ],
+      budgetUsd: 5,
+      noCache: true,
+    });
+    expect(out.report.judge_errors.total).toBe(1);
+    expect(out.report.run_status).toBe('ok');
+  });
+
   // ---- Lane D: R5 regression — cache key tuple shape stays 5 fields ----
   // Lane A1 bumped PROMPT_VERSION 1→2 (invalidates cache) but kept the key
   // shape unchanged. Adding a 6th field would silently break every operator's

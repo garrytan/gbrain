@@ -408,13 +408,20 @@ export async function checkStaleLocks(
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      let breakHint = 'gbrain doctor';
+      // Every hint here must be a REAL command: `gbrain dream --break-lock`
+      // was advertised for years but dream never implemented the flag —
+      // pasting the hint ran a full (paid) dream cycle instead of breaking a
+      // lock. Cycle locks: dead-holder rows on THIS host are reaped by
+      // `gbrain doctor --fix` (checkStaleLocks above) and swept automatically
+      // at the next dream-cycle start; cross-host or live-holder locks have
+      // no safe break command by design. The old fallback 'gbrain doctor' was
+      // circular (this line IS doctor output) and plain doctor reaps nothing.
+      let breakHint =
+        'expired lock is swept at the next acquire; if it persists, inspect the gbrain_cycle_locks row';
       if (s.id.startsWith('gbrain-sync:')) {
         breakHint = `gbrain sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
-      } else if (s.id.startsWith('gbrain-cycle:')) {
-        breakHint = `gbrain dream --break-lock --source ${s.id.slice('gbrain-cycle:'.length)}`;
-      } else if (s.id === 'gbrain-cycle') {
-        breakHint = 'gbrain dream --break-lock';
+      } else if (s.id.startsWith('gbrain-cycle:') || s.id === 'gbrain-cycle') {
+        breakHint = 'gbrain doctor --fix (reaps dead holders on this host; also swept at next dream start)';
       }
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });

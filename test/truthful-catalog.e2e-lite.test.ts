@@ -661,11 +661,17 @@ describe('E5 truthful catalog — OAuth-path cells (serve-http seams over dispat
     await setGates(false);
     const cell = makeCell('agent', ['agent'], 'full', false, false);
     const listed = await oauthToolsList(cell);
-    expect(sortedArray(listed)).toEqual(['get_agent_job', 'request_tools', 'submit_agent']);
+    // #4098: the generic queue ops (get/list/progress/cancel) are
+    // agentCallable with an owner-client fence, so the honest agent-lane
+    // row includes them alongside the submit_agent/get_agent_job pair.
+    expect(sortedArray(listed)).toEqual([
+      'cancel_job', 'get_agent_job', 'get_job', 'get_job_progress',
+      'list_jobs', 'request_tools', 'submit_agent',
+    ]);
 
     // Probes: garbage args die at validation (proving the scope layer let
     // them through), and discovery genuinely works for the agent class.
-    for (const name of ['submit_agent', 'get_agent_job']) {
+    for (const name of ['submit_agent', 'get_agent_job', 'get_job', 'get_job_progress', 'cancel_job', 'list_jobs']) {
       const op = operations.find(o => o.name === name)!;
       const verdict = await oauthToolCall(cell, name, probeArgsFor(op));
       expect(verdict.kind).toBe('invalid_params');

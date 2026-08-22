@@ -265,10 +265,14 @@ describe('evaluateAndFireNudge', () => {
 // ─── buildNudgeText ─────────────────────────────────────────────────
 
 describe('buildNudgeText', () => {
-  test('contains the matched tag for hush command', () => {
+  test('contains the matched tag and the auto-quiet notice (no fake hush command, #3697)', () => {
     const out = buildNudgeText({ matchedTag: 'over-confident-geography', conviction: 0.85 });
     expect(out).toContain('over-confident-geography');
-    expect(out).toContain('gbrain takes nudge --hush over-confident-geography');
+    // #3697: `gbrain takes nudge --hush` does not exist — the 14-day quiet
+    // period is automatic (take_nudge_log cooldown). The text must say that
+    // instead of advertising a subcommand that exits "Unknown subcommand".
+    expect(out).not.toContain('gbrain takes nudge --hush');
+    expect(out).toContain('auto-quiets');
   });
 
   test('contains the conviction value', () => {

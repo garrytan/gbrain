@@ -1507,7 +1507,8 @@ async function runExtractAndEmbed(
     // Large sync skips the inline embed; queue a capped backfill job so the
     // mirrored pages don't sit unembedded until someone notices recall is
     // keyword-only. Mirrors performSync's auto-defer chaser.
-    const drainHint = `run 'gbrain embed --stale --source-id ${deps.sourceId}' to drain now`;
+    // #3697: embed's source filter is `--source` (embed.ts parses no --source-id).
+    const drainHint = `run 'gbrain embed --stale --source ${deps.sourceId}' to drain now`;
     try {
       const { submitEmbedBackfill } = await import('./embed-backfill-submit.ts');
       const sub = await submitEmbedBackfill(deps.engine, deps.sourceId, { reason: 'github_sync_defer' });

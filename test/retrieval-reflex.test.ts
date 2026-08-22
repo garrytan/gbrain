@@ -671,3 +671,85 @@ describe('v0.46.15 ship-review hardening (adversarial F1/F2 + stale-alias veto)'
     expect(block).toBeNull();
   });
 });
+
+describe('#3746 — cjk-title arm (pure-CJK weak norms probe exact title/slug)', () => {
+  test('japanese: unregistered-alias page resolves via exact title', async () => {
+    await seed('people/tanaka', '田中', '田中 is a partner at fund-a.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('田中さんの会議のメモを見せて'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    expect(block!.pointers[0].slug).toBe('people/tanaka');
+    expect(block!.pointers[0].arm).toBe('cjk-title');
+    expect(block!.pointers[0].confidence).toBeGreaterThanOrEqual(0.7); // survives the volunteer gate
+    expect(block!.pointers[0].matchedNorm).toBe(normalizeAlias('田中'));
+  });
+
+  test('korean: registered CJK alias resolves through the alias arm (0.9)', async () => {
+    await seed('people/kim-chulsoo', 'Kim Chulsoo', 'A founder.');
+    await engine.setPageAliases('people/kim-chulsoo', 'default', [normalizeAlias('김철수')]);
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('김철수 미팅 노트 보여줘'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    expect(block!.pointers[0].slug).toBe('people/kim-chulsoo');
+    expect(block!.pointers[0].arm).toBe('alias');
+  });
+
+  test('chinese: exact CJK slug resolves when the title differs', async () => {
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('王小明', 'default', 'person', 'Wang Xiaoming', 'A researcher.', '')`,
+      [],
+    );
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('给我看看王小明的笔记'),
+      {},
+    );
+    expect(block).not.toBeNull();
+    expect(block!.pointers[0].slug).toBe('王小明');
+    expect(block!.pointers[0].arm).toBe('cjk-title');
+  });
+
+  test('no matching page → resolves nothing (junk grams never fabricate)', async () => {
+    await seed('people/unrelated', 'Unrelated Person', 'Nothing CJK here.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('田中さんの会議のメモを見せて'),
+      {},
+    );
+    expect(block).toBeNull();
+  });
+
+  test('ambiguous gram (two pages share the title) injects nothing', async () => {
+    await seed('people/tanaka-a', '田中', 'First 田中.');
+    await seed('people/tanaka-b', '田中', 'Second 田中.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('田中さんの会議のメモを見せて'),
+      {},
+    );
+    expect(block).toBeNull();
+  });
+
+  test('kill switch: lexicalArms=false disables the cjk-title arm', async () => {
+    await seed('people/tanaka', '田中', '田中 is a partner.');
+    const block = await resolveEntitiesToPointers(
+      engine,
+      'default',
+      extractCandidates('田中さんの会議のメモを見せて'),
+      { lexicalArms: false },
+    );
+    expect(block).toBeNull();
+  });
+});

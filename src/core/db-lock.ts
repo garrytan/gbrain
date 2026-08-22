@@ -379,6 +379,92 @@ export async function tryAcquireDbLock(
   return null;
 }
 
+/** Options for waitForDbLockTakeover (#2308). */
+export interface WaitForTakeoverOpts {
+  /** Poll cadence in ms (default 15s). */
+  pollMs?: number;
+  /**
+   * Hard wait bound in ms. Default: TTL + steal grace + 60s margin — the
+   * worst-case window after which a DEAD holder's row is structurally
+   * takeable by the normal upsert.
+   */
+  maxWaitMs?: number;
+  /** Called once per still-waiting poll (loud-wait logging seam). */
+  onWait?: (info: { snapshot: LockSnapshot | null; waitedMs: number; maxWaitMs: number }) => void;
+  /** Test seam: sleep implementation (default setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * #2308 — bounded wait for a dead holder's lock to become takeable.
+ *
+ * The gap: a CROSS-HOST holder that died leaves a row whose TTL is still
+ * live. `tryAcquireDbLock` correctly refuses to steal it (process.kill is
+ * meaningless remotely → classify `cross_host`), so a one-shot caller (the
+ * minion supervisor's start) exits LOCK_HELD even though the lock frees
+ * itself within TTL + steal-grace. This helper polls the normal acquire up
+ * to that bound instead of failing fast — turning "dead holder on another
+ * host" from an operator page into a self-healing wait.
+ *
+ * ALIVE holders are detected early and bailed on: a holder whose
+ * `last_refreshed_at` ADVANCES between polls is actively heartbeating —
+ * return null immediately rather than burning the full window. A holder
+ * REPLACED by a different (pid, host) while we waited also returns null
+ * (someone else won the takeover; they are alive by construction).
+ *
+ * Never throws for data reasons; poll errors degrade to the next poll.
+ */
+export async function waitForDbLockTakeover(
+  engine: BrainEngine,
+  lockId: string,
+  ttlMinutes: number = DEFAULT_TTL_MINUTES,
+  opts: WaitForTakeoverOpts = {},
+): Promise<DbLockHandle | null> {
+  const pollMs = Math.max(50, opts.pollMs ?? 15_000);
+  const stealGraceSeconds = resolveStealGraceSeconds(ttlMinutes);
+  const maxWaitMs = opts.maxWaitMs ?? (ttlMinutes * 60 + stealGraceSeconds + 60) * 1000;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const start = Date.now();
+
+  let baseline: LockSnapshot | null = null;
+  try {
+    baseline = await inspectLock(engine, lockId);
+  } catch {
+    /* observe from the first poll instead */
+  }
+
+  for (;;) {
+    const handle = await tryAcquireDbLock(engine, lockId, ttlMinutes);
+    if (handle) return handle;
+
+    let snap: LockSnapshot | null = null;
+    try {
+      snap = await inspectLock(engine, lockId);
+    } catch {
+      /* transient read failure — keep waiting within the bound */
+    }
+    if (snap && baseline) {
+      const sameHolder =
+        snap.holder_pid === baseline.holder_pid && snap.holder_host === baseline.holder_host;
+      if (!sameHolder) return null; // replaced by a live winner while we waited
+      if (
+        snap.last_refreshed_at &&
+        baseline.last_refreshed_at &&
+        snap.last_refreshed_at.getTime() > baseline.last_refreshed_at.getTime()
+      ) {
+        return null; // heartbeat advanced — holder is alive, stop waiting
+      }
+    } else if (snap && !baseline) {
+      baseline = snap; // row appeared after our first look — start observing it
+    }
+
+    const waitedMs = Date.now() - start;
+    if (waitedMs >= maxWaitMs) return null;
+    opts.onWait?.({ snapshot: snap, waitedMs, maxWaitMs });
+    await sleep(Math.min(pollMs, maxWaitMs - waitedMs));
+  }
+}
+
 /**
  * v0.41.6.0 D3: inspect the current holder of a named lock.
  *

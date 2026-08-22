@@ -13,7 +13,7 @@
  * Called at the end of initSchema(), after all migrations complete.
  */
 
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import type { BrainEngine } from './engine.ts';
 
 /** A column expected to exist in the database. */

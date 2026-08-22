@@ -35,7 +35,7 @@ export interface ChronicleJudgeResult {
    *     the JSON array was cut mid-stream and must not be parsed as complete.
    *   - 'parse_failed': the model returned text but no valid JSON array.
    */
-  failure?: 'truncated' | 'parse_failed';
+  failure?: 'truncated' | 'parse_failed' | 'llm_unavailable';
 }
 export type ChronicleJudge = (input: ChronicleJudgeInput) => Promise<ChronicleJudgeResult>;
 
@@ -193,7 +193,11 @@ const DEFAULT_JUDGE_MAX_TOKENS = 4000;
 function defaultJudge(engine: BrainEngine): ChronicleJudge {
   return async (input) => {
     const { isAvailable, chat } = await import('../ai/gateway.ts');
-    if (!isAvailable('chat')) return { events: [] };
+    // #2608: a missing chat provider used to return a bare `{events: []}` —
+    // indistinguishable from "the judge read the page and found no events",
+    // so keyless daemons reported clean no_events runs forever. Surface it as
+    // a distinct failure (mapped to status 'skipped' / judge_llm_unavailable).
+    if (!isAvailable('chat')) return { events: [], failure: 'llm_unavailable' };
     const body = (input.body || '').slice(0, 12_000);
     // #2606: configurable cap so event-dense pages have headroom.
     let maxTokens = DEFAULT_JUDGE_MAX_TOKENS;

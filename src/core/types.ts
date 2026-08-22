@@ -214,6 +214,14 @@ export interface PageInput {
   compiled_truth: string;
   timeline?: string;
   frontmatter?: Record<string, unknown>;
+  /**
+   * #3694: page tags for content-hash parity with the importer. The importer
+   * (parseMarkdown) hoists `tags` out of frontmatter; putPage callers usually
+   * leave them inside `frontmatter.tags`. `contentHash` accepts either
+   * (`page.tags ?? frontmatter.tags`, sorted) so both spellings hash the same.
+   * Optional — omitting it keeps existing callers source-compatible.
+   */
+  tags?: string[];
   content_hash?: string;
   /**
    * v0.19.0: distinguishes markdown vs code pages at the DB level. Defaults
@@ -342,6 +350,14 @@ export interface PageFilters {
   /** Inclusive bounds on semantic page time. NULL effective dates do not match. */
   effective_after?: string;
   effective_before?: string;
+  /**
+   * #4352 remediation — hide pages whose frontmatter carries
+   * `visibility: private` (absent visibility defaults to 'world'). Set by
+   * list_pages for untrusted callers via resolveExcludePrivatePages; trusted
+   * local listing is unchanged. Predicate matches privatePagesFilterFragment
+   * (search/private-visibility.ts) in BOTH engines.
+   */
+  excludePrivate?: boolean;
 }
 
 /** v0.26.5 — opts for getPage / softDeletePage / restorePage. */
@@ -758,6 +774,17 @@ export interface SearchResult {
    */
   unverified?: boolean;
   /**
+   * #4220: the page's raw `frontmatter.status` value (e.g. 'draft',
+   * 'superseded', 'restricted', 'unverified', 'verified'), surfaced so agents
+   * can weigh lifecycle state without a follow-up page fetch. Stamped
+   * pre-fusion by `stampUnverifiedExtractions` (hybrid.ts) from the same
+   * batched query that powers the quarantine lane. Absent when the page has
+   * no status frontmatter. NOTE: `unverified` stays the load-bearing
+   * quarantine flag (requires provenance='auto-extracted' too); `status`
+   * alone is informational.
+   */
+  status?: string;
+  /**
    * v0.36 (cross-modal wave): the chunk's modality discriminator from
    * content_chunks.modality. 'text' for the existing text-embedding rows,
    * 'image' for rows populated by importImageFile. Surfaced so callers /
@@ -903,6 +930,24 @@ export interface SearchResult {
    * decision keys off (T4).
    */
   alias_hit?: boolean;
+  /**
+   * #3783 — set when this result was surfaced by a LEXICAL arm (chunk-grain
+   * keyword FTS or the page-grain title arm). Stamped pre-fusion by
+   * markKeywordHits and OR-propagated through RRF fusion so a row that
+   * arrived via both vector and keyword arms keeps the flag regardless of
+   * which copy fusion saw first. `evidence: keyword_exact` fires ONLY on
+   * rows carrying this flag — a pure-vector row with a solid blended score
+   * is no longer mislabeled as a keyword match.
+   */
+  keyword_hit?: boolean;
+  /**
+   * #1663 — set when the structural exact-lookup tier promoted/injected this
+   * result (query was the page's slug or exact normalized title). Drives the
+   * autocut preserve predicate (tier hits carry no rerank_score) and
+   * `--explain` telemetry; evidence still reads via alias_hit /
+   * title_match_boost so the frozen EVIDENCE_ENUM is untouched.
+   */
+  exact_lookup?: 'slug' | 'title';
   /**
    * T4 — the strongest signal that surfaced this page (alias_hit >
    * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
@@ -1164,6 +1209,17 @@ export interface SearchOpts {
    * upper bound on result size.
    */
   tokenBudget?: number;
+  /**
+   * #4352 — page-level `visibility: private` enforcement for untrusted
+   * callers. When true, both engines' search paths (keyword, titles,
+   * keyword-chunks, vector) add
+   * `COALESCE(p.frontmatter->>'visibility','world') <> 'private'` to the
+   * visibility clause. Callers resolve trust + the config gate via
+   * `resolveExcludePrivatePages` (search/private-visibility.ts):
+   * ctx.remote !== false → true unless the operator opted out. Omitted /
+   * false = pre-fix behavior (trusted local reads see everything).
+   */
+  excludePrivate?: boolean;
   /**
    * v0.32.x (search-lite): enable/disable the semantic query cache for this
    * call. When undefined, the cache decision falls back to global config
@@ -1799,6 +1855,14 @@ export interface HybridSearchMeta {
    * `gbrain search --explain`.
    */
   autocut?: import('./search/autocut.ts').AutocutDecision;
+  /**
+   * #3995 — guaranteed page-1 relational evidence slot. Present only when a
+   * fired relational arm's answer had to be promoted from beyond the limit
+   * window (fusion overflow) or re-injected after autocut/trim dropped it.
+   * Omitted on clean runs (evidence already on page 1) and when the arm
+   * didn't fire. Surfaced for `gbrain search --explain`.
+   */
+  relational_evidence_slot?: import('./search/relational-recall.ts').RelationalEvidenceSlotDecision;
   /**
    * v0.32.x (search-lite): token budget enforcement metadata. Omitted when
    * no budget was applied (backward-compatible with pre-search-lite

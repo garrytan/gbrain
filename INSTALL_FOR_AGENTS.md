@@ -78,7 +78,12 @@ export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models;
 
 Save to shell profile or `.env`, or store in `~/.gbrain/config.json` (file plane). Do
 NOT use `gbrain config set` for API keys — it writes the DB plane, which the provider
-pipeline never reads. Without any embedding provider, keyword search still works.
+pipeline never reads. For the autopilot daemon, put keys AND process-level env
+(`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) in `~/.gbrain/env` — a 0600
+file created by `gbrain autopilot --install` and sourced by the daemon wrapper;
+interactive shell rc files never reach daemon shells, and the path honors
+`GBRAIN_HOME`. Re-run `gbrain autopilot --install` after editing it so the daemon
+reloads. Without any embedding provider, keyword search still works.
 Chat-shaped features (automatic fact extraction, enrichment, synthesis, query
 expansion) route to whichever supported chat key is present (Anthropic or OpenAI) —
 Anthropic when both are set, OpenAI when it is the only one; other chat providers
@@ -232,6 +237,17 @@ refuses to overwrite anything that exists. Use `gbrain skillpack reference <name
 diff against gbrain's bundle when you want upstream improvements. (The legacy
 `gbrain skillpack install` managed-block model was removed in v0.33 — run
 `gbrain skillpack migrate-fence` once if upgrading from an older release.)
+
+> **PGLite brains are single-process (applies to every MCP registration
+> below).** PGLite is a single-writer embedded Postgres: the first running
+> `gbrain serve` owns the brain's data directory via the data-dir lock. A
+> second `serve` (gbrain registered in two harnesses on the same machine) —
+> or any CLI command that opens the DB — fails on the lock while that serve
+> is live (`gbrain sync` is the one exception: it delegates to the live
+> serve). If multiple processes need the brain at once, run ONE shared
+> `gbrain serve --http` and point every client at it, or migrate to the
+> Postgres/Supabase engine, which tolerates concurrent connections. Details:
+> [docs/architecture/serve-sync-concurrency.md](docs/architecture/serve-sync-concurrency.md).
 
 **If you are Hermes:** register gbrain as your MCP server:
 

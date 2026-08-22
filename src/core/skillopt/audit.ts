@@ -34,9 +34,13 @@ export type SkilloptEvent =
       total_steps: number; baseline_sel_score?: number; best_sel_score?: number;
       baseline_test_score?: number; test_score?: number; final_cost_usd: number;
       ts: string }
+  // #3516: 'error' is the truthful catch-all for unrecognized failures
+  // (provider errors, no_pricing hard-fails, bugs). 'sigint' is reserved for
+  // an actual SIGINT interrupt — pre-fix the catch-all logged every error as
+  // 'sigint', which made the audit trail lie about why runs died.
   | { kind: 'abort'; run_id: string; skill: string; reason: 'budget_exhausted' |
-      'runtime_exhausted' | 'dirty_tree' | 'lock_busy' | 'sentinel_pending' |
-      'bundled_skill_no_flag' | 'd_sel_too_small' | 'sigint'; detail?: string;
+      'runtime_exceeded' | 'dirty_tree' | 'lock_busy' | 'sentinel_pending' |
+      'bundled_skill_no_flag' | 'd_sel_too_small' | 'sigint' | 'error'; detail?: string;
       ts: string };
 
 let _writer: AuditWriter<SkilloptEvent> | null = null;

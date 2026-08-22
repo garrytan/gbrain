@@ -216,7 +216,10 @@ describe('formatAbReport', () => {
       decisive_trials: 0,
     }, 30);
     expect(out).toContain('No data yet');
-    expect(out).toContain('gbrain think --ab');
+    // #3697: the report must NOT advertise `gbrain think --ab` — think.ts never
+    // parses --ab (it would be swallowed into the question positional), so the
+    // old hint sent users to a silently-misparsed command.
+    expect(out).not.toContain('gbrain think --ab');
   });
 
   test('decisive-trials breakdown', () => {

@@ -636,3 +636,107 @@ export async function checkFactsEmbeddingWidthConsistency(engine: BrainEngine): 
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// #4222 junk_entity_hubs — near-empty entity pages with huge edge counts
+// ---------------------------------------------------------------------------
+
+/**
+ * Default thresholds for the junk-hub heuristic: a page with almost no
+ * content of its own (<= JUNK_HUB_MAX_CHUNKS chunks) but a very large edge
+ * count (> JUNK_HUB_EDGE_THRESHOLD links in either direction) is almost
+ * always an extractor-minted generic-token entity ("Will", "Info") that the
+ * by-mention auto-linker turned into a mega-hub. Exported so tests and
+ * out-of-tree tooling reference the shipped numbers instead of copying them.
+ */
+export const JUNK_HUB_EDGE_THRESHOLD = 1000;
+export const JUNK_HUB_MAX_CHUNKS = 2;
+
+/**
+ * #4222 junk_entity_hubs doctor check.
+ *
+ * Surfaces (warn + list — NEVER auto-delete) pages whose edge count dwarfs
+ * their content: chunks <= maxChunks AND total edges (from + to) >
+ * edgeThreshold. These poison graph signals and relational recall. The
+ * mint gate (enrichEntity) and gazetteer drop (buildGazetteer) stop NEW
+ * accretion; this check finds hubs that predate those gates so the owner
+ * can review/merge/delete them deliberately.
+ *
+ * `opts` exists for tests (small corpora can't reach 1000 edges); the
+ * production call site uses the exported defaults.
+ */
+export async function checkJunkEntityHubs(
+  engine: BrainEngine,
+  opts?: { edgeThreshold?: number; maxChunks?: number },
+): Promise<Check> {
+  const edgeThreshold = opts?.edgeThreshold ?? JUNK_HUB_EDGE_THRESHOLD;
+  const maxChunks = opts?.maxChunks ?? JUNK_HUB_MAX_CHUNKS;
+  try {
+    const rows = await engine.executeRaw<{
+      slug: string;
+      source_id: string | null;
+      edges: number;
+      chunks: number;
+    }>(
+      `WITH edge_counts AS (
+         SELECT page_id, COUNT(*)::int AS edges FROM (
+           SELECT from_page_id AS page_id FROM links
+           UNION ALL
+           SELECT to_page_id AS page_id FROM links
+         ) e
+         GROUP BY page_id
+         HAVING COUNT(*) > $1
+       ),
+       chunk_counts AS (
+         SELECT page_id, COUNT(*)::int AS chunks
+         FROM content_chunks
+         GROUP BY page_id
+       )
+       SELECT p.slug, p.source_id, ec.edges, COALESCE(cc.chunks, 0)::int AS chunks
+       FROM edge_counts ec
+       JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
+       LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
+       WHERE COALESCE(cc.chunks, 0) <= $2
+       ORDER BY ec.edges DESC
+       LIMIT 20`,
+      [edgeThreshold, maxChunks],
+    );
+
+    if (rows.length === 0) {
+      return {
+        name: 'junk_entity_hubs',
+        status: 'ok',
+        message: `No junk entity hubs (pages with <=${maxChunks} chunks and >${edgeThreshold} edges)`,
+      };
+    }
+
+    const list = rows
+      .map(r => `  ${r.slug}${(r.source_id ?? 'default') !== 'default' ? ` [${r.source_id}]` : ''} — ${r.edges} edges, ${r.chunks} chunk(s)`)
+      .join('\n');
+    return {
+      name: 'junk_entity_hubs',
+      status: 'warn',
+      message:
+        `${rows.length} near-empty page(s) with >${edgeThreshold} edges — likely generic-token entities ` +
+        `("Will", "Info") minted by an extractor and inflated by mention auto-links:\n${list}\n` +
+        `Review each page and merge/delete deliberately (nothing is auto-deleted). ` +
+        `New accretion is already gated: enrichEntity refuses generic single-token mints and ` +
+        `buildGazetteer drops single-generic-token person titles.`,
+      details: {
+        hubs: rows.map(r => ({
+          slug: r.slug,
+          source_id: r.source_id ?? 'default',
+          edges: r.edges,
+          chunks: r.chunks,
+        })),
+      },
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      name: 'junk_entity_hubs',
+      status: 'warn',
+      message: `Could not check for junk entity hubs: ${msg}`,
+    };
+  }
+}

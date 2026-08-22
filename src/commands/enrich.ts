@@ -34,7 +34,7 @@ import type { EnrichCandidate, PageType } from '../core/types.ts';
 import { operations } from '../core/operations.ts';
 import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
-import { BudgetTracker, BudgetExhausted, type BudgetReason } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason } from '../core/budget/budget-tracker.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
@@ -164,6 +164,9 @@ export interface EnrichResult {
   budget_exhausted_reason?: BudgetReason;
   /** Model that triggered a no_pricing abort, when the tracker knew it (#4032). */
   budget_exhausted_model?: string;
+  /** #2504 — first pool failure ('slug: message'), so pages_failed > 0 always
+   *  carries a WHY (pool.failures was previously write-only). */
+  first_failure?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,28 +482,44 @@ export async function runEnrichCore(
   const workersResolved = resolveWorkersWithClamp(engine, opts.workers, 'enrich', 0);
   const workers = workersResolved.workers;
 
+  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model });
+  const cpKey = checkpointKey(fp);
+
+  // #3629: load the checkpoint BEFORE enumerating candidates. SKIP'd pages
+  // stay thin (nothing is written), so they re-enter the candidate list on
+  // every run — the checkpoint is the ONLY thing that stops them re-billing.
+  if (opts.force) await clearOpCheckpoint(engine, cpKey);
+  const done = new Set<string>(opts.force ? [] : await loadOpCheckpoint(engine, cpKey));
+
   // Candidate enumeration — ONE source-aware, memory-bounded SQL query.
+  // #3629: over-fetch by the number of checkpointed keys so already-done
+  // pages sitting at the top of the ranking can't wedge the limit window
+  // (limit=N with N done candidates used to yield pending=[] forever while
+  // lower-ranked candidates never got a turn), then slice back to `limit`.
   const candidates = await engine.listEnrichCandidates({
     types,
     sourceId,
     thinThreshold,
     order,
-    limit,
+    limit: limit + done.size,
     reenrichAfterMs,
   });
   result.candidates_considered = candidates.length;
   if (candidates.length === 0) return result;
 
-  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model });
-  const cpKey = checkpointKey(fp);
+  // Filter out already-completed candidates (resume), bounded to this run's
+  // requested window.
+  const pending = candidates
+    .filter((c) => !done.has(completedKey(sourceId, c.slug)))
+    .slice(0, limit);
+  // #3629: nothing to do → return WITHOUT recordCompleted. Re-recording the
+  // same done set on every no-op run would refresh the checkpoint's activity
+  // clock and the 7-day purge TTL would never expire, making SKIP keys
+  // permanent instead of decaying (the intended retry channel; --force is
+  // the immediate one).
+  if (pending.length === 0) return result;
 
   const body = async () => {
-    if (opts.force) await clearOpCheckpoint(engine, cpKey);
-    const done = new Set<string>(opts.force ? [] : await loadOpCheckpoint(engine, cpKey));
-
-    // Filter out already-completed candidates (resume).
-    const pending = candidates.filter((c) => !done.has(completedKey(sourceId, c.slug)));
-
     const oneCtx: EnrichOneCtx = {
       engine,
       sourceId,
@@ -544,13 +563,28 @@ export async function runEnrichCore(
 
     result.pages_failed = pool.errored;
 
+    // #2504 — pool.failures used to be write-only: an operator saw
+    // pages_failed:N with zero reason anywhere (the pricing hard-fail looked
+    // like a model/route problem). Log the first failure loud and carry it on
+    // the result so cycle/JSON consumers see WHY.
+    if (pool.failures.length > 0) {
+      const f = pool.failures[0];
+      const fMsg = f.error instanceof Error ? f.error.message : String(f.error);
+      result.first_failure = `${f.label}: ${fMsg}`;
+      process.stderr.write(
+        `[enrich:${sourceId}] ${pool.errored} page(s) failed; first: ${f.label}: ${fMsg}\n`,
+      );
+    }
+
     if (!dryRun) {
+      // #3629: the checkpoint is NOT cleared on a clean run any more. The old
+      // clear made SKIP keys vanish the moment a run completed, so a page
+      // whose synthesis said SKIP (still thin, still a candidate) was
+      // re-billed on every subsequent run — the "unchanged page never
+      // re-spends" contract only held mid-run. Enriched pages drop out of the
+      // thin set anyway; SKIP keys decay via the cycle purge's 7-day TTL
+      // (purgeStaleCheckpoints) and `--force` clears immediately.
       await recordCompleted(engine, cpKey, [...done]);
-      // Clear the checkpoint only on a clean, complete run so an immediate
-      // re-run starts fresh (enriched pages drop out of the thin set anyway).
-      if (!pool.aborted && !signal?.aborted) {
-        await clearOpCheckpoint(engine, cpKey);
-      }
     }
   };
 
@@ -562,9 +596,15 @@ export async function runEnrichCore(
   // would serialize to null in audit rows). undefined-when-unset still → DEFAULT.
   const resolvedCap =
     opts.maxCostUsd === Infinity ? undefined : (opts.maxCostUsd ?? DEFAULT_MAX_COST_USD);
+  // #4312: operator price overrides (config `pricing.overrides`) reach the
+  // tracker at construction, so proxy-routed models (litellm chat AND embed)
+  // with a declared rate price normally instead of TX2 no_pricing-aborting.
+  // Loaded only on the internal-tracker path (`??` short-circuits); an
+  // externally-supplied tracker (cycle phase) carries its own overrides.
   const tracker = opts.budgetTracker ?? new BudgetTracker({
     maxCostUsd: resolvedCap,
     label: `enrich:${sourceId}`,
+    pricingOverrides: await loadPricingOverrides(engine),
   });
   try {
     if (opts.budgetTracker) {
@@ -822,6 +862,10 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
   ) {
     agg.budget_exhausted_reason = r.budget_exhausted_reason;
     agg.budget_exhausted_model = r.budget_exhausted_model;
+  }
+  // #2504 — first failure seen across sources sticks (a sample, not a log).
+  if (r.first_failure && agg.first_failure === undefined) {
+    agg.first_failure = r.first_failure;
   }
 }
 

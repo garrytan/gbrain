@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 import {
   CANONICAL_PRICING,
   canonicalLookup,
+  ANTHROPIC_CACHE_READ_MULT,
+  ANTHROPIC_CACHE_WRITE_5M_MULT,
 } from '../src/core/model-pricing.ts';
 import { ANTHROPIC_PRICING } from '../src/core/anthropic-pricing.ts';
 import { MODEL_PRICING } from '../src/core/takes-quality-eval/pricing.ts';
@@ -36,23 +38,23 @@ describe('CANONICAL_PRICING — table integrity', () => {
   });
 
   test('Opus 5 present at $5/$25 (same tier as Opus 4.8)', () => {
-    expect(CANONICAL_PRICING['anthropic:claude-opus-5']).toEqual({ input: 5.0, output: 25.0 });
+    expect(CANONICAL_PRICING['anthropic:claude-opus-5']).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('Opus 4.8 present at $5/$25 (closes gbrain#1819)', () => {
-    expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toEqual({ input: 5.0, output: 25.0 });
+    expect(CANONICAL_PRICING['anthropic:claude-opus-4-8']).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('Opus 4.7 at $5/$25 (not the stale $15/$75)', () => {
-    expect(CANONICAL_PRICING['anthropic:claude-opus-4-7']).toEqual({ input: 5.0, output: 25.0 });
+    expect(CANONICAL_PRICING['anthropic:claude-opus-4-7']).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('Sonnet 5 present at $3/$15 (standard rate, intro discount not modeled)', () => {
-    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toEqual({ input: 3.0, output: 15.0 });
+    expect(CANONICAL_PRICING['anthropic:claude-sonnet-5']).toMatchObject({ input: 3.0, output: 15.0 });
   });
 
   test('Fable 5 present at $10/$50', () => {
-    expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toEqual({ input: 10.0, output: 50.0 });
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toMatchObject({ input: 10.0, output: 50.0 });
   });
 
   test('Gemini 2.0 Flash reconciled to $0.10/$0.40; legacy alias agrees', () => {
@@ -61,19 +63,51 @@ describe('CANONICAL_PRICING — table integrity', () => {
       CANONICAL_PRICING['google:gemini-2.0-flash'],
     );
   });
+
+  // #4218 drift guard extension: cache_read/cache_write are DERIVED from the
+  // input rate via the exported multipliers — a hand-edited cache number that
+  // drifts from input*mult fails here.
+  test('every anthropic: row carries cache_read = 0.1x input and cache_write = 1.25x input', () => {
+    for (const [key, p] of Object.entries(CANONICAL_PRICING)) {
+      if (!key.startsWith('anthropic:')) continue;
+      expect(p.cache_read).toBeCloseTo(p.input * ANTHROPIC_CACHE_READ_MULT, 10);
+      expect(p.cache_write).toBeCloseTo(p.input * ANTHROPIC_CACHE_WRITE_5M_MULT, 10);
+    }
+  });
+
+  test('cache fields, when present, are finite positive with read < input < write', () => {
+    for (const [key, p] of Object.entries(CANONICAL_PRICING)) {
+      if (p.cache_read !== undefined) {
+        expect(Number.isFinite(p.cache_read)).toBe(true);
+        expect(p.cache_read).toBeGreaterThan(0);
+        expect(p.cache_read).toBeLessThan(p.input);
+      }
+      if (p.cache_write !== undefined) {
+        expect(Number.isFinite(p.cache_write)).toBe(true);
+        expect(p.cache_write).toBeGreaterThan(p.input);
+      }
+      // Non-Anthropic rows deliberately carry NO cache fields until their
+      // provider's cache pricing is verified — consumers fall back to the
+      // input rate (documented in ModelPricing).
+      if (!key.startsWith('anthropic:')) {
+        expect(p.cache_read).toBeUndefined();
+        expect(p.cache_write).toBeUndefined();
+      }
+    }
+  });
 });
 
 describe('canonicalLookup — id normalization', () => {
   test('bare anthropic id → hit (defaults to anthropic provider)', () => {
-    expect(canonicalLookup('claude-opus-4-8')).toEqual({ input: 5.0, output: 25.0 });
+    expect(canonicalLookup('claude-opus-4-8')).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('colon form → hit', () => {
-    expect(canonicalLookup('anthropic:claude-opus-4-8')).toEqual({ input: 5.0, output: 25.0 });
+    expect(canonicalLookup('anthropic:claude-opus-4-8')).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('slash form → hit', () => {
-    expect(canonicalLookup('anthropic/claude-opus-4-8')).toEqual({ input: 5.0, output: 25.0 });
+    expect(canonicalLookup('anthropic/claude-opus-4-8')).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('non-anthropic bare id → miss (preserves prior null contract)', () => {
@@ -177,11 +211,11 @@ describe('no heavy import (cycle guard)', () => {
 
 describe('canonicalLookup — case-insensitive fallback (#4123 / TODOS case-sensitivity)', () => {
   test('cased provider prefix resolves', () => {
-    expect(canonicalLookup('ANTHROPIC:claude-opus-4-8')).toEqual({ input: 5.0, output: 25.0 });
+    expect(canonicalLookup('ANTHROPIC:claude-opus-4-8')).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('cased model tail resolves', () => {
-    expect(canonicalLookup('anthropic:CLAUDE-OPUS-4-8')).toEqual({ input: 5.0, output: 25.0 });
+    expect(canonicalLookup('anthropic:CLAUDE-OPUS-4-8')).toMatchObject({ input: 5.0, output: 25.0 });
   });
 
   test('nested OpenRouter ids still intentionally MISS (markup never repriced as native)', () => {

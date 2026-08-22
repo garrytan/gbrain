@@ -11,7 +11,7 @@
  * names, so its existing importers are unaffected.
  */
 
-import { parseInlineCitationTimelineEntries } from './link-extraction.ts';
+import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter } from './link-extraction.ts';
 
 export interface ExtractedTimelineEntry {
   slug: string;
@@ -21,33 +21,12 @@ export interface ExtractedTimelineEntry {
   detail?: string;
 }
 
-/**
- * Index of the first dash (—, –, -) that can serve as the Source — Summary
- * delimiter: it must have whitespace on both sides and sit outside every
- * markdown-link span. Hyphens inside link targets
- * (`../people/alice-example.md`) and dashes inside link labels
- * (`[Deals — Q1 Review](...)`) are content, not delimiters — splitting on
- * them shatters one entry into two fragments whose halves re-insert on
- * every sync (the (page_id, date, summary, source) uniqueness sees each
- * fragment shape as a new row). Returns -1 when the line has no delimiter.
- */
-function findDelimiterOutsideLinks(text: string): number {
-  let depth = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '[' || c === '(') depth++;
-    else if (c === ']' || c === ')') { if (depth > 0) depth--; }
-    else if (
-      depth === 0 &&
-      (c === '—' || c === '–' || c === '-') &&
-      i > 0 && /\s/.test(text[i - 1]) &&
-      i + 1 < text.length && /\s/.test(text[i + 1])
-    ) {
-      return i;
-    }
-  }
-  return -1;
-}
+// #3957: the link-aware `Source — Summary` delimiter finder moved to
+// link-extraction.ts (findTimelineSourceDelimiter) so the DB-side parser
+// (parseTimelineEntries) applies the IDENTICAL split — FS- and DB-extracted
+// rows must share one (source, summary) shape or the timeline dedup index
+// duplicates every bullet extracted through both paths.
+const findDelimiterOutsideLinks = findTimelineSourceDelimiter;
 
 /** Extract timeline entries from markdown content */
 export function extractTimelineFromContent(content: string, slug: string): ExtractedTimelineEntry[] {

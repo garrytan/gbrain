@@ -116,19 +116,24 @@ describe('#2576 bug 2 — non-whitelisted dirs produce candidates (ops/ = people
     expect(candidates).toEqual([]);
   });
 
-  test('bare [[name]] wikilinks (no slash) keep the flag-gated behavior', async () => {
+  test('bare [[name]] wikilinks (no slash) keep the flag-gated BASENAME behavior', async () => {
+    // #4062: the flag gates only basename resolution. The root-exact direct
+    // candidate (`struktura` at the brain root) is emitted regardless —
+    // downstream existence checks drop it when no root page exists — so
+    // bare wikilinks get parity with the FS path's resolveSlug ancestor walk.
     const resolver = setResolver(['projects/struktura']);
     const off = await extractPageLinks(
       'concepts/x', 'This relates to [[struktura]].',
       {}, 'concept', resolver, { skipFrontmatter: true },
     );
-    expect(off.candidates).toEqual([]);
+    expect(off.candidates.filter(c => c.linkSource === 'wikilink-resolved')).toEqual([]);
+    expect(off.candidates.map(c => c.targetSlug)).toEqual(['struktura']);
     const on = await extractPageLinks(
       'concepts/x', 'This relates to [[struktura]].',
       {}, 'concept', resolver, { skipFrontmatter: true, globalBasename: true },
     );
-    expect(on.candidates.map(c => c.targetSlug)).toEqual(['projects/struktura']);
-    expect(on.candidates[0].linkType).toBe('wikilink_basename');
+    const basename = on.candidates.filter(c => c.linkType === 'wikilink_basename');
+    expect(basename.map(c => c.targetSlug)).toEqual(['projects/struktura']);
   });
 
   test('LINK_EXTRACTOR_VERSION_TS was bumped so stamped pages re-extract', () => {

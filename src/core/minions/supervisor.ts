@@ -43,8 +43,10 @@ import {
   writeSync,
 } from 'fs';
 import { dirname, resolve } from 'path';
+import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
-import { tryAcquireDbLock, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
+import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
+import { MinionQueue } from './queue.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
 import { resolveEnvNumber } from '../env-number.ts';
@@ -470,6 +472,23 @@ const SUPERVISOR_LOCK_REFRESH_MS = 60_000;
 const SUPERVISOR_LOCK_REFRESH_MAX_FAILURES = 3; // 3 × 60s = 180s < 5min TTL
 
 /**
+ * #2308 — how long start() waits for a held queue lock to become takeable
+ * (dead cross-host holder whose TTL hasn't lapsed yet).
+ *   0            → disabled (pre-#2308 one-shot LOCK_HELD exit)
+ *   positive int → hard bound in seconds
+ *   unset/other  → -1 (waitForDbLockTakeover derives TTL + steal-grace + margin)
+ * Exported for tests.
+ */
+export function resolveSupervisorLockWaitSeconds(): number {
+  const raw = process.env.GBRAIN_SUPERVISOR_LOCK_WAIT_SECONDS;
+  if (raw !== undefined && raw !== '') {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0) return n;
+  }
+  return -1;
+}
+
+/**
  * #1849: the queue-scoped supervisor singleton lock id. Keyed ONLY on the
  * queue, because the lock ROW lives inside the target database — the (database)
  * half of the mutex domain is physical, not part of the key. Keying on a
@@ -699,6 +718,54 @@ export class MinionSupervisor {
     // mutex is physical (the lock row lives in this DB).
     this.dbLock = await tryAcquireDbLock(this.engine, this.supervisorLockId(), SUPERVISOR_LOCK_TTL_MIN);
     if (!this.dbLock) {
+      // #2308: a DEAD holder on ANOTHER host leaves a row whose TTL is still
+      // live — tryAcquireDbLock correctly refuses to steal it (cross_host),
+      // but a one-shot exit here turns a self-healing condition (the row is
+      // takeable after TTL + steal-grace) into an operator page. Wait,
+      // bounded, for the takeover; bail fast when the holder's heartbeat
+      // advances (a genuinely live supervisor). CROSS-HOST holders only:
+      // same-host liveness is already probed by tryAcquireDbLock's
+      // auto-takeover (a dead local holder was reclaimed above; a live one
+      // should keep the immediate LOCK_HELD exit).
+      // GBRAIN_SUPERVISOR_LOCK_WAIT_SECONDS=0 disables the wait (pre-#2308
+      // one-shot behavior); a positive value overrides the derived TTL+grace bound.
+      const waitSeconds = resolveSupervisorLockWaitSeconds();
+      let holderIsCrossHost = false;
+      if (waitSeconds !== 0) {
+        try {
+          const snap = await inspectLock(this.engine, this.supervisorLockId());
+          holderIsCrossHost = snap !== null && snap.holder_host !== hostname();
+        } catch { /* stay one-shot on inspect failure */ }
+      }
+      if (waitSeconds !== 0 && holderIsCrossHost) {
+        console.error(
+          `Supervisor queue lock for '${this.opts.queue}' is held (possibly by a dead ` +
+          `process on another host). Waiting up to ${waitSeconds > 0 ? waitSeconds : 'TTL+grace'}s ` +
+          `for the holder to expire or heartbeat; set GBRAIN_SUPERVISOR_LOCK_WAIT_SECONDS=0 to exit immediately.`,
+        );
+        this.dbLock = await waitForDbLockTakeover(
+          this.engine,
+          this.supervisorLockId(),
+          SUPERVISOR_LOCK_TTL_MIN,
+          {
+            ...(waitSeconds > 0 ? { maxWaitMs: waitSeconds * 1000 } : {}),
+            onWait: ({ snapshot, waitedMs, maxWaitMs }) => {
+              const holder = snapshot
+                ? `pid=${snapshot.holder_pid} host=${snapshot.holder_host}`
+                : 'holder row gone';
+              console.error(
+                `[supervisor] still waiting for queue lock '${this.opts.queue}' ` +
+                `(${holder}, waited ${Math.round(waitedMs / 1000)}s of ${Math.round(maxWaitMs / 1000)}s)`,
+              );
+            },
+          },
+        );
+        if (this.dbLock) {
+          console.error(`[supervisor] queue lock '${this.opts.queue}' taken over from expired holder.`);
+        }
+      }
+    }
+    if (!this.dbLock) {
       console.error(
         `Supervisor already running for queue '${this.opts.queue}' on this database ` +
         `(another supervisor holds the queue lock, regardless of pidfile path). Exiting.`,
@@ -785,6 +852,35 @@ export class MinionSupervisor {
         reason: 'wedge_watchdog_inert',
         error: e instanceof Error ? e.message : String(e),
         queue: this.opts.queue,
+      });
+    }
+  }
+
+  private async reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(): Promise<void> {
+    try {
+      // 30s bound: a hanging DB call here would otherwise block EVERY worker
+      // respawn indefinitely (the hook is awaited in the supervise loop with
+      // isStopping unchecked during the await). Timeout → spawn proceeds; the
+      // next respawn retries recovery.
+      const result = await Promise.race([
+        new MinionQueue(this.engine).reconcileOrphanedPrivateQueues({
+          reason: 'supervisor startup recovery: orphaned dream-inline private queue',
+        }),
+        new Promise<never>((_, reject) => {
+          const t = setTimeout(() => reject(new Error('private-queue recovery timed out after 30s')), 30_000);
+          t.unref?.();
+        }),
+      ]);
+      if (result.cancelled_jobs > 0) {
+        this.emit('health_warn', {
+          reason: 'private_queue_startup_recovery',
+          ...result,
+        });
+      }
+    } catch (e) {
+      this.emit('health_warn', {
+        reason: 'private_queue_startup_recovery_failed',
+        error: e instanceof Error ? e.message : String(e),
       });
     }
   }
@@ -1024,6 +1120,11 @@ export class MinionSupervisor {
       hardStopMaxCrashes: resolveHardStopMaxCrashes(this.opts.maxCrashes),
       _backoffFloorMs: this.opts._backoffFloorMs,
       isStopping: () => this.stopping,
+      // Run under the supervisor's queue-scoped DB singleton lock before every
+      // child spawn, not merely once when the supervisor starts. The supervisor
+      // intentionally survives worker crashes/watchdog drains, and those are
+      // exactly the exits that can strand a parent-owned private queue.
+      beforeSpawn: () => this.reconcileOrphanedPrivateQueuesBeforeWorkerSpawn(),
       onMaxCrashesExceeded: (count, max) => {
         this.emit('max_crashes_exceeded', {
           crash_count: count,

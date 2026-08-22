@@ -2,6 +2,213 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.28.0] - 2026-08-21
+
+The megawave: 111 verified issues fixed in one release — every remaining
+fixable item from the full-backlog triage, implemented reproduce-first with
+failing-first tests and two-lens adversarial review per area. Fully
+reconciled with v0.46.26.0–27.0 (the daemon env file supersedes interim key
+channels; both rc files now source independently on top of it).
+
+### Security & visibility
+- Private-page visibility (`visibility: private` frontmatter) is now enforced
+  uniformly across every remote read surface — search arms, page reads, link
+  and graph traversal, chunk/version/timeline/raw reads, and slug resolution —
+  with one shared predicate so engines and ops can't drift. Private pages read
+  exactly like missing ones to untrusted callers (no existence oracle). Trusted
+  local CLI use is unchanged; operators keep a config opt-out
+  (`search.remote_private_pages`) and an incident escape hatch
+  (`GBRAIN_REMOTE_PRIVATE_PAGES=1`), documented in the MCP surface runbook.
+- Query caching stays fully effective for remote callers: the visibility
+  posture folds into the cache key (knobs_hash v=23) instead of skipping the
+  cache — one-time cold-miss on upgrade, cross-posture contamination is
+  structurally impossible (pinned at hash, cache-store, and hybrid levels).
+- Untrusted frontmatter can no longer point conversation ingestion at
+  arbitrary host files (absolute-path traversal guard, fail-closed).
+- Trust-gate hardening: tombstone payloads and code-graph readiness rechecks
+  now fail closed on unset trust.
+
+### Retrieval
+- CJK queries recover keyword matches on both engines (bigram fallback parity,
+  #3986); relational-arm results carry evidence stamps and monotone scores.
+- CRAG-style escalation seam (config-gated, default off, experimental) — a
+  degraded search can escalate to a deeper re-run (#1663).
+- Degradation visibility: searches that fall back now say so in `_meta`
+  (#3873 note: model-tier config now takes precedence over `models.default` —
+  set your tier explicitly if you relied on the old order).
+- Multi-type filters, snippet caps, and deep-research ids thread through every
+  search leg uniformly (#3985 #3800).
+
+### Sync, ingestion & timeline
+- Legacy timeline rows are repaired one-time by migration (content-anchored,
+  idempotent) so re-extraction dedups instead of duplicating (#3957); the
+  dedup index re-keys on md5(summary) so long summaries can't abort timeline
+  writes (#3737).
+- `sync --dry-run` is pure again (no config writes, #4342); image files import
+  incrementally (#2683); FS-walk stamps snapshot page state before reading so
+  concurrent edits stay stale-visible (#3875).
+- Entity identity groups (manual cross-source linking, v1) respect source
+  scope in both directions (#4224).
+
+### Jobs, cycle & operations
+- Durable per-call chat usage ledger (`chat_usage_log`, read via `get_usage`,
+  now admin-scoped) with canonical-table cost estimates (#4218).
+- Probe-liveness wedge in the LLM halt/cooldown path unlatched — a deferred
+  probe can no longer freeze a worker queue until restart; strikes escalate
+  per halted probe, not per concurrent failure.
+- Cycle stale-drain is time-budgeted; lock refreshers feature-detect signal
+  shapes; PID-1 zombie reaping under container/daemon use (#2443 #2308).
+- Embed retry/backoff cluster peeled into core (`core/embed-retry.ts`) fixing
+  a core→commands layering hazard; Voyage/OpenAI embedding prices re-verified.
+
+### Release-gate hardening (caught by this release's own gate battery)
+- Schema-pack regex inference no longer uses a `node:vm` watchdog — it could
+  wedge the event loop in embedded-engine processes (silent hangs during
+  large imports); replaced with input caps + a nested-quantifier refusal
+  shared with the lint rule (#3190 follow-up).
+- Autopilot launchd installs survive repo deletion: the job's working
+  directory no longer pins the repo, so the self-disable guard actually runs
+  (previously every respawn died before reaching it).
+
+### Doctor, CLI & DX
+- Doctor: silent-death checks, self-upgrade honesty, dead-check pruning, and
+  quieter output on healthy brains (#3944 #3925 #3958).
+- CLI: silent-failure surfacing on exit paths, confirm-race gate on
+  destructive prompts, Bun.which PATH fix for bootstrap detection (#4325).
+- Decorated Python defs chunk correctly for code-def resolution (#3821).
+- Note for RTL users: pointed-Hebrew (niqqud) slugs re-key under the
+  normalized scheme — existing links self-heal on next sync (#3700).
+
+### Historical CHANGELOG corrections
+- v0.13.1 entry: corrected the budget figure (#3748).
+- v0.46.x entry: `gbrain migrate-engine` → `gbrain migrate --to` (#3697).
+
+### To take advantage of v0.46.26.0
+```bash
+gbrain upgrade         # or: bun install -g gbrain@latest
+gbrain migrate         # runs migrations v137–v140 (identity groups, timeline
+                       # dedup re-key + one-time repair, chat usage ledger)
+gbrain doctor          # confirms the new checks pass on your brain
+```
+First queries after upgrade re-warm the semantic cache (knobs v=23). If you
+relied on `models.default` overriding tier config, re-check `gbrain search
+modes` output (#3873 precedence change).
+
+## [0.46.27.0] - 2026-08-21
+
+**The autopilot daemon can no longer lose your API keys silently.** The
+failure mode: `autopilot --install` generated a wrapper that loaded env only
+from interactive shell rc files, which daemon supervisors (launchd, systemd,
+cron) never run — so the daemon started green while every LLM phase
+(chronicle, dream, enrich) quietly produced nothing, for days, with no error
+anywhere. This release adopts the env-file fix from PR #4443 (thank you
+@Masashi-Ono0611) and hardens the whole lane. Closes #2608.
+
+### Added
+- The daemon wrapper now sources a gbrain-owned `~/.gbrain/env` file (after
+  your shell profiles, so it wins on conflicts; honors `GBRAIN_HOME`).
+  `autopilot --install` creates it as a fully-commented, owner-only (0600)
+  template — API keys plus the process-level env only a wrapper can deliver
+  (`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs). gbrain never
+  overwrites or deletes it; a pre-existing group/world-readable file gets one
+  warning and is left untouched.
+- Autopilot prints one loud line at boot when no chat provider is available,
+  naming both remediation paths and the reload step — the silent no-op is now
+  visible in `autopilot.log` at startup instead of surfacing as "runs green,
+  extracts nothing."
+
+### Fixed
+- `autopilot --install` now actually reloads a running daemon: launchd
+  unloads before loading (a bare `launchctl load` over a loaded agent also
+  errored and aborted every reinstall), systemd restarts an already-active
+  unit, and the cron/container paths tell you when a running loop keeps its
+  old environment and exactly how to end it.
+- Env files with plain `KEY=value` lines (no `export`) now reach the daemon —
+  the wrapper sources under `set -a`, matching how dedicated env files are
+  usually written.
+
+To take advantage of v0.46.27.0:
+- Existing daemon installs: re-run `gbrain autopilot --install` once. The
+  upgrade alone swaps the binary but does not regenerate the wrapper, so the
+  env-file sourcing (and the template) only appear after a reinstall — which
+  now also reloads the daemon for you on launchd and systemd.
+- Then put your keys in `~/.gbrain/env` (or keep them in
+  `~/.gbrain/config.json`); the wrapper sources the env file on every daemon
+  start.
+
+## [0.46.26.0] - 2026-08-20
+
+**Dream fan-out can no longer strand work in queues nobody owns.** The
+production incident: dead parent runs left thousands of waiting jobs in
+private `dream-inline-*` queues for 16-27 hours, and every dashboard said
+"restart the worker" — advice that cannot work, because no shared worker can
+claim a private queue. This release adopts the lifecycle repair from
+PR #4361 (thank you @garrytan-agents) and hardens every recovery lane the
+review found unwired. Closes #4332.
+
+### Added
+- Private dream queues now carry an explicit owner job, owner token, and
+  renewable lease (adopted from #4361). Synthesize and patterns reconcile
+  their children on every terminal path — success, throw, timeout, abort,
+  cancellation — and startup recovery cancels provably-orphaned queues
+  (owner terminal/missing, or lease expired) while never touching live ones.
+- Recovery now runs on EVERY lane that can strand a queue: the supervisor's
+  pre-spawn hook (adopted), bare `gbrain jobs work` startup, autopilot's
+  worker spawns and crash respawns, and dream-cycle start — the last one
+  being the only possible lane on PGLite brains, which previously had no
+  recovery surface at all.
+- Reconcile cancellations are stamped with a machine-readable reason family
+  (`private_queue_reconciled: <detail>`), mirroring the waiting-TTL prefix,
+  so operators and tooling can tell reconciliation from TTL expiry.
+
+### Changed
+- Lease renewal is monotonic (a renewal can only extend, never shrink) and
+  fires from the drain loop's idle polls and fast-failure iterations too —
+  a live queue with slow or bouncing children can no longer read as orphaned
+  mid-run.
+- The maintenance lane (where synthesize/patterns actually run on
+  multi-source brains) now threads its job id as the private-queue owner, so
+  its queues get the fast owner-terminal recovery path instead of waiting
+  out the lease.
+- Doctor's `orphaned_private_queue` check now runs on PGLite too and buckets
+  findings through the same classifier recovery uses: metadata-backed
+  orphans advertise auto-recovery, legacy unowned queues advertise the
+  retriage preview, and owner-pending queues say which owner job to inspect.
+  The wedged-queue surfaces (doctor, `jobs stats`, the `get_job_stats` op)
+  never call a private queue "wedged" and never advertise a worker restart
+  for it.
+- Doctor's stale-lock hints now name only commands that exist:
+  `gbrain dream --break-lock` was advertised for years but never implemented
+  — pasting it ran a full (paid) dream cycle instead of breaking a lock. The
+  cycle-lock remediation is `gbrain doctor --fix` (dead holders on this
+  host; also swept at the next dream start), and the circular `gbrain
+  doctor` fallback hint is gone. The wedged-queue restart hint names the
+  wedged queue (`supervisor start --queue '<q>'`) instead of always bouncing
+  the default worker.
+
+### Fixed
+- Doctor's orphaned-queue check is honest about truncation on the healthy
+  path too: with more than 100 candidate queues, the never-classified
+  remainder is now reported (`unclassified_candidates`) even when everything
+  classified came back live — previously 100 live + 50 unexamined orphans
+  read as a clean bill of health. `waiting_jobs` now counts flagged queues
+  only, matching what `orphaned_private_queues` reports.
+- The upgrade bootstrap probes all three private-queue columns (owner id,
+  owner token, lease) in both engines — a partially-upgraded brain missing
+  only the token column now repairs itself instead of wedging.
+- The private-queue lease keepalive is one shared, tested helper
+  (`MinionQueue.makeThrottledLeaseRenewer`) instead of twin inline copies in
+  synthesize and patterns; the coverage wave backfills behavioral tests for
+  every recovery lane, the renewing wait, the v136 migration replay, doctor's
+  hint/bucket surfaces, and token redaction on the jobs MCP ops.
+
+To take advantage of v0.46.26.0:
+- `gbrain upgrade` (or reinstall the binary). No schema action needed beyond
+  the automatic migration that adds the owner/lease columns.
+- Existing abandoned queues from before this release are legacy-unowned:
+  `gbrain doctor` now tells you exactly which repair applies; use the
+  `gbrain dream retriage` preview for those.
+
 ## [0.46.25.0] - 2026-08-20
 
 **The backlog release: 62 community pull requests merged, ~50 maintainer fixes, and 87 open issues closed in one landing.** Every pull request was individually trial-merged and tested before inclusion; every fix started from a reproduced bug and shipped with a failing-first test. The headline classes: embedding backfills can no longer quietly destroy vectors (probe-gated invalidation, honest counts, content-revision staleness, registry-aware writes end to end), sync can no longer delete the wrong page or be repointed by a foreign repo, search caching can no longer serve one source's rows to another or one query's rows to a different query, page timelines survive filesystem rebuilds, large piped CLI output is delivered to the last byte on every path, and the DB config plane is finally read at runtime.

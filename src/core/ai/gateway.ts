@@ -47,6 +47,7 @@ import type {
   TouchpointKind,
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId, embeddingDimsForModel } from './model-resolver.ts';
+import { recordChatUsage } from './chat-usage.ts';
 import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
@@ -61,7 +62,7 @@ import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
-import { buildGatewayConfig } from './build-gateway-config.ts';
+import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
 
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
@@ -502,7 +503,12 @@ export function refreshGatewayEnvFromFilePlane(): void {
   } catch {
     cfg = null;
   }
-  _config = { ..._config, env: mergedProviderEnv(cfg, process.env) };
+  // #3350: re-apply the file-plane native base-URL fold — without it a worker
+  // refresh would silently drop ANTHROPIC_BASE_URL/OPENAI_BASE_URL that the
+  // boot fold installed from provider_base_urls.{anthropic,openai}. File-plane
+  // only (cfg is loadConfig() here), preserving the mount-safety rule that
+  // DB-plane base_urls never steer native keys.
+  _config = { ..._config, env: foldNativeBaseUrlsFromFilePlane(cfg, mergedProviderEnv(cfg, process.env)) };
   _modelCache.clear();
 }
 
@@ -1658,6 +1664,22 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
 const MIN_SUB_BATCH = 1;
 
 /**
+ * #3875: default per-call item cap for `no_batch_cap` recipes (Ollama,
+ * LiteLLM proxy). These recipes declare no static token/item cap because the
+ * backend's capacity is user-launched — but the per-SDK-call
+ * AI_EMBED_TIMEOUT_MS (60s default) then bounded a whole FILE's chunks in one
+ * request. A slow local model (CPU Ollama) embedding a large file timed out
+ * deterministically and every retry re-sent the same oversized batch. Capping
+ * items per sub-batch makes the 60s timeout a per-BATCH budget: 16 chunks per
+ * call finishes comfortably even on CPU-bound local models, and a genuinely
+ * wedged provider still surfaces the timeout loudly on the first sub-batch.
+ * An explicit `max_batch_items` on the recipe always wins over this default.
+ *
+ * @internal exported for tests; not part of the public gateway API.
+ */
+export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
+
+/**
  * Embed many texts. Truncates to MAX_CHARS, then dispatches based on whether
  * the recipe declares a per-batch token budget.
  *
@@ -1803,7 +1825,18 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
 
   // Hard COUNT cap (e.g. llama-server's "maximum allowed batch size 32").
   // Token budget can't bound item count, so re-split any oversized batch.
-  const maxBatchItems = embedding?.max_batch_items;
+  //
+  // #3875: recipes that declare `no_batch_cap` (Ollama, LiteLLM proxy) have
+  // NO static token cap AND no item cap, so a large file used to ride to the
+  // provider as ONE request — and the 60s AI_EMBED_TIMEOUT_MS (per SDK call)
+  // became a per-FILE budget. A slow local model embedding hundreds of chunks
+  // hit the timeout deterministically, and no amount of retrying could ever
+  // succeed. Default those recipes to a conservative item cap so the per-call
+  // timeout bounds a fixed amount of work; an explicit max_batch_items still
+  // wins.
+  const maxBatchItems =
+    embedding?.max_batch_items ??
+    (embedding?.no_batch_cap === true ? NO_BATCH_CAP_SUB_BATCH_ITEMS : undefined);
   const batches = maxBatchItems
     ? tokenBatches.flatMap(b => capBatchItems(b, maxBatchItems))
     : tokenBatches;
@@ -3562,6 +3595,18 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     let threw: unknown = null;
     try {
       res = await _chatTransport(opts);
+      // #4218 success boundary (test-transport lane): same accounting call as
+      // the production path below so transport-driven tests exercise it.
+      recordChatUsage({
+        model: res.model ?? modelStrEarly,
+        provider: res.providerId ?? null,
+        usage: {
+          input_tokens: res.usage.input_tokens,
+          output_tokens: res.usage.output_tokens,
+          cache_read_tokens: res.usage.cache_read_tokens,
+          cache_write_tokens: res.usage.cache_creation_tokens,
+        },
+      });
       return res;
     } catch (err) {
       threw = err;
@@ -3775,19 +3820,27 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     const { inputTokens: inTok, outputTokens: outTok } = normalizeSdkUsage(usage);
     _recordBudget(`${recipe.id}:${modelId}`, inTok, outTok);
 
+    const usageOut = {
+      input_tokens: inTok,
+      output_tokens: outTok,
+      // `usage.cachedInputTokens` is the AI SDK's provider-neutral cache-read
+      // count — it's how OpenAI-compatible routes (OpenRouter's
+      // prompt_tokens_details.cached_tokens) surface cache hits.
+      cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
+      cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
+    };
+    // #4218 success boundary: durable usage ledger (fire-and-forget, fail-open).
+    recordChatUsage({
+      model: `${recipe.id}:${modelId}`,
+      provider: recipe.id,
+      usage: { ...usageOut, cache_write_tokens: usageOut.cache_creation_tokens },
+    });
+
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
       stopReason: mapStopReason((result as any).finishReason, providerMetadata),
-      usage: {
-        input_tokens: inTok,
-        output_tokens: outTok,
-        // `usage.cachedInputTokens` is the AI SDK's provider-neutral cache-read
-        // count — it's how OpenAI-compatible routes (OpenRouter's
-        // prompt_tokens_details.cached_tokens) surface cache hits.
-        cache_read_tokens: Number(anthropicCache.cacheReadInputTokens ?? anthropicCache.cache_read_input_tokens ?? usage.cachedInputTokens ?? 0),
-        cache_creation_tokens: Number(anthropicCache.cacheCreationInputTokens ?? anthropicCache.cache_creation_input_tokens ?? 0),
-      },
+      usage: usageOut,
       model: `${recipe.id}:${modelId}`,
       providerId: recipe.id,
       providerMetadata,

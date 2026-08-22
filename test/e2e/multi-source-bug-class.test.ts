@@ -201,6 +201,12 @@ describe('multi-source bug class', () => {
       'media-corpus::media/x/post-123',
       'media-corpus::people/alice',
     ]);
+    // #4304: each ref carries updated_at (a real Date) so --since walks can
+    // filter before any full-page fetch.
+    for (const r of refs) {
+      expect(r.updated_at instanceof Date).toBe(true);
+      expect(Number.isFinite(r.updated_at.getTime())).toBe(true);
+    }
   });
 
   test('getPage with sourceId picks the right (source, slug) row', async () => {

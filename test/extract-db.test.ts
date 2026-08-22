@@ -249,3 +249,66 @@ describe('gbrain extract all --source db', () => {
     expect(entries.length).toBe(1);
   });
 });
+
+describe('--since ref-level prefilter (#4304)', () => {
+  beforeEach(truncateAll);
+
+  test('listAllPageRefs returns updated_at as a real Date', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    const refs = await engine.listAllPageRefs();
+    expect(refs.length).toBe(1);
+    expect(refs[0].updated_at instanceof Date).toBe(true);
+    expect(Number.isFinite(refs[0].updated_at.getTime())).toBe(true);
+  });
+
+  test('--since in the future skips every page WITHOUT a getPage round-trip', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('meetings/standup', meetingPage(
+      'Standup', 'Attendees: [Alice](people/alice).',
+    ));
+
+    // Spy on getPage via an own-property shadow; delete restores the
+    // prototype method. Pre-#4304 the walk called getPage once per corpus
+    // page and applied --since AFTER the fetch.
+    const proto = Object.getPrototypeOf(engine) as { getPage: typeof engine.getPage };
+    const origGetPage = proto.getPage;
+    let getPageCalls = 0;
+    (engine as unknown as Record<string, unknown>).getPage = function (this: typeof engine, ...args: Parameters<typeof origGetPage>) {
+      getPageCalls++;
+      return origGetPage.apply(this, args);
+    };
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--since', '2999-01-01']);
+    } finally {
+      delete (engine as unknown as Record<string, unknown>).getPage;
+    }
+
+    expect(getPageCalls).toBe(0);
+    expect(await engine.getLinks('meetings/standup')).toHaveLength(0);
+  });
+
+  test('--since in the past still extracts (touched-since semantics on updated_at)', async () => {
+    await engine.putPage('people/alice', personPage('Alice'));
+    await engine.putPage('meetings/standup', meetingPage(
+      'Standup', 'Attendees: [Alice](people/alice).',
+    ));
+
+    await runExtract(engine, ['links', '--source', 'db', '--since', '2000-01-01']);
+
+    expect((await engine.getLinks('meetings/standup')).length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('timeline walk applies --since at the ref level too', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice',
+      compiled_truth: '- **2026-01-15** | Test event',
+      timeline: '',
+    });
+
+    await runExtract(engine, ['timeline', '--source', 'db', '--since', '2999-01-01']);
+    expect(await engine.getTimeline('people/alice')).toHaveLength(0);
+
+    await runExtract(engine, ['timeline', '--source', 'db', '--since', '2000-01-01']);
+    expect((await engine.getTimeline('people/alice')).length).toBe(1);
+  });
+});

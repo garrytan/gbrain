@@ -3,36 +3,38 @@
 # Raising a ceiling is a conscious, reviewer-visible act. Lower ceilings in
 # the same commit as any peel (the guard fails on >50 lines of stale slack).
 # Columns: path	max_lines	policy	note
-src/commands/doctor.ts	4366	ratchet	grown v0.46.25.0 fix waves: sunset-aware search-mode check, dead-check pruning (#3626 #1871 #4382)
-src/core/operations.ts	303	ratchet	peel target: containment sprint C4-C7
-src/core/postgres-engine.ts	5989	ratchet	grown v0.46.25.0 fix waves: registry plane + timeline honesty + think temporal windows (#1262 #3827 #4389)
-src/core/pglite-engine.ts	5971	ratchet	grown v0.46.24.0 overnight wave: registry-aware writes + stale/invalidate plane unification (#1262); peeled cjk-search (#4299)
-src/core/migrate.ts	668	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted
-src/commands/sync.ts	4334	ratchet	grown v0.46.25.0 fix waves: delete-slug resolver + msys healing (#3942 #2955)
-src/core/ai/gateway.ts	4441	ratchet	grown v0.46.25.0 D2: env-key snapshot stash (#2119)
-src/cli.ts	3628	ratchet	grown v0.46.25.0 D2: stdout interposer install (#4383)
-src/core/cycle.ts	3099	ratchet	grown v0.46.25.0 fix waves: refresher abort gating + keyless honesty (#4309 #2821) | signal feature-detect (#4309 handler shape)
+src/commands/doctor.ts	4422	ratchet	grown v0.46.26.0 megawave: silent-death checks, self-upgrade honesty, noise pruning (#3944 #3925 #3958)
+src/core/operations.ts	315	ratchet	peel target: containment sprint C4-C7; grown v0.46.26.0 megawave op wiring
+src/core/postgres-engine.ts	6166	ratchet	grown v0.46.26.0 megawave (#4218 #3986 #4352) + master v0.46.26.0 private-queue token bootstrap probe
+src/core/pglite-engine.ts	6062	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns
+src/core/migrate.ts	687	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted — grown v0.46.26.0: repair-handler hooks (#3957 pages-upsert-arbiter)
+src/commands/sync.ts	4512	ratchet	grown v0.46.26.0 megawave: image sync, ingest-log gating, dry-run purity, checkpoint honesty (#2683 #4342 #3875) + 3 nosemgrep dataflow annotations (path-traversal audit)
+src/core/ai/gateway.ts	4494	ratchet	grown v0.46.26.0 megawave: config-plane probes + halt telemetry (#3387 #4312)
+src/cli.ts	3723	ratchet	grown v0.46.26.0 megawave: SIGCHLD reaper install, silent-failure surfacing, confirm-race gate (#2443 #2898 #2297)
+src/core/cycle.ts	3171	ratchet	grown v0.46.26.0 megawave (#4102 #2608) + master v0.46.26.0 cycle-start orphan recovery
 src/commands/serve-http.ts	3294	ratchet	grown v0.46.25.0 D2: /mcp per-request teardown (#2844)
-src/commands/jobs.ts	3041	ratchet	grown v0.46.25.0 fix waves: jobs list/get --json (#3685)
-src/core/search/hybrid.ts	2703	ratchet	grown v0.46.25.0 fix waves: cache scope isolation + pool floor + offset bypass (#3871 #3002)
-src/core/engine.ts	2415	ratchet	grown v0.46.25.0 fix waves: timeline dedup contract + registry write contract (#3827 #1262)
-src/commands/autopilot.ts	2349	ratchet	grown v0.46.25.0 fix waves: positional validation (#1525) + liveness takeover (#4300)
-src/commands/extract.ts	2066	ratchet	lowered: timeline extractor hoisted to core/timeline-extract.ts (module-cycle fix)
+src/commands/jobs.ts	3111	ratchet	grown v0.46.26.0 megawave (#4098 #2308) + master v0.46.26.0 worker startup recovery + stats gating
+src/core/search/hybrid.ts	2845	ratchet	grown v0.46.26.0 megawave: CRAG escalation seam, degradation visibility, excludePrivate knobs-fold v23 (#1663 #3873 #4352)
+src/core/engine.ts	2495	ratchet	grown v0.46.26.0 megawave: relational/visibility/usage contract surface (#4352 #4218)
+src/commands/autopilot.ts	2641	ratchet	grown v0.46.26.0 megawave (#4300 #4285 #3696) + master v0.46.27.0 env-file lane + boot warning + reload-safe install (#2608 #4443) + 1 nosemgrep dataflow annotation (path-traversal audit)
+src/commands/extract.ts	2332	ratchet	grown v0.46.26.0 megawave: FS-walk stamp snapshot + legacy timeline repair wiring (#3957 D4)
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
-src/core/import-file.ts	2016	ratchet	grown v0.46.24.0 overnight wave: embedding_plane_split named error (#4287)
-src/core/cycle/synthesize.ts	2702	ratchet	merged: five-issue wave + dream-wave C7 peel + C8 manifest + C9 mode/telemetry/backfill + adversarial fix batches
-src/commands/embed.ts	2046	ratchet	grown v0.46.25.0 delegated wave (#3971)
-src/core/types.ts	1882	ratchet	grown v0.46.22.0 phone wave: supersession rerank result fields + effective-date page filters (#4056 #4389)
+src/core/import-file.ts	2142	ratchet	grown v0.46.26.0 megawave: OCR budget + image import + embed-retry rewire (#3973 #3374)
+src/core/cycle/synthesize.ts	2792	ratchet	merged waves; grown v0.46.26.0 megawave + master rolling lease via shared throttled renewer
+src/commands/embed.ts	1896	ratchet	lowered v0.46.26.0: embedBatchWithBackoff + retry cluster peeled to core/embed-retry.ts (core/commands layering fix)
+src/core/types.ts	1946	ratchet	grown v0.46.26.0 megawave: EvidenceOpts, pacing/usage result fields, PageFilters growth (#4352 #4218)
 src/commands/skillpack.ts	1360	ratchet
-src/core/minions/queue.ts	2138	ratchet	grown by #4078 subagent-loop capability fix
+src/core/minions/queue.ts	2442	ratchet	grown #4078 + megawave probe-liveness unlatch (#4310) + master private-queue lifecycle: recovery classifier + monotonic lease
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
-src/commands/integrations.ts	1733	ratchet	grown v0.46.24.0 overnight wave (#3588)
+src/commands/integrations.ts	1736	ratchet	grown v0.46.26.0 megawave (#4039 connector compat) + 1 nosemgrep dataflow annotation (path-traversal audit)
 src/core/minions/handlers/subagent.ts	1825	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches; grown by #4078 subagent-loop capability fix
 src/commands/bootstrap.ts	2010	ratchet	grandfathered at merge (grew past the 1500 cap on master); raised for #4066 HOME_WORKSPACE_GUARD_EXEMPT (status/uninstall/harness)
 src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
 src/commands/sources.ts	1790	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)
-src/core/link-extraction.ts	1467	ratchet	grown v0.46.25.0 delegated wave (#3939 #3723); lowered: stripCodeBlocks + citation loop peeled to markdown-code.ts/timeline-citations.ts (#3892 adoption)
+src/core/link-extraction.ts	1681	ratchet	grown v0.46.26.0 megawave: link-aware timeline split + delimiter-outside-links (#3957 #4062 #3737)
 src/core/embedding-migration.ts	1545	ratchet	new row: crossed 1500 in v0.46.25.0 fix waves (#4305 #4306 chunk-model truth helpers)
 src/core/github-source.ts	1560	ratchet	new row: crossed the 1500 unlisted cap in v0.46.23.0 review fix wave (scope-state gating, client hardening, symlink containment)
 src/core/bootstrap/harness.ts	1947	ratchet
-src/commands/hook.ts	1550	ratchet	cathedral-5 heartbeat extraction offsets part of the BrainBench-seam growth
+src/commands/hook.ts	1559	ratchet	cathedral-5 heartbeat extraction offsets part of the BrainBench-seam growth; grown v0.46.26.0 megawave hooks-ipc (#4245)
+src/core/chunkers/code.ts	1556	ratchet	new row: crossed the 1500 unlisted cap in v0.46.26.0 megawave (decorated-python defs #3821, version-gate + timeout chunker fixes)
+src/core/config.ts	1503	ratchet	new row: crossed the 1500 unlisted cap in v0.46.26.0 megawave (spend-controls hint #3703, config-set validation)

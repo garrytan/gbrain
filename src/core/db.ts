@@ -1,6 +1,6 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
 import { isRetryableConnError } from './retry-matcher.ts';

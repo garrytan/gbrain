@@ -132,6 +132,77 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 | Cost preflight | D3 | Surprise mid-run budget exhaustion |
 | Dirty-tree refusal | dry-fix pattern | Overwriting your uncommitted changes |
 
+## Hardening notes (#4119)
+
+Operational truths that keep a run honest. Read these before trusting a
+score delta.
+
+### Rule judges are gameable — prefer `llm` rubrics for acceptance
+
+`judge: rule` checks (substring / tool-call assertions) are deterministic and
+free, which makes them ideal for smoke coverage — and exactly what a
+skill-text optimizer can overfit. The reflect loop sees failing rollouts and
+can "improve" the skill by teaching the model to emit the literal strings the
+rule checks match, without improving the underlying behavior. Treat rule
+judges as cheap regression pins, not acceptance criteria: any benchmark whose
+score decides a mutation (`D_sel`, `--held-out`) should lean on `llm` rubric
+judges, which grade the trajectory against intent rather than surface tokens.
+A planned n-gram overlap gate (reject candidates whose text copies judge
+strings verbatim) is a tracked follow-up — until it lands, review accepted
+diffs for judge-string echoes before shipping them.
+
+### D13 is a prompt-surface-only limit
+
+Two distinct guarantees get conflated as "the sandbox":
+
+- **D13 (rollout side):** rollouts call a read-only tool allowlist — an
+  optimization run cannot write junk pages into your brain.
+- **D5 + the apply path (mutation side):** the optimizer edits the SKILL BODY
+  MARKDOWN only — the prompt surface. It never touches frontmatter (routing),
+  code, config, or hooks.
+
+The corollary cuts both ways. Nothing outside the prompt surface can be
+damaged by an accepted candidate — but nothing outside the prompt surface can
+be *improved* either. If a benchmark failure is rooted in a missing tool, a
+wrong op contract, or retrieval quality, SkillOpt will at best wordsmith
+around it; fix the code and re-benchmark instead.
+
+### Sizing `--max-cost-usd`
+
+The preflight estimate is a floor, not a ceiling — reflect retries, judge
+re-runs, and the held-out gate add real spend. Rough per-run scaling:
+
+    rollouts ≈ (epochs × steps_per_epoch × batch_size × 1)   # forward passes
+             + (accept-gate candidates × |D_sel| × 3)         # median-of-3
+             + (|D_test| × 3 × 2)                             # final + baseline
+             + (--held-out: |held_out| × 3 × 2 per candidate)
+
+Budget ~$0.01 per Sonnet rollout+judge pair and ~$0.03 per Opus reflect call,
+then set `--max-cost-usd` at ~1.5x the estimate so the budget tracker aborts
+runaways without killing honest runs at 95%. A tighter built-in estimator is
+a tracked follow-up. The wall-clock companion knob is `--max-runtime`: the
+deadline is enforced between steps AND inside every gate's rollout loop
+(checked before each individual rollout), so a breach aborts within one
+rollout rather than one batch.
+
+### Hermetic claude-cli rollouts (`CLAUDE_CONFIG_DIR` recipe)
+
+When the target model routes through the `claude-cli:` recipe, each rollout
+child inherits the operator's user-level `~/.claude` state — CLAUDE.md
+memory, `settings.json`, hooks. That contaminates measurements: a skill can
+score well only because YOUR user-level instructions carried it. For hermetic
+runs, set:
+
+    GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG=1 gbrain skillopt run <skill> ...
+
+`1`/`true` points the child's `CLAUDE_CONFIG_DIR` at an isolated empty
+per-process directory; any other value is used verbatim as the config-dir
+path (pre-seed one if you want a fixed minimal config). **Opt-in on
+purpose:** on non-macOS installs the config dir also holds the OAuth session
+credentials, so the empty-dir form logs the child out there (macOS keeps
+credentials in the keychain and survives). If rollouts start failing auth
+after flipping this on, that is why.
+
 ## When NOT to use SkillOpt
 
 - **No benchmark.** Optimizing against guesses is worse than not optimizing.

@@ -179,3 +179,47 @@ describe('v0.46.15 ship-review F10 — rejected strong candidates do not shadow 
     expect(weak.some((c) => c.query === 'persona12')).toBe(true);
   });
 });
+
+describe('#3746 — CJK weak n-gram pass (JA/KO/ZH)', () => {
+  test('japanese: name grams extracted as weak candidates (pre-fix: zero)', () => {
+    const weak = weakQueries('田中さんの会議のメモを見せて');
+    expect(weak.length).toBeGreaterThan(0);
+    expect(weak).toContain('田中');
+  });
+
+  test('korean: whitespace-tokenized name run extracted whole', () => {
+    const weak = weakQueries('김철수 미팅 노트 보여줘');
+    expect(weak).toContain('김철수');
+  });
+
+  test('chinese: name grams extracted from an unsegmented sentence', () => {
+    const weak = weakQueries('给我看看王小明的笔记');
+    expect(weak).toContain('王小明');
+  });
+
+  test('every CJK candidate is weak (never strong)', () => {
+    const cands = extractCandidates('田中さんの会議');
+    for (const c of cands) expect(c.weak).toBe(true);
+  });
+
+  test('pure-hiragana grams (particles/function words) are skipped', () => {
+    const weak = weakQueries('それをしてください');
+    expect(weak).toEqual([]);
+  });
+
+  test('CJK pass honors its own cap', () => {
+    const long = '漢'.repeat(40) + '字'.repeat(40);
+    const weak = weakQueries(long);
+    expect(weak.length).toBeLessThanOrEqual(24);
+  });
+
+  test('no CJK in text → pass is inert (latin-only output unchanged)', () => {
+    const cands = extractCandidates('what do you think about Garry Tan?');
+    expect(cands.some((c) => /[一-鿿぀-ゟ゠-ヿ가-힯]/.test(c.query))).toBe(false);
+  });
+
+  test('grams deduplicate against strong candidates and each other', () => {
+    const weak = weakQueries('田中 田中');
+    expect(weak.filter((q) => q === '田中')).toHaveLength(1);
+  });
+});

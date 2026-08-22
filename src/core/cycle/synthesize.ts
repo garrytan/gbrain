@@ -51,10 +51,10 @@ import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
-import { MinionQueue } from '../minions/queue.ts';
+import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
 import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS } from './patterns.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
-import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
+import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
@@ -330,6 +330,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** Internal: minion owner job id for private dream-inline queue recovery. */
+  privateQueueOwnerJobId?: number | null;
   /**
    * issue #2860 — `gbrain dream --phase synthesize --once`. Bypasses the
    * `dream.synthesize.enabled` gate for THIS call only (does NOT bypass
@@ -344,6 +346,7 @@ export async function runPhaseSynthesize(
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   // Normalize brainDir to an absolute path BEFORE any reverse-write. Without
   // this, a relative or empty brainDir flows down to writeReversePages →
   // `join(brainDir, '${slug}.md')` → relative path → resolves against cwd at
@@ -519,7 +522,12 @@ export async function runPhaseSynthesize(
 
     // Fan-out: submit one subagent per worth-processing transcript (or one
     // per chunk for transcripts that exceed the model's per-prompt budget).
-    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine);
+    // #4117: the validated per-lane namespaces derive extra allow-list globs
+    // so a custom reflections/originals prefix is actually writable.
+    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine, {
+      reflectionsPrefix: config.reflectionsPrefix,
+      originalsPrefix: config.originalsPrefix,
+    });
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
@@ -546,6 +554,17 @@ export async function runPhaseSynthesize(
     // unrelated 'default'-queue jobs, and a 'default'-queue worker must never
     // claim a child this parent is about to run itself.
     const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    ownedPrivateQueue = { queue, name: childQueueName };
+    const privateQueueOwnerToken = randomUUID();
+    // Rolling 10-min lease renewed every ≤30s from the drain loop (idle polls,
+    // claim iterations, per-child keepalive) and the post-drain chunked wait —
+    // a crashed run's queue becomes lease-recoverable within ~10 minutes
+    // instead of a wait-timeout-sized horizon. The whole wrapper (lease AND
+    // cycle-lock refresh) is 30s-throttled so 1-5s polls cost one UPDATE per
+    // half-minute, not per poll; the cycle lock's 5-min TTL is ample at 30s.
+    const renewPrivateQueueLease = queue.makeThrottledLeaseRenewer(
+      childQueueName, privateQueueOwnerToken, opts.yieldDuringPhase,
+    );
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -710,6 +729,9 @@ export async function runPhaseSynthesize(
             buildTriageMapBlock(triageVerdict, chunks[i], chunks.length),
             manifestBlock,
             allowedSlugPrefixes,
+            // #4117: validated per-lane namespaces.
+            config.reflectionsPrefix,
+            config.originalsPrefix,
           ),
           model: subagentModel,
           max_turns: config.maxTurns,
@@ -756,6 +778,9 @@ export async function runPhaseSynthesize(
           idempotency_key,
           timeout_ms: perChild.timeoutMs,
           queue: childQueueName,
+          private_queue_owner_job_id: opts.privateQueueOwnerJobId ?? null,
+          private_queue_owner_token: privateQueueOwnerToken,
+          private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
         };
         let child: Awaited<ReturnType<typeof queue.add>>;
         try {
@@ -856,7 +881,7 @@ export async function runPhaseSynthesize(
     }
     const drainStartedAt = Date.now();
     await runSubagentsInline(
-      engine, queue, childQueueName, opts.yieldDuringPhase,
+      engine, queue, childQueueName, renewPrivateQueueLease,
       undefined, undefined, effectiveConcurrency, opts.deadlineAtMs ?? null,
     );
     // Captured HERE: everything after this line (waiters, collection,
@@ -892,9 +917,10 @@ export async function runPhaseSynthesize(
         const remainingParentMs = opts.deadlineAtMs != null
           ? Math.max(1000, opts.deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now())
           : config.subagentWaitTimeoutMs;
-        const job = await waitForCompletion(queue, jobId, {
+        const job = await waitForCompletionRenewing(queue, jobId, {
           timeoutMs: Math.min(config.subagentWaitTimeoutMs, remainingParentMs),
           pollMs: 5 * 1000,
+          renew: renewPrivateQueueLease,
         });
         // Turn telemetry: surfaces max_turns cap pressure in details.synthesis
         // so the 30→16 default can be re-litigated on data. #4216 adds the
@@ -1135,6 +1161,27 @@ export async function runPhaseSynthesize(
   } catch (e) {
     return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
       e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
+  } finally {
+    if (ownedPrivateQueue) {
+      try {
+        const cancelled = await ownedPrivateQueue.queue.reconcilePrivateQueue(
+          ownedPrivateQueue.name,
+          'private queue owner terminalized: synthesize phase ended',
+        );
+        if (cancelled.length > 0) {
+          process.stderr.write(
+            `[dream] synthesize reconciled ${cancelled.length} non-terminal child job(s) from ${ownedPrivateQueue.name}\n`,
+          );
+        }
+      } catch (cleanupError) {
+        // The phase result must survive a transient cleanup failure; Doctor
+        // and waiting-TTL remain delayed backstops and will surface/reap it.
+        process.stderr.write(
+          `[dream] synthesize private-queue cleanup failed for ${ownedPrivateQueue.name}: ` +
+          `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}\n`,
+        );
+      }
+    }
   }
 }
 
@@ -1189,6 +1236,13 @@ export interface SynthConfig {
    * grammar; invalid values fall back to 'wiki' with a stderr warning.
    */
   outputRoot: string;
+  /**
+   * #4117: per-lane namespaces (see loadDreamNamespaces). Defaults derive
+   * from outputRoot; config keys dream.synthesize.reflections_slug_prefix /
+   * dream.synthesize.originals_slug_prefix override them individually.
+   */
+  reflectionsPrefix: string;
+  originalsPrefix: string;
   subagentTimeoutMs: number;
   subagentWaitTimeoutMs: number;
   /**
@@ -1233,6 +1287,47 @@ export async function loadOutputRoot(engine: BrainEngine): Promise<string> {
     `[dream] dream.synthesize.output_root "${raw}" is not a valid slug prefix; falling back to "wiki".\n`,
   );
   return 'wiki';
+}
+
+/**
+ * #4117: per-lane output namespaces. `dream.synthesize.output_root` moves
+ * the whole tree; these two keys move the REFLECTIONS and ORIGINALS lanes
+ * individually (brains whose schema has no `personal/reflections` /
+ * `originals/ideas` convention). SUMMARY_SLUG_RE-validated with a stderr
+ * warning + default fallback — an invalid value can never leak an
+ * unvalidated prefix into the prompt or the write allow-list (fail-closed:
+ * the derived allow-list glob only ever comes from a validated prefix).
+ * Mirrors the `dream.patterns.{source,output}_slug_prefix` shape.
+ */
+export interface DreamNamespaces {
+  /** Where reflections land. Config `dream.synthesize.reflections_slug_prefix`; default `<output_root>/personal/reflections`. */
+  reflectionsPrefix: string;
+  /** Where originals land. Config `dream.synthesize.originals_slug_prefix`; default `<output_root>/originals/ideas`. */
+  originalsPrefix: string;
+}
+
+export async function loadDreamNamespaces(
+  engine: BrainEngine,
+  outputRoot: string,
+): Promise<DreamNamespaces> {
+  const resolvePrefix = async (key: string, fallback: string): Promise<string> => {
+    const raw = await engine.getConfig(key);
+    if (!raw) return fallback;
+    const trimmed = raw.trim().replace(/^\/+|\/+$/g, '');
+    if (SUMMARY_SLUG_RE.test(trimmed)) return trimmed;
+    process.stderr.write(
+      `[dream] ${key} "${raw}" is not a valid slug prefix; falling back to "${fallback}".\n`,
+    );
+    return fallback;
+  };
+  return {
+    reflectionsPrefix: await resolvePrefix(
+      'dream.synthesize.reflections_slug_prefix', `${outputRoot}/personal/reflections`,
+    ),
+    originalsPrefix: await resolvePrefix(
+      'dream.synthesize.originals_slug_prefix', `${outputRoot}/originals/ideas`,
+    ),
+  };
 }
 
 export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -1338,6 +1433,10 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     }
   }
 
+  // #4117: resolve the root once, then the per-lane namespaces from it.
+  const outputRoot = await loadOutputRoot(engine);
+  const namespaces = await loadDreamNamespaces(engine, outputRoot);
+
   return {
     enabled,
     corpusDir: corpusDir ?? null,
@@ -1358,7 +1457,9 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     cooldownHours,
     maxPromptTokens,
     maxChunksPerTranscript,
-    outputRoot: await loadOutputRoot(engine),
+    outputRoot,
+    // #4117: per-lane namespaces derived from outputRoot unless overridden.
+    ...namespaces,
     subagentTimeoutMs,
     subagentWaitTimeoutMs,
     inlineConcurrency,
@@ -2245,6 +2346,11 @@ function buildSynthesisPrompt(
   triageMapBlock = '',
   linkManifestBlock = '',
   allowedSlugPrefixes: string[] = [],
+  // #4117: per-lane namespaces. Defaults derive from outputRoot so existing
+  // callers/tests are byte-identical; loadSynthConfig passes the validated
+  // config-resolved values.
+  reflectionsPrefix = `${outputRoot}/personal/reflections`,
+  originalsPrefix = `${outputRoot}/originals/ideas`,
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -2286,10 +2392,10 @@ OUTPUT POLICY (ALL of these are required)
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
-   slug: \`${outputRoot}/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
+   slug: \`${reflectionsPrefix}/${dateHint}-<topic-slug>-${hashSuffix}\`
 
 B. Originals (new ideas, frames, theses, mental models):
-   slug: \`${outputRoot}/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
+   slug: \`${originalsPrefix}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
 C. People mentions: ${linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available'}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 

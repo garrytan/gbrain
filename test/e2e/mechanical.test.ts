@@ -47,10 +47,19 @@ afterAll(() => {
   try { if (_tmpHome) rmSync(_tmpHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
+function makeCtx(
+  opts: { remote?: boolean; storage?: { backend: 'local'; localPath: string } } = {},
+): OperationContext {
   return {
     engine: getEngine(),
-    config: { engine: 'postgres', database_url: process.env.DATABASE_URL! },
+    config: {
+      engine: 'postgres',
+      database_url: process.env.DATABASE_URL!,
+      // #4302: file_upload / file_url are fail-closed — they refuse with a
+      // typed storage_error unless a storage backend is configured. Tests
+      // that exercise the success path pass a local (temp-dir) backend here.
+      ...(opts.storage ? { storage: opts.storage } : {}),
+    },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     // Default: trusted local invocation (matches `gbrain call` semantics).
@@ -616,7 +625,7 @@ describeE2E('E2E: Ingest Log & Raw Data', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Files (stub verification)
+// Files (fail-closed refusal without a backend + real local-backend path)
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Files', () => {
@@ -638,7 +647,24 @@ describeE2E('E2E: Files', () => {
     writeFileSync(tmpFile, 'fake pdf content');
 
     try {
-      const result = await callOp('file_upload', {
+      // #4302 (fail-closed storage honesty): with NO storage backend
+      // configured, file_upload must refuse with a typed storage_error and
+      // must NOT record a phantom files row.
+      let refused: any = null;
+      try {
+        await callOp('file_upload', { path: tmpFile, page_slug: 'people/sarah-chen' });
+      } catch (e) {
+        refused = e;
+      }
+      expect(refused).not.toBeNull();
+      expect(refused.code).toBe('storage_error');
+      expect(((await callOp('file_list', {})) as any[]).length).toBe(0);
+
+      // Success path: a real (local, temp-dir) backend — bytes stored,
+      // files row recorded, file_list + file_url read it back.
+      const storage = { backend: 'local' as const, localPath: join(tmpDir, 'storage') };
+      const uploadOp = operationsByName['file_upload'];
+      const result = await uploadOp.handler(makeCtx({ storage }), {
         path: tmpFile,
         page_slug: 'people/sarah-chen',
       }) as any;
@@ -654,9 +680,13 @@ describeE2E('E2E: Files', () => {
       expect(typeof files[0].size_bytes).toBe('number');
       expect(() => JSON.stringify(files)).not.toThrow();
 
-      // Verify file_url returns URI format
-      const url = await callOp('file_url', { storage_path: result.storage_path }) as any;
-      expect(url.url).toContain('gbrain:files/');
+      // Verify file_url resolves a REAL backend URL (#4302 replaced the
+      // gbrain:files/ placeholder with the backend's own URL after an
+      // existence probe; LocalStorage yields file://).
+      const urlOp = operationsByName['file_url'];
+      const url = await urlOp.handler(makeCtx({ storage }), { storage_path: result.storage_path }) as any;
+      expect(url.url).toMatch(/^file:\/\//);
+      expect(url.url).toContain('sarah-chen');
     } finally {
       rmSync(tmpDir, { recursive: true });
     }
