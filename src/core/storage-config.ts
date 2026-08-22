@@ -372,9 +372,24 @@ export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
   'dream-cycle-summaries/',
 ];
 
-/** Declared db_only dirs plus the derive-phase defaults, deduped. */
+/**
+ * Declared db_only dirs plus the derive-phase defaults, deduped.
+ *
+ * `declared` is lowercased before the union (issue #3766): its only consumer
+ * (`checkUndeclaredDbOnlyPages`) matches these prefixes against page `slug`
+ * values via a plain `.startsWith()`, and slugs are ALWAYS lowercased at
+ * creation time (`pathToSlug`/`slugifyCodePath` in sync.ts) regardless of the
+ * host filesystem's case sensitivity. Without this, a `storage.db_only`
+ * entry typed with any uppercase (e.g. `Notes/` in gbrain.yml) silently never
+ * matches a single slug and every page under it gets falsely flagged as
+ * undeclared. This is deliberately NOT done in `normalizeAndValidateStorageConfig`
+ * / `loadStorageConfig` — `manageGitignore` (sync.ts) reads that raw,
+ * case-preserved config to write `.gitignore` entries that must match the
+ * REAL on-disk directory name (case-sensitive on Linux); lowercasing there
+ * would break gitignore management instead of fixing this doctor check.
+ */
 export function effectiveDbOnlyDirs(declared: string[]): string[] {
-  return [...new Set([...declared, ...DERIVE_PHASE_DB_ONLY_DEFAULTS])];
+  return [...new Set([...declared.map((d) => d.toLowerCase()), ...DERIVE_PHASE_DB_ONLY_DEFAULTS])];
 }
 
 /**
