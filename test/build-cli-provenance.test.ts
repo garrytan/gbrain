@@ -198,6 +198,18 @@ describe("procedencia del build CLI", () => {
     expect(readFileSync(lock, "utf8")).toBe("owner\n");
   }, 120_000);
 
+  test("recupera un bloqueo abandonado por un proceso terminado", () => {
+    const repo = createRepository();
+    const lock = join(repo.root, ".git", "gbrain-build.lock");
+    writeFileSync(lock, `${JSON.stringify({ pid: 2147483647, started_at: '2000-01-01T00:00:00.000Z', token: 'abandoned-test' })}\n`, { mode: 0o600 });
+
+    const result = runBuild(repo.root, repo.output);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(lock)).toBe(false);
+    expect(runBinary(repo.output)).toBe(repo.commit);
+  }, 120_000);
+
   test("conserva el build normal para un commit limpio", () => {
     const repo = createRepository();
 

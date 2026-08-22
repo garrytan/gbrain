@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import {
   resolveInstalledBuildCommit,
   resolveSourceCheckoutCommit,
@@ -49,6 +50,17 @@ describe('runtime build provenance', () => {
     ))).rejects.toThrow(/does not match/i);
   });
 
+  test('rejects a malformed GitHub owner before making a request', async () => {
+    const root = temporaryDirectory('gbrain-installed-provenance-owner-');
+    writeFileSync(join(root, '.bun-tag'), 'evil/path-gbrain-124880f\n');
+    let requested = false;
+    await expect(resolveInstalledBuildCommit(root, async () => {
+      requested = true;
+      return new Response(JSON.stringify({ sha: '124880f' + 'a'.repeat(33) }), { status: 200 });
+    })).rejects.toThrow(/owner|tag/i);
+    expect(requested).toBe(false);
+  });
+
   test('resolves only a clean source checkout', () => {
     const root = temporaryDirectory('gbrain-source-provenance-');
     mkdirSync(join(root, 'src'));
@@ -75,5 +87,34 @@ describe('runtime build provenance', () => {
     writeFileSync(fakeGit, '#!/bin/sh\nprintf "%040d\\n" 0\n');
     chmodSync(fakeGit, 0o777);
     expect(() => resolveSourceCheckoutCommit(root, fakeGit)).toThrow(/protected executable/i);
+  });
+
+  test('ignores a protected fake Git at the front of PATH on POSIX', () => {
+    if (process.platform === 'win32') return;
+    const root = temporaryDirectory('gbrain-source-provenance-path-');
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'cli.ts'), 'export {};\n');
+    for (const args of [
+      ['init', '-q'],
+      ['config', 'user.email', 'provenance@example.invalid'],
+      ['config', 'user.name', 'Provenance Test'],
+      ['add', '.'],
+      ['commit', '-qm', 'fixture'],
+    ]) expect(spawnSync('git', args, { cwd: root }).status).toBe(0);
+    const expected = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+    const fakeBin = temporaryDirectory('gbrain-source-provenance-path-bin-');
+    const marker = join(fakeBin, 'invoked');
+    const fakeGit = join(fakeBin, 'git');
+    writeFileSync(fakeGit, `#!/bin/sh\ntouch '${marker}'\ncase "$*" in *status*) exit 0;; *) printf '%040d\\n' 0;; esac\n`);
+    chmodSync(fakeGit, 0o755);
+    const moduleUrl = pathToFileURL(join(import.meta.dir, '..', 'src', 'core', 'build-provenance.ts')).href;
+    const script = `import { resolveSourceCheckoutCommit } from ${JSON.stringify(moduleUrl)}; console.log(resolveSourceCheckoutCommit(${JSON.stringify(root)}));`;
+    const result = spawnSync(process.execPath, ['-e', script], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${fakeBin}:/usr/bin:/bin` },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe(expected);
+    expect(existsSync(marker)).toBe(false);
   });
 });

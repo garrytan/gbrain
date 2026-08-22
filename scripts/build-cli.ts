@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   accessSync,
   chmodSync,
@@ -188,18 +188,83 @@ git(repoRoot, ["ls-files", "--error-unmatch", "--", scriptPath]);
 const commonDirectoryRaw = gitText(repoRoot, ["rev-parse", "--git-common-dir"]);
 const commonDirectory = realpathSync(isAbsolute(commonDirectoryRaw) ? commonDirectoryRaw : resolve(repoRoot, commonDirectoryRaw));
 const lockPath = join(commonDirectory, "gbrain-build.lock");
+const lockToken = randomUUID();
 let lockDescriptor: number | undefined;
 let lockAcquired = false;
 let temporaryRoot: string | undefined;
 let stagedOutput: string | undefined;
 
+interface BuildLockRecord {
+  pid: number;
+  started_at: string;
+  token: string;
+}
+
+function readBuildLock(path: string): BuildLockRecord {
+  const stat = lstatSync(path);
+  const trustedOwner = process.platform === "win32"
+    || stat.uid === 0
+    || stat.uid === process.getuid?.();
+  if (!stat.isFile() || !trustedOwner || (process.platform !== "win32" && (stat.mode & 0o022) !== 0)) {
+    throw new Error(`el bloqueo existente no es un archivo protegido: ${path}`);
+  }
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<BuildLockRecord>;
+  if (
+    !Number.isSafeInteger(parsed.pid)
+    || Number(parsed.pid) <= 0
+    || typeof parsed.started_at !== "string"
+    || !Number.isFinite(Date.parse(parsed.started_at))
+    || typeof parsed.token !== "string"
+    || !/^[a-zA-Z0-9-]{8,128}$/.test(parsed.token)
+  ) {
+    throw new Error(`el bloqueo existente tiene un formato inválido: ${path}`);
+  }
+  return parsed as BuildLockRecord;
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function acquireBuildLock(path: string): void {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      lockDescriptor = openSync(path, "wx", 0o600);
+      const record: BuildLockRecord = {
+        pid: process.pid,
+        started_at: new Date().toISOString(),
+        token: lockToken,
+      };
+      writeFileSync(lockDescriptor, `${JSON.stringify(record)}\n`);
+      closeSync(lockDescriptor);
+      lockDescriptor = undefined;
+      lockAcquired = true;
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const record = readBuildLock(path);
+      const ageMs = Date.now() - Date.parse(record.started_at);
+      if (processIsAlive(record.pid) && ageMs <= 6 * 60 * 60 * 1000) {
+        throw new Error(`otro build conserva el bloqueo ${path}`);
+      }
+      const unchanged = readBuildLock(path);
+      if (JSON.stringify(unchanged) !== JSON.stringify(record)) {
+        throw new Error(`el bloqueo cambió durante la recuperación: ${path}`);
+      }
+      unlinkSync(path);
+    }
+  }
+  throw new Error(`no se pudo adquirir el bloqueo ${path}`);
+}
+
 try {
   try {
-    lockDescriptor = openSync(lockPath, "wx", 0o600);
-    lockAcquired = true;
-    writeFileSync(lockDescriptor, `${process.pid}\n`);
-    closeSync(lockDescriptor);
-    lockDescriptor = undefined;
+    acquireBuildLock(lockPath);
   } catch (error) {
     throw new Error(`otro build conserva el bloqueo ${lockPath}`, { cause: error });
   }
@@ -224,7 +289,7 @@ try {
   const dependencies = join(repoRoot, "node_modules");
   try {
     if (lstatSync(dependencies).isDirectory()) {
-      symlinkSync(dependencies, join(snapshotRoot, "node_modules"), "dir");
+      symlinkSync(dependencies, join(snapshotRoot, "node_modules"), process.platform === "win32" ? "junction" : "dir");
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -261,7 +326,7 @@ try {
   if (temporaryRoot !== undefined) rmSync(temporaryRoot, { recursive: true, force: true });
   if (lockAcquired) {
     try {
-      unlinkSync(lockPath);
+      if (readBuildLock(lockPath).token === lockToken) unlinkSync(lockPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
