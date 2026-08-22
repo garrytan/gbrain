@@ -17,7 +17,7 @@ src/commands/jobs.ts	3111	ratchet	grown v0.46.26.0 megawave (#4098 #2308) + mast
 src/core/search/hybrid.ts	2845	ratchet	grown v0.46.26.0 megawave: CRAG escalation seam, degradation visibility, excludePrivate knobs-fold v23 (#1663 #3873 #4352)
 src/core/engine.ts	2495	ratchet	grown v0.46.26.0 megawave: relational/visibility/usage contract surface (#4352 #4218)
 src/commands/autopilot.ts	2641	ratchet	grown v0.46.26.0 megawave (#4300 #4285 #3696) + master v0.46.27.0 env-file lane + boot warning + reload-safe install (#2608 #4443) + 1 nosemgrep dataflow annotation (path-traversal audit)
-src/commands/extract.ts	2332	ratchet	grown v0.46.26.0 megawave: FS-walk stamp snapshot + legacy timeline repair wiring (#3957 D4)
+src/commands/extract.ts	2368	ratchet	grown v0.46.26.0 megawave: FS-walk stamp snapshot + legacy timeline repair wiring (#3957 D4) + PR#4486 rebase onto current master
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2142	ratchet	grown v0.46.26.0 megawave: OCR budget + image import + embed-retry rewire (#3973 #3374)
 src/core/cycle/synthesize.ts	2792	ratchet	merged waves; grown v0.46.26.0 megawave + master rolling lease via shared throttled renewer
