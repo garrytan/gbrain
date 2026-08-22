@@ -10,6 +10,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   writeFactsAbsorbLog,
+  writeFactsAbsorbFailure,
   classifyFactsAbsorbError,
   FACTS_ABSORB_REASONS,
 } from '../src/core/facts/absorb-log.ts';
@@ -125,7 +126,22 @@ describe('writeFactsAbsorbLog — ingest_log row shape', () => {
     expect(FACTS_ABSORB_REASONS).toContain('malformed_output');
     expect(FACTS_ABSORB_REASONS).toContain('non_terminal_stop');
     expect(FACTS_ABSORB_REASONS).toContain('truncated_output');
-    expect(FACTS_ABSORB_REASONS.length).toBe(12);
+    expect(FACTS_ABSORB_REASONS).toContain('gateway_auth');
+    expect(FACTS_ABSORB_REASONS).toContain('gateway_billing');
+    expect(FACTS_ABSORB_REASONS).toContain('gateway_rate_limit');
+    expect(FACTS_ABSORB_REASONS.length).toBe(15);
+  });
+
+  test.each([
+    ['typed-auth', Object.assign(new Error('invalid api key sk-sensitive-auth'), { status: 401 }), 'gateway_auth'],
+    ['typed-billing', new Error('credit balance is too low: acct-sensitive'), 'gateway_billing'],
+    ['typed-rate', Object.assign(new Error('rate limit: req-sensitive'), { status: 429 }), 'gateway_rate_limit'],
+  ])('%s provider failure records only its typed class', async (ref, err, reason) => {
+    await writeFactsAbsorbFailure(engine, `meetings/${ref}`, err);
+    const log = await engine.getIngestLog({ limit: 30 });
+    const ours = log.find(r => r.source_ref === `meetings/${ref}`);
+    expect(ours?.summary).toBe(`${reason}: provider request failed (Error)`);
+    expect(ours?.summary).not.toContain('sensitive');
   });
 });
 

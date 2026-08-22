@@ -2499,7 +2499,11 @@ export async function registerBuiltinHandlers(
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
-    );
+    ).catch(async (err: unknown) => {
+      const { writeFactsAbsorbFailure } = await import('../core/facts/absorb-log.ts');
+      await writeFactsAbsorbFailure(engine, slug, err, sourceId);
+      throw err;
+    });
     // Execution-time chat_unavailable in a KEYED worker is config drift —
     // throw (typed) so minion retry/backoff parks it as a VISIBLE, re-runnable
     // failure instead of consuming the job and silently losing the facts. A

@@ -18,6 +18,9 @@
  *   - 'queue_shutdown'  — queue rejected the enqueue because shutdown is in progress.
  *   - 'embed_failure'   — gateway down on embedOne; row inserts with NULL embedding.
  *   - 'pipeline_error'  — anything else absorbed inside runFactsBackstop's catch.
+ *   - 'gateway_auth'    — provider authentication/authorization failed.
+ *   - 'gateway_billing' — provider credit, quota, or billing hard limit failed.
+ *   - 'gateway_rate_limit' — provider rate limit; retry policy remains with the caller.
  *   - eligibility_skip is intentionally NOT logged (high cardinality, low signal).
  *
  * The writer is best-effort — a failure to log SHOULDN'T blow up the
@@ -26,6 +29,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { GBrainError } from '../types.ts';
 
 export const FACTS_ABSORB_REASONS = [
@@ -45,6 +49,9 @@ export const FACTS_ABSORB_REASONS = [
   'malformed_output',
   'non_terminal_stop',
   'truncated_output',
+  'gateway_auth',
+  'gateway_billing',
+  'gateway_rate_limit',
 ] as const;
 
 // v0.39.3.0 WARN-4 + CV13 — module-scoped flag so the first-occurrence
@@ -124,6 +131,29 @@ export async function writeFactsAbsorbLog(
       `[facts:absorb] failed to log ${reason} for ${ref}: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
+}
+
+/**
+ * Persist a provider failure without copying provider response bodies, keys,
+ * or request payloads into ingest_log. Global failures get stable typed
+ * reason codes; all other failures retain the existing classifier.
+ */
+export async function writeFactsAbsorbFailure(
+  engine: BrainEngine,
+  ref: string,
+  err: unknown,
+  sourceId: string = 'default',
+): Promise<void> {
+  const globalClass = classifyGlobalLlmError(err);
+  const reason: FactsAbsorbReason = globalClass === 'auth'
+    ? 'gateway_auth'
+    : globalClass === 'billing'
+      ? 'gateway_billing'
+      : globalClass === 'rate_limit'
+        ? 'gateway_rate_limit'
+        : classifyFactsAbsorbError(err);
+  const errorType = err instanceof Error && err.name ? err.name : 'Error';
+  await writeFactsAbsorbLog(engine, ref, reason, `provider request failed (${errorType})`, sourceId);
 }
 
 /**

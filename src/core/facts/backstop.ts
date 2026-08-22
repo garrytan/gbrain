@@ -358,10 +358,8 @@ export async function runFactsBackstop(
       try {
         await runPipeline(parsedPage, ctx, signal);
       } catch (err) {
-        const { classifyFactsAbsorbError, writeFactsAbsorbLog } = await import('./absorb-log.ts');
-        const reason = classifyFactsAbsorbError(err);
-        const msg = err instanceof Error ? err.message : String(err);
-        await writeFactsAbsorbLog(ctx.engine, parsedPage.slug, reason, msg, ctx.sourceId);
+        const { writeFactsAbsorbFailure } = await import('./absorb-log.ts');
+        await writeFactsAbsorbFailure(ctx.engine, parsedPage.slug, err, ctx.sourceId);
       }
     }, ctx.sessionId ?? parsedPage.slug);
 
