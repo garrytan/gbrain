@@ -38,6 +38,7 @@ test/brain-score-breakdown.test.ts	linkable scope — archive pages do not drag 
 test/brainstorm-timeout.test.ts	orchestrator entry-point wrap (CV11 single-point classification)	2	bun-file
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
+test/build-runtime-provenance.test.ts	runtime build provenance	8	readFileSync
 test/canonical-migration-command.test.ts	canonical migration command (single home: ai/defaults.ts)	5	doctor-source-helper
 test/chat-key-plane.test.ts	#3944 both planner surfaces share the helper (source guard)	2	readFileSync
 test/check-bootstrap-guards.test.ts	check-grok-pin.sh	10	readFileSync
