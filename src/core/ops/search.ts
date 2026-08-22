@@ -37,6 +37,17 @@ import {
 // --- Search ---
 
 /**
+ * #4039 - OpenAI deep-research contract: ChatGPT's deep research reads an
+ * `id` off each search result and passes it to `fetch`. gbrain's natural id
+ * is the page slug, so stamp `id: slug` onto every result row at the op
+ * boundary (engines stay slug-only). The pair then round-trips with zero
+ * translation: fetch accepts the exact value search returns.
+ */
+function stampSearchIds<T extends { slug: string }>(results: T[]): (T & { id: string })[] {
+  return results.map((r) => ({ ...r, id: r.slug }));
+}
+
+/**
  * WP2/D3 + E1: the `retrieval` response-meta payload for the search/query
  * ops. Carries the already-computed HybridSearchMeta signal (vector arm,
  * cache, budget, degradation stages — populated by the search pipeline) plus
@@ -189,8 +200,8 @@ const search: Operation = {
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
       ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, null, { conceptHint: true }));
-      // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-      return applySnippetCap(results, snippetCap);
+// #3800: cap AFTER capture/meta so eval + cache see the real payload.
+      return applySnippetCap(stampSearchIds(results), snippetCap);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -211,8 +222,8 @@ const search: Operation = {
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, capturedMeta, { conceptHint: true }));
-    // #3800: cap AFTER capture/meta so eval + cache see the real payload.
-    return applySnippetCap(results, snippetCap);
+// #3800: cap AFTER capture/meta so eval + cache see the real payload.
+    return applySnippetCap(stampSearchIds(results), snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },

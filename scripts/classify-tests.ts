@@ -202,7 +202,9 @@ export function generate(): { tsv: string; suites: number; cases: number; files:
   const rows: SuiteRow[] = [];
   const unknown: string[] = [];
   for (const f of listTestFiles(testDir)) {
-    const rel = relative(REPO_ROOT, f);
+    // Windows: path.relative emits backslash separators; the committed TSV
+    // (and its byte-diff freshness check) is forward-slash canonical.
+    const rel = relative(REPO_ROOT, f).split(/\\/).join('/');
     const res = classifyFile(rel, readFileSync(f, 'utf-8'));
     rows.push(...res.rows);
     if (res.unknown) unknown.push(rel);
