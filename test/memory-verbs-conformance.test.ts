@@ -45,7 +45,7 @@ import {
   __setEmbedTransportForTests,
 } from '../src/core/ai/gateway.ts';
 import { __setUsageLogPathForTests } from '../src/core/verbs/usage-log.ts';
-import { withEnv } from './helpers/with-env.ts';
+import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -472,10 +472,12 @@ describe('writeSingleFact — supersession rule [X1] + degraded dedup', () => {
   });
 
   it('reports degraded_dedup when no embedding provider is configured', async () => {
-    const r = await writeSingleFact(engine, 'default', {
-      fact: 'a fact written with no embedding provider',
-      provenance: 'test', entity: 'people/degraded-test',
-    });
+    const r = await withNoEmbeddingProvider(() =>
+      writeSingleFact(engine, 'default', {
+        fact: 'a fact written with no embedding provider',
+        provenance: 'test', entity: 'people/degraded-test',
+      }),
+    );
     expect(r.status).toBe('inserted');
     expect(r.degraded_dedup).toBe(true);
   });
@@ -502,34 +504,42 @@ describe('conformance runner — negative self-test [F3]', () => {
 
   it('a certifier that cannot fail certifies nothing: missing fields, bad enums, wrong id types all flag', async () => {
     // Mutation 1: remember drops the required `status` field.
-    const r1 = await runConformance(
-      lyingClient((verb, body) => (verb === 'remember' ? (({ status: _s, ...rest }) => rest)(body as { status?: unknown } & Record<string, unknown>) : body)),
-      { marker: 'neg1' },
+    const r1 = await withNoEmbeddingProvider(() =>
+      runConformance(
+        lyingClient((verb, body) => (verb === 'remember' ? (({ status: _s, ...rest }) => rest)(body as { status?: unknown } & Record<string, unknown>) : body)),
+        { marker: 'neg1' },
+      ),
     );
     expect(r1.ok).toBe(false);
 
     // Mutation 2: remember returns an out-of-enum status.
-    const r2 = await runConformance(
-      lyingClient((verb, body) => (verb === 'remember' ? { ...body, status: 'absorbed' } : body)),
-      { marker: 'neg2' },
+    const r2 = await withNoEmbeddingProvider(() =>
+      runConformance(
+        lyingClient((verb, body) => (verb === 'remember' ? { ...body, status: 'absorbed' } : body)),
+        { marker: 'neg2' },
+      ),
     );
     expect(r2.ok).toBe(false);
 
     // Mutation 3: recall re-types fact_id to a number (the opaque-string mandate [T4]).
-    const r3 = await runConformance(
-      lyingClient((verb, body) => {
-        if (verb !== 'recall' || !Array.isArray((body as { facts?: unknown[] }).facts)) return body;
-        return {
-          ...body,
-          facts: (body.facts as Array<Record<string, unknown>>).map(f => ({ ...f, fact_id: Number(f.fact_id) })),
-        };
-      }),
-      { marker: 'neg3' },
+    const r3 = await withNoEmbeddingProvider(() =>
+      runConformance(
+        lyingClient((verb, body) => {
+          if (verb !== 'recall' || !Array.isArray((body as { facts?: unknown[] }).facts)) return body;
+          return {
+            ...body,
+            facts: (body.facts as Array<Record<string, unknown>>).map(f => ({ ...f, fact_id: Number(f.fact_id) })),
+          };
+        }),
+        { marker: 'neg3' },
+      ),
     );
     expect(r3.ok).toBe(false);
 
     // Honest server passes (sanity: the failures above are the mutations' doing).
-    const honest = await runConformance(lyingClient((_v, b) => b), { marker: 'pos1' });
+    const honest = await withNoEmbeddingProvider(() =>
+      runConformance(lyingClient((_v, b) => b), { marker: 'pos1' }),
+    );
     const failures = honest.results.filter(r => r.status === 'fail');
     expect(failures).toEqual([]);
   }, 20_000); // v0.45.7: two full runConformance passes now exercise 7 verbs;
@@ -568,7 +578,9 @@ describe('fixture mirror + surface invariants', () => {
         return { isError: res.isError, text: res.content[0].text };
       },
     };
-    const r = await runConformance(fiveVerbClient, { marker: `five-${Date.now()}` });
+    const r = await withNoEmbeddingProvider(() =>
+      runConformance(fiveVerbClient, { marker: `five-${Date.now()}` }),
+    );
     // The additive verbs must appear ONLY as skips — never executed, never failed.
     const additive = r.results.filter((x) => x.verb === 'context_pack' || x.verb === 'delta');
     expect(additive.length).toBeGreaterThan(0);
@@ -580,3 +592,24 @@ describe('fixture mirror + surface invariants', () => {
     expect(advertFails).toEqual([]);
   });
 });
+
+function withNoEmbeddingProvider<T>(fn: () => T | Promise<T>): Promise<T> {
+  return withEnv(
+    {
+      GBRAIN_HOME: emptyHome(),
+      OPENAI_API_KEY: undefined,
+      VOYAGE_API_KEY: undefined,
+      GOOGLE_GENERATIVE_AI_API_KEY: undefined,
+    },
+    async () => {
+      resetGateway();
+      __setEmbedTransportForTests(null);
+      try {
+        return await fn();
+      } finally {
+        resetGateway();
+        __setEmbedTransportForTests(null);
+      }
+    },
+  );
+}
