@@ -85,7 +85,7 @@ afterEach(() => {
 
 describe("procedencia del build CLI", () => {
   test("las raíces Windows confiables no vienen del entorno heredado", () => {
-    const source = readFileSync(buildScript, "utf8");
+    const source = readFileSync(join(import.meta.dir, '..', 'scripts', 'build-cli.ts'), "utf8");
     expect(source).not.toContain("process.env.ProgramFiles");
     expect(source).not.toContain("process.env['ProgramFiles(x86)']");
   });
