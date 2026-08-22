@@ -882,7 +882,7 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
 // ---------------------------------------------------------------------------
 
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep as pathSep } from 'node:path';
 
 /** Options for serializePageToMarkdown. */
 export interface SerializePageOpts {
@@ -964,7 +964,19 @@ export function resolvePageFilePath(
  *
  * Returns null for an unsafe or non-markdown source path. Callers must still
  * enforce their normal realpath containment check before a write.
+ *
+ * Segment splitting is platform-aware (`pathSep`), not a blanket
+ * `[\\/]+` split: on POSIX, `\` is a legal filename character (real
+ * gbrain data has Apple Notes titles containing one), not a directory
+ * separator, so splitting on it there reconstructs a path that doesn't
+ * exist on disk even though the file does (issue: undeclared_db_only_pages
+ * false positive + silent restore/export failure for any such file). On
+ * Windows, `\` is the real separator, so it still needs to split there.
  */
+function splitLocalPathSegments(value: string): string[] {
+  return (pathSep === '\\' ? value.split(/[\\/]+/) : value.split(/\/+/)).filter(Boolean);
+}
+
 export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
@@ -973,14 +985,14 @@ export function resolveSourceLocalFilePath(
   const value = rawSourcePath.trim();
   if (!value || value.includes('\0') || !/\.mdx?$/i.test(value)) return null;
   if (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return null;
-  const sourceSegments = value.split(/[\\/]+/).filter(Boolean);
+  const sourceSegments = splitLocalPathSegments(value);
   if (sourceSegments.length === 0 || sourceSegments.some(segment => segment === '..')) return null;
 
   const absoluteLocalPath = resolve(localPath);
   let cursor = absoluteLocalPath;
   while (true) {
     if (existsSync(join(cursor, '.git'))) {
-      const scope = relative(cursor, absoluteLocalPath).split(/[\\/]+/).filter(Boolean);
+      const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
       if (scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index])) {
         return join(absoluteLocalPath, ...sourceSegments.slice(scope.length));
       }
