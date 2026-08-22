@@ -655,6 +655,32 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     }
   });
 
+  test('#3754 soft-deleted pages hidden from traverseGraph on both engines', async () => {
+    for (const engine of [pgEngine, pgliteEngine]) {
+      await engine.putPage('notes/sdg-from', {
+        type: 'note', title: 'sdg-from', compiled_truth: 'links out', timeline: '',
+      });
+      await engine.putPage('notes/sdg-to', {
+        type: 'note', title: 'sdg-to', compiled_truth: 'target', timeline: '',
+      });
+      await engine.addLink('notes/sdg-from', 'notes/sdg-to', 'ctx', 'wikilink');
+
+      const before = await engine.traverseGraph('notes/sdg-from', 1);
+      expect(before.map((n) => n.slug).sort()).toEqual(['notes/sdg-from', 'notes/sdg-to']);
+
+      await engine.softDeletePage('notes/sdg-to', { sourceId: 'default' });
+
+      // Node set, displayed links array, capped recursive variant, and the
+      // deleted-seed case all filter identically on both engines.
+      const after = await engine.traverseGraph('notes/sdg-from', 1);
+      expect(after.map((n) => n.slug)).toEqual(['notes/sdg-from']);
+      expect(after[0].links.map((l) => l.to_slug)).toEqual([]);
+      const capped = await engine.traverseGraph('notes/sdg-from', 1, { frontierCap: 10 });
+      expect(capped.map((n) => n.slug)).toEqual(['notes/sdg-from']);
+      expect(await engine.traverseGraph('notes/sdg-to', 1)).toEqual([]);
+    }
+  });
+
   test('v0.41.19.0 deletePages parity: both engines return same confirmed-deleted slugs', async () => {
     const realSlugs = ['wiki/dpp-1', 'wiki/dpp-2', 'wiki/dpp-3'];
     for (const slug of realSlugs) {

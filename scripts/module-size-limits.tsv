@@ -5,8 +5,8 @@
 # Columns: path	max_lines	policy	note
 src/commands/doctor.ts	4422	ratchet	grown v0.46.26.0 megawave: silent-death checks, self-upgrade honesty, noise pruning (#3944 #3925 #3958)
 src/core/operations.ts	315	ratchet	peel target: containment sprint C4-C7; grown v0.46.26.0 megawave op wiring
-src/core/postgres-engine.ts	6166	ratchet	grown v0.46.26.0 megawave (#4218 #3986 #4352) + master v0.46.26.0 private-queue token bootstrap probe
-src/core/pglite-engine.ts	6062	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns
+src/core/postgres-engine.ts	6168	ratchet	grown v0.46.26.0 megawave (#4218 #3986 #4352) + master v0.46.26.0 private-queue token bootstrap probe; +#3754 traverseGraph soft-delete filters
+src/core/pglite-engine.ts	6064	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns; +#3754 traverseGraph soft-delete filters
 src/core/migrate.ts	687	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted — grown v0.46.26.0: repair-handler hooks (#3957 pages-upsert-arbiter)
 src/commands/sync.ts	4512	ratchet	grown v0.46.26.0 megawave: image sync, ingest-log gating, dry-run purity, checkpoint honesty (#2683 #4342 #3875) + 3 nosemgrep dataflow annotations (path-traversal audit)
 src/core/ai/gateway.ts	4494	ratchet	grown v0.46.26.0 megawave: config-plane probes + halt telemetry (#3387 #4312)

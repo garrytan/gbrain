@@ -3917,6 +3917,7 @@ export class PostgresEngine implements BrainEngine {
              JOIN pages p2 ON p2.id = l.to_page_id
              WHERE g.depth < ${depth}
                AND NOT (p2.id = ANY(g.visited))
+               AND p2.deleted_at IS NULL
                ${stepScope}
              ORDER BY p2.slug ASC, p2.id ASC
              LIMIT ${cap})`
@@ -3926,12 +3927,13 @@ export class PostgresEngine implements BrainEngine {
             JOIN pages p2 ON p2.id = l.to_page_id
             WHERE g.depth < ${depth}
               AND NOT (p2.id = ANY(g.visited))
+              AND p2.deleted_at IS NULL
               ${stepScope}`;
     // Cycle prevention: visited array tracks page IDs already in the path.
     const rows = await sql`
       WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug} ${seedScope}
+        FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${seedScope}
 
         UNION ALL
 
@@ -3949,7 +3951,7 @@ export class PostgresEngine implements BrainEngine {
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id ${aggScope}),
+           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${aggScope}),
           '[]'::jsonb
         ) as links
       FROM graph g

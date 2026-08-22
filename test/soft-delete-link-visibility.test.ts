@@ -139,3 +139,50 @@ describe('#3754 traversePaths hides soft-deleted pages', () => {
     expect(await engine.traversePaths('hop-a', { direction: 'out', depth: 3 })).toEqual([]);
   });
 });
+
+describe('#3754 traverseGraph hides soft-deleted pages', () => {
+  test('deleted neighbor disappears from nodes AND from the displayed links array', async () => {
+    await seedPair();
+    const before = await engine.traverseGraph('bl-a', 1);
+    expect(before.map((n) => n.slug).sort()).toEqual(['bl-a', 'bl-b']);
+
+    await engine.softDeletePage('bl-b', { sourceId: 'default' });
+    const after = await engine.traverseGraph('bl-a', 1);
+    expect(after.map((n) => n.slug)).toEqual(['bl-a']);
+    // The aggregation subquery must not display an edge to the deleted page.
+    expect(after[0].links.map((l) => l.to_slug)).toEqual([]);
+  });
+
+  test('a soft-deleted seed anchors nothing', async () => {
+    await seedPair();
+    await engine.softDeletePage('bl-a', { sourceId: 'default' });
+    expect(await engine.traverseGraph('bl-a', 1)).toEqual([]);
+  });
+
+  test('a soft-deleted relay breaks multi-hop traversal (recursive step filter)', async () => {
+    await engine.putPage('tg-a', { type: 'note', title: 'a', compiled_truth: 'x', timeline: '' });
+    await engine.putPage('tg-mid', { type: 'note', title: 'mid', compiled_truth: 'x', timeline: '' });
+    await engine.putPage('tg-c', { type: 'note', title: 'c', compiled_truth: 'x', timeline: '' });
+    await engine.addLink('tg-a', 'tg-mid', '', 'wikilink');
+    await engine.addLink('tg-mid', 'tg-c', '', 'wikilink');
+    expect((await engine.traverseGraph('tg-a', 3)).map((n) => n.slug).sort()).toEqual(['tg-a', 'tg-c', 'tg-mid']);
+
+    await engine.softDeletePage('tg-mid', { sourceId: 'default' });
+    expect((await engine.traverseGraph('tg-a', 3)).map((n) => n.slug)).toEqual(['tg-a']);
+  });
+
+  test('the frontier-capped recursive variant filters too', async () => {
+    await seedPair();
+    await engine.softDeletePage('bl-b', { sourceId: 'default' });
+    const nodes = await engine.traverseGraph('bl-a', 1, { frontierCap: 10 });
+    expect(nodes.map((n) => n.slug)).toEqual(['bl-a']);
+  });
+
+  test('restore brings the node back', async () => {
+    await seedPair();
+    await engine.softDeletePage('bl-b', { sourceId: 'default' });
+    await engine.restorePage('bl-b', { sourceId: 'default' });
+    const nodes = await engine.traverseGraph('bl-a', 1);
+    expect(nodes.map((n) => n.slug).sort()).toEqual(['bl-a', 'bl-b']);
+  });
+});
