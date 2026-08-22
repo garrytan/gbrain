@@ -2495,6 +2495,10 @@ export async function runCycle(
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesizeConcepts(engine, {
           brainDir: brainDir ?? undefined,
+          // Thread the cycle's resolved source into the phase's page/receipt/
+          // rollup writes; the engine's `?? 'default'` fallback throws on any
+          // brain without a source literally named 'default'.
+          sourceId: cycleSourceId,
           dryRun,
           // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),

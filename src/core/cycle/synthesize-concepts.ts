@@ -54,6 +54,15 @@ const TIER_T3_MIN = 2;
 
 export interface SynthesizeConceptsOpts {
   brainDir?: string;
+  /**
+   * The cycle's resolved source scope (cycleSourceId in cycle.ts). Without
+   * it every write below falls through to the engine's `?? 'default'`
+   * literal, which is fatal on any brain whose sole source is not named
+   * `default`: getPage's undefined-source path is source-agnostic, so the
+   * existence probe passes, then createVersion throws
+   * "page ... (source=default) not found" and kills the cycle.
+   */
+  sourceId?: string;
   dryRun?: boolean;
   yieldDuringPhase?: (() => Promise<void>) | undefined;
   /**
@@ -324,6 +333,7 @@ export async function runPhaseSynthesizeConcepts(
       );
       await importFromContent(engine, `concepts/${title}`, md, {
         noEmbed: !isAvailable('embedding'),
+        sourceId: opts.sourceId,
       });
     }
     conceptsWritten++;
@@ -337,15 +347,16 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Brain-global
-  // phase — uses 'default' source_id because concepts span sources. Receipt
-  // only fires when concepts were actually written; rollup always fires so
-  // doctor sees the phase ran.
+  // phase — receipt/rollup carry the cycle's resolved source (opts.sourceId);
+  // 'default' survives only as the fallback for engines that really have a
+  // default source. Receipt only fires when concepts were actually written;
+  // rollup always fires so doctor sees the phase ran.
   if (!opts.dryRun && conceptsWritten > 0) {
     const runId = `concepts-${Date.now().toString(36)}`;
     try {
       await writeReceipt(engine, {
         kind: 'concepts',
-        source_id: 'default',
+        source_id: opts.sourceId ?? 'default',
         run_id: runId,
         round: 'single',
         extracted_at: new Date().toISOString(),
@@ -365,7 +376,7 @@ export async function runPhaseSynthesizeConcepts(
   if (!opts.dryRun) {
     await upsertExtractRollup(engine, {
       kind: 'concepts',
-      source_id: 'default',
+      source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
       round_completed_delta: failures.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0,
