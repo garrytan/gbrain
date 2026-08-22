@@ -229,11 +229,15 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
   const table = await engine.executeRaw<{
     relrowsecurity: boolean;
     relforcerowsecurity: boolean;
+    trusted_owner: boolean;
     policy_count: number;
     public_has_privileges: boolean;
   }>(
     `SELECT c.relrowsecurity,
             c.relforcerowsecurity,
+            c.relowner = (
+              SELECT relowner FROM pg_class WHERE oid = 'public.pages'::regclass
+            ) AS trusted_owner,
             (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policy_count,
             (
               has_table_privilege('public', c.oid, 'SELECT')
@@ -250,6 +254,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
   return table.length === 1
     && table[0].relrowsecurity === true
     && table[0].relforcerowsecurity === false
+    && table[0].trusted_owner === true
     && Number(table[0].policy_count) === 0
     && table[0].public_has_privileges === false;
 }

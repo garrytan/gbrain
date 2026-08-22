@@ -299,6 +299,40 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     }
   });
 
+  test('migration verifier rejects a different owner for sealed receipts and definer functions', async () => {
+    const engine = getEngine();
+    const conn = getConn();
+    await conn.unsafe('DROP POLICY create_page_app_receipts ON sealed_page_receipts');
+    const ownerRows = await conn.unsafe<{ owner: string }[]>(`
+      SELECT pg_get_userbyid(relowner) AS owner
+        FROM pg_class
+       WHERE oid = 'public.pages'::regclass
+    `);
+    const trustedOwner = `"${String(ownerRows[0]?.owner).replaceAll('"', '""')}"`;
+    const driftOwner = 'gbrain_drift_owner';
+    expect(await verifySealedPageReceiptsMigration(engine)).toBe(true);
+    await conn.unsafe(`DO $$ BEGIN
+      CREATE ROLE ${driftOwner} NOLOGIN;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$`);
+
+    try {
+      await conn.unsafe(`ALTER TABLE sealed_page_receipts OWNER TO ${driftOwner}`);
+      await conn.unsafe(`ALTER FUNCTION protect_sealed_page_fn() OWNER TO ${driftOwner}`);
+      await conn.unsafe(`ALTER FUNCTION protect_sealed_chunk_fn() OWNER TO ${driftOwner}`);
+      expect(await verifySealedPageReceiptsMigration(engine)).toBe(false);
+    } finally {
+      await conn.unsafe(`ALTER TABLE sealed_page_receipts OWNER TO ${trustedOwner}`);
+      await conn.unsafe(`ALTER FUNCTION protect_sealed_page_fn() OWNER TO ${trustedOwner}`);
+      await conn.unsafe(`ALTER FUNCTION protect_sealed_chunk_fn() OWNER TO ${trustedOwner}`);
+      await conn.unsafe(`DROP ROLE IF EXISTS ${driftOwner}`);
+      await conn.unsafe(
+        `CREATE POLICY create_page_app_receipts ON sealed_page_receipts TO ${APP_ROLE}
+           USING (source_id = 'default') WITH CHECK (source_id = 'default')`,
+      );
+    }
+  });
+
   test('migration accepts an equivalent renamed source foreign key without duplicating it', async () => {
     const engine = getEngine();
     const conn = getConn();
