@@ -57,6 +57,16 @@ export function setGatewayAnthropicKeySnapshot(key: string | undefined): void {
   _gatewayEnvKeySnapshot = key;
 }
 
+/**
+ * Read-only view of the gateway env snapshot for presence probes (#3944
+ * follow-up: chatApiKeyConfigured). A non-undefined value means a DB-plane
+ * key was merged into the RUNNING gateway env — i.e. chat is actually
+ * servable — without exposing a raw engine.getConfig read to the planner.
+ */
+export function getGatewayAnthropicKeySnapshot(): string | undefined {
+  return _gatewayEnvKeySnapshot;
+}
+
 export function hasAnthropicKey(): boolean {
   return resolveAnthropicKey() !== undefined;
 }

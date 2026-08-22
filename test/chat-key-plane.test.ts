@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { chatApiKeyConfigured } from '../src/core/brain-score-recommendations.ts';
+import { setGatewayAnthropicKeySnapshot } from '../src/core/ai/anthropic-key.ts';
 
 describe('#3944 chatApiKeyConfigured', () => {
   test('no env, no file key → false (a DB-only key is invisible by design)', async () => {
@@ -61,5 +62,25 @@ describe('#3944 both planner surfaces share the helper (source guard)', () => {
     const src = readFileSync(join(import.meta.dir, '../src/core/remediation/context.ts'), 'utf-8');
     expect(src).toContain('chatApiKeyConfigured(fileCfg)');
     expect(src).not.toContain('process.env.ANTHROPIC_API_KEY ||');
+  });
+});
+
+describe('#3944 follow-up — gateway env snapshot plane', () => {
+  test('a gateway-merged DB-plane key reads as configured, and only while the snapshot is live', async () => {
+    await withEnv({ ANTHROPIC_API_KEY: undefined }, () => {
+      // A raw DB-only key stays invisible (no engine reaches this helper) —
+      // but once loadConfigWithEngine merged it into the RUNNING gateway env
+      // (modeled by the snapshot seam), the key is actually serving chat and
+      // must not read as missing on either planner surface.
+      try {
+        setGatewayAnthropicKeySnapshot('sk-test-db-merged');
+        expect(chatApiKeyConfigured(null)).toBe(true);
+        expect(chatApiKeyConfigured({})).toBe(true);
+      } finally {
+        setGatewayAnthropicKeySnapshot(undefined);
+      }
+      // Gateway reset clears the snapshot → back to not-configured.
+      expect(chatApiKeyConfigured(null)).toBe(false);
+    });
   });
 });
