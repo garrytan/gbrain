@@ -557,9 +557,9 @@ export async function checkTypeProliferation(
 }
 
 /**
- * dangling_aliases (F12): surfaces slug_aliases rows whose canonical page
- * no longer exists in the pages table. Source-scoped JOIN prevents
- * cross-source false-positive deletion.
+ * dangling_aliases (F12): surfaces both slug_aliases redirects and
+ * page_aliases free-text names whose target page no longer exists.
+ * Source-scoped JOINs prevent cross-source false-positive deletion.
  *
  * v0.42 ships surface-only (no auto-GC RemediationStep). v0.43+ may add
  * `cleanup-dangling-aliases` as an auto_apply handler once detection is
@@ -572,7 +572,7 @@ export async function checkTypeProliferation(
 export async function checkDanglingAliases(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const n = await safeCount(
+  const slugAliases = await safeCount(
     engine,
     `SELECT COUNT(*) AS count FROM slug_aliases sa
      LEFT JOIN pages p
@@ -581,16 +581,30 @@ export async function checkDanglingAliases(
       AND p.deleted_at IS NULL
      WHERE p.id IS NULL`,
   );
+  const pageAliases = await safeCount(
+    engine,
+    `SELECT COUNT(*) AS count FROM page_aliases pa
+     LEFT JOIN pages p
+       ON p.slug = pa.slug
+      AND p.source_id = pa.source_id
+      AND p.deleted_at IS NULL
+     WHERE p.id IS NULL`,
+  );
+  const n = slugAliases + pageAliases;
   if (n > 0) {
     return {
       check: {
         name: 'dangling_aliases',
         status: 'warn',
         message:
-          `${n} alias rows point at deleted canonicals. Safe GC (source-scoped): ` +
+          `${n} alias rows point at missing/deleted pages ` +
+          `(${slugAliases} slug redirects; ${pageAliases} free-text page aliases). ` +
+          `Safe GC (source-scoped): ` +
           `\`DELETE FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p ` +
           `WHERE p.slug = sa.canonical_slug AND p.source_id = sa.source_id ` +
-          `AND p.deleted_at IS NULL);\``,
+          `AND p.deleted_at IS NULL); DELETE FROM page_aliases pa WHERE NOT EXISTS ` +
+          `(SELECT 1 FROM pages p WHERE p.slug = pa.slug ` +
+          `AND p.source_id = pa.source_id AND p.deleted_at IS NULL);\``,
       },
       remediations: [],  // v0.42: surface-only; auto-GC v0.43+
     };
