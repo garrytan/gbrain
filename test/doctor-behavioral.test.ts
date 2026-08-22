@@ -242,6 +242,53 @@ describe('buildChecks — orchestrator against PGLite', () => {
     }
   });
 
+  test('oversized_pages excludes pages that already took the embed_skip remediation (gbrain dogfooding find)', async () => {
+    // The warn message for this check says "existing oversized pages can be
+    // ... accepted as non-embeddable" (i.e. frontmatter.embed_skip: true).
+    // Before this fix the underlying query never excluded those pages, so a
+    // page an operator had already remediated the documented way kept
+    // re-appearing in this check's output on every run with no way to clear
+    // it short of deleting the page.
+    const big = 'oversized page body prose for the embed_skip exclusion probe. '.repeat(11_000);
+    await engine.putPage('wiki/oversized-embed-skip-probe', {
+      type: 'note',
+      title: 'Oversized Embed-Skip Probe',
+      compiled_truth: big,
+      timeline: '',
+      frontmatter: { embed_skip: true },
+    });
+
+    const checks = await buildChecks(engine, []);
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    expect(oversized).toBeDefined();
+    // Positive control above (line ~227) proves the same byte count without
+    // embed_skip DOES warn and names the page — this proves the ONLY
+    // difference (embed_skip: true) is what excludes it.
+    expect(oversized!.status).toBe('ok');
+    expect(oversized!.message).not.toContain('oversized-embed-skip-probe');
+  });
+
+  test('oversized_pages still warns when embed_skip is explicitly false (Codex review: key-presence check would wrongly exclude this)', async () => {
+    // embed_skip: false means "do not skip embedding" — it must NOT be
+    // treated the same as embed_skip: true. An exclusion built on key
+    // PRESENCE alone (e.g. a bare jsonb_exists check) would wrongly exclude
+    // this page too; the fix must check the actual boolean value.
+    const big = 'oversized page body prose for the embed_skip=false probe. '.repeat(11_000);
+    await engine.putPage('wiki/oversized-embed-skip-false-probe', {
+      type: 'note',
+      title: 'Oversized Embed-Skip-False Probe',
+      compiled_truth: big,
+      timeline: '',
+      frontmatter: { embed_skip: false },
+    });
+
+    const checks = await buildChecks(engine, []);
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    expect(oversized).toBeDefined();
+    expect(oversized!.status).toBe('warn');
+    expect(oversized!.message).toContain('oversized-embed-skip-false-probe');
+  });
+
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {
     // The orchestrator's render path (outputResults in the wrapper) reads
     // the same DoctorReport.status enum we compute here. Pin the
