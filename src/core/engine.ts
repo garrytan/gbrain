@@ -576,6 +576,8 @@ export interface NewFact {
 export interface FactListOpts {
   /** Hide expired_at IS NOT NULL rows. Default true. */
   activeOnly?: boolean;
+  /** Restrict to facts not yet promoted into a take. Default false. */
+  unconsolidatedOnly?: boolean;
   limit?: number;
   offset?: number;
   /** Restrict to specific kinds. Default: all kinds. */

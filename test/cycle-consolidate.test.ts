@@ -129,6 +129,38 @@ describe('runPhaseConsolidate', () => {
     }
   });
 
+  test('large bucket fetches pending facts instead of starving behind 100 consolidated rows', async () => {
+    const slug = 'people/large-bucket-example';
+    await seedPage(slug);
+    const newer = new Date(Date.now() - 30 * 60 * 60 * 1000);
+    for (let i = 0; i < 100; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts
+           (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, consolidated_at)
+         VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4::vector, $3::timestamptz, now())`,
+        [slug, `already consolidated ${i}`, new Date(newer.getTime() + i * 1000).toISOString(), unitVec()],
+      );
+    }
+    const older = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    for (let i = 0; i < 3; i++) {
+      await engine.executeRaw(
+        `INSERT INTO facts
+           (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
+         VALUES ('default', $1, $2, 'fact', 'test', $3::timestamptz, $4::vector, $3::timestamptz)`,
+        [slug, `pending ${i}`, older, unitVec()],
+      );
+    }
+
+    const result = await runPhaseConsolidate(engine, {});
+
+    expect(result.details.facts_consolidated).toBe(3);
+    const pending = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE entity_slug = $1 AND consolidated_at IS NULL`,
+      [slug],
+    );
+    expect(Number(pending[0]?.n ?? -1)).toBe(0);
+  });
+
   test('dryRun honored: counters tick but no rows written', async () => {
     await seedPage('cons-dryrun');
     for (let i = 0; i < 3; i++) {
