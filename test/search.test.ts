@@ -7,6 +7,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   rrfFusion,
   cosineSimilarity,
+  blendCosineScore,
   applyBacklinkBoost,
   applySalienceBoost,
   applyRecencyBoost,
@@ -72,6 +73,21 @@ describe('rrfFusion', () => {
     const results = rrfFusion([list], 60);
     // Top result: normalized to 1.0, no boost (timeline = 1.0x)
     expect(results[0].score).toBe(1.0);
+  });
+
+  test('synthetic chunkless title rows do not receive compiled-truth authority boost', () => {
+    const synthetic = makeResult({
+      slug: 'title-only',
+      chunk_id: 0,
+      chunk_text: '',
+      chunk_source: 'compiled_truth',
+    });
+    const real = makeResult({ slug: 'real-page', chunk_id: 42, chunk_text: 'real content' });
+
+    const results = rrfFusion([[synthetic, real]], 60);
+
+    expect(results[0].slug).toBe('real-page');
+    expect(results.find((r) => r.slug === 'title-only')?.score).toBe(1);
   });
 
   test('returns empty for empty lists', () => {
@@ -162,6 +178,13 @@ describe('cosineSimilarity', () => {
     a[0] = 1.0;
     b[5] = 1.0;
     expect(cosineSimilarity(a, b)).toBe(0);
+  });
+});
+
+describe('blendCosineScore', () => {
+  test('puts an unembedded chunkless row on the same blended scale', () => {
+    expect(blendCosineScore(2, 2)).toBeCloseTo(0.7, 8);
+    expect(blendCosineScore(1, 2, 1)).toBeCloseTo(0.65, 8);
   });
 });
 

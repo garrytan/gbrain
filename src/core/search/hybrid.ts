@@ -95,6 +95,17 @@ export const PRE_FUSION_POOL_FLOOR = 50;
 export function shouldBoostCompiledTruth(detail: string | null | undefined): boolean {
   return detail === 'low';
 }
+
+/** Synthetic title-arm rows have no real chunk and must not gain chunk authority. */
+function compiledTruthBoost(result: SearchResult, applyBoost: boolean): number {
+  const syntheticTitleRow = result.chunk_id === 0 && result.chunk_text.trim().length === 0;
+  return applyBoost
+    && result.chunk_source === 'compiled_truth'
+    && result.unverified !== true
+    && !syntheticTitleRow
+    ? COMPILED_TRUTH_BOOST
+    : 1.0;
+}
 const pendingCacheWrites = new Set<Promise<unknown>>();
 
 /**
@@ -2714,7 +2725,7 @@ export function rrfFusionWeighted(
       e.score = e.score / maxScore;
       // issue #160: unverified auto-extracted stubs (stamped pre-fusion by
       // stampUnverifiedExtractions) never get the compiled-truth authority boost.
-      const boost = applyBoost && e.result.chunk_source === 'compiled_truth' && e.result.unverified !== true ? COMPILED_TRUTH_BOOST : 1.0;
+      const boost = compiledTruthBoost(e.result, applyBoost);
       e.score *= boost;
     }
   }
@@ -2764,7 +2775,7 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
 
       // Apply compiled truth boost after normalization (skip for detail=high;
       // skip for unverified auto-extracted stubs — issue #160)
-      const boost = applyBoost && e.result.chunk_source === 'compiled_truth' && e.result.unverified !== true ? COMPILED_TRUTH_BOOST : 1.0;
+      const boost = compiledTruthBoost(e.result, applyBoost);
       e.score *= boost;
 
       if (DEBUG) {
@@ -2817,11 +2828,9 @@ async function cosineReScore(
 
   return results.map(r => {
     const chunkEmb = r.chunk_id != null ? embeddingMap.get(r.chunk_id) : undefined;
-    if (!chunkEmb) return r;
-
-    const cosine = cosineSimilarity(queryEmbedding, chunkEmb);
+    const cosine = chunkEmb ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
+    const blended = blendCosineScore(r.score, maxRrf, cosine);
     const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
-    const blended = 0.7 * normRrf + 0.3 * cosine;
 
     if (DEBUG) {
       console.error(`[search-debug] ${r.slug}:${r.chunk_id} cosine=${cosine.toFixed(4)} norm_rrf=${normRrf.toFixed(4)} blended=${blended.toFixed(4)}`);
@@ -2831,6 +2840,12 @@ async function cosineReScore(
     // hydration map is already paid for; zero extra probes).
     return { ...r, score: blended, cosine };
   }).sort((a, b) => b.score - a.score);
+}
+
+/** Keep every candidate on the same score scale, including chunkless rows. */
+export function blendCosineScore(rrfScore: number, maxRrf: number, cosine = 0): number {
+  const normRrf = maxRrf > 0 ? rrfScore / maxRrf : 0;
+  return 0.7 * normRrf + 0.3 * cosine;
 }
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
