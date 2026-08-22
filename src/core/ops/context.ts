@@ -533,11 +533,15 @@ export function resolveRequestedScope(
  * were invisible to get_page/search/list_pages while resolve_slugs leaked them).
  *
  * The expansion NEVER applies when:
- *   - a per-call `source_id` was passed (explicit wins, including `__all__`);
+ *   - a concrete per-call `source_id` was passed (explicit wins);
  *   - the resolver already produced a federated array (OAuth grant governs);
  *   - the transport didn't populate `localFederatedSourceIds` (see that
- *     field's doc: it is only set for callers with NO explicit source scope,
- *     and never from caller-controlled params — so trust stays fail-closed).
+ *     field's doc: it is transport-computed and never derived from
+ *     caller-controlled params — so trust stays fail-closed).
+ *
+ * The read-only `__all__` sentinel is equivalent to an unqualified read when
+ * it resolves to the caller's scalar floor. It may therefore use the same
+ * transport-computed federated set, but never widens an OAuth grant.
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
  * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
@@ -549,7 +553,8 @@ export function federatedSearchScope(
 ): { sourceId?: string; sourceIds?: string[] } {
   const scope = resolveRequestedScope(ctx, sourceIdParam);
   if (
-    sourceIdParam === undefined &&
+    (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) &&
+    ctx.auth?.allowedSources === undefined &&
     scope.sourceId !== undefined &&
     scope.sourceIds === undefined &&
     ctx.localFederatedSourceIds !== undefined &&
