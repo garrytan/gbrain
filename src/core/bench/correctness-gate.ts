@@ -24,6 +24,7 @@ import {
   computeFirstRelevantHit,
   computeRecallAtK,
   DEFAULT_QRELS_THRESHOLDS,
+  makeRef,
   refKey,
   type QrelsFile,
   type QrelsEntry,
@@ -69,9 +70,9 @@ export interface CorrectnessResult {
   per_query: PerQueryResult[];
 }
 
-/** Build the canonical `${source_id}::${slug}` set for a SearchResult-like array. */
-function toRefKeySet(results: Array<{ source_id?: string; slug: string }>): string[] {
-  return results.map(r => `${r.source_id ?? 'default'}::${r.slug}`);
+/** Build the canonical, insertion-ordered page-key set for a SearchResult-like array. */
+function toRefKeySet(results: Array<{ source_id?: string; slug: string }>): Set<string> {
+  return new Set(results.map(r => makeRef(r.source_id ?? 'default', r.slug)));
 }
 
 async function runOneQuery(
@@ -83,7 +84,7 @@ async function runOneQuery(
   let retrieved: string[];
   try {
     const raw = await searchFn(engine, entry.query, { limit: k });
-    retrieved = toRefKeySet(raw);
+    retrieved = [...toRefKeySet(raw)];
   } catch (err) {
     return {
       query_id: entry.query_id,
