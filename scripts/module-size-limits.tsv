@@ -8,7 +8,7 @@ src/core/operations.ts	315	ratchet	peel target: containment sprint C4-C7; grown 
 src/core/postgres-engine.ts	6166	ratchet	grown v0.46.26.0 megawave (#4218 #3986 #4352) + master v0.46.26.0 private-queue token bootstrap probe
 src/core/pglite-engine.ts	6062	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns
 src/core/migrate.ts	687	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted — grown v0.46.26.0: repair-handler hooks (#3957 pages-upsert-arbiter)
-src/commands/sync.ts	4512	ratchet	grown v0.46.26.0 megawave: image sync, ingest-log gating, dry-run purity, checkpoint honesty (#2683 #4342 #3875) + 3 nosemgrep dataflow annotations (path-traversal audit)
+src/commands/sync.ts	4530	ratchet	grown v0.46.26.0 megawave: image sync, ingest-log gating, dry-run purity, checkpoint honesty (#2683 #4342 #3875) + 3 nosemgrep dataflow annotations (path-traversal audit); +#2683 residual: status-error failure recording at both import sites
 src/core/ai/gateway.ts	4494	ratchet	grown v0.46.26.0 megawave: config-plane probes + halt telemetry (#3387 #4312)
 src/cli.ts	3723	ratchet	grown v0.46.26.0 megawave: SIGCHLD reaper install, silent-failure surfacing, confirm-race gate (#2443 #2898 #2297)
 src/core/cycle.ts	3171	ratchet	grown v0.46.26.0 megawave (#4102 #2608) + master v0.46.26.0 cycle-start orphan recovery

@@ -1859,6 +1859,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- `to` is a git-diff rename path from the synced repo (repo content can be hostile), but the joined path is used ONLY inside the isPathSafe(filePath, gitContextRoot) realpath containment check on the next line — a path escaping the repo root (dot-dot or committed symlink) is refused before any read
       const filePath = join(syncImportRoot, to);
       let importResult: Awaited<ReturnType<typeof importFile>> | undefined;
+      // #2683 residual: a failed destination import (status 'error' OR a
+      // throw) must not checkpoint `to` — the resume filter would skip the
+      // rename forever, leaving the target permanently unimported.
+      let importErrored = false;
       if (existsSync(filePath) && isPathSafe(filePath, gitContextRoot)) {
         try {
           // #2683: dispatch renamed images to importImageFile (binary bytes
@@ -1875,8 +1879,15 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             serr(`  Skipped (malformed filename): ${sanitizePathForDisplay(to)}`);
           } else if (result.status === 'skipped' && (result as { error?: string }).error) {
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
+          } else if (result.status === 'error') {
+            // importImageFile (and importFile's frontmatter gate) report
+            // failures as status 'error', which no branch above recorded —
+            // the rename silently succeeded with a dead target.
+            importErrored = true;
+            failedFiles.push({ path: to, error: String((result as { error?: string }).error ?? 'import error') });
           }
         } catch (e: unknown) {
+          importErrored = true;
           failedFiles.push({ path: to, error: e instanceof Error ? e.message : String(e) });
         }
       }
@@ -1935,13 +1946,14 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       }
       // Converged (cheap rename, clean reconcile, or nothing to reconcile):
       // clear any `<rename:…>` sentinel a previous failing run recorded.
-      if (!reconcileFailed) succeededPaths.push(`<rename:${to}>`);
+      if (!reconcileFailed && !importErrored) succeededPaths.push(`<rename:${to}>`);
       pagesAffected.push(newSlug);
       deletedSlugs.delete(newSlug); // #1284: rename landed on a previously-deleted slug → embeddable again
-      // A failed reconcile must NOT checkpoint: banking `to` would make the
-      // resume filter skip this rename on the retry run, turning a transient
-      // delete failure into a permanent duplicate — the exact bug being fixed.
-      if (!reconcileFailed) await markCompleted(to);
+      // A failed reconcile OR a failed destination import must NOT checkpoint:
+      // banking `to` would make the resume filter skip this rename on the
+      // retry run — a permanent duplicate (reconcile) or a permanently
+      // unimported target (import error) — the exact bug class being fixed.
+      if (!reconcileFailed && !importErrored) await markCompleted(to);
       progress.tick(1, newSlug);
     }
     progress.finish();
@@ -2168,6 +2180,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           await markCompleted(path);
         } else if (result.status === 'skipped' && (result as any).error) {
           failedFiles.push({ path, error: String((result as any).error) });
+        } else if (result.status === 'error') {
+          // status 'error' (frontmatter validation, importImageFile OCR/read
+          // failures) must feed the failure ledger like a thrown error — the
+          // fall-through below would checkpoint the path as DONE and the file
+          // would never be re-attempted.
+          failedFiles.push({ path, error: String((result as any).error ?? 'import error') });
         } else {
           // status 'skipped' with no error == content_hash short-circuit
           // (already imported, unchanged). It IS done for checkpoint purposes,

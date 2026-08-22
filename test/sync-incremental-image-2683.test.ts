@@ -118,3 +118,51 @@ test('gate off: a committed png stays excluded (no image page, no failure)', asy
     expect(slugs.some(s => s.endsWith('photo.png'))).toBe(false);
   });
 }, 90_000);
+
+describe('#2683 residual — import status "error" feeds the failure gate, not the checkpoint', () => {
+  test('an image whose decode fails blocks the bookmark and is re-attempted on the next sync', async () => {
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+      const seed = await syncOnce();
+      expect(seed.status === 'first_sync' || seed.status === 'synced').toBeTruthy();
+
+      // Garbage bytes under a .heic name: decodeIfNeeded throws, and
+      // importImageFile reports it as { status: 'error' } WITHOUT throwing —
+      // the branch this regression pins. Pre-fix that result fell into the
+      // checkpoint else-branch: the run said 'synced', banked the path as
+      // done, and the image was never re-attempted.
+      writeFileSync(join(repo, 'broken.heic'), Buffer.from('not a real heic file'));
+      git('git add -A && git commit -m broken-image');
+
+      const r1 = await syncOnce();
+      expect(r1.status).toBe('blocked_by_failures');
+      expect(r1.failedFiles ?? 0).toBeGreaterThanOrEqual(1);
+      expect((await pageSlugs()).some(s => s.endsWith('broken.heic'))).toBe(false);
+
+      const r2 = await syncOnce();
+      expect(r2.status).toBe('blocked_by_failures');
+      expect(r2.failedFiles ?? 0).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  test('a rename whose destination import errors is not checkpointed as done', async () => {
+    await withEnv({ GBRAIN_EMBEDDING_MULTIMODAL: 'true' }, async () => {
+      const seed = await syncOnce();
+      expect(seed.status === 'first_sync' || seed.status === 'synced').toBeTruthy();
+
+      // git-rename the synced markdown to a .heic name: importImageFile gets
+      // markdown bytes, decodeIfNeeded throws, the destination import reports
+      // status 'error'. Pre-fix the rename arm recorded the failure but STILL
+      // ran markCompleted(to) — the resume filter then skipped the rename
+      // forever, leaving the target permanently unimported.
+      git('git mv note.md renamed.heic && git commit -m rename-to-broken-image');
+
+      const r1 = await syncOnce();
+      expect(r1.status).toBe('blocked_by_failures');
+      expect(r1.failedFiles ?? 0).toBeGreaterThanOrEqual(1);
+
+      const r2 = await syncOnce();
+      expect(r2.status).toBe('blocked_by_failures');
+      expect(r2.failedFiles ?? 0).toBeGreaterThanOrEqual(1);
+    });
+  }, 30000);
+});
