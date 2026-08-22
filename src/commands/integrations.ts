@@ -23,17 +23,11 @@ import matter from 'gray-matter';
 import { readFileSync, existsSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import { homedir } from 'os';
-import { gbrainPath, loadConfig } from '../core/config.ts';
-import { buildGatewayConfig } from '../core/ai/build-gateway-config.ts';
+import { gbrainPath } from '../core/config.ts';
+import { checkSecrets, hasConfiguredSecrets, secretEnv, secretGroupName, type RecipeSecret } from './integration-secrets.ts';
 import { execSync } from 'child_process';
 
 // --- Types ---
-
-interface RecipeSecret {
-  name: string;
-  description: string;
-  where: string;
-}
 
 /**
  * Install mode discriminator. New recipes default to 'local-managed' (the
@@ -143,23 +137,7 @@ export function isUnsafeHealthCheck(check: string): boolean {
   return /[;&|`$(){}\\<>\n]/.test(check);
 }
 
-/**
- * Env view for secret resolution (#2789): apply the same config.json→env
- * folding the runtime applies via buildGatewayConfig, so a credential stored
- * only in ~/.gbrain/config.json — which powers a perfectly healthy
- * integration — is not reported [missing] by show/status. process.env still
- * wins for non-empty values (buildGatewayConfig spreads it last, dropping
- * only ''/undefined entries). Falls back to bare process.env before
- * `gbrain init` (no config file yet). Mirrors the #2728 fix on the
- * providers command.
- */
-export function secretEnv(): Record<string, string | undefined> {
-  try {
-    const cfg = loadConfig();
-    if (cfg) return buildGatewayConfig(cfg).env;
-  } catch { /* integrations must keep working pre-init — fall through */ }
-  return process.env;
-}
+export { checkSecrets, hasConfiguredSecrets, secretEnv } from './integration-secrets.ts';
 
 /**
  * Parse a heartbeat_max_age duration string ("30s", "90m", "48h", "2d")
@@ -558,86 +536,10 @@ function readHeartbeat(id: string): HeartbeatEntry[] {
   }
 }
 
-// --- Secret Checking ---
-
-export function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing: RecipeSecret[] } {
-  const set: string[] = [];
-  const missing: RecipeSecret[] = [];
-  const env = secretEnv();
-  for (const s of secrets) {
-    if (env[s.name]) {
-      set.push(s.name);
-    } else {
-      missing.push(s);
-    }
-  }
-  return { set, missing };
-}
-
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
-/** Env var names a health check references (via `$VAR`) or names directly. */
-function checkEnvRefs(check: HealthCheck): string[] {
-  if (typeof check === 'string') return [];
-  switch (check.type) {
-    case 'env_exists':
-      return [check.name];
-    case 'http': {
-      const fields = [
-        check.url, check.body, check.auth_token, check.auth_user, check.auth_pass,
-        ...Object.values(check.headers || {}),
-      ].filter((v): v is string => typeof v === 'string');
-      const refs = new Set<string>();
-      for (const f of fields) {
-        for (const m of f.matchAll(/\$([A-Z_][A-Z0-9_]*)/g)) refs.add(m[1]);
-      }
-      return [...refs];
-    }
-    default:
-      return [];
-  }
-}
-
-/**
- * Is a single `any_of` branch satisfied by the current env? env_exists needs its
- * var present; http needs every `$VAR` it references present (a sync proxy for the
- * network check — presence of the auth material, not liveness). command branches
- * can't be evaluated from env, so they never mark a recipe "configured" on their own.
- *
- * `env` is resolved through `secretEnv()` (config.json folded over process.env), so a
- * secret stored only in ~/.gbrain/config.json counts — same source `checkSecrets` and
- * the env_exists health-check runner read, keeping getStatus consistent with them.
- */
-function branchSatisfiedByEnv(check: HealthCheck, env: Record<string, string | undefined>): boolean {
-  if (typeof check === 'string') return false;
-  if (check.type === 'any_of') return check.checks.some(c => branchSatisfiedByEnv(c, env));
-  if (check.type === 'command') return false;
-  const refs = checkEnvRefs(check);
-  return refs.length > 0 && refs.every(v => !!env[v]);
-}
-
-/**
- * A recipe is auth-configured when its secrets are set. The flat `secrets:` list
- * conflates alternative auth paths (Option A ClawVisor OR Option B Google), so an
- * all-of check reports a correctly-configured single-path user as "available". When
- * the recipe declares its alternatives in an `any_of` health check, honor that: each
- * `any_of` group needs one branch satisfied by env. Recipes with no `any_of` keep the
- * original all-secrets-required rule.
- */
-function authConfigured(recipe: ParsedRecipe): boolean {
-  const anyOfGroups = recipe.frontmatter.health_checks.filter(
-    (c): c is Extract<HealthCheck, { type: 'any_of' }> =>
-      typeof c === 'object' && c.type === 'any_of'
-  );
-  if (anyOfGroups.length > 0) {
-    const env = secretEnv();
-    return anyOfGroups.every(g => g.checks.some(c => branchSatisfiedByEnv(c, env)));
-  }
-  return checkSecrets(recipe.frontmatter.secrets).missing.length === 0;
-}
-
 export function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  if (!authConfigured(recipe)) return 'available';
+  if (!hasConfiguredSecrets(recipe.frontmatter.secrets)) return 'available';
 
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const recentEvents = heartbeat.filter(e =>
@@ -728,7 +630,11 @@ function cmdList(args: string[]): void {
       const statusStr = status === 'active' ? 'ACTIVE' : status === 'configured' ? 'CONFIGURED' : 'AVAILABLE';
       const id = r.frontmatter.id.padEnd(22);
       const desc = r.frontmatter.description.slice(0, 28).padEnd(28);
-      const deps = r.frontmatter.requires.length > 0 ? ` (needs ${r.frontmatter.requires.join(', ')})` : '';
+      const unmet = r.frontmatter.requires.filter(id => {
+        const dependency = recipes.find(candidate => candidate.frontmatter.id === id);
+        return !dependency || getStatus(dependency) === 'available';
+      });
+      const deps = unmet.length > 0 ? ` (needs ${unmet.join(', ')})` : '';
       console.log(`  ${id}${desc}  ${statusStr}${deps}`);
     }
   };
@@ -768,11 +674,14 @@ function cmdShow(args: string[]): void {
   if (f.cost_estimate) console.log(`Cost:       ${f.cost_estimate}`);
   if (f.requires.length > 0) console.log(`Requires:   ${f.requires.join(', ')}`);
 
-  console.log('\nSecrets needed:');
+  const hasAlternatives = f.secrets.some(secret => Boolean(secretGroupName(secret)));
+  console.log(hasAlternatives ? '\nSecrets (all shared and one option):' : '\nSecrets needed:');
   const env = secretEnv();
   for (const s of f.secrets) {
     const isSet = env[s.name] ? '  [set]' : '  [missing]';
-    console.log(`  ${s.name}${isSet}`);
+    const group = secretGroupName(s);
+    const requirement = group ? ` (${group} option)` : hasAlternatives ? ' (required)' : '';
+    console.log(`  ${s.name}${isSet}${requirement}`);
     console.log(`    ${s.description}`);
     console.log(`    Get it: ${s.where}`);
   }
@@ -804,7 +713,7 @@ function cmdStatus(args: string[]): void {
     console.log(JSON.stringify({
       id: recipe.frontmatter.id,
       status,
-      secrets: { set, missing: missing.map(m => ({ name: m.name, where: m.where })) },
+      secrets: { set, missing: missing.map(m => ({ name: m.name, where: m.where, group: secretGroupName(m) })) },
       heartbeat: {
         total_events: heartbeat.length,
         last_event: heartbeat.length > 0 ? heartbeat[heartbeat.length - 1] : null,
@@ -820,10 +729,12 @@ function cmdStatus(args: string[]): void {
     for (const s of set) console.log(`  ${s}  [set]`);
   }
 
-  if (missing.length > 0) {
+  const actionableMissing = status === 'available' ? missing : missing.filter(secret => !secret.group);
+  if (actionableMissing.length > 0) {
     console.log('\nMissing secrets:');
-    for (const m of missing) {
-      console.log(`  ${m.name}  [missing]`);
+    for (const m of actionableMissing) {
+      const group = secretGroupName(m);
+      console.log(`  ${m.name}  [missing]${group ? ` (${group} option)` : ''}`);
       console.log(`    Get it: ${m.where}`);
     }
   }
