@@ -1,0 +1,79 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import {
+  resolveInstalledBuildCommit,
+  resolveSourceCheckoutCommit,
+} from '../src/core/build-provenance.ts';
+
+const temporaryPaths: string[] = [];
+
+function temporaryDirectory(prefix: string): string {
+  const path = mkdtempSync(join(tmpdir(), prefix));
+  temporaryPaths.push(path);
+  return path;
+}
+
+afterEach(() => {
+  for (const path of temporaryPaths.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+describe('runtime build provenance', () => {
+  test('resolves the exact commit for a Bun GitHub install and caches it', async () => {
+    const root = temporaryDirectory('gbrain-installed-provenance-');
+    writeFileSync(join(root, '.bun-tag'), 'ljcarreira-galaico-gbrain-124880f\n');
+    const expected = '124880fa375d7dc429dff9601fec8d54e7770736';
+    let fetches = 0;
+
+    const first = await resolveInstalledBuildCommit(root, async (url) => {
+      fetches += 1;
+      expect(url).toBe('https://api.github.com/repos/ljcarreira-galaico/gbrain/commits/124880f');
+      return new Response(JSON.stringify({ sha: expected }), { status: 200 });
+    });
+    const second = await resolveInstalledBuildCommit(root, async () => {
+      throw new Error('the cached commit must avoid a second request');
+    });
+
+    expect(first).toBe(expected);
+    expect(second).toBe(expected);
+    expect(fetches).toBe(1);
+  });
+
+  test('rejects a GitHub response outside the installed short commit', async () => {
+    const root = temporaryDirectory('gbrain-installed-provenance-mismatch-');
+    writeFileSync(join(root, '.bun-tag'), 'garrytan-gbrain-124880f\n');
+    await expect(resolveInstalledBuildCommit(root, async () => (
+      new Response(JSON.stringify({ sha: 'f'.repeat(40) }), { status: 200 })
+    ))).rejects.toThrow(/does not match/i);
+  });
+
+  test('resolves only a clean source checkout', () => {
+    const root = temporaryDirectory('gbrain-source-provenance-');
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(root, 'src', 'cli.ts'), 'export {};\n');
+    const git = spawnSync('git', ['init', '-q'], { cwd: root });
+    expect(git.status).toBe(0);
+    spawnSync('git', ['config', 'user.email', 'provenance@example.invalid'], { cwd: root });
+    spawnSync('git', ['config', 'user.name', 'Provenance Test'], { cwd: root });
+    spawnSync('git', ['add', '.'], { cwd: root });
+    spawnSync('git', ['commit', '-qm', 'fixture'], { cwd: root });
+    const expected = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+
+    expect(resolveSourceCheckoutCommit(root)).toBe(expected);
+    writeFileSync(join(root, 'src', 'cli.ts'), 'export const dirty = true;\n');
+    expect(() => resolveSourceCheckoutCommit(root)).toThrow(/clean source checkout/i);
+  });
+
+  test('rejects a writable Git executable on POSIX', () => {
+    if (process.platform === 'win32') return;
+    const root = temporaryDirectory('gbrain-source-provenance-fake-git-');
+    mkdirSync(join(root, '.git'));
+    const fakeBin = temporaryDirectory('gbrain-source-provenance-bin-');
+    const fakeGit = join(fakeBin, 'git');
+    writeFileSync(fakeGit, '#!/bin/sh\nprintf "%040d\\n" 0\n');
+    chmodSync(fakeGit, 0o777);
+    expect(() => resolveSourceCheckoutCommit(root, fakeGit)).toThrow(/protected executable/i);
+  });
+});

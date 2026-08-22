@@ -4,6 +4,9 @@ import type { ChunkInput, PageInput } from './types.ts';
 import { parseMarkdown } from './markdown.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { validateSlug } from './utils.ts';
+import { serverBuildCommit } from './build-provenance.ts';
+
+export { __setServerBuildCommitForTests } from './build-provenance.ts';
 
 export const CREATE_PAGE_PROTOCOL_VERSION = 'gbrain.create_page.v1';
 const SEALED_PAGE_KIND = 'markdown';
@@ -11,8 +14,6 @@ const SEALED_SOURCE_KIND = 'mcp:create_page';
 const SEALED_INGESTED_VIA = 'mcp:create_page';
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const GIT_SHA1_RE = /^[a-f0-9]{40}$/;
-declare const __GBRAIN_BUILD_COMMIT__: string | undefined;
-let serverBuildCommitForTests: string | null = null;
 
 export interface CanonicalPageProjection {
   slug: string;
@@ -72,24 +73,6 @@ export function canonicalJson(value: unknown): string {
 
 export function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-export function __setServerBuildCommitForTests(commit: string | null): void {
-  if (commit !== null && !GIT_SHA1_RE.test(commit)) {
-    throw new TypeError('test server build commit must be an exact lowercase Git SHA-1');
-  }
-  serverBuildCommitForTests = commit;
-}
-
-function serverBuildCommit(): string {
-  const embedded = typeof __GBRAIN_BUILD_COMMIT__ === 'string'
-    ? __GBRAIN_BUILD_COMMIT__
-    : undefined;
-  const commit = embedded ?? serverBuildCommitForTests;
-  if (typeof commit !== 'string' || !GIT_SHA1_RE.test(commit)) {
-    throw new Error('server build lacks a verified compile-time Git commit');
-  }
-  return commit;
 }
 
 export function canonicalCreatePageRequestSha256(slug: string, content: string): string {
@@ -449,7 +432,7 @@ export async function createSealedPageTransactional(
       }
 
       const committedAt = new Date().toISOString();
-      const buildCommit = serverBuildCommit();
+      const buildCommit = await serverBuildCommit();
       const receiptId = receiptIdFor({
         protocol_version: CREATE_PAGE_PROTOCOL_VERSION,
         operation_id: input.operationId,

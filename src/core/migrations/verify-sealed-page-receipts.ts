@@ -107,9 +107,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
             p.proisstrict, p.prosecdef, p.proleakproof, p.proparallel::text,
             p.prokind::text, p.pronargs, p.prorettype::regtype::text AS return_type,
             COALESCE(array_to_string(p.proconfig, ','), '') AS function_config,
-            (NOT p.prosecdef OR p.proowner = (
-              SELECT relowner FROM pg_class WHERE oid = 'public.sealed_page_receipts'::regclass
-            )) AS trusted_owner,
+            (NOT p.prosecdef OR p.proowner = current_user::regrole) AS trusted_owner,
             has_function_privilege('public', p.oid, 'EXECUTE') AS public_can_execute
        FROM pg_proc p
        JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -235,9 +233,7 @@ export async function verifySealedPageReceiptsMigration(engine: BrainEngine): Pr
   }>(
     `SELECT c.relrowsecurity,
             c.relforcerowsecurity,
-            c.relowner = (
-              SELECT relowner FROM pg_class WHERE oid = 'public.pages'::regclass
-            ) AS trusted_owner,
+            c.relowner = current_user::regrole AS trusted_owner,
             (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policy_count,
             (
               has_table_privilege('public', c.oid, 'SELECT')

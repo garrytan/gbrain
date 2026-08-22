@@ -345,6 +345,24 @@ describe('create_page sealed contract', () => {
     expect(Number((rows[0] as any).n)).toBe(1);
   });
 
+  test('an identical retry after an upgrade returns the original persisted receipt', async () => {
+    const slug = syntheticSlug('cross-build-retry');
+    const markdown = content('Cross-build retry');
+    const originalBuild = 'a'.repeat(40);
+    const activeBuild = 'b'.repeat(40);
+    try {
+      __setServerBuildCommitForTests(originalBuild);
+      const first = await create(slug, markdown, 'cross-build-retry');
+      __setServerBuildCommitForTests(activeBuild);
+      const retry = await create(slug, markdown, 'cross-build-retry');
+      expect(retry.status).toBe('matched');
+      expect(retry.receipt.server_build_commit).toBe(originalBuild);
+      expect(retry.receipt.receipt_id).toBe(first.receipt.receipt_id);
+    } finally {
+      __setServerBuildCommitForTests(TEST_BUILD_COMMIT);
+    }
+  });
+
   test('concurrent operation ids on one slug produce one winner', async () => {
     const slug = syntheticSlug('concurrent');
     const markdown = content('Concurrent');

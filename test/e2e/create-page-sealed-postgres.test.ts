@@ -299,14 +299,12 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     }
   });
 
-  test('migration verifier rejects a different owner for sealed receipts and definer functions', async () => {
+  test('migration verifier rejects coherent owner drift away from the migration user', async () => {
     const engine = getEngine();
     const conn = getConn();
     await conn.unsafe('DROP POLICY create_page_app_receipts ON sealed_page_receipts');
     const ownerRows = await conn.unsafe<{ owner: string }[]>(`
-      SELECT pg_get_userbyid(relowner) AS owner
-        FROM pg_class
-       WHERE oid = 'public.pages'::regclass
+      SELECT current_user AS owner
     `);
     const trustedOwner = `"${String(ownerRows[0]?.owner).replaceAll('"', '""')}"`;
     const driftOwner = 'gbrain_drift_owner';
@@ -317,11 +315,13 @@ describePg('create_page sealed gate — real PostgreSQL', () => {
     END $$`);
 
     try {
+      await conn.unsafe(`ALTER TABLE pages OWNER TO ${driftOwner}`);
       await conn.unsafe(`ALTER TABLE sealed_page_receipts OWNER TO ${driftOwner}`);
       await conn.unsafe(`ALTER FUNCTION protect_sealed_page_fn() OWNER TO ${driftOwner}`);
       await conn.unsafe(`ALTER FUNCTION protect_sealed_chunk_fn() OWNER TO ${driftOwner}`);
       expect(await verifySealedPageReceiptsMigration(engine)).toBe(false);
     } finally {
+      await conn.unsafe(`ALTER TABLE pages OWNER TO ${trustedOwner}`);
       await conn.unsafe(`ALTER TABLE sealed_page_receipts OWNER TO ${trustedOwner}`);
       await conn.unsafe(`ALTER FUNCTION protect_sealed_page_fn() OWNER TO ${trustedOwner}`);
       await conn.unsafe(`ALTER FUNCTION protect_sealed_chunk_fn() OWNER TO ${trustedOwner}`);

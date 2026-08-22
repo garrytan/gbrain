@@ -3,8 +3,11 @@ import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { which } from "bun";
 
-const GIT = "/usr/bin/git";
+const gitExecutable = which("git");
+if (!gitExecutable) throw new Error("Git is required for build provenance tests");
+const GIT: string = gitExecutable;
 const BUN = process.execPath;
 const buildScript = join(import.meta.dir, "..", "scripts", "build-cli.ts");
 const temporaryPaths: string[] = [];
@@ -20,10 +23,10 @@ function git(cwd: string, args: string[]): string {
     cwd,
     encoding: "utf8",
     env: {
-      PATH: "/usr/bin:/bin",
+      PATH: process.platform === "win32" ? (process.env.PATH ?? "") : "/usr/bin:/bin",
       HOME: temporaryDirectory("gbrain-build-home-"),
       GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
     },
   });
   if (result.status !== 0) throw new Error(result.stderr || result.stdout);
@@ -82,6 +85,7 @@ afterEach(() => {
 
 describe("procedencia del build CLI", () => {
   test("ignora un git falso al principio de PATH", () => {
+    if (process.platform === "win32") return;
     const repo = createRepository();
     const fakeBin = temporaryDirectory("gbrain-fake-git-");
     const marker = join(fakeBin, "invoked");
