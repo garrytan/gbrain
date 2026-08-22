@@ -294,6 +294,76 @@ CREATE INDEX IF NOT EXISTS pages_links_extracted_at_idx
 CREATE INDEX IF NOT EXISTS pages_coalesce_date_idx
   ON pages ((COALESCE(effective_date, updated_at)));
 
+-- Idempotent create-only receipts. Existing pages are intentionally not sealed.
+CREATE TABLE IF NOT EXISTS sealed_page_receipts (
+  protocol_version       TEXT NOT NULL CHECK (protocol_version = 'gbrain.create_page.v1'),
+  operation_id           TEXT PRIMARY KEY CHECK (operation_id ~ '^[a-f0-9]{64}\$'),
+  source_id              TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+  slug                   TEXT NOT NULL,
+  request_sha256         TEXT NOT NULL CHECK (request_sha256 ~ '^[a-f0-9]{64}\$'),
+  page_id                INTEGER NOT NULL UNIQUE REFERENCES pages(id) ON DELETE RESTRICT,
+  page_revision          BIGINT NOT NULL CHECK (page_revision > 0),
+  canonical_page_sha256  TEXT NOT NULL CHECK (canonical_page_sha256 ~ '^[a-f0-9]{64}\$'),
+  canonical_projection   JSONB NOT NULL,
+  committed_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  server_build_commit    TEXT NOT NULL CHECK (server_build_commit ~ '^[a-f0-9]{40}\$'),
+  receipt_id             TEXT NOT NULL UNIQUE CHECK (receipt_id ~ '^[a-f0-9]{64}\$'),
+  CONSTRAINT sealed_page_receipts_source_slug_key UNIQUE (source_id, slug),
+  CONSTRAINT sealed_page_projection_exact CHECK (
+    canonical_projection = jsonb_build_object(
+      'slug', canonical_projection->'slug',
+      'type', canonical_projection->'type',
+      'title', canonical_projection->'title',
+      'compiled_truth', canonical_projection->'compiled_truth',
+      'frontmatter', canonical_projection->'frontmatter'
+    )
+    AND canonical_projection->>'slug' = slug
+    AND jsonb_typeof(canonical_projection->'slug') = 'string'
+    AND jsonb_typeof(canonical_projection->'type') = 'string'
+    AND jsonb_typeof(canonical_projection->'title') = 'string'
+    AND jsonb_typeof(canonical_projection->'compiled_truth') = 'string'
+    AND jsonb_typeof(canonical_projection->'frontmatter') = 'object'
+  )
+);
+ALTER TABLE sealed_page_receipts ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION protect_sealed_page_fn() RETURNS trigger SECURITY DEFINER SET search_path = pg_catalog, public AS \$fn\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = OLD.id) THEN
+    RAISE EXCEPTION 'sealed page is immutable: %/%', OLD.source_id, OLD.slug USING ERRCODE = '55000';
+  END IF;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+\$fn\$ LANGUAGE plpgsql;
+DO \$owner\$
+DECLARE relation_owner NAME;
+BEGIN
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_page_fn() OWNER TO %I', relation_owner);
+END;
+\$owner\$;
+REVOKE ALL ON FUNCTION protect_sealed_page_fn() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS protect_sealed_page_trg ON pages;
+CREATE TRIGGER protect_sealed_page_trg
+  BEFORE UPDATE OR DELETE ON pages
+  FOR EACH ROW EXECUTE FUNCTION protect_sealed_page_fn();
+
+CREATE OR REPLACE FUNCTION protect_sealed_receipt_fn() RETURNS trigger SET search_path = pg_catalog, public AS \$fn\$
+BEGIN
+  RAISE EXCEPTION 'sealed page receipt is immutable' USING ERRCODE = '55000';
+END;
+\$fn\$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS protect_sealed_receipt_trg ON sealed_page_receipts;
+CREATE TRIGGER protect_sealed_receipt_trg
+  BEFORE UPDATE OR DELETE ON sealed_page_receipts
+  FOR EACH ROW EXECUTE FUNCTION protect_sealed_receipt_fn();
+
 -- ============================================================
 -- content_chunks: chunked content with embeddings
 -- ============================================================
@@ -378,6 +448,36 @@ CREATE TRIGGER chunk_search_vector_trigger
   BEFORE INSERT OR UPDATE OF chunk_text, doc_comment, symbol_name_qualified
   ON content_chunks
   FOR EACH ROW EXECUTE FUNCTION update_chunk_search_vector();
+
+CREATE OR REPLACE FUNCTION protect_sealed_chunk_fn() RETURNS trigger SECURITY DEFINER SET search_path = pg_catalog, public AS \$fn\$
+DECLARE protected_page_id INTEGER;
+BEGIN
+  protected_page_id := CASE WHEN TG_OP = 'INSERT' THEN NEW.page_id ELSE OLD.page_id END;
+  IF EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = protected_page_id)
+    OR (TG_OP = 'UPDATE' AND NEW.page_id <> OLD.page_id
+        AND EXISTS (SELECT 1 FROM public.sealed_page_receipts WHERE page_id = NEW.page_id)) THEN
+    RAISE EXCEPTION 'sealed page chunk is immutable: page_id=%', protected_page_id USING ERRCODE = '55000';
+  END IF;
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+\$fn\$ LANGUAGE plpgsql;
+DO \$owner\$
+DECLARE relation_owner NAME;
+BEGIN
+  SELECT r.rolname INTO relation_owner
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_roles r ON r.oid = c.relowner
+   WHERE n.nspname = 'public' AND c.relname = 'sealed_page_receipts';
+  EXECUTE format('ALTER FUNCTION public.protect_sealed_chunk_fn() OWNER TO %I', relation_owner);
+END;
+\$owner\$;
+REVOKE ALL ON FUNCTION protect_sealed_chunk_fn() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS protect_sealed_chunk_trg ON content_chunks;
+CREATE TRIGGER protect_sealed_chunk_trg
+  BEFORE INSERT OR UPDATE OR DELETE ON content_chunks
+  FOR EACH ROW EXECUTE FUNCTION protect_sealed_chunk_fn();
 
 -- ============================================================
 -- code_edges_chunk + code_edges_symbol: v0.20.0 Cathedral II structural edges

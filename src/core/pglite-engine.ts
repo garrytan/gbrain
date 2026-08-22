@@ -36,6 +36,7 @@ import type {
   SourceRow,
 } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import { createSealedPageTransactional, type PreparedSealedPage } from './sealed-page.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
 // exception because its local try/catch preserves a soft fallback.
@@ -1776,6 +1777,10 @@ export class PGLiteEngine implements BrainEngine {
       throw new Error(`putPage: RETURNING produced no row for ${sourceId}/${slug}`);
     }
     return rowToPage(rows[0] as Record<string, unknown>);
+  }
+
+  async createSealedPage(input: PreparedSealedPage) {
+    return createSealedPageTransactional(this, input);
   }
 
   async deletePage(slug: string, opts?: { sourceId?: string }): Promise<void> {

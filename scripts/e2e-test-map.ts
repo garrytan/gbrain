@@ -94,6 +94,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/postgres-engine.ts": [
+    "test/e2e/create-page-sealed-postgres.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
@@ -124,9 +125,14 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/schema-drift.test.ts",
   ],
   // Schema source of truth: any change must pass the cross-engine drift gate.
-  "src/schema.sql": ["test/e2e/schema-drift.test.ts"],
+  "src/schema.sql": ["test/e2e/create-page-sealed-postgres.test.ts", "test/e2e/schema-drift.test.ts"],
   "src/core/pglite-schema.ts": ["test/e2e/schema-drift.test.ts"],
-  "src/core/migrate.ts": ["test/e2e/schema-drift.test.ts", "test/e2e/migrate-chain.test.ts"],
+  "src/core/migrate.ts": [
+    "test/e2e/create-page-sealed-postgres.test.ts",
+    "test/e2e/schema-drift.test.ts",
+    "test/e2e/migrate-chain.test.ts",
+  ],
+  "src/core/sealed-page.ts": ["test/e2e/create-page-sealed-postgres.test.ts"],
   // MCP stdio + HTTP transports share dispatch.
   "src/mcp/**": ["test/e2e/mcp.test.ts", "test/e2e/http-transport.test.ts"],
   // Integrity batch-load fast path.

@@ -28,8 +28,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
-import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import { operations, OperationError, opAllowedForBoundClient, type OperationContext, type AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
 import {
   GBrainOAuthProvider,
@@ -2412,6 +2411,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
       }
 
+      if (authInfo.boundTools !== undefined && !authInfo.boundTools.includes(name)) return { content: [{ type: 'text', text: JSON.stringify({ error: 'permission_denied', message: `Operation ${name} is excluded by this client's bound_tools allow-list` }) }], isError: true };
       // Scope enforcement (v0.28: hasScope replaces exact-string-match so
       // admin tokens satisfy any scope, write satisfies read, and the new
       // sources_admin / users_admin scopes resolve through the same

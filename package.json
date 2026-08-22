@@ -32,8 +32,8 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --outfile bin/gbrain src/cli.ts",
-    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
+    "build": "bun run scripts/build-cli.ts bin/gbrain",
+    "build:all": "bun run scripts/build-cli.ts bin/gbrain-darwin-arm64 bun-darwin-arm64 && bun run scripts/build-cli.ts bin/gbrain-linux-x64 bun-linux-x64",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bash scripts/build-schema.sh",
@@ -42,6 +42,7 @@
     "build:flag-registry": "bun run scripts/generate-flag-registry.ts",
     "build:pglite-snapshot": "bun run scripts/build-pglite-snapshot.ts",
     "test": "bash scripts/run-unit-parallel.sh",
+    "test:build-provenance": "bun test test/build-cli-provenance.test.ts",
     "eval:autocut": "bun test test/search/autocut-eval.test.ts",
     "test:full": "bun run verify && bash scripts/run-unit-parallel.sh && bun run test:slow && ([ -n \"$DATABASE_URL\" ] && bash scripts/run-e2e.sh || echo '[test:full] skipped E2E (no DATABASE_URL); run docker-compose -f docker-compose.ci.yml up + bun run test:e2e to include' 1>&2)",
     "verify": "bash scripts/run-verify-parallel.sh",
