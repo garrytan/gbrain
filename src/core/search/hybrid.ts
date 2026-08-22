@@ -2785,8 +2785,11 @@ export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true)
 /**
  * Cosine re-scoring: blend RRF score with query-chunk cosine similarity.
  * Runs before dedup so semantically better chunks survive.
+ *
+ * Exported (only) for direct unit testing of the chunkless-row blend fix
+ * (#3695) — not part of the public search API surface.
  */
-async function cosineReScore(
+export async function cosineReScore(
   engine: BrainEngine,
   results: SearchResult[],
   queryEmbedding: Float32Array,
@@ -2816,10 +2819,18 @@ async function cosineReScore(
   const maxRrf = Math.max(...results.map(r => r.score));
 
   return results.map(r => {
+    // v0.46.28.0 (#3695): a row with no hydratable chunk embedding (the
+    // synthetic chunkless row for an embed_skip'd oversized page, or a
+    // chunk_id whose embedding didn't hydrate) used to return `r` untouched
+    // — keeping its RAW post-RRF score on a [0, ~2.0] scale while every
+    // other row got compressed onto the [0, 1.0] blended scale below. That
+    // gave chunkless rows a structural 2x head start (#3695's reported
+    // symptom: an empty-snippet embed_skip page outranking on-point
+    // results). Route it through the SAME blend with cosine=0 instead of
+    // excluding it — excluding would make embed_skip pages unsearchable,
+    // a different (undesired) behavior change.
     const chunkEmb = r.chunk_id != null ? embeddingMap.get(r.chunk_id) : undefined;
-    if (!chunkEmb) return r;
-
-    const cosine = cosineSimilarity(queryEmbedding, chunkEmb);
+    const cosine = chunkEmb ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
     const normRrf = maxRrf > 0 ? r.score / maxRrf : 0;
     const blended = 0.7 * normRrf + 0.3 * cosine;
 
