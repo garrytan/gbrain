@@ -16,7 +16,7 @@ src/commands/serve-http.ts	3294	ratchet	grown v0.46.25.0 D2: /mcp per-request te
 src/commands/jobs.ts	3093	ratchet	grown v0.46.25.0 (--json #3685) + v0.46.26.0: maybeRunWorkerStartupRecovery extraction + stats gating + help text
 src/core/search/hybrid.ts	2703	ratchet	grown v0.46.25.0 fix waves: cache scope isolation + pool floor + offset bypass (#3871 #3002)
 src/core/engine.ts	2415	ratchet	grown v0.46.25.0 fix waves: timeline dedup contract + registry write contract (#3827 #1262)
-src/commands/autopilot.ts	2356	ratchet	grown v0.46.25.0 (#1525 #4300) + v0.46.26.0: GBRAIN_SUPERVISED strip
+src/commands/autopilot.ts	2487	ratchet	grown: daemon env-file lane + boot warning + reload-safe install (#2608 #4443)
 src/commands/extract.ts	2066	ratchet	lowered: timeline extractor hoisted to core/timeline-extract.ts (module-cycle fix)
 src/commands/extract-conversation-facts.ts	2045	ratchet	grown v0.46.x per-provider gateway-unavailable copy
 src/core/import-file.ts	2016	ratchet	grown v0.46.24.0 overnight wave: embedding_plane_split named error (#4287)

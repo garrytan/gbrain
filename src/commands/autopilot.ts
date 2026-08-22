@@ -521,6 +521,35 @@ export function resolveAutopilotPositionals(args: string[]): string[] {
   return out;
 }
 
+/**
+ * #2608 — pure function (test seam, same pattern as generateLaunchdPlist):
+ * the boot-time warning emitted when no chat provider is available, so the
+ * silent no-op of every LLM phase (chronicle, dream, enrich) is visible in
+ * the daemon log instead of manifesting as "autopilot runs green but
+ * nothing gets extracted".
+ *
+ * gbrainDir is a param (not resolved here) to keep the function pure AND so
+ * both remediation paths honor GBRAIN_HOME — a literal `~/.gbrain` lies on
+ * custom-home installs. `gbrain config set` is deliberately NOT named: the
+ * canonical key guidance (INSTALL_FOR_AGENTS.md Step 2) tells users not to
+ * use it for API keys. The reload instruction is load-bearing: the wrapper
+ * sources the env file only at exec and the gateway folds env once
+ * pre-dispatch, so a key written after boot changes nothing until
+ * `--install` regenerates the wrapper and reloads the daemon.
+ */
+export function chatBootWarning(chatAvailable: boolean, gbrainDir: string): string | null {
+  if (chatAvailable) return null;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- warning-message hint construction, no fs operation; gbrainDir is configDir()-validated (absolute, no ..), same pattern as import.ts:43
+  const envFile = join(gbrainDir, 'env');
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: log-string construction only
+  const configJson = join(gbrainDir, 'config.json');
+  return (
+    '[autopilot] WARNING: no chat provider available — LLM phases (chronicle, dream, enrich) will no-op. ' +
+    `Put an API key (ANTHROPIC_API_KEY or OPENAI_API_KEY) in ${envFile} (sourced by the daemon wrapper) ` +
+    `or in ${configJson} (file plane), then re-run \`gbrain autopilot --install\` to reload the daemon.`
+  );
+}
+
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
   args = resolveAutopilotPositionals(args);
   if (args.includes('--help') || args.includes('-h')) {
@@ -584,6 +613,24 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
   } catch { /* best-effort */ }
 
   console.log(`Autopilot starting. Repo: ${repoPath}, interval: ${baseInterval}s`);
+
+  // #2608: LLM phases (chronicle extract, dream synthesis, enrich) gate on
+  // isAvailable('chat') and silently no-op when no chat provider resolves —
+  // the classic symptom of a daemon shell that never sourced the API keys
+  // (see writeWrapperScript below). One loud boot-time line makes that
+  // failure mode visible in the daemon log instead of manifesting as
+  // "autopilot runs green but nothing gets extracted".
+  // console.log, NOT console.error: launchd/systemd route stderr to
+  // autopilot.err, which install output and showStatus never reference —
+  // stdout is the autopilot.log sink on all four install targets.
+  // Bare isAvailable('chat') probes the GLOBAL chat model on purpose — it
+  // mirrors the phases named above; facts extraction gates model-aware
+  // (core/facts/extract.ts) and doctor owns that diagnosis.
+  try {
+    const { isAvailable } = await import('../core/ai/gateway.ts');
+    const warn = chatBootWarning(isAvailable('chat'), gbrainHomePath());
+    if (warn) console.log(warn);
+  } catch { /* diagnostic only — never blocks the loop */ }
 
   // Mode resolution: Minions dispatch when the user has opted in AND the
   // worker daemon can actually run (Postgres only; PGLite's exclusive file
@@ -1644,7 +1691,35 @@ rm -f '${q(strikes)}' 2>/dev/null || true
 `;
 }
 
-function writeWrapperScript(repoPath: string, target: InstallTarget): string {
+/**
+ * #2608: contents of the install-time `<gbrainDir>/env` template. All lines
+ * commented — the install must never ship a live secret. GBRAIN_HOME is
+ * deliberately absent: the wrapper bakes it at install time AFTER sourcing
+ * this file, so setting it here would be clobbered (or diverge the daemon's
+ * home from the file's own location).
+ */
+const GBRAIN_ENV_TEMPLATE = `# gbrain daemon environment — sourced by autopilot-run.sh before the daemon
+# starts (set -a: plain KEY=value lines are exported too). Created once by
+# \`gbrain autopilot --install\`; gbrain never overwrites or deletes it.
+# Interactive shell rc files do NOT reach daemon shells — put anything the
+# daemon needs here, then re-run \`gbrain autopilot --install\` to reload.
+#
+# API keys (~/.gbrain/config.json file plane works too):
+# export ANTHROPIC_API_KEY=sk-ant-...
+# export OPENAI_API_KEY=sk-...
+# export VOYAGE_API_KEY=pa-...
+#
+# Process-level env that must exist before the daemon boots:
+# export NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem
+# export HTTPS_PROXY=http://proxy:3128
+# export GBRAIN_DATABASE_URL=postgres://...
+#
+# Do NOT set GBRAIN_HOME here — --install bakes it into the wrapper after
+# this file is sourced, so a value here is clobbered or diverges the
+# daemon's home from this file's own location.
+`;
+
+export function writeWrapperScript(repoPath: string, target: InstallTarget): string {
   // gbrainHomePath, not raw $HOME: the daemon writes its lock/markers through
   // it and the status command reads through it, so a GBRAIN_HOME install must
   // keep its wrapper (and the start-script detection that looks for it) in
@@ -1660,6 +1735,25 @@ function writeWrapperScript(repoPath: string, target: InstallTarget): string {
   const gbrainPath = resolveGbrainCliPath();
   const safeRepoPath = repoPath.replace(/'/g, "'\\''");
   const safeGbrainPath = gbrainPath.replace(/'/g, "'\\''");
+  // #2608: same gbrain home the daemon itself uses (honors GBRAIN_HOME),
+  // baked as an absolute path so the sourcing below never depends on a
+  // literal ~/.gbrain guess drifting from a custom install.
+  const gbrainEnvFile = join(gbrainDir, 'env');
+  const safeGbrainEnvFile = gbrainEnvFile.replace(/'/g, "'\\''");
+  // #2608: install-time template so the boot warning points at a file that
+  // exists, secret-safe (0600) from birth. Never overwrite — it may hold
+  // user secrets — and never chmod a pre-existing file (warn instead). A
+  // failed template write must not abort an otherwise-working install
+  // (untested by design: dir-permission tricks don't bite under root CI).
+  try {
+    if (!existsSync(gbrainEnvFile)) {
+      writeFileSync(gbrainEnvFile, GBRAIN_ENV_TEMPLATE, { mode: 0o600 });
+    } else if ((statSync(gbrainEnvFile).mode & 0o077) !== 0) {
+      console.error(`[autopilot] warning: ${gbrainEnvFile} is group/world-readable and may hold API keys — consider: chmod 600 '${safeGbrainEnvFile}'`);
+    }
+  } catch (e) {
+    console.error(`[autopilot] warning: could not create env template at ${gbrainEnvFile}: ${e instanceof Error ? e.message : String(e)}`);
+  }
   // Bake the dir of the bun runtime actually executing this install onto PATH,
   // so the wrapper finds bun wherever it lives — Homebrew (/opt/homebrew/bin),
   // npm -g, Docker (/usr/local/bin), a custom BUN_INSTALL, or nix — not just
@@ -1680,6 +1774,18 @@ function writeWrapperScript(repoPath: string, target: InstallTarget): string {
 # OPENAI/ANTHROPIC keys exported in zshenv reach autopilot.
 [ -f ~/.zshenv ] && source ~/.zshenv 2>/dev/null
 source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
+# gbrain-owned env file (#2608), additive to the profiles above: daemon
+# shells are non-interactive, so exports that live only in an interactive
+# rc file never reach them — and the ~/.bashrc guard below means even
+# ~/.bashrc-only exports can be lost on a common Linux config. This is the
+# deterministic place for API keys AND process-level env the daemon needs
+# before boot (NODE_EXTRA_CA_CERTS, proxy vars, GBRAIN_DATABASE_URL) —
+# things an in-process config read could never deliver. Created 0600 by
+# --install. Sourced AFTER the profiles so it wins on conflicts; a missing
+# file is a normal no-op, not an error. set -a exports dotenv-style
+# KEY=value lines too — without it a plain assignment never reaches the
+# exec'd daemon.
+[ -f '${safeGbrainEnvFile}' ] && { set -a; source '${safeGbrainEnvFile}' 2>/dev/null; set +a; }
 # Belt-and-suspenders PATH fix. ~/.bashrc ships with a non-interactive guard
 # (\`case $- in *i*) ;; *) return;; esac\`) that exits early when launched from
 # cron/systemd/launchd — so its PATH exports never reach this subprocess.
@@ -1781,6 +1887,12 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string) {
     // plist written under an umask-0 parent stays 0666 forever) — so
     // normalize unconditionally.
     chmodSync(plistPath(), 0o644);
+    // Unload-before-load (same pattern as uninstall): bare `launchctl load`
+    // on an already-loaded agent errors and aborted every reinstall — and a
+    // running daemon must be relaunched anyway to pick up a regenerated
+    // wrapper / env file (#2608: the boot warning tells users to re-run
+    // --install to reload; this line is what makes that true on macOS).
+    execSync(`launchctl unload "${plistPath()}" 2>/dev/null || true`, { stdio: 'pipe' });
     execSync(`launchctl load "${plistPath()}"`, { stdio: 'pipe' });
     console.log(`Installed launchd service: ${autopilotLaunchdLabel()}`);
     console.log(`  Repo: ${repoPath}`);
@@ -1897,6 +2009,13 @@ function installSystemd(wrapperPath: string, repoPath: string) {
     chmodSync(unitPath, 0o644);
     execSync('systemctl --user daemon-reload', { stdio: 'pipe', timeout: 10_000 });
     execSync(`systemctl --user enable --now ${AUTOPILOT_SYSTEMD_UNIT}`, { stdio: 'pipe', timeout: 15_000 });
+    // enable --now does NOT restart an already-active unit, so a reinstall
+    // over a running daemon would keep the old process (and its stale env)
+    // alive indefinitely (#2608: the boot warning tells users to re-run
+    // --install to reload; this line is what makes that true on systemd).
+    // try-restart only bounces a running unit — a fresh install just started
+    // above is restarted at worst, never left stopped.
+    execSync(`systemctl --user try-restart ${AUTOPILOT_SYSTEMD_UNIT}`, { stdio: 'pipe', timeout: 15_000 });
     console.log(`Installed systemd user service: ${AUTOPILOT_SYSTEMD_UNIT}`);
     console.log(`  Repo: ${repoPath}`);
     console.log('  Log: ~/.gbrain/autopilot.log');
@@ -1930,6 +2049,11 @@ echo \$! > ~/.gbrain/autopilot.pid
   console.log('Ephemeral container detected (Render / Railway / Fly / Docker).');
   console.log(`Repo: ${repoPath}`);
   console.log(`Start script: ${scriptPath}`);
+  // Rewriting the start script cannot reload an autopilot already launched
+  // from it — that process keeps its old environment until the container
+  // restarts. Never auto-kill; say how (#2608, same honesty as the cron path).
+  console.log('  An already-running autopilot keeps its old environment until the container');
+  console.log('  restarts (or: kill $(cat ~/.gbrain/autopilot.pid), then re-run the start script).');
   console.log('');
   console.log('Crontab is unreliable here (wiped on deploy). Add ONE LINE to your');
   console.log('agent bootstrap to launch autopilot on every start:');
@@ -1986,6 +2110,13 @@ function installCrontab(wrapperPath: string, home: string) {
     const existing = execSync('crontab -l 2>/dev/null || true', { encoding: 'utf-8' });
     if (existing.includes('gbrain autopilot') || existing.includes('autopilot-run.sh')) {
       console.log('Crontab entry already exists. Remove with: gbrain autopilot --uninstall');
+      // The wrapper (and env template) were regenerated above, but cron
+      // cannot reload a loop that is already running — it keeps its old
+      // environment until it exits. Never auto-kill a user process; tell
+      // them exactly how (#2608: makes the boot warning's re-run---install
+      // remediation honest on the cron target).
+      console.log(`  A running autopilot loop keeps its old environment until it exits — end it with: kill $(cat '${autopilotLockPath().replace(/'/g, "'\\''")}')`);
+      console.log('  The next cron tick relaunches it with the refreshed wrapper and env file.');
       return;
     }
     // Use a temp file instead of echo pipe to avoid shell escaping issues (#1)

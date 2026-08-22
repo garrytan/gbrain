@@ -78,7 +78,12 @@ export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models;
 
 Save to shell profile or `.env`, or store in `~/.gbrain/config.json` (file plane). Do
 NOT use `gbrain config set` for API keys — it writes the DB plane, which the provider
-pipeline never reads. Without any embedding provider, keyword search still works.
+pipeline never reads. For the autopilot daemon, put keys AND process-level env
+(`NODE_EXTRA_CA_CERTS`, proxy vars, custom base URLs) in `~/.gbrain/env` — a 0600
+file created by `gbrain autopilot --install` and sourced by the daemon wrapper;
+interactive shell rc files never reach daemon shells, and the path honors
+`GBRAIN_HOME`. Re-run `gbrain autopilot --install` after editing it so the daemon
+reloads. Without any embedding provider, keyword search still works.
 Chat-shaped features (automatic fact extraction, enrichment, synthesis, query
 expansion) route to whichever supported chat key is present (Anthropic or OpenAI) —
 Anthropic when both are set, OpenAI when it is the only one; other chat providers
