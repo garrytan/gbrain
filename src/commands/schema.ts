@@ -728,7 +728,37 @@ async function runLintCmd(args: string[]): Promise<void> {
   let pack: SchemaPackManifest | null;
   if (name) {
     const p = packPathByName(name);
-    try { pack = p ? loadPackFromFile(p) : null; } catch { pack = null; }
+    try {
+      const child = p ? loadPackFromFile(p) : null;
+      // #lint-extends: lint the RESOLVED manifest, not the raw child. Every lint
+      // rule tests against `manifest.page_types`, so linting an unresolved
+      // extending pack reports each INHERITED type as undeclared -- e.g. a pack
+      // that extends gbrain-base-v2 and maps `frontmatter_links` onto `note` or
+      // `project` fails with frontmatter_links_undeclared_page_type for types the
+      // resolved pack plainly declares. The no-name branch below never had this
+      // bug because loadActivePack walks the extends chain. Falls back to the
+      // child manifest when the chain cannot be resolved (missing parent), so
+      // lint still reports something actionable instead of silently passing.
+      if (child) {
+        try {
+          const { resolvePack } = await import('../core/schema-pack/registry.ts');
+          const resolved = await resolvePack(
+            child,
+            async (parentName: string) => {
+              const pp = packPathByName(parentName);
+              if (!pp) throw new Error(`parent pack not found: ${parentName}`);
+              return loadPackFromFile(pp);
+            },
+            { loadByPath: (n: string) => packPathByName(n) },
+          );
+          pack = resolved.manifest;
+        } catch {
+          pack = child;
+        }
+      } else {
+        pack = null;
+      }
+    } catch { pack = null; }
   } else {
     pack = (await loadActivePack({ cfg, remote: false })).manifest;
   }
