@@ -68,9 +68,12 @@ export const QUERY_DESCRIPTION =
   "Hybrid search with vector + keyword + multi-query expansion. " +
   "Prefer `query` for concept / synonym / landscape questions ('all the X that " +
   "do Y', 'the landscape of Z') — expansion recovers synonym- and " +
-  "outcome-phrased matches a single embedding misses. Still top-K: for " +
-  "exhaustive enumeration use list_pages; for exact known tokens `search` is " +
-  "cheaper (no expansion LLM call). " +
+  "outcome-phrased matches a single embedding misses. Still top-K, and the " +
+  "default count when `limit` is omitted depends on the configured search " +
+  "mode (10 conservative / 25 balanced / 50 tokenmax — see the `limit` param " +
+  "description); pass `limit` explicitly for a stable count regardless of " +
+  "mode. For exhaustive enumeration use list_pages; for exact known tokens " +
+  "`search` is cheaper (no expansion LLM call). " +
   "For personal/emotional questions ('what's going on with me', 'anything notable', " +
   "'how am I feeling'), prefer get_recent_salience, find_anomalies, or " +
   "get_recent_transcripts. Semantic search returns polished pages and misses " +

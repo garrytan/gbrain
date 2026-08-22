@@ -233,7 +233,22 @@ const query: Operation = {
      *  CLI loads the file, base64-encodes, and passes through `image`). */
     image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
     image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
-    limit: { type: 'number', description: 'Max results (default 20)' },
+    // #4356 — the text/hybrid path no longer hard-defaults this to 20; an
+    // omitted OR falsy (0) `limit` resolves from the active search mode's
+    // searchLimit (10/25/50 for conservative/balanced/tokenmax by default,
+    // overridable via the `search.searchLimit` config key — see mode.ts
+    // `pick()`). 0 is treated as "unset" rather than "return zero rows",
+    // matching the existing convention on every other limit surface with
+    // this same shape (`search`'s own limit below, and the image-
+    // similarity branch below it) — none of which support a literal
+    // empty-result request today; introducing that only here would be a
+    // new, undocumented asymmetry rather than a limit-consistency fix.
+    // (`search_by_image`, a separate op in src/core/ops/image.ts, has the
+    // same convention but isn't "in this file".) The image-similarity path
+    // (`image` param) is unaffected by this change and still hard-defaults
+    // to 20 regardless of mode — out of scope here, tracked separately
+    // (#4356 Problem 2).
+    limit: { type: 'number', description: 'Max results. For text queries, omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override). For image-similarity queries (`image` param), always defaults to 20 regardless of mode.' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
@@ -399,7 +414,15 @@ const query: Operation = {
     // Plain hybridSearch remains the bare API for callers that opt out.
     // (#1663: `let` — the CRAG gate below may swap in an escalated run.)
     let results = await hybridSearchCached(ctx.engine, queryText, {
-      limit: (p.limit as number) || 20,
+      // #4356 — was a hard `|| 20`, independent of the mode-resolution
+      // hybridSearchCached applies when `limit` is falsy (undefined OR 0):
+      // `opts?.limit || resolvedMode.searchLimit` (hybrid.ts). Passing
+      // `undefined` through instead of hard-defaulting to 20 lets that
+      // resolution apply (10/25/50 for conservative/balanced/tokenmax).
+      // `(p.limit as number) || undefined` keeps 0 in that same "unset"
+      // bucket rather than requesting a literal empty result — see the
+      // `limit` param description above for why.
+      limit: (p.limit as number) || undefined,
       offset: (p.offset as number) || 0,
       excludePrivate,
       expansion: expand,

@@ -2435,7 +2435,28 @@ export async function hybridSearchCached(
       // displace legitimate ones off the offset/limit window either.
       const scopedResults = filterResultsByCallerScope(hit.results, opts);
 
-      const limit = opts?.limit || 20;
+      // #4356 — was a hard `|| 20`, independent of the mode-resolution the
+      // miss path uses (`opts?.limit || resolvedMode.searchLimit` above, in
+      // bare hybridSearch): a balanced-mode miss could cache 25 results,
+      // then the next identical-shape hit sliced that row down to 20.
+      // `resolvedForCache` (resolved once, above, at the top of this
+      // function) already folds `opts?.limit` through the same per-call
+      // resolver bare hybridSearch's own `resolvedMode` uses (including 0 —
+      // see mode.ts `resolveSearchMode`'s `pick()`), so mirroring it here
+      // keeps hit/miss consistent for the common case without a second
+      // config round-trip. Caveat: this is a SEPARATE `resolveSearchMode`
+      // call from the one bare hybridSearch performs internally on a miss
+      // (hybrid.ts's inner `resolvedMode`, computed when `hybridSearch` is
+      // invoked below) — not literally the same object — so a `search.mode`
+      // / `search.searchLimit` config change landing between these two
+      // resolutions within one request could theoretically desync the
+      // stored row's actual size from what its own `knobsHash` (built from
+      // `resolvedForCache`) implies. Narrow and pre-existing (the double
+      // resolution itself predates this PR); tracked as #4359, not fixed
+      // here — closing it would mean threading one resolved snapshot into
+      // the inner `hybridSearch` call, a larger change than this PR's
+      // `|| 20` → `|| resolvedMode.searchLimit` substitution.
+      const limit = opts?.limit || resolvedForCache.searchLimit;
       const offset = opts?.offset || 0;
       const sliced = scopedResults.slice(offset, offset + limit);
 
