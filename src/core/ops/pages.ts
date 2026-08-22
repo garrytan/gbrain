@@ -228,6 +228,15 @@ const get_page: Operation = {
             stripTakesFence(page.compiled_truth),
             { keepVisibility: ['world'] },
           ),
+          // #3625: a `## Facts` fence placed below the timeline sentinel
+          // lands in page.timeline (splitBody's routing), not
+          // compiled_truth. Stripping only compiled_truth left that fence
+          // — including private rows — readable verbatim by untrusted
+          // remote callers. Apply the same strip to timeline.
+          timeline: stripFactsFence(
+            stripTakesFence(page.timeline ?? ''),
+            { keepVisibility: ['world'] },
+          ),
         }
       : page;
     // v0.42 (#1699) agent-warning channel: surface the page's content_flag
