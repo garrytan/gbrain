@@ -36,6 +36,7 @@ test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdo
 test/brain-score-breakdown.test.ts	Bug 11 — orphan_pages is "no inbound links"	3	doctor-source-helper
 test/brain-score-breakdown.test.ts	linkable scope — archive pages do not drag the score	3	doctor-source-helper
 test/brainstorm-timeout.test.ts	orchestrator entry-point wrap (CV11 single-point classification)	2	bun-file
+test/build-cli-provenance.test.ts	procedencia del build CLI	10	readFileSync
 test/build-llms.test.ts	CLAUDE.md restructure content contracts	5	readFileSync
 test/build-llms.test.ts	build-llms generator	7	readFileSync
 test/build-runtime-provenance.test.ts	runtime build provenance	8	readFileSync
