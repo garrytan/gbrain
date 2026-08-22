@@ -9,7 +9,7 @@ src/core/postgres-engine.ts	6166	ratchet	grown v0.46.26.0 megawave (#4218 #3986 
 src/core/pglite-engine.ts	6062	ratchet	grown v0.46.26.0 megawave parity twins + master v0.46.26.0 private-queue columns
 src/core/migrate.ts	687	region-exempt	append-only MIGRATIONS array grows freely; runner logic is ratcheted — grown v0.46.26.0: repair-handler hooks (#3957 pages-upsert-arbiter)
 src/commands/sync.ts	4512	ratchet	grown v0.46.26.0 megawave: image sync, ingest-log gating, dry-run purity, checkpoint honesty (#2683 #4342 #3875) + 3 nosemgrep dataflow annotations (path-traversal audit)
-src/core/ai/gateway.ts	4494	ratchet	grown v0.46.26.0 megawave: config-plane probes + halt telemetry (#3387 #4312)
+src/core/ai/gateway.ts	4515	ratchet	grown v0.46.26.0 megawave: config-plane probes + halt telemetry (#3387 #4312); +21 lines (OpenAI Responses API reasoning-item echo: ChatBlock 'reasoning' variant, chat()/toModelMessages() round-trip)
 src/cli.ts	3723	ratchet	grown v0.46.26.0 megawave: SIGCHLD reaper install, silent-failure surfacing, confirm-race gate (#2443 #2898 #2297)
 src/core/cycle.ts	3171	ratchet	grown v0.46.26.0 megawave (#4102 #2608) + master v0.46.26.0 cycle-start orphan recovery
 src/commands/serve-http.ts	3294	ratchet	grown v0.46.25.0 D2: /mcp per-request teardown (#2844)
@@ -27,7 +27,7 @@ src/commands/skillpack.ts	1360	ratchet
 src/core/minions/queue.ts	2442	ratchet	grown #4078 + megawave probe-liveness unlatch (#4310) + master private-queue lifecycle: recovery classifier + monotonic lease
 src/commands/init.ts	1950	ratchet	grown v0.46.x keyless capability notices
 src/commands/integrations.ts	1736	ratchet	grown v0.46.26.0 megawave (#4039 connector compat) + 1 nosemgrep dataflow annotation (path-traversal audit)
-src/core/minions/handlers/subagent.ts	1825	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches; grown by #4078 subagent-loop capability fix
+src/core/minions/handlers/subagent.ts	1831	ratchet	merged: master v131 settle rework + dream-wave C5 peel + C6 accounting + C7 lease heartbeats/lost-lease aborts + C9 oneshot dispatch + adversarial fix batches; grown by #4078 subagent-loop capability fix; +6 lines (reasoning-item replay: adaptContentBlocksToChatBlocks handles 'reasoning' blocks)
 src/commands/bootstrap.ts	2010	ratchet	grandfathered at merge (grew past the 1500 cap on master); raised for #4066 HOME_WORKSPACE_GUARD_EXEMPT (status/uninstall/harness)
 src/core/minions/worker.ts	1560	ratchet	grandfathered at merge (grew past the 1500 cap on master, #4170); grown v0.46.11.0 five-issue wave
 src/commands/sources.ts	1790	ratchet	grown v0.46.22.0 phone wave: github source kind (#4104)

@@ -1690,6 +1690,12 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
       : {};
     if (t === 'text' && typeof block.text === 'string') {
       out.push({ type: 'text', text: block.text, ...meta });
+    } else if (t === 'reasoning' && typeof block.text === 'string') {
+      // OpenAI Responses API reasoning-item id (providerMetadata.openai.itemId)
+      // — see the ChatBlock doc comment. Must survive crash-replay the same
+      // way tool-call providerMetadata does, or a resumed reasoning-model
+      // tool loop dead-letters on its next turn.
+      out.push({ type: 'reasoning', text: block.text, ...meta });
     } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       // v1 Anthropic shape
       out.push({
