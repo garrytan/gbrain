@@ -9,8 +9,8 @@
  * empty corpus.
  *
  * Vocabulary:
- *   - `source`        — the brain has at least one non-default source with
- *                       >=1 page (a corpus exists).
+ *   - `source`        — the brain has at least one source with >=1 page
+ *                       (the default source is a valid corpus).
  *   - `source:<id>`   — a source with that id exists.
  *   - `dir:<path>`    — a brain page-directory (e.g. `conversations/`) has
  *                       >=1 page.
@@ -56,7 +56,7 @@ export interface PreconditionContext {
   countPages(): Promise<number>;
   /** Pages filed under a given brain directory prefix (e.g. `conversations/`). */
   countPagesInDir(dir: string): Promise<number>;
-  /** Non-default source ids that hold at least one page. */
+  /** Source ids that hold at least one page, including `default`. */
   listSourceIds(): Promise<string[]>;
   /** Optional: pages for a specific source id. */
   countPagesForSource?(id: string): Promise<number>;
@@ -139,7 +139,7 @@ async function checkAnySource(req: Precondition, ctx: PreconditionContext): Prom
     met,
     detail: met
       ? `found ${ids.length} source(s) with content: ${ids.join(', ')}`
-      : `no non-default source holds any pages`,
+      : `no source holds any pages`,
     hint: met
       ? `corpus present (${ids.length} source(s))`
       : `ingest a corpus first (gbrain sync / gbrain import), then re-run`,
