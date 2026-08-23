@@ -129,14 +129,20 @@ describe('applyExactLookupTier (#1663)', () => {
     expect(out.length).toBe(3);
   });
 
-  test('promotes (does not duplicate) an identity match already in the set', async () => {
+  test('promotes and collapses an identity match repeated by chunk results', async () => {
     await engine.putPage('people/alice-example', {
       type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
     });
-    const organic = [res('notes/unrelated', 0.9), res('people/alice-example', 0.2)];
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.2, { chunk_text: 'best page chunk' }),
+      res('people/alice-example', 0.1, { chunk_text: 'weaker page chunk' }),
+    ];
     const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
     expect(out.filter((r) => r.slug === 'people/alice-example').length).toBe(1);
+    expect(out.length).toBe(2);
     expect(out[0].slug).toBe('people/alice-example');
+    expect(out[0].chunk_text).toBe('best page chunk');
     expect(out[0].exact_lookup).toBe('slug');
   });
 

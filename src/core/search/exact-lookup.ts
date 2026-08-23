@@ -173,16 +173,27 @@ export async function applyExactLookupTier(
 
   for (const hit of hits) {
     injectScore += 1e-6;
-    const idx = out.findIndex(
-      (r) => r.slug === hit.slug && (r.source_id ?? 'default') === (hit.source_id ?? 'default'),
-    );
-    if (idx >= 0) {
-      // Promote in place: identity match outranks every scored row.
-      out[idx].score = injectScore;
-      out[idx].exact_lookup = hit.exact_lookup;
-      if (hit.alias_hit) out[idx].alias_hit = true;
+    const matchingIndexes = out.flatMap((r, idx) => (
+      r.slug === hit.slug && (r.source_id ?? 'default') === (hit.source_id ?? 'default')
+        ? [idx]
+        : []
+    ));
+    if (matchingIndexes.length > 0) {
+      // Search is chunk-grained, but an exact identity lookup is page-grained.
+      // Promote the best existing chunk and remove the same page's remaining
+      // chunks so the canonical identity appears exactly once on the wire.
+      const idx = matchingIndexes.reduce((best, candidate) => (
+        out[candidate].score > out[best].score ? candidate : best
+      ));
+      const promoted = out[idx];
+      promoted.score = injectScore;
+      promoted.exact_lookup = hit.exact_lookup;
+      if (hit.alias_hit) promoted.alias_hit = true;
       if (hit.title_match_boost) {
-        out[idx].title_match_boost = Math.max(out[idx].title_match_boost ?? 1.0, hit.title_match_boost);
+        promoted.title_match_boost = Math.max(promoted.title_match_boost ?? 1.0, hit.title_match_boost);
+      }
+      for (const duplicateIdx of matchingIndexes.slice().sort((a, b) => b - a)) {
+        if (duplicateIdx !== idx) out.splice(duplicateIdx, 1);
       }
       continue;
     }
