@@ -23,7 +23,7 @@ import type { SearchResult } from '../types.ts';
 import { runGather, renderPagesBlock, takesHitToTakeForPrompt, selectRelevantExcerpt } from './gather.ts';
 import { renderTakesBlock } from './sanitize.ts';
 import { buildThinkSystemPrompt, buildThinkUserMessage } from './prompt.ts';
-import { resolveCitations, type ParsedCitation } from './cite-render.ts';
+import { parseInlineCitations, resolveCitations, type ParsedCitation } from './cite-render.ts';
 import { resolveOwnerHolder } from '../owner-holder.ts';
 import { resolveModel } from '../model-config.ts';
 import { chat as gatewayChat, probeChatModel, type ChatResult } from '../ai/gateway.ts';
@@ -696,6 +696,80 @@ export async function runThink(
     for (const w of resolved.warnings) warnings.push(w);
   }
 
+  // Anti-hallucination guard: model citations must point at evidence that was
+  // actually gathered for this question. The prompt already tells the model not
+  // to fabricate slugs/rows; this runtime check makes the contract enforceable.
+  // Restored from master after a MEMORY_VERBS / truthful-surface merge dropped
+  // it from the return path. Failed compose (empty_answer / not_json / …)
+  // keeps its typed status + extractive fallback — we still drop unsupported
+  // citations, but we do not overwrite a failed-synthesis shape with the
+  // refuse template (that would flip synthesisOk and hide the real failure).
+  const allowedPageCitations = new Set(gather.pages.map(p => p.slug.toLowerCase()));
+  const allowedTakeCitations = new Set(
+    gather.takes.map(t => `${t.page_slug.toLowerCase()}#${t.row_num}`),
+  );
+  const inlineCitations = parseInlineCitations(response.answer);
+  const citationKey = (c: ParsedCitation) => `${c.page_slug.toLowerCase()}#${c.row_num ?? '_'}`;
+  const outputCitationMap = new Map<string, ParsedCitation>();
+  for (const c of [...resolved.citations, ...inlineCitations]) {
+    outputCitationMap.set(citationKey(c), c);
+  }
+  const outputCitations = [...outputCitationMap.values()];
+
+  if (resolved.citations.length > 0 && inlineCitations.length > 0) {
+    const structuredKeys = new Set(resolved.citations.map(citationKey));
+    const inlineKeys = new Set(inlineCitations.map(citationKey));
+    const mismatch =
+      structuredKeys.size !== inlineKeys.size ||
+      [...structuredKeys].some(k => !inlineKeys.has(k)) ||
+      [...inlineKeys].some(k => !structuredKeys.has(k));
+    if (mismatch) warnings.push('CITATION_STRUCTURED_INLINE_MISMATCH');
+  }
+
+  const groundedCitations = outputCitations.filter(c => {
+    if (c.row_num === null) return allowedPageCitations.has(c.page_slug);
+    return allowedTakeCitations.has(`${c.page_slug}#${c.row_num}`);
+  });
+  const droppedCitationCount = outputCitations.length - groundedCitations.length;
+  if (droppedCitationCount > 0) {
+    warnings.push(`DROPPED_${droppedCitationCount}_UNSUPPORTED_CITATIONS`);
+  }
+  if (groundedCitations.length === 0) {
+    warnings.push('NO_GROUNDED_CITATIONS');
+  }
+
+  // Graph slugs are navigation context, not citable evidence: there is no
+  // row/edge citation format yet. Do not let an anchor-only graph make an
+  // otherwise unsupported synthesis look grounded.
+  const hasEvidence = gather.pages.length > 0 || gather.takes.length > 0;
+  const missingInlineGrounding = hasEvidence && inlineCitations.length === 0;
+  if (missingInlineGrounding) warnings.push('NO_INLINE_GROUNDED_CITATIONS');
+
+  const shouldRefuse =
+    !hasEvidence ||
+    groundedCitations.length === 0 ||
+    droppedCitationCount > 0 ||
+    missingInlineGrounding;
+  const canRefuseCompose = synthesisStatus === 'ok' && response.answer.trim().length > 0;
+  if (shouldRefuse && canRefuseCompose) {
+    const reason = !hasEvidence
+      ? 'NO_RETRIEVED_EVIDENCE'
+      : droppedCitationCount > 0
+        ? 'UNSUPPORTED_CITATIONS_IN_ANSWER'
+        : missingInlineGrounding
+          ? 'NO_INLINE_GROUNDED_CITATIONS'
+          : 'NO_GROUNDED_CITATIONS';
+    warnings.push(reason);
+    response = {
+      answer: '## Answer\n\nNot found in the current brain evidence. I do not have grounded citations for this question.\n\n## Gaps\n\n- Need retrieved page or take evidence that directly supports the answer.',
+      citations: [],
+      gaps: response.gaps.length > 0
+        ? response.gaps
+        : ['Need retrieved page or take evidence that directly supports the answer.'],
+    };
+  }
+  const finalCitations = shouldRefuse ? [] : groundedCitations;
+
   // Round-loop scaffolding (rounds > 1 currently re-runs without gap-driven retrieval).
   // The loop is in place so the v0.29 gap-fill heuristic doesn't change the call site.
   for (let r = 1; r < rounds; r++) {
@@ -718,7 +792,7 @@ export async function runThink(
   return {
     question: opts.question,
     answer: response.answer,
-    citations: resolved.citations,
+    citations: finalCitations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,
     takesGathered: gather.takes.length,

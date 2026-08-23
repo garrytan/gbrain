@@ -69,9 +69,27 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   return engine;
 }
 
-function staleCountOnce(count: number): () => Promise<number> {
-  let calls = 0;
-  return async () => calls++ === 0 ? count : 0;
+/**
+ * One-shot stale count for `--stale` tests.
+ *
+ * `embedAllStale` now calls `countStaleChunks` twice in the #3391
+ * null-signature warning probe (wide `includeNullSignature: true`, then
+ * narrow) BEFORE the pre-flight count that early-returns on 0. Those
+ * probe calls always pass `signature`. Keep returning `count` for them
+ * so they cannot burn the one-shot contract; the first non-signature
+ * call (pre-flight) still sees `count`, and later remaining-count
+ * checks see 0 so the cursor can finish.
+ */
+function staleCountOnce(count: number): (opts?: { signature?: string }) => Promise<number> {
+  let preflightConsumed = false;
+  return async (opts) => {
+    if (opts?.signature != null) return count;
+    if (!preflightConsumed) {
+      preflightConsumed = true;
+      return count;
+    }
+    return 0;
+  };
 }
 
 beforeEach(() => {
