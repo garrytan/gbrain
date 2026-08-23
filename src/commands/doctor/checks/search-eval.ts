@@ -633,6 +633,10 @@ export async function computeConversationFactsBacklogCheck(
             COALESCE(TO_CHAR(p.effective_date AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'none')
          WHERE p.type = ANY($1::text[])
            AND p.deleted_at IS NULL
+           AND COALESCE(
+             LOWER(BTRIM(p.frontmatter->>'fact_extraction')) NOT IN ('false', '0', 'no', 'off'),
+             true
+           )
            AND COALESCE(BTRIM(p.frontmatter->>'raw_transcript'), '') = ''
            AND p.content_hash IS NOT NULL
          GROUP BY p.source_id, p.slug
@@ -660,6 +664,10 @@ export async function computeConversationFactsBacklogCheck(
          FROM pages
         WHERE type = ANY($1::text[])
           AND deleted_at IS NULL
+          AND COALESCE(
+            LOWER(BTRIM(frontmatter->>'fact_extraction')) NOT IN ('false', '0', 'no', 'off'),
+            true
+          )
           AND (
             COALESCE(BTRIM(frontmatter->>'raw_transcript'), '') <> ''
             OR content_hash IS NULL
@@ -680,6 +688,14 @@ export async function computeConversationFactsBacklogCheck(
           });
           if (batch.length === 0) break;
           const verifyInProcess = batch.filter((page) => {
+            const factExtraction = page.frontmatter?.fact_extraction;
+            if (
+              factExtraction === false ||
+              (typeof factExtraction === 'string' &&
+                ['false', '0', 'no', 'off'].includes(
+                  factExtraction.trim().toLowerCase(),
+                ))
+            ) return false;
             const raw = page.frontmatter?.raw_transcript;
             return (typeof raw === 'string' && raw.trim().length > 0) ||
               page.content_hash == null;

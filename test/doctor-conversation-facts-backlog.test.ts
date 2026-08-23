@@ -81,6 +81,21 @@ describe('conversation_facts_backlog durable outcomes', () => {
     expect(result.details?.scanned_not_extractable).toBe(1);
   });
 
+  test('excludes pages whose source policy disables fact extraction', async () => {
+    await engine.putPage('conversations/raw-evidence', {
+      type: 'conversation',
+      title: 'Raw evidence copy',
+      compiled_truth: 'A raw support page that must not enter the extraction backlog.',
+      timeline: '',
+      frontmatter: { fact_extraction: false },
+    });
+
+    const result = await computeConversationFactsBacklogCheck(engine);
+    expect(result.details?.backlog).toBe(0);
+    expect(result.details?.completed).toBe(0);
+    expect(result.details?.scanned_not_extractable).toBe(0);
+  });
+
   test('a content change invalidates the prior outcome', async () => {
     await seedPage('meetings/growing', 'meeting');
     await seedOutcome('meetings/growing', TERMINAL_AUDIT_SOURCE);
