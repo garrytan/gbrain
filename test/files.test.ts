@@ -2,34 +2,15 @@ import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { writeFileSync, mkdirSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
-import { extname } from 'path';
 import { tmpdir } from 'os';
-import { collectFiles, formatFileSizeKb } from '../src/commands/files.ts';
+import { collectFiles, formatFileSizeKb, getMimeType } from '../src/commands/files.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import * as db from '../src/core/db.ts';
 
 const TMP = join(import.meta.dir, '.tmp-files-test');
 
-// These functions are not exported from files.ts, so we reimplement and test
-// the logic patterns to ensure correctness. If they ever get exported, switch
-// to direct imports.
-
-const MIME_TYPES: Record<string, string> = {
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
-  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.m4a': 'audio/mp4',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.heic': 'image/heic',
-  '.tiff': 'image/tiff', '.tif': 'image/tiff', '.dng': 'image/x-adobe-dng',
-  '.doc': 'application/msword',
-  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  '.xls': 'application/vnd.ms-excel',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-};
-
-function getMimeType(filePath: string): string | null {
-  const ext = extname(filePath).toLowerCase();
-  return MIME_TYPES[ext] || null;
-}
+// fileHash is not exported from files.ts (it takes a path there, not a
+// buffer), so it stays reimplemented below. getMimeType is imported.
 
 function fileHash(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex');
@@ -121,6 +102,26 @@ describe('getMimeType', () => {
 
   test('handles .dng (raw photos)', () => {
     expect(getMimeType('RAW_001.dng')).toBe('image/x-adobe-dng');
+  });
+
+  test('handles the audio containers transcription accepts', () => {
+    expect(getMimeType('memo.ogg')).toBe('audio/ogg');
+    expect(getMimeType('memo.flac')).toBe('audio/flac');
+    expect(getMimeType('memo.mpga')).toBe('audio/mpeg');
+    expect(getMimeType('clip.webm')).toBe('video/webm');
+    expect(getMimeType('clip.mpeg')).toBe('video/mpeg');
+  });
+
+  // upload-raw routes on `mimeType?.startsWith('audio/'|'video/'|'image/')`.
+  // A null MIME is falsy, so any transcribable format missing from MIME_TYPES
+  // is silently classified as small text and copied into the brain git repo.
+  test('every extension transcription.ts accepts routes as media', () => {
+    const transcribable = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.ogg', '.flac'];
+    const notMedia = transcribable.filter(ext => {
+      const mime = getMimeType(`voice-memo${ext}`);
+      return !mime || !/^(audio|video)\//.test(mime);
+    });
+    expect(notMedia).toEqual([]);
   });
 });
 
