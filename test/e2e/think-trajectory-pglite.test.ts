@@ -144,9 +144,11 @@ describe('e2e/think-trajectory: temporal intent end-to-end', () => {
       client,
     });
 
-    // Pipeline ran through to LLM call.
+    // Pipeline ran through to LLM call. The captureClient stub is
+    // ungrounded; runThink's citation guard may replace the body.
     expect(captured.length).toBe(1);
-    expect(result.answer).toBe('stubbed e2e answer');
+    expect(typeof result.answer).toBe('string');
+    expect(result.answer.length).toBeGreaterThan(0);
 
     const userMsg = captured[0].user;
     // Trajectory block lands in the prompt.
@@ -222,9 +224,11 @@ describe('e2e/think-trajectory: empty brain (no facts) graceful no-op', () => {
       client,
     });
 
-    // No block emitted, but the call succeeds and returns the stub answer.
+    // No block emitted, but the call succeeds. Empty gather is ungrounded,
+    // so the citation guard may replace the stub body.
     expect(captured[0].user).not.toContain('Known trajectory:');
-    expect(result.answer).toBe('stubbed e2e answer');
+    expect(typeof result.answer).toBe('string');
+    expect(result.answer.length).toBeGreaterThan(0);
   });
 });
 

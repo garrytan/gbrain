@@ -178,7 +178,10 @@ describe('runThink — graceful degradation', () => {
       // Promise.allSettled, so the throw is swallowed silently. The
       // outer try/catch in runThink only fires on errors in the
       // orchestration code itself (e.g. import failures).
-      expect(result.answer).toBe('stubbed answer');
+      // The captureClient stub is ungrounded; runThink's citation guard
+      // may replace the body. This test only pins "pipeline returned".
+      expect(typeof result.answer).toBe('string');
+      expect(result.answer.length).toBeGreaterThan(0);
     } finally {
       (engine as { findTrajectory: typeof engine.findTrajectory }).findTrajectory = originalFn;
     }

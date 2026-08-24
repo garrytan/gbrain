@@ -312,8 +312,21 @@ describe('synthesize — marked expensive + unavailable conversion [c10]', () =>
     // key via withEnv (so the client builds) AND install the chat seam (so no
     // real API call fires). Without the env key, CI (credential-free) takes the
     // NO_ANTHROPIC_API_KEY path → the verb's `unavailable` conversion → isError.
+    //
+    // Seed + cite a real gathered page: runThink's anti-hallucination guard
+    // refuses ungrounded answers (empty citations / no retrieved evidence).
+    await seedEntityPage(
+      'people/synth-example',
+      'Synth Example',
+      'Synth Example founded Acme and is the subject of this synthesis fixture.',
+    );
+    const groundedAnswer = 'Synthesized test answer. [people/synth-example]';
     __setChatTransportForTests(async () => ({
-      text: JSON.stringify({ answer: 'Synthesized test answer.', citations: [], gaps: ['none'] }),
+      text: JSON.stringify({
+        answer: groundedAnswer,
+        citations: [{ page_slug: 'people/synth-example', row_num: null, citation_index: 1 }],
+        gaps: ['none'],
+      }),
       blocks: [],
       stopReason: 'end' as const,
       usage: { input_tokens: 1200, output_tokens: 80, cache_read_tokens: 0, cache_creation_tokens: 0 },
@@ -321,10 +334,10 @@ describe('synthesize — marked expensive + unavailable conversion [c10]', () =>
       providerId: 'anthropic',
     }));
     const { isError, body } = await withEnv({ ANTHROPIC_API_KEY: 'sk-test-hermetic' }, async () =>
-      callRemote('synthesize', { question: 'what do we know?' }),
+      callRemote('synthesize', { question: 'What do we know about Synth Example founded Acme?' }),
     );
     expect(isError).toBe(false);
-    expect(body.answer).toBe('Synthesized test answer.');
+    expect(body.answer).toBe(groundedAnswer);
     expect(body.protocol_version).toBe(1);
     expect(body.cost.input_tokens).toBe(1200);
     expect(body.cost.output_tokens).toBe(80);
