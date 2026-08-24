@@ -260,6 +260,17 @@ describe('sibling read ops (#4352 remediation — no bypass around get_page)', (
     } as never;
   }
 
+  function federatedCtx(remote: boolean) {
+    return {
+      engine,
+      config: { engine: 'pglite' },
+      logger: { info() {}, warn() {}, error() {} },
+      dryRun: false,
+      remote,
+      auth: { allowedSources: ['default', 'private-copy'] },
+    } as never;
+  }
+
   beforeAll(async () => {
     // Edges in both directions so get_links / get_backlinks / traverse_graph
     // each have a private endpoint to leak.
@@ -271,6 +282,61 @@ describe('sibling read ops (#4352 remediation — no bypass around get_page)', (
     });
     await engine.createVersion('notes/private-page');
     await engine.putRawData('notes/private-page', 'crustdata', { secret: true });
+
+    // Same slug in two federated sources: one public and one private.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+       VALUES ('private-copy', 'private-copy', '/tmp/private-copy', '{"federated": true}'::jsonb)`,
+    );
+    await engine.executeRaw(
+      `UPDATE sources SET config = '{"federated": true}'::jsonb WHERE id = 'default'`,
+    );
+    await engine.putPage('notes/world-page', {
+      title: 'Private copy of world page',
+      type: 'concept',
+      frontmatter: { visibility: 'private' },
+      compiled_truth: 'PRIVATE COPY SECRET',
+      timeline: '',
+    }, { sourceId: 'private-copy' });
+    await engine.upsertChunks('notes/world-page', [
+      { chunk_index: 0, chunk_text: 'PRIVATE CHUNK SECRET', chunk_source: 'compiled_truth' },
+    ], { sourceId: 'private-copy' });
+    await engine.createVersion('notes/world-page');
+    await engine.createVersion('notes/world-page', { sourceId: 'private-copy' });
+    await engine.addTimelineEntry('notes/world-page', {
+      date: '2026-08-02', source: 'test', summary: 'public timeline entry',
+    });
+    await engine.addTimelineEntry('notes/world-page', {
+      date: '2026-08-03', source: 'test', summary: 'PRIVATE TIMELINE SECRET',
+    }, { sourceId: 'private-copy' });
+    await engine.putRawData('notes/world-page', 'public-feed', { public: true });
+    await engine.putRawData('notes/world-page', 'private-feed', { secret: true }, { sourceId: 'private-copy' });
+  });
+
+  test('federated sibling reads exclude rows from a private same-slug source', async () => {
+    __resetPrivateVisibilityCacheForTests();
+    const remoteCtx = federatedCtx(true);
+    const localCtx = federatedCtx(false);
+
+    const localChunks = (await operationsByName['get_chunks'].handler(localCtx, { slug: 'notes/world-page' })) as Array<{ chunk_text: string }>;
+    expect(localChunks.map((row) => row.chunk_text)).toContain('PRIVATE CHUNK SECRET');
+    const chunks = (await operationsByName['get_chunks'].handler(remoteCtx, { slug: 'notes/world-page' })) as Array<{ chunk_text: string }>;
+    expect(chunks.map((row) => row.chunk_text)).not.toContain('PRIVATE CHUNK SECRET');
+
+    const localVersions = (await operationsByName['get_versions'].handler(localCtx, { slug: 'notes/world-page' })) as Array<{ compiled_truth: string }>;
+    expect(localVersions.map((row) => row.compiled_truth)).toContain('PRIVATE COPY SECRET');
+    const versions = (await operationsByName['get_versions'].handler(remoteCtx, { slug: 'notes/world-page' })) as Array<{ compiled_truth: string }>;
+    expect(versions.map((row) => row.compiled_truth)).not.toContain('PRIVATE COPY SECRET');
+
+    const localTimeline = (await operationsByName['get_timeline'].handler(localCtx, { slug: 'notes/world-page' })) as Array<{ summary: string }>;
+    expect(localTimeline.map((row) => row.summary)).toContain('PRIVATE TIMELINE SECRET');
+    const timeline = (await operationsByName['get_timeline'].handler(remoteCtx, { slug: 'notes/world-page' })) as Array<{ summary: string }>;
+    expect(timeline.map((row) => row.summary)).not.toContain('PRIVATE TIMELINE SECRET');
+
+    const localRaw = (await operationsByName['get_raw_data'].handler(localCtx, { slug: 'notes/world-page' })) as Array<{ source: string }>;
+    expect(localRaw.map((row) => row.source)).toContain('private-feed');
+    const raw = (await operationsByName['get_raw_data'].handler(remoteCtx, { slug: 'notes/world-page' })) as Array<{ source: string }>;
+    expect(raw.map((row) => row.source)).not.toContain('private-feed');
   });
 
   test('get_chunks: private page reads as missing ([]) remotely; local + world unaffected', async () => {

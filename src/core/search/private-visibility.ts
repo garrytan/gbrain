@@ -89,6 +89,36 @@ export async function findPrivateOnlySlugs(
 }
 
 /**
+ * Narrow a page-content read to sources whose same-slug page is visible to
+ * the caller. A mixed public/private slug must not let private rows ride on
+ * the public row's visibility. Returns null when no source is visible.
+ */
+export async function visiblePageScopeForCaller(
+  engine: BrainEngine,
+  remote: boolean | undefined,
+  slug: string,
+  scope: { sourceId?: string; sourceIds?: string[] } = {},
+): Promise<{ sourceIds: string[] } | { sourceId?: string; sourceIds?: string[] } | null> {
+  if (!(await resolveExcludePrivatePages(engine, remote))) return scope;
+
+  const params: unknown[] = [slug];
+  const where = [`p.slug = $1`, privatePagesFilterFragment('p')];
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    params.push(scope.sourceIds);
+    where.push(`p.source_id = ANY($${params.length}::text[])`);
+  } else if (scope.sourceId) {
+    params.push(scope.sourceId);
+    where.push(`p.source_id = $${params.length}`);
+  }
+  const rows = await engine.executeRaw<{ source_id: string }>(
+    `SELECT DISTINCT p.source_id FROM pages p WHERE ${where.join(' AND ')}`,
+    params,
+  );
+  if (rows.length === 0) return null;
+  return { sourceIds: rows.map(row => row.source_id) };
+}
+
+/**
  * One-slug trust + probe combo for the sibling content ops (#4352
  * remediation: get_chunks / get_versions / get_timeline / get_raw_data).
  * True ⇒ the caller's read of `slug` must behave exactly like a missing

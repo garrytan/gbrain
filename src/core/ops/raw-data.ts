@@ -7,7 +7,7 @@
 
 import type { Operation } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
-import { slugHiddenFromCaller } from '../search/private-visibility.ts';
+import { visiblePageScopeForCaller } from '../search/private-visibility.ts';
 
 // --- Raw Data ---
 
@@ -43,8 +43,9 @@ const get_raw_data: Operation = {
     // #4352 remediation: a `visibility: private` page's raw data reads
     // exactly like a missing page's ([]) for untrusted callers — no
     // existence oracle.
-    if (await slugHiddenFromCaller(ctx.engine, ctx.remote, p.slug as string, scope)) return [];
-    return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, scope);
+    const visibleScope = await visiblePageScopeForCaller(ctx.engine, ctx.remote, p.slug as string, scope);
+    if (!visibleScope) return [];
+    return ctx.engine.getRawData(p.slug as string, p.source as string | undefined, visibleScope);
   },
   scope: 'read',
 };

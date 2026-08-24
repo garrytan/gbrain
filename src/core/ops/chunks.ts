@@ -11,7 +11,7 @@ import { federatedSearchScope, sourceScopeOpts } from './context.ts';
 import {
   findPrivateOnlySlugs,
   resolveExcludePrivatePages,
-  slugHiddenFromCaller,
+  visiblePageScopeForCaller,
 } from '../search/private-visibility.ts';
 
 // --- Resolution & Chunks ---
@@ -54,8 +54,9 @@ const get_chunks: Operation = {
     const scope = sourceScopeOpts(ctx);
     // #4352 remediation: a `visibility: private` page's chunks read exactly
     // like a missing page's ([]) for untrusted callers — no existence oracle.
-    if (await slugHiddenFromCaller(ctx.engine, ctx.remote, p.slug as string, scope)) return [];
-    return ctx.engine.getChunks(p.slug as string, scope);
+    const visibleScope = await visiblePageScopeForCaller(ctx.engine, ctx.remote, p.slug as string, scope);
+    if (!visibleScope) return [];
+    return ctx.engine.getChunks(p.slug as string, visibleScope);
   },
   scope: 'read',
 };

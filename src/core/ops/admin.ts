@@ -11,7 +11,7 @@
 import type { Operation } from './contract.ts';
 import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { stripTakesFence } from '../takes-fence.ts';
-import { slugHiddenFromCaller } from '../search/private-visibility.ts';
+import { visiblePageScopeForCaller } from '../search/private-visibility.ts';
 import { VERSION } from '../../version.ts';
 
 // --- Admin ---
@@ -148,8 +148,9 @@ const get_versions: Operation = {
     // exactly like a missing page's ([]) for untrusted callers — snapshots
     // persist historical compiled_truth verbatim, so /history was a full
     // bypass of get_page's gate. No existence oracle.
-    if (await slugHiddenFromCaller(ctx.engine, ctx.remote, p.slug as string, scope)) return [];
-    const versions = await ctx.engine.getVersions(p.slug as string, scope);
+    const visibleScope = await visiblePageScopeForCaller(ctx.engine, ctx.remote, p.slug as string, scope);
+    if (!visibleScope) return [];
+    const versions = await ctx.engine.getVersions(p.slug as string, visibleScope);
     // Same takes-allow-list privacy boundary as get_page. Snapshots persist
     // historical compiled_truth verbatim, including the takes fence, so
     // a remote token bypassing get_page via /history would re-introduce
