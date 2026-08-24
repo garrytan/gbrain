@@ -9,7 +9,10 @@
  * cursor advancement — the hook just fires the event and injects stdout.
  * World-only by default. The secret-gated IPC server rejects private requests
  * unless the deployment owner explicitly enables them; this handler then
- * widens every pack arm together through assembleContextPack. Fail-open:
+ * widens every pack arm together through assembleContextPack and applies the
+ * native private-model eligibility gate before any structured response leaves
+ * GBrain. Detected credentials, authentication/payment secrets, and explicit
+ * local-only/no-model items are excluded item-by-item. Fail-open:
  * session-state trouble degrades to a stateless pack, never an error.
  */
 
@@ -18,8 +21,16 @@ import { isAbsolute, join } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { ContextPackHandler } from '../core/context/resolve-ipc.ts';
 import { CONTEXT_PACK_SERVER_BUDGET_MS } from '../core/context/resolve-ipc.ts';
-import { assembleContextPack } from '../core/context/turn-context.ts';
+import {
+  assembleContextPack,
+  renderPack,
+  type TurnContextFact,
+  type TurnContextResult,
+} from '../core/context/turn-context.ts';
 import { extractCandidatesFromWindow } from '../core/context/entity-salience.ts';
+import { findPii } from '../core/eval-capture-scrub.ts';
+import { scanText } from '../core/secret-scan.ts';
+import type { EntityCard, EntityOpenThread } from '../core/verbs/entity-card.ts';
 import {
   getCheckpointManifest,
   getSessionContextState,
@@ -30,6 +41,87 @@ import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/chec
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
 export const PUSH_PACK_MAX_ENTITIES = 4;
+
+/**
+ * Private means model-eligible by default on this explicitly authorized IPC
+ * surface. These durable markers carve an item back out without requiring a
+ * second visibility database or a client-side text filter.
+ */
+const NO_MODEL_MARKER = new RegExp(
+  [
+    String.raw`\[(?:gbrain:)?(?:no[-_ ]?model|local[-_ ]?only)\]`,
+    String.raw`(?:model[-_ ]?(?:eligible|access)|audience)\s*[:=]\s*(?:false|deny|denied|no[-_ ]?model|local[-_ ]?only)`,
+    String.raw`\b(?:do not|don't|never)\s+(?:send|share|transmit|include)\s+(?:this\s+)?(?:with|to|in)\s+(?:an?\s+)?(?:llm|model|ai)\b`,
+  ].join('|'),
+  'i',
+);
+
+/** Low-entropy secrets (for example a short password or PIN) do not trip the
+ * generic entropy detector, so assignment-shaped credential material gets a
+ * separate deterministic deny rule. */
+const CREDENTIAL_ASSIGNMENT = new RegExp(
+  String.raw`\b(?:password|passphrase|pin|cvv|cvc|security[-_ ]?code|api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|private[-_ ]?key|seed[-_ ]?phrase|recovery[-_ ]?phrase)\b\s*(?::|=|\bis\b)\s*\S+`,
+  'i',
+);
+
+const PRIVATE_MODEL_DENY_PII = new Set(['ssn', 'jwt', 'bearer', 'credit_card']);
+
+/**
+ * Native private-pack admission. No matched value is returned or logged.
+ * Scanner uncertainty is fail-closed for that item.
+ */
+export function isPrivateModelEligibleText(...values: unknown[]): boolean {
+  try {
+    const strings = values.filter((v): v is string => typeof v === 'string');
+    if (strings.length !== values.filter((v) => v !== null && v !== undefined).length) return false;
+    const text = strings.join('\n');
+    if (!text.trim()) return true;
+    if (NO_MODEL_MARKER.test(text) || CREDENTIAL_ASSIGNMENT.test(text)) return false;
+    if (scanText(text, { highEntropy: true }).length > 0) return false;
+    if (findPii(text).some((f) => PRIVATE_MODEL_DENY_PII.has(f.family))) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sanitize every structured arm before the private pack crosses the IPC
+ * boundary. Mixed packs preserve eligible siblings and their provenance.
+ */
+export function filterPrivateModelPack(result: TurnContextResult): TurnContextResult {
+  const facts = (result.facts ?? []).filter((f: TurnContextFact) =>
+    isPrivateModelEligibleText(
+      f.fact,
+      f.kind,
+      f.entity_slug,
+      f.notability,
+      f.context,
+    ));
+  const openThreads = (result.openThreads ?? []).filter((t: EntityOpenThread) =>
+    isPrivateModelEligibleText(t.kind, t.text, t.date));
+  const cards = (result.cards ?? []).flatMap((card: EntityCard) => {
+    if (!isPrivateModelEligibleText(card.entity.slug, card.entity.title, card.entity.type)) return [];
+    const summary = isPrivateModelEligibleText(card.summary) ? card.summary : '';
+    const aka = card.aka.filter((alias) => isPrivateModelEligibleText(alias));
+    const cardThreads = card.open_threads.filter((t) =>
+      isPrivateModelEligibleText(t.kind, t.text, t.date));
+    const edges = card.edges.filter((edge) =>
+      isPrivateModelEligibleText(edge.type, edge.direction, edge.slug, edge.context));
+    return [{ ...card, summary, aka, open_threads: cardThreads, edges }];
+  });
+  const checkpointLinks = (result.checkpointLinks ?? []).filter((link) =>
+    isPrivateModelEligibleText(link.slug, link.title, link.at, link.seg));
+  return {
+    ...result,
+    text: renderPack(cards, openThreads, facts, checkpointLinks),
+    factsCount: facts.length,
+    cards,
+    openThreads,
+    facts,
+    checkpointLinks,
+  };
+}
 
 /** Segment basenames only: no separators, no traversal, `.txt` suffix. */
 const SAFE_CORPUS_BASENAME = /^[A-Za-z0-9._-]{1,240}\.txt$/;
@@ -122,7 +214,7 @@ export function makeContextPackIpcHandler(
       };
     }
 
-    const result = await assembleContextPack(engine, {
+    let result = await assembleContextPack(engine, {
       sourceId: defaultSource,
       entities,
       sessionId: sessionId ?? undefined,
@@ -139,6 +231,9 @@ export function makeContextPackIpcHandler(
         ? { checkpointLinks: (await getCheckpointManifest(engine, defaultSource, null, sessionId)) ?? [] }
         : {}),
     });
+    if (req.includePrivate === true) {
+      result = filterPrivateModelPack(result);
+    }
     if (sessionId) {
       // Bank the standing set; advance the wake cursor only on a COMPLETE
       // pack — a deadline-partial pack may have dropped the delta section,

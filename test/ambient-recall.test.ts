@@ -513,6 +513,38 @@ describe('push-path IPC handler (extracted, real engine)', () => {
     expect(widened?.text).toContain('confidential preference');
   });
 
+  test('a newly written no-model private fact stays out of the next authorized IPC pack', async () => {
+    const local = ctxFor({ remote: false });
+    await call(remember, local, {
+      fact: 'ipc-eligibility-example ordinary private preference',
+      provenance: 'test',
+      entity: 'ipc-eligibility-example',
+      visibility: 'private',
+    });
+    await call(remember, local, {
+      fact: 'ipc-eligibility-example [gbrain:no-model] password: short-secret',
+      provenance: 'test',
+      entity: 'ipc-eligibility-example',
+      visibility: 'private',
+    });
+    __resetHotMemoryCacheForTests();
+
+    const { makeContextPackIpcHandler } = await import('../src/mcp/context-pack-handler.ts');
+    const handler = makeContextPackIpcHandler(engine, 'default');
+    const widened = await handler({
+      kind: 'context_pack', protocol: 2, secret: 's',
+      entities: ['ipc-eligibility-example'],
+      includePrivate: true,
+    });
+
+    expect(widened?.text).toContain('ordinary private preference');
+    expect(widened?.text).not.toContain('short-secret');
+    expect(widened?.facts?.map((f) => f.fact)).toContain(
+      'ipc-eligibility-example ordinary private preference',
+    );
+    expect(widened?.facts?.some((f) => f.fact.includes('short-secret'))).toBe(false);
+  });
+
   test('bankOnly persists standing entities under the local lane; assembly merges them back', async () => {
     const { makeContextPackIpcHandler } = await import('../src/mcp/context-pack-handler.ts');
     const handler = makeContextPackIpcHandler(engine, 'default');
