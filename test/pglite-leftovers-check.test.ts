@@ -5,7 +5,7 @@
  * network. Mirrors npm-squat-check.test.ts's shape (#505).
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, opendirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -171,15 +171,15 @@ describe('assessPgliteLeftovers', () => {
     const locked = join(dir, 'locked');
     mkdirSync(locked);
     writeFileSync(join(locked, 'hidden'), Buffer.alloc(4096, 67));
-    chmodSync(locked, 0o000);
-    try {
-      const a = assessPgliteLeftovers('postgres', home);
-      expect(a.status).toBe('warn');
-      expect(a.leftovers[0]?.size_incomplete).toBe(true);
-      expect(a.message).toContain('>=');
-    } finally {
-      chmodSync(locked, 0o755); // so afterAll cleanup can delete it
-    }
+    const a = assessPgliteLeftovers('postgres', home, SIZE_WALK_MAX_ENTRIES, {
+      openDir: (path) => {
+        if (path === locked) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        return opendirSync(path);
+      },
+    });
+    expect(a.status).toBe('warn');
+    expect(a.leftovers[0]?.size_incomplete).toBe(true);
+    expect(a.message).toContain('>=');
   });
 
   test('size walk is bounded by an injectable assessment-wide budget', () => {

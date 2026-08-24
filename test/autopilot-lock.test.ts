@@ -149,21 +149,21 @@ describe('readProcessCommand', () => {
   });
 
   test('falls back to ps when the cmdline probe throws', () => {
-    // The current process always exists; ps must resolve it on macOS/Linux.
-    const cmd = readProcessCommand(process.pid, {
+    const cmd = readProcessCommand(1234, {
       readCmdlineFile: () => {
         throw new Error('ENOENT');
       },
+      readPsCommand: (pid) => `gbrain autopilot --pid ${pid}`,
     });
-    expect(cmd).not.toBeNull();
-    expect((cmd ?? '').length).toBeGreaterThan(0);
+    expect(cmd).toBe('gbrain autopilot --pid 1234');
   });
 
   test('falls back to ps when the cmdline file is empty (zombie)', () => {
-    const cmd = readProcessCommand(process.pid, {
+    const cmd = readProcessCommand(1234, {
       readCmdlineFile: () => Buffer.from(''),
+      readPsCommand: () => 'worker --idle',
     });
-    expect(cmd).not.toBeNull();
+    expect(cmd).toBe('worker --idle');
   });
 
   test('returns null for invalid pids without probing', () => {

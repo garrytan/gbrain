@@ -20,7 +20,7 @@
  *     `afterAll`) per CLAUDE.md test-isolation rules R3 + R4.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync, chmodSync } from 'fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -158,23 +158,18 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
     // minutes, putting the next boundary hours away — the run then never
     // converges under repeated kills.
     await withEnv({ GBRAIN_HOME: workspace }, async () => {
-      // Three small good files (well under the 100-boundary) plus one that
-      // exceeds the content-sanity block threshold. That throws, so `errors`
-      // is non-zero and the checkpoint is PRESERVED rather than cleared —
-      // note a SLUG_MISMATCH would NOT work here: it is a soft `failures`
-      // entry that leaves `errors` at 0, so upstream clears the checkpoint.
+      // Three small good files (well under the 100-boundary) plus one with a
+      // deterministic soft failure. Soft failures must preserve the checkpoint
+      // just like thrown errors, otherwise the successful tail is redone.
       writeBrainFile('people/alice.md', validMarkdown('people/alice'));
       writeBrainFile('people/carol.md', validMarkdown('people/carol'));
       writeBrainFile('people/dave.md', validMarkdown('people/dave'));
-      // A file the reader cannot open raises inside importFile, which is the
-      // path that increments `errors` (a SLUG_MISMATCH would NOT work: it is
-      // a soft `failures` entry leaving `errors` at 0, so upstream clears the
-      // checkpoint rather than preserving it).
-      writeBrainFile('people/unreadable.md', validMarkdown('people/unreadable'));
-      chmodSync(join(brainDir, 'people/unreadable.md'), 0o000);
+      writeBrainFile('people/broken.md', [
+        '---', 'type: person', 'title: Broken', 'slug: wrong-slug', '---', '', 'Body.',
+      ].join('\n'));
 
       const result = await runImport(engine, [brainDir, '--no-embed']);
-      expect(result.errors).toBeGreaterThan(0);
+      expect(result.failures.some(f => f.path.includes('broken'))).toBe(true);
 
       // The checkpoint exists AND carries the successful files, even though
       // no 100-boundary was ever crossed.
@@ -184,7 +179,7 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
       expect(cp.completedPaths).toContain('people/carol.md');
       expect(cp.completedPaths).toContain('people/dave.md');
       // The failed file must still be absent so the next run retries it.
-      expect(cp.completedPaths).not.toContain('people/unreadable.md');
+      expect(cp.completedPaths).not.toContain('people/broken.md');
     });
   }, 30_000);
 

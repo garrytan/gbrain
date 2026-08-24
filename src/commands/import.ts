@@ -649,7 +649,7 @@ export async function runImport(
   // This must run before clearCheckpoint() so a clean run still ends with no
   // checkpoint file — it only makes the ERROR path's preserved checkpoint
   // complete.
-  if (errors > 0 && completed.size > lastCheckpointSize) {
+  if (failures.length > 0 && completed.size > lastCheckpointSize) {
     try {
       const cpDir = gbrainPath();
       if (!existsSync(cpDir)) {
@@ -670,10 +670,10 @@ export async function runImport(
   // Clear checkpoint on clean completion. On error, the path-based checkpoint
   // preserves only the successfully-completed paths, so the next run retries
   // failed files automatically (they never entered `completed`).
-  if (errors === 0) {
+  if (failures.length === 0) {
     clearCheckpoint(checkpointPath);
   } else if (existsSync(checkpointPath)) {
-    info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
+    info(`  Checkpoint preserved (${failures.length} failures). Run again to retry failed files.`);
   }
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);

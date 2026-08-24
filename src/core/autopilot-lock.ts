@@ -26,6 +26,17 @@ export function isPidAlive(pid: number): boolean {
 export interface ProcessCommandProbeDeps {
   /** Injected for tests; defaults to fs.readFileSync of /proc/<pid>/cmdline. */
   readCmdlineFile?: (path: string) => Buffer | string;
+  /** Injected for tests; defaults to `ps -p PID -o args=`. */
+  readPsCommand?: (pid: number) => string | null;
+}
+
+function readPsCommand(pid: number): string | null {
+  const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 1000,
+  }).trim();
+  return out.length > 0 ? out : null;
 }
 
 /**
@@ -45,12 +56,7 @@ export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = 
     // Not Linux (no /proc) or unreadable — fall through to ps.
   }
   try {
-    const out = execFileSync('ps', ['-p', String(pid), '-o', 'args='], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 1000,
-    }).trim();
-    return out.length > 0 ? out : null;
+    return (deps.readPsCommand ?? readPsCommand)(pid);
   } catch {
     return null;
   }

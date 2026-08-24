@@ -56,6 +56,11 @@ export interface PgliteLeftoversAssessment {
   leftovers: PgliteLeftoverDir[];
 }
 
+export interface PgliteLeftoversProbeDeps {
+  /** Injectable for deterministic unreadable-directory tests. */
+  openDir?: (path: string) => ReturnType<typeof opendirSync>;
+}
+
 /**
  * Bound on how many directory entries the size walk visits across the WHOLE
  * assessment (all leftover dirs share one budget). A PGLite store is a modest
@@ -79,7 +84,11 @@ export function isMigrationLeftoverName(name: string): boolean {
 /** Iterative, symlink-free size walk. Shares `budget` across calls; flags
  *  incompleteness on budget exhaustion AND on any unreadable entry (an
  *  unreadable multi-GB store must never be reported as exactly 0 B). */
-function walkSize(root: string, budget: { entries: number }): { bytes: number; incomplete: boolean } {
+function walkSize(
+  root: string,
+  budget: { entries: number },
+  openDir: (path: string) => ReturnType<typeof opendirSync>,
+): { bytes: number; incomplete: boolean } {
   let bytes = 0;
   let incomplete = false;
   const stack: string[] = [root];
@@ -87,7 +96,7 @@ function walkSize(root: string, budget: { entries: number }): { bytes: number; i
     const dir = stack.pop() as string;
     let handle: ReturnType<typeof opendirSync>;
     try {
-      handle = opendirSync(dir);
+      handle = openDir(dir);
     } catch {
       incomplete = true;
       continue;
@@ -167,6 +176,7 @@ export function assessPgliteLeftovers(
   engineKind: string | null | undefined,
   gbrainHome: string,
   maxEntries: number = SIZE_WALK_MAX_ENTRIES,
+  deps: PgliteLeftoversProbeDeps = {},
 ): PgliteLeftoversAssessment {
   if (engineKind !== 'postgres') {
     return { status: 'skip', message: '', leftovers: [] };
@@ -183,7 +193,7 @@ export function assessPgliteLeftovers(
   let names: string[] = [];
   const budget = { entries: maxEntries };
   try {
-    const handle = opendirSync(gbrainHome);
+    const handle = (deps.openDir ?? opendirSync)(gbrainHome);
     try {
       for (;;) {
         const entry = handle.readSync();
@@ -210,7 +220,7 @@ export function assessPgliteLeftovers(
     } catch {
       // stat raced a concurrent delete — still report the dir, without a date
     }
-    const { bytes, incomplete } = walkSize(p, budget);
+    const { bytes, incomplete } = walkSize(p, budget, deps.openDir ?? opendirSync);
     leftovers.push({ path: p, approx_bytes: bytes, size_incomplete: incomplete, dir_mtime: mtime });
   }
   if (leftovers.length === 0) {
