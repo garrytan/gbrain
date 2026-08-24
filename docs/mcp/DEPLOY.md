@@ -223,6 +223,31 @@ Remote agents cannot reach local filesystem surface area.
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
 
+## External Gateway JWTs (optional)
+
+If clients reach GBrain through an AI gateway that signs each MCP call with
+a short-lived JWT (e.g. LiteLLM's `mcp_jwt_signer` guardrail), GBrain can
+verify those JWTs directly and act as the registered client the caller maps
+to — one gateway credential per user, no second GBrain token to distribute.
+
+```bash
+export GBRAIN_EXTERNAL_TOKEN_ISSUER="https://gateway.example.com"
+export GBRAIN_EXTERNAL_TOKEN_AUDIENCE="gbrain"
+# JWT sub (or email) -> registered oauth_clients.client_id
+export GBRAIN_EXTERNAL_TOKEN_CALLER_MAP='{"user-3f9":"acl-alice","bob@example.com":"acl-bob"}'
+# optional: defaults to <issuer>/.well-known/jwks.json; inline JWKS via
+# GBRAIN_EXTERNAL_TOKEN_JWKS for air-gapped deploys
+```
+
+Verification is fail-closed: RS256 signature against the issuer's JWKS,
+`iss`/`aud`/`exp` enforced, unmapped subjects rejected, and the mapped
+client must exist (not deleted). Scopes and source isolation (`--source`,
+`--federated-read`, slug fences, surface) come from the mapped client's
+registration — the JWT only establishes who is calling. Opaque GBrain
+tokens are unaffected; the JWT path only engages for three-segment
+bearer values when all three required variables are set. Partial
+configuration is a startup error rather than a silently disabled verifier.
+
 ## Legacy Bearer Token Setup
 
 Bearer tokens are the simple path when you don't need per-client scoping.

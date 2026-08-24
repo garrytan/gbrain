@@ -152,7 +152,8 @@
     "postgres": "^3.4.0",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.22.6",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "jose": "^6.0.11"
   },
   "devDependencies": {
     "@types/bun": "latest",
