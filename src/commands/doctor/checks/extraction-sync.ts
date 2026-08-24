@@ -612,6 +612,133 @@ export async function computeExtractAtomsBacklogCheck(
 }
 
 /**
+ * atom_provenance_drift doctor check.
+ *
+ * The mirror of extract_atoms_backlog. That check counts pages waiting to be
+ * extracted; this one counts atoms whose provenance no longer resolves.
+ *
+ * extract_atoms stamps `frontmatter.source_hash` with the first 16 chars of the
+ * source page's content_hash, and discovery skips a page while an atom with the
+ * matching hash exists. Editing the page moves its content_hash, so the atom is
+ * left pointing at a hash no live page carries. Nothing reclaims those atoms:
+ * re-extraction mints under a deterministic slug built from the atom TITLE, so
+ * it only upserts in place when the new pass happens to produce the same title.
+ * A reworded claim lands on a new slug and the old atom stays, unreferenced.
+ *
+ * Why this needs a signal: a drifted atom is still returned by search, still
+ * carries a `source_quote`, and still reads as sourced — but its quote can no
+ * longer be located in any current page. It is the one class of derived page
+ * that silently diverges from the corpus it claims to summarize.
+ *
+ * Measured on a 17-source brain (30.7k pages, 4.0k atoms) before shipping this:
+ * 1,001 of 3,999 atoms (25.0%) had drifted; 932 still had a live source page
+ * that had merely been edited, 69 had lost the source page entirely. The
+ * youngest drifted atom was 6.0 days old and the mean was 16.5 days, i.e. the
+ * population is NOT extraction lag working itself out — it accumulates.
+ *
+ * Diagnostic only. It reports and hints; it never deletes. `source_gone` and
+ * `source_changed` are split because they warrant different handling and the
+ * second is by far the larger group — a naive GC keyed on drift alone would
+ * delete mostly-recoverable knowledge.
+ */
+export async function computeAtomProvenanceDriftCheck(
+  engine: BrainEngine,
+): Promise<Check> {
+  const name = 'atom_provenance_drift';
+  // Both must trip: the ratio alone flaps on brains with a handful of atoms,
+  // and the count alone fires on large healthy brains mid-cycle.
+  const MIN_DRIFTED = 25;
+  const WARN_RATIO = 0.1;
+  try {
+    const rows = await engine.executeRaw<{
+      total: string | number; drifted: string | number;
+      source_changed: string | number; source_gone: string | number;
+      oldest_days: string | number | null;
+    }>(
+      `WITH atom AS (
+         SELECT a.source_id,
+                a.frontmatter->>'source_hash' AS sh,
+                a.frontmatter->>'source_slug' AS ss,
+                (a.frontmatter->>'extracted_at')::timestamptz AS ext
+           FROM pages a
+          WHERE a.type = 'atom'
+            AND a.deleted_at IS NULL
+            AND a.frontmatter->>'source_hash' IS NOT NULL
+            -- in-flight marker written before the extraction commits
+            AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
+       ), drift AS (
+         SELECT atom.*,
+                NOT EXISTS (
+                  SELECT 1 FROM pages p
+                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
+                     AND substring(p.content_hash from 1 for 16) = atom.sh
+                ) AS drifted,
+                EXISTS (
+                  SELECT 1 FROM pages p
+                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
+                     AND p.slug = atom.ss
+                ) AS src_alive
+           FROM atom
+       )
+       SELECT count(*) AS total,
+              count(*) FILTER (WHERE drifted) AS drifted,
+              count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
+              count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
+              max(extract(epoch FROM now() - ext) / 86400.0)
+                FILTER (WHERE drifted) AS oldest_days
+         FROM drift`,
+      [],
+    );
+    const r = rows?.[0];
+    if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows' };
+
+    const num = (v: string | number | null | undefined) => (v == null ? 0 : Number(v));
+    const total = num(r.total);
+    const drifted = num(r.drifted);
+    const sourceChanged = num(r.source_changed);
+    const sourceGone = num(r.source_gone);
+    const oldestDays = r.oldest_days == null ? null : Math.round(Number(r.oldest_days) * 10) / 10;
+    const ratio = total > 0 ? drifted / total : 0;
+    const details = {
+      total_atoms: total,
+      drifted,
+      source_changed: sourceChanged,
+      source_gone: sourceGone,
+      drift_pct: total > 0 ? Math.round(ratio * 1000) / 10 : 0,
+      oldest_drifted_days: oldestDays ?? undefined,
+    };
+
+    if (total === 0) return { name, status: 'ok', message: 'no atoms to check', details };
+    if (drifted === 0) return { name, status: 'ok', message: `${total} atom(s), all provenance-resolved`, details };
+
+    if (drifted >= MIN_DRIFTED && ratio > WARN_RATIO) {
+      const fix =
+        "review before acting — most drift is an edited source, not a dead one. " +
+        "List them with: SELECT slug, frontmatter->>'source_slug' FROM pages a WHERE a.type='atom' " +
+        "AND a.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=a.source_id " +
+        "AND p.deleted_at IS NULL AND substring(p.content_hash from 1 for 16)=a.frontmatter->>'source_hash')";
+      return {
+        name, status: 'warn',
+        message:
+          `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
+          `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
+          (oldestDays != null ? `; oldest ${oldestDays}d` : '') +
+          `. These still surface in search with a source_quote that no current page contains. Fix: ${fix}`,
+        details,
+      };
+    }
+
+    return {
+      name, status: 'ok',
+      message: `${drifted}/${total} atom(s) drifted (below warn threshold)`,
+      details,
+    };
+  } catch (err) {
+    return { name, status: 'warn', message: `atom_provenance_drift check failed: ${(err as Error).message}` };
+  }
+}
+
+/**
  * v0.42 — extract_health doctor check.
  *
  * Reads the extract_rollup_7d table (migration v106) for the last 7 days
