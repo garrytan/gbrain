@@ -19,6 +19,7 @@ import {
   ensureIpcSecretForConfig,
   type IpcHandlers,
 } from '../core/context/resolve-ipc.ts';
+import { privateContextIpcEnabled } from '../core/context/private-context-ipc-policy.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 import { lexicalArmsEnabled } from '../core/context/reflex.ts';
 import { assembleTurnContext } from '../core/context/turn-context.ts';
@@ -310,6 +311,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
             logTurnContextDeliveryFireAndForget(engine, result, req),
           boundSourceId: defaultSource,
           secret: ipcSecret,
+          // Explicit deployment opt-in. Ordinary MCP remains remote/world-only
+          // regardless; this controls only the secret-gated local context_pack
+          // IPC request used by a destination-authorized consumer.
+          allowPrivateContextPack: privateContextIpcEnabled(cfg),
         },
       );
     }

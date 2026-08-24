@@ -479,6 +479,40 @@ describe('delta cursor lifecycle', () => {
 });
 
 describe('push-path IPC handler (extracted, real engine)', () => {
+  test('explicit private IPC assembly widens the fact arm while the default stays world-only', async () => {
+    const local = ctxFor({ remote: false });
+    await call(remember, local, {
+      fact: 'ipc-private-example public preference',
+      provenance: 'test',
+      entity: 'ipc-private-example',
+      visibility: 'world',
+    });
+    await call(remember, local, {
+      fact: 'ipc-private-example confidential preference',
+      provenance: 'test',
+      entity: 'ipc-private-example',
+      visibility: 'private',
+    });
+    __resetHotMemoryCacheForTests();
+
+    const { makeContextPackIpcHandler } = await import('../src/mcp/context-pack-handler.ts');
+    const handler = makeContextPackIpcHandler(engine, 'default');
+    const world = await handler({
+      kind: 'context_pack', protocol: 2, secret: 's',
+      entities: ['ipc-private-example'],
+    });
+    const widened = await handler({
+      kind: 'context_pack', protocol: 2, secret: 's',
+      entities: ['ipc-private-example'],
+      includePrivate: true,
+    });
+
+    expect(world?.text).toContain('public preference');
+    expect(world?.text).not.toContain('confidential preference');
+    expect(widened?.text).toContain('public preference');
+    expect(widened?.text).toContain('confidential preference');
+  });
+
   test('bankOnly persists standing entities under the local lane; assembly merges them back', async () => {
     const { makeContextPackIpcHandler } = await import('../src/mcp/context-pack-handler.ts');
     const handler = makeContextPackIpcHandler(engine, 'default');

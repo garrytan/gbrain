@@ -177,8 +177,10 @@ export interface TurnContextRequest {
  *   - bankOnly: PreCompact banking — extract entities from `window`, merge
  *     them into the session row's standing set, return an empty block. The
  *     post-compaction SessionStart (source=compact) then serves a warm pack.
- * Same secret + source-binding posture as turn_context. World-only ALWAYS
- * (the push path never widens — include_private is a pull-verb affordance).
+ * Same secret + source-binding posture as turn_context. World-only by
+ * default. An explicit `includePrivate` request is honored only when the
+ * serve owner separately enables `IpcServerOpts.allowPrivateContextPack`;
+ * ordinary hooks never send it and ordinary MCP remains world-only.
  */
 export interface ContextPackRequest {
   kind: 'context_pack';
@@ -212,6 +214,13 @@ export interface ContextPackRequest {
    * OpenClaw assemble poll.
    */
   manifestOnly?: boolean;
+  /**
+   * Trusted-local read opt-in. The server rejects this request unless its
+   * deployment owner separately enabled allowPrivateContextPack. Additive:
+   * old clients omit it and stay world-only; old servers ignore it and their
+   * handler remains world-only.
+   */
+  includePrivate?: boolean;
 }
 
 export type IpcRequest =
@@ -301,6 +310,13 @@ export interface IpcServerOpts {
    * turn_context request is rejected 'unauthorized' (fail closed).
    */
   secret?: string;
+  /**
+   * Deployment authorization for private context_pack reads. Default false.
+   * This is deliberately separate from possession of the IPC secret: the
+   * secret authenticates a local caller, while this switch authorizes the
+   * serve process to widen this one read-only operation.
+   */
+  allowPrivateContextPack?: boolean;
 }
 
 /** Canonical socket path for a PGLite data dir. */
@@ -928,6 +944,9 @@ async function handleContextPack(
   }
   if (req.sourceId && opts.boundSourceId && req.sourceId !== opts.boundSourceId) {
     return { ok: false, protocol: 2, error: 'source_mismatch' };
+  }
+  if (req.includePrivate === true && opts.allowPrivateContextPack !== true) {
+    return { ok: false, protocol: 2, error: 'private_context_disabled' };
   }
   try {
     const budget = new Promise<'__budget__'>((r) => {

@@ -164,6 +164,68 @@ describe('context_pack over IPC', () => {
     expect(resp.error).toBe('source_mismatch');
   });
 
+  test('private request is rejected unless the serve owner separately enables it', async () => {
+    const dataDir = join(tmp, 'data');
+    mkdirSync(dataDir, { recursive: true });
+    const secret = ensureIpcSecret(dataDir);
+    let handlerCalls = 0;
+    const server = await startResolveIpcServer(
+      resolveSocketPath(dataDir),
+      {
+        resolve: async () => null,
+        context_pack: async () => {
+          handlerCalls += 1;
+          return { text: 'PRIVATE', pointers: [], factsCount: 0 };
+        },
+      },
+      { secret, boundSourceId: 'default' },
+    );
+    servers.push(server!);
+
+    const res = await requestContextPack(resolveSocketPath(dataDir), {
+      secret,
+      sourceId: 'default',
+      includePrivate: true,
+    });
+    const resp = res as ContextPackResponse;
+    expect(resp.ok).toBe(false);
+    expect(resp.error).toBe('private_context_disabled');
+    expect(handlerCalls).toBe(0);
+  });
+
+  test('authorized serve forwards the explicit private request to its bounded handler', async () => {
+    const dataDir = join(tmp, 'data');
+    mkdirSync(dataDir, { recursive: true });
+    const secret = ensureIpcSecret(dataDir);
+    let seenPrivate: boolean | undefined;
+    const server = await startResolveIpcServer(
+      resolveSocketPath(dataDir),
+      {
+        resolve: async () => null,
+        context_pack: async (req) => {
+          seenPrivate = req.includePrivate;
+          return { text: 'PRIVATE', pointers: [], factsCount: 0 };
+        },
+      },
+      {
+        secret,
+        boundSourceId: 'default',
+        allowPrivateContextPack: true,
+      },
+    );
+    servers.push(server!);
+
+    const res = await requestContextPack(resolveSocketPath(dataDir), {
+      secret,
+      sourceId: 'default',
+      includePrivate: true,
+    });
+    const resp = res as ContextPackResponse;
+    expect(resp.ok).toBe(true);
+    expect(resp.block?.text).toBe('PRIVATE');
+    expect(seenPrivate).toBe(true);
+  });
+
   test('handler that exceeds the server backstop → server_budget degrade, never a hang', async () => {
     const dataDir = join(tmp, 'data');
     mkdirSync(dataDir, { recursive: true });
