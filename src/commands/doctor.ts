@@ -815,6 +815,16 @@ export async function buildChecks(
       } catch { /* pre-migration / transient: pidfile-only */ }
     }
     const running = pidfileRunning || detectedViaDbLock;
+    // #4518: under --fast, `engine` is null (the CLI dispatcher never
+    // connects — see cli.ts's `if (args.includes('--fast'))` branch), so the
+    // #1849 DB-lock fallback above is structurally unreachable. A supervisor
+    // running the documented multi-queue pattern (distinct --pid-file per
+    // named queue, e.g. `supervisor-cron.pid` + `supervisor-default.pid`)
+    // never writes DEFAULT_PID_FILE either, so `running` is always false for
+    // that install shape under --fast — not because it's actually down, but
+    // because the ONE check that could prove otherwise was never attempted.
+    // Don't assert "not running" on a check we know is inconclusive here.
+    const dbLockCheckSkippedUnderFast = fastMode && !pidfileRunning && !engine;
 
     const events = readSupervisorEvents({ sinceMs: 24 * 60 * 60 * 1000 });
     const lastStart = events.filter(e => e.event === 'started').pop()?.ts ?? null;
@@ -842,6 +852,17 @@ export async function buildChecks(
           name: 'supervisor',
           status: 'fail',
           message: `Supervisor gave up at ${maxCrashesEvent.ts} (max_crashes_exceeded). Restart with: gbrain jobs supervisor start --detach`,
+        });
+      } else if (!running && dbLockCheckSkippedUnderFast && events.length > 0) {
+        // #4518: pidfile check found nothing at the HOME-derived default
+        // path, but under --fast we never got to try the #1849 DB-lock
+        // fallback that would prove a per-queue --pid-file supervisor is
+        // actually alive. Say so instead of asserting a liveness verdict
+        // this run structurally couldn't determine.
+        checks.push({
+          name: 'supervisor',
+          status: 'ok',
+          message: `Not found at the default pidfile path (last_start=${lastStart ?? 'unknown'}) — inconclusive under --fast (DB-lock fallback needs a connection). Run \`gbrain doctor\` without --fast to verify a per-queue --pid-file supervisor.`,
         });
       } else if (!running && events.length > 0) {
         checks.push({
