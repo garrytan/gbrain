@@ -289,7 +289,13 @@ export async function runImport(
     const { resolveSourceId } = await import('../core/source-resolver.ts');
     sourceId = await resolveSourceId(engine, null);
   } else if (!sourceId) {
-    const { resolveSourceWithTier, formatSoleNonDefaultNudge } = await import('../core/source-resolver.ts');
+    const {
+      resolveSourceWithTier,
+      formatSoleNonDefaultNudge,
+      defaultWriteAllowedByEnv,
+      assessDefaultWriteGuard,
+      formatDefaultWriteWarning,
+    } = await import('../core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, null);
     // Only adopt the resolution when it improves on the seed_default
     // fallback — that preserves the v0.30.x "default-only when unset"
@@ -299,6 +305,18 @@ export async function runImport(
       sourceId = resolved.source_id;
       const nudge = formatSoleNonDefaultNudge(sourceId);
       if (nudge) process.stderr.write(nudge + '\n');
+    } else if (resolved.tier === 'seed_default' && !defaultWriteAllowedByEnv()) {
+      // refuse an unscoped import that would silently land in
+      // 'default' on a bulk-non-default brain. Escape: `--source-id default`
+      // (sets sourceId above, skipping this branch) or GBRAIN_ALLOW_DEFAULT_WRITE=1.
+      const assessment = await assessDefaultWriteGuard(engine);
+      if (assessment.shouldGuard) {
+        // Advisory only. Refusing here would change behaviour for callers that
+        // never asked about source routing — and runImport also runs in-process
+        // (sync_brain MCP op, autopilot daemon, minion sync), where aborting
+        // takes the host down mid-call.
+        console.error(formatDefaultWriteWarning(assessment, '--source-id'));
+      }
     }
   }
   const workersIdx = args.indexOf('--workers');

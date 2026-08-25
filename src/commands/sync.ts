@@ -3625,7 +3625,7 @@ See also:
   // surfaces the auto-route to stderr so the user knows what happened
   // and can pass --source to override if needed.
   const explicitSource = args.find((a, i) => args[i - 1] === '--source') || null;
-  const { resolveSourceWithTier, resolveSourceForRepoPath, formatSoleNonDefaultNudge } =
+  const { resolveSourceWithTier, resolveSourceForRepoPath, formatSoleNonDefaultNudge, defaultWriteAllowedByEnv } =
     await import('../core/source-resolver.ts');
   // #3765: an explicit --repo anchors source resolution at the REPO dir, not
   // the caller's cwd. Pre-fix, `gbrain sync --repo ~/other-vault` parsed the
@@ -3656,6 +3656,19 @@ See also:
   if (resolved.tier === 'sole_non_default') {
     const nudge = formatSoleNonDefaultNudge(sourceId);
     if (nudge) process.stderr.write(nudge + '\n');
+  }
+
+  // refuse an unscoped single-source sync that would silently land in
+  // 'default' on a bulk-non-default brain. `--all` iterates every source (not an
+  // unscoped-to-default write) and is exempt. Escape: `--source default`
+  // (resolves as tier 'flag', never seed_default) or GBRAIN_ALLOW_DEFAULT_WRITE=1.
+  if (resolved.tier === 'seed_default' && !syncAll && !defaultWriteAllowedByEnv()) {
+    const { assessDefaultWriteGuard, formatDefaultWriteRefusal } = await import('../core/source-resolver.ts');
+    const assessment = await assessDefaultWriteGuard(engine);
+    if (assessment.shouldGuard) {
+      console.error(formatDefaultWriteRefusal('sync', assessment));
+      process.exit(1);
+    }
   }
 
   // --skip-failed: acknowledge pre-existing unacked failures BEFORE the sync

@@ -134,6 +134,10 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     tools: buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
   })));
 
+  // latch so the "unscoped default write on a multi-source brain"
+  // warning fires at most once per serve process (avoids log spam per call).
+  let warnedDefaultWrite = false;
+
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
   // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
   // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
@@ -159,6 +163,23 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     const sessionId = typeof rawMetaSession === 'string' && rawMetaSession.length > 0
       ? rawMetaSession
       : undefined;
+    // The tokenless stdio pipe writes to 'default' unless GBRAIN_SOURCE is pinned.
+    // On a multi-source brain that silently re-creates cross-source duplicate
+    // slugs. No `--source` flag exists on this transport, so warn loudly (once
+    // per process) instead of refusing the agent's write.
+    if (!process.env.GBRAIN_SOURCE && !warnedDefaultWrite) {
+      const op = operations.find(o => o.name === name);
+      if (op?.mutating) {
+        try {
+          const { assessDefaultWriteGuard, formatDefaultWriteWarning } = await import('../core/source-resolver.ts');
+          const assessment = await assessDefaultWriteGuard(engine);
+          if (assessment.shouldGuard) {
+            process.stderr.write(formatDefaultWriteWarning(assessment) + '\n');
+            warnedDefaultWrite = true;
+          }
+        } catch { /* guard is advisory; never block a write */ }
+      }
+    }
     return dispatchToolCall(engine, name, params, {
       remote: true,
       // #1061: mark the transport so whoami can report {transport: 'stdio'}
