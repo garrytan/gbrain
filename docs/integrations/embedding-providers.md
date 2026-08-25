@@ -104,7 +104,7 @@ To switch an existing brain, run `gbrain migrate embeddings --to voyage:voyage-c
 
 ### Google Gemini
 
-Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Model: `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072. Cheap.
+Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Models: `gemini-embedding-2` (current, GA 2026-04-22) and `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072 (`--embedding-dimensions 1536` / `3072`). Cheap. The two models' vector spaces are not interchangeable — to move an existing brain from `-001` to `-2`, use `gbrain migrate embeddings --to google:gemini-embedding-2 --dim <N>`, not `config set`.
 
 For GCP service-account / Vertex AI auth (production deployments), see the v0.32.x follow-up — Vertex ADC is on the roadmap.
 

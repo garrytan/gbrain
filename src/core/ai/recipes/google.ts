@@ -41,7 +41,11 @@ export const google: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['gemini-embedding-001'],
+      // gemini-embedding-2 (GA 2026-04-22) is Google's current embedding model.
+      // `models` is informational (providers list / docs), not a runtime
+      // allowlist — see assertTouchpoint. Its vector space is incompatible
+      // with -001: switching an existing brain needs `gbrain migrate embeddings`.
+      models: ['gemini-embedding-001', 'gemini-embedding-2'],
       default_dims: 768,
       dims_options: [768, 1536, 3072],
       cost_per_1m_tokens_usd: 0.15,
