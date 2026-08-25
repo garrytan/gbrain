@@ -9,15 +9,11 @@ import { withEnv } from './helpers/with-env.ts';
 import { runGitHubSync, type GitHubSourceConfig } from '../src/core/github-source.ts';
 
 let engine: PGLiteEngine;
-// Captured post-initSchema: resetPgliteState wipes the config `version` row
-// that MinionQueue.ensureSchema() reads; tests that enqueue jobs restore it.
-let migratedVersion: string;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  migratedVersion = (await engine.getConfig('version')) ?? '1';
 });
 
 afterAll(async () => {
@@ -782,7 +778,7 @@ describe('github-source materialize', () => {
     }
   });
 
-  test('large sync defers embeds to an embed-backfill job with a drain hint', async () => {
+  test('large PGLite sync refuses an undrainable embed-backfill job', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ghsrc-embed-defer-'));
     const fx = makeFixture();
     for (let n = 10; n < 111; n++) {
@@ -801,17 +797,14 @@ describe('github-source materialize', () => {
     const fetchImpl = buildFetch(fx);
     try {
       await insertSource(engine, dir);
-      await engine.setConfig('version', migratedVersion); // MinionQueue schema gate
       await withEnv({ GH_TOKEN: 'test-token' }, async () => {
         const res = await runGitHubSync(engine, 'ghsrc', makeCfg(dir), { sourceId: 'ghsrc', full: true, noExtract: true }, fetchImpl);
         expect(res.added).toBeGreaterThan(100);
         expect(res.embedded).toBe(0); // inline embed skipped by the size gate
-        const jobs = await engine.executeRaw<{ data: unknown }>(
-          `SELECT data FROM minion_jobs WHERE name = 'embed-backfill'`,
+        const jobs = await engine.executeRaw<{ id: number }>(
+          `SELECT id FROM minion_jobs WHERE name = 'embed-backfill'`,
         );
-        expect(jobs.length).toBe(1);
-        const data = (typeof jobs[0].data === 'string' ? JSON.parse(jobs[0].data) : jobs[0].data) as { sourceId: string };
-        expect(data.sourceId).toBe('ghsrc');
+        expect(jobs).toEqual([]);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

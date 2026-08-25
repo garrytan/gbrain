@@ -503,12 +503,15 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
     expect((details.warnings as string[]).some(w => w.includes('phase deadline hit'))).toBe(true);
 
-    // Rollup records the deadline break as a halt, not a completed round
-    // (same posture as budget exhaustion). Params: $5 = halt, $8 = completed.
+    // #4482 three-way stop classification: a deadline cap is the extractor
+    // working as designed (partial progress banked) — recorded as an
+    // expected_limit, NOT a halt and NOT a completed round (same posture as
+    // budget exhaustion). Params: $5 = halt, $8 = completed, $9 = expected_limit.
     const rollup = captured.find((c) => c.sql.includes('extract_rollup_7d'));
     expect(rollup).toBeDefined();
-    expect(rollup!.params[4]).toBe(1); // halt_count delta
+    expect(rollup!.params[4]).toBe(0); // halt_count delta (error halts only)
     expect(rollup!.params[7]).toBe(0); // round_completed delta
+    expect(rollup!.params[8]).toBe(1); // expected_limit delta (deadline cap)
   });
 
   test('default deadline does not fire on a fast run', async () => {

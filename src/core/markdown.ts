@@ -187,6 +187,52 @@ function quoteAmbiguousFrontmatterScalars(content: string): string {
   return `---\n${fixedBody}\n---${closer}${rest}`;
 }
 
+/**
+ * #4526: gray-matter only recognizes a frontmatter fence at byte 0, but the
+ * rest of the pipeline (frontmatterBodyOffset above, collectValidationErrors'
+ * MISSING_OPEN check below) tolerates leading blank lines before the opener.
+ * A content blob with a single leading newline therefore silently lost its
+ * whole frontmatter block: empty data, the block left embedded in the body,
+ * and the title humanized from the slug — a raw UUID for `fact/<uuid>`
+ * pages. Strip leading blank lines when (and only when) the first non-empty
+ * line is a fence, so the parse matches what the validators already accept.
+ */
+function stripLeadingBlanksBeforeFence(content: string): string {
+  if (!/^[ \t\r]*\n/.test(content)) return content; // fast path: first line non-blank
+  const lines = content.split('\n');
+  let i = 0;
+  while (i < lines.length && lines[i].trim().length === 0) i++;
+  if (i === 0 || i >= lines.length || lines[i].trim() !== '---') return content;
+  return lines.slice(i).join('\n');
+}
+
+/**
+ * #4526 (second arm): pages already corrupted by the pre-fix parse carry
+ * their real frontmatter EMBEDDED at the top of the body (double-frontmatter
+ * after a get→put round-trip). When the normal precedence found no title
+ * (no frontmatter `title:`, no body H1) and the alternative is humanizing
+ * the slug/filename, promote a `title:` from the embedded leading fence
+ * block instead. Deliberately last-before-fallback: it never overrides a
+ * real title, it only rescues the junk-title case.
+ */
+function inferTitleFromEmbeddedFrontmatter(body: string): string {
+  const m = body.match(/^\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!m) return '';
+  for (const line of m[1]!.split('\n')) {
+    const kv = line.match(/^title:[ \t]+(.+?)[ \t\r]*$/);
+    if (!kv) continue;
+    let value = kv[1]!;
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    return value.trim();
+  }
+  return '';
+}
+
 export function parseMarkdown(
   content: string,
   filePath?: string,
@@ -206,7 +252,9 @@ export function parseMarkdown(
   // so there's no failure signal to react to after the fact. Pre-quoting
   // ambiguous values keeps that input from ever reaching gray-matter in
   // its broken shape.
-  const safeContent = quoteAmbiguousFrontmatterScalars(content);
+  // #4526: lift the fence to byte 0 first (leading blank lines are legal per
+  // the validators), THEN quote ambiguous scalars (whose regex anchors ^---).
+  const safeContent = quoteAmbiguousFrontmatterScalars(stripLeadingBlanksBeforeFence(content));
   let parsed: ReturnType<typeof matter> | null = null;
   let yamlParseError: Error | null = null;
   try {
@@ -248,9 +296,13 @@ export function parseMarkdown(
   // the H1 fallback they get junk titles humanized from the slug
   // (`Contact 20170928 5 John Defalco`), which also breaks anything keyed on
   // the title (e.g. the by-mention gazetteer's first-token bucketing).
+  // #4526: an embedded leading fence block's `title:` outranks only the
+  // humanized-filename fallback — it rescues pages the pre-fix parse left
+  // with their frontmatter stuck in the body, without overriding real titles.
   const title =
     coerceFrontmatterString(frontmatter.title).trim() ||
     inferTitleFromBody(body) ||
+    inferTitleFromEmbeddedFrontmatter(body) ||
     inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
@@ -550,7 +602,7 @@ export function findTimelineSplitIndex(lines: string[]): number {
       for (let j = i + 1; j < lines.length; j++) {
         const next = lines[j].trim();
         if (next.length === 0) continue;
-        if (/^##\s+(timeline|history)\b/i.test(next)) return i;
+        if (/^##\s+(timeline|history)\s*$/i.test(next)) return i;
         break;
       }
     }
@@ -882,7 +934,7 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
 // ---------------------------------------------------------------------------
 
 import { existsSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep as pathSep } from 'node:path';
 
 /** Options for serializePageToMarkdown. */
 export interface SerializePageOpts {
@@ -964,7 +1016,19 @@ export function resolvePageFilePath(
  *
  * Returns null for an unsafe or non-markdown source path. Callers must still
  * enforce their normal realpath containment check before a write.
+ *
+ * Segment splitting is platform-aware (`pathSep`), not a blanket
+ * `[\\/]+` split: on POSIX, `\` is a legal filename character (real
+ * gbrain data has Apple Notes titles containing one), not a directory
+ * separator, so splitting on it there reconstructs a path that doesn't
+ * exist on disk even though the file does (issue: undeclared_db_only_pages
+ * false positive + silent restore/export failure for any such file). On
+ * Windows, `\` is the real separator, so it still needs to split there.
  */
+function splitLocalPathSegments(value: string): string[] {
+  return (pathSep === '\\' ? value.split(/[\\/]+/) : value.split(/\/+/)).filter(Boolean);
+}
+
 export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
@@ -973,14 +1037,14 @@ export function resolveSourceLocalFilePath(
   const value = rawSourcePath.trim();
   if (!value || value.includes('\0') || !/\.mdx?$/i.test(value)) return null;
   if (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return null;
-  const sourceSegments = value.split(/[\\/]+/).filter(Boolean);
+  const sourceSegments = splitLocalPathSegments(value);
   if (sourceSegments.length === 0 || sourceSegments.some(segment => segment === '..')) return null;
 
   const absoluteLocalPath = resolve(localPath);
   let cursor = absoluteLocalPath;
   while (true) {
     if (existsSync(join(cursor, '.git'))) {
-      const scope = relative(cursor, absoluteLocalPath).split(/[\\/]+/).filter(Boolean);
+      const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
       if (scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index])) {
         return join(absoluteLocalPath, ...sourceSegments.slice(scope.length));
       }

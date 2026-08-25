@@ -18,7 +18,7 @@ import { join, dirname, resolve } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { isSourceFederated, parseSourceConfig } from './sources-load.ts';
 import { SOURCE_ID_RE, isValidSourceId, ALL_SOURCES } from './source-id.ts';
-import { isTrustedDotfile, realpathOrResolve } from './path-confine.ts';
+import { isTrustedDotfile, realpathOrResolve, realpathOrResolveAsync } from './path-confine.ts';
 
 // Re-export so scope-resolution call sites can import the sentinel from
 // either module (#1712).
@@ -90,6 +90,59 @@ function readDotfileWalk(startDir: string): string | null {
  *          (prevents silently writing to a nonexistent source and bloating
  *          pages with a dead FK).
  */
+/**
+ * Tier-4 shared core: "registered source whose local_path contains CWD",
+ * longest-prefix-wins. Realpaths BOTH sides (not bare resolve) so a
+ * symlinked CWD can't forge a prefix match against a registered local_path
+ * it doesn't really live under (codex #9); `realpathOrResolveAsync` falls
+ * back to lexical resolve() for a stale registration whose path no longer
+ * exists.
+ *
+ * All N `local_path` realpaths (plus cwd's) resolve via `Promise.all`
+ * (#4091-class fix): a synchronous `realpathSync` loop blocks the event
+ * loop for the FULL duration of every call in sequence, so wrapping the
+ * sync calls in `Promise.all` doesn't parallelize anything — a single slow
+ * or interrupted filesystem path (network mount, macOS on-access security
+ * scan, degraded disk) still serializes the whole tier behind itself times
+ * the registered-source count. The async realpath here truly overlaps I/O
+ * across sources, so the tier's cost is bounded by the SLOWEST single
+ * source, not their sum.
+ *
+ * Shared by `resolveSourceId` and `resolveSourceWithTier` so the two
+ * resolution-chain entry points can't drift on this tier (mirrors how
+ * `pickSoleNonDefaultSource` is already shared for tier 5.5).
+ */
+async function resolveRegisteredPathMatch(
+  engine: BrainEngine,
+  cwd: string,
+): Promise<{ id: string; path: string; pathLen: number } | null> {
+  const registered = await listRegisteredLocalPathSources(engine);
+  if (registered.length === 0) return null;
+  const [cwdResolved, resolvedPaths] = await Promise.all([
+    realpathOrResolveAsync(cwd),
+    Promise.all(registered.map(r => realpathOrResolveAsync(r.local_path))),
+  ]);
+  // #3880: ACTIVE sources win the prefix match — an archived (deeper)
+  // registration must not shadow an active parent source. When cwd lands
+  // ONLY in archived trees, the caller's assertSourceExists still throws
+  // (explicit unavailable target — never silent continuation). The paths
+  // are already resolved above, so the tiering is a pure in-memory pass.
+  for (const archivedTier of [false, true]) {
+    let best: { id: string; path: string; pathLen: number } | null = null;
+    for (let i = 0; i < registered.length; i++) {
+      if ((registered[i].archived === true) !== archivedTier) continue;
+      const p = resolvedPaths[i];
+      if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
+        if (!best || p.length > best.pathLen) {
+          best = { id: registered[i].id, path: p, pathLen: p.length };
+        }
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
 export async function resolveSourceId(
   engine: BrainEngine,
   explicit: string | null | undefined,
@@ -128,32 +181,9 @@ export async function resolveSourceId(
   // 4. Registered source whose local_path contains CWD.
   //    Uses longest-prefix match so nested-path configurations (e.g.
   //    gstack at ~/gstack + plans at ~/gstack/plans) pick the deepest.
-  //    #3880: ACTIVE sources win the prefix match — an archived (deeper)
-  //    registration must not shadow an active parent source. When cwd lands
-  //    ONLY in archived trees, the assertSourceExists below still throws
-  //    (explicit unavailable target — never silent continuation).
-  const registered = await listRegisteredLocalPathSources(engine);
-  // realpath BOTH sides (not bare resolve) so a symlinked CWD can't forge a
-  // prefix match against a registered local_path it doesn't really live under
-  // (codex #9). realpathOrResolve falls back to lexical resolve() for a stale
-  // registration whose path no longer exists. Resolving both sides keeps a
-  // legitimately symlinked vault matching — only one-sided symlinks break.
-  const cwdResolved = realpathOrResolve(cwd);
-  let best: { id: string; pathLen: number } | null = null;
-  for (const tier of [
-    registered.filter((r) => r.archived !== true),
-    registered.filter((r) => r.archived === true),
-  ]) {
-    for (const r of tier) {
-      const p = realpathOrResolve(r.local_path);
-      if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
-        if (!best || p.length > best.pathLen) {
-          best = { id: r.id, pathLen: p.length };
-        }
-      }
-    }
-    if (best) break;
-  }
+  //    #3880 active-over-archived tiering + parallel realpath both live in
+  //    the shared resolveRegisteredPathMatch helper.
+  const best = await resolveRegisteredPathMatch(engine, cwd);
   if (best) {
     // A local_path registration can outlive source archival. Treat landing in
     // that tree as an explicit unavailable target, never as permission to
@@ -486,25 +516,9 @@ export async function resolveSourceWithTier(
   }
 
   // 4. Registered source whose local_path contains CWD.
-  //    #3880: active-over-archived tiering — see resolveSourceId's block.
-  const registered = await listRegisteredLocalPathSources(engine);
-  // realpath both sides — see the matching block in resolveSourceId (codex #9).
-  const cwdResolved = realpathOrResolve(cwd);
-  let best: { id: string; path: string; pathLen: number } | null = null;
-  for (const tier of [
-    registered.filter((r) => r.archived !== true),
-    registered.filter((r) => r.archived === true),
-  ]) {
-    for (const r of tier) {
-      const p = realpathOrResolve(r.local_path);
-      if (cwdResolved === p || cwdResolved.startsWith(p + '/')) {
-        if (!best || p.length > best.pathLen) {
-          best = { id: r.id, path: p, pathLen: p.length };
-        }
-      }
-    }
-    if (best) break;
-  }
+  //    #3880 active-over-archived tiering + parallel realpath both live in
+  //    the shared resolveRegisteredPathMatch helper.
+  const best = await resolveRegisteredPathMatch(engine, cwd);
   if (best) {
     await assertSourceExists(engine, best.id);
     return { source_id: best.id, tier: 'local_path', detail: best.path };

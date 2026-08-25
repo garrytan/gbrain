@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -112,6 +112,34 @@ body
 
     const entries = loadSkillTriggerIndex(skillsDir);
     expect(entries).toEqual([]);
+  });
+
+  test('symlinked skill directory (shared skills store) → frontmatter entries still appear', () => {
+    // Regression: readdirSync's Dirent.isDirectory() reflects the dirent's
+    // own type (DT_LNK on macOS/Linux for a symlink) and does NOT resolve
+    // the link target, so a skill dir symlinked in from a shared store
+    // (e.g. `~/.agents/skills/<name>` linked into `skills/<name>`) was
+    // silently skipped and its triggers never registered.
+    const skillsDir = makeSkillsDir();
+    const storeDir = mkdtempSync(join(tmpdir(), 'skill-trigger-index-store-'));
+    TEMPDIRS.push(storeDir);
+    const realSkillDir = join(storeDir, 'shared-skill');
+    mkdirSync(realSkillDir, { recursive: true });
+    writeFileSync(
+      join(realSkillDir, 'SKILL.md'),
+      skillWithTriggers('shared-skill', ['do the shared thing']),
+    );
+    symlinkSync(realSkillDir, join(skillsDir, 'shared-skill'), 'dir');
+
+    const entries = loadSkillTriggerIndex(skillsDir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      trigger: 'do the shared thing',
+      skillPath: 'skills/shared-skill/SKILL.md',
+      isGStack: false,
+      section: FRONTMATTER_SECTION,
+      source: 'frontmatter',
+    });
   });
 
   test('skill with empty triggers: array → not registered', () => {

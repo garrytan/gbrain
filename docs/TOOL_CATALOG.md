@@ -109,7 +109,7 @@ Every non-localOnly operation on the MCP surface: 118 tools across 22 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `add_link` | Create link between pages | write |  |  |
-| `find_orphans` | Find pages with no inbound wikilinks. | read |  |  |
+| `find_orphans` | Find disconnected pages. | read |  |  |
 | `get_backlinks` | List incoming links to a page | read | yes |  |
 | `get_links` | List outgoing links from a page | read |  |  |
 | `list_link_sources` | List distinct link_source provenances in the brain with edge counts (e.g. | read | yes |  |

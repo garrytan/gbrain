@@ -20,6 +20,7 @@
 
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
+import { MERGE_PROTECTED_SYMBOL_TYPES } from './def-types.ts';
 import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import {
@@ -132,7 +133,14 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // TOP_LEVEL_TYPES / NESTED_EMIT_CONFIG, so decorated code emitted ZERO
 // semantic chunks and its text vanished from the index entirely. The bump
 // forces a full re-chunk so existing Python pages recover the lost symbols.
-export const CHUNKER_VERSION = 5;
+//
+// v6 (#4511): mergeSmallSiblings no longer folds named definitions into
+// anonymous `symbolType: 'merged'` chunks (merging nulls out symbol_name, so
+// a merged definition was unreachable by code-def — a flat file of short
+// top-level defs indexed to ZERO symbols). Chunk boundaries change for every
+// previously-merged file, so the bump forces a re-chunk that recovers the
+// erased symbols.
+export const CHUNKER_VERSION = 6;
 
 // Lazy-loaded tree-sitter module (v0.22.x API: Parser is default export)
 let Parser: typeof import('web-tree-sitter') | null = null;
@@ -923,6 +931,16 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
   // header (empty parent path, but holds the class declaration) and to
   // nested leaves (non-empty parent path).
   const hasScopedChunks = chunks.some(c => (c.metadata.parentSymbolPath ?? []).length > 0);
+  // #4511: merging nulls out symbolName, and code-def resolves names against
+  // chunk rows, so a merged definition is unreachable — a flat file of short
+  // top-level defs indexed to ZERO symbols (protection previously happened
+  // only as a side effect of hasScopedChunks, which flat files never set).
+  // Upstream intent is to merge import/const RUNS, not definitions — enforce
+  // exactly that: a named definition never starts a merge group and is never
+  // accumulated into one. The set is a derived view of code-def's DEF_TYPES
+  // (def-types.ts), so the lookup allowlist and this guard cannot drift.
+  const isDefChunk = (c: CodeChunk): boolean =>
+    c.metadata.symbolName != null && MERGE_PROTECTED_SYMBOL_TYPES.has(c.metadata.symbolType);
   const merged: CodeChunk[] = [];
   let i = 0;
   while (i < chunks.length) {
@@ -934,7 +952,7 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
     // class body's 3 × 10-token methods are each their own chunk on
     // purpose — merging would erase the (in ClassName) scope header
     // Layer 6 just added.
-    if (currentTokens >= mergeThreshold || hasScopedChunks || currentIsScoped) {
+    if (currentTokens >= mergeThreshold || hasScopedChunks || currentIsScoped || isDefChunk(current)) {
       merged.push({ ...current, index: merged.length });
       i++;
       continue;
@@ -945,6 +963,7 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
     let j = i + 1;
     while (j < chunks.length) {
       const next = chunks[j]!;
+      if (isDefChunk(next)) break; // #4511: never fold a definition into a run
       const nextTokens = estimateTokens(next.text);
       if (groupTokens + nextTokens > chunkTarget) break;
       group.push(next);

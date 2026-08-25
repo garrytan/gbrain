@@ -260,10 +260,12 @@ describe('findOrphans (engine-injected)', () => {
     if (engine) await engine.disconnect();
   }, 60_000);
 
-  test('returns pages with no inbound links, excluding pseudo-pages', async () => {
-    // Build a tiny brain: alice links to bob. alice is an orphan (nothing
-    // points to her), bob is not (alice points to him). _atlas is a pseudo
-    // page that should be excluded by default.
+  test('default (islanded, #4524) excludes connected pages and pseudo-pages', async () => {
+    // Build a tiny brain: alice links to bob, carol is fully disconnected.
+    // Under the #4524 canonical 'islanded' default (= get_health's
+    // definition) alice is NOT an orphan (she links out) and bob is not
+    // (alice points to him) — only carol is. _atlas is a pseudo page that
+    // should be excluded by default.
     await engine.putPage('people/alice', {
       type: 'person',
       title: 'Alice',
@@ -274,6 +276,12 @@ describe('findOrphans (engine-injected)', () => {
       type: 'person',
       title: 'Bob',
       compiled_truth: 'Bob.',
+      timeline: '',
+    });
+    await engine.putPage('people/carol', {
+      type: 'person',
+      title: 'Carol',
+      compiled_truth: 'Carol is disconnected.',
       timeline: '',
     });
     await engine.putPage('_atlas', {
@@ -288,10 +296,15 @@ describe('findOrphans (engine-injected)', () => {
     const result = await findOrphans(engine);
 
     const slugs = result.orphans.map(o => o.slug).sort();
-    expect(slugs).toEqual(['people/alice']); // _atlas excluded by default; bob has a backlink
+    expect(slugs).toEqual(['people/carol']); // alice links out; bob has a backlink; _atlas excluded
     expect(result.total_orphans).toBe(1);
-    expect(result.total_pages).toBe(3);
+    expect(result.total_pages).toBe(4);
     expect(result.excluded).toBeGreaterThanOrEqual(1); // _atlas was filtered
+
+    // The legacy no-inbound-only view stays reachable via mode: 'inbound' —
+    // there alice (no backlinks, links out) counts again.
+    const inbound = await findOrphans(engine, { mode: 'inbound' });
+    expect(inbound.orphans.map(o => o.slug).sort()).toEqual(['people/alice', 'people/carol']);
   });
 
   test('includePseudo: true surfaces pseudo-pages too', async () => {
@@ -403,8 +416,14 @@ describe('findOrphans (engine-injected)', () => {
 
     const rows = await queryOrphanPages(engine);
     const slugs = rows.map(r => r.slug);
-    // alice is orphan (no inbound), bob is NOT (alice links to him).
-    expect(slugs).toContain('people/alice');
+    // #4524 islanded default: bob is NOT an orphan (live inbound from
+    // alice), and alice is NOT either — she links out to a live page.
+    expect(slugs).not.toContain('people/alice');
     expect(slugs).not.toContain('people/bob');
+    // The legacy inbound-only view still reports alice (no backlinks).
+    const inbound = await engine.findOrphanPages({ mode: 'inbound' });
+    const inboundSlugs = inbound.map(r => r.slug);
+    expect(inboundSlugs).toContain('people/alice');
+    expect(inboundSlugs).not.toContain('people/bob');
   });
 });

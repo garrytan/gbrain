@@ -77,6 +77,17 @@ export interface ModeBundle {
   /** Zero-LLM intent classifier weight adjustments (PR #897). On for everyone. */
   intentWeighting: boolean;
   /**
+   * Keyword-arm AND→OR zero-recall fallback (fix/title-retrieval-arm, D2).
+   * websearch AND semantics at chunk grain mean one non-co-occurring token
+   * zeroes keyword recall; the fallback retries once with OR-of-terms.
+   * On corpora the FTS config can't stem (CJK/agglutinative text under
+   * 'english') the OR retry can match a large fraction of the corpus, and
+   * ts_rank has no IDF to demote common-token hits — the relaxed rows read
+   * as noise in the RRF blend. This knob lets those corpora turn the
+   * fallback off. Default on (the previous hardcoded behavior).
+   */
+  keywordOrFallback: boolean;
+  /**
    * Per-call token budget cap (PR #897). undefined = no-op (tokenmax).
    * 4000 = tight (conservative, fits Haiku context loop).
    * 12000 = balanced (sweet-spot for Sonnet).
@@ -326,6 +337,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: 4000,
     expansion: false,
     searchLimit: 10,
@@ -373,6 +385,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: 12000,
     expansion: false,
     searchLimit: 25,
@@ -434,6 +447,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: undefined,
     expansion: true,
     searchLimit: 50,
@@ -501,6 +515,7 @@ export interface SearchKeyOverrides {
   cache_similarity_threshold?: number;
   cache_ttl_seconds?: number;
   intentWeighting?: boolean;
+  keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
@@ -554,6 +569,7 @@ export interface SearchPerCallOpts {
   cache_similarity_threshold?: number;
   cache_ttl_seconds?: number;
   intentWeighting?: boolean;
+  keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
@@ -658,6 +674,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     cache_similarity_threshold: pick('cache_similarity_threshold'),
     cache_ttl_seconds: pick('cache_ttl_seconds'),
     intentWeighting: pick('intentWeighting'),
+    keywordOrFallback: pick('keywordOrFallback'),
     tokenBudget: pick('tokenBudget'),
     expansion: pick('expansion'),
     searchLimit: pick('searchLimit'),
@@ -896,7 +913,43 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // ~50% cache savings back. Same contamination class as detail (v=16) and
 // hardExcludes (v=12); same one-time global cold-miss pattern as the bumps
 // above, refills within cache.ttl_seconds (3600s default).
-export const KNOBS_HASH_VERSION = 23;
+//
+// bump 23→24 (#4358 residual): hybrid.ts's `pagedRequest` skip-cache gate
+// only bypassed the cache for offset>0 (the #4368 wave absorbed the
+// positive-offset half of the original #4358 fix, which used `!== 0`, as
+// `> 0`). A negative offset re-slices an already-sliced stored page just as
+// badly as a positive one, and — since offset isn't part of this hash — a
+// negative-offset request could read OR write the same cache row an
+// offset=0 (or any other offset) request shares. Any row written while that
+// gap was live may hold a wrong page under a knobsHash a clean request can
+// still reach. No new key part; the bump alone invalidates (the PR authored
+// this as v=22; master had already reached 23, so it sequences here per the
+// D8 convention). Same one-time global cold-miss pattern as the bumps
+// above; refills within cache.ttl_seconds (3600s).
+//
+// bump 24→25: `kof=` (keyword AND→OR fallback knob) joins the key. The PR
+// authored this as 23→24, but 24 was claimed by the negative-offset bump
+// above while it was open, so it takes the next free number per the D8
+// convention. Same one-time global cold-miss pattern as the bumps above.
+//
+// bump 25→26 folds salience/recency + intent_patterns (#4415) — wave-g. Three
+// new ctx parts:
+//   sal=/rec= — the EFFECTIVE per-call salience/recency modes (explicit
+//     SearchOpts ?? auto-suggested, resolved by the same chain bare
+//     hybridSearch uses — see hybrid.ts resolveEffectiveSalience/
+//     resolveEffectiveRecency). #4415 extended the per-call knobs to the
+//     default MCP `search` surface, so a salience:'strong' write (reordered
+//     result set) could be served to a salience:'off' lookup of the same
+//     query for the whole TTL — same contamination class as det= (v=16).
+//   ipat= — fingerprint of the applied `search.intent_patterns` config.
+//     The patterns change classification (intent weights + auto salience/
+//     recency/detail) and therefore results; without the fold, a config
+//     edit kept serving old-classification rows for up to the TTL.
+// Same one-time global cold-miss pattern as the bumps above; refills
+// within cache.ttl_seconds (3600s default). (Authored as 23→24 on the
+// wave-g branch; 24 and 25 were claimed by the two bumps above while it
+// was in flight, so it takes the next free number per the D8 convention.)
+export const KNOBS_HASH_VERSION = 26;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -956,6 +1009,28 @@ export interface KnobsHashContext {
    * (private included), matching enforcement's strict `=== true` semantics.
    */
   excludePrivate?: boolean;
+  /**
+   * v=24 (#4415, wave-g): the EFFECTIVE salience/recency boost modes for
+   * this call — per-call SearchOpts, or the classifier's auto-suggestion
+   * when the caller didn't specify (hybridSearchCached resolves them with
+   * the same chain bare hybridSearch uses). Both reorder the post-fusion
+   * result set, so a 'strong' write must never serve an 'off' lookup.
+   * Undefined falls back to 'off' (the classifier's default for unmatched
+   * queries) so legacy callers hash stably.
+   */
+  salience?: 'off' | 'on' | 'strong';
+  recency?: 'off' | 'on' | 'strong';
+  /**
+   * v=24 (#4415, wave-g): fingerprint of the applied `search.intent_patterns`
+   * config (query-intent.ts intentPatternFingerprint — 'none' when unset).
+   * The patterns change classification (intent weights + auto salience/
+   * recency/detail) and therefore results; folding the fingerprint makes a
+   * config edit invalidate immediately instead of after the TTL. Threaded
+   * through ctx (not read process-globally like fts=) because the applied
+   * config is PER ENGINE (wave-g) — a process-global read would key one
+   * brain's rows under another brain's patterns in a multi-engine process.
+   */
+  intentPatterns?: string;
 }
 
 export function knobsHash(
@@ -1083,6 +1158,21 @@ export function knobsHash(
     // Strict `=== true` mirrors the enforcement predicate so undefined and
     // false (both private-included) hash identically.
     `xp=${ctx?.excludePrivate === true ? 1 : 0}`,
+    // v=25 addition (append-only): keyword AND→OR fallback knob. A
+    // fallback-on write (OR-relaxed rows blended in) must not be served
+    // to a fallback-off lookup — the zero-strict-recall result sets are
+    // disjoint (relaxed rows vs empty keyword arm). `?? true` mirrors the
+    // module's defensive read of other knobs for partial-knobs callers.
+    `kof=${(knobs.keywordOrFallback ?? true) ? 1 : 0}`,
+    // v=26 additions (#4415, wave-g, append-only): effective salience/
+    // recency boost modes + applied intent-pattern config fingerprint. A
+    // salience/recency-boosted (reordered) write must never serve a lookup
+    // under different modes, and a `search.intent_patterns` edit changes
+    // classification → results, so it must change the key. 'off'/'none'
+    // fallbacks keep legacy callers stable.
+    `sal=${ctx?.salience ?? 'off'}`,
+    `rec=${ctx?.recency ?? 'off'}`,
+    `ipat=${ctx?.intentPatterns ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1120,6 +1210,10 @@ export function loadOverridesFromConfig(
   const iw = get('search.intentWeighting');
   if (iw !== undefined) {
     out.intentWeighting = iw === '1' || iw.toLowerCase() === 'true';
+  }
+  const kof = get('search.keywordOrFallback');
+  if (kof !== undefined) {
+    out.keywordOrFallback = kof === '1' || kof.toLowerCase() === 'true';
   }
   const tb = get('search.tokenBudget');
   if (tb !== undefined) {
@@ -1293,6 +1387,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.cache.similarity_threshold',
   'search.cache.ttl_seconds',
   'search.intentWeighting',
+  'search.keywordOrFallback',
   'search.tokenBudget',
   'search.expansion',
   'search.searchLimit',

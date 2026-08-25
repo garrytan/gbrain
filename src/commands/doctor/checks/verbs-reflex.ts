@@ -111,11 +111,14 @@ export function buildRetrievalReflexCheck(skillsDir: string | null): Check {
       viablePathVisible = false;
     }
 
+    // #4474: when the socket is absent, say the operational truth plainly —
+    // ONLY a running `gbrain serve` (stdio or --http) binds it, and until
+    // one does every lifecycle hook degrades to no_serve on this brain.
     const runtimeMsg = firedRecently
       ? `active (last fired ${lastFired})`
       : viablePathVisible
         ? 'enabled; not observed firing yet'
-        : 'enabled but no observed activity and no visible resolve path (host capability may still supply it; policy skill carries otherwise)';
+        : 'enabled but NO resolve path exists right now: the IPC socket is only bound by a running `gbrain serve` (stdio or --http) — until one is up, hooks/reflex degrade to no_serve on this brain (host capability may still supply pointers; policy skill carries otherwise)';
 
     const status: Check['status'] = firedRecently || viablePathVisible ? 'ok' : 'warn';
     const skillHint = skillInstalled

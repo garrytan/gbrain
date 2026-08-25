@@ -256,14 +256,68 @@ describe('serve-delegated sync (real serve + real sync subprocesses)', () => {
     // the rung-2 regression pin. The gbrain-sync ROW lock is dead-held for
     // the 60s takeover grace, so break it explicitly first.
     const br = await runSyncChild(['--force-break-lock', '--yes'], { timeoutMs: 120_000 });
-    expect(br.code).toBe(0);
+    if (br.code !== 0) {
+      throw new Error(`--force-break-lock exited ${br.code}\nstderr:\n${br.err}\nstdout:\n${br.out}`);
+    }
 
-    const r = await runSyncChild(['--no-pull', '--yes', '--no-embed'], { timeoutMs: 180_000 });
+    // #4492: settle between the break-lock child and the direct run. CI run
+    // 32556210838 flaked here — the direct sync exited 1 and the bare
+    // `expect(r.code).toBe(0)` dropped the stderr that would have pinned the
+    // race (residual PGLite data-dir lock release vs the next spawn, or a
+    // not-yet-cleared gbrain-sync row). Open the brain in-process (connect
+    // reaps dead data-dir lock holders) and poll the sync row-lock free,
+    // then release BEFORE spawning the direct child.
+    const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
+    {
+      const settleDeadline = Date.now() + 60_000;
+      let settleEngine = null as Awaited<ReturnType<typeof createEngine>> | null;
+      for (;;) {
+        try {
+          settleEngine = await createEngine(engineConfig);
+          await settleEngine.connect(engineConfig);
+          break;
+        } catch (e) {
+          settleEngine = null;
+          if (Date.now() > settleDeadline) {
+            throw new Error(`settle: brain not openable after force-break: ${(e as Error).message}`);
+          }
+          await new Promise((res) => setTimeout(res, 500));
+        }
+      }
+      try {
+        for (;;) {
+          const held = await settleEngine!.executeRaw<{ n: number }>(
+            `SELECT count(*)::int AS n FROM gbrain_cycle_locks WHERE id LIKE 'gbrain-sync:%'`,
+          );
+          if (held[0]!.n === 0) break;
+          if (Date.now() > settleDeadline) {
+            throw new Error(`settle: gbrain-sync lock row still held after force-break (${held[0]!.n} row(s))`);
+          }
+          await new Promise((res) => setTimeout(res, 500));
+        }
+      } finally {
+        await settleEngine!.disconnect();
+      }
+    }
+
+    // Retry-once: a first direct attempt can still lose a residual startup
+    // race with the just-released data-dir lock; a second attempt (with the
+    // first failure's stderr surfaced) separates a flaky settle from a real
+    // regression.
+    let r = await runSyncChild(['--no-pull', '--yes', '--no-embed'], { timeoutMs: 180_000 });
+    if (r.code !== 0) {
+      process.stderr.write(
+        `[pin4] first direct sync attempt exited ${r.code}; retrying once.\n` +
+        `[pin4] first-attempt stderr:\n${r.err}\n`,
+      );
+      r = await runSyncChild(['--no-pull', '--yes', '--no-embed'], { timeoutMs: 180_000 });
+    }
     expect(r.err).not.toContain('delegating the sync');
-    expect(r.code).toBe(0);
+    if (r.code !== 0) {
+      throw new Error(`direct sync exited ${r.code}\nstderr:\n${r.err}\nstdout:\n${r.out}`);
+    }
 
     // The pages are really in the brain (direct engine open works now).
-    const engineConfig = { engine: 'pglite' as const, database_path: dbDir };
     const engine = await createEngine(engineConfig);
     await engine.connect(engineConfig);
     const rows = await engine.executeRaw<{ n: number }>(

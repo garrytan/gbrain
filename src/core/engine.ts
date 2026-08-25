@@ -1314,6 +1314,11 @@ export interface BrainEngine {
    * constrains the delete to a specific provenance ('frontmatter', 'markdown',
    * 'manual') — used by runAutoLink reconciliation to avoid deleting edges from
    * other provenances when pruning frontmatter-derived edges.
+   *
+   * #4527: returns the number of rows actually deleted (via RETURNING) so
+   * callers can distinguish a real removal from a no-op (typo'd slug, wrong
+   * type/provenance, already-removed edge) instead of both looking like
+   * success.
    */
   removeLink(
     from: string,
@@ -1321,7 +1326,7 @@ export interface BrainEngine {
     linkType?: string,
     linkSource?: string,
     opts?: { fromSourceId?: string; toSourceId?: string },
-  ): Promise<void>;
+  ): Promise<number>;
   /**
    * #3674 — bulk removal of derived links for a set of FROM pages, scoped to
    * one link_source. The substrate for `extract links --by-mention --rebuild`:
@@ -1563,9 +1568,18 @@ export interface BrainEngine {
    * `opts` for the brain-wide behavior (unchanged). When both are set,
    * `sourceIds` wins (mirrors `sourceScopeOpts` precedence).
    */
+  /**
+   * #4524: `mode` selects the orphan definition. 'islanded' (the DEFAULT)
+   * matches get_health.orphan_pages — no live inbound AND no live outbound
+   * link — so every consumer (orphans CLI, find_orphans op, doctor
+   * orphan_ratio, health) agrees by construction. 'inbound' is the legacy
+   * no-inbound-only view (a page that links out but is never linked TO still
+   * counts as an orphan there).
+   */
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
+    mode?: 'inbound' | 'islanded';
   }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
 
   // Tags

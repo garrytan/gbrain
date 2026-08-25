@@ -44,7 +44,7 @@ import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
 import type { OperationContext } from '../operations.ts';
@@ -144,6 +144,17 @@ export type ProposeTakesExtractor = (input: {
   pageBody: string;
   existingTakes: Array<{ claim: string; kind: string; holder: string; weight: number }>;
   modelHint?: string;
+  /**
+   * #4494: output cap for the extractor call (default
+   * PROPOSE_TAKES_MAX_TOKENS). Configurable via dream.propose_takes.max_tokens
+   * because thinking models spend reasoning tokens INSIDE maxTokens — at the
+   * 2048 default a thinking model can burn the whole budget before emitting
+   * any JSON, truncating EVERY page into a permanent per-page retry loop.
+   */
+  maxTokens?: number;
+  /** #4494: escalated cap for the one truncation retry (default
+   *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
+  retryMaxTokens?: number;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -307,6 +318,15 @@ const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
  * parity); a still-truncated retry throws an error NAMING the truncation
  * instead of the old generic 'transient — retry' (which re-billed the page
  * every cycle forever while hiding the real cause).
+ *
+ * #4494 — these are now DEFAULTS, overridable via
+ * `dream.propose_takes.max_tokens` / `dream.propose_takes.retry_max_tokens`
+ * (floor 256; retry clamped >= base), mirroring dream.triage.max_tokens.
+ * Thinking models (DeepSeek-R1, MiniMax-M3, Claude with extended thinking)
+ * spend reasoning tokens INSIDE the maxTokens budget, so field deployments
+ * saw every dense page truncate at 2048 → retry at 4096 → truncate again →
+ * throw → re-bill next cycle, forever. Raising the config key breaks that
+ * loop without inflating the default for non-thinking models.
  */
 export const PROPOSE_TAKES_MAX_TOKENS = 2048;
 export const PROPOSE_TAKES_RETRY_MAX_TOKENS = 4096;
@@ -339,6 +359,16 @@ export async function defaultExtractor(
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
     .replace('{PAGE_BODY}', input.pageBody);
 
+  // #4494: per-run configurable caps (dream.propose_takes.max_tokens /
+  // .retry_max_tokens), threaded by the phase; the #3763 constants stay as
+  // defaults. Retry is clamped >= base so a partial override can't shrink
+  // the escalation below the first attempt.
+  const baseMaxTokens = Math.max(256, Math.floor(input.maxTokens ?? PROPOSE_TAKES_MAX_TOKENS));
+  const retryMaxTokens = Math.max(
+    baseMaxTokens,
+    Math.floor(input.retryMaxTokens ?? PROPOSE_TAKES_RETRY_MAX_TOKENS),
+  );
+
   // Bound each call so one stalled provider socket can't pin the phase for the
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
   // caller already catches per-page errors, logs a warning, and continues.
@@ -348,7 +378,7 @@ export async function defaultExtractor(
     maxTokens,
     abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
   });
-  let result = await call(PROPOSE_TAKES_MAX_TOKENS);
+  let result = await call(baseMaxTokens);
 
   // #3763: a truncated response (stopReason 'length' — e.g. reasoning tokens
   // eating the cap, or a dense page extracting many claims) produced
@@ -359,15 +389,17 @@ export async function defaultExtractor(
   // warning tells the operator what actually happened.
   if (result.stopReason === 'length') {
     process.stderr.write(
-      `[propose_takes] WARN: extractor output truncated at maxTokens=${PROPOSE_TAKES_MAX_TOKENS} ` +
-      `(${input.pagePath}); retrying once at ${PROPOSE_TAKES_RETRY_MAX_TOKENS}\n`,
+      `[propose_takes] WARN: extractor output truncated at maxTokens=${baseMaxTokens} ` +
+      `(${input.pagePath}); retrying once at ${retryMaxTokens}\n`,
     );
-    result = await call(PROPOSE_TAKES_RETRY_MAX_TOKENS);
+    result = await call(retryMaxTokens);
     if (result.stopReason === 'length') {
       throw new Error(
         `propose_takes extractor: output truncated (stopReason=length) even at ` +
-        `maxTokens=${PROPOSE_TAKES_RETRY_MAX_TOKENS} on ${input.pagePath} — ` +
-        `page prose extracts more than the cap can carry; no tombstone written, page retries next cycle`,
+        `maxTokens=${retryMaxTokens} on ${input.pagePath} — ` +
+        `page prose extracts more than the cap can carry; raise ` +
+        `dream.propose_takes.max_tokens (thinking models spend reasoning tokens ` +
+        `inside this budget); no tombstone written, page retries next cycle`,
       );
     }
   }
@@ -605,6 +637,27 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     const modelId = opts.model ?? getChatModel();
 
+    // #4494: configurable extractor output caps (dream.triage.max_tokens
+    // precedent — floor 256, retry clamped >= base, fail-open to the #3763
+    // defaults on any config-plane error). Thinking models spend reasoning
+    // tokens inside maxTokens, so the hardcoded 2048/4096 pair put dense
+    // pages into a permanent truncate → retry → truncate → re-bill loop.
+    let extractorMaxTokens = PROPOSE_TAKES_MAX_TOKENS;
+    let extractorRetryMaxTokens = PROPOSE_TAKES_RETRY_MAX_TOKENS;
+    try {
+      const readCap = async (key: string): Promise<number | null> => {
+        const raw = await engine.getConfig?.(key);
+        if (raw == null || String(raw).trim() === '') return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+      const baseCap = await readCap('dream.propose_takes.max_tokens');
+      if (baseCap != null) extractorMaxTokens = Math.max(256, Math.floor(baseCap));
+      const retryCap = await readCap('dream.propose_takes.retry_max_tokens');
+      if (retryCap != null) extractorRetryMaxTokens = Math.floor(retryCap);
+    } catch { /* keep defaults */ }
+    extractorRetryMaxTokens = Math.max(extractorMaxTokens, extractorRetryMaxTokens);
+
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
     // think/index.ts: unknown provider/model or Anthropic-without-key skips;
@@ -768,6 +821,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pageBody: body,
           existingTakes,
           modelHint: opts.model,
+          // #4494: configurable output caps (see resolution above).
+          maxTokens: extractorMaxTokens,
+          retryMaxTokens: extractorRetryMaxTokens,
         });
       } catch (err) {
         result.llm_calls_failed += 1;
@@ -894,9 +950,14 @@ class ProposeTakesPhase extends BaseCyclePhase {
         console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
       }
     }
-    // A deadline-hit run halted mid-list the same way a budget-exhausted one
-    // does — record it as a halt, not a completed round. A global-error
-    // abort (#3044) is the same posture: the round did not complete.
+    // #4482: three-way stop classification. A budget/deadline cap is the
+    // extractor working as designed (partial progress banked; the rest
+    // drains over future runs) — recorded as expected_limit_delta, a
+    // capacity signal doctor's failure rate excludes. A global-error abort
+    // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
+    // from today. An error alongside a cap counts as the error.
+    // `halted` (any incomplete round, caps included) is kept for the phase
+    // result's status/details below — the diagnostic split is rollup-only.
     const halted =
       result.budget_exhausted ||
       result.deadline_hit === true ||
@@ -905,8 +966,13 @@ class ProposeTakesPhase extends BaseCyclePhase {
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
-      round_completed_delta: halted ? 0 : 1,
-      halt_delta: halted ? 1 : 0,
+      ...classifyRunStop({
+        budget_exhausted: result.budget_exhausted === true,
+        deadline_hit: result.deadline_hit === true,
+        error:
+          result.aborted_global_error !== undefined ||
+          result.aborted_failure_streak === true,
+      }),
     });
 
     // Status folds warnings in (the extract_facts precedent from #1928): a

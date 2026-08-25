@@ -223,6 +223,12 @@ describe.skipIf(!OPENAI && !ANTHROPIC)('keyed auto fact-extraction (LLM takes)',
       title: 'Keyed Extraction Probe',
       compiled_truth: PROSE,
     });
+    // #4473: takes are md-first — the probe page needs a real markdown home
+    // (a page with no locatable .md is skipped, never written DB-only).
+    const repo = join(root, 'brain');
+    mkdirSync(join(repo, 'concepts'), { recursive: true });
+    writeFileSync(join(repo, `${SLUG}.md`), `# Keyed Extraction Probe\n\n${PROSE}\n`, 'utf-8');
+    await engine.setConfig('sync.repo_path', repo);
   }, 120_000);
 
   afterAll(async () => {

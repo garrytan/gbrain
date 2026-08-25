@@ -548,3 +548,78 @@ describe('checkpoint persistence (#3629)', () => {
     expect(synthCalls).toBe(2); // --force re-bills deliberately
   }, 60000);
 });
+
+describe('checkpoint residuals (#3629 follow-up)', () => {
+  test('blank model output stays retryable: NOT banked in the checkpoint', async () => {
+    await seedStub('people/blank-example', 'Blank Example', 'person');
+    await seedLinkInto('people/blank-example', 'meetings/blank-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const blankSynth: SynthesizeFn = async () => { synthCalls++; return ''; };
+    const opts = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: blankSynth,
+    };
+
+    const r1 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1);
+    expect(r1.pages_empty_output).toBe(1);
+
+    // A blank response is a synthesis-failure shape (#2085), not a grounding
+    // verdict — the next run must re-attempt it instead of suppressing the
+    // page for the checkpoint TTL.
+    const r2 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(2);
+    expect(r2.pages_empty_output).toBe(1);
+  }, 60000);
+
+  test('relaxing --min-context re-evaluates a page banked under the stricter gate', async () => {
+    await seedStub('people/thin-ctx', 'Thin Ctx', 'person');
+    await seedLinkInto('people/thin-ctx', 'meetings/thin-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const synth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const base = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: synth,
+    };
+
+    // Strict gate: pre-LLM rejection banks the page under THIS fingerprint.
+    const strict = await runEnrichCore(engine, { ...base, minContextChars: 100000 });
+    expect(synthCalls).toBe(0);
+    expect(strict.pages_skipped_pre_llm ?? 0).toBe(1);
+
+    // Relaxed gate is a different run: the banked pre-LLM skip must not
+    // suppress the page under the new knob value.
+    await runEnrichCore(engine, { ...base, minContextChars: 10 });
+    expect(synthCalls).toBe(1);
+  }, 60000);
+
+  test('--dry-run --force does not destroy the real checkpoint', async () => {
+    await seedStub('people/dryforce', 'Dry Force', 'person');
+    await seedLinkInto('people/dryforce', 'meetings/df-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const skipSynth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const opts = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: skipSynth,
+    };
+
+    await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1);
+
+    // A dry-run preview with --force must stay read-only.
+    await runEnrichCore(engine, { ...opts, dryRun: true, force: true });
+
+    const r3 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1); // still banked — the dry-run didn't clear it
+    expect(r3.pages_enriched).toBe(0);
+  }, 60000);
+});

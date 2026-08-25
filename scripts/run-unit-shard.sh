@@ -81,8 +81,19 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-echo "[unit-shard ${SHARD:-(unsharded)}] running ${#files[@]} files"
-if [ -n "$MAX_CONC" ]; then
-  exec bun test --max-concurrency="$MAX_CONC" --timeout=60000 "${files[@]}"
+# #4479: per-shard timeout multiplier. 4-way shard contention in the CI
+# container makes subprocess/PGLite tests ~6x slower per file than native,
+# producing timeout-class failures that pass natively. The 60s per-test
+# ceiling scales by GBRAIN_TEST_TIMEOUT_MULTIPLIER (integer, default 1;
+# ci-local's container lane sets it). Non-integer values fall back to 1.
+MULT="${GBRAIN_TEST_TIMEOUT_MULTIPLIER:-1}"
+if ! printf '%s' "$MULT" | grep -qE '^[0-9]+$' || [ "$MULT" -lt 1 ]; then
+  MULT=1
 fi
-exec bun test --timeout=60000 "${files[@]}"
+TEST_TIMEOUT_MS=$((60000 * MULT))
+
+echo "[unit-shard ${SHARD:-(unsharded)}] running ${#files[@]} files (timeout=${TEST_TIMEOUT_MS}ms)"
+if [ -n "$MAX_CONC" ]; then
+  exec bun test --max-concurrency="$MAX_CONC" --timeout="$TEST_TIMEOUT_MS" "${files[@]}"
+fi
+exec bun test --timeout="$TEST_TIMEOUT_MS" "${files[@]}"

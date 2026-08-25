@@ -27,6 +27,7 @@ import {
   addTypeToPack,
   invalidatePackCache,
   loadActivePack,
+  loadResolvedPackByName,
   removeAliasFromType,
   removeLinkTypeFromPack,
   removePrefixFromType,
@@ -728,7 +729,24 @@ async function runLintCmd(args: string[]): Promise<void> {
   let pack: SchemaPackManifest | null;
   if (name) {
     const p = packPathByName(name);
-    try { pack = p ? loadPackFromFile(p) : null; } catch { pack = null; }
+    let raw: SchemaPackManifest | null;
+    try { raw = p ? loadPackFromFile(p) : null; } catch { raw = null; }
+    if (raw) {
+      // #4501: lint the MERGED manifest (extends chain + borrow_from
+      // resolved), matching the no-name branch's loadActivePack path —
+      // a child pack referencing inherited parent types must not fail
+      // raw-manifest lint. Fall back to the raw child (with a stderr
+      // warning) when the chain can't be resolved, e.g. missing parent.
+      try {
+        pack = (await loadResolvedPackByName(name)).manifest;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`warn: could not resolve extends chain for pack \`${name}\` (${msg}); linting raw manifest only`);
+        pack = raw;
+      }
+    } else {
+      pack = null;
+    }
   } else {
     pack = (await loadActivePack({ cfg, remote: false })).manifest;
   }

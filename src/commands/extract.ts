@@ -196,20 +196,33 @@ function refsWithSnapshotStamps(
  * v0.42.7 (#1696): pure cross-source resolution for one extracted link
  * candidate. Validates both endpoints exist (else the batch JOIN drops the row),
  * then picks from_source_id / to_source_id: prefer the origin page's source,
- * fall back to 'default', else skip (never push a wrong-source edge). Returns
- * null when the candidate should be skipped. Shared by extractLinksFromDB and
- * extractStaleFromDB so the F10 multi-source resolution can't drift.
+ * fall back to 'default', else skip (never push a wrong-source edge). Shared
+ * by extractLinksFromDB and extractStaleFromDB so the F10 multi-source
+ * resolution can't drift.
+ *
+ * v0.46.28.0 (#2589): the failure case now carries a `reason` instead of a
+ * bare `null`. A target that resolves via `global_basename` to a page that
+ * exists ONLY in a source other than the origin's or 'default' was
+ * indistinguishable from a genuinely-missing target — both silently dropped
+ * the candidate and both counted (misleadingly) as "target page doesn't
+ * exist". This stays default-deny by design: cross-source edges remain
+ * unwritten (source isolation — see CLAUDE.md), but callers can now
+ * attribute the drop correctly instead of reporting a wrong reason.
  */
+export type CandidateSourceResolution =
+  | { ok: true; fromSlug: string; fromSourceId: string; toSourceId: string }
+  | { ok: false; reason: 'missing_target' | 'missing_from' | 'cross_source' };
+
 export function resolveCandidateSources(
   c: LinkCandidate,
   pageSlug: string,
   pageSourceId: string,
   allSlugs: Set<string>,
   slugToSources: Map<string, string[]>,
-): { fromSlug: string; fromSourceId: string; toSourceId: string } | null {
+): CandidateSourceResolution {
   const fromSlug = c.fromSlug ?? pageSlug;
-  if (!allSlugs.has(c.targetSlug)) return null;
-  if (!allSlugs.has(fromSlug)) return null;
+  if (!allSlugs.has(c.targetSlug)) return { ok: false, reason: 'missing_target' };
+  if (!allSlugs.has(fromSlug)) return { ok: false, reason: 'missing_from' };
   const fromSources = slugToSources.get(fromSlug) ?? [];
   const fromSourceId = fromSources.includes(pageSourceId) ? pageSourceId
     : (fromSources.includes('default') ? 'default' : fromSources[0]);
@@ -220,9 +233,9 @@ export function resolveCandidateSources(
   } else if (targetSources.includes('default')) {
     toSourceId = 'default';
   } else {
-    return null;
+    return { ok: false, reason: 'cross_source' };
   }
-  return { fromSlug, fromSourceId, toSourceId };
+  return { ok: true, fromSlug, fromSourceId, toSourceId };
 }
 
 // isRetryableConnError reference retained for any inline classification at
@@ -760,6 +773,9 @@ Extraction:
       survive). Fixes drift the stale_mentions doctor check reports (#3674).
   gbrain extract <links|timeline|all> --ner --source db
   gbrain extract <timeline|all> --from-meetings --source db
+      Scans only meeting pages (type 'meeting', or 'note' with
+      frontmatter.legacy_type 'meeting'). REPLACES the default timeline
+      pass — it does not add to it.
 
   --since DATE filters on updated_at — the page row's last DB-write time
   ("touched since"): import, sync, enrich, and extraction stamps all advance
@@ -1040,6 +1056,20 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
         result.pages_processed = r.meetings_scanned;
         if (!jsonMode) {
           console.log(`Timeline from meetings: ${r.entries_created} entries on ${r.entities_touched} entity pages from ${r.meetings_scanned} meetings`);
+        }
+        // #4542: a zero-meeting brain used to print "0 entries ... from 0
+        // meetings" and exit 0 — indistinguishable from success. Easy to hit
+        // because --from-meetings REPLACES the default timeline pass (this
+        // branch runs solo), so users expecting "meetings AND the usual pass"
+        // silently got neither. Warn on stderr, name the predicate, and point
+        // at the way out.
+        if (r.meetings_scanned === 0) {
+          console.error(
+            `[extract timeline] WARN: 0 meetings matched — --from-meetings only scans pages ` +
+            `WHERE type = 'meeting' (or type = 'note' with frontmatter.legacy_type = 'meeting'). ` +
+            `Note this flag REPLACES the default timeline pass (it does not add to it); ` +
+            `omit --from-meetings to extract timeline entries from all pages.`,
+          );
         }
         // #2057 (codex): batch failures are no longer swallowed silently — make
         // them visible at the command surface (and non-zero exit) instead of
@@ -1621,6 +1651,10 @@ async function extractLinksFromDB(
   let processed = 0, created = 0;
   // #2576: skipped-candidate counter — see extractStaleFromDB's twin.
   let skippedMissingTarget = 0;
+  // #2589: target resolved (via global_basename) to a page that exists only
+  // in a source other than the origin's or 'default' — default-deny by
+  // design (source isolation), but distinct from a genuinely missing target.
+  let skippedCrossSource = 0;
   // v0.42.7 (#1696): pages whose links we extracted this run — stamped after
   // the loop so a manual `gbrain extract links|all --source db` clears the
   // links_extraction_lag doctor signal. Non-dry-run only.
@@ -1669,10 +1703,15 @@ async function extractLinksFromDB(
     for (const c of extracted.candidates) {
       // v0.32.8 F10 cross-source link resolution, extracted to the shared pure
       // helper in v0.42.7 (#1696) so extract --stale reuses the exact same
-      // endpoint-validation + from/to source-id picking (null = skip: missing
-      // endpoint OR target only in a non-origin/non-default source).
+      // endpoint-validation + from/to source-id picking. #2589: the reason
+      // is now distinguished (missing endpoint vs. target only in a
+      // non-origin/non-default source) so the two don't get counted as one.
       const resolved = resolveCandidateSources(c, slug, source_id, allSlugs, slugToSources);
-      if (!resolved) { skippedMissingTarget++; continue; }
+      if (!resolved.ok) {
+        if (resolved.reason === 'cross_source') skippedCrossSource++;
+        else skippedMissingTarget++;
+        continue;
+      }
       const { fromSlug, fromSourceId, toSourceId } = resolved;
 
       if (dryRunSeen) {
@@ -1731,6 +1770,9 @@ async function extractLinksFromDB(
     console.log(`Links: ${label} ${created} from ${processed} pages (db source)`);
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
+    }
+    if (skippedCrossSource > 0) {
+      console.log(`Skipped ${skippedCrossSource} candidate(s) whose target page exists only in another source (cross-source edges are not written — see docs/architecture/brains-and-sources.md).`);
     }
     if (includeFrontmatter && unresolved.length > 0) {
       // Top-20 preview of unresolvable frontmatter names so the user can
@@ -1884,7 +1926,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
   const timeBudgetMs = opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
@@ -1943,6 +1985,10 @@ export async function extractStaleFromDB(
   // persisted. Counted so a dropped reference is observable in the summary
   // instead of vanishing silently (the failure mode that hid bug 2).
   let skippedMissingTarget = 0;
+  // #2589: target resolved (via global_basename) to a page that exists only
+  // in a source other than the origin's or 'default' — default-deny by
+  // design (source isolation), but distinct from a genuinely missing target.
+  let skippedCrossSource = 0;
 
   for (;;) {
     const rows = await engine.listStalePagesForExtraction({
@@ -1962,7 +2008,11 @@ export async function extractStaleFromDB(
       );
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(c, page.slug, page.source_id, allSlugs, slugToSources);
-        if (!r) { skippedMissingTarget++; continue; }
+        if (!r.ok) {
+          if (r.reason === 'cross_source') skippedCrossSource++;
+          else skippedMissingTarget++;
+          continue;
+        }
         linkRows.push({
           from_slug: r.fromSlug, to_slug: c.targetSlug, link_type: c.linkType,
           context: c.context, link_source: c.linkSource, origin_slug: c.originSlug,
@@ -2030,6 +2080,9 @@ export async function extractStaleFromDB(
     if (skippedMissingTarget > 0) {
       console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
+    if (skippedCrossSource > 0) {
+      console.log(`Skipped ${skippedCrossSource} candidate(s) whose target page exists only in another source (cross-source edges are not written — see docs/architecture/brains-and-sources.md).`);
+    }
     if (budgetHit && staleRemaining > 0) {
       console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
     }
@@ -2037,10 +2090,10 @@ export async function extractStaleFromDB(
     process.stdout.write(JSON.stringify({
       action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
-      skipped_missing_target: skippedMissingTarget,
+      skipped_missing_target: skippedMissingTarget, skipped_cross_source: skippedCrossSource,
     }) + '\n');
   }
-  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget };
+  return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource };
 }
 
 /**

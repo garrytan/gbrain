@@ -48,7 +48,7 @@ import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, isAnthropicProvider, isOpenRouterAnthropic, TIER_DEFAULTS } from '../../model-config.ts';
 import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
 import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
@@ -417,7 +417,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // #2753: share the doctor's truthiness set. Before this, the doctor accepted
     // yes/on but the worker did not, so `config set ... yes` reported healthy
     // here and still refused the job below.
-    const useGatewayLoop = isConfigTruthy(useGatewayLoopRaw);
+    // OpenRouter Anthropic is not `isAnthropicProvider` (the Messages SDK
+    // cannot speak OR). Auto-enable the gateway loop so the legacy pin
+    // does not refuse `openrouter:anthropic/…` when the flag is off.
+    const useGatewayLoop = isConfigTruthy(useGatewayLoopRaw) || isOpenRouterAnthropic(model);
     if (!useGatewayLoop && !isAnthropicProvider(model)) {
       throw new Error(
         `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
@@ -1690,6 +1693,12 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
       : {};
     if (t === 'text' && typeof block.text === 'string') {
       out.push({ type: 'text', text: block.text, ...meta });
+    } else if (t === 'reasoning' && typeof block.text === 'string') {
+      // OpenAI Responses API reasoning-item id (providerMetadata.openai.itemId)
+      // — see the ChatBlock doc comment. Must survive crash-replay the same
+      // way tool-call providerMetadata does, or a resumed reasoning-model
+      // tool loop dead-letters on its next turn.
+      out.push({ type: 'reasoning', text: block.text, ...meta });
     } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       // v1 Anthropic shape
       out.push({

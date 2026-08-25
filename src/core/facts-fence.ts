@@ -345,6 +345,118 @@ export function renderFactsTable(facts: ParsedFact[]): string {
 }
 
 /**
+ * #2044 / #4548 row-level, visibility-aware restoration merge for the
+ * remote write-back boundary (import-file.ts), replacing the original
+ * whole-block swap (which only fired when the incoming fence went to
+ * exactly zero facts).
+ *
+ * `get_page`/`fetch` strip non-'world' rows before an untrusted
+ * (`ctx.remote !== false`) caller ever sees them, so a documented
+ * get_page -> edit -> put_page round-trip arrives MISSING rows the caller
+ * structurally could not have seen — their absence is not an intentional
+ * delete. Conversely, 'world'-visible rows WERE fully visible, so an
+ * edit/deletion of one is the caller's and must be honored (#4554).
+ *
+ * Rules:
+ *   - Only non-'world' rows of the existing fence are restoration
+ *     candidates. World rows are NEVER restored — a legitimate deletion
+ *     stays deleted.
+ *   - A hidden row whose rowNum is absent from the incoming fence is
+ *     restored at its stable rowNum (cross-page `#F<N>` refs survive).
+ *   - A hidden row whose rowNum APPEARS in the incoming fence with a
+ *     DIFFERENT claim is a rowNum collision: the caller never saw that
+ *     number, so the incoming row is a caller-authored addition that
+ *     landed on a hidden number. The hidden row keeps its stable number;
+ *     the caller's row is renumbered onto fresh appended numbers
+ *     (max rowNum across both sets + 1), matching upsertFactRow's
+ *     append-only contract.
+ *   - Same rowNum + same claim: the caller already carries the row (e.g.
+ *     a full-content write-through) — the incoming version wins, nothing
+ *     restored, so the merge is idempotent.
+ *   - Either side parsing with warnings returns null: re-rendering a
+ *     fence we could not fully parse would drop the caller's unparsed
+ *     rows. The residual data loss is surfaced by factsGapWarning below.
+ *
+ * Returns null when there is nothing to restore (pure-world fence, no
+ * hidden rows missing, or a non-authoritative parse) — the caller writes
+ * the incoming fence as-is. Pure and side-effect-free.
+ */
+export function restoreHiddenFactRows(
+  incoming: { facts: ParsedFact[]; warnings: string[] },
+  existing: { facts: ParsedFact[]; warnings: string[] },
+): { merged: ParsedFact[]; restored: ParsedFact[]; renumbered: Array<{ from: number; to: number }> } | null {
+  if (incoming.warnings.length > 0 || existing.warnings.length > 0) return null;
+  const hidden = existing.facts.filter((f) => f.visibility !== 'world');
+  if (hidden.length === 0) return null;
+
+  const incomingByRowNum = new Map(incoming.facts.map((f) => [f.rowNum, f]));
+  const restored: ParsedFact[] = [];
+  const collidingRowNums = new Set<number>();
+  for (const h of hidden) {
+    const inc = incomingByRowNum.get(h.rowNum);
+    if (!inc) {
+      restored.push(h);
+    } else if (inc.claim !== h.claim) {
+      collidingRowNums.add(h.rowNum);
+      restored.push(h);
+    }
+    // claim-equal: incoming already carries the row; keep the incoming version.
+  }
+  if (restored.length === 0) return null;
+
+  let next = Math.max(
+    0,
+    ...incoming.facts.map((f) => f.rowNum),
+    ...existing.facts.map((f) => f.rowNum),
+  ) + 1;
+  const renumbered: Array<{ from: number; to: number }> = [];
+  const kept = incoming.facts.map((f) => {
+    if (!collidingRowNums.has(f.rowNum)) return f;
+    const to = next++;
+    renumbered.push({ from: f.rowNum, to });
+    return { ...f, rowNum: to };
+  });
+  const merged = [...kept, ...restored].sort((a, b) => a.rowNum - b.rowNum);
+  return { merged, restored, renumbered };
+}
+
+/**
+ * Surfacing-only diagnostic for the residual data-loss case the #4548
+ * row-level merge (restoreHiddenFactRows above) deliberately does not
+ * cover: when either fence parses with warnings, the merge refuses to
+ * re-render it (that would drop the caller's unparsed rows), so non-'world'
+ * rows present before the remote write and missing from the incoming write
+ * are still dropped. This warning surfaces exactly that.
+ *
+ * With clean parses the merge always restores hidden rows, so `restored`
+ * is true and this returns null — the pre-#4548 gap (a mixed fence's
+ * hidden row silently dropped) no longer occurs.
+ *
+ * Returns a warning string, or null if nothing to flag. Pure and
+ * side-effect-free — the caller decides how to surface it (console.warn
+ * today).
+ */
+export function factsGapWarning(
+  slug: string,
+  incoming: { facts: ParsedFact[]; warnings: string[] },
+  existing: { facts: ParsedFact[]; warnings: string[] },
+  restored: boolean,
+): string | null {
+  if (restored) return null;
+  if (existing.facts.length === 0) return null;
+
+  const incomingRowNums = new Set(incoming.facts.map((f) => f.rowNum));
+  const dropped = existing.facts.filter(
+    (f) => f.visibility !== 'world' && !incomingRowNums.has(f.rowNum),
+  ).length;
+  if (dropped === 0) return null;
+  return `[gbrain] #2044 gap on ${slug}: ${dropped} non-'world' fact row(s) present before this ` +
+    `remote write are missing from the incoming write and were NOT restored (the fence parsed ` +
+    `with warnings, so the row-level merge could not rewrite it safely). If these rows were ` +
+    `dropped by a caller who never saw them, they are now lost.`;
+}
+
+/**
  * Append a new fact row to the body. If a fenced facts table exists, the
  * row is added to the end of it. If not, a new `## Facts` section + fence
  * is created at the end of the body.

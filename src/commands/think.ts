@@ -56,8 +56,12 @@ Options:
                            provider/model or a bare alias. An explicit --model that
                            can't be resolved is a hard error (exit 1) — never a
                            silent no-LLM degrade.
+  --source <id>            Scope evidence gathering to this source. An unknown
+                           or archived source is a hard error (exit 1).
   --since YYYY-MM-DD       Start of temporal window
   --until YYYY-MM-DD       End of temporal window
+  --with-calibration       Inject the active calibration profile (anti-bias rewrite)
+  --calibration-holder <h> Holder whose calibration profile to use (default: self)
   --json                   Output as JSON
   --help                   Show this help
 
@@ -73,8 +77,11 @@ prints what would have been the input (exit 0).
     return;
   }
 
-  // Strip flags from positional args
-  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until'];
+  // Strip flags from positional args.
+  // #4508: --source and --calibration-holder were MISSING here — the flag and
+  // its value joined the positional question, so `think "q" --source X`
+  // echoed `# --source X q` and silently ignored the scope.
+  const flagNames = ['--anchor', '--rounds', '--model', '--since', '--until', '--source', '--calibration-holder'];
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -102,6 +109,9 @@ prints what would have been the input (exit 0).
   // profile gets injected per D22 placement (after retrieval, before question).
   const withCalibration = flagPresent(args, '--with-calibration');
   const calibrationHolder = flagValue(args, '--calibration-holder');
+  // #4508: parse --source; validated (existence + shape) in the local branch
+  // below where a real engine is available.
+  const source = flagValue(args, '--source');
 
   if (take && !anchor) {
     console.error('--take requires --anchor (the take row needs a target page)');
@@ -127,6 +137,14 @@ prints what would have been the input (exit 0).
         'with the `viaSubagent` context if you need persistence.',
       );
     }
+    if (source !== undefined) {
+      // #4508: the remote `think` op scopes by the server's session/auth, not
+      // a per-call param — say so instead of silently dropping the flag.
+      console.error(
+        '[thin-client] --source is scoped by the remote server (session/auth) ' +
+        'and cannot be overridden per call — the flag is not forwarded.',
+      );
+    }
     const raw = await callRemoteTool(cfg!, 'think', {
       question, anchor, rounds, model, since, until,
       // save/take intentionally NOT forwarded — server would ignore them;
@@ -135,8 +153,18 @@ prints what would have been the input (exit 0).
     result = unpackToolResult<any>(raw);
   } else {
     try {
+      // #4508: validate --source before the gather runs — an unknown or
+      // archived source is a hard exit 1 (SourceTargetError message names
+      // it), never a silent full-brain gather.
+      let sourceId: string | undefined;
+      if (source !== undefined) {
+        const { resolveSourceWithTier } = await import('../core/source-resolver.ts');
+        sourceId = (await resolveSourceWithTier(engine, source)).source_id;
+      }
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,
+        // #4508: thread the validated scope (RunThinkOpts.sourceId).
+        ...(sourceId ? { sourceId } : {}),
         // #3734: activate takes' vector retrieval arm for CLI think.
         embedQuestion: (q) => embedQuery(q),
         // #1698: explicit --model → hard error on an unresolvable model (no silent

@@ -1698,6 +1698,41 @@ Deferred from the BrainBench wave (eng-reviewed; plan + GSTACK REVIEW REPORT at
   dev shells match keyless CI by definition; tests that want keys inject them
   explicitly. Escape hatch `GBRAIN_TEST_KEEP_PROVIDER_KEYS=1` (set by
   scripts/run-e2e.sh).
+
+## sync --working-tree follow-ups (filed v0.43.1.0)
+
+Deferred findings from the v0.43.1.0 ship reviews (adversarial + specialists).
+The shipped fix is safe without them; these harden the opt-in further.
+
+- [ ] **P1 — doctor.test.ts subagent_capability test is not hermetic.** `checkSubagentCapability`'s ANTHROPIC_API_KEY drift check reads the real `~/.gbrain/config.json` via `loadConfig()`, so the "ok path" unit test fails on any dev machine with a non-Anthropic chat_model and no ANTHROPIC_API_KEY env (passes in CI). Pre-existing on master (files identical); stub the file-config read in the test or inject it into the check.
+- [ ] **P2 — estimator blind spot.** The inline cost estimator prices attached
+  working-tree files at $0 by design (#2139 phantom-cost class), so a
+  persisted `sync.include_working_tree` + inline embed can spend past
+  `sync.cost_gate_min_usd` on a large dirty tree. Price the working-tree
+  manifest when the opt-in is resolved true.
+- [ ] **P2 — checkpoint/resume vs the workingTree flag.** `op_checkpoint` is
+  keyed (sourceId, lastCommit) and records neither the flag nor a working-tree
+  fingerprint: a killed `--working-tree` run resumed as a plain sync completes
+  commit-only and reports clean `synced` over a mixed snapshot; a working-tree
+  path banked pre-kill then edited before resume keeps the stale content.
+  Record the flag in the checkpoint key or invalidate on mismatch.
+- [ ] **P3 — perpetually-dirty trees vs --ff-only pull.** include_working_tree
+  users run dirty trees by definition; any remote change touching a dirty file
+  wedges pull → partial/pull_failed until manually resolved. Consider
+  auto-stash-pull-pop or a clearer remedy in the pull_failed message.
+- [ ] **P3 — drift missing from dry_run/partial results.** `uncommitted` rides
+  only up_to_date/synced; dry-run and partial JSON consumers see stderr only.
+  The `sync --all --json` per-source envelope also omits it (explicit field
+  projection in sync.ts) — add `uncommitted` there when fixing this.
+- [ ] **P3 — collapse the two working-tree git subprocesses** into one
+  `git status --porcelain=v2 -z` pass (halves per-sync probe overhead), and
+  memoize the manifest per (gitContextRoot, headCommit) for `--all` sweeps
+  over monorepo-scoped sources.
+- [ ] **P4 — warn fatigue.** A perpetually-dirty vault now warns every night;
+  consider a dampener (warn on count change, re-warn weekly) so
+  blocked_by_failures/pull_failed stay visible.
+
+
 ## #2416 follow-ups (query-steering wave)
 
 - [x] **P2 — MCP-envelope `hint` field for concept-shaped `search` calls.**
@@ -1860,6 +1895,40 @@ master before starting, several fixes landed independently).
   means the repair feature silently dies). Any future pglite upgrade wave must revisit BOTH
   together and re-derive the ControlFileData offset table for the new PG major.
 
+## synthesize_concepts mints orphans the orphan check then penalizes (filed v0.42.74.0)
+
+The `synthesize_concepts` dream phase writes concept pages that nothing links to,
+and the `orphans` phase in the same cycle counts them against the brain score. One
+cycle creates the pages, another docks you for them, and the count grows every night
+the phase runs. Observed on a real brain: the phase reported N concepts synthesized
+and the orphan report listed exactly N orphaned `concepts/` slugs — a 1:1 match, all
+of them machine-generated in that run.
+
+This reads to an operator as a curation failure ("I wrote concept pages and never
+linked them") when nothing was hand-authored at all. It also makes the brain-score
+orphan component drift downward as a direct function of how often the cycle runs,
+which inverts the intent of the metric.
+
+- [ ] **P1 — decide whether synthesized concepts belong in the orphan denominator.**
+  Two candidate fixes, and they are not equivalent. (a) Wire concepts into the graph
+  at synthesis time: when the phase extracts a concept from a set of pages, link those
+  pages to the concept node. This is the better outcome — a concept page nothing can
+  reach is close to useless for retrieval too, so the orphan signal is telling the
+  truth and the synthesis step is what's incomplete. (b) Add `concepts/` to
+  `DENY_PREFIXES` in `src/core/orphan-policy.ts`, the way `extracts/` and `atoms/`
+  already are. Cheap, but it silences a real reachability problem rather than fixing
+  it. Prefer (a); fall back to (b) only if concept nodes are deliberately
+  retrieval-only and never meant to be graph-reachable.
+- [ ] **P2 — near-duplicate concepts suggest the extractor needs a merge step.**
+  The same run produced several near-synonym concept nodes (three variants of one
+  adjectival stem, four of one noun stem). Whatever the orphan decision, an extractor
+  emitting near-duplicates inflates the node count and splits inbound links across
+  synonyms. Consider a similarity merge before write.
+- [ ] **P3 — imported calendar days are a separate leaf class.** `meetings/calendar/
+  <year>/<date>` pages are dated machine imports with no expected inbound links, the
+  same class as the `daily` first-segment exclusion but not matched by it. Either
+  broaden the convention defaults or document that calendar-import prefixes want a
+  per-brain `orphans.exclude_prefixes` entry.
 ## serve --http takes-holders + agent-voice hardening follow-ups (filed v0.42.74.0)
 
 Deferred from the #2529/#2477 security-fix wave (plan-eng-review + codex outside
@@ -1889,7 +1958,38 @@ voice CLEARED). None block the wave.
   clause (`src/mcp/http-transport.ts` validateToken). Apply the same pattern —
   one fewer write per request on the `serve --http` hot path.
   Where: `src/core/oauth-provider.ts`.
+## nightly dream digest (filed v0.42.73.1)
 
+Operators wire `gbrain dream --json` into a notifier (Telegram, Slack, email) through a
+hand-rolled shell wrapper, then `jq` the counters out of it. That shape is fragile and
+produces a low-signal report. Both problems are ours to fix, not the operator's.
+
+- [ ] **P1 — `gbrain dream --digest` — a notification-ready summary gbrain owns.**
+  Today every operator re-implements the same `jq` pipeline against `.totals` and
+  `.phases[]`. Three failure modes follow. (a) The wrapper guesses at our schema, so a
+  field rename degrades it silently. (b) Deltas are impossible — a wrapper has nowhere to
+  persist last night's totals, so it can only print levels, and an orphan count carries no
+  information without a trend. (c) Wrappers redirect with `2>&1`, which merges our stderr
+  progress stream into the `--json` stdout payload and makes the report unparseable; the
+  usual `|| echo '?'` fallback then renders a dead monitor as a healthy one. Emit a
+  formatted digest directly so none of this is the caller's problem.
+- [ ] **P1 — report by exception, with deltas.** A quiet night is `synced=0 extracted=0
+  embedded=0` — three zeros in the headline while the `warn` phases and the
+  needs-a-human items go unmentioned. Invert it: collapse healthy phases into a single
+  status line, lead with `warn`/`error` phases, and render every counter as a delta
+  against the prior run. Persist prior-run totals so the delta is real. A phase reporting
+  `0 fixes applied` for N consecutive nights while its backlog grows is the signal worth
+  paging on, and no level-only report can express it.
+- [ ] **P2 — fold `advisor` into the digest's action section.** Every number in a nightly
+  report should carry the command that acts on it. `src/core/advisor/` already computes a
+  ranked action list from brain state across its collectors; the digest's
+  "waiting on you" section should call it rather than grow a second ranking heuristic.
+- [ ] **P2 — surface skipped-because-disabled phases.** A dream run can skip many phases
+  purely on config flags. That is invisible in the totals, so a brain can quietly do far
+  less work than its operator believes for months. Name the disabled phases in the digest.
+- [ ] **P3 — document the stdout/stderr contract at the point of use.** `--json` callers
+  must not merge streams. Say so in the `dream` help text and in the cron/scheduling
+  guide, next to the example wrapper.
 ## v0.42.67.0 follow-ups (Windows build tooling)
 
 Filed as follow-ups from v0.42.67.0 (`.gitattributes` LF pin for `*.sh` +
@@ -4530,7 +4630,9 @@ contributor traps.
 
 ## v0.37.6.0 OpenRouter recipe follow-ups (v0.37.x+ / v0.38.x)
 
-- [ ] **v0.37.x: Verify `tool_use_id` stability through OpenRouter with a live test, then decide whether to relax the subagent-loop gate.** v0.37.6.0 shipped `supports_subagent_loop: false` on the OR recipe as informational only; the flag is now enforced — `classifyCapabilities()` in `src/core/ai/capabilities.ts` refuses the subagent tier on it (`unusable:no_subagent_loop`), and the legacy path additionally hard-rejects non-Anthropic providers via `isAnthropicProvider()` in `src/core/model-config.ts` when `agent.use_gateway_loop` is off. OR proxies Anthropic-direct models that DO support stable `tool_use_id` by contract, but OR's response normalization may strip or re-encode them. A short live test: spin up a real OR account, run a subagent loop via `openrouter:anthropic/claude-haiku-4.5`, deliberately abort mid-loop, retry. Assert tool_use_id blocks are byte-identical across attempts (the test itself needs a temporary bypass of the classifier gate, since `classifyCapabilities()` now refuses the OR recipe outright). If they are, BOTH gates need relaxing — the OR recipe's `supports_subagent_loop: false` flag (enforced by `classifyCapabilities()`) and the legacy `isAnthropicProvider()` check — to allow Anthropic models proxied through OR, giving users OR's price/availability story for subagent work. This is a deeper structural change than a recipe-flag flip; needs its own /plan-eng-review pass. Filed during v0.37.6.0 codex review.
+- [x] **OpenRouter Anthropic subagent loop.** Anthropic routes (`openrouter:anthropic/…`) now declare `supports_subagent_loop` via a per-id predicate. `isAnthropicProvider` stays false (Messages SDK cannot speak OR); the handler auto-routes those jobs through `gateway.toolLoop()` when `agent.use_gateway_loop` is off. Live abort/retry: `test/e2e/openrouter-anthropic-subagent-replay.live.test.ts` (skip-gated on `OPENROUTER_API_KEY`). Other OR families stay refused.
+
+- [ ] **v0.37.x: Live-test non-Anthropic OpenRouter families (DeepSeek / OpenAI / Gemini) for the subagent loop.** Same abort/retry pin as Anthropic-via-OR before flipping the predicate wider.
 
 - [ ] **v0.37.x: Quarterly OR catalog refresh.** v0.37.6.0 ships 8 curated chat slugs (gpt-5.2, gpt-5.2-chat, gpt-5.5, claude-haiku-4.5, claude-sonnet-4.6, claude-opus-4.7, gemini-3-flash-preview, deepseek-chat) with `price_last_verified: '2026-05-20'`. OR's catalog churns weekly; specific slugs get deprecated, renamed, or merged. Refresh cadence: every 90 days, walk https://openrouter.ai/models, prune deprecated slugs, add new frontier IDs that match the recipe's curation logic (frontier-tier + cheap-routing entry points). Bump `price_last_verified`. The shape-test regression in `test/ai/recipe-openrouter.test.ts` (`MODEL_SHAPE` regex) means typos surface immediately; the catalog refresh is about discovery, not validation.
 
@@ -7584,27 +7686,28 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
 
 ## Megawave follow-ups (filed from v0.46.28.0, #4475)
 
-- [ ] **P2 — #4477: db.ts initSchema legacy blob-replay path lacks
-  forward-reference bootstrap.** The legacy schema-blob replay in
-  `src/core/db.ts` doesn't run the bootstrap probe set, so an
-  upgrade-boundary DB can wedge when a migration builds an index on a column
-  the replayed blob predates. Bring the replay path under the same
-  forward-reference probes `initSchema` uses. Effort: M.
-- [ ] **P3 — #4478: subagent-crash-replay-multi-provider openrouter matrix
-  rows stale.** The matrix rows have been stale since
-  `supports_subagent_loop: false` enforcement landed; re-derive or prune the
-  openrouter rows so the suite tests what the gateway actually allows.
-  Effort: S.
-- [ ] **P3 — #4479: ci-local hardening.** (a) pin the `oven/bun` image to the
-  host bun version (drift between host and container bun has produced
-  container-only results); (b) fix the upload-path fuzz depth-1 `/app` mount
-  expectation. Effort: S.
-- [ ] **P2 — #4480: deferred review findings from the megawave** (each
-  >10-line, needs its own design pass): (a) `take-proposals.ts` TOCTOU —
-  claim-first CAS restructure (local CLI, low concurrency, but the
-  check-then-write window is real); (b) `cjk-keyword-sql.ts` doesn't honor
-  `types`/`exclude_slugs` filters — builder-param plumbing across BOTH
-  engines + exact-lookup gating; (c) `get_usage` per-engine sink —
-  last-engine-wins when multiple engines are live (the read→admin scope
-  tightening landed in v0.46.28.0; the sink unification did not). Effort: M
-  spread.
+- [x] **P2 — #4477: db.ts initSchema legacy blob-replay path lacks
+  forward-reference bootstrap.** DONE (v0.46.29.0, #4567): peeled into
+  `src/core/postgres-engine/forward-reference-bootstrap.ts`
+  (`applyPostgresForwardReferenceBootstrap`), run by BOTH SCHEMA_SQL replay
+  entrypoints — `PostgresEngine.initSchema()` and the standalone
+  `db.ts:initSchema()`. Pinned by `test/e2e/postgres-bootstrap.test.ts`.
+- [x] **P3 — #4478: subagent-crash-replay-multi-provider openrouter matrix
+  rows stale.** DONE (v0.46.29.0, #4567): generic openrouter rows pruned
+  (the capability gate refuses them before replay; pinned by a dedicated
+  refusal describe), and the #4514 Anthropic-via-OR carve-out gets its own
+  replay coverage in `test/e2e/openrouter-anthropic-subagent-replay.live.test.ts`
+  + `test/e2e/subagent-gateway-path.test.ts`.
+- [x] **P3 — #4479: ci-local hardening.** DONE (v0.46.29.0, #4567): (a)
+  `docker-compose.ci.yml` pins `oven/bun:${GBRAIN_CI_BUN_TAG:-1.3.14}` to the
+  host bun (override per-run to test latest); (b) the upload-path fuzz suite
+  chdirs to a guaranteed-deep cwd so the depth-1 `/app` mount can't false-fail
+  the `..`-probes; plus a container-lane `GBRAIN_TEST_TIMEOUT_MULTIPLIER=6`.
+- [x] **P2 — #4480: deferred review findings from the megawave.** DONE
+  (v0.46.29.0, #4567), all three: (a) `take-proposals.ts` accept is now
+  claim-first CAS (exactly one caller wins the pending row; best-effort
+  rollback on post-claim failure; stranded claimed-but-unpromoted rows get a
+  named error); (b) `cjk-keyword-sql.ts` honors `type`/`types`/`exclude_slugs`
+  like the main keyword arm; (c) the chat-usage sink is a registry stack with
+  deregister-on-disconnect (records route to the top LIVE entry), so a
+  multi-engine process no longer loses its ledger to a closed engine.

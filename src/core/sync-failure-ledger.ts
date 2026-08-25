@@ -216,6 +216,33 @@ export function formatCodeBreakdown(
 }
 
 /**
+ * #4543: name the failing FILES (not just code counts) so a blocked sync is
+ * actionable without opening sync-failures.jsonl by hand. Sentinel rows
+ * (`<head>`, `<rename:…>`) are excluded — they aren't files. Paths are
+ * control-char scrubbed (terminal-escape safety, same policy as
+ * sanitizePathForDisplay) and the list is capped so one pathological run
+ * can't flood stderr. Callers pair this with the
+ * `gbrain frontmatter validate <path>` hint for parse-class failures.
+ */
+export function formatFailedFileList(
+  failures: Array<{ path: string; error: string; code?: string }>,
+  limit = 10,
+): string {
+  const files = failures.filter(f => isSkippablePath(f.path));
+  const shown = files.slice(0, Math.max(0, limit));
+  const scrub = (p: string): string => {
+    // eslint-disable-next-line no-control-regex
+    const cleaned = p.replace(/[\x00-\x1f\x7f]/g, '�');
+    return cleaned.length > 200 ? `${cleaned.slice(0, 197)}...` : cleaned;
+  };
+  const lines = shown.map(f => `    ${scrub(f.path)} (${f.code ?? classifyErrorCode(f.error)})`);
+  if (files.length > shown.length) {
+    lines.push(`    … and ${files.length - shown.length} more (see sync-failures.jsonl)`);
+  }
+  return lines.join('\n');
+}
+
+/**
  * Where `sync-failures.jsonl` lives. Defaults to the gbrain home.
  *
  * `GBRAIN_SYNC_FAILURES_DIR` exists for the same reason `GBRAIN_AUDIT_DIR` does

@@ -27,6 +27,7 @@
 
 import { closeSync, lstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { isPathContained } from '../path-confine.ts';
+import { detectWslMountRoot, translateWindowsPath } from '../wsl-paths.ts';
 import { claudeProjectsDir, type HostSpecTarget } from '../bootstrap/host-specs.ts';
 import type { WindowTurn } from '../context/entity-salience.ts';
 
@@ -72,17 +73,39 @@ export type ConfineTranscriptResult =
  * intermediate symlinked directories, so a planted dir-symlink that escapes
  * the tree also fails). Fail-closed on every error.
  *
- * `opts.root` is a TEST SEAM — production callers use the default.
+ * Cross-OS install (#4522, Claude Code on the Windows host + gbrain in WSL):
+ * the hook stdin's transcript_path arrives as a Windows drive literal
+ * (`C:\Users\…\.claude\projects\…\session.jsonl`). Under WSL that literal is
+ * translated to the automount view (`/mnt/c/…`) BEFORE the lstat; on any
+ * non-WSL host `detectWslMountRoot()` is null and the path is used verbatim
+ * (native Windows lstats drive paths fine; macOS/plain Linux keep failing
+ * `unreadable` as before). The containment root translates the same way (a
+ * CLAUDE_CONFIG_DIR carrying a Windows literal, the #4324 interaction).
+ * When no explicit root is in play, the ONLY accepted fallback root is the
+ * session's known config tree on the mounted drive: the Windows
+ * user-profile pattern `<mount>/<drive>/Users/<profile>/.claude/projects`
+ * (wave-g tightening — the earlier first-`.claude/projects`-marker
+ * derivation let an attacker-controlled hook stdin pass under ANY such dir,
+ * e.g. `C:\evil\.claude\projects\x.jsonl`). Still transcripts-dir
+ * confinement [S3#8], just rooted Windows-side, since the WSL-side
+ * `$HOME/.claude/projects` can never contain a Windows-home transcript;
+ * anything outside CLAUDE_CONFIG_DIR / that profile tree is rejected.
+ *
+ * `opts.root` and `opts.wslMountRoot` are TEST SEAMS — production callers use
+ * the defaults (`wslMountRoot: null` means "not under WSL").
  */
 export function confineTranscriptPath(
   p: unknown,
-  opts: { root?: string; maxBytes?: number } = {},
+  opts: { root?: string; maxBytes?: number; wslMountRoot?: string | null } = {},
 ): ConfineTranscriptResult {
   if (typeof p !== 'string' || p.length === 0) return { ok: false, reason: 'missing_path' };
   if (!p.endsWith('.jsonl')) return { ok: false, reason: 'not_jsonl' };
+  const mountRoot = opts.wslMountRoot !== undefined ? opts.wslMountRoot : detectWslMountRoot();
+  const translated = mountRoot !== null ? translateWindowsPath(p, mountRoot) : null;
+  const candidate = translated ?? p;
   let st: ReturnType<typeof lstatSync>;
   try {
-    st = lstatSync(p);
+    st = lstatSync(candidate);
   } catch {
     return { ok: false, reason: 'unreadable' };
   }
@@ -90,9 +113,49 @@ export function confineTranscriptPath(
   if (!st.isFile()) return { ok: false, reason: 'not_file' };
   const cap = opts.maxBytes ?? TRANSCRIPT_HARD_CAP_BYTES;
   if (st.size > cap) return { ok: false, reason: 'too_large' };
-  const root = opts.root ?? claudeProjectsDir();
-  if (!isPathContained(p, root)) return { ok: false, reason: 'outside_projects_dir' };
-  return { ok: true, path: p, size: st.size };
+  const rootRaw = opts.root ?? claudeProjectsDir();
+  const root = (mountRoot !== null ? translateWindowsPath(rootRaw, mountRoot) : null) ?? rootRaw;
+  if (!isPathContained(candidate, root)) {
+    // Cross-OS fallback (#4522): only for a path we translated ourselves and
+    // only when the caller didn't pin an explicit root.
+    const derived =
+      mountRoot !== null && translated !== null && opts.root === undefined
+        ? deriveTranslatedProjectsRoot(translated, mountRoot)
+        : null;
+    if (derived === null || !isPathContained(candidate, derived)) {
+      return { ok: false, reason: 'outside_projects_dir' };
+    }
+  }
+  return { ok: true, path: candidate, size: st.size };
+}
+
+/**
+ * The Windows user-profile `.claude/projects` root of a TRANSLATED Windows
+ * transcript path (posix separators by construction), or null when the path
+ * doesn't sit inside one. wave-g tightening: the root is pinned to the
+ * session's known config-tree shape —
+ * `<mountRoot>/<drive>/Users/<profile>/.claude/projects` — never derived
+ * from the path's own first `.claude/projects` marker, which accepted an
+ * attacker-controlled tree anywhere on a mounted drive
+ * (`C:\evil\.claude\projects\x.jsonl`). The `Users` segment is
+ * case-insensitive (Windows filesystems are); the profile segment must be a
+ * real component (`.`/`..` refused so `C:\Users\..\.claude\projects` can't
+ * widen the root); `.claude/projects` stays exact. `isPathContained` then
+ * realpaths both sides, so `..` traversal and planted symlinks past the
+ * prefix still fail.
+ */
+function deriveTranslatedProjectsRoot(translated: string, mountRoot: string): string | null {
+  const base = mountRoot.replace(/\/+$/, '');
+  if (!translated.startsWith(base + '/')) return null;
+  const segments = translated.slice(base.length + 1).split('/');
+  // [drive, 'Users', profile, '.claude', 'projects', ...at least one more]
+  if (segments.length < 6) return null;
+  const [drive, users, profile, dotClaude, projects] = segments;
+  if (!/^[a-z]$/i.test(drive)) return null;
+  if (users.toLowerCase() !== 'users') return null;
+  if (!profile || profile === '.' || profile === '..') return null;
+  if (dotClaude !== '.claude' || projects !== 'projects') return null;
+  return [base, drive, users, profile, dotClaude, projects].join('/');
 }
 
 // ── Parsing [G3, A6] ────────────────────────────────────────────────────────

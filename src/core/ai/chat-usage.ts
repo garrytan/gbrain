@@ -60,11 +60,34 @@ export function currentChatPhase(): string | null {
   return __chatPhaseStore.getStore() ?? null;
 }
 
-let _sink: ChatUsageSink | null = null;
+/**
+ * #4480: sink REGISTRY (stack), not a last-wins scalar. A multi-engine
+ * process (migrate-engine source+target, doctor probes, tests) used to lose
+ * its ledger permanently: the most recently created engine overwrote the
+ * sink, and once that engine disconnected every later record was swallowed
+ * by a closed engine. Registration now returns a deregister handle; the
+ * engine factory calls it on engine.disconnect, restoring the previous live
+ * sink. Records route to the TOP live entry (still single-writer —
+ * simultaneous multi-brain attribution stays documented best-effort).
+ */
+interface SinkEntry { sink: ChatUsageSink }
+let _sinks: SinkEntry[] = [];
 
-/** Register (or clear, with null) the process-wide usage sink. Last wins. */
+/** Register a usage sink. Returns an idempotent deregister handle. */
+export function registerChatUsageSink(sink: ChatUsageSink): () => void {
+  const entry: SinkEntry = { sink };
+  _sinks.push(entry);
+  return () => {
+    _sinks = _sinks.filter((e) => e !== entry);
+  };
+}
+
+/**
+ * Legacy scalar API (tests + one-shot callers): clears the registry and
+ * installs `sink` as the only entry (null = clear).
+ */
 export function setChatUsageSink(sink: ChatUsageSink | null): void {
-  _sink = sink;
+  _sinks = sink ? [{ sink }] : [];
 }
 
 /**
@@ -108,7 +131,7 @@ export function recordChatUsage(input: {
     cache_write_tokens?: number;
   };
 }): void {
-  const sink = _sink;
+  const sink = _sinks.length > 0 ? _sinks[_sinks.length - 1]!.sink : null;
   if (!sink) return;
   try {
     const record: ChatUsageRecord = {

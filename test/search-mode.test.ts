@@ -60,6 +60,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: 4000,
       expansion: false,
       searchLimit: 10,
@@ -94,6 +95,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: 12000,
       expansion: false,
       searchLimit: 25,
@@ -127,6 +129,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       cache_similarity_threshold: 0.92,
       cache_ttl_seconds: 3600,
       intentWeighting: true,
+      keywordOrFallback: true,
       tokenBudget: undefined,
       expansion: true,
       searchLimit: 50,
@@ -442,7 +445,12 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // semantic cache for every remote MCP caller (excludePrivate=true is
     // their default). A private-included write must not serve a
     // private-excluding lookup and vice versa.
-    expect(KNOBS_HASH_VERSION).toBe(23);
+    // #4358 residual: bumped 23→24 — negative-offset requests could
+    // read/write the same cache row an offset=0 request shares
+    // (pagedRequest previously skipped only offset>0).
+    // 24→25: kof= (keyword AND→OR fallback knob) joins the key.
+    // 25→26: sal=/rec=/ipat= — salience/recency + intent_patterns fold (#4415).
+    expect(KNOBS_HASH_VERSION).toBe(26);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -464,7 +472,10 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // 19→20 pool floor (#3002); 20→21 recency fallback re-key (#895).
     // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
     // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
-    expect(KNOBS_HASH_VERSION).toBe(23);
+    // #4358 residual: 23→24 negative-offset cache-skip gap.
+    // 24→25: kof= (keyword AND→OR fallback knob) joins the key.
+    // 25→26: sal=/rec=/ipat= — salience/recency + intent_patterns fold (#4415).
+    expect(KNOBS_HASH_VERSION).toBe(26);
   });
 
   test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -482,6 +493,40 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // strict `=== true` predicate, so legacy callers that don't thread the
     // posture share the trusted (private-included) rows.
     expect(unset).toBe(including);
+  });
+
+  test('#4415 (wave-g): salience/recency modes produce DIFFERENT hashes (cache contamination prevention)', () => {
+    // A salience:'strong' write (post-fusion reordered result set) must
+    // never serve a salience:'off' lookup of the same query, and vice
+    // versa — same contamination class as det= (v=16). #4415 extended the
+    // per-call overrides to the default MCP `search` surface.
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const off = knobsHash(knobs, { salience: 'off', recency: 'off' });
+    const on = knobsHash(knobs, { salience: 'on', recency: 'off' });
+    const strong = knobsHash(knobs, { salience: 'strong', recency: 'off' });
+    const recOn = knobsHash(knobs, { salience: 'off', recency: 'on' });
+    const recStrong = knobsHash(knobs, { salience: 'off', recency: 'strong' });
+    const unset = knobsHash(knobs);
+    expect(new Set([off, on, strong, recOn, recStrong]).size).toBe(5);
+    // Undefined falls back to 'off' (the classifier default for unmatched
+    // queries) so legacy callers that don't thread the modes hash stably.
+    expect(unset).toBe(off);
+  });
+
+  test('#4415 (wave-g): intent-pattern config fingerprint produces DIFFERENT hashes (config-edit invalidation)', () => {
+    // search.intent_patterns changes classification (intent weights + auto
+    // salience/recency/detail) and thus results; folding the fingerprint
+    // makes a config edit invalidate immediately instead of serving
+    // old-classification rows for the rest of the cache TTL.
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const none = knobsHash(knobs, { intentPatterns: 'none' });
+    const cfgA = knobsHash(knobs, { intentPatterns: 'aaaaaaaaaaaa' });
+    const cfgB = knobsHash(knobs, { intentPatterns: 'bbbbbbbbbbbb' });
+    const unset = knobsHash(knobs);
+    expect(none).not.toBe(cfgA);
+    expect(cfgA).not.toBe(cfgB);
+    // Undefined falls back to 'none' so pattern-less brains hash stably.
+    expect(unset).toBe(none);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -646,8 +691,8 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 23 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(23);
+  test('KNOBS_HASH_VERSION is 26 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 negative-offset cache-skip gap #4358 residual; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415)', () => {
+    expect(KNOBS_HASH_VERSION).toBe(26);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
@@ -833,5 +878,27 @@ describe('v0.46.15 — retrieval-wave knobs (evidence_cosine_floor + autocut_min
     const base = knobsHash(resolveSearchMode({ mode: 'balanced' }));
     const relabeled = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { evidence_cosine_floor: 0.5 } }));
     expect(relabeled).toBe(base);
+  });
+});
+
+describe('keywordOrFallback knob (v=25)', () => {
+  test('config override turns the fallback off; bundle default stays on', () => {
+    expect(resolveSearchMode({ mode: 'balanced' }).keywordOrFallback).toBe(true);
+    const off = resolveSearchMode({ mode: 'balanced', overrides: { keywordOrFallback: false } });
+    expect(off.keywordOrFallback).toBe(false);
+  });
+
+  test('loadOverridesFromConfig parses search.keywordOrFallback', () => {
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': 'false' }).keywordOrFallback).toBe(false);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': '0' }).keywordOrFallback).toBe(false);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': '1' }).keywordOrFallback).toBe(true);
+    expect(loadOverridesFromConfig({ 'search.keywordOrFallback': 'true' }).keywordOrFallback).toBe(true);
+    expect(loadOverridesFromConfig({}).keywordOrFallback).toBeUndefined();
+  });
+
+  test('kof participates in knobsHash — a fallback-on row cannot serve a fallback-off lookup', () => {
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { keywordOrFallback: false } }));
+    expect(on).not.toBe(off);
   });
 });

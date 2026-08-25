@@ -91,6 +91,23 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx): CjkKeywor
   }
 
   let extraFilter = '';
+  // #4480: the CJK arm must honor the SAME shape filters as the main
+  // keyword arm. type/types/exclude_slugs were silently dropped here, so a
+  // typed query (`gbrain whoknows` → types:['person','company']) or an
+  // exclude-scoped query returned out-of-contract rows for CJK text while
+  // ASCII text filtered correctly.
+  if (opts?.type) {
+    params.push(opts.type);
+    extraFilter += ` AND p.type = $${params.length}`;
+  }
+  if (opts?.types && opts.types.length > 0) {
+    params.push(opts.types);
+    extraFilter += ` AND p.type = ANY($${params.length}::text[])`;
+  }
+  if (opts?.exclude_slugs?.length) {
+    params.push(opts.exclude_slugs);
+    extraFilter += ` AND p.slug != ALL($${params.length}::text[])`;
+  }
   if (opts?.language) {
     params.push(opts.language);
     extraFilter += ` AND cc.language = $${params.length}`;

@@ -186,3 +186,53 @@ describe('#4342 slug_root_mode', () => {
     expect(await readSlugRootMode(engine, 'vault-dry')).toBe('source-root');
   }, 120_000);
 });
+
+// ─── #4521 — a string-scalar sources.config must not abort the sync ───────
+//
+// Historical writers could leave sources.config as a jsonb STRING scalar
+// (double-encoded object). v0.46.28.0's writeSlugRootMode ran jsonb_set
+// directly on it → 'cannot set path in scalar' → every subdir-scoped sync
+// exited 1 right after sync.discover_git_root. The write now heals the
+// column through the canonical SOURCE_CONFIG_OBJECT_SQL coercion first.
+describe('#4521 scalar sources.config heal-on-write', () => {
+  test('writeSlugRootMode heals a string-scalar config and pins the mode', async () => {
+    await runSources(engine, ['add', 'vault-scalar', '--path', subdir, '--no-federated']);
+    // Simulate the historical corruption: a double-encoded object scalar.
+    await engine.executeRaw(
+      `UPDATE sources SET config = to_jsonb($2::text) WHERE id = $1`,
+      ['vault-scalar', JSON.stringify({ federated: false })],
+    );
+    await writeSlugRootMode(engine, 'vault-scalar', 'source-root');
+    expect(await readSlugRootMode(engine, 'vault-scalar')).toBe('source-root');
+    // The heal is a RECOVERY, not a wipe: keys inside the double-encoded
+    // object survive, and the column is an object again.
+    const rows = await engine.executeRaw<{ federated: string | null; t: string }>(
+      `SELECT config->>'federated' AS federated, jsonb_typeof(config) AS t
+         FROM sources WHERE id = $1`,
+      ['vault-scalar'],
+    );
+    expect(rows[0]?.t).toBe('object');
+    expect(rows[0]?.federated).toBe('false');
+  });
+
+  test('a subdir-scoped sync over a scalar config completes instead of aborting', async () => {
+    await runSources(engine, ['add', 'vault-scalar-sync', '--path', subdir, '--no-federated']);
+    await engine.executeRaw(
+      `UPDATE sources SET config = to_jsonb($2::text) WHERE id = $1`,
+      ['vault-scalar-sync', '"not-an-object"'],
+    );
+    const res = await performSync(engine, {
+      repoPath: subdir, sourceId: 'vault-scalar-sync', noEmbed: true, noPull: true,
+    });
+    expect(['first_sync', 'synced']).toContain(res.status);
+    expect(await readSlugRootMode(engine, 'vault-scalar-sync')).toBe('source-root');
+  }, 120_000);
+
+  test('a failed pin write names the source in the error', async () => {
+    const fake = {
+      executeRaw: async () => { throw new Error('cannot set path in scalar'); },
+    } as unknown as PGLiteEngine;
+    await expect(writeSlugRootMode(fake, 'vault-broken', 'git-root'))
+      .rejects.toThrow(/vault-broken/);
+  });
+});

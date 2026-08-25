@@ -163,9 +163,21 @@ const sources_list: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { listSources } = await import('../sources-ops.ts');
+    // #4433: row-filter the listing to the caller's federated source grant —
+    // a client whose grant excludes a source must not learn that source's
+    // id, name, or page_count. The filter mirrors EXACTLY the boundary
+    // resolveRequestedScope enforces on explicit per-call `source_id` reads
+    // (a non-empty ctx.auth.allowedSources array): the listing shows
+    // precisely the sources the caller could actually read. Trusted local
+    // CLI and remote callers WITHOUT such a grant (the scalar
+    // default-source floor, which today may read any source by naming it
+    // explicitly) keep the full listing.
+    const granted = ctx.remote !== false ? ctx.auth?.allowedSources : undefined;
+    const allowedSourceIds = granted && granted.length > 0 ? granted : undefined;
     return {
       sources: await listSources(ctx.engine, {
         includeArchived: (p.include_archived as boolean) === true,
+        ...(allowedSourceIds !== undefined ? { allowedSourceIds } : {}),
       }),
     };
   },

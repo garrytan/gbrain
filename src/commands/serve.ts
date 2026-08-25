@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
-import { startMcpServer } from '../mcp/server.ts';
+import { startMcpServer, stdioRpcsInFlightCount } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import {
@@ -11,12 +11,16 @@ import {
   type LoopStallWatchdogOpts,
   type WatchdogHandle,
 } from '../core/process-watchdog.ts';
-import {
-  delegatedSyncSettleMs,
-  isDelegatedSyncRunning,
-  maybeDrainDeferredEmbeds,
-  shutdownDelegatedSync,
-} from '../core/serve-sync-runner.ts';
+// #4409: serve-sync-runner is deliberately NOT imported statically. The #4362
+// static import put its 370-line module (plus dependency graph) on EVERY serve
+// boot — heavy enough for a one-shot client's stdin EOF to win the race against
+// the first tool-call response on the plugin path — and it defeated the
+// GBRAIN_SERVE_SYNC_IPC=0 kill switch (mcp/server.ts guards only ITS dynamic
+// import). The three consumers below (shutdown chain, idle sweep) load it
+// lazily; a never-loaded runner trivially has no delegated sync running.
+// Guarded by test/serve-stdin-eof-drain.test.ts's source-text check.
+type ServeSyncRunnerModule = typeof import('../core/serve-sync-runner.ts');
+const loadSyncRunner = (): Promise<ServeSyncRunnerModule> => import('../core/serve-sync-runner.ts');
 
 // Maximum time the stdio path will wait for engine.disconnect() (PGLite
 // close + advisory lock release) before forcing exit. Keeps a wedged
@@ -129,6 +133,13 @@ export interface ServeOptions {
   // to resolveServeStallWatchdogMs(GBRAIN_SERVE_STALL_WATCHDOG_MS) — opt-in,
   // 15s floor, garbage values warn and stay off.
   stallWatchdogMs?: number;
+  // Test seam (#4409): live in-flight stdio RPC count consulted by the
+  // stdin-EOF drain. Defaults to mcp/server.ts's stdioRpcsInFlightCount.
+  pendingRpcs?: () => number;
+  // Test seam (#4409): stdin-EOF drain bound in ms; 0 = immediate shutdown
+  // (pre-#4409 behavior). Defaults to GBRAIN_SERVE_EOF_DRAIN_MS (30s when
+  // unset; lenient parse).
+  eofDrainMs?: number;
 }
 
 /**
@@ -369,6 +380,27 @@ export async function runServe(
   // hooks from being able to call process.exit() cleanly.
 }
 
+// #4409: stdin-EOF drain bound. Long enough for a real tool call (a query
+// with embedding + LLM expansion) to finish; short enough that a genuinely
+// wedged handler can't pin the PGLite lock forever after the parent left.
+const DEFAULT_EOF_DRAIN_MS = 30_000;
+
+// Env resolution for the stdin-EOF drain bound. Lenient like
+// resolveBootTimeoutMs: a typo'd env var must not turn the data-loss fix
+// into a shutdown failure. 0 disables the drain (immediate exit).
+function resolveEofDrainMs(): number {
+  const raw = process.env.GBRAIN_SERVE_EOF_DRAIN_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_EOF_DRAIN_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    console.error(
+      `[gbrain serve] ignoring invalid GBRAIN_SERVE_EOF_DRAIN_MS=${JSON.stringify(raw)} — using default ${DEFAULT_EOF_DRAIN_MS}ms`,
+    );
+    return DEFAULT_EOF_DRAIN_MS;
+  }
+  return Math.floor(n);
+}
+
 // Env resolution for the boot deadline. Lenient (warn + default) rather
 // than throw: this is an incident-time escape hatch, and a typo'd env var
 // must not turn a boot-safety net into a boot failure of its own.
@@ -445,29 +477,43 @@ function installStdioLifecycle(
     // A running delegated sync extends the deadline by exactly its settle
     // bound: shutdownDelegatedSync must finish its abort+settle against the
     // live engine BEFORE disconnect, and a fixed 5s would force-exit mid-
-    // settle (second-outside-voice finding EV1).
-    const settleExtensionMs = isDelegatedSyncRunning() ? delegatedSyncSettleMs() : 0;
-    const deadline = setTimeout(() => {
-      deps.log(
-        `GBrain MCP server: cleanup deadline (${CLEANUP_DEADLINE_MS + settleExtensionMs}ms) exceeded — forcing exit`,
-      );
-      deps.exit(0);
-    }, CLEANUP_DEADLINE_MS + settleExtensionMs);
-    deadline.unref?.();
+    // settle (second-outside-voice finding EV1). #4409: the runner loads
+    // lazily inside the chain (module-cache hit when a sync ever ran; a
+    // fresh load trivially reports no sync running), so the deadline arms
+    // at the base bound first and re-arms with the settle extension once
+    // the runner state is known.
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const armDeadline = (ms: number): void => {
+      deadline = setTimeout(() => {
+        deps.log(
+          `GBrain MCP server: cleanup deadline (${ms}ms) exceeded — forcing exit`,
+        );
+        deps.exit(0);
+      }, ms);
+      deadline.unref?.();
+    };
+    armDeadline(CLEANUP_DEADLINE_MS);
 
     Promise.resolve()
       // Idempotent shared promise — mcp/server.ts's shutdown races here on
       // the same signals; whichever runs first does the abort+settle, the
       // other awaits it. Must precede disconnect (settle writes need the
       // live engine; the disconnect-mode drain is allowAbort:false).
-      .then(() => shutdownDelegatedSync())
+      .then(() => loadSyncRunner())
+      .then((runner) => {
+        if (runner.isDelegatedSyncRunning()) {
+          if (deadline) clearTimeout(deadline);
+          armDeadline(CLEANUP_DEADLINE_MS + runner.delegatedSyncSettleMs());
+        }
+        return runner.shutdownDelegatedSync();
+      })
       .then(() => engine.disconnect())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         deps.log(`GBrain MCP server: cleanup error: ${msg}`);
       })
       .finally(() => {
-        clearTimeout(deadline);
+        if (deadline) clearTimeout(deadline);
         deps.exit(0);
       });
   };
@@ -499,9 +545,46 @@ function installStdioLifecycle(
   // `mcpStdio` is the injectable form; default reads the env once at
   // install time so tests stay isolated (no process.env mutation).
   const mcpStdioMode = opts.mcpStdio ?? (process.env.MCP_STDIO === '1');
+  // #4409: a one-shot MCP client writes its frames and closes stdin
+  // immediately. Node delivers 'end' AFTER all 'data' events, and the SDK
+  // parses every received frame synchronously during 'data' (handler start
+  // is queued as a microtask) — so at EOF time requests can be in flight
+  // with no response written yet. Treating EOF as an immediate shutdown
+  // silently dropped those responses (the codex-plugin door went red on
+  // exactly this shape). Drain in-flight RPCs — bounded — before the
+  // graceful exit; idle servers still exit promptly (one timer tick).
+  // GBRAIN_SERVE_EOF_DRAIN_MS tunes the bound; 0 restores immediate exit.
+  const pendingRpcs = opts.pendingRpcs ?? stdioRpcsInFlightCount;
+  const eofDrainMs = opts.eofDrainMs ?? resolveEofDrainMs();
+  let eofDrainStarted = false;
+  const drainThenShutdown = (reason: string): void => {
+    if (shuttingDown || eofDrainStarted) return;
+    eofDrainStarted = true;
+    void (async () => {
+      if (eofDrainMs > 0) {
+        // One macrotask so already-parsed requests' handlers (microtasks)
+        // start and increment the counter before the first check.
+        await new Promise<void>((r) => setTimeout(r, 0));
+        if (pendingRpcs() > 0) {
+          deps.log(
+            `GBrain MCP server: stdin EOF with ${pendingRpcs()} in-flight request(s) — draining before exit (bound ${eofDrainMs}ms; GBRAIN_SERVE_EOF_DRAIN_MS)`,
+          );
+          const deadlineAt = Date.now() + eofDrainMs;
+          while (pendingRpcs() > 0 && Date.now() < deadlineAt && !shuttingDown) {
+            await new Promise<void>((r) => setTimeout(r, 25));
+          }
+        }
+        // One extra macrotask: the SDK sends the response in a .then AFTER
+        // the handler resolves — let that stdout write get issued before
+        // the cleanup chain starts.
+        await new Promise<void>((r) => setTimeout(r, 0));
+      }
+      beginShutdown(reason);
+    })();
+  };
   if (!deps.stdin.isTTY && !mcpStdioMode) {
-    deps.stdin.once('end', () => beginShutdown('stdin-end'));
-    deps.stdin.once('close', () => beginShutdown('stdin-close'));
+    deps.stdin.once('end', () => drainThenShutdown('stdin-end'));
+    deps.stdin.once('close', () => drainThenShutdown('stdin-close'));
   }
 
   // Parent-process watchdog. Some hosts (launchd, cron, certain MCP
@@ -566,9 +649,12 @@ function installStdioLifecycle(
   const sweepEnabled = opts.sweepEnabled ?? (process.env.GBRAIN_SWEEP !== '0');
   if (sweepEnabled) {
     const runIdleSweep = opts.sweep ?? (async (e: BrainEngine) => {
+      // #4409: the runner loads lazily here too — the sweep fires after
+      // 10-20 min of idle, well off the boot path this fix protects.
+      const runner = await loadSyncRunner();
       // A delegated sync owns the event loop right now — sweeping under it
       // is pointless contention; the next idle tick catches up.
-      if (isDelegatedSyncRunning()) return;
+      if (runner.isDelegatedSyncRunning()) return;
       // Lazy import keeps the sweep core off the serve boot path.
       const { runMaintenanceSweep } = await import('../core/sweep.ts');
       await runMaintenanceSweep(e, {
@@ -577,7 +663,7 @@ function installStdioLifecycle(
       });
       // Deferred-embed drain: delegated syncs always run noEmbed (the #2139
       // cost gate lives in runSync); the lock owner closes that loop here.
-      await maybeDrainDeferredEmbeds(e);
+      await runner.maybeDrainDeferredEmbeds(e);
     });
     let stdinSawData = false;
     let sweepInFlight = false;

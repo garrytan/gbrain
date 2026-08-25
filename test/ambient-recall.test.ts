@@ -641,6 +641,52 @@ describe('visibility (eng 1A / D2=A): world-only default, fail-closed widen', ()
     expect(facts).not.toContain('secret burn rate');
     expect(r.text as string).not.toContain('secret burn rate');
   });
+
+  test('delta page arm widens private pages only for trusted local include_private', async () => {
+    const since = new Date(Date.now() - 5 * 60_000).toISOString();
+    await engine.putPage('notes/delta-world-page', {
+      title: 'Delta World Page',
+      type: 'note',
+      frontmatter: { visibility: 'world' },
+      compiled_truth: 'world page body',
+      timeline: '',
+    });
+    await engine.putPage('notes/delta-private-page', {
+      title: 'Delta Private Page',
+      type: 'note',
+      frontmatter: { visibility: 'private' },
+      compiled_truth: 'private page body',
+      timeline: '',
+    });
+
+    const worldOnly = await call(del, ctxFor({ remote: false }), { since });
+    const widened = await call(del, ctxFor({ remote: false }), {
+      since,
+      include_private: true,
+    });
+    const remote = await call(del, ctxFor({ remote: true, clientId: 'c1' }), {
+      since,
+      include_private: true,
+    });
+
+    for (const result of [worldOnly, widened, remote]) {
+      expect(result.pages.map((p: { slug: string }) => p.slug)).toContain(
+        'notes/delta-world-page',
+      );
+    }
+    expect(worldOnly.pages.map((p: { slug: string }) => p.slug)).not.toContain(
+      'notes/delta-private-page',
+    );
+    expect(worldOnly.text as string).not.toContain('Delta Private Page');
+    expect(widened.pages.map((p: { slug: string }) => p.slug)).toContain(
+      'notes/delta-private-page',
+    );
+    expect(widened.text as string).toContain('Delta Private Page');
+    expect(remote.pages.map((p: { slug: string }) => p.slug)).not.toContain(
+      'notes/delta-private-page',
+    );
+    expect(remote.text as string).not.toContain('Delta Private Page');
+  });
 });
 
 describe('budget packing + drop footer', () => {

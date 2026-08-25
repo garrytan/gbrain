@@ -119,13 +119,16 @@ const remove_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;
-    await ctx.engine.removeLink(
+    // #4527: report how many edges actually died — an unconditional
+    // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
+    // link_type, already removed) indistinguishable from a real removal.
+    const removed = await ctx.engine.removeLink(
       p.from as string, p.to as string,
       (p.link_type as string) || undefined,
       (p.link_source as string) || undefined,
       linkOpts,
     );
-    return { status: 'ok' };
+    return { status: 'ok', removed };
   },
   cliHints: { name: 'unlink', aliases: ['link-rm'], positional: ['from', 'to'] },
 };

@@ -36,8 +36,11 @@
 import { randomUUIDv7 } from 'bun';
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import {
+  claudeCliConfigDir,
+  claudeCliCwdDir,
+  sweepDeadClaudeCliScratchDirs,
+} from './claude-cli-scratch.ts';
 import type {
   LanguageModelV2,
   LanguageModelV2CallOptions,
@@ -51,10 +54,17 @@ import type {
 function claudeBin(): string {
   return process.env.GBRAIN_CLAUDE_CLI_BIN ?? 'claude';
 }
-const CLAUDE_CWD = join(tmpdir(), `gbrain-claude-cli-cwd-${process.pid}`);
+// #4472: the per-PID dir names + the transcript-fingerprint predicate live in
+// claude-cli-scratch.ts so transcript discovery can exclude the sessions these
+// subprocess cwds mint under ~/.claude/projects/ without importing this module.
+const CLAUDE_CWD = claudeCliCwdDir();
 let cwdEnsured = false;
 function ensureCleanCwd(): string {
   if (!cwdEnsured) {
+    // #4472: the per-PID naming leaks one scratch dir per crashed/killed
+    // gbrain process forever — sweep dead-PID leftovers once per process at
+    // provider init. Best-effort: a sweep failure never breaks a chat call.
+    try { sweepDeadClaudeCliScratchDirs(); } catch { /* best-effort */ }
     mkdirSync(CLAUDE_CWD, { recursive: true });
     cwdEnsured = true;
   }
@@ -62,7 +72,7 @@ function ensureCleanCwd(): string {
 }
 
 // #4119 — opt-in hermetic config dir for the child. See resolveHermeticConfigDir.
-const CLAUDE_HERMETIC_CONFIG = join(tmpdir(), `gbrain-claude-cli-config-${process.pid}`);
+const CLAUDE_HERMETIC_CONFIG = claudeCliConfigDir();
 let hermeticEnsured = false;
 /**
  * Resolve the CLAUDE_CONFIG_DIR the child should run with when

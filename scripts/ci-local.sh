@@ -124,7 +124,7 @@ fi
 gitleaks dir . --redact --no-banner
 gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
 
-# Step 1: pull. Refreshes pgvector + oven/bun:1 (both are `image:` not `build:`).
+# Step 1: pull. Refreshes pgvector + the pinned oven/bun tag (both are `image:` not `build:`).
 if [ "$NO_PULL" = "0" ]; then
   echo "[ci-local] Pulling base images (use --no-pull to skip)..."
   docker compose -f "$COMPOSE_FILE" pull 2>&1 | tail -5
@@ -247,6 +247,10 @@ echo \"[runner] Tier 3: PGLite snapshot fixture (idempotent; rebuilds on hash dr
 # warn+slow path). Concurrency-safe via the script's mkdir lock (D5.8).
 bun run build:pglite-snapshot
 export GBRAIN_PGLITE_SNAPSHOT=test/fixtures/pglite-snapshot.tar
+# #4479: 4-way shard contention makes subprocess/PGLite tests ~6x slower per
+# file in the container than natively — timeout-class failures that pass on
+# the host. Scale the per-test ceiling for the container lane (overridable).
+export GBRAIN_TEST_TIMEOUT_MULTIPLIER=\${GBRAIN_TEST_TIMEOUT_MULTIPLIER:-6}
 echo \"[runner] resolving E2E file selection (--diff aware)\"
 ${DIFF_E2E_PREP}
 mkdir -p /tmp/shard-logs
@@ -313,7 +317,7 @@ fi
 INNER_CMD=$(cat <<'EOF'
 set -euo pipefail
 echo "[runner] bun version: $(bun --version)"
-# oven/bun:1 omits git; many unit tests use mkdtemp + git init for fixtures.
+# The oven/bun image omits git; many unit tests use mkdtemp + git init for fixtures.
 if ! command -v git >/dev/null 2>&1; then
   echo "[runner] Installing git (debian apt)..."
   apt-get update -qq >/dev/null

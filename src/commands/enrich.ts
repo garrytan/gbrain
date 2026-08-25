@@ -182,6 +182,14 @@ export function enrichFingerprint(opts: {
   order: EnrichOrder;
   thinThreshold: number;
   model: string;
+  /**
+   * #3629 residual: the pre-LLM grounding gate decides against exactly this
+   * knob, so a banked skip must not outlive a relaxed --min-context — a
+   * non-default value is a genuinely different run. Folded only when it
+   * differs from MIN_CONTEXT_CHARS so every existing default-config
+   * checkpoint keeps its key (no one-time re-bill on upgrade).
+   */
+  minContextChars?: number;
 }): string {
   return fingerprint({
     sourceId: opts.sourceId,
@@ -189,6 +197,9 @@ export function enrichFingerprint(opts: {
     order: opts.order,
     thinThreshold: opts.thinThreshold,
     model: opts.model,
+    ...(opts.minContextChars !== undefined && opts.minContextChars !== MIN_CONTEXT_CHARS
+      ? { minContextChars: opts.minContextChars }
+      : {}),
   });
 }
 
@@ -397,10 +408,14 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     // reports skip=true for blank raw too, so discriminate on the raw text.
     if (parsed.skip && (raw ?? '').trim().length > 0) {
       ctx.result.pages_model_skip = (ctx.result.pages_model_skip ?? 0) + 1;
+      // A real grounding verdict — durable until the checkpoint TTL/--force.
+      ctx.done.add(completedKey(sourceId, slug));
     } else {
       ctx.result.pages_empty_output = (ctx.result.pages_empty_output ?? 0) + 1;
+      // Synthesis-failure shape (#2085), usually transient provider trouble —
+      // banking it would suppress the page for the full checkpoint TTL, so it
+      // stays out of `done` and is re-attempted on the next run.
     }
-    ctx.done.add(completedKey(sourceId, slug));
     return;
   }
 
@@ -482,13 +497,15 @@ export async function runEnrichCore(
   const workersResolved = resolveWorkersWithClamp(engine, opts.workers, 'enrich', 0);
   const workers = workersResolved.workers;
 
-  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model });
+  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model, minContextChars });
   const cpKey = checkpointKey(fp);
 
   // #3629: load the checkpoint BEFORE enumerating candidates. SKIP'd pages
   // stay thin (nothing is written), so they re-enter the candidate list on
   // every run — the checkpoint is the ONLY thing that stops them re-billing.
-  if (opts.force) await clearOpCheckpoint(engine, cpKey);
+  // #3629 residual: --dry-run promises "no checkpoint advance"; a dry-run
+  // --force must not destroy the real checkpoint either.
+  if (opts.force && !dryRun) await clearOpCheckpoint(engine, cpKey);
   const done = new Set<string>(opts.force ? [] : await loadOpCheckpoint(engine, cpKey));
 
   // Candidate enumeration — ONE source-aware, memory-bounded SQL query.

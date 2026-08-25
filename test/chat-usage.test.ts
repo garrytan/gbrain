@@ -21,6 +21,7 @@ import {
   withChatPhase,
   currentChatPhase,
   setChatUsageSink,
+  registerChatUsageSink,
   recordChatUsage,
   estimateChatCostUsd,
   makeEngineChatUsageSink,
@@ -43,6 +44,63 @@ function fakeResult(over: Partial<ChatResult> = {}): ChatResult {
 afterEach(() => {
   __setChatTransportForTests(null);
   setChatUsageSink(null);
+});
+
+describe('#4480 — sink registry: multi-engine deregistration restores the prior ledger', () => {
+  const usage = { input_tokens: 1, output_tokens: 1 };
+
+  test('records route to the top live sink; deregistering it restores the previous one', () => {
+    const primary: ChatUsageRecord[] = [];
+    const secondary: ChatUsageRecord[] = [];
+    const deregPrimary = registerChatUsageSink((r) => { primary.push(r); });
+    const deregSecondary = registerChatUsageSink((r) => { secondary.push(r); });
+
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(secondary.length).toBe(1);
+    expect(primary.length).toBe(0);
+
+    // The short-lived secondary engine disconnects. Pre-fix (last-wins
+    // scalar) the ledger was permanently lost to the closed engine; now the
+    // primary sink is restored.
+    deregSecondary();
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(primary.length).toBe(1);
+    expect(secondary.length).toBe(1);
+
+    deregPrimary();
+    // No live sink: record is a silent no-op (never throws).
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(primary.length).toBe(1);
+    // Deregistration is idempotent.
+    deregSecondary();
+    deregPrimary();
+  });
+
+  test('out-of-order deregistration removes only its own entry', () => {
+    const a: ChatUsageRecord[] = [];
+    const b: ChatUsageRecord[] = [];
+    const c: ChatUsageRecord[] = [];
+    const deregA = registerChatUsageSink((r) => { a.push(r); });
+    const deregB = registerChatUsageSink((r) => { b.push(r); });
+    const deregC = registerChatUsageSink((r) => { c.push(r); });
+    // Middle entry disconnects first — top stays the router.
+    deregB();
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(c.length).toBe(1);
+    deregC();
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(a.length).toBe(1);
+    expect(b.length).toBe(0);
+    deregA();
+  });
+
+  test('setChatUsageSink(null) clears every registered entry (legacy scalar API)', () => {
+    const a: ChatUsageRecord[] = [];
+    registerChatUsageSink((r) => { a.push(r); });
+    setChatUsageSink(null);
+    recordChatUsage({ model: 'anthropic:claude-haiku-4-5', usage });
+    expect(a.length).toBe(0);
+  });
 });
 
 describe('estimateChatCostUsd — canonical pricing incl. cache tokens', () => {

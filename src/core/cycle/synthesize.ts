@@ -66,6 +66,7 @@ export { runSubagentsInline, runDrainRenewalTick };
 import { loadAllowedSlugPrefixes } from './filing-rules.ts';
 export { loadAllowedSlugPrefixes };
 import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
@@ -2720,7 +2721,31 @@ async function writeSummaryPage(
     frontmatter: parsed.frontmatter,
   }, { sourceId });
 
-  // Also write to disk (orchestrator dual-write).
+  // Also write to disk (orchestrator dual-write). #4506: the unconditional
+  // file write dirtied clean source repos (an untracked
+  // dream-cycle-summaries/<date>.md after every nightly run). Two
+  // suppressors, both leaving the DB row untouched:
+  //   - explicit knob `dream.synthesize.summary_file_write=false|0|off`
+  //     (default ON — back-compat for brains that expect the dual-write);
+  //   - a gbrain.yml storage tier that declares the summary slug `db_only`
+  //     (the DB/file-plane split the reporter expected to cover this path).
+  const fileWriteRaw = (await engine.getConfig('dream.synthesize.summary_file_write'))?.trim().toLowerCase();
+  const fileWriteEnabled = !(fileWriteRaw === 'false' || fileWriteRaw === '0' || fileWriteRaw === 'off');
+  let dbOnlyTier = false;
+  if (fileWriteEnabled) {
+    try {
+      const storage = loadStorageConfig(brainDir);
+      dbOnlyTier = storage !== null && isDbOnly(summarySlug, storage);
+    } catch {
+      // Unreadable gbrain.yml — keep the dual-write default (fail-open to
+      // pre-#4506 behavior; sync owns loud storage-config validation).
+    }
+  }
+  if (!fileWriteEnabled || dbOnlyTier) {
+    const why = !fileWriteEnabled ? 'dream.synthesize.summary_file_write=off' : 'db_only storage tier';
+    process.stderr.write(`[dream] summary file-write skipped (${why}): ${summarySlug} lives in the DB only\n`);
+    return;
+  }
   try {
     const filePath = join(brainDir, `${summarySlug}.md`);
     mkdirSync(dirname(filePath), { recursive: true });
@@ -2789,4 +2814,5 @@ export const __testing = {
   reverseWriteRefs,
   runSubagentsInline,
   loadSynthConfig,
+  writeSummaryPage,
 };

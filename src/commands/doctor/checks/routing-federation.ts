@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
+import { embedBackfillWorkerSurface } from '../../../core/minions/embed-backfill-admission.ts';
 import { isUndefinedTableError, isUndefinedColumnError } from '../../../core/utils.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -98,13 +99,16 @@ export async function checkFederationHealth(engine: BrainEngine): Promise<Check>
     const warns: string[] = [];
     const fails: string[] = [];
     for (const m of metrics) {
+      const embedRemedy = embedBackfillWorkerSurface(engine).status === 'no_worker_surface'
+        ? `gbrain embed --stale --source ${m.source_id}`
+        : `gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'`;
       // Fail thresholds first (most severe)
       if (m.lag_seconds !== null && m.lag_seconds > 24 * 3600) {
         fails.push(`${m.source_id}: stale ${Math.floor(m.lag_seconds / 3600)}h — run \`gbrain sync trigger --source ${m.source_id}\``);
         continue;
       }
       if (m.embed_coverage_pct < 50 && m.total_chunks > 1000) {
-        fails.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage (${m.total_chunks.toLocaleString()} chunks) — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+        fails.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage (${m.total_chunks.toLocaleString()} chunks) — run \`${embedRemedy}\``);
         continue;
       }
       // Warns
@@ -112,7 +116,7 @@ export async function checkFederationHealth(engine: BrainEngine): Promise<Check>
         warns.push(`${m.source_id}: federated source ${Math.floor(m.lag_seconds / 3600)}h+ stale — run \`gbrain sync trigger --source ${m.source_id}\``);
       }
       if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
-        warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+        warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`${embedRemedy}\``);
       }
       if (m.failed_jobs_24h >= 3) {
         warns.push(`${m.source_id}: ${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
@@ -495,4 +499,3 @@ export function checkCyclePhaseScope(): Check {
     return { name: 'cycle_phase_scope', status: 'warn', message: `Check failed: ${msg}` };
   }
 }
-

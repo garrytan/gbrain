@@ -243,6 +243,62 @@ describe('undeclared_db_only_pages (#2784)', () => {
     expect(c.status).toBe('ok');
   });
 
+  // #3766 — a `storage.db_only` prefix typed with any uppercase (a plausible
+  // authoring choice — nothing in gbrain.yml's schema requires lowercase)
+  // used to never match, because page slugs are ALWAYS lowercased at write
+  // time (pathToSlug/slugifyCodePath) regardless of the host filesystem's
+  // case sensitivity, while the declared prefix was compared verbatim. Every
+  // page under the declared directory was falsely flagged undeclared.
+  test('declared db_only prefix with different case still matches the (always-lowercase) slug', async () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, 'gbrain.yml'), 'storage:\n  db_only:\n    - Notes/\n');
+    await addSource('src-a', repo);
+    await addPage('notes/db-resident', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
+  // False-negative guard for the fix above: a case-insensitive prefix match
+  // must not become a blanket "everything is covered" match. A page under an
+  // UNRELATED directory in the same source (with the same mixed-case
+  // declaration active) must still be flagged exactly as before.
+  test('mixed-case declared prefix does not swallow pages under an unrelated directory', async () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, 'gbrain.yml'), 'storage:\n  db_only:\n    - Notes/\n');
+    await addSource('src-a', repo);
+    await addPage('notes/db-resident', { sourceId: 'src-a' });
+    await addPage('people/ghost-page', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('people/ghost-page');
+    expect(c.message).not.toContain('notes/db-resident');
+    expect((c.details as any).total).toBe(1);
+  });
+
+  // #3766 literal repro check: the reporter's symptom (a code source
+  // indexing a Next.js App Router repo — bracketed dynamic-route
+  // directories, camelCase filenames — got 225/254 pages falsely flagged).
+  // Code pages (`page_kind: 'code'`) use a different, non-lossy slug scheme
+  // (`slugifyCodePath`, which — unlike the markdown slugifier — intentionally
+  // keeps framework paths like `app/[id]/page.tsx` indexable) and this check
+  // scopes its SQL to `page_kind = 'markdown'` only, so no code page can ever
+  // reach this check's matching logic in the first place. Locks in current
+  // (already-correct) behavior against regression.
+  test('#3766 repro: bracket-route + camelCase code page is never considered (page_kind=code out of scope)', async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, 'app', 'shop', '[id]'), { recursive: true });
+    writeFileSync(join(repo, 'app', 'shop', '[id]', 'page.tsx'), 'export default function Page() {}');
+    mkdirSync(join(repo, 'components'), { recursive: true });
+    writeFileSync(join(repo, 'components', 'ArchiveButton.tsx'), 'export function ArchiveButton() {}');
+    await addSource('src-a', repo);
+    // Slugs mirror what slugifyCodePath('app/shop/[id]/page.tsx') /
+    // slugifyCodePath('components/ArchiveButton.tsx') actually produce.
+    await addPage('app-shop-id-page-tsx', { sourceId: 'src-a', pageKind: 'code' });
+    await addPage('components-archivebutton-tsx', { sourceId: 'src-a', pageKind: 'code' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
   test('page with no backing file outside every db_only path → warn with sample + fix', async () => {
     const repo = makeRepo();
     await addSource('src-a', repo);
@@ -310,6 +366,20 @@ describe('undeclared_db_only_pages (#2784)', () => {
     expect(dirs.filter(d => d === 'atoms/').length).toBe(1);
     expect(dirs).toContain('notes/');
     for (const d of DERIVE_PHASE_DB_ONLY_DEFAULTS) expect(dirs).toContain(d);
+  });
+
+  // #3766 — declared prefixes are lowercased before the union, since the
+  // only consumer (checkUndeclaredDbOnlyPages) matches them against
+  // always-lowercase page slugs. A mixed-case declaration still dedupes
+  // against an already-lowercase default/declaration for the same directory.
+  test('effectiveDbOnlyDirs lowercases declared dirs (case-insensitive match against always-lowercase slugs)', () => {
+    const dirs = effectiveDbOnlyDirs(['Notes/', 'ATOMS/']);
+    expect(dirs).toContain('notes/');
+    expect(dirs).not.toContain('Notes/');
+    // 'ATOMS/' lowercases to 'atoms/', which collides with (dedupes against)
+    // the derive-phase default of the same name.
+    expect(dirs.filter(d => d === 'atoms/').length).toBe(1);
+    expect(dirs).not.toContain('ATOMS/');
   });
 });
 

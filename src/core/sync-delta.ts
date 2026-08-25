@@ -64,14 +64,16 @@ function unique<T>(items: T[]): T[] {
 }
 
 /**
- * Working-tree manifest for a DETACHED HEAD (relocated from sync.ts:557 so the
- * estimator can price detached sources identically to how the executor imports
- * them). On a detached HEAD, sync syncs from the live working tree: tracked
- * changes (`git diff --name-status -M HEAD`) PLUS untracked files (`ls-files
- * --others --exclude-standard`). Attached HEADs never call this — their
- * incremental path imports ONLY the commit diff (untracked/dirty files are not
- * imported), which is why the estimator must not price dirty files on an
- * attached repo (issue #2139 phantom-cost class).
+ * Working-tree manifest: tracked changes (`git diff --name-status -M HEAD`)
+ * PLUS untracked files (`ls-files --others --exclude-standard`). Built for
+ * EVERY sync now, not just detached HEADs (the name predates that): detached
+ * HEADs always import it; attached HEADs use it to count uncommitted drift
+ * (`SyncResult.uncommitted` + stderr warning) and, under `--working-tree` /
+ * `sync.include_working_tree`, to import uncommitted state through the same
+ * merge path. The ESTIMATOR still prices working-tree files only for detached
+ * sources — attached repos import only the commit diff by default, so pricing
+ * dirty files there would re-introduce the #2139 phantom-cost class (the
+ * --working-tree opt-in is deliberately not priced; see SyncOpts.workingTree).
  */
 export function buildDetachedWorkingTreeManifest(
   repoPath: string,

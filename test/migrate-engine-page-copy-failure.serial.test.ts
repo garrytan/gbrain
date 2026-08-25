@@ -53,6 +53,9 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
         putPageCalls.push({ slug, page, opts });
         return fakePage();
       },
+      // #4527: copyPageToTarget restores the source row's timestamps via a
+      // raw UPDATE right after putPage.
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
@@ -95,6 +98,9 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
         putPageCalls.push({ slug, page, opts });
         return fakePage();
       },
+      // #4527: copyPageToTarget restores the source row's timestamps via a
+      // raw UPDATE right after putPage.
+      executeRaw: async () => [],
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],

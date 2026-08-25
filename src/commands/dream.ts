@@ -41,7 +41,13 @@ interface DreamArgs {
   json: boolean;
   dryRun: boolean;
   pull: boolean;
-  phase: CyclePhase | null;
+  /**
+   * #4493: every explicitly-named (or --input/--drain-implied) phase, order
+   * preserved, deduped. Empty = full/default cycle. Previously a single
+   * `phase` scalar read from the FIRST --phase flag, so repeats were
+   * silently dropped.
+   */
+  phases: CyclePhase[];
   dir: string | null;
   help: boolean;
   /** v0.21: ad-hoc transcript file path; implies --phase synthesize. */
@@ -118,22 +124,31 @@ function collectFlagValues(args: string[], flag: string): string[] | null {
 }
 
 function parseArgs(args: string[]): DreamArgs {
-  const phaseIdx = args.indexOf('--phase');
+  // #4493: collect EVERY --phase occurrence. `args.indexOf('--phase')` used
+  // to read only the FIRST flag, so `--phase a --phase b --phase c` silently
+  // ran phase a alone and exited 0 with a report covering one phase. Each
+  // value is validated, order is preserved, repeats of the same value
+  // collapse (same contract as the repeated --source handling below).
+  const phaseValues = collectFlagValues(args, '--phase');
+  if (phaseValues === null) {
+    console.error('--phase <name>: missing value. Usage: gbrain dream --phase <name>');
+    process.exit(2);
+  }
   // issue #2860 (Codex P3): captured BEFORE --input/--drain get a chance to
-  // implicitly default `phase` below, so --once's validation can require
+  // implicitly default `phases` below, so --once's validation can require
   // the user actually TYPED --phase, not merely that some phase ended up
   // resolved. Without this, `--input <f> --once` and `--drain --once`
   // slip past the "explicit --phase required" contract (the derived
-  // `phase` value is already non-null by the time that check runs) and
+  // phase value is already non-null by the time that check runs) and
   // --once becomes silently ineffective for both.
-  const phaseWasExplicit = phaseIdx !== -1;
-  const rawPhase = phaseIdx !== -1 ? args[phaseIdx + 1] : null;
-  let phase = rawPhase && (ALL_PHASES as string[]).includes(rawPhase)
-    ? (rawPhase as CyclePhase)
-    : null;
-  if (rawPhase && !phase) {
-    console.error(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`);
-    process.exit(1);
+  const phaseWasExplicit = phaseValues.length > 0;
+  let phases: CyclePhase[] = [];
+  for (const rawPhase of phaseValues) {
+    if (!(ALL_PHASES as string[]).includes(rawPhase)) {
+      console.error(`Unknown phase "${rawPhase}". Valid: ${ALL_PHASES.join(', ')}`);
+      process.exit(1);
+    }
+    if (!phases.includes(rawPhase as CyclePhase)) phases.push(rawPhase as CyclePhase);
   }
 
   const dirIdx = args.indexOf('--dir');
@@ -175,7 +190,7 @@ function parseArgs(args: string[]): DreamArgs {
   }
 
   // --input implies --phase synthesize.
-  if (inputFile && !phase) phase = 'synthesize';
+  if (inputFile && phases.length === 0) phases = ['synthesize'];
 
   // v0.41.13: --source <id> (and the --source-id alias) drives per-source
   // cycle scoping. Resolution rules:
@@ -229,9 +244,9 @@ function parseArgs(args: string[]): DreamArgs {
     windowSeconds = parseInt(raw, 10);
   }
   if (drain) {
-    if (!phase) phase = 'extract_atoms';
-    else if (phase !== 'extract_atoms') {
-      console.error(`--drain currently supports only --phase extract_atoms (got "${phase}")`);
+    if (phases.length === 0) phases = ['extract_atoms'];
+    else if (phases.length > 1 || phases[0] !== 'extract_atoms') {
+      console.error(`--drain currently supports only --phase extract_atoms (got "${phases.join(', ')}")`);
       process.exit(2);
     }
   }
@@ -264,12 +279,22 @@ function parseArgs(args: string[]): DreamArgs {
     );
     process.exit(2);
   }
+  // #4493 corollary: --once bypasses ONE phase's enabled gate; with several
+  // named phases there is no single target, and force-enabling them all at
+  // once is the surprise-spend risk #2860 exists to prevent.
+  if (once && phases.length > 1 && !wantsHelp) {
+    console.error(
+      `--once supports a single --phase target; got [${phases.join(', ')}]. ` +
+      'Run each phase in its own --phase <name> --once invocation.',
+    );
+    process.exit(2);
+  }
 
   return {
     json: args.includes('--json'),
     dryRun: args.includes('--dry-run'),
     pull: args.includes('--pull'),
-    phase,
+    phases,
     dir,
     help: args.includes('--help') || args.includes('-h'),
     inputFile,
@@ -369,7 +394,9 @@ Options:
                       but skips the synthesis subagents.
                       "--dry-run" does NOT mean "zero LLM calls."
   --json              Emit the CycleReport as JSON (agent-readable)
-  --phase <name>      Run a single phase: ${ALL_PHASES.join(' | ')}
+  --phase <name>      Run only the named phase(s). Repeatable — every named
+                      phase runs, in canonical cycle order (#4493).
+                      Valid: ${ALL_PHASES.join(' | ')}
   --once              With --phase <name>: run that phase once even if its
                       own dream.<phase>.enabled / cycle.<phase>.enabled
                       config gate is false. Never reads or writes config —
@@ -576,7 +603,7 @@ async function runDrain(
   if (opts.dryRun) {
     const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
     if (opts.json) {
-      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window' }, null, 2));
+      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, last_error: null }, null, 2));
     } else {
       console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
     }
@@ -611,6 +638,16 @@ async function runDrain(
     throw e;
   }
 
+  // #4539: surface WHY the drain underperformed. Pre-fix the phase's
+  // failures[] was collapsed to bare counts inside the drain adapter, so a
+  // run that failed on every item printed only `stopped: no_progress` and the
+  // operator had to re-run the phase by hand to see the provider/parse error.
+  // Stderr (not stdout): progress/diagnostics never pollute the data stream.
+  if (result.failure_count > 0) {
+    process.stderr.write(
+      `[drain] ${result.failure_count} item failure(s)${result.last_error ? `; last error: ${result.last_error}` : ''}\n`,
+    );
+  }
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
   } else {
@@ -742,7 +779,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     return runDrain(engine, opts, resolvedSourceId, brainDir);
   }
 
-  const phases: CyclePhase[] | undefined = opts.phase ? [opts.phase] : undefined;
+  // #4493: pass EVERY named phase through (runCycle already accepts the
+  // array); empty means the full/default cycle.
+  const phases: CyclePhase[] | undefined = opts.phases.length > 0 ? opts.phases : undefined;
 
   const report = await runCycle(engine, {
     brainDir,
@@ -755,9 +794,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     synthFrom: opts.from ?? undefined,
     synthTo: opts.to ?? undefined,
     synthBypassDreamGuard: opts.bypassDreamGuard,
-    // issue #2860: opts.phase is guaranteed non-null here when opts.once is
-    // set (parseArgs enforces --once requires --phase).
-    onceForPhase: opts.once ? opts.phase! : undefined,
+    // issue #2860: exactly one phase is guaranteed here when opts.once is
+    // set (parseArgs enforces --once requires a single explicit --phase).
+    onceForPhase: opts.once ? opts.phases[0]! : undefined,
   });
 
   if (opts.json) {

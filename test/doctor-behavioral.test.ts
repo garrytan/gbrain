@@ -28,6 +28,7 @@ import {
   computeDoctorReport,
   type Check,
 } from '../src/commands/doctor.ts';
+import { buildEmbedSkipMarker } from '../src/core/embed-skip.ts';
 
 let engine: PGLiteEngine;
 
@@ -240,6 +241,63 @@ describe('buildChecks — orchestrator against PGLite', () => {
     for (const c of checks) {
       expect(c.message).not.toContain('connect() has not been called');
     }
+  });
+
+  test('oversized_pages excludes pages that already took the embed_skip remediation (gbrain dogfooding find)', async () => {
+    // The warn message for this check says "existing oversized pages can be
+    // ... accepted as non-embeddable" (i.e. frontmatter.embed_skip set).
+    // Before this fix the underlying query never excluded those pages, so a
+    // page an operator had already remediated the documented way kept
+    // re-appearing in this check's output on every run with no way to clear
+    // it short of deleting the page. Uses the real production marker shape
+    // (an object from buildEmbedSkipMarker, not a bare boolean) — the
+    // canonical writer (src/core/content-sanity.ts) never writes a boolean,
+    // and the exclusion must match what actually lands in frontmatter.
+    const big = 'oversized page body prose for the embed_skip exclusion probe. '.repeat(11_000);
+    await engine.putPage('wiki/oversized-embed-skip-probe', {
+      type: 'note',
+      title: 'Oversized Embed-Skip Probe',
+      compiled_truth: big,
+      timeline: '',
+      frontmatter: { embed_skip: buildEmbedSkipMarker(big.length) },
+    });
+
+    const checks = await buildChecks(engine, []);
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    expect(oversized).toBeDefined();
+    // Positive control above (line ~227) proves the same byte count without
+    // embed_skip DOES warn and names the page — this proves the ONLY
+    // difference (embed_skip set) is what excludes it.
+    expect(oversized!.status).toBe('ok');
+    expect(oversized!.message).not.toContain('oversized-embed-skip-probe');
+  });
+
+  test('oversized_pages still warns when embed_skip is absent (does not exclude every page)', async () => {
+    // Sibling positive control to the exclusion test above: a page with no
+    // embed_skip key at all must still warn, proving the exclusion is
+    // scoped to the marker's presence and isn't a query regression that
+    // silently stops counting oversized pages altogether.
+    //
+    // Note: per the canonical contract in src/core/embed-skip.ts
+    // (isEmbedSkipped: "any non-null value" is skip, by design — the
+    // predicate is key-EXISTENCE, not a boolean value check), an explicit
+    // `embed_skip: false` is ALSO treated as skip, matching every other
+    // embed-skip consumer in the codebase (embed.ts, postgres-engine.ts,
+    // pglite-engine.ts). This check must stay consistent with that shared
+    // contract rather than inventing its own true/false semantics.
+    const big = 'oversized page body prose for the embed_skip-absent probe. '.repeat(11_000);
+    await engine.putPage('wiki/oversized-embed-skip-absent-probe', {
+      type: 'note',
+      title: 'Oversized Embed-Skip-Absent Probe',
+      compiled_truth: big,
+      timeline: '',
+    });
+
+    const checks = await buildChecks(engine, []);
+    const oversized = checks.find(c => c.name === 'oversized_pages');
+    expect(oversized).toBeDefined();
+    expect(oversized!.status).toBe('warn');
+    expect(oversized!.message).toContain('oversized-embed-skip-absent-probe');
   });
 
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {

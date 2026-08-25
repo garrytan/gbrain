@@ -16,6 +16,7 @@ import type {
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment } from './types.ts';
 import { validateAttachment } from './attachments.ts';
 import { isProtectedJobName } from './protected-names.ts';
+import { assertEmbedBackfillQueueAdmission } from './embed-backfill-admission.ts';
 import {
   computeParamHash,
   resolveAdmissionPolicy,
@@ -36,14 +37,12 @@ import {
   logBatchRetry as auditLogBatchRetry,
   logBatchExhausted as auditLogBatchExhausted,
 } from '../audit/batch-retry-audit.ts';
-
-/** Options for opting into protected-job-name submission. Passed as a separate
- *  4th arg to `MinionQueue.add()` (NOT folded into `opts`) so user-spread
- *  `{...userOpts}` payloads can't accidentally carry the trust flag. */
+/** Trusted 4th argument, kept outside user-spread job options. */
 export interface TrustedSubmitOpts {
-  /** When true, allow submission of names in PROTECTED_JOB_NAMES (currently 'shell').
-   *  Set only by the CLI path and by `submit_job` when `ctx.remote === false`. */
+  /** Allow PROTECTED_JOB_NAMES; CLI or operation-local callers only. */
   allowProtectedSubmit?: boolean;
+  /** Allow PGLite embed-backfill only for an explicit inline-worker caller. */
+  allowPgliteInlineWorker?: boolean;
 }
 
 const MIGRATION_VERSION = 7;
@@ -214,6 +213,7 @@ export class MinionQueue {
     if (jobName.length === 0) {
       throw new Error('Job name cannot be empty');
     }
+    assertEmbedBackfillQueueAdmission(this.engine, jobName, data, trusted);
     if (isProtectedJobName(jobName) && !trusted?.allowProtectedSubmit) {
       throw new Error(
         `protected job name '${jobName}' requires CLI or operation-local submitter ` +

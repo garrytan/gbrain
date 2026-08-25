@@ -23,12 +23,14 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MIGRATIONS, LATEST_VERSION, runMigrations } from '../src/core/migrate.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
+let workerBackedQueue: MinionQueue;
 
 const V128_SQL = MIGRATIONS.find(m => m.version === 128)?.sql ?? '';
 
@@ -48,6 +50,14 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' }); // in-memory
   await engine.initSchema();
   queue = new MinionQueue(engine);
+  const workerBackedEngine = new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'kind') return 'postgres';
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as BrainEngine;
+  workerBackedQueue = new MinionQueue(workerBackedEngine);
 });
 
 afterAll(async () => {
@@ -117,7 +127,7 @@ describe('migration v128 — backfill + cleanup semantics (PGLite)', () => {
     const unmapped = await queue.add('sync', {});
     expect(unmapped.timeout_ms).toBeNull();
     // Explicit budget: untouched.
-    const explicit = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    const explicit = await workerBackedQueue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
 
     // --- Cleanup fixtures (statement 2) ---
     // Three ticker-keyed waiting cycles for ONE source, staggered ages —

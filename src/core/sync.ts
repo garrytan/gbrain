@@ -669,6 +669,7 @@ export {
   classifyErrorCode,
   summarizeFailuresByCode,
   formatCodeBreakdown,
+  formatFailedFileList,
   syncFailuresPath,
   loadSyncFailures,
   unacknowledgedSyncFailures,

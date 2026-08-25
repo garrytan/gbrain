@@ -12,16 +12,26 @@ import { sourceScopeOpts } from './context.ts';
 
 const find_orphans: Operation = {
   name: 'find_orphans',
-  description: 'Find pages with no inbound wikilinks. Essential for content enrichment cycles.',
+  description: 'Find disconnected pages. Default mode "islanded" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode "inbound" is the legacy no-inbound-only view. Essential for content enrichment cycles.',
   params: {
     include_pseudo: {
       type: 'boolean',
       description: 'Include auto-generated and pseudo pages (default: false)',
     },
+    mode: {
+      type: 'string',
+      description: "#4524: orphan definition — 'islanded' (default; agrees with get_health.orphan_pages and doctor) or 'inbound' (legacy: no inbound links, even when the page links out).",
+    },
   },
   scope: 'read',
   handler: async (ctx, p) => {
     const { findOrphans } = await import('../../commands/orphans.ts');
+    // #4524: validate rather than silently coerce — an unknown mode must not
+    // quietly fall back to the default and misreport the orphan set.
+    const mode = p.mode === undefined ? undefined : (p.mode as string);
+    if (mode !== undefined && mode !== 'inbound' && mode !== 'islanded') {
+      throw new Error(`find_orphans: invalid mode "${mode}" — use 'inbound' or 'islanded'`);
+    }
     // v0.41.29.0 (Codex F8): scope by the caller's source (ctx.sourceId /
     // ctx.auth.allowedSources) via the canonical sourceScopeOpts ladder.
     // Pre-fix, find_orphans returned brain-wide orphans regardless of a
@@ -30,6 +40,7 @@ const find_orphans: Operation = {
     // orphans --source` instead (ctx.remote === false → empty scope here).
     return findOrphans(ctx.engine, {
       includePseudo: (p.include_pseudo as boolean) || false,
+      ...(mode ? { mode } : {}),
       ...sourceScopeOpts(ctx),
     });
   },

@@ -39,8 +39,19 @@ export interface ExtractAtomsDrainDeps {
    * (zero items succeeded, at least one failure) — i.e. the batch's warning
    * result was actually a total provider outage, not a partial/no-op batch.
    * Omit/false for the ordinary partial-success or nothing-to-do cases.
+   *
+   * #4539: `failureCount` (per-item failures in this batch) and `firstError`
+   * (a representative failure message) let the drain surface WHY a run
+   * stopped/underperformed — pre-fix the phase's failures[] was collapsed to
+   * bare counts and the operator saw only `stopped: no_progress`.
    */
-  runBatch: () => Promise<{ extracted: number; skipped: number; providerFailure?: boolean }>;
+  runBatch: () => Promise<{
+    extracted: number;
+    skipped: number;
+    providerFailure?: boolean;
+    failureCount?: number;
+    firstError?: string;
+  }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
   /** Injectable clock. Production: Date.now. */
@@ -74,6 +85,17 @@ export interface ExtractAtomsDrainResult {
   batches: number;
   /** Why the loop stopped: drained | window | no_progress | max_batches | provider_failure. */
   stopped: 'drained' | 'window' | 'no_progress' | 'max_batches' | 'provider_failure';
+  /**
+   * #4539: total per-item failures across every batch in this run. 0 for a
+   * clean run. Included in `--json` verbatim; dream.ts prints a stderr line
+   * when non-zero so the operator sees WHY the drain underperformed.
+   */
+  failure_count: number;
+  /**
+   * #4539: representative failure message from the most recent batch that
+   * reported one (`source: error`), or null for a clean run.
+   */
+  last_error: string | null;
 }
 
 export async function runExtractAtomsDrain(
@@ -91,6 +113,9 @@ export async function runExtractAtomsDrain(
     // the returned `status`, independent of how `stopped` reads after the
     // final (possibly overriding) remaining-count check below.
     let providerFailure = false;
+    // #4539: accumulate per-item failure visibility across batches.
+    let failureCount = 0;
+    let lastError: string | null = null;
 
     while (deps.now() < deadline) {
       if (batches >= maxBatches) { stopped = 'max_batches'; break; }
@@ -102,6 +127,8 @@ export async function runExtractAtomsDrain(
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
+      if (typeof r.failureCount === 'number' && r.failureCount > 0) failureCount += r.failureCount;
+      if (r.firstError) lastError = r.firstError;
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
       // issue #3218: every item this batch attempted failed (0 succeeded, >=1
@@ -144,6 +171,8 @@ export async function runExtractAtomsDrain(
       remaining,
       batches,
       stopped,
+      failure_count: failureCount,
+      last_error: lastError,
     };
   });
 }
@@ -218,10 +247,21 @@ export async function runExtractAtomsDrainForSource(
         const failures = Array.isArray(d.failures) ? d.failures : [];
         const itemsSucceeded =
           Number(d.transcripts_processed ?? 0) + Number(d.pages_processed ?? 0);
+        // #4539: carry a representative failure up to the drain result instead
+        // of collapsing failures[] to bare counts — pre-fix a failing drain
+        // reported only `stopped: no_progress` and the operator had no way to
+        // see the underlying provider/parse error without re-running the
+        // phase by hand.
+        const first = failures[0] as { source?: unknown; error?: unknown } | undefined;
+        const firstError = first
+          ? `${typeof first.source === 'string' ? `${first.source}: ` : ''}${typeof first.error === 'string' ? first.error : JSON.stringify(first.error)}`
+          : undefined;
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
+          failureCount: failures.length,
+          ...(firstError ? { firstError } : {}),
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),

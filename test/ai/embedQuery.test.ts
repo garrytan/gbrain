@@ -75,6 +75,28 @@ describe('embedQuery — return shape', () => {
   });
 });
 
+describe('embed — input truncation', () => {
+  test('never splits a UTF-16 surrogate pair at MAX_CHARS', async () => {
+    configureOpenAI();
+    const input = `${'a'.repeat(7_999)}💡trailing prose`;
+    let captured = '';
+    __setEmbedTransportForTests((async (args: any) => {
+      captured = args.values[0];
+      return fakeEmbeddings(1, 1536);
+    }) as any);
+
+    await embed([input]);
+
+    expect(input.slice(0, 8_000).isWellFormed()).toBe(false); // positive control
+    expect(captured.isWellFormed()).toBe(true);
+    // Truncation must actually occur (not a no-op that trivially passes well-formedness):
+    // the straddling pair moves the safe cut back to 7,999, dropping both the emoji and
+    // the trailing prose entirely.
+    expect(captured.length).toBe(7_999);
+    expect(captured).not.toContain('trailing prose');
+  });
+});
+
 describe('embedQuery — inputType plumbing (ZE asymmetric)', () => {
   beforeEach(() => configureZE());
 

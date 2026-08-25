@@ -835,6 +835,58 @@ describe('runExtractConversationFactsCore', () => {
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
   });
 
+  test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
+    chatTextOverride = JSON.stringify({
+      facts: [{
+        fact: 'Alice Example signed the offer letter.',
+        kind: 'event',
+        entity: 'Alice Example',
+        confidence: 1.0,
+        notability: 'high',
+      }],
+    });
+
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+      `SELECT entity_slug FROM facts
+        WHERE source = $1 AND source_markdown_slug = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, 'conversations/imessage/alice-example'],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.entity_slug === 'people/alice-example')).toBe(true);
+  });
+
+  test('preserves an already-canonical LLM entity slug', async () => {
+    chatTextOverride = JSON.stringify({
+      facts: [{
+        fact: 'Alice Example started the new role.',
+        kind: 'event',
+        entity: 'people/alice-example',
+        confidence: 1.0,
+        notability: 'high',
+      }],
+    });
+
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+      `SELECT entity_slug FROM facts
+        WHERE source = $1 AND source_markdown_slug = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, 'conversations/imessage/alice-example'],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.entity_slug === 'people/alice-example')).toBe(true);
+  });
+
   test('terminal outcome skips a completed page after checkpoint GC', async () => {
     await runExtractConversationFactsCore(engine, {
       sourceId: 'default',

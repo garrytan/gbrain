@@ -97,3 +97,80 @@ describe('#3696 autopilot dispatch skips relative local_path', () => {
     expect(relativeLocalPathSkipWarning('ok-src', '/abs/vault')).toBeNull();
   });
 });
+
+describe('#3696 residual — a relative --clone-dir is absolutized before use', () => {
+  test('relative clone-dir participates in the overlap check as an absolute path', async () => {
+    // The overlap check runs BEFORE any clone work and compares finalPath
+    // (localPath OR cloneDir) against every registered local_path — all
+    // absolute. A verbatim relative clone-dir can never match, so the same
+    // phantom-path class #3696 fixed for --path survived through --clone-dir.
+    // Observable seam: register a source at the ABSOLUTE parent, then add a
+    // URL source whose RELATIVE clone-dir resolves inside it. Fixed code
+    // throws overlapping_path before touching git/network; unfixed code
+    // sails past the check (and would try to clone).
+    const parent = mkdtempSync(join(tmpdir(), 'gbrain-3696-clone-'));
+    const origCwd = process.cwd();
+    try {
+      // chdir FIRST, then derive both paths from the same (realpathed) cwd —
+      // macOS chdir realpaths /var → /private/var, so a join(parent, ...)
+      // expectation would compare the unrealpathed spelling (same trap the
+      // relative --path test above documents).
+      process.chdir(parent);
+      await addSource(engine, { id: 'abs-parent-3696', localPath: resolve('clones'), force: true });
+      const relCloneDir = 'clones/rel-3696';
+      expect(isAbsolute(relCloneDir)).toBe(false);
+
+      let err: unknown;
+      try {
+        await addSource(engine, {
+          id: 'rel-clone-3696',
+          remoteUrl: 'https://invalid.invalid/repo.git',
+          cloneDir: relCloneDir,
+        });
+      } catch (e) { err = e; }
+      expect(String((err as { code?: string } | undefined)?.code ?? err)).toBe('overlapping_path');
+    } finally {
+      process.chdir(origCwd);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('#3696 residual — a relative --kind github --dir is absolutized before use', () => {
+  test('relative github.dir is resolved against cwd before INSERT', async () => {
+    // Path C (--kind github) never went through the cloneDir/localPath
+    // absolutization above — `finalPath = opts.github.dir` was used verbatim
+    // for both mkdirSync and the local_path INSERT, so the same phantom-path
+    // class #3696 fixed for --path/--clone-dir survived through --dir.
+    const parent = mkdtempSync(join(tmpdir(), 'gbrain-3696-ghdir-'));
+    const origCwd = process.cwd();
+    try {
+      process.chdir(parent);
+      const relDir = 'clones/gh-rel-3696';
+      expect(isAbsolute(relDir)).toBe(false);
+      const expected = resolve(relDir);
+
+      await addSource(engine, {
+        id: 'gh-rel-3696',
+        github: {
+          tokenEnv: 'GH_TOKEN',
+          handle: '',
+          scope: 'auto',
+          repos: [],
+          dir: relDir,
+          involvement: true,
+        },
+      });
+
+      const rows = await engine.executeRaw<{ local_path: string }>(
+        `SELECT local_path FROM sources WHERE id = 'gh-rel-3696'`,
+      );
+      expect(rows.length).toBe(1);
+      expect(isAbsolute(rows[0]!.local_path)).toBe(true);
+      expect(rows[0]!.local_path).toBe(expected);
+    } finally {
+      process.chdir(origCwd);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});

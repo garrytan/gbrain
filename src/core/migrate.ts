@@ -6186,16 +6186,32 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 141,
+    name: 'extract_rollup_expected_limit',
+    // #4482: orthogonal counter for EXPECTED-limit stops (per-source budget /
+    // walltime caps working as designed). halt_count keeps its historical
+    // meaning — rows written before this migration conflate error halts and
+    // cap stops and are deliberately NOT reclassified (they read as 0 caps,
+    // i.e. "unknown"). New writers record error halts in halt_count and cap
+    // stops here, so doctor's extract_health failure rate can exclude
+    // self-imposed capacity limits while keeping them observable.
+    idempotent: true,
+    sql: `
+      ALTER TABLE extract_rollup_7d
+        ADD COLUMN IF NOT EXISTS expected_limit_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 142,
     name: 'takes_embedding_dimension_matches_config',
     // #2089: takes was created with a hard-coded vector(1536), while the
     // configured embedding model can emit another width (for example the
     // default zembed-1 2560d). The vector writer cannot be useful until the
     // column shares the configured dimension with content_chunks/facts.
-    // Renumbered to v141 because master consumed v133-v140 (content_chunks
+    // Renumbered to v142 because master consumed v133-v141 (content_chunks
     // embedded_text_hash, chunk-index restore, event-time index, minion
     // private queue owner metadata, entity_identities, timeline dedup md5,
-    // timeline legacy source repair, chat_usage_log) while this PR was in
-    // flight.
+    // timeline legacy source repair, chat_usage_log, extract_rollup
+    // expected_limit counter) while this PR was in flight.
     idempotent: true,
     sql: '',
     handler: async (engine) => {
@@ -6233,7 +6249,7 @@ export const MIGRATIONS: Migration[] = [
              WHERE active AND embedding IS NOT NULL`,
         );
       }
-      process.stderr.write(`  v141: takes.embedding resized to vector(${embeddingDim}); existing take vectors cleared\n`);
+      process.stderr.write(`  v142: takes.embedding resized to vector(${embeddingDim}); existing take vectors cleared\n`);
     },
   },
 ];

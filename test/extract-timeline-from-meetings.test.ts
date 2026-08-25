@@ -10,7 +10,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-}, 60_000);
+}, 240_000); // cold PGLite init can exceed 60s on a loaded CI/dev machine
 
 afterAll(async () => {
   await engine.disconnect();
@@ -96,5 +96,50 @@ describe('extractTimelineFromMeetings', () => {
     });
     const timeline = await engine.getTimeline('people/alice-example', { sourceId: 'default' });
     expect(timeline).toHaveLength(0);
+  });
+});
+
+// ─── #4542 — CLI surface: a zero-meeting run must WARN, not mimic success ──
+//
+// `gbrain extract timeline --from-meetings --source db` on a brain with no
+// meeting-typed pages printed "0 entries on 0 entity pages from 0 meetings"
+// and exited 0 — indistinguishable from a healthy no-op. Worse,
+// --from-meetings REPLACES the default timeline pass (extract.ts runs it
+// solo), so users expecting "meetings AND the usual pass" silently got
+// NEITHER. The CLI now warns on stderr, names the meeting predicate, and
+// points at omitting the flag.
+describe('#4542 zero-meetings warning at the CLI surface', () => {
+  async function runExtractCapturingStderr(args: string[]): Promise<string[]> {
+    const { runExtract } = await import('../src/commands/extract.ts');
+    const lines: string[] = [];
+    const savedError = console.error;
+    console.error = (...a: unknown[]) => { lines.push(a.map(String).join(' ')); };
+    try {
+      await runExtract(engine, args);
+    } finally {
+      console.error = savedError;
+    }
+    return lines;
+  }
+
+  it('warns on stderr with the predicate + omit hint when 0 meetings matched', async () => {
+    const stderrLines = await runExtractCapturingStderr(['timeline', '--from-meetings', '--source', 'db']);
+    const joined = stderrLines.join('\n');
+    expect(joined).toContain("type = 'meeting'");
+    expect(joined).toContain('omit --from-meetings');
+    expect(joined.toLowerCase()).toContain('replaces');
+  });
+
+  it('stays quiet when meetings exist', async () => {
+    await engine.putPage('meetings/2026-04-20-sync', {
+      type: 'meeting',
+      title: 'Weekly Sync',
+      compiled_truth: 'Discussed roadmap.',
+      timeline: '',
+      frontmatter: {},
+      effective_date: new Date('2026-04-20T00:00:00.000Z'),
+    });
+    const stderrLines = await runExtractCapturingStderr(['timeline', '--from-meetings', '--source', 'db']);
+    expect(stderrLines.join('\n')).not.toContain('omit --from-meetings');
   });
 });

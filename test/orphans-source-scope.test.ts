@@ -33,6 +33,11 @@ const page = (title: string) => ({
 });
 
 // Every test in this file is READ-ONLY (findOrphanPages / getOrphansData /
+// #4524 note: every call below pins mode: 'inbound' — this file's subject is
+// SOURCE SCOPING (A2/F6/F8), and its fixtures were designed against the
+// legacy no-inbound orphan definition (linker pages that link out on
+// purpose). The new 'islanded' default is covered by
+// test/orphans-mode-islanded.test.ts.
 // find_orphans op handler). Seed ONCE in beforeAll rather than reset+reseed
 // per test — the canonical R3/R4 pattern (engine in beforeAll, disconnect in
 // afterAll) is satisfied, and this cuts the file from ~6min to seconds.
@@ -84,7 +89,7 @@ afterAll(async () => {
 
 describe('findOrphanPages — source scoping (A2)', () => {
   test('scoped to default: alice-orphan is an orphan; cross-source-linked page is NOT', async () => {
-    const rows = await engine.findOrphanPages({ sourceId: 'default' });
+    const rows = await engine.findOrphanPages({ sourceId: 'default', mode: 'inbound' });
     const slugs = rows.map(r => r.slug);
     expect(slugs).toContain('people/alice-orphan');
     // A2: cross-target has inbound from src-b → reachable → NOT an orphan.
@@ -98,13 +103,13 @@ describe('findOrphanPages — source scoping (A2)', () => {
   });
 
   test('scoped to src-b returns a different orphan set', async () => {
-    const rows = await engine.findOrphanPages({ sourceId: 'src-b' });
+    const rows = await engine.findOrphanPages({ sourceId: 'src-b', mode: 'inbound' });
     const slugs = rows.map(r => r.slug).sort();
     expect(slugs).toEqual(['people/src-b-linker', 'people/zara-orphan']);
   });
 
   test('unscoped (brain-wide) returns the union', async () => {
-    const rows = await engine.findOrphanPages();
+    const rows = await engine.findOrphanPages({ mode: 'inbound' });
     const slugs = rows.map(r => r.slug).sort();
     expect(slugs).toEqual([
       'people/alice-orphan',
@@ -114,7 +119,7 @@ describe('findOrphanPages — source scoping (A2)', () => {
   });
 
   test('federated sourceIds scopes to the union of the given sources', async () => {
-    const rows = await engine.findOrphanPages({ sourceIds: ['default', 'src-b'] });
+    const rows = await engine.findOrphanPages({ sourceIds: ['default', 'src-b'], mode: 'inbound' });
     const slugs = rows.map(r => r.slug).sort();
     expect(slugs).toEqual([
       'people/alice-orphan',
@@ -122,7 +127,7 @@ describe('findOrphanPages — source scoping (A2)', () => {
       'people/zara-orphan',
     ]);
     // Single-element federated array behaves like the scalar scope.
-    const onlyB = await engine.findOrphanPages({ sourceIds: ['src-b'] });
+    const onlyB = await engine.findOrphanPages({ sourceIds: ['src-b'], mode: 'inbound' });
     expect(onlyB.map(r => r.slug).sort()).toEqual([
       'people/src-b-linker',
       'people/zara-orphan',
@@ -132,7 +137,7 @@ describe('findOrphanPages — source scoping (A2)', () => {
 
 describe('getOrphansData — scoped totals + F6 denominator', () => {
   test('default scope: counts differ from brain-wide; excluded non-orphan drops from total_linkable (F6)', async () => {
-    const data = await findOrphans(engine, { includePseudo: false, sourceId: 'default' });
+    const data = await findOrphans(engine, { includePseudo: false, sourceId: 'default', mode: 'inbound' });
     // 4 live default pages; 1 orphan (alice-orphan).
     expect(data.total_pages).toBe(4);
     expect(data.total_orphans).toBe(1);
@@ -146,14 +151,14 @@ describe('getOrphansData — scoped totals + F6 denominator', () => {
   });
 
   test('src-b scope: distinct from default', async () => {
-    const data = await findOrphans(engine, { includePseudo: false, sourceId: 'src-b' });
+    const data = await findOrphans(engine, { includePseudo: false, sourceId: 'src-b', mode: 'inbound' });
     expect(data.total_pages).toBe(2);
     expect(data.total_orphans).toBe(2);
     expect(data.total_linkable).toBe(2); // no excluded pages in src-b
   });
 
   test('brain-wide F6: excluded non-orphan drops from total_linkable', async () => {
-    const data = await findOrphans(engine, { includePseudo: false });
+    const data = await findOrphans(engine, { includePseudo: false, mode: 'inbound' });
     expect(data.total_pages).toBe(6);
     expect(data.total_orphans).toBe(3);
     // 6 live pages - 1 excluded (templates/junk-linked) = 5.
@@ -161,7 +166,7 @@ describe('getOrphansData — scoped totals + F6 denominator', () => {
   });
 
   test('includePseudo keeps excluded pages in the denominator', async () => {
-    const data = await findOrphans(engine, { includePseudo: true, sourceId: 'default' });
+    const data = await findOrphans(engine, { includePseudo: true, sourceId: 'default', mode: 'inbound' });
     // No exclusion → denominator is the full live set.
     expect(data.total_linkable).toBe(4);
   });
@@ -180,7 +185,7 @@ describe('find_orphans MCP op — F8 source-isolation scope', () => {
       remote: true,
       sourceId: 'src-b',
     };
-    const result = (await op!.handler(ctx as any, {})) as { orphans: { slug: string }[] };
+    const result = (await op!.handler(ctx as any, { mode: 'inbound' })) as { orphans: { slug: string }[] };
     const slugs = result.orphans.map(o => o.slug).sort();
     expect(slugs).toEqual(['people/src-b-linker', 'people/zara-orphan']);
     // Leak guard: default's orphan must NOT appear.
@@ -205,7 +210,7 @@ describe('find_orphans MCP op — F8 source-isolation scope', () => {
         allowedSources: ['src-b'], // ...but the federated array wins.
       },
     };
-    const result = (await op!.handler(ctx as any, {})) as { orphans: { slug: string }[] };
+    const result = (await op!.handler(ctx as any, { mode: 'inbound' })) as { orphans: { slug: string }[] };
     const slugs = result.orphans.map(o => o.slug).sort();
     expect(slugs).toEqual(['people/src-b-linker', 'people/zara-orphan']);
     expect(slugs).not.toContain('people/alice-orphan');

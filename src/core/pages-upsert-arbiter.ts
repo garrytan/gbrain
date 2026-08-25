@@ -67,8 +67,25 @@ export async function checkPagesUpsertArbiter(engine: BrainEngine): Promise<Page
   if (!tablePresent) {
     return { tablePresent: false, arbiterPresent: false, needsRepair: false, duplicateGroups: 0 };
   }
+  // Catalog-anchored candidate set (#550 residual): pg_indexes was a bare
+  // text scan on tablename, which false-passed on exactly the drift shapes
+  // this module exists to catch — an INVALID index (a failed CREATE INDEX
+  // CONCURRENTLY remnant renders a normal-looking indexdef but cannot
+  // arbitrate), a DEFERRABLE unique (indimmediate = false, unusable for ON
+  // CONFLICT), and a same-named table in ANOTHER schema (tablename has no
+  // schema qualifier, while the table probe above resolved via search_path).
+  // Anchoring on the SAME to_regclass('pages') plus the catalog validity
+  // flags closes all three; indpred IS NULL keeps the existing
+  // partial-index exclusion at the catalog level too.
   const rows = await engine.executeRaw<{ indexdef: string }>(
-    `SELECT indexdef FROM pg_indexes WHERE tablename = 'pages'`,
+    `SELECT pg_get_indexdef(x.indexrelid) AS indexdef
+       FROM pg_index x
+      WHERE x.indrelid = to_regclass('pages')
+        AND x.indisunique
+        AND x.indisvalid
+        AND x.indisready
+        AND x.indimmediate
+        AND x.indpred IS NULL`,
   );
   const arbiterPresent = rows.some(r => isArbiterShape(r.indexdef));
   let duplicateGroups = 0;

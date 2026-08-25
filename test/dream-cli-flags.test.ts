@@ -34,7 +34,8 @@ describe('dream CLI flag wiring', () => {
   });
 
   test('--input implies --phase synthesize', () => {
-    expect(dreamSrc).toContain("phase = 'synthesize'");
+    // #4493: phase became the phases[] array (repeated --phase flags all run).
+    expect(dreamSrc).toContain("phases = ['synthesize']");
   });
 
   test('--from > --to range validation', () => {
@@ -115,7 +116,8 @@ describe('dream CLI flag wiring', () => {
     });
 
     test('--drain defaults to extract_atoms and rejects other phases', () => {
-      expect(dreamSrc).toContain("phase = 'extract_atoms'");
+      // #4493: phase became the phases[] array (repeated --phase flags all run).
+      expect(dreamSrc).toContain("phases = ['extract_atoms']");
       expect(dreamSrc).toContain('--drain currently supports only --phase extract_atoms');
     });
 
@@ -153,27 +155,30 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('if (once && !phaseWasExplicit && !wantsHelp)');
     });
 
-    // Codex P3 finding: the derived `phase` value gets populated by
+    // Codex P3 finding: the derived phase value gets populated by
     // --input/--drain BEFORE this validation used to run, so those two
-    // silently slipped past an `!phase`-based check. The fix validates
-    // against `phaseWasExplicit` (captured at `phaseIdx !== -1`, before
-    // any implicit defaulting) instead. Behavioral pins live in
-    // test/dream.test.ts.
+    // silently slipped past an emptiness-based check. The fix validates
+    // against `phaseWasExplicit` (captured from the raw flag occurrences,
+    // before any implicit defaulting) instead. Behavioral pins live in
+    // test/dream.test.ts. (#4493: the capture source moved from
+    // `phaseIdx !== -1` to `phaseValues.length > 0` when --phase became
+    // repeatable — same before-defaulting ordering contract.)
     test('validates against phaseWasExplicit, captured before --input/--drain defaulting', () => {
-      expect(dreamSrc).toContain('const phaseWasExplicit = phaseIdx !== -1;');
+      expect(dreamSrc).toContain('const phaseWasExplicit = phaseValues.length > 0;');
       // Must be declared before the --input-implies-synthesize and
       // --drain-implies-extract_atoms defaulting blocks so it captures
       // presence prior to any implicit phase assignment.
-      const explicitIdx = dreamSrc.indexOf('const phaseWasExplicit = phaseIdx !== -1;');
-      const inputImpliesIdx = dreamSrc.indexOf("phase = 'synthesize'");
-      const drainImpliesIdx = dreamSrc.indexOf("phase = 'extract_atoms'");
+      const explicitIdx = dreamSrc.indexOf('const phaseWasExplicit = phaseValues.length > 0;');
+      const inputImpliesIdx = dreamSrc.indexOf("phases = ['synthesize']");
+      const drainImpliesIdx = dreamSrc.indexOf("phases = ['extract_atoms']");
       expect(explicitIdx).toBeGreaterThan(-1);
       expect(explicitIdx).toBeLessThan(inputImpliesIdx);
       expect(explicitIdx).toBeLessThan(drainImpliesIdx);
     });
 
     test('threads onceForPhase to runCycle, gated on opts.once', () => {
-      expect(dreamSrc).toMatch(/onceForPhase:\s*opts\.once\s*\?\s*opts\.phase!\s*:\s*undefined/);
+      // #4493: opts.phases[0] — parseArgs guarantees exactly one when --once.
+      expect(dreamSrc).toMatch(/onceForPhase:\s*opts\.once\s*\?\s*opts\.phases\[0\]!\s*:\s*undefined/);
     });
 
     test('documents --once in --help output', () => {

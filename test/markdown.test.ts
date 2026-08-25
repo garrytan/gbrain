@@ -1,5 +1,8 @@
-import { describe, test, expect } from 'bun:test';
-import { parseMarkdown, serializeMarkdown, splitBody } from '../src/core/markdown.ts';
+import { describe, test, expect, afterEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { parseMarkdown, serializeMarkdown, splitBody, resolveSourceLocalFilePath } from '../src/core/markdown.ts';
 
 describe('Markdown Parser', () => {
   test('parses frontmatter + compiled_truth + timeline (explicit sentinel)', () => {
@@ -139,6 +142,25 @@ describe('splitBody', () => {
     expect(timeline).toContain('## History');
   });
 
+  // rule 3's heading match used \b, which matches any heading that
+  // merely STARTS with "Timeline"/"History" ("## History & Reach",
+  // "## Timeline of Events"). That silently moved the rest of an ordinary
+  // article into the timeline half. Rule 3 is a back-compat shim for pages
+  // gbrain itself wrote, so it takes the exact heading only.
+  test('does NOT split at --- when the heading only STARTS with History', () => {
+    const body = 'Article content\n\n---\n\n## History & Reach\n\n- item';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toBe(body);
+    expect(timeline).toBe('');
+  });
+
+  test('does NOT split at --- when the heading only STARTS with Timeline', () => {
+    const body = 'Article content\n\n---\n\n## Timeline of Events\n\ntext';
+    const { compiled_truth, timeline } = splitBody(body);
+    expect(compiled_truth).toBe(body);
+    expect(timeline).toBe('');
+  });
+
   test('does NOT split at plain --- (horizontal rule in article body)', () => {
     const body = 'Above the line\n\n---\n\nBelow the line';
     const { compiled_truth, timeline } = splitBody(body);
@@ -255,6 +277,42 @@ Second section.
     expect(parsed.compiled_truth).toContain('Second section.');
     expect(parsed.compiled_truth).not.toContain('Timeline entry');
     expect(parsed.timeline).toContain('Timeline entry');
+  });
+
+  test('keeps the whole body when a section heading merely starts with History', () => {
+    // Real shape from an imported chat transcript: HR-separated sections,
+    // one of them '## History & Reach'. Pre-fix the page was cut at the HR
+    // and everything below it landed in the timeline column.
+    const md = `---
+type: source
+title: Example show
+---
+
+Here's a breakdown of how it works.
+
+---
+
+## Format & Premise
+
+- 30 singles date in pods.
+
+---
+
+## History & Reach
+
+- The show premiered in 2020.
+
+---
+
+## Reception
+
+- Critics noted the format.`;
+    const parsed = parseMarkdown(md);
+    expect(parsed.timeline).toBe('');
+    expect(parsed.compiled_truth).toContain('## Format & Premise');
+    expect(parsed.compiled_truth).toContain('## History & Reach');
+    expect(parsed.compiled_truth).toContain('premiered in 2020');
+    expect(parsed.compiled_truth).toContain('## Reception');
   });
 
   test('handles frontmatter without type or title', () => {
@@ -612,5 +670,65 @@ ${first.timeline}
     const third = parseMarkdown(reserialized, 'companies/acme-example.md');
     expect(third.timeline).toContain('Series A closed');
     expect(third.compiled_truth).not.toContain('Series A closed');
+  });
+});
+
+describe('resolveSourceLocalFilePath — POSIX backslash-in-filename (undeclared_db_only_pages false positive)', () => {
+  let repoRoot: string;
+
+  afterEach(() => {
+    if (repoRoot) rmSync(repoRoot, { recursive: true, force: true });
+  });
+
+  test('a real file whose name contains a literal backslash resolves to its actual on-disk path', () => {
+    if (process.platform === 'win32') return; // `\` is the real separator there — no such filename is possible
+    // Reproduces production data: an Apple Notes export can legitimately
+    // contain a `\` character in a note title, which lands verbatim in the
+    // exported filename on a POSIX filesystem (where `\` is a normal
+    // filename character, not a path separator).
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-'));
+    mkdirSync(join(repoRoot, '.git'));
+    mkdirSync(join(repoRoot, 'Archive', 'POL'), { recursive: true });
+    const filename = '2019-10-03 \\event title-.md';
+    const filePath = join(repoRoot, 'Archive', 'POL', filename);
+    writeFileSync(filePath, '# note');
+
+    const sourcePath = `Archive/POL/${filename}`;
+    const resolved = resolveSourceLocalFilePath(repoRoot, sourcePath);
+
+    expect(resolved).toBe(filePath);
+  });
+
+  test('negative control: a genuinely missing file still resolves to null-equivalent (no such path)', () => {
+    if (process.platform === 'win32') return; // relies on `\` staying a filename character (POSIX-only)
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-missing-'));
+    mkdirSync(join(repoRoot, '.git'));
+    mkdirSync(join(repoRoot, 'Archive', 'POL'), { recursive: true });
+    // No file written — the resolved path must point at a location that
+    // does not exist, so callers' existsSync() check correctly reports it
+    // as unbacked (this stays a real gap, not a resolution bug).
+    const sourcePath = 'Archive/POL/2019-10-03 \\never-written-.md';
+    const resolved = resolveSourceLocalFilePath(repoRoot, sourcePath);
+
+    expect(resolved).toBe(join(repoRoot, 'Archive', 'POL', '2019-10-03 \\never-written-.md'));
+  });
+
+  test('path traversal via a real `/`-separated `..` segment is still rejected', () => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-traversal-'));
+    mkdirSync(join(repoRoot, '.git'));
+    expect(resolveSourceLocalFilePath(repoRoot, '../../etc/passwd.md')).toBeNull();
+  });
+
+  test('a Windows drive-letter absolute path is still rejected', () => {
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-drive-'));
+    mkdirSync(join(repoRoot, '.git'));
+    expect(resolveSourceLocalFilePath(repoRoot, 'C:\\Windows\\evil.md')).toBeNull();
+  });
+
+  test('on Windows, `\\` stays a real separator and `..\\` traversal is still rejected', () => {
+    if (process.platform !== 'win32') return; // the platform-aware split only changes POSIX behavior
+    repoRoot = mkdtempSync(join(tmpdir(), 'gbrain-backslash-win-'));
+    mkdirSync(join(repoRoot, '.git'));
+    expect(resolveSourceLocalFilePath(repoRoot, '..\\..\\evil.md')).toBeNull();
   });
 });

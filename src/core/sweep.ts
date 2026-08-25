@@ -396,7 +396,7 @@ async function runLinksTimelinePass(
     for (const { slug, candidates } of pageCandidates) {
       for (const c of candidates) {
         const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources);
-        if (!resolved) continue;
+        if (!resolved.ok) continue;
         linkBatch.push({
           from_slug: resolved.fromSlug,
           to_slug: c.targetSlug,

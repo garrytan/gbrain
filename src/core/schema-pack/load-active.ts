@@ -161,6 +161,23 @@ export async function loadActivePack(input: LoadActivePackInput): Promise<Resolv
 }
 
 /**
+ * Load + resolve a pack BY NAME — extends chain walked, borrow_from
+ * resolved, child-wins merge applied — without touching the active-pack
+ * resolution chain. `gbrain schema lint <name>` uses this (#4501) so a
+ * named pack is linted against the same merged manifest it would serve
+ * when active; a child that references inherited parent types must not
+ * fail raw-manifest lint. Throws the same errors as `loadActivePack`
+ * (UnknownPackError, ExtendsChainTooDeepError, AliasCycleError,
+ * SchemaPackManifestError).
+ */
+export async function loadResolvedPackByName(name: string): Promise<ResolvedPack> {
+  const manifest = await loadPackManifestByName(name);
+  return await resolvePack(manifest, loadPackManifestByName, {
+    loadByPath: (n) => _packLocator(n),
+  });
+}
+
+/**
  * Return the resolved pack NAME and source tier WITHOUT loading the
  * manifest from disk. Used by `gbrain schema active` to surface
  * provenance ("active pack: garry — source: gbrain.yml") without

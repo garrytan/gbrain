@@ -176,9 +176,16 @@ describe('checkVolunteerChannels', () => {
     // Serve wires the feedback-loop callback — deleting the registration
     // would silently disconnect the hook-lane feedback loop while every unit
     // test stays green (the body lives in volunteer-events.ts; the seam is
-    // tested with stub callbacks).
+    // tested with stub callbacks). #4474 moved the registration into the
+    // shared bindResolveIpcForServe helper (src/mcp/resolve-ipc-binding.ts)
+    // so stdio serve and `serve --http` wire it identically — pin the
+    // callback in the helper AND both serve surfaces routing through it.
+    const bindingSrc = readFileSync(join(import.meta.dir, '..', 'src', 'mcp', 'resolve-ipc-binding.ts'), 'utf8');
+    expect(bindingSrc).toContain('onTurnContextDelivered');
+    expect(bindingSrc).toContain('logTurnContextDeliveryFireAndForget(engine, result, req)');
     const serverSrc = readFileSync(join(import.meta.dir, '..', 'src', 'mcp', 'server.ts'), 'utf8');
-    expect(serverSrc).toContain('onTurnContextDelivered');
-    expect(serverSrc).toContain('logTurnContextDeliveryFireAndForget(engine, result, req)');
+    expect(serverSrc).toContain('bindResolveIpcForServe');
+    const serveHttpSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'serve-http.ts'), 'utf8');
+    expect(serveHttpSrc).toContain('bindResolveIpcForServe');
   });
 });

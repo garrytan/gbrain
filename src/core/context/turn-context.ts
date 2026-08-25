@@ -533,6 +533,11 @@ async function assembleDelta(
             ? { updatedAfterKeyset: { updatedAt: since, slug: opts.sinceSlug } }
             : { updated_after: since }),
           sourceId: opts.sourceId,
+          // Match the facts + entity-card arms: delta is world-only unless a
+          // trusted local caller explicitly sets includePrivate.  Without
+          // this engine-level filter, a default/remote delta exposed private
+          // page titles and slugs even though its fact payload was filtered.
+          excludePrivate: remote,
           limit: DELTA_PAGE_FETCH_LIMIT + 1,
           sort: 'updated_asc',
         });

@@ -434,6 +434,23 @@ export async function copyPageToTarget(
     content_hash: page.content_hash,
   }), { ...sourceOpts, allowEmptyOverwrite: true });
 
+  // #4527: putPage stamps created_at/updated_at with now() (PageInput has no
+  // timestamp fields), so without this every migrated page loses its
+  // chronology — recency ranking, `--since` filters, and timeline ordering
+  // all silently reset to the migration date. Restore the source row's
+  // timestamps directly; COALESCE keeps the putPage-stamped value if the
+  // source engine ever hands back a NULL (never expected, but a copy must
+  // not null out a NOT NULL column).
+  if (page.created_at != null || page.updated_at != null) {
+    await target.executeRaw(
+      `UPDATE pages
+          SET created_at = COALESCE($1, created_at),
+              updated_at = COALESCE($2, updated_at)
+        WHERE slug = $3 AND source_id = $4`,
+      [page.created_at ?? null, page.updated_at ?? null, page.slug, page.source_id ?? 'default'],
+    );
+  }
+
   // Copy chunks with embeddings.
   const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
   if (chunks.length > 0) {
@@ -453,8 +470,11 @@ export async function copyPageToTarget(
     await target.addTag(page.slug, tag, sourceOpts);
   }
 
-  // Copy timeline
-  const timeline = await source.getTimeline(page.slug, sourceOpts);
+  // Copy timeline. #4485: getTimeline defaults to LIMIT 100 (newest-first)
+  // in both engines, so a page with a longer history silently lost everything
+  // past its newest 100 entries — pass an explicit unbounded limit (max int4,
+  // safely above any real per-page timeline).
+  const timeline = await source.getTimeline(page.slug, { ...sourceOpts, limit: 2_147_483_647 });
   for (const entry of timeline) {
     await target.addTimelineEntry(page.slug, {
       date: entry.date,
@@ -1071,7 +1091,21 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // warnings and keeps going so the user sees the full picture.
   console.log('\nVerifying target...');
   try {
-    await verifyTarget(targetEngine, sourceStats.page_count);
+    // #4485: compare timeline counts too — the LIMIT-100 truncation class of
+    // bug (a bounded read inside the copy) is invisible to the page-count
+    // check, so verify pins the row-level tables it can count cheaply on
+    // both sides. wave-g: counts are scoped to the COPIED page set (live
+    // pages), not the whole table — the copy iterates listPages() output,
+    // which excludes soft-deleted pages, so a soft-deleted source page that
+    // still owns timeline rows produced a false WARN under whole-table
+    // counts. Both sides use the identical predicate.
+    let sourceTimelineCount: number | undefined;
+    try {
+      const rows = await sourceEngine.executeRaw<{ count: string }>(COPIED_TIMELINE_COUNT_SQL);
+      sourceTimelineCount = Number(rows[0]?.count ?? NaN);
+      if (!Number.isFinite(sourceTimelineCount)) sourceTimelineCount = undefined;
+    } catch { /* older schema: skip the timeline parity check */ }
+    await verifyTarget(targetEngine, sourceStats.page_count, sourceTimelineCount);
   } catch (e) {
     console.warn(`  Verification could not complete: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -1080,16 +1114,50 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
 }
 
 /**
+ * wave-g (#4485 follow-up): timeline parity counts rows over the COPIED page
+ * set — timeline entries whose page is live (`deleted_at IS NULL`). The
+ * migration copies listPages() output, which excludes soft-deleted pages, so
+ * whole-table counts false-WARNed whenever a soft-deleted page still owned
+ * timeline rows on the source. Shared by the source read and verifyTarget so
+ * the two sides can never drift; throws on pre-deleted_at schemas, which the
+ * callers' try/catch already fail-opens to "skip the parity check".
+ * Exported for the test surface only.
+ */
+export const COPIED_TIMELINE_COUNT_SQL =
+  `SELECT count(*)::text AS count
+     FROM timeline_entries te
+     JOIN pages p ON p.id = te.page_id
+    WHERE p.deleted_at IS NULL`;
+
+/**
  * Lightweight doctor-style verify run against the migrated target.
  * Prints a small table of signals; does not exit. Callers own engine
  * lifecycle.
  */
-async function verifyTarget(engine: BrainEngine, expectedPages: number): Promise<void> {
+async function verifyTarget(engine: BrainEngine, expectedPages: number, expectedTimelineEntries?: number): Promise<void> {
   const stats = await engine.getStats();
   if (stats.page_count === expectedPages) {
     console.log(`  ok  pages: ${stats.page_count} (matches source)`);
   } else {
     console.warn(`  WARN pages: ${stats.page_count} (source had ${expectedPages})`);
+  }
+
+  // #4485: row-level parity for the timeline table — a bounded read inside
+  // the copy (the old LIMIT-100 truncation) passes the page-count check just
+  // fine, so the verify step counts the rows themselves. wave-g: scoped to
+  // the copied (live) page set on BOTH sides — see COPIED_TIMELINE_COUNT_SQL.
+  if (expectedTimelineEntries !== undefined) {
+    try {
+      const rows = await engine.executeRaw<{ count: string }>(COPIED_TIMELINE_COUNT_SQL);
+      const targetTimeline = Number(rows[0]?.count ?? NaN);
+      if (targetTimeline === expectedTimelineEntries) {
+        console.log(`  ok  timeline entries: ${targetTimeline} (matches source)`);
+      } else {
+        console.warn(`  WARN timeline entries: ${targetTimeline} (source had ${expectedTimelineEntries})`);
+      }
+    } catch (e) {
+      console.warn(`  WARN timeline entries: could not count (${e instanceof Error ? e.message : String(e)})`);
+    }
   }
 
   try {

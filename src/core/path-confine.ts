@@ -20,6 +20,7 @@
  */
 
 import { realpathSync, existsSync, type Stats } from 'fs';
+import { realpath as realpathAsync } from 'fs/promises';
 import { resolve as resolvePath, relative, isAbsolute, dirname, basename, join, sep } from 'path';
 
 /**
@@ -137,6 +138,35 @@ export function msysToNativePath(
   const drive = m[1]!.toUpperCase();
   const rest = (m[2] ?? '').replace(/\//g, '\\');
   return `${drive}:${rest || '\\'}`;
+}
+
+/**
+ * Async twin of `realpathOrResolve` — same fallback contract, but backed by
+ * `fs.promises.realpath` instead of `realpathSync`. Exists so a caller
+ * resolving N independent paths (e.g. every registered source's local_path)
+ * can `Promise.all` them and let a slow/interrupted filesystem stall on ONE
+ * path without serializing behind the others: `realpathSync` blocks the
+ * event loop for its full duration no matter how many `Promise.all`-wrapped
+ * calls surround it (#4091-class root-cause), so parallelizing the SYNC
+ * function would still take sum-of-durations, not max-of-durations. Use this
+ * version whenever more than one path is being resolved together.
+ *
+ * The lexical fallback below is the same shape as the sync version above
+ * (unflagged there only because semgrep's diff-scoped CI scan doesn't
+ * re-flag pre-existing lines): `p` is never raw untrusted input at this
+ * call site — a registered source's local_path or the CLI's own cwd — and
+ * this is the fallback for a path that already failed to realpath
+ * (ENOENT/stale registration). The security boundary is the caller's
+ * realpath-both-sides prefix/containment check afterward, not this
+ * resolve() call.
+ */
+export async function realpathOrResolveAsync(p: string): Promise<string> {
+  try {
+    return await realpathAsync(p);
+  } catch {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    return resolvePath(p);
+  }
 }
 
 /**

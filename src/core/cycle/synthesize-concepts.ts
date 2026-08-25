@@ -54,6 +54,15 @@ const TIER_T3_MIN = 2;
 
 export interface SynthesizeConceptsOpts {
   brainDir?: string;
+  /**
+   * #4416: the cycle's resolved source scope (cycleSourceId in cycle.ts).
+   * Without it every write below falls through to the engine's `?? 'default'`
+   * literal, which misfiles (or, on the createVersion update path, kills the
+   * cycle) on any brain whose sole source is not named `default`: getPage's
+   * undefined-source path is source-agnostic, so the existence probe passes,
+   * then createVersion throws "page ... (source=default) not found".
+   */
+  sourceId?: string;
   dryRun?: boolean;
   yieldDuringPhase?: (() => Promise<void>) | undefined;
   /**
@@ -324,6 +333,8 @@ export async function runPhaseSynthesizeConcepts(
       );
       await importFromContent(engine, `concepts/${title}`, md, {
         noEmbed: !isAvailable('embedding'),
+        // #4416: target the cycle's resolved source, not the 'default' literal.
+        sourceId: opts.sourceId,
       });
     }
     conceptsWritten++;
@@ -336,16 +347,17 @@ export async function runPhaseSynthesizeConcepts(
     await maybeYield();
   }
 
-  // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Brain-global
-  // phase — uses 'default' source_id because concepts span sources. Receipt
-  // only fires when concepts were actually written; rollup always fires so
-  // doctor sees the phase ran.
+  // v0.42 Wave B3: receipt + rollup for synthesize_concepts. Receipt/rollup
+  // carry the cycle's resolved source (#4416, opts.sourceId); 'default'
+  // survives only as the fallback for legacy unscoped callers. Receipt only
+  // fires when concepts were actually written; rollup always fires so doctor
+  // sees the phase ran.
   if (!opts.dryRun && conceptsWritten > 0) {
     const runId = `concepts-${Date.now().toString(36)}`;
     try {
       await writeReceipt(engine, {
         kind: 'concepts',
-        source_id: 'default',
+        source_id: opts.sourceId ?? 'default',
         run_id: runId,
         round: 'single',
         extracted_at: new Date().toISOString(),
@@ -365,7 +377,7 @@ export async function runPhaseSynthesizeConcepts(
   if (!opts.dryRun) {
     await upsertExtractRollup(engine, {
       kind: 'concepts',
-      source_id: 'default',
+      source_id: opts.sourceId ?? 'default',
       cost_delta: estimatedSpendUsd,
       round_completed_delta: failures.length === 0 ? 1 : 0,
       halt_delta: failures.length > 0 ? 1 : 0,

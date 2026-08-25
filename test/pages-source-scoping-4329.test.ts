@@ -265,6 +265,47 @@ describe('#4329 — get_page source_id', () => {
   });
 });
 
+describe('#4516 — get_page miss names the source that holds the slug (trusted local only)', () => {
+  beforeEach(async () => {
+    await engine.putPage('beta-only/doc', {
+      type: 'note', title: 'beta only', compiled_truth: 'beta only content', timeline: '', frontmatter: {},
+    }, { sourceId: 'beta' });
+  });
+
+  test('trusted local scoped miss → hint says which source holds it and how to route there', async () => {
+    await expect(get_page.handler(ctxOf({ remote: false }), { slug: 'beta-only/doc' }))
+      .rejects.toMatchObject({
+        code: 'page_not_found',
+        suggestion: expect.stringContaining("--source beta"),
+      });
+  });
+
+  test('remote caller gets NO cross-source existence hint (no oracle outside the grant)', async () => {
+    try {
+      await get_page.handler(ctxOf(), { slug: 'beta-only/doc' });
+      throw new Error('expected page_not_found');
+    } catch (e: any) {
+      expect(e.code).toBe('page_not_found');
+      expect(String(e.suggestion ?? '')).not.toContain('beta');
+    }
+  });
+
+  test('slug existing nowhere keeps the plain hint', async () => {
+    try {
+      await get_page.handler(ctxOf({ remote: false }), { slug: 'nowhere/doc' });
+      throw new Error('expected page_not_found');
+    } catch (e: any) {
+      expect(e.code).toBe('page_not_found');
+      expect(String(e.suggestion ?? '')).not.toContain('--source');
+    }
+  });
+
+  test('explicit --source targeting still finds it (isolation is by design, unchanged)', async () => {
+    const res = await get_page.handler(ctxOf({ remote: false }), { slug: 'beta-only/doc', source_id: 'beta' }) as Record<string, unknown>;
+    expect(res.title).toBe('beta only');
+  });
+});
+
 describe('#3070 — sole_non_default emptiness guard (real engine, both ways)', () => {
   // Neutral cwd (no .gbrain-source ancestor, outside any registered
   // local_path) + GBRAIN_SOURCE cleared, so tiers 1-4 never fire.

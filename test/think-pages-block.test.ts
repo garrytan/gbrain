@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { renderPagesBlock } from '../src/core/think/gather.ts';
+import {
+  renderPagesBlock,
+  pagesBlockExcerptLen,
+  EXCERPT_CUT_START_MARKER,
+  EXCERPT_CUT_END_MARKER,
+} from '../src/core/think/gather.ts';
 import type { SearchResult } from '../src/core/types.ts';
 
 function searchResult(
@@ -18,6 +23,14 @@ function renderedExcerpt(rendered: string): string {
   const match = rendered.match(/<page[^>]*>\n([\s\S]*?)\n<\/page>/);
   if (!match) throw new Error('rendered page block did not contain an excerpt');
   return match[1];
+}
+
+/** The excerpt minus the #4510 truncation-marker lines. */
+function excerptBody(rendered: string): string {
+  let body = renderedExcerpt(rendered);
+  if (body.startsWith(`${EXCERPT_CUT_START_MARKER}\n`)) body = body.slice(EXCERPT_CUT_START_MARKER.length + 1);
+  if (body.endsWith(`\n${EXCERPT_CUT_END_MARKER}`)) body = body.slice(0, -(EXCERPT_CUT_END_MARKER.length + 1));
+  return body;
 }
 
 describe('renderPagesBlock', () => {
@@ -63,7 +76,7 @@ describe('renderPagesBlock', () => {
   test('never splits a surrogate pair at a selected window boundary', () => {
     const content = `${'a'.repeat(599)}🚀 target evidence ${'z'.repeat(1000)}`;
     const rendered = renderPagesBlock([searchResult(content)], 600, 'target evidence');
-    const excerpt = renderedExcerpt(rendered);
+    const excerpt = excerptBody(rendered);
 
     expect(rendered.isWellFormed()).toBe(true);
     expect(excerpt).toContain('target evidence');
@@ -191,13 +204,13 @@ describe('renderPagesBlock', () => {
       'unmatched question',
     );
 
-    expect(renderedExcerpt(rendered)).toBe(content.slice(0, 600));
+    expect(excerptBody(rendered)).toBe(content.slice(0, 600));
   });
 
   test('keeps a complete surrogate pair ending exactly at the fallback budget', () => {
     const content = `${'a'.repeat(598)}🚀tail`;
     const rendered = renderPagesBlock([searchResult(content)], 600);
-    const excerpt = renderedExcerpt(rendered);
+    const excerpt = excerptBody(rendered);
 
     expect(excerpt).toBe(content.slice(0, 600));
     expect(excerpt.isWellFormed()).toBe(true);
@@ -207,6 +220,50 @@ describe('renderPagesBlock', () => {
     const content = 'abcdefghij'.repeat(100);
     const rendered = renderPagesBlock([searchResult(content)], 600);
 
-    expect(renderedExcerpt(rendered)).toBe(content.slice(0, 600));
+    expect(excerptBody(rendered)).toBe(content.slice(0, 600));
+  });
+});
+
+describe('renderPagesBlock — #4510 truncation honesty', () => {
+  test('a cut inside a table lands on a row boundary and is explicitly marked', () => {
+    const rows = Array.from({ length: 40 }, (_, i) => `| tool-${i} | purpose of tool ${i} goes here |`);
+    const content = `# Required Tools\n\n${rows.join('\n')}\n`;
+    const rendered = renderPagesBlock([searchResult(content)], 600, 'what tools do I need?');
+    const excerpt = renderedExcerpt(rendered);
+
+    // Marked: the model can tell "the table ends here" from "the text was cut".
+    expect(excerpt.endsWith(EXCERPT_CUT_END_MARKER)).toBe(true);
+    // Every delivered row is complete — no mid-cell severing.
+    const body = excerptBody(rendered);
+    for (const line of body.split('\n')) {
+      if (line.startsWith('|')) expect(line.endsWith('|')).toBe(true);
+    }
+  });
+
+  test('an excerpt starting mid-page carries the start marker', () => {
+    const filler = 'background line\n'.repeat(80);
+    const content = `${filler}decisive target evidence here\n${'tail line\n'.repeat(40)}`;
+    const rendered = renderPagesBlock([searchResult(content)], 120, 'target evidence');
+    const excerpt = renderedExcerpt(rendered);
+
+    expect(excerpt.startsWith(EXCERPT_CUT_START_MARKER)).toBe(true);
+    expect(excerpt).toContain('decisive target evidence here');
+  });
+
+  test('a page that fits whole carries no markers', () => {
+    const content = 'short page\nwith two lines';
+    const rendered = renderPagesBlock([searchResult(content)], 600, 'short page');
+
+    expect(rendered).not.toContain(EXCERPT_CUT_START_MARKER);
+    expect(rendered).not.toContain(EXCERPT_CUT_END_MARKER);
+    expect(renderedExcerpt(rendered)).toBe(content);
+  });
+
+  test('pagesBlockExcerptLen: floor holds at high page counts, window grows at low counts', () => {
+    expect(pagesBlockExcerptLen(20)).toBe(600);   // budget/20 = 600 → floor
+    expect(pagesBlockExcerptLen(40)).toBe(600);   // never collapses below the floor
+    expect(pagesBlockExcerptLen(10)).toBe(1200);  // fewer pages → bigger windows
+    expect(pagesBlockExcerptLen(1)).toBe(2400);   // ceiling
+    expect(pagesBlockExcerptLen(0)).toBe(600);
   });
 });

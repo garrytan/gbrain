@@ -66,6 +66,28 @@ describe('buildCJKKeywordSql (#3986)', () => {
     expect(scalar!.params).toContain('c');
   });
 
+  test('#4480: type/types/exclude_slugs filters bind as params (parity with the main keyword arm)', () => {
+    const built = buildCJKKeywordSql('東京', ctx({
+      opts: {
+        type: 'person' as never,
+        types: ['person', 'company'] as never,
+        exclude_slugs: ['people/alice-example'],
+      },
+    }));
+    expect(built!.sql).toContain('p.type = $');
+    expect(built!.sql).toContain('p.type = ANY($');
+    expect(built!.sql).toContain(`p.slug != ALL($`);
+    expect(built!.params).toContain('person');
+    expect(built!.params).toContainEqual(['person', 'company']);
+    expect(built!.params).toContainEqual(['people/alice-example']);
+  });
+
+  test('#4480: no type/exclude filters → no p.type / p.slug clauses (unfiltered stays unfiltered)', () => {
+    const built = buildCJKKeywordSql('東京', ctx());
+    expect(built!.sql).not.toContain('p.type = $');
+    expect(built!.sql).not.toContain('p.slug != ALL(');
+  });
+
   test('date/lang/symbol filters bind as params', () => {
     const built = buildCJKKeywordSql('東京', ctx({
       opts: { afterDate: '2026-01-01', beforeDate: '2026-02-01', language: 'typescript', symbolKind: 'function' },

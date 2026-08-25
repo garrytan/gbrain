@@ -169,6 +169,27 @@ describe('adaptContentBlocksToChatBlocks (D5 — v1 Anthropic → v2 ChatBlock s
     expect(out.length).toBe(1);
     expect(out[0].toolCallId).toBe('ok');
   });
+
+  // A crash-replayed reasoning-model tool loop must keep the OpenAI
+  // Responses API reasoning-item id (providerMetadata.openai.itemId) across
+  // resume the same way a tool-call's providerMetadata already does —
+  // otherwise the resumed job's next turn 400s the same way an un-echoed
+  // live turn does (see gateway-chat.test.ts's reasoning-item round trip
+  // suite for the live-turn half of this fix).
+  it('passes a reasoning block through with providerMetadata intact', () => {
+    const sig = { openai: { itemId: 'rs_abc123', reasoningEncryptedContent: 'opaque-blob' } };
+    const blocks = [{ type: 'reasoning', text: 'weighing the tradeoff...', providerMetadata: sig }];
+    expect(adaptContentBlocksToChatBlocks(blocks)).toEqual(blocks);
+  });
+
+  it('drops a reasoning block with a non-string text field (defensive)', () => {
+    const blocks = [
+      { type: 'reasoning', text: null },
+      { type: 'text', text: 'ok' },
+    ];
+    const out = adaptContentBlocksToChatBlocks(blocks) as any[];
+    expect(out).toEqual([{ type: 'text', text: 'ok' }]);
+  });
 });
 
 describe('loadPriorToolsV2 (D5 — synthesizes stable keys for v1 rows)', () => {

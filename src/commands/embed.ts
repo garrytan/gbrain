@@ -3,6 +3,7 @@ import { currentEmbeddingSignature } from '../core/embedding.ts';
 import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
+import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
@@ -784,13 +785,15 @@ async function embedPage(
   let chunks = await engine.getChunks(slug, opts);
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
+    // #4530: respect the active embedding model's per-input token limit.
+    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
     if (page.compiled_truth.trim()) {
-      for (const c of chunkText(page.compiled_truth)) {
+      for (const c of chunkText(page.compiled_truth, chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (page.timeline.trim()) {
-      for (const c of chunkText(page.timeline)) {
+      for (const c of chunkText(page.timeline, chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }
@@ -1228,13 +1231,15 @@ async function healChunklessPages(
 
   const buildInputs = (compiledTruth: string, timeline: string): ChunkInput[] => {
     const inputs: ChunkInput[] = [];
+    // #4530: respect the active embedding model's per-input token limit.
+    const chunkOpts = { maxTokens: resolveMaxChunkTokens() };
     if (compiledTruth.trim()) {
-      for (const c of chunkText(compiledTruth)) {
+      for (const c of chunkText(compiledTruth, chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'compiled_truth' });
       }
     }
     if (timeline.trim()) {
-      for (const c of chunkText(timeline)) {
+      for (const c of chunkText(timeline, chunkOpts)) {
         inputs.push({ chunk_index: inputs.length, chunk_text: c.text, chunk_source: 'timeline' });
       }
     }

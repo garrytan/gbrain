@@ -4,6 +4,7 @@ import { canonicalLookup } from './model-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 import { parseModelId } from './ai/model-resolver.ts';
+import { getGatewayAnthropicKeySnapshot } from './ai/anthropic-key.ts';
 
 /**
  * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
@@ -57,19 +58,25 @@ export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
  */
 /**
  * #3944: chat-key presence for the remediation planner, judged on the planes
- * both planner surfaces can rely on — process env + the FILE config plane.
- * NOT `engine.getConfig()`: a DB-only `anthropic_api_key` is only usable on
- * paths that ran the loadConfigWithEngine DB merge before configuring the
- * gateway, and doctor's planner (remediation/context.ts) judges the file
- * plane (#2662 is the same rule for embed keys). Pre-fix, autopilot read the
- * DB plane here while doctor read the file plane, so autopilot dispatched
- * chat jobs doctor classified as blocked. Shared by
- * loadRecommendationContext and the autopilot dispatch loop.
+ * both planner surfaces can rely on — process env, the FILE config plane,
+ * and the gateway env snapshot (a DB-plane key that loadConfigWithEngine
+ * already merged into the RUNNING gateway, i.e. a key that is actually
+ * serving chat right now). NOT a raw `engine.getConfig()` read: a DB-only
+ * key that never reached the gateway is unusable on planner paths, and the
+ * raw read is what diverged autopilot from doctor pre-#3944 (doctor's
+ * planner judges the file plane, #2662 is the same rule for embed keys).
+ * The snapshot keeps both surfaces CONVERGENT — it flows through this one
+ * shared helper — while a genuinely-usable key no longer reads as missing.
+ * Shared by loadRecommendationContext and the autopilot dispatch loop.
  */
 export function chatApiKeyConfigured(
   fileCfg: { anthropic_api_key?: unknown } | null | undefined,
 ): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key);
+  return !!(
+    process.env.ANTHROPIC_API_KEY ||
+    fileCfg?.anthropic_api_key ||
+    getGatewayAnthropicKeySnapshot()
+  );
 }
 
 export function embeddingProviderConfigured(

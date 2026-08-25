@@ -8,6 +8,8 @@ import type { FactsBackstopResult } from '../core/facts/backstop.ts';
 // Leaf module (no flag surface of its own) — see that file for why this
 // isn't imported from extract-conversation-facts.ts directly (#4135).
 import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-types.ts';
+import { assertEmbedBackfillQueueAdmission } from '../core/minions/embed-backfill-admission.ts';
+import { isProtectedJobName } from '../core/minions/protected-names.ts';
 import { MinionQueue, deriveWedgeSignal } from '../core/minions/queue.ts';
 import { MinionWorker } from '../core/minions/worker.ts';
 import {
@@ -635,7 +637,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
 
   switch (sub) {
     case 'submit': {
-      const name = args[1];
+      const name = args[1]?.trim();
       if (!name) {
         console.error('Error: job name required. Usage: gbrain jobs submit <name>');
         process.exit(1);
@@ -688,12 +690,18 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       const queueName = parseFlag(args, '--queue') ?? 'default';
       const dryRun = hasFlag(args, '--dry-run');
       const follow = hasFlag(args, '--follow');
-      // v0.36.5.0: --redact-secrets is a CLI convenience that merges
-      // `redact_secrets: true` into the params before validation. Equivalent
-      // to passing it in --params JSON; flag form is faster to type.
-      if (hasFlag(args, '--redact-secrets') && name.trim() === 'shell') {
+      // v0.36.5.0: --redact-secrets merges the equivalent --params JSON convenience.
+      if (hasFlag(args, '--redact-secrets') && name === 'shell') {
         data.redact_secrets = true;
       }
+
+      // Dry-run reports real admission; follow starts and awaits an inline worker.
+      const trusted = {
+        ...(isProtectedJobName(name) ? { allowProtectedSubmit: true } : {}),
+        ...(follow && name === 'embed-backfill' ? { allowPgliteInlineWorker: true } : {}),
+      };
+      try { assertEmbedBackfillQueueAdmission(engine, name, data, trusted); }
+      catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
       if (dryRun) {
         console.log(`[DRY RUN] Would submit job:`);
@@ -719,25 +727,15 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
         return;
       }
 
-      try {
-        await queue.ensureSchema();
-      } catch (e) {
-        console.error(e instanceof Error ? e.message : String(e));
-        process.exit(1);
-      }
-
-      // The CLI path is a trusted submitter. Pass {allowProtectedSubmit: true}
-      // ONLY for protected names, not blanket-set for every submission, so any
-      // future protected name forces explicit opt-in at the call site.
-      const { isProtectedJobName } = await import('../core/minions/protected-names.ts');
-      const trusted = isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+      try { await queue.ensureSchema(); }
+      catch (e) { console.error(e instanceof Error ? e.message : String(e)); process.exit(1); }
 
       // v0.35.8.0: pre-enqueue shell-job validation. Validates `inherit:`
       // closed enum, rejects secret env-keys, fail-fasts on missing config.
       // Throws UnrecoverableError BEFORE `queue.add` so a bad payload never
       // lands in `minion_jobs.data`. Defense-in-depth re-validation happens
       // in the worker handler. See: src/core/minions/handlers/shell-validate.ts
-      if (name.trim() === 'shell') {
+      if (name === 'shell') {
         try {
           const { validateShellJobParams } = await import('../core/minions/handlers/shell-validate.ts');
           validateShellJobParams(data);
@@ -766,7 +764,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       // Submission audit log (operational trace, not forensic insurance).
       try {
         const { logShellSubmission } = await import('../core/minions/handlers/shell-audit.ts');
-        if (name.trim() === 'shell') {
+        if (name === 'shell') {
           const inheritNames = Array.isArray(data.inherit)
             ? (data.inherit as unknown[]).filter((s): s is string => typeof s === 'string')
             : undefined;
@@ -788,7 +786,7 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       // regardless of the submitter's own `GBRAIN_ALLOW_SHELL_JOBS` — the submitter
       // env is a weak proxy for the worker env (they may run on different machines),
       // so the warning remains useful any time the job might sit in 'waiting'.
-      if (!follow && name.trim() === 'shell') {
+      if (!follow && name === 'shell') {
         process.stderr.write(
           `\n⚠  Shell jobs require GBRAIN_ALLOW_SHELL_JOBS=1 on the worker process.\n` +
           `   Your job was queued (id=${job.id}) but will sit in 'waiting' until a\n` +
@@ -1980,23 +1978,23 @@ export async function runJobs(engineOrNull: BrainEngine | null, args: string[]):
       const cliPath = parseFlag(args, '--cli-path') ?? resolveGbrainCliPath();
 
       // --detach: fork a background supervisor, print PID payload, exit 0.
-      // Implementation: re-exec the same CLI as a detached child without --detach,
-      // inheriting stderr (so JSONL events still flow to the parent's tail-f
-      // if they wanted to follow logs) but detaching stdin/stdout.
+      // #4418: the child gets a DURABLE stderr sink (audit-dir log, null-device
+      // fallback) instead of inheriting the invoker's stderr — an inherited
+      // capture pipe closing killed the worker (SIGPIPE 141) and then the
+      // supervisor itself on their next stderr write. See detached-stderr.ts.
       if (detach) {
-        const { spawn } = await import('child_process');
-        const childArgs = process.argv.slice(2).filter(a => a !== '--detach');
-        const child = spawn(process.execPath, [process.argv[1], ...childArgs], {
-          detached: true,
-          stdio: ['ignore', 'ignore', 'inherit'],
-          env: process.env,
-        });
-        child.unref();
+        const { spawnDetachedSupervisor } = await import('../core/minions/detached-stderr.ts');
+        const started = spawnDetachedSupervisor(
+          process.execPath,
+          process.argv[1],
+          process.argv.slice(2).filter(a => a !== '--detach'),
+        );
         const payload = {
           event: 'started',
-          supervisor_pid: child.pid,
+          supervisor_pid: started.pid,
           pid_file: pidFile,
           detached: true,
+          ...(started.stderrPath ? { stderr_log: started.stderrPath } : {}),
         };
         console.log(JSON.stringify(payload));
         process.exit(0);
@@ -2177,9 +2175,11 @@ export async function registerBuiltinHandlers(
               : 'sync_handler',
           });
           if (submission.status === 'submitted') {
-            embedJobId = submission.jobId ?? null;
-          } else {
+            embedJobId = submission.jobId;
+          } else if (submission.status === 'cooldown' || submission.status === 'spend_capped' || submission.status === 'no_worker_surface') {
             embedSkipReason = submission.status;
+          } else {
+            submission satisfies never;
           }
         } else {
           embedSkipReason = 'feature_flag_disabled';
@@ -2499,7 +2499,11 @@ export async function registerBuiltinHandlers(
         visibility: job.data.visibility === 'world' ? 'world' : 'private',
         ...(typeof job.data.model === 'string' && job.data.model ? { model: job.data.model } : {}),
       },
-    );
+    ).catch(async (err: unknown) => {
+      const { writeFactsAbsorbFailure } = await import('../core/facts/absorb-log.ts');
+      await writeFactsAbsorbFailure(engine, slug, err, sourceId);
+      throw err;
+    });
     // Execution-time chat_unavailable in a KEYED worker is config drift —
     // throw (typed) so minion retry/backoff parks it as a VISIBLE, re-runnable
     // failure instead of consuming the job and silently losing the facts. A

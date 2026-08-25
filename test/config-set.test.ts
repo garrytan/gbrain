@@ -90,6 +90,18 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('doctor.suppress_provider_sunset');
   });
 
+  test('contains the working-tree sync toggle (untracked-gap fix)', () => {
+    // The drift NOTE + stderr warning both tell users to run
+    // `gbrain config set sync.include_working_tree true`; the key must be
+    // known or the remedy itself is rejected without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('sync.include_working_tree');
+  });
+
+  test('contains the local extract-atoms knobs', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.extract_atoms.page_discovery_budget');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.extract_atoms.max_source_chars');
+  });
+
   test('registers only the live conversation-parser fallback key', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
     expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');

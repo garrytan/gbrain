@@ -58,6 +58,16 @@ export interface ExactLookupOpts {
    * only the slug probe runs.
    */
   titleCandidates?: SearchResult[];
+  /**
+   * #4480 — shape-filter gating. The scored arms apply type/types/
+   * exclude_slugs at SQL level; without the same gate here the tier could
+   * top-inject a page the caller's filters explicitly excluded. Same
+   * semantics as SearchOpts: `type` and `types` are AND-applied, both empty
+   * = no type gate.
+   */
+  type?: string;
+  types?: string[];
+  excludeSlugs?: string[];
 }
 
 /** Max distinct sources probed for a slug-shaped query on a federated call. */
@@ -78,7 +88,17 @@ export async function structuralExactLookup(
 
   const hits: SearchResult[] = [];
   const seen = new Set<string>();
+  // #4480 — mirror the scored arms' shape filters so the tier can never
+  // inject a page the caller explicitly filtered out.
+  const excluded = new Set(opts.excludeSlugs ?? []);
+  const typeGate = (t: string | undefined | null): boolean => {
+    if (opts.type && t !== opts.type) return false;
+    if (opts.types && opts.types.length > 0 && (t == null || !opts.types.includes(t))) return false;
+    return true;
+  };
   const push = (r: SearchResult) => {
+    if (excluded.has(r.slug)) return;
+    if (!typeGate(r.type)) return;
     const key = `${r.source_id ?? 'default'}::${r.slug}`;
     if (seen.has(key)) return;
     seen.add(key);

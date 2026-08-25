@@ -864,26 +864,41 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
   let server: { close: () => void } | null = null;
   const prevSource = process.env.GBRAIN_SOURCE;
+  const socketPath = resolveSocketPath(dataDir);
+  // #4474: prefer the REAL socket. Pre-fix the smoke ALWAYS started its own
+  // in-process IPC server, so it manufactured the exact condition it was
+  // testing — a serve posture that never binds IPC (the old `serve --http`)
+  // still passed verify while every production hook degraded to no_serve.
+  // A present socket now means "a live serve is the provider; exercise IT";
+  // only when NO socket exists do we self-provide (plumbing-only smoke) and
+  // say so honestly in the result.
+  const liveSocket = existsSync(socketPath);
   try {
-    const secret = ensureIpcSecret(dataDir);
-    server = await startResolveIpcServer(
-      resolveSocketPath(dataDir),
-      {
-        resolve: async () => null,
-        turn_context: (req) =>
-          assembleTurnContext(engine, {
-            sourceId,
-            window: req.window,
-            ...(req.priorContextText !== undefined ? { priorContextText: req.priorContextText } : {}),
-            ...(req.sessionId !== undefined ? { sessionId: req.sessionId } : {}),
-            ...(req.maxBytes !== undefined ? { maxBytes: req.maxBytes } : {}),
-          }),
-      },
-      { secret, boundSourceId: sourceId },
-    );
-    if (!server) {
-      return { id, ok: true, warn: true, detail: 'could not bind the IPC socket (a live serve owns it?) — smoke skipped; the live serve itself is the IPC provider' };
+    if (!liveSocket) {
+      const secret = ensureIpcSecret(dataDir);
+      server = await startResolveIpcServer(
+        socketPath,
+        {
+          resolve: async () => null,
+          turn_context: (req) =>
+            assembleTurnContext(engine, {
+              sourceId,
+              window: req.window,
+              ...(req.priorContextText !== undefined ? { priorContextText: req.priorContextText } : {}),
+              ...(req.sessionId !== undefined ? { sessionId: req.sessionId } : {}),
+              ...(req.maxBytes !== undefined ? { maxBytes: req.maxBytes } : {}),
+            }),
+        },
+        { secret, boundSourceId: sourceId },
+      );
+      if (!server) {
+        return { id, ok: true, warn: true, detail: 'could not bind the IPC socket (a live serve owns it?) — smoke skipped; the live serve itself is the IPC provider' };
+      }
     }
+    // Provenance suffix for every outcome below: which listener answered.
+    const via = liveSocket
+      ? 'via the live serve’s IPC socket'
+      : `via a verify-owned IPC server (no live serve socket at ${socketPath} — hooks stay degraded (no_serve) until a running \`gbrain serve\` binds it)`;
     process.env.GBRAIN_SOURCE = sourceId;
     // USER_PROMPT_DEADLINE_MS is the hook's own budget — the smoke compares
     // against the same constant it enforces (no drifting hardcoded copy).
@@ -903,22 +918,26 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
       if (elapsed >= USER_PROMPT_DEADLINE_MS) {
         // [A7] Real latency is a non-gating benchmark — the hard deadline
         // assertion lives in the hook tests against an injected slow-IPC stub.
-        return { id, ok: true, warn: true, detail: `context block delivered but in ${elapsed}ms (over the ${USER_PROMPT_DEADLINE_MS}ms budget on this box) — watch hook latency` };
+        return { id, ok: true, warn: true, detail: `context block delivered but in ${elapsed}ms (over the ${USER_PROMPT_DEADLINE_MS}ms budget on this box) ${via} — watch hook latency` };
       }
-      return { id, ok: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars)` };
+      // #4474: a self-provided listener is a plumbing-only pass — production
+      // hooks still need a live serve to bind the socket, so it WARNS.
+      return liveSocket
+        ? { id, ok: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars) ${via}` }
+        : { id, ok: true, warn: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars) ${via}` };
     }
     // Empty stdout must be a DOCUMENTED degradation — read the heartbeat it wrote.
     const tail = await readHeartbeatTail(1);
     const reason = tail[tail.length - 1]?.reason ?? 'empty_block';
     if (reason === 'empty_block' || reason === 'empty_window') {
-      return { id, ok: true, warn: true, detail: `empty context block in ${elapsed}ms (documented degradation: ${reason}) — plumbing works, brain has nothing to volunteer yet` };
+      return { id, ok: true, warn: true, detail: `empty context block in ${elapsed}ms (documented degradation: ${reason}) ${via} — plumbing works, brain has nothing to volunteer yet` };
     }
     if (reason === 'deadline' || reason === 'ipc_unavailable' || reason === 'server_budget') {
       // [A7] Latency-shaped degradations don't gate verify (slow CI box ≠
       // broken install); the reason is named so a human can judge.
-      return { id, ok: true, warn: true, detail: `hook degraded on latency (${reason}) in ${elapsed}ms — non-gating; re-run on an idle machine if it persists` };
+      return { id, ok: true, warn: true, detail: `hook degraded on latency (${reason}) in ${elapsed}ms ${via} — non-gating; re-run on an idle machine if it persists` };
     }
-    return { id, ok: false, detail: `hook degraded (${reason}) in ${elapsed}ms — stdin→IPC→stdout plumbing is not healthy` };
+    return { id, ok: false, detail: `hook degraded (${reason}) in ${elapsed}ms ${via} — stdin→IPC→stdout plumbing is not healthy` };
   } catch (e) {
     return { id, ok: false, detail: `hooks smoke failed: ${(e as Error).message}` };
   } finally {

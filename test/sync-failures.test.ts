@@ -614,3 +614,53 @@ describe('v0.41.6.0 D2 — embedding error classification', () => {
     expect(classifyErrorCode('some random unmatched error message')).toBe('UNKNOWN');
   });
 });
+
+// ─── #4543 — blocked_by_failures names the failing files + validate hint ───
+//
+// The v0.46.28.0 fix (#4496) made a status:'error' import result BLOCK the
+// bookmark instead of checkpointing it as done — but the blocked message only
+// showed code COUNTS (`YAML_PARSE: 1`), never WHICH file failed, and gave no
+// pointer to the tool that pinpoints the YAML issue. Operators had to open
+// sync-failures.jsonl by hand.
+describe('#4543 blocked output names failing files', () => {
+  test('formatFailedFileList names files with codes and skips sentinels', async () => {
+    const { formatFailedFileList } = await import('../src/core/sync.ts');
+    const out = formatFailedFileList([
+      { path: 'notes/bad.md', error: 'YAML parse failed: bad block mapping' },
+      { path: '<head>', error: 'history rewrite' },
+    ]);
+    expect(out).toContain('notes/bad.md');
+    expect(out).toContain('YAML_PARSE');
+    expect(out).not.toContain('<head>');
+  });
+
+  test('formatFailedFileList caps the list and counts the overflow', async () => {
+    const { formatFailedFileList } = await import('../src/core/sync.ts');
+    const many = Array.from({ length: 15 }, (_, i) => ({
+      path: `notes/f${String(i).padStart(2, '0')}.md`,
+      error: 'YAML parse failed',
+    }));
+    const out = formatFailedFileList(many, 10);
+    expect(out).toContain('notes/f09.md');
+    expect(out).not.toContain('notes/f10.md');
+    expect(out).toContain('and 5 more');
+  });
+
+  test('formatFailedFileList scrubs control characters from paths', async () => {
+    const { formatFailedFileList } = await import('../src/core/sync.ts');
+    const out = formatFailedFileList([
+      { path: 'notes/evil\x1b[2Jname.md', error: 'YAML parse failed' },
+    ]);
+    expect(out).not.toContain('\x1b');
+    expect(out).toContain('�');
+  });
+
+  test('both blocked gates name the files and hint at frontmatter validate', async () => {
+    const source = await Bun.file(new URL('../src/commands/sync.ts', import.meta.url)).text();
+    // Incremental gate names files from failedFiles; full gate from result.failures.
+    expect(source).toContain('formatFailedFileList(failedFiles)');
+    expect(source).toContain('formatFailedFileList(result.failures)');
+    // The actionable hint rides along in the blocked copy.
+    expect(source).toContain("gbrain frontmatter validate <path>");
+  });
+});

@@ -39,11 +39,13 @@ beforeAll(async () => {
     { chunk_index: 0, chunk_text: LONG_TEXT, chunk_source: 'compiled_truth' },
   ]);
   await engine.setConfig('search.mcp_keyword_only', 'true');
-}, 60_000);
+  // 240s: PGLite cold init (135 migrations) regularly exceeds 60s on a
+  // loaded CI box / parallel local agents; the old cap flaked this suite.
+}, 240_000);
 
 afterAll(async () => {
   if (engine) await engine.disconnect();
-}, 60_000);
+}, 240_000);
 
 describe('applySnippetCap helper (#3800)', () => {
   test('truncates chunk_text only and appends the get_page marker', () => {

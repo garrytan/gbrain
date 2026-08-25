@@ -117,3 +117,31 @@ describe('loadGuardrailProvidersFromEnv (#3688)', () => {
     ).rejects.toBeInstanceOf(GuardrailLoadError);
   });
 });
+
+describe('#3688 residual — top-level side-effect registration counts', () => {
+  test('a module that registers at import time is accepted, not rejected as zero-provider', async () => {
+    const guardrailsUrl = new URL('../src/core/guardrails.ts', import.meta.url).href;
+    const p = fixture('side-effect-provider.mjs', `
+      import { registerGuardrailProvider } from '${guardrailsUrl}';
+      registerGuardrailProvider({ id: 'fixture-side-effect', classify() {} });
+      export default undefined;
+    `);
+    const out = await loadGuardrailProvidersFromEnv({ GBRAIN_GUARDRAILS_MODULE: p });
+    expect(out.loaded).toBe(1);
+    expect(hasGuardrails()).toBe(true);
+  });
+
+  test('a same-id REPLACEMENT counts as a registration, not zero', async () => {
+    const guardrailsUrl = new URL('../src/core/guardrails.ts', import.meta.url).href;
+    // Pre-register the id, then load a module that replaces it: providers.size
+    // stays constant, so a size-delta count would misread the load as empty.
+    const { registerGuardrailProvider } = await import('../src/core/guardrails.ts');
+    registerGuardrailProvider({ id: 'fixture-replace', classify() {} });
+    const p = fixture('replace-provider.mjs', `
+      export default { id: 'fixture-replace', classify() {} };
+    `);
+    const out = await loadGuardrailProvidersFromEnv({ GBRAIN_GUARDRAILS_MODULE: p });
+    expect(out.loaded).toBe(1);
+    expect(hasGuardrails()).toBe(true);
+  });
+});

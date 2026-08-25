@@ -666,14 +666,24 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             let enabled = false;
             if (isTty) {
               const { createInterface } = await import('readline');
+              // #4318 residual: rl.close() must not run before the answer's
+              // resolveAns() — the unguarded rl.on('close', ...) below would
+              // otherwise settle the promise `false` first (the close event
+              // fires synchronously during rl.close()), so an operator
+              // pressing Enter to accept this [Y/n]-default-yes prompt would
+              // always land on "declined" regardless of what they typed.
               enabled = await new Promise<boolean>((resolveAns) => {
                 const rl = createInterface({ input: process.stdin, output: process.stdout });
+                let answered = false;
                 rl.question('[gbrain] Enable skill publishing now? (recommended) [Y/n] ', (answer) => {
-                  rl.close();
+                  answered = true;
                   const a = answer.trim().toLowerCase();
                   resolveAns(a === '' || a === 'y' || a === 'yes');
+                  rl.close();
                 });
-                rl.on('close', () => resolveAns(false));
+                rl.on('close', () => {
+                  if (!answered) resolveAns(false);
+                });
               });
             } else {
               console.log('[AGENT] Relay this to your operator. Recommended: enable it.');

@@ -21,11 +21,26 @@ import type { BrainEngine } from '../engine.ts';
 import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
+import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
 export interface DiscoveredFile {
   format: TranscriptFormat;
   path: string;
   bytes: number;
+}
+
+export interface DiscoverOpts {
+  /**
+   * #4472 — include gbrain's OWN claude-cli subprocess sessions. The
+   * claude-cli provider spawns `claude --print` from a per-PID tmpdir cwd
+   * (gbrain-claude-cli-cwd-<pid>), and Claude Code records each of those
+   * calls as a session under ~/.claude/projects/<slugified-cwd>/. Importing
+   * them is a self-ingestion feedback loop (gbrain's prompt scaffolding +
+   * page content re-entering the brain as "conversations"), so discovery
+   * skips them by default. `gbrain transcripts ingest --include-self` is the
+   * escape hatch for deliberately auditing the provider's own calls.
+   */
+  includeSelf?: boolean;
 }
 
 /** Recursively list regular files under root (lstat: symlinks are skipped). */
@@ -51,7 +66,7 @@ function walk(dir: string, out: string[], depth = 0): void {
   }
 }
 
-export function discoverTranscriptFiles(roots?: HarnessRoot[]): DiscoveredFile[] {
+export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpts = {}): DiscoveredFile[] {
   const out: DiscoveredFile[] = [];
   for (const { format, root, extension } of harnessRoots(roots)) {
     if (format === 'hermes') {
@@ -69,6 +84,10 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[]): DiscoveredFile[]
     for (const p of files) {
       if (!p.endsWith(extension)) continue;
       if (isOpenclawCheckpointFile(p)) continue;
+      // #4472: skip gbrain's own claude-cli subprocess sessions (see
+      // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
+      // Claude Code's project-dir slugification.
+      if (!opts.includeSelf && isClaudeCliSelfTranscriptPath(p)) continue;
       let bytes = 0;
       try {
         bytes = lstatSync(p).size;

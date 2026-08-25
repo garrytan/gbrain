@@ -736,6 +736,16 @@ async function cmdExtract(engine: BrainEngine, rest: string[]): Promise<void> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
+  // #4473: takes are markdown-canonical — pages the fence writer refused are
+  // skipped (never written DB-only). Say so instead of silently undercounting.
+  if (result.pages_skipped > 0) {
+    const reasons = [...new Set(result.skipped.map((s) => s.reason))].join(', ');
+    process.stderr.write(
+      `[takes extract] ${result.pages_skipped} page(s) skipped (${reasons}) — takes are ` +
+      `markdown-canonical; a page with no locatable .md file is not written. ` +
+      `Configure sync.repo_path (or the source's local_path) and re-run.\n`,
+    );
+  }
   process.stdout.write(
     `takes extract --from-pages: ${result.claims_extracted} claim(s) from ${result.pages_scanned} page(s)` +
     (dryRun ? ' (dry-run)' : '') + '\n',

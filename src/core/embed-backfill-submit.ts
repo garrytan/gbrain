@@ -2,13 +2,15 @@
  * Single submission entry point for the `embed-backfill` minion job
  * (v0.40 Federated Sync v2 — D19).
  *
- * Every caller routes through `submitEmbedBackfill`:
+ * Every automatic caller routes through `submitEmbedBackfill`:
  *   - Parallel sync --all completion (D18)
  *   - Extended `sync` handler (D22, auto_embed_backfill)
  *   - POST /webhooks/github
  *   - `sources federate` / `unfederate` flip hook
  *   - `gbrain sync trigger`
  *   - autopilot per-source dispatch (when source is stale and degraded)
+ * Explicit `jobs submit` / MCP submissions route through MinionQueue's public
+ * admission gate instead, with explicit CLI follow mode as the inline-worker exception.
  *
  * Why centralize: D2 added a per-source DB lock at handler entry. That
  * protects against double-RUN but not double-SUBMIT — a webhook storm could
@@ -19,10 +21,12 @@
  * the same window. Multi-hour push activity racks up unbounded calls.
  *
  * D19 layered defenses (composed here):
- *   1. Per-source cooldown (default 10min). Refuses submission if the most
+ *   1. Worker-surface gate. PGLite has no persistent worker, so it refuses
+ *      instead of accepting a job that cannot drain after submission returns.
+ *   2. Per-source cooldown (default 10min). Refuses submission if the most
  *      recent embed-backfill for this source finished or is still active
  *      inside the window.
- *   2. Per-source 24h rolling spend cap (default $25). Computed from the
+ *   3. Per-source 24h rolling spend cap (default $25). Computed from the
  *      embed-backfill-tagged rows in the budget audit JSONL. Refuses
  *      submission when spend has hit the cap.
  *
@@ -34,6 +38,7 @@
  * (`gbrain sources status`, webhook response body, sync completion banner).
  */
 import type { BrainEngine } from './engine.ts';
+import { embedBackfillWorkerSurface } from './minions/embed-backfill-admission.ts';
 import { MinionQueue } from './minions/queue.ts';
 import { parseUsdLimit, resolveSpendPosture, type SpendPosture } from './spend-posture.ts';
 
@@ -43,29 +48,15 @@ export const SPEND_CAP_CONFIG_KEY = 'embed.backfill_max_usd_per_source_24h';
 const DEFAULT_COOLDOWN_MIN = 10;
 const DEFAULT_SPEND_CAP_USD = 25;
 
-export type SubmitEmbedBackfillStatus =
-  | 'submitted'
-  | 'cooldown'
-  | 'spend_capped';
+export type SubmitEmbedBackfillResult =
+  | { status: 'submitted'; jobId: number; spendCapBypassed: false }
+  | { status: 'submitted'; jobId: number; spendCapBypassed: true; spend24hUsd: number }
+  | { status: 'cooldown'; reason: 'active_or_waiting'; cooldownRemainingSeconds: null }
+  | { status: 'cooldown'; reason: 'recently_finished'; cooldownRemainingSeconds: number }
+  | { status: 'spend_capped'; spend24hUsd: number; spendCapUsd: number }
+  | { status: 'no_worker_surface'; engineKind: 'pglite' | 'unknown' };
 
-export interface SubmitEmbedBackfillResult {
-  status: SubmitEmbedBackfillStatus;
-  /** Set when status === 'submitted'. */
-  jobId?: number;
-  /** Set when status === 'cooldown'. Seconds remaining until cooldown lifts. */
-  cooldownRemainingSeconds?: number;
-  /** Set when status === 'spend_capped'. Dollars spent in the 24h window. */
-  spend24hUsd?: number;
-  /** Set when status === 'spend_capped'. Active cap. */
-  spendCapUsd?: number;
-  /**
-   * Set true when `spend.posture=tokenmax` waved the job past the 24h spend
-   * cap (#2139). The spend is still LEDGERED by the per-job BudgetTracker —
-   * posture removes the ceiling, not the accounting. Cooldown is NOT bypassed
-   * (it's queue-churn protection, not a spend gate).
-   */
-  spendCapBypassed?: boolean;
-}
+export type SubmitEmbedBackfillStatus = SubmitEmbedBackfillResult['status'];
 
 export interface SubmitEmbedBackfillOpts {
   /** Logged into the job's data row for audit. */
@@ -139,6 +130,12 @@ export async function submitEmbedBackfill(
   sourceId: string,
   opts: SubmitEmbedBackfillOpts,
 ): Promise<SubmitEmbedBackfillResult> {
+  // PGLite has no persistent worker process: a queued job cannot be drained
+  // after this submission call returns. Refuse before reading gates or writing
+  // a row so the undrainable job cannot also cooldown-block a later attempt.
+  const surface = embedBackfillWorkerSurface(engine);
+  if (surface.status === 'no_worker_surface') return surface;
+
   const now = opts.nowMs ?? Date.now();
   const cooldownMin =
     opts.cooldownMinOverride ??
@@ -168,8 +165,9 @@ export async function submitEmbedBackfill(
 
   if (lastJob[0]) {
     if (lastJob[0].status === 'active' || lastJob[0].status === 'waiting') {
-      // Active or waiting: no cooldown-remaining number (would be misleading).
-      return { status: 'cooldown' };
+      // Active or waiting has no truthful retry countdown; keep the payload
+      // required and explicit instead of omitting a branch-dependent field.
+      return { status: 'cooldown', reason: 'active_or_waiting', cooldownRemainingSeconds: null };
     }
     if (lastJob[0].finished_at) {
       const finishedMs = new Date(lastJob[0].finished_at).getTime();
@@ -178,6 +176,7 @@ export async function submitEmbedBackfill(
       if (ageMs < cooldownMs) {
         return {
           status: 'cooldown',
+          reason: 'recently_finished',
           cooldownRemainingSeconds: Math.ceil((cooldownMs - ageMs) / 1000),
         };
       }
@@ -214,7 +213,7 @@ export async function submitEmbedBackfill(
 
   return spendCapBypassed
     ? { status: 'submitted', jobId: job.id, spendCapBypassed: true, spend24hUsd: spend24h }
-    : { status: 'submitted', jobId: job.id };
+    : { status: 'submitted', jobId: job.id, spendCapBypassed: false };
 }
 
 /** Round timestamp down to the nearest `bucketMs` boundary. */

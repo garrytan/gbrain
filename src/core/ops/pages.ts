@@ -119,6 +119,30 @@ async function dropPrivateSlugs(
   return candidates.filter(c => !hidden.has(c));
 }
 
+/**
+ * #3625: strip the takes/private-facts fences from BOTH compiled_truth and
+ * timeline before a page reaches an untrusted reader. Pre-#3625 this only
+ * covered compiled_truth — a `## Facts` fence written below the
+ * `<!-- timeline -->` sentinel lands in the `timeline` column (splitBody's
+ * split boundary), which get_page/fetch_page returned verbatim, unstripped.
+ * A private fact fence misplaced there was fully readable by any remote MCP
+ * caller. Same stripping rule as compiled_truth: takes fence dropped
+ * entirely, facts fence keeps only `world`-visibility rows.
+ */
+function stripPrivacyFencesForRemoteReader(page: Page): Page {
+  return {
+    ...page,
+    compiled_truth: stripFactsFence(
+      stripTakesFence(page.compiled_truth),
+      { keepVisibility: ['world'] },
+    ),
+    timeline: stripFactsFence(
+      stripTakesFence(page.timeline ?? ''),
+      { keepVisibility: ['world'] },
+    ),
+  };
+}
+
 const get_page: Operation = {
   name: 'get_page',
   description: 'Read a page by slug (supports optional fuzzy matching). To edit a page, pass include_content: true — the returned `content` field is the canonical full markdown (frontmatter + body + timeline sentinel); edit THAT and pass it back to put_page to round-trip losslessly. Reassembling compiled_truth/timeline by hand risks dropping sections. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
@@ -181,7 +205,25 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
+      let hint = includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify';
+      // #4516: source scoping is by-design isolation, but the miss diagnostic
+      // should say WHERE the slug actually lives. Trusted local callers only
+      // (`ctx.remote === false`) — for a remote caller the probe would be a
+      // cross-source existence oracle outside its grant. Only when the lookup
+      // was actually scoped (an unscoped read already spanned every source).
+      if (ctx.remote === false && (sourceOpts.sourceId !== undefined || sourceOpts.sourceIds !== undefined)) {
+        try {
+          // gbrain-allow-unscoped-getpage: read-only diagnostic existence probe —
+          // deliberately spans all sources to name where the slug lives.
+          const elsewhere = await ctx.engine.getPage(slug, { includeDeleted });
+          if (elsewhere && !(excludePrivate && isPrivatePage(elsewhere.frontmatter))) {
+            hint = `Page exists in source '${elsewhere.source_id}' — pass --source ${elsewhere.source_id} (source_id: '${elsewhere.source_id}' over MCP). ${hint}`;
+          }
+        } catch {
+          // Diagnostic only — a probe failure must never mask the real error.
+        }
+      }
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, hint);
     }
 
     // v0.37.0 (D11): op-layer write-back for the `last_retrieved_at` stale
@@ -222,13 +264,7 @@ const get_page: Operation = {
     //    untrusted readers see them. Private facts never cross the boundary.
     const isUntrustedReader = ctx.remote === true;
     const visibleBody = isUntrustedReader
-      ? {
-          ...page,
-          compiled_truth: stripFactsFence(
-            stripTakesFence(page.compiled_truth),
-            { keepVisibility: ['world'] },
-          ),
-        }
+      ? stripPrivacyFencesForRemoteReader(page)
       : page;
     // v0.42 (#1699) agent-warning channel: surface the page's content_flag
     // marker as a top-level field (parallel to SearchResult.content_flag) so
@@ -300,13 +336,7 @@ const fetch_page: Operation = {
     // true — every MCP transport) never see takes or private facts fences.
     const visibleBody = ctx.remote === false
       ? page
-      : {
-          ...page,
-          compiled_truth: stripFactsFence(
-            stripTakesFence(page.compiled_truth),
-            { keepVisibility: ['world'] },
-          ),
-        };
+      : stripPrivacyFencesForRemoteReader(page);
     return {
       id: page.slug,
       title: page.title,
@@ -328,7 +358,7 @@ const fetch_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write/update a page (markdown with frontmatter). Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. Remote (MCP) callers: body wikilinks are NOT reconciled into the graph — auto_link/auto_timeline are skipped for untrusted writers (response reports auto_links: {skipped: "remote"}); use local capture/put_page for link extraction. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Full markdown content with YAML frontmatter' },
@@ -571,9 +601,9 @@ const put_page: Operation = {
     let autoLinks:
       | { created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }
       | { error: string }
-      | { skipped: 'remote' }
+      | { skipped: 'remote'; hint?: string }
       | undefined;
-    let autoTimeline: { created: number } | { error: string } | { skipped: 'remote' } | undefined;
+    let autoTimeline: { created: number } | { error: string } | { skipped: 'remote'; hint?: string } | undefined;
     // Trusted-workspace path (v0.23 dream cycle) re-enables auto-link/timeline
     // even though ctx.remote=true, because the allow-list bounds the slug and
     // the synthesis prompt is itself the trusted dispatcher. Without this,
@@ -584,8 +614,14 @@ const put_page: Operation = {
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
     if (ctx.remote !== false && !trustedWorkspace) {
-      autoLinks = { skipped: 'remote' };
-      autoTimeline = { skipped: 'remote' };
+      // #4525: say WHY and what to do about it — pre-fix the bare
+      // {skipped: 'remote'} left agents believing their body wikilinks had
+      // been reconciled into the graph.
+      const hint = 'auto_link/auto_timeline run for trusted local writers only; '
+        + 'body wikilinks were saved as text but NOT reconciled into the graph. '
+        + 'Use local `gbrain capture`/`gbrain call put_page` for link extraction.';
+      autoLinks = { skipped: 'remote', hint };
+      autoTimeline = { skipped: 'remote', hint };
     } else if (result.parsedPage) {
       try {
         const enabled = await isAutoLinkEnabled(ctx.engine);

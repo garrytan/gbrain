@@ -167,3 +167,74 @@ describe('doctor pages_upsert_arbiter check (#550)', () => {
     expect(check.message).toContain('apply-migrations');
   });
 });
+
+describe('#550 residual — catalog validity gates on the arbiter probe', () => {
+  test('an INVALID arbiter index does not count (failed CONCURRENTLY remnant shape)', async () => {
+    // Healthy first, then flip the catalog validity bit — the exact state a
+    // failed CREATE INDEX CONCURRENTLY leaves behind. pg_indexes still
+    // renders a normal-looking indexdef for it, but ON CONFLICT cannot use
+    // it, so the check must flag needsRepair instead of masking the outage.
+    expect((await checkPagesUpsertArbiter(engine)).arbiterPresent).toBe(true);
+    await engine.executeRaw(
+      `UPDATE pg_index SET indisvalid = false
+        WHERE indexrelid = 'pages_source_slug_key'::regclass`,
+    );
+    try {
+      const st = await checkPagesUpsertArbiter(engine);
+      expect(st.arbiterPresent).toBe(false);
+      expect(st.needsRepair).toBe(true);
+    } finally {
+      await engine.executeRaw(
+        `UPDATE pg_index SET indisvalid = true
+          WHERE indexrelid = 'pages_source_slug_key'::regclass`,
+      );
+    }
+  });
+
+  test('repair replaces an INVALID arbiter and putPage works again', async () => {
+    await engine.executeRaw(
+      `UPDATE pg_index SET indisvalid = false
+        WHERE indexrelid = 'pages_source_slug_key'::regclass`,
+    );
+    const r = await repairPagesUpsertArbiter(engine);
+    expect(r.repaired).toBe(true);
+    expect((await checkPagesUpsertArbiter(engine)).arbiterPresent).toBe(true);
+    await putProbePage('probe/invalid-heal');
+  });
+
+  test('a DEFERRABLE unique constraint does not count (indimmediate = false)', async () => {
+    await dropArbiter();
+    await engine.executeRaw(
+      `ALTER TABLE pages ADD CONSTRAINT pages_deferrable_probe
+         UNIQUE (source_id, slug) DEFERRABLE INITIALLY IMMEDIATE`,
+    );
+    try {
+      const st = await checkPagesUpsertArbiter(engine);
+      expect(st.arbiterPresent).toBe(false);
+      expect(st.needsRepair).toBe(true);
+    } finally {
+      await engine.executeRaw(
+        `ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_deferrable_probe`,
+      );
+    }
+  });
+
+  test('an arbiter on a same-named table in ANOTHER schema does not count', async () => {
+    await engine.executeRaw(`CREATE SCHEMA IF NOT EXISTS arbiter_decoy`);
+    await engine.executeRaw(
+      `CREATE TABLE IF NOT EXISTS arbiter_decoy.pages (
+         source_id TEXT NOT NULL, slug TEXT NOT NULL,
+         CONSTRAINT decoy_source_slug_key UNIQUE (source_id, slug)
+       )`,
+    );
+    await dropArbiter();
+    try {
+      const st = await checkPagesUpsertArbiter(engine);
+      expect(st.arbiterPresent).toBe(false);
+      expect(st.needsRepair).toBe(true);
+    } finally {
+      await engine.executeRaw(`DROP TABLE IF EXISTS arbiter_decoy.pages`);
+      await engine.executeRaw(`DROP SCHEMA IF EXISTS arbiter_decoy`);
+    }
+  });
+});

@@ -57,7 +57,9 @@ Mode resolution lives in bare `hybridSearch`, not just the cached wrapper,
 so eval replays test the same mode-affected behavior as the production
 `query` op. The query cache folds the active knobs into its key
 (`knobs_hash`), so switching modes never serves you a stale result set
-from a different configuration.
+from a different configuration. Cache hits honor the same result-count
+resolution as misses (per-call `limit`, else the mode's `searchLimit`) —
+a cached page is sliced to what you asked for, never a fixed count.
 
 ### Cost intuition
 

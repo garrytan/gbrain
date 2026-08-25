@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'bun:test';
-import { parseExpectedColumns, simplifyColumnDef } from '../src/core/schema-verify.ts';
+import { parseExpectedColumns, simplifyColumnDef, detectMissingColumns } from '../src/core/schema-verify.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+
+/**
+ * Minimal executeRaw-only stub: routes on which information_schema view the
+ * SQL targets (schema-verify.ts's two queries never touch anything else).
+ * Not a shared test helper — narrow enough that a one-off stub here is
+ * clearer than adding a new file for a single caller (gbrain#4421).
+ */
+function stubEngine(opts: {
+  tables: string[];
+  columns: Array<{ table_name: string; column_name: string }>;
+}): BrainEngine {
+  return {
+    executeRaw: async (sql: string) => {
+      if (sql.includes('information_schema.tables')) {
+        return opts.tables.map(table_name => ({ table_name })) as unknown[];
+      }
+      if (sql.includes('information_schema.columns')) {
+        return opts.columns as unknown[];
+      }
+      throw new Error(`stubEngine.executeRaw: unexpected query: ${sql}`);
+    },
+  } as unknown as BrainEngine;
+}
 
 describe('parseExpectedColumns', () => {
   it('extracts columns from all major tables', () => {
@@ -51,6 +75,40 @@ describe('parseExpectedColumns', () => {
     for (const col of columns) {
       expect(col.definition.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('detectMissingColumns', () => {
+  it('reports missing when the ledger-expected column is absent from the live table (gbrain#4421 repro)', async () => {
+    // Positive control: content_chunks exists (so it's in-scope) but its
+    // actual columns don't include embedded_text_hash — the exact drift
+    // that made `gbrain doctor` report schema_version=ok while `gbrain
+    // import` failed on every file with "column ... does not exist".
+    const engine = stubEngine({
+      tables: ['content_chunks'],
+      columns: [{ table_name: 'content_chunks', column_name: 'chunk_text' }],
+    });
+    const result = await detectMissingColumns(engine);
+    expect(result.missing).toContainEqual({ table: 'content_chunks', column: 'embedded_text_hash' });
+  });
+
+  it('reports no missing columns when the live table matches every expected column (negative control)', async () => {
+    const expected = parseExpectedColumns();
+    const contentChunksCols = expected.filter(c => c.table === 'content_chunks');
+    const engine = stubEngine({
+      tables: ['content_chunks'],
+      columns: contentChunksCols.map(c => ({ table_name: 'content_chunks', column_name: c.column })),
+    });
+    const result = await detectMissingColumns(engine);
+    expect(result.missing).toEqual([]);
+    expect(result.checked).toBe(contentChunksCols.length);
+  });
+
+  it('skips tables that do not exist yet (fresh-install / not-yet-migrated tables are not false positives)', async () => {
+    const engine = stubEngine({ tables: [], columns: [] });
+    const result = await detectMissingColumns(engine);
+    expect(result.checked).toBe(0);
+    expect(result.missing).toEqual([]);
   });
 });
 

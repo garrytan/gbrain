@@ -10,6 +10,7 @@ import type { SyncOpts } from '../commands/sync.ts';
 import { ownsGlobalSyncAnchor, sameRepoDir } from './sync.ts';
 import { isWithinRoot } from './sync-git.ts';
 import { serr } from './console-prefix.ts';
+import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 
 // v0.18.0 Step 5: source-scoped sync state helpers. When opts.sourceId
 // is set, read/write the per-source row instead of the global config
@@ -391,12 +392,30 @@ export async function writeSlugRootMode(
 ): Promise<void> {
   if (sourceId) {
     // jsonb_set on a bound ::text — never JSON.stringify into ::jsonb.
-    await engine.executeRaw(
-      `UPDATE sources
-          SET config = jsonb_set(COALESCE(config, '{}'::jsonb), '{slug_root_mode}', to_jsonb($2::text))
-        WHERE id = $1`,
-      [sourceId, mode],
-    );
+    //
+    // #4521: a historical string-scalar (or array-shaped) sources.config made
+    // the plain `jsonb_set(COALESCE(config, '{}'::jsonb), …)` throw
+    // `cannot set path in scalar` and abort every subdir-scoped sync right
+    // after sync.discover_git_root. Heal-on-write instead: coerce the column
+    // through the canonical SOURCE_CONFIG_OBJECT_SQL recovery expression
+    // (unwraps double-encoded object strings so their keys SURVIVE; anything
+    // unrecoverable collapses to '{}') before setting the key.
+    try {
+      await engine.executeRaw(
+        `UPDATE sources
+            SET config = jsonb_set(${SOURCE_CONFIG_OBJECT_SQL}, '{slug_root_mode}', to_jsonb($2::text))
+          WHERE id = $1`,
+        [sourceId, mode],
+      );
+    } catch (e) {
+      // Name the source — "cannot set path in scalar" alone gives the
+      // operator nothing to act on.
+      throw new Error(
+        `failed to pin slug_root_mode on sources.config for source '${sourceId}': ` +
+        `${e instanceof Error ? e.message : String(e)}`,
+        e instanceof Error ? { cause: e } : undefined,
+      );
+    }
     return;
   }
   await engine.setConfig('sync.slug_root_mode', mode);

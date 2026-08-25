@@ -18,6 +18,7 @@ import {
   EMBEDDING_COST_PER_1K_TOKENS,
   estimateEmbeddingCostUsd,
   willEmbedSynchronously,
+  resolveWorkerBackedSyncEmbedMode,
   shouldBlockSync,
 } from '../src/core/embedding.ts';
 import { lookupEmbeddingPrice } from '../src/core/embedding-pricing.ts';
@@ -93,7 +94,8 @@ describe('Layer 8 D1 — embedding cost model', () => {
 });
 
 describe('v0.41.31 — willEmbedSynchronously (embed-mode resolver)', () => {
-  // Mirrors sync.ts:2346 effectiveNoEmbed = v2 && !serial && !noEmbed ? true : noEmbed.
+  // Public compatibility contract: package.json exports ./embedding, so the
+  // original v2/serial call shape must remain both type- and runtime-safe.
   // Embed runs INLINE iff that resolves to false.
   test('v2 off → inline (legacy synchronous embed)', () => {
     expect(willEmbedSynchronously({ v2Enabled: false, serialFlag: false, noEmbed: false })).toBe('inline');
@@ -107,6 +109,14 @@ describe('v0.41.31 — willEmbedSynchronously (embed-mode resolver)', () => {
   test('--no-embed forces deferred regardless of v2/serial', () => {
     expect(willEmbedSynchronously({ v2Enabled: false, serialFlag: false, noEmbed: true })).toBe('deferred');
     expect(willEmbedSynchronously({ v2Enabled: true, serialFlag: true, noEmbed: true })).toBe('deferred');
+  });
+});
+
+describe('worker-capability-aware sync embed mode', () => {
+  test('defers only when the command boundary found a worker-backed defer path', () => {
+    expect(resolveWorkerBackedSyncEmbedMode({ deferEligible: false, noEmbed: false })).toBe('inline');
+    expect(resolveWorkerBackedSyncEmbedMode({ deferEligible: true, noEmbed: false })).toBe('deferred');
+    expect(resolveWorkerBackedSyncEmbedMode({ deferEligible: false, noEmbed: true })).toBe('deferred');
   });
 });
 

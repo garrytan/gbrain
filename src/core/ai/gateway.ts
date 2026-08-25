@@ -31,12 +31,12 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
+import { truncateUtf8 } from '../text-safe.ts';
 import {
   BudgetTracker,
   extractUsageFromError as _extractUsageFromError,
   type BudgetKind,
 } from '../budget/budget-tracker.ts';
-
 import type {
   AIGatewayConfig,
   EmbedMultimodalOpts,
@@ -1783,7 +1783,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = texts.map(t => (t ?? '').slice(0, MAX_CHARS));
+  const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
 
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
@@ -2967,9 +2967,19 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
  * on the rebuilt part in toModelMessages(), and carried through the replay shim
  * (adaptContentBlocksToChatBlocks). Attached ONLY when the provider sent one —
  * blocks from providers without per-part state stay byte-identical.
+ *
+ * `reasoning` blocks are the same #4201 shape applied to OpenAI's Responses
+ * API reasoning models (o-series, gpt-5.x family): every response `reasoning`
+ * part carries `providerMetadata.openai.itemId` (+ optional
+ * `reasoningEncryptedContent`), and OpenAI's server REJECTS a later turn whose
+ * history has a `function_call` item with no matching `reasoning` item —
+ * "Item '<fc_id>' of type 'function_call' was provided without its required
+ * 'reasoning' item: '<rs_id>'." A reasoning-model tool-loop conversation dies
+ * on turn 2 without this: `chat()` previously never captured the part at all.
  */
 export type ChatBlock =
   | { type: 'text'; text: string; providerMetadata?: Record<string, unknown> }
+  | { type: 'reasoning'; text: string; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown> };
 
@@ -3085,18 +3095,26 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
     }
     return {
       role: m.role,
-      // Drop text blocks whose `text` isn't a string: reasoning models
-      // (DeepSeek v4, etc.) surface `text: null/undefined` thinking parts that
-      // AI SDK v6's Zod schema rejects, poisoning the whole call. `''` is valid
-      // and kept.
+      // Drop text/reasoning blocks whose `text` isn't a string: reasoning
+      // models (DeepSeek v4, etc.) surface `text: null/undefined` thinking
+      // parts that AI SDK v6's Zod schema rejects, poisoning the whole call.
+      // `''` is valid and kept.
       content: blocks
-        .filter((b) => b.type !== 'text' || typeof b.text === 'string')
+        .filter((b) => (b.type !== 'text' && b.type !== 'reasoning') || typeof b.text === 'string')
         .map((b) => {
           // #4201: `providerOptions` echoes per-part provider state (e.g.
-          // Gemini 3.x thoughtSignature) — attached only when captured.
+          // Gemini 3.x thoughtSignature, OpenAI reasoning-item id) — attached
+          // only when captured.
           if (b.type === 'text') {
             return {
               type: 'text' as const,
+              text: b.text,
+              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+            };
+          }
+          if (b.type === 'reasoning') {
+            return {
+              type: 'reasoning' as const,
               text: b.text,
               ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
             };
@@ -3781,13 +3799,16 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (Array.isArray(rawContent) && rawContent.length > 0) {
       for (const part of rawContent) {
         // #4201: capture per-part providerMetadata (Gemini 3.x thoughtSignature
-        // arrives on functionCall/text parts and must be echoed back next turn).
-        // `reasoning` parts stay deliberately dropped: the echo requirement is
-        // on functionCall parts; reasoning text never re-enters the transcript.
+        // and OpenAI reasoning-item ids arrive on functionCall/reasoning/text
+        // parts and must be echoed back next turn — see the ChatBlock doc
+        // comment for the OpenAI Responses API's specific requirement).
         const partMeta = part.providerMetadata && typeof part.providerMetadata === 'object'
           ? { providerMetadata: part.providerMetadata as Record<string, unknown> }
           : {};
         if (part.type === 'text') blocks.push({ type: 'text', text: part.text, ...partMeta });
+        else if (part.type === 'reasoning') {
+          blocks.push({ type: 'reasoning', text: typeof part.text === 'string' ? part.text : '', ...partMeta });
+        }
         else if (part.type === 'tool-call') {
           blocks.push({
             type: 'tool-call',

@@ -174,7 +174,15 @@ Two details that are easy to miss:
   empty commit (`git commit --allow-empty`) — isn't enough. Registration
   checks for real tracked content (`git ls-tree HEAD` scoped to the path),
   not just a resolvable `HEAD`, so this footgun is caught immediately
-  instead of surfacing later as a sync that imports nothing.
+  instead of surfacing later as a sync that imports nothing. For files that
+  are deliberately untracked or `.gitignore`d but should still sync, use
+  `gbrain sync --include-gitignored` — it forces a full filesystem walk so
+  periodic syncs see ignored/untracked syncable content the git-object walk
+  skips (`gbrain import <dir> --include-gitignored` is the one-shot import
+  equivalent). Doctor's `multi_source_drift` advice names this case (#4490):
+  a slug stuck at `default` whose file is untracked won't be recreated by a
+  plain re-sync, so reach for the flag (or commit the file) before any
+  delete step.
 - **`--force` registers the source anyway**, skipping the check. Use this if
   you're registering a path before an automated pipeline gets around to
   `git init`-ing it. GBrain never auto-`git init`s a `--path` source for

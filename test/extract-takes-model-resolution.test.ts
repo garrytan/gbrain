@@ -11,6 +11,9 @@
  *   idiom) — NOT the DB config plane (engine.getConfig('chat_model')).
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   configureGateway,
@@ -20,21 +23,29 @@ import {
 import { extractTakesFromPages } from '../src/core/extract-takes-from-pages.ts';
 
 let engine: PGLiteEngine;
+let repo: string;
 const seenModels: string[] = [];
 let pageN = 0;
 
-/** Each test seeds a fresh uncovered page so the extraction loop fires. */
+/** Each test seeds a fresh uncovered page so the extraction loop fires.
+ *  #4473: takes are md-first — the page needs a real .md home too. */
 async function seedPage(): Promise<void> {
   const body = 'An opinion-bearing body long enough to clear the 200-char eligibility floor. '.repeat(5);
-  await engine.putPage(`concepts/model-resolution-${pageN++}`, {
+  const slug = `concepts/model-resolution-${pageN++}`;
+  await engine.putPage(slug, {
     type: 'concept', title: `M${pageN}`, compiled_truth: body, frontmatter: {},
   });
+  writeFileSync(join(repo, `${slug}.md`), `# M${pageN}\n\n${body}\n`, 'utf-8');
 }
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+
+  repo = mkdtempSync(join(tmpdir(), 'gb-takes-model-res-'));
+  mkdirSync(join(repo, 'concepts'), { recursive: true });
+  await engine.setConfig('sync.repo_path', repo);
 
   __setChatTransportForTests(async (opts) => {
     seenModels.push(opts.model ?? '(unset)');
@@ -53,6 +64,7 @@ afterAll(async () => {
   __setChatTransportForTests(null);
   resetGateway();
   await engine.disconnect();
+  rmSync(repo, { recursive: true, force: true });
 });
 
 beforeEach(() => {

@@ -279,16 +279,21 @@ describe('queue.add trusted-submit gate for subagent', () => {
   });
 
   test('subagent with a loop-incapable provider (supports_subagent_loop: false) is rejected at submit time', async () => {
-    // moonshot supports tools but declares the loop unsupported
-    // (tool_call_ids not replay-stable); OpenRouter routes carry the same
-    // declaration because stability can't be guaranteed through the proxy.
-    // Pre-fix these passed the gate as 'ok' / 'degraded:no_caching'.
+    // moonshot supports tools but declares the loop unsupported.
+    // Non-Anthropic OpenRouter families stay refused; Anthropic-via-OR is allowed.
     await expect(
       queue.add('subagent', { prompt: 'hi', model: 'moonshot:kimi-k2.5' }, {}, { allowProtectedSubmit: true }),
     ).rejects.toThrow(/supports_subagent_loop/);
     await expect(
       queue.add('subagent', { prompt: 'hi', model: 'openrouter:openai/gpt-5.2' }, {}, { allowProtectedSubmit: true }),
     ).rejects.toThrow(/supports_subagent_loop/);
+    const job = await queue.add(
+      'subagent',
+      { prompt: 'hi', model: 'openrouter:anthropic/claude-haiku-4.5' },
+      {},
+      { allowProtectedSubmit: true },
+    );
+    expect(job.id).toBeGreaterThan(0);
   });
 });
 

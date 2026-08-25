@@ -116,6 +116,53 @@ describe('structuralExactLookup (#1663)', () => {
   });
 });
 
+describe('#4480 — shape-filter gating (type/types/excludeSlugs)', () => {
+  test('excludeSlugs drops a slug-probe hit the caller filtered out', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const ungated = await structuralExactLookup(engine, 'people/alice-example', { sourceId: 'default' });
+    expect(ungated.length).toBe(1);
+    const gated = await structuralExactLookup(engine, 'people/alice-example', {
+      sourceId: 'default',
+      excludeSlugs: ['people/alice-example'],
+    });
+    expect(gated.length).toBe(0);
+  });
+
+  test('types gate drops hits whose type is outside the filter; matching type passes', async () => {
+    await engine.putPage('notes/widget-brief', {
+      type: 'note', title: 'Widget Brief', compiled_truth: 'A note.',
+    });
+    const asPerson = await structuralExactLookup(engine, 'notes/widget-brief', {
+      sourceId: 'default',
+      types: ['person', 'company'],
+    });
+    expect(asPerson.length).toBe(0);
+    const asNote = await structuralExactLookup(engine, 'notes/widget-brief', {
+      sourceId: 'default',
+      types: ['note'],
+    });
+    expect(asNote.length).toBe(1);
+  });
+
+  test('scalar type gate applies to title-arm hits too', async () => {
+    const titleArm = [res('projects/mingtang', 0.4, { title: 'The Mingtang', type: 'note' })];
+    const gated = await structuralExactLookup(engine, 'the mingtang', {
+      sourceId: 'default',
+      titleCandidates: titleArm,
+      type: 'person',
+    });
+    expect(gated.length).toBe(0);
+    const passed = await structuralExactLookup(engine, 'the mingtang', {
+      sourceId: 'default',
+      titleCandidates: titleArm,
+      type: 'note',
+    });
+    expect(passed.length).toBe(1);
+  });
+});
+
 describe('applyExactLookupTier (#1663)', () => {
   test('injects an absent identity match at rank-1 above scored organics', async () => {
     await engine.putPage('people/alice-example', {

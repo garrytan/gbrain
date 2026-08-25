@@ -53,6 +53,20 @@ export interface EmbeddingTouchpoint {
    * `default_dims`, so a recipe can declare only the models it knows.
    */
   model_dims?: Readonly<Record<string, number>>;
+  /**
+   * #4530: per-model maximum tokens PER SINGLE INPUT, keyed like model_dims
+   * (partial by design — declare only the models whose limit is known).
+   * Distinct from max_batch_tokens (whole-request budget): some hosted
+   * encoders enforce a hard per-input cap far below any batch budget —
+   * nvidia/nv-embedqa-e5-v5 rejects any single input over 512 tokens with a
+   * non-transient 400, so chunks over the cap can never embed. When the
+   * ACTIVE embedding model declares a value here, the markdown chunker caps
+   * emitted chunks at floor(limit × EMBED_INPUT_SAFETY) estimated tokens
+   * (resolveMaxChunkTokens in src/core/embedding-input-limit.ts) — SPLIT,
+   * never truncated. Models absent from the map keep
+   * DEFAULT_MAX_CHUNK_TOKENS.
+   */
+  max_input_tokens?: Readonly<Record<string, number>>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
@@ -272,9 +286,11 @@ export interface ChatTouchpoint {
   supports_tools: boolean;
   /**
    * Stable enough across crashes/replays to drive a Minions subagent loop.
-   * Strictly stronger than supports_tools.
+   * Strictly stronger than supports_tools. Boolean for recipe-wide behavior;
+   * predicate when only some routed model ids are loop-safe (OpenRouter
+   * Anthropic routes vs other proxied families).
    */
-  supports_subagent_loop: boolean;
+  supports_subagent_loop: boolean | ((modelId: string) => boolean);
   /**
    * Prompt caching honored for this chat touchpoint. Static booleans cover
    * native providers; openai-compatible aggregators may decide per model id

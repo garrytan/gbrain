@@ -54,6 +54,8 @@ import {
 } from '../mcp/surface.ts';
 import { writeSurfaceChangeAudit } from '../core/surface-audit.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
+import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
+import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
@@ -3272,6 +3274,22 @@ ${bootstrapFromEnv
 `);
   });
 
+  // #4474: bind the resolve-IPC unix socket under --http too. This is the
+  // exact posture `gbrain bootstrap harness` targets — without the listener
+  // every wired lifecycle hook (SessionStart / UserPromptSubmit / PreCompact)
+  // degrades to `no_serve` forever, and on a PGLite brain there is no local
+  // recovery (the http serve owns the single-writer lock, so a second stdio
+  // serve can't provide the socket). Shares the stdio path's wiring via
+  // bindResolveIpcForServe; best-effort — failure to bind never blocks the
+  // HTTP server.
+  const ipcBinding = await bindResolveIpcForServe(
+    engine,
+    (await resolveMcpStdioSourceScope(engine)).sourceId,
+  );
+  if (ipcBinding.socketPath) {
+    console.error(`  Resolve IPC: ${ipcBinding.socketPath}`);
+  }
+
   // SIGTERM/SIGHUP route through process-cleanup's pass and then
   // `process.exit`, which skips cli.ts's finally-teardown — so on those
   // signals the PGLite write handle was never closed. An unclosed PGLite
@@ -3283,12 +3301,19 @@ ${bootstrapFromEnv
   // the same clean close the SIGINT path already gets via the cli
   // teardown. Deregistered on normal return so the cli finally remains
   // the single owner of orderly shutdown.
+  const deregisterIpcCleanup = registerCleanup('resolve-ipc-close', async () => {
+    ipcBinding.close();
+  });
   const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', () =>
     engine.disconnect(),
   );
   try {
     await waitForHttpServerLifecycle(httpServer);
   } finally {
+    // Close the IPC listener + reap the socket file on orderly shutdown
+    // (abnormal termination goes through the registered cleanup above).
+    ipcBinding.close();
+    deregisterIpcCleanup();
     deregisterEngineCleanup();
   }
 }

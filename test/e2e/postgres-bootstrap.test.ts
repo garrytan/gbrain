@@ -218,6 +218,41 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(cols).toHaveLength(1);
   }, 60_000);
 
+  test('standalone db.initSchema straddles an old-shaped brain via the shared bootstrap (#4477)', async () => {
+    // src/core/db.ts's module-level initSchema (used by test/e2e/helpers.ts
+    // and legacy callers) replays SCHEMA_SQL directly. Pre-fix it ran NO
+    // forward-reference bootstrap, so a brain whose pages table predates a
+    // blob-indexed column (here: deleted_at ← pages_deleted_at_purge_idx)
+    // wedged on the blob's CREATE INDEX. It now shares
+    // applyPostgresForwardReferenceBootstrap with PostgresEngine.initSchema.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at CASCADE;
+    `);
+
+    // The engine connected in module-singleton style (PostgresEngine.connect
+    // delegates to db.connect), so db.initSchema() runs on the SAME pool —
+    // exactly how test/e2e/helpers.ts drives it. Do NOT db.disconnect()
+    // here: that would tear down the shared singleton under the engine.
+    const db = await import('../../src/core/db.ts');
+    // The path under test: bootstrap → SCHEMA_SQL, no engine.initSchema.
+    await db.initSchema();
+
+    const col = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'pages' AND column_name = 'deleted_at'
+    `;
+    expect(col).toHaveLength(1);
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'pages' AND indexname = 'pages_deleted_at_purge_idx'
+    `;
+    expect(idx).toHaveLength(1);
+  }, 60_000);
+
   // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only
   // assertions (security_invoker has no surface on embedded PGLite).
   test('v120: page_links view runs with security_invoker=on (#1647b)', async () => {

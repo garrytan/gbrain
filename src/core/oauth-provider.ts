@@ -23,7 +23,7 @@ import type {
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo as SdkAuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidTokenError, InvalidClientMetadataError, InvalidGrantError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import { hashToken, generateToken, isUndefinedColumnError } from './utils.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { hasScope, assertAllowedScopes, parseScopeString, InvalidScopeError } from './scope.ts';
@@ -682,14 +682,20 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         AND client_id = ${client.client_id}
       RETURNING client_id, scopes, expires_at
     `;
-    if (rows.length === 0) throw new Error('Refresh token not found');
+    // #4532: InvalidGrantError (not bare Error) — the SDK's token handler maps
+    // OAuthError subclasses to their RFC 6749 wire shape (400 invalid_grant)
+    // and everything else to a 500 Internal Server Error. A refresh with a
+    // rotated/expired token is a routine client condition (RFC 6749 §5.2
+    // invalid_grant), and the 500 made well-behaved MCP clients treat it as a
+    // server outage instead of re-running the authorization flow.
+    if (rows.length === 0) throw new InvalidGrantError('Refresh token not found');
 
     const row = rows[0];
     // NULL expires_at is treated as expired (fail-closed). Schema permits NULL
     // even though issueTokens always sets it, so a corrupt or hand-modified row
     // can't ride past validation.
     const expiresAt = coerceTimestamp(row.expires_at);
-    if (expiresAt === undefined || expiresAt < now) throw new Error('Refresh token expired');
+    if (expiresAt === undefined || expiresAt < now) throw new InvalidGrantError('Refresh token expired');
 
     // F3 hardening: requested scopes on refresh MUST be a subset of the
     // original grant on this refresh token's row. RFC 6749 §6: "the scope of

@@ -23,12 +23,27 @@ import { validateUploadPath } from '../../src/core/operations.ts';
 const NUM_RUNS = 500;
 
 let baseTmpRoot: string;
+let savedCwd: string;
 
 beforeAll(() => {
   baseTmpRoot = mkdtempSync(join(tmpdir(), 'gbrain-fuzz-fs-'));
+  // #4479: the `..`-probe expectations assume a cwd DEEP enough that
+  // resolve('..') stays well below the filesystem root. In the CI container
+  // the workdir is the depth-1 /app mount, where '..' resolves to '/' and
+  // relative('/', box) no longer starts with '..' — the probe "passes"
+  // confinement and the test false-fails as a container-only failure. Run
+  // the whole file from a guaranteed-deep working directory instead of
+  // depending on where the harness happened to be launched.
+  savedCwd = process.cwd();
+  const deepCwd = join(baseTmpRoot, 'deep', 'cwd', 'for', 'traversal', 'probes');
+  mkdirSync(deepCwd, { recursive: true });
+  process.chdir(deepCwd);
 });
 
 afterAll(() => {
+  // Restore BEFORE removing baseTmpRoot — rmSync of the cwd's ancestor
+  // leaves the process in a deleted directory otherwise.
+  process.chdir(savedCwd);
   rmSync(baseTmpRoot, { recursive: true, force: true });
 });
 

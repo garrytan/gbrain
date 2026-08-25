@@ -246,6 +246,39 @@ describe('searchKeyword — D2 AND→OR fallback', () => {
   });
 });
 
+describe('hybridSearch — search.keywordOrFallback knob (v=15)', () => {
+  // Title deliberately shares no token with the query so the D1 title arm
+  // can't rescue the page — isolates the keyword arm's OR retry, which is
+  // what the knob gates.
+  async function seedLabJournal(): Promise<void> {
+    await engine.putPage('notes/lab-journal', {
+      type: 'note',
+      title: 'Lab Journal',
+      compiled_truth: 'quantum lattice harmonics resonance experiments',
+    });
+    await engine.upsertChunks('notes/lab-journal', [
+      {
+        chunk_index: 0,
+        chunk_text: 'quantum lattice harmonics resonance experiments',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+  }
+
+  test('bundle default (on): the OR retry rescues through the full hybrid path', async () => {
+    await seedLabJournal();
+    const results = await hybridSearch(engine, 'quantum lattice harmonics zzzmissingtoken', { limit: 10 });
+    expect(results.map(r => r.slug)).toContain('notes/lab-journal');
+  });
+
+  test('search.keywordOrFallback=false suppresses the OR retry end-to-end', async () => {
+    await seedLabJournal();
+    await engine.setConfig('search.keywordOrFallback', 'false');
+    const results = await hybridSearch(engine, 'quantum lattice harmonics zzzmissingtoken', { limit: 10 });
+    expect(results.map(r => r.slug)).not.toContain('notes/lab-journal');
+  });
+});
+
 describe('buildOrFallbackWebsearchQuery — pure', () => {
   test('joins tokens with OR', () => {
     expect(buildOrFallbackWebsearchQuery('alpha beta')).toBe('alpha OR beta');
