@@ -202,7 +202,10 @@ export function generate(): { tsv: string; suites: number; cases: number; files:
   const rows: SuiteRow[] = [];
   const unknown: string[] = [];
   for (const f of listTestFiles(testDir)) {
-    const rel = relative(REPO_ROOT, f);
+    // Normalize to POSIX separators: the committed TSV is byte-diffed on CI
+    // (Linux runners), so Windows backslash paths from a local regen would
+    // fail the freshness guard (see time-attack trial note on PR #3776).
+    const rel = relative(REPO_ROOT, f).replaceAll('\\', '/');
     const res = classifyFile(rel, readFileSync(f, 'utf-8'));
     rows.push(...res.rows);
     if (res.unknown) unknown.push(rel);
