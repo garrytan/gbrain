@@ -60,6 +60,22 @@ export const ollama: Recipe = {
       supports_subagent_loop: false,
       supports_prompt_cache: false,
       supports_structured_outputs: false,
+      // Reasoning-by-default local families spend output budget on internal
+      // reasoning before emitting answer text, and Ollama bills it against
+      // `max_tokens` — so callers that size output caps must grant headroom
+      // (same contract as DeepSeek v4, gbrain#4172). Without this, a 4000-token
+      // default is consumed entirely by reasoning and the caller gets EMPTY
+      // content with finish_reason "length". Verified on qwen38-27b:latest:
+      // max_tokens=16 returned "" (16 reasoning tokens), max_tokens=600
+      // returned "PONG". Model ids are user-managed, so this is a predicate
+      // over the known reasoning families rather than a recipe-wide boolean —
+      // non-reasoning local models (qwen2.5-coder, llama3.x, mistral) keep the
+      // conservative default. `qwen3` is matched with a boundary so the
+      // qwen2.5-* tags can never be swallowed by it.
+      thinking_by_default: (modelId: string) =>
+        /^(?:qwen3[0-9]*(?:[.\-:]|$)|deepseek-r[0-9]|gpt-oss(?:[.\-:]|$)|magistral(?:[.\-:]|$)|phi[0-9]+-reasoning)/i.test(
+          modelId,
+        ),
       // Provider-wide routing ceiling only; Ollama still enforces each loaded
       // model's actual context window at request time.
       max_context_tokens: 128_000,
