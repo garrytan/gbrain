@@ -92,8 +92,10 @@ const warnings = [];
 for (const file of files) {
   // Path identity is always "skills/<path-under-skills-dir>", independent of cwd
   // canonicalization (macOS /var vs /private/var) or an absolute --skills-dir.
-  const underSkills = relative(SKILLS_DIR, file);
-  const rel = join('skills', underSkills);
+  // Separators are normalized to POSIX so Windows regens match the committed
+  // allowlist keys and the migrations/ prefix check (CI runs on Linux).
+  const underSkills = relative(SKILLS_DIR, file).replaceAll('\\', '/');
+  const rel = `skills/${underSkills}`;
   const inMigrations = underSkills.startsWith('migrations/');
   const text = readFileSync(file, 'utf8');
 
