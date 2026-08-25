@@ -150,7 +150,11 @@ jobs:
       - name: Run Tier 1 E2E tests
         # job-isolation rides tier1 deliberately: e2e.yml runs only explicitly
         # NAMED files (no glob) — an unwired e2e file is silent coverage loss.
-        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts
+        # sync-reconcile-postgres joins this line (#4568): it uses the same
+        # setupDB/teardownDB TRUNCATE-reset pattern as mechanical/job-isolation
+        # (see helpers.ts), so it shares this process/database safely — it was
+        # previously reachable only via the nightly coverage-full-e2e glob.
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
