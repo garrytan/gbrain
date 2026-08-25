@@ -52,8 +52,14 @@ beforeEach(async () => {
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-3583-pg-home-'));
   process.env.GBRAIN_HOME = tmpHome;
   await engine.executeRaw(`DELETE FROM pages WHERE source_id = 'default'`);
+  // local_path must reset too, not just the anchor fields — each test's
+  // mkRepo() mints a fresh tmpdir, and writeSyncAnchor's ownership guard
+  // (#3735) refuses to repoint a non-NULL local_path left over from an
+  // earlier test's repo, silently wedging every later test's sync into
+  // "not advanced" / first_sync (see setupDB's identical reset in
+  // helpers.ts, which this beforeEach was a narrower copy of).
   await engine.executeRaw(
-    `UPDATE sources SET last_sync_at = NULL, last_commit = NULL WHERE id = 'default'`,
+    `UPDATE sources SET local_path = NULL, last_sync_at = NULL, last_commit = NULL WHERE id = 'default'`,
   );
 });
 
