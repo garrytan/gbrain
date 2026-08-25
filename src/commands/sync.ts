@@ -800,7 +800,7 @@ function frontmatterSlugShapes(content: string, rel: string): string[] {
  * ANY reachable attribute epoch assigns a filter to ANYTHING
  * (`historicalFilter`, computed once per index build), the read still
  * registers what it can (spare-side) but the proof is NOT intact:
- * `cat-file --filters` reconstructs the historical blob with TODAY's
+ * `cat-file filters` mode reconstructs the historical blob with TODAY's
  * filter definitions, and the row's content was imported under whatever
  * filter was active — at ITS import-time anchor, under ITS path AT THAT
  * TIME. The historical side is deliberately repo-wide rather than
@@ -863,7 +863,7 @@ function attributeEpochCommits(gitContextRoot: string, anchorCommit: string): st
     // can sit below the shallow boundary where no enumeration reaches it.
     // Unprovable, not absent.
     if (git(gitContextRoot, ['rev-parse', '--is-shallow-repository']) === 'true') return null;
-    // --full-history: the default path-simplified walk prunes a side line
+    // full-history mode: the default path-simplified walk prunes a side line
     // whose attribute change was discarded at a merge (`-s ours` of an
     // experiment branch is TREESAME to the kept parent) — but a sync
     // anchored ON that side line imported under the pruned filter state.
@@ -2614,6 +2614,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             // import; counting it as a failure would gate the bookmark forever.
             serr(`  Skipped (malformed filename): ${sanitizePathForDisplay(to)}`);
           } else if (result.status === 'skipped' && (result as { error?: string }).error) {
+            // #2683 residual (maintainer-lens review, PR #3583): an errored
+            // skip (SLUG_MISMATCH etc.) must also set importErrored — the
+            // destination did not materialize, and without this the
+            // succeededPaths/markCompleted gate below reads !importErrored
+            // as true and checkpoints a rename whose target import failed.
+            importErrored = true;
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
           } else if (result.status === 'error') {
             // importImageFile (and importFile's frontmatter gate) report
