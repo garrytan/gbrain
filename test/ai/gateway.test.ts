@@ -115,9 +115,16 @@ describe('outbound embedding gate', () => {
     ]) {
       expect(scanOutboundText(text)).toEqual({ ok: true });
     }
-    const real = scanOutboundText('Authorization: Bearer abcdefghijklmnop');
-    expect(real.ok).toBe(false);
-    expect((real as { ruleId: string }).ruleId).toBe('authorization-header');
+    for (const text of [
+      'Authorization: Bearer abcdefghijklmnop',
+      'Authorization: Bearer "abcdefghijklmnop"',
+      "Authorization: Basic 'abcdefghijklmnop'",
+    ]) {
+      const real = scanOutboundText(text);
+      expect(real.ok).toBe(false);
+      expect((real as { ruleId: string }).ruleId).toBe('authorization-header');
+    }
+    expect(scanOutboundText('Authorization: Bearer "$OPENROUTER_API_KEY"')).toEqual({ ok: true });
   });
 
   test('a JWT-shaped token is blocked', () => {
