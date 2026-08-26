@@ -316,7 +316,11 @@ export async function runImport(
   // v0.22.13 (PR #490 Q2): shared parseWorkers helper rejects bad input
   // (--workers 0, -3, "foo") with a loud error instead of silently falling
   // through to 1. Mirrors sync.ts's flag handling.
-  const { parseWorkers } = await import('../core/sync-concurrency.ts');
+  const {
+    clampWorkersForConnectionBudget,
+    parseWorkers,
+    resolveMaxConnections,
+  } = await import('../core/sync-concurrency.ts');
   let workerCount: number;
   try {
     workerCount = parseWorkers(workersArg ?? undefined) ?? 1;
@@ -440,8 +444,34 @@ export async function runImport(
   }
   const files = resumeFilter(allFiles, dir, completed);
 
-  // Determine actual worker count
-  const actualWorkers = workerCount > 1 ? workerCount : 1;
+  // Determine actual worker count. Import owns the same per-worker Postgres
+  // pools as sync, so it must honor the shared opt-in connection budget too.
+  // Resolve this before choosing the parallel branch: a budget that cannot
+  // fit even one child worker falls through to the provided parent engine.
+  let actualWorkers = workerCount > 1 ? workerCount : 1;
+  if (actualWorkers > 1 && engine.kind !== 'pglite') {
+    const maxConnections = resolveMaxConnections();
+    if (maxConnections !== undefined) {
+      const { resolvePoolSize } = await import('../core/db.ts');
+      const parentPool = resolvePoolSize();
+      const perWorkerPool = Math.min(2, resolvePoolSize(2));
+      const clampResult = clampWorkersForConnectionBudget(actualWorkers, {
+        maxConnections,
+        parentPool,
+        perWorkerPool,
+      });
+      if (clampResult.clamped) {
+        const budgetDetail = clampResult.workers === 1
+          ? `(serial parent engine; parent pool ${parentPool}).`
+          : `(parent ${parentPool} + ${clampResult.workers}x${perWorkerPool} per-worker).`;
+        console.error(
+          `  [import] GBRAIN_MAX_CONNECTIONS=${maxConnections}: clamped workers ` +
+          `${actualWorkers} -> ${clampResult.workers} ${budgetDetail}`,
+        );
+      }
+      actualWorkers = clampResult.workers;
+    }
+  }
   if (actualWorkers > 1) {
     info(`Using ${actualWorkers} parallel workers`);
   }
@@ -597,9 +627,9 @@ export async function runImport(
     } else {
       const { PostgresEngine } = await import('../core/postgres-engine.ts');
       const { resolvePoolSize } = await import('../core/db.ts');
-      // Default per-worker pool is 2 (small, parallel import case). Users on
-      // constrained poolers (e.g. Supabase port 6543) can cap below this via
-      // GBRAIN_POOL_SIZE=1.
+      // Each child keeps the established two-connection pool. GBRAIN_POOL_SIZE
+      // controls the parent pool; GBRAIN_MAX_CONNECTIONS clamps the child
+      // count above so the combined footprint stays within the operator's cap.
       const workerPoolSize = Math.min(2, resolvePoolSize(2));
       const databaseUrl = config.database_url;
 
