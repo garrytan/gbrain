@@ -37,9 +37,9 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
 
 import type { BrainEngine } from '../engine.ts';
+import { contentHash } from '../utils.ts';
 import type { Page } from '../types.ts';
 import {
   resolvePhantomCanonical,
@@ -173,31 +173,6 @@ export function stripFenceAndFrontmatterAndLeadingH1(body: string): string {
 
   // 3. Whitespace-trim. Empty (or only whitespace) is the gate.
   return working.trim();
-}
-
-/**
- * Compute the canonical content_hash for a page. Matches
- * `src/core/import-file.ts:241`'s shape exactly so `gbrain sync`'s
- * idempotency check sees the redirected canonical as unchanged.
- */
-function computePageContentHash(parsed: {
-  title: string;
-  type: string;
-  compiled_truth: string;
-  timeline: string;
-  frontmatter: Record<string, unknown>;
-  tags: string[];
-}): string {
-  return createHash('sha256')
-    .update(JSON.stringify({
-      title: parsed.title,
-      type: parsed.type,
-      compiled_truth: parsed.compiled_truth,
-      timeline: parsed.timeline,
-      frontmatter: parsed.frontmatter,
-      tags: [...parsed.tags].sort(),
-    }))
-    .digest('hex');
 }
 
 /**
@@ -454,7 +429,7 @@ export async function tryRedirectPhantom(
   const newCanonicalBody = fs.readFileSync(canonicalPath, 'utf-8');
   const reparsed = parseMarkdown(newCanonicalBody, `${canonical}.md`);
   const canonicalTags = await engine.getTags(canonical, { sourceId });
-  const newContentHash = computePageContentHash({
+  const newContentHash = contentHash({
     title: reparsed.title,
     type: reparsed.type,
     compiled_truth: reparsed.compiled_truth,
