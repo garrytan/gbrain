@@ -74,17 +74,19 @@ describe('hasBacklink', () => {
 });
 
 describe('buildBacklinkEntry', () => {
-  test('dir-shaped source: extension-less link (#1776, brain-slug convention)', () => {
-    const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
-    expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review)');
+  test('dir-shaped source: undated extension-less link (#1776, brain-slug convention)', () => {
+    const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md');
+    expect(entry).toBe('- Referenced in [Q1 Review](../../meetings/q1-review)');
+    expect(entry).not.toMatch(/\*\*\d{4}-\d{2}-\d{2}\*\*/);
   });
 
-  test('root-level source keeps .md (only the filename substring can credit it)', () => {
+  test('root-level source keeps .md and stays undated (only the filename substring can credit it)', () => {
     // The canonical extractor only parses `dir/name` paths, so an
     // extension-less link to a root-level page would never be credited on
     // the next check pass and the fixer would append duplicates forever.
-    const entry = buildBacklinkEntry('Notes', '../notes.md', '2026-04-11');
-    expect(entry).toBe('- **2026-04-11** | Referenced in [Notes](../notes.md)');
+    const entry = buildBacklinkEntry('Notes', '../notes.md');
+    expect(entry).toBe('- Referenced in [Notes](../notes.md)');
+    expect(entry).not.toMatch(/\*\*\d{4}-\d{2}-\d{2}\*\*/);
   });
 });
 
@@ -160,7 +162,8 @@ describe('findBacklinkGaps — extension-less backlink credit (#1776)', () => {
       const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
       expect(outcome.fixed).toBe(1);
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
-      expect(after).toContain('Referenced in [Standup](../meetings/standup)');
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       expect(findBacklinkGaps(root)).toHaveLength(0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -178,7 +181,8 @@ describe('findBacklinkGaps — extension-less backlink credit (#1776)', () => {
       const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
       expect(outcome.fixed).toBe(1);
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
-      expect(after).toContain('Referenced in [Inbox](../inbox.md)');
+      expect(after).toContain('- Referenced in [Inbox](../inbox.md)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       expect(findBacklinkGaps(root)).toHaveLength(0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -346,7 +350,8 @@ describe('fixBacklinkGaps safety pipeline', () => {
       expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
       // #1776: dir-shaped fixer rows are extension-less so the next check
       // pass credits them through the canonical extractor.
-      expect(after).toContain('Referenced in [Standup](../meetings/standup)');
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
     } finally {
       cleanup();
@@ -484,6 +489,9 @@ describe('fixBacklinkGaps safety pipeline', () => {
       const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro)');
       expect(standupIdx).toBeGreaterThan(headingIdx);
       expect(retroIdx).toBeGreaterThan(headingIdx);
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).toContain('- Referenced in [Retro](../meetings/retro)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       // Exactly one Timeline section — the second gap must not mint a new one.
       expect(after.match(/^## Timeline$/gm)).toHaveLength(1);
       // No tmp residue from the atomic-write pipeline.

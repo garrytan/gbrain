@@ -76,8 +76,8 @@ export function hasBacklink(targetContent: string, sourceFilename: string): bool
   return targetContent.includes(sourceFilename);
 }
 
-/** Build a timeline back-link entry */
-export function buildBacklinkEntry(sourceTitle: string, sourcePath: string, date: string): string {
+/** Build an undated timeline back-link entry without inventing event chronology. */
+export function buildBacklinkEntry(sourceTitle: string, sourcePath: string): string {
   // #1776: dir-shaped sources get an extension-less link (the brain-slug
   // convention the canonical extractor parses, so a freshly-written row is
   // credited by the next check pass instead of re-flagged). Root-level
@@ -87,7 +87,7 @@ export function buildBacklinkEntry(sourceTitle: string, sourcePath: string, date
   // non-idempotent (duplicate rows on every run).
   const bare = sourcePath.replace(/^(?:\.\.\/)+/, '');
   const linkPath = bare.includes('/') ? sourcePath.replace(/\.md$/, '') : sourcePath;
-  return `- **${date}** | Referenced in [${sourceTitle}](${linkPath})`;
+  return `- Referenced in [${sourceTitle}](${linkPath})`;
 }
 
 /** Scan a brain directory for back-link gaps */
@@ -239,7 +239,6 @@ export async function fixBacklinkGaps(
   dryRun: boolean = false,
   opts?: { lockRoot?: string },
 ): Promise<BacklinkFixOutcome> {
-  const today = new Date().toISOString().slice(0, 10);
   const outcome: BacklinkFixOutcome = { fixed: 0, skipped: [] };
 
   // Group gaps by target page to batch writes
@@ -277,7 +276,7 @@ export async function fixBacklinkGaps(
           const relPrefix = '../'.repeat(depth);
           const relPath = relPrefix + gap.sourcePage;
 
-          const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
+          const entry = buildBacklinkEntry(gap.sourceTitle, relPath);
           content = insertTimelineEntry(content, bodyStart, entry);
           inserted++;
         }
