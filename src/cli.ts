@@ -1676,6 +1676,12 @@ export function maybePrintConceptNudge(opName: string, params: Record<string, un
   if (nudge) process.stderr.write(nudge + '\n');
 }
 
+/**
+ * Characters of `compiled_truth` the human `history` table previews per
+ * version row. `--json` returns the untruncated rows.
+ */
+const VERSION_TRUTH_PREVIEW_CHARS = 60;
+
 export function formatResult(
   opName: string,
   result: unknown,
@@ -1809,10 +1815,24 @@ export function formatResult(
     }
     case 'get_versions': {
       const versions = result as any[];
+      // `--json` is legal on every op lane (findUnknownOpFlag exempts it,
+      // parseOpArgs populates params.json), and every other data-returning
+      // verb consumes it. This one silently dropped it and printed the human
+      // table instead. Same `params.json === true` shape as search/query
+      // rather than the process.argv probe: it honors the `--json=false`
+      // spelling parseOpArgs already supports and keeps the formatter free
+      // of process globals.
+      if (params.json === true) return JSON.stringify(versions, null, 2) + '\n';
       if (versions.length === 0) return 'No versions.\n';
-      return versions.map(v =>
-        `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
-      ).join('\n') + '\n';
+      return versions.map(v => {
+        // The ellipsis was unconditional, so an 11-char body rendered as
+        // `Short body....` — three dots claiming a truncation that never
+        // happened. Only elide when something was actually dropped.
+        const truth = v.compiled_truth ?? '';
+        const head = truth.slice(0, VERSION_TRUTH_PREVIEW_CHARS);
+        const elided = truth.length > VERSION_TRUTH_PREVIEW_CHARS ? '...' : '';
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}`;
+      }).join('\n') + '\n';
     }
     // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`
     // escapes to the raw envelope (parseOpArgs ignores an unmatched trailing
@@ -3902,7 +3922,7 @@ JOBS (Minions)
 ADMIN
   stats                              Brain statistics
   health                             Brain health dashboard
-  history <slug>                     Page version history
+  history <slug> [--json]            Page version history
   revert <slug> <version-id>         Revert to version
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon
