@@ -64,7 +64,7 @@ import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
-import { assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
+import { assertOutboundImageEmbeddingAllowed, assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
@@ -2233,7 +2233,14 @@ export async function embedMultimodal(
   opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
-  assertOutboundEmbeddingAllowed(inputs.flatMap(input => input.kind === 'text' ? [truncateUtf8(input.text ?? '', MAX_CHARS)] : []));
+  // The gate is only honest if the bytes it scans ARE the bytes we send.
+  // Shorten here and reuse the SAME array downstream — scanning a shortened
+  // copy while the request body carried the full text let everything past
+  // MAX_CHARS out unscanned.
+  inputs = inputs.map(input =>
+    input.kind === 'text' ? { ...input, text: truncateUtf8(input.text ?? '', MAX_CHARS) } : input);
+  assertOutboundImageEmbeddingAllowed(inputs.map(input => input.kind));
+  assertOutboundEmbeddingAllowed(inputs.flatMap(input => input.kind === 'text' ? [input.text ?? ''] : []));
   const cfg = requireConfig();
   // Prefer embedding_multimodal_model when set, so brains using OpenAI for
   // text embeddings can route multimodal to Voyage without changing the
