@@ -146,6 +146,31 @@ describe('outbound embedding gate', () => {
     expect((caught as OutboundGateError).textIndex).toBe(1);
   });
 
+  test('GATE_REQUIRED mode cannot be switched off', () => {
+    const prev = {
+      required: process.env.GBRAIN_OUTBOUND_GATE_REQUIRED,
+      allowImage: process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE,
+    };
+    process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = '1';
+    process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE = '1';
+    try {
+      // The image escape hatch is exactly what an operator reaches for when a
+      // backfill stalls; under REQUIRED it must not be reachable.
+      let caught: unknown;
+      try {
+        assertOutboundImageEmbeddingAllowed(['image']);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(OutboundGateError);
+    } finally {
+      if (prev.required === undefined) delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
+      else process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = prev.required;
+      if (prev.allowImage === undefined) delete process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE;
+      else process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE = prev.allowImage;
+    }
+  });
+
   test('the block message does not name the disable switch', () => {
     const error = new OutboundGateError('authorization-header', 0, 0);
     expect(error.message).not.toContain('GBRAIN_OUTBOUND_GATE');
