@@ -65,7 +65,7 @@ export const openai: Recipe = {
     },
     expansion: {
       models: ['gpt-5.6-luna', 'gpt-4o-mini'],
-      cost_per_1m_tokens_usd: 1.00, // gpt-5.6-luna baseline
+      cost_per_1m_tokens_usd: 0.20, // gpt-5.6-luna baseline (price cut 2026-07-30)
       price_last_verified: '2026-08-17',
     },
     chat: {

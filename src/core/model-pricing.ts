@@ -123,7 +123,7 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'openai:gpt-5.6':                       { input:  5.00, output: 30.00 },
   'openai:gpt-5.6-sol':                   { input:  5.00, output: 30.00 },
   'openai:gpt-5.6-terra':                 { input:  2.50, output: 15.00 },
-  'openai:gpt-5.6-luna':                  { input:  1.00, output:  6.00 },
+  'openai:gpt-5.6-luna':                  { input:  0.20, output:  1.20 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   // `gemini-1.5-pro` was retired by Google (#3510); kept so historical
