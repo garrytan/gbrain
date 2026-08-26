@@ -16,7 +16,7 @@ import {
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
-import { OutboundGateError } from '../../src/core/ai/outbound-gate.ts';
+import { OutboundGateError, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
 // afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
@@ -76,7 +76,6 @@ describe('outbound embedding gate', () => {
       ['authorization-header', 'Authorization: Bearer fake-value'],
       ['url-userinfo', 'https://fake-user:fake-password@example.test/path'],
       ['private-key-pem', '-----BEGIN PRIVATE KEY-----'],
-      ['high-entropy-token', '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-'],
     ] as const;
 
     for (const [ruleId, text] of cases) {
@@ -90,6 +89,34 @@ describe('outbound embedding gate', () => {
       expect((caught as OutboundGateError).ruleId).toBe(ruleId);
     }
     expect(calls).toBe(0);
+  });
+
+  test('entropy rule is opt-in: off by default, blocks when enabled', async () => {
+    const highEntropy = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-';
+    expect(scanOutboundText(highEntropy)).toEqual({ ok: true });
+
+    const previous = process.env.GBRAIN_OUTBOUND_ENTROPY_GATE;
+    process.env.GBRAIN_OUTBOUND_ENTROPY_GATE = '1';
+    try {
+      const result = scanOutboundText(highEntropy);
+      expect(result.ok).toBe(false);
+      expect((result as { ruleId: string }).ruleId).toBe('high-entropy-token');
+    } finally {
+      if (previous === undefined) delete process.env.GBRAIN_OUTBOUND_ENTROPY_GATE;
+      else process.env.GBRAIN_OUTBOUND_ENTROPY_GATE = previous;
+    }
+  });
+
+  test('ordinary vault prose is not blocked', () => {
+    for (const text of [
+      'task-goal-oriented-planning 문서',
+      'NEXT-SESSION-2026-08-10-decision-journal-capture-closed',
+      'risk-user-story-mapping-and-desk-research',
+      'xoxb-workspace-token 이라는 플레이스홀더',
+      'sk-or-v1-... 형식으로 넣으세요',
+    ]) {
+      expect(scanOutboundText(text)).toEqual({ ok: true });
+    }
   });
 
   test('blocks a process-start denylist value with zero provider calls', async () => {

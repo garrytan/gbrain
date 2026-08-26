@@ -4,12 +4,27 @@ export type OutboundScanResult =
   | { ok: true }
   | { ok: false; ruleId: string; offset: number };
 
-const CREDENTIAL_PREFIX = /(?:sk-(?:ant-|or-v1-|proj-|svcacct-)?[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,}|hf_[0-9A-Za-z_-]{20,}|github_pat_[0-9A-Za-z_]{20,}|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9A-Za-z-]{12,}|AKIA[0-9A-Z]{16})/g;
+// Shapes are deliberately tight. Measured against the real vault corpus
+// (12,688 files): the loose `sk-[A-Za-z0-9_-]{12,}` form matched ordinary prose
+// — any word ending in "sk" followed by a hyphen ("task-goal-…", "risk-user-…")
+// produced 288 false hits. Bare `sk-` now requires an unbroken 32+ alnum run
+// (real OpenAI keys have no interior hyphen); prefixed forms keep their marker.
+const CREDENTIAL_PREFIX = /(?<![A-Za-z0-9])(?:sk-(?:ant-|or-v1-|proj-|svcacct-)[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{20,}|hf_[0-9A-Za-z_-]{20,}|github_pat_[0-9A-Za-z_]{20,}|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9]{10,}-[0-9A-Za-z-]{10,}|AKIA[0-9A-Z]{16})/g;
 const AUTHORIZATION_HEADER = /Authorization\s*:\s*(?:Bearer|Basic)\s+[^\s]+/gi;
 const URL_USERINFO = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi;
 const PRIVATE_KEY_HEADER = /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----/g;
+// Opt-in only. On our own corpus this rule alone blocked 2,082 of 12,688 files
+// (16.4%) — long kebab/snake slugs and document filenames clear the 4.0 bar
+// easily (5,688 kebab-word + 1,982 snake-word + 8,550 mixed matches). A gate
+// that blocks one file in six is not a gate; it is an outage. Entropy scanning
+// belongs in the staging scan, where gitleaks tunes it and a human reviews the
+// file-level verdict before ingest. Here we keep only high-signal shapes and
+// the known-value denylist.
 const HIGH_ENTROPY_TOKEN = /[A-Za-z0-9_-]{40,}/g;
 const HIGH_ENTROPY_THRESHOLD = 4.0;
+function entropyRuleEnabled(): boolean {
+  return process.env.GBRAIN_OUTBOUND_ENTROPY_GATE === '1';
+}
 
 function loadKnownValues(): string[] {
   const path = process.env.GBRAIN_OUTBOUND_DENYLIST_FILE;
@@ -63,6 +78,8 @@ export function scanOutboundText(text: string): OutboundScanResult {
     const offset = text.indexOf(value);
     if (offset !== -1) return { ok: false, ruleId: 'known-value-denylist', offset };
   }
+
+  if (!entropyRuleEnabled()) return { ok: true };
 
   HIGH_ENTROPY_TOKEN.lastIndex = 0;
   for (let match = HIGH_ENTROPY_TOKEN.exec(text); match; match = HIGH_ENTROPY_TOKEN.exec(text)) {
