@@ -4,6 +4,7 @@ import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
+import { healOversizedPageChunks } from '../core/embed-oversize-heal.ts';
 import { createProgress, type ProgressReporter } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
@@ -846,6 +847,14 @@ async function embedPage(
       await engine.upsertChunks(slug, inputs, opts);
       chunks = await engine.getChunks(slug, opts);
     }
+  } else if (!dryRun) {
+    // SUP-3874: legacy chunks may predate the model input-cap. Split them
+    // before the embed call so one oversized row can't fail the page/sweep.
+    const healed = await healOversizedPageChunks(engine, slug, {
+      sourceId,
+      onSplit: (n) => serr(`  ${slug}: split ${n} oversized chunk(s) to fit embedding input limit`),
+    });
+    if (healed.changed) chunks = healed.chunks;
   }
 
   // Embed chunks without embeddings. embedding_is_null is the stored-vector
@@ -1739,10 +1748,42 @@ async function embedAllStale(
       result.total_chunks += batch.length;
 
       async function embedOneKey(key: string) {
-        const stale = byKey.get(key)!;
+        let stale = byKey.get(key)!;
         const keySourceId = stale[0]?.source_id ?? 'default';
         const slug = stale[0].slug;
         try {
+          // SUP-3874: split legacy oversized chunk_text BEFORE the embed call.
+          // `--stale` reuses stored rows; without this, one pre-cap chunk
+          // (e.g. notes/superaicoach-seo-implementation-plan on mxbai) fails
+          // forever and exits the sweep non-zero.
+          const healed = await observed(pacer, () =>
+            healOversizedPageChunks(engine, slug, {
+              sourceId: keySourceId,
+              onSplit: (n) =>
+                serr(`\n  ${slug}: split ${n} oversized chunk(s) to fit embedding input limit`),
+            }),
+          );
+          if (healed.changed) {
+            stale = healed.chunks
+              .filter((c) => !c.embedded_at || c.embedding_is_null === true)
+              .map((c) => ({
+                page_id: c.page_id,
+                chunk_index: c.chunk_index,
+                chunk_text: c.chunk_text,
+                chunk_source: (c.chunk_source === 'timeline' ? 'timeline' : 'compiled_truth') as
+                  'compiled_truth' | 'timeline',
+                model: c.model ?? null,
+                token_count: c.token_count ?? null,
+                slug,
+                source_id: keySourceId,
+              }));
+            if (stale.length === 0) {
+              totalProcessedPages++;
+              result.pages_processed++;
+              return;
+            }
+          }
+
           // #3507: fetch the page row for its title + stored CR mode so the
           // re-embed reproduces the page's wrapping convention instead of
           // silently stripping contextual prefixes — `embed --stale` is the
