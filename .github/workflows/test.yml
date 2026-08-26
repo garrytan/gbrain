@@ -278,7 +278,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10  # ~15s hermetic run; matches the per-job-timeout hardening (#2254)
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - name: Fetch origin/master baseline ref (shallow)
         # The gate reads ONE file via `git show origin/master:...` — a depth-1
         # fetch of the master ref replaces the previous full 3700-commit clone.
@@ -445,7 +445,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
           fetch-depth: 0  # diff gate needs origin/master; baseline gate reads git show origin/master:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
