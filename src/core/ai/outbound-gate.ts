@@ -10,7 +10,10 @@ export type OutboundScanResult =
 // produced 288 false hits. Bare `sk-` now requires an unbroken 32+ alnum run
 // (real OpenAI keys have no interior hyphen); prefixed forms keep their marker.
 const CREDENTIAL_PREFIX = /(?<![A-Za-z0-9])(?:sk-(?:ant-|or-v1-|proj-|svcacct-)[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{20,}|hf_[0-9A-Za-z_-]{20,}|github_pat_[0-9A-Za-z_]{20,}|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9]{10,}-[0-9A-Za-z-]{10,}|AKIA[0-9A-Z]{16})/g;
-const AUTHORIZATION_HEADER = /Authorization\s*:\s*(?:Bearer|Basic)\s+(?![<$'"`])[^\s]+/gi;
+// A quoted header (`Authorization: Bearer "<real token>"`) is still a real
+// credential — strip the quote before deciding, or the quote itself becomes the
+// bypass. Only the placeholder forms after the quote (`<name>`, `$VAR`) pass.
+const AUTHORIZATION_HEADER = /Authorization\s*:\s*(?:Bearer|Basic)\s+["'`]?(?![<$])[^\s"'`]+/gi;
 // Compact, high-signal, near-zero false positives: a JWT header segment always
 // starts `eyJ` and is followed by a second base64url segment. Fable's review
 // flagged this as the shape gitleaks' assignment-context rules miss in prose.
