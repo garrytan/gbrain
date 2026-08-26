@@ -2,6 +2,43 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.1.0] - 2026-08-26
+
+**Large directory imports now stay inside the database connection limit you set.**
+`gbrain import --workers N` previously skipped the connection-budget guard that
+already protected `gbrain sync`. On a small session pool, a high worker count
+could therefore open more child pools than the database allowed and fail partway
+through an otherwise healthy import. Direct imports now use the same budget math
+as sync before any child engine connects.
+
+Set `GBRAIN_MAX_CONNECTIONS` to the maximum number of database sessions the run
+may use. GBrain accounts for the parent pool plus two connections per child,
+reduces the requested worker count when needed, and prints the exact adjustment.
+If the budget cannot fit even one child pool, the import continues serially on
+the already-connected parent engine instead of failing during worker setup.
+
+| Requested workers | Parent pool | Session budget | Effective workers | Maximum sessions |
+|---:|---:|---:|---:|---:|
+| 12 | 10 | 15 | 2 | 14 |
+| 12 | 10 | 10 | serial parent | 10 |
+
+Nothing changes when `GBRAIN_MAX_CONNECTIONS` is unset. PGLite imports remain
+serial, and imports whose requested fan-out already fits the budget keep their
+existing worker count.
+
+### Itemized changes
+
+### Fixed
+- Applied `clampWorkersForConnectionBudget` to direct Postgres directory imports,
+  including the serial-parent fallback when no child pool fits.
+- Corrected the import worker-pool documentation: `GBRAIN_POOL_SIZE` controls the
+  parent pool, while `GBRAIN_MAX_CONNECTIONS` constrains the combined footprint.
+
+### Tests
+- Added regression coverage for parallel clamping, configured-fit and unset-budget
+  compatibility, the parent/child pool formula, serial fallback, warning text, and
+  the PGLite bypass.
+
 ## [0.46.32.0] - 2026-08-26
 
 **The community train: 54 contributor PRs absorbed.** Wave K triaged all 141
