@@ -33,14 +33,37 @@ function entropyRuleEnabled(): boolean {
   return process.env.GBRAIN_OUTBOUND_ENTROPY_GATE === '1';
 }
 
+/**
+ * Set by the ingest wrapper on the child that actually embeds vault content.
+ * In that mode the gate is not a suggestion: the disable switch is ignored, an
+ * absent or unreadable denylist is fatal rather than an empty array, and images
+ * stay refused. Leaving the plain env switches usable outside this mode keeps
+ * local development workable without giving the vault path a way to fail open.
+ */
+function gateRequired(): boolean {
+  return process.env.GBRAIN_OUTBOUND_GATE_REQUIRED === '1';
+}
+
 function loadKnownValues(): string[] {
   const path = process.env.GBRAIN_OUTBOUND_DENYLIST_FILE;
-  if (!path) return [];
+  if (!path) {
+    if (gateRequired()) {
+      throw new Error(
+        'GBRAIN_OUTBOUND_GATE_REQUIRED=1 but GBRAIN_OUTBOUND_DENYLIST_FILE is unset.',
+      );
+    }
+    return [];
+  }
   try {
-    return readFileSync(path, 'utf8')
-      .split(/\r?\n/)
-      .filter(line => line.length > 0);
+    const values = readFileSync(path, 'utf8').split(/\r?\n/).filter(line => line.length > 0);
+    if (values.length === 0 && gateRequired()) {
+      throw new Error('Outbound denylist is empty; refusing to embed under GBRAIN_OUTBOUND_GATE_REQUIRED=1.');
+    }
+    return values;
   } catch (error) {
+    // Silently degrading to [] here is the whole failure mode Sol flagged: the
+    // gate keeps reporting healthy while its highest-signal rule is gone.
+    if (gateRequired()) throw error;
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw error;
   }
@@ -48,7 +71,8 @@ function loadKnownValues(): string[] {
 
 // Process-start snapshot: rotating the file requires a process restart.
 const KNOWN_VALUES = loadKnownValues();
-const OUTBOUND_GATE_ENABLED = process.env.GBRAIN_OUTBOUND_GATE !== '0';
+const OUTBOUND_GATE_ENABLED = process.env.GBRAIN_OUTBOUND_GATE_REQUIRED === '1'
+  || process.env.GBRAIN_OUTBOUND_GATE !== '0';
 let warnedDisabled = false;
 
 function firstMatch(text: string, pattern: RegExp): number | null {
@@ -127,7 +151,7 @@ export class OutboundGateError extends Error {
  */
 export function assertOutboundImageEmbeddingAllowed(kinds: readonly string[]): void {
   if (!OUTBOUND_GATE_ENABLED) return;
-  if (process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE === '1') return;
+  if (process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE === '1' && !gateRequired()) return;
   const index = kinds.findIndex(kind => kind !== 'text');
   if (index === -1) return;
   throw new OutboundGateError('image-input-not-scannable', index, 0);
