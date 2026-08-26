@@ -1,4 +1,7 @@
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   configureGateway,
   resetGateway,
@@ -6,12 +9,14 @@ import {
   isAvailable,
   embed,
   embedOne,
+  embedQueryMultimodal,
   __setEmbedTransportForTests,
   getEmbeddingModel,
   getEmbeddingDimensions,
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
+import { OutboundGateError } from '../../src/core/ai/outbound-gate.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
 // afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
@@ -30,6 +35,215 @@ import {
   isValidVoyageOutputDim,
 } from '../../src/core/ai/dims.ts';
 import { AIConfigError } from '../../src/core/ai/errors.ts';
+
+async function runGatewayChild(
+  source: string,
+  env: Record<string, string>,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const child = Bun.spawn([process.execPath, '-e', source], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...env },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
+describe('outbound embedding gate', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setEmbedTransportForTests(null);
+  });
+
+  test('blocks five built-in credential rule groups before any provider call', async () => {
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    let calls = 0;
+    __setEmbedTransportForTests(async () => {
+      calls++;
+      return { embeddings: [new Array(3).fill(0.1)], usage: { tokens: 1 } } as any;
+    });
+    const cases = [
+      ['credential-prefix', 'prefix sk-ant-abcdefghijklmnopqrstuv'],
+      ['authorization-header', 'Authorization: Bearer fake-value'],
+      ['url-userinfo', 'https://fake-user:fake-password@example.test/path'],
+      ['private-key-pem', '-----BEGIN PRIVATE KEY-----'],
+      ['high-entropy-token', '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-'],
+    ] as const;
+
+    for (const [ruleId, text] of cases) {
+      let caught: unknown;
+      try {
+        await embed([text]);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(OutboundGateError);
+      expect((caught as OutboundGateError).ruleId).toBe(ruleId);
+    }
+    expect(calls).toBe(0);
+  });
+
+  test('blocks a process-start denylist value with zero provider calls', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-outbound-gate-'));
+    const denylistPath = join(dir, 'denylist.txt');
+    writeFileSync(denylistPath, 'fake denylisted phrase\n');
+    const source = `
+      const g = await import('./src/core/ai/gateway.ts');
+      g.configureGateway({ embedding_model: 'google:gemini-embedding-001', embedding_dimensions: 3, env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' } });
+      let calls = 0;
+      g.__setEmbedTransportForTests(async () => { calls++; return { embeddings: [[0.1, 0.1, 0.1]], usage: { tokens: 1 } }; });
+      try { await g.embed(['prefix fake denylisted phrase suffix']); }
+      catch (error) { process.stdout.write(JSON.stringify({ name: error.name, ruleId: error.ruleId, calls })); }
+    `;
+    try {
+      const result = await runGatewayChild(source, {
+        GBRAIN_OUTBOUND_GATE: '1',
+        GBRAIN_OUTBOUND_DENYLIST_FILE: denylistPath,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        name: 'OutboundGateError',
+        ruleId: 'known-value-denylist',
+        calls: 0,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('allows normal text and preserves embedding behavior', async () => {
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    let calls = 0;
+    __setEmbedTransportForTests(async () => {
+      calls++;
+      return { embeddings: [[0.1, 0.2, 0.3]], usage: { tokens: 1 } } as any;
+    });
+    const vectors = await embed(['ordinary knowledge-base text']);
+    expect(calls).toBe(1);
+    expect(vectors[0][0]).toBeCloseTo(0.1);
+    expect(vectors[0][1]).toBeCloseTo(0.2);
+    expect(vectors[0][2]).toBeCloseTo(0.3);
+  });
+
+  test('one contaminated array item blocks the whole batch without partial send', async () => {
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    let calls = 0;
+    __setEmbedTransportForTests(async () => {
+      calls++;
+      return { embeddings: [], usage: { tokens: 1 } } as any;
+    });
+    await expect(embed(['clean first', 'Authorization: Basic fake-value', 'clean last']))
+      .rejects.toBeInstanceOf(OutboundGateError);
+    expect(calls).toBe(0);
+  });
+
+  test('GBRAIN_OUTBOUND_GATE=0 passes and warns only once', async () => {
+    const source = `
+      const g = await import('./src/core/ai/gateway.ts');
+      g.configureGateway({ embedding_model: 'google:gemini-embedding-001', embedding_dimensions: 3, env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' } });
+      let calls = 0;
+      g.__setEmbedTransportForTests(async ({ values }) => { calls++; return { embeddings: values.map(() => [0.1, 0.1, 0.1]), usage: { tokens: 1 } }; });
+      await g.embed(['Authorization: Bearer fake-one']);
+      await g.embed(['Authorization: Bearer fake-two']);
+      process.stdout.write(JSON.stringify({ calls }));
+    `;
+    const result = await runGatewayChild(source, { GBRAIN_OUTBOUND_GATE: '0' });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ calls: 2 });
+    expect(result.stderr.match(/outbound embedding gate disabled/g)?.length).toBe(1);
+  });
+
+  test('missing denylist file disables only that source', async () => {
+    const source = `
+      const g = await import('./src/core/ai/gateway.ts');
+      g.configureGateway({ embedding_model: 'google:gemini-embedding-001', embedding_dimensions: 3, env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' } });
+      let calls = 0;
+      g.__setEmbedTransportForTests(async () => { calls++; return { embeddings: [[0.1, 0.1, 0.1]], usage: { tokens: 1 } }; });
+      let ruleId = null;
+      try { await g.embed(['Authorization: Bearer fake-value']); } catch (error) { ruleId = error.ruleId; }
+      process.stdout.write(JSON.stringify({ calls, ruleId }));
+    `;
+    const result = await runGatewayChild(source, {
+      GBRAIN_OUTBOUND_GATE: '1',
+      GBRAIN_OUTBOUND_DENYLIST_FILE: join(tmpdir(), 'does-not-exist-gbrain-denylist'),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ calls: 0, ruleId: 'authorization-header' });
+  });
+
+  test('error object and message never contain the matched credential', async () => {
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    const credential = 'sk-ant-this-is-a-fake-credential-value';
+    let caught: OutboundGateError | undefined;
+    try {
+      await embed([`prefix ${credential} suffix`]);
+    } catch (error) {
+      caught = error as OutboundGateError;
+    }
+    const serialized = [
+      caught?.name,
+      caught?.message,
+      caught?.stack,
+      JSON.stringify(caught),
+      ...Object.values(caught ?? {}).map(String),
+    ].join('\n');
+    expect(serialized.includes(credential)).toBe(false);
+  });
+
+  test('embedOne and embedQuery both pass through the gate', async () => {
+    const { embedQuery } = await import('../../src/core/ai/gateway.ts');
+    configureGateway({
+      embedding_model: 'google:gemini-embedding-001',
+      embedding_dimensions: 3,
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake-google' },
+    });
+    let calls = 0;
+    __setEmbedTransportForTests(async () => {
+      calls++;
+      return { embeddings: [[0.1, 0.1, 0.1]], usage: { tokens: 1 } } as any;
+    });
+    await expect(embedOne('Authorization: Bearer fake-one')).rejects.toBeInstanceOf(OutboundGateError);
+    await expect(embedQuery('https://fake:fake@example.test')).rejects.toBeInstanceOf(OutboundGateError);
+    expect(calls).toBe(0);
+  });
+
+  test('multimodal text queries are blocked before direct fetch', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error('fetch must not run');
+    }) as unknown as typeof fetch;
+    try {
+      await expect(embedQueryMultimodal('Authorization: Bearer fake-value'))
+        .rejects.toBeInstanceOf(OutboundGateError);
+      expect(calls).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 describe('gateway configuration', () => {
   beforeEach(() => resetGateway());
