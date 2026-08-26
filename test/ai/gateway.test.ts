@@ -16,7 +16,7 @@ import {
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
-import { OutboundGateError, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
+import { OutboundGateError, assertOutboundImageEmbeddingAllowed, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
 // afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
@@ -105,6 +105,43 @@ describe('outbound embedding gate', () => {
       if (previous === undefined) delete process.env.GBRAIN_OUTBOUND_ENTROPY_GATE;
       else process.env.GBRAIN_OUTBOUND_ENTROPY_GATE = previous;
     }
+  });
+
+  test('placeholders in an Authorization header are not credentials', () => {
+    for (const text of [
+      'curl -H "Authorization: Bearer <candidate>"',
+      'curl -H "Authorization: Bearer $OPENROUTER_API_KEY"',
+      'Authorization: Bearer ${TOKEN}',
+    ]) {
+      expect(scanOutboundText(text)).toEqual({ ok: true });
+    }
+    const real = scanOutboundText('Authorization: Bearer abcdefghijklmnop');
+    expect(real.ok).toBe(false);
+    expect((real as { ruleId: string }).ruleId).toBe('authorization-header');
+  });
+
+  test('a JWT-shaped token is blocked', () => {
+    const result = scanOutboundText('token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.sig');
+    expect(result.ok).toBe(false);
+    expect((result as { ruleId: string }).ruleId).toBe('jwt-token');
+  });
+
+  test('image inputs cannot reach a provider — no text rule can inspect them', () => {
+    expect(() => assertOutboundImageEmbeddingAllowed(['text', 'text'])).not.toThrow();
+    let caught: unknown;
+    try {
+      assertOutboundImageEmbeddingAllowed(['text', 'image']);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OutboundGateError);
+    expect((caught as OutboundGateError).ruleId).toBe('image-input-not-scannable');
+    expect((caught as OutboundGateError).textIndex).toBe(1);
+  });
+
+  test('the block message does not name the disable switch', () => {
+    const error = new OutboundGateError('authorization-header', 0, 0);
+    expect(error.message).not.toContain('GBRAIN_OUTBOUND_GATE');
   });
 
   test('ordinary vault prose is not blocked', () => {

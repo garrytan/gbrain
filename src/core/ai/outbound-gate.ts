@@ -10,7 +10,11 @@ export type OutboundScanResult =
 // produced 288 false hits. Bare `sk-` now requires an unbroken 32+ alnum run
 // (real OpenAI keys have no interior hyphen); prefixed forms keep their marker.
 const CREDENTIAL_PREFIX = /(?<![A-Za-z0-9])(?:sk-(?:ant-|or-v1-|proj-|svcacct-)[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{20,}|hf_[0-9A-Za-z_-]{20,}|github_pat_[0-9A-Za-z_]{20,}|gh[pousr]_[0-9A-Za-z]{20,}|xox[baprs]-[0-9]{10,}-[0-9A-Za-z-]{10,}|AKIA[0-9A-Z]{16})/g;
-const AUTHORIZATION_HEADER = /Authorization\s*:\s*(?:Bearer|Basic)\s+[^\s]+/gi;
+const AUTHORIZATION_HEADER = /Authorization\s*:\s*(?:Bearer|Basic)\s+(?![<$'"`])[^\s]+/gi;
+// Compact, high-signal, near-zero false positives: a JWT header segment always
+// starts `eyJ` and is followed by a second base64url segment. Fable's review
+// flagged this as the shape gitleaks' assignment-context rules miss in prose.
+const JWT_TOKEN = /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}/g;
 const URL_USERINFO = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi;
 const PRIVATE_KEY_HEADER = /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----/g;
 // Opt-in only. On our own corpus this rule alone blocked 2,082 of 12,688 files
@@ -68,6 +72,7 @@ export function scanOutboundText(text: string): OutboundScanResult {
     ['authorization-header', AUTHORIZATION_HEADER],
     ['url-userinfo', URL_USERINFO],
     ['private-key-pem', PRIVATE_KEY_HEADER],
+    ['jwt-token', JWT_TOKEN],
   ];
   for (const [ruleId, pattern] of rules) {
     const offset = firstMatch(text, pattern);
@@ -98,13 +103,31 @@ export class OutboundGateError extends Error {
   constructor(ruleId: string, textIndex: number, offset: number) {
     super(
       `Outbound embedding blocked by rule "${ruleId}" at texts[${textIndex}] offset ${offset}. ` +
-      'Remove the sensitive value or set GBRAIN_OUTBOUND_GATE=0 only for an explicitly approved run.',
+      // Deliberately does NOT name the disable switch. An agent that hits this
+      // mid-backfill will do whatever the message suggests, and "turn the gate
+      // off" must never be the path of least resistance.
+      'Remove the sensitive value from the source document, then re-run the staging transform.',
     );
     this.name = 'OutboundGateError';
     this.ruleId = ruleId;
     this.textIndex = textIndex;
     this.offset = offset;
   }
+}
+
+/**
+ * Image inputs cannot be scanned by any text rule here — a screenshot of a
+ * terminal, a QR code, or a settings pane carries credentials that no regex
+ * will ever see. Until image embedding has its own threat model (local OCR /
+ * DLP + an approval path), refuse it outright rather than let it slip past a
+ * gate that structurally cannot inspect it.
+ */
+export function assertOutboundImageEmbeddingAllowed(kinds: readonly string[]): void {
+  if (!OUTBOUND_GATE_ENABLED) return;
+  if (process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE === '1') return;
+  const index = kinds.findIndex(kind => kind !== 'text');
+  if (index === -1) return;
+  throw new OutboundGateError('image-input-not-scannable', index, 0);
 }
 
 export function assertOutboundEmbeddingAllowed(texts: string[]): void {
