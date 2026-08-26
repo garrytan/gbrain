@@ -64,7 +64,7 @@ import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
-
+import { assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
@@ -1912,7 +1912,7 @@ export interface EmbedOpts {
 }
 
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
-  if (!texts || texts.length === 0) return [];
+  if (!texts || texts.length === 0) { assertOutboundEmbeddingAllowed([]); return []; }
 
   const cfg = requireConfig();
   // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
@@ -1923,7 +1923,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
-
+  assertOutboundEmbeddingAllowed(truncated);
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
   // actual total reported by the SDK across all sub-batches.
@@ -2278,7 +2278,7 @@ export async function embedMultimodal(
   opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
-
+  assertOutboundEmbeddingAllowed(inputs.flatMap(input => input.kind === 'text' ? [truncateUtf8(input.text ?? '', MAX_CHARS)] : []));
   const cfg = requireConfig();
   // Prefer embedding_multimodal_model when set, so brains using OpenAI for
   // text embeddings can route multimodal to Voyage without changing the
