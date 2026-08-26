@@ -343,6 +343,18 @@ export function dimsProviderOptions(
       if (matchId === 'text-embedding-v3' || matchId === 'embedding-3') {
         return { openaiCompatible: { dimensions: dims } };
       }
+      // Gemini embedding models on OpenRouter return 3072 dimensions when
+      // the parameter is omitted, so reduced-width brains must send it.
+      if (bareModelId.startsWith('gemini-embedding')) {
+        if (!Number.isInteger(dims) || dims < 1 || dims > 3072) {
+          throw new AIConfigError(
+            `Gemini model "${modelId}" supports embedding_dimensions in 1..3072, got ${dims}.`,
+            `Set \`embedding_dimensions\` to a value between 1 and 3072 in your gbrain config.`,
+          );
+        }
+        if (dims === 3072) return undefined;
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // Qwen3-Embedding family on Ollama (and any other openai-compatible
       // provider serving it) supports Matryoshka truncation via `dimensions`.
       // Native sizes: 0.6B=1024, 4B=2560, 8B=4096. Without `dimensions`,

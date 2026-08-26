@@ -214,8 +214,23 @@ describe('dims.dimsProviderOptions', () => {
   });
 
   test('Google gemini-embedding returns outputDimensionality', () => {
-    const opts = dimsProviderOptions('native-google', 'gemini-embedding-001', 768);
-    expect(opts).toEqual({ google: { outputDimensionality: 768 } });
+    const opts = dimsProviderOptions('native-google', 'gemini-embedding-001', 1024);
+    expect(opts).toEqual({ google: { outputDimensionality: 1024 } });
+  });
+
+  test('OpenRouter Gemini embedding returns dimensions for a reduced width', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'google/gemini-embedding-001', 1024);
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+
+  test('OpenRouter Gemini embedding omits dimensions at the native width', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'google/gemini-embedding-001', 3072);
+    expect(opts).toBeUndefined();
+  });
+
+  test('OpenRouter Gemini embedding rejects dimensions outside 1..3072', () => {
+    expect(() => dimsProviderOptions('openai-compatible', 'google/gemini-embedding-001', 3073))
+      .toThrow(AIConfigError);
   });
 
   test('Anthropic returns undefined (no embedding model)', () => {
