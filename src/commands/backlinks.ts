@@ -15,7 +15,7 @@ import { join, relative, basename } from 'path';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { parseMarkdown, frontmatterBodyOffset } from '../core/markdown.ts';
+import { parseMarkdown, frontmatterBodyOffset, findTimelineSplitIndex } from '../core/markdown.ts';
 import { atomicWriteFileSync } from '../core/atomic-write.ts';
 import { withPageLock } from '../core/page-lock.ts';
 
@@ -76,7 +76,7 @@ export function hasBacklink(targetContent: string, sourceFilename: string): bool
   return targetContent.includes(sourceFilename);
 }
 
-/** Build an undated timeline back-link entry without inventing event chronology. */
+/** Build an undated back-link entry without inventing event chronology. */
 export function buildBacklinkEntry(sourceTitle: string, sourcePath: string): string {
   // #1776: dir-shaped sources get an extension-less link (the brain-slug
   // convention the canonical extractor parses, so a freshly-written row is
@@ -194,37 +194,49 @@ function firstEditBlockingError(content: string, filePath: string): string | nul
 }
 
 /**
- * Insert a timeline entry into the body of `content`, never touching bytes
- * before `bodyStart`. The `## Timeline` heading is matched only as a real
- * heading line at/after bodyStart (CRLF-tolerant), so a `## Timeline` string
- * inside YAML frontmatter, a `### Timeline` sub-heading, or a
- * `## Timeline (2026)` variant never anchors the insertion. With multiple real
- * headings, the FIRST one wins deterministically (post-validation guards the
- * result either way). Exported for direct unit tests.
+ * Insert an undated back-link into a dedicated `## Referenced by` section,
+ * never touching bytes before `bodyStart` and never inserting into the
+ * timeline region. Existing timeline sentinels take precedence over bare
+ * `## Timeline` / `## History` headings.
  */
-export function insertTimelineEntry(content: string, bodyStart: number, entry: string): string {
+export function insertBacklinkEntry(content: string, bodyStart: number, entry: string): string {
   const bodySlice = content.slice(bodyStart);
-  const headingMatch = /^## Timeline[ \t]*\r?$/m.exec(bodySlice);
-
-  if (!headingMatch) {
-    // No real Timeline heading in the body — append a fresh section.
-    return content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
+  const lines = bodySlice.split('\n');
+  const splitIndex = findTimelineSplitIndex(lines);
+  let timelineStart = content.length;
+  if (splitIndex >= 0) {
+    timelineStart = bodyStart;
+    for (let i = 0; i < splitIndex; i++) timelineStart += lines[i].length + 1;
+  } else {
+    const bareTimeline = /^## (?:Timeline|History)[ \t]*\r?$/im.exec(bodySlice);
+    if (bareTimeline) timelineStart = bodyStart + bareTimeline.index;
   }
 
-  const headingAbs = bodyStart + headingMatch.index;
-  const headingLineEnd = content.indexOf('\n', headingAbs);
-  const sectionStart = headingLineEnd === -1 ? content.length : headingLineEnd + 1;
+  const beforeTimeline = content.slice(bodyStart, timelineStart);
+  const headingMatch = /^## Referenced by[ \t]*\r?$/im.exec(beforeTimeline);
+  const eol = bodySlice.includes('\r\n') ? '\r\n' : '\n';
 
-  const nextHeading = /^## /m.exec(content.slice(sectionStart));
-  if (nextHeading) {
-    const insertAt = sectionStart + nextHeading.index;
-    return content.slice(0, insertAt) + entry + '\n' + content.slice(insertAt);
+  if (headingMatch) {
+    const headingAbs = bodyStart + headingMatch.index;
+    const headingLineEnd = content.indexOf('\n', headingAbs);
+    const sectionStart = headingLineEnd === -1 ? content.length : headingLineEnd + 1;
+    const nextHeading = /^##\s+\S/m.exec(content.slice(sectionStart, timelineStart));
+    const sectionEnd = nextHeading ? sectionStart + nextHeading.index : timelineStart;
+    const suffix = content.slice(sectionEnd);
+    const updatedSection = content.slice(0, sectionEnd).trimEnd() + eol + entry + eol;
+    return suffix ? updatedSection + eol + suffix : updatedSection;
   }
-  return content.trimEnd() + '\n' + entry + '\n';
+
+  const prefix = content.slice(0, timelineStart).trimEnd();
+  const suffix = content.slice(timelineStart);
+  const section = `${prefix}${prefix ? eol + eol : ''}## Referenced by${eol}${eol}${entry}${eol}`;
+  return suffix ? section + eol + suffix : section;
 }
 
+export const insertTimelineEntry = insertBacklinkEntry;
+
 /**
- * Fix back-link gaps by inserting timeline entries into target pages.
+ * Fix back-link gaps by inserting undated entries into target pages.
  *
  * Safety pipeline per target file (each failure isolates to that file and is
  * reported in `skipped` — one bad page can't kill the batch or corrupt itself):
@@ -277,7 +289,7 @@ export async function fixBacklinkGaps(
           const relPath = relPrefix + gap.sourcePage;
 
           const entry = buildBacklinkEntry(gap.sourceTitle, relPath);
-          content = insertTimelineEntry(content, bodyStart, entry);
+          content = insertBacklinkEntry(content, bodyStart, entry);
           inserted++;
         }
 
