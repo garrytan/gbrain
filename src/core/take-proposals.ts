@@ -36,6 +36,16 @@ export interface TakeProposalRow {
   promoted_row_num: number | null;
 }
 
+/** Normalize Postgres driver values to the public numeric row contract. */
+function normalizeTakeProposalRow(row: TakeProposalRow): TakeProposalRow {
+  return {
+    ...row,
+    id: Number(row.id),
+    weight: Number(row.weight),
+    promoted_row_num: row.promoted_row_num == null ? null : Number(row.promoted_row_num),
+  };
+}
+
 export type TakeProposalErrorCode = 'not_found' | 'not_pending';
 
 export class TakeProposalError extends Error {
@@ -82,7 +92,7 @@ export async function listPendingProposals(
     where.push(`source_id = $${params.length}`);
   }
   params.push(limit);
-  return engine.executeRaw<TakeProposalRow>(
+  const rows = await engine.executeRaw<TakeProposalRow>(
     `SELECT ${PROPOSAL_COLUMNS}
        FROM take_proposals
       WHERE ${where.join(' AND ')}
@@ -90,6 +100,7 @@ export async function listPendingProposals(
       LIMIT $${params.length}`,
     params,
   );
+  return rows.map(normalizeTakeProposalRow);
 }
 
 async function loadProposal(
@@ -110,7 +121,7 @@ async function loadProposal(
   if (rows.length === 0) {
     throw new TakeProposalError('not_found', `No take proposal #${id}${sourceId ? ` in source '${sourceId}'` : ''}.`);
   }
-  const row = rows[0];
+  const row = normalizeTakeProposalRow(rows[0]);
   if (row.status !== 'pending') {
     // wave-g (#4480 follow-up): a crash between the accept CAS and the fence
     // write (or a failed rollback) strands the row as status='accepted' with

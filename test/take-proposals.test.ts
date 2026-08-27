@@ -307,6 +307,43 @@ describe('CLI dispatcher (#2411 no-fallthrough)', () => {
     expect(parsed.some((r: { claim_text: string }) => r.claim_text === 'cli: pending list claim')).toBe(true);
   });
 
+  test('`takes propose --json` normalizes Postgres BigInt proposal rows (#4634)', async () => {
+    const id = await insertProposal({
+      slug: 'companies/acme-example',
+      claim: 'cli: bigint proposal row',
+    });
+    const originalExecuteRaw = engine.executeRaw;
+    engine.executeRaw = (async <T>(query: string, params?: unknown[]): Promise<T[]> => {
+      const rows = await originalExecuteRaw.call(engine, query, params) as T[];
+      if (!query.includes('FROM take_proposals') || !query.includes("status = 'pending'")) {
+        return rows;
+      }
+      return rows.map((row) => {
+        const record = row as Record<string, unknown>;
+        return {
+          ...record,
+          id: BigInt(Number(record.id)),
+          weight: String(record.weight),
+          promoted_row_num: record.promoted_row_num == null
+            ? null
+            : BigInt(Number(record.promoted_row_num)),
+        } as T;
+      });
+    }) as typeof engine.executeRaw;
+
+    try {
+      const out = await captureStdout(() =>
+        runTakes(engine, ['propose', '--json', '--limit', '100'])
+      );
+      const parsed = JSON.parse(out) as Array<{ id: number; claim_text: string }>;
+      const row = parsed.find((candidate) => candidate.claim_text === 'cli: bigint proposal row');
+      expect(row?.id).toBe(id);
+      expect(typeof row?.id).toBe('number');
+    } finally {
+      engine.executeRaw = originalExecuteRaw;
+    }
+  });
+
   test('`takes propose --accept <id>` promotes and reports the fence row', async () => {
     const id = await insertProposal({ slug: 'companies/acme-example', claim: 'cli: accept me' });
     const out = await captureStdout(() => runTakes(engine, ['propose', '--accept', String(id)]));
