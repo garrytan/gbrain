@@ -235,7 +235,10 @@ async function listCandidatePages(
   scope: ScopedReadOpts,
   limit: number,
 ): Promise<ProposeTakesPageRow[]> {
-  const where = ['deleted_at IS NULL'];
+  const where = [
+    'deleted_at IS NULL',
+    "type IS DISTINCT FROM 'extract_receipt'",
+  ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
     params.push(scope.sourceIds);

@@ -62,6 +62,28 @@ async function putThesis(): Promise<void> {
 }
 
 describe('#2138 per-claim proposal idempotency', () => {
+  test('skips extract receipts before invoking the extractor (#4621)', async () => {
+    await putThesis();
+    await engine.putPage('extracts/2026-08-27/takes.proposed/default/propose/round-single', {
+      title: 'propose_takes receipt',
+      type: 'extract_receipt',
+      compiled_truth: 'Operational receipt with no gradeable claims.',
+      frontmatter: { type: 'extract_receipt', dream_generated: true },
+      timeline: '',
+    });
+
+    const scannedPages: string[] = [];
+    const extractor: ProposeTakesExtractor = async ({ pagePath }) => {
+      scannedPages.push(pagePath);
+      return [];
+    };
+
+    const result = await runPhaseProposeTakes(context(), { extractor });
+
+    expect(scannedPages).toEqual(['wiki/essays/thesis']);
+    expect((result.details as Record<string, unknown>).pages_scanned).toBe(1);
+  });
+
   test('keeps distinct claims, drops repeated claim, then page-cache hits', async () => {
     await putThesis();
     const result = await runPhaseProposeTakes(context(), { extractor: proposals });

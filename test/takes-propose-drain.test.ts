@@ -118,6 +118,14 @@ describe('propose_takes → takes propose drain (#4102)', () => {
       expect((gated.details as Record<string, unknown>).reason).toBe('disabled');
       expect(calls).toBe(0);
 
+      // Change the page body so the once-run has a real uncached candidate.
+      // The preceding test already cached the original content hash.
+      await engine.putPage(SLUG, {
+        type: 'company',
+        title: 'Drain Example',
+        compiled_truth: 'I bet drain-example expands into a second market within 12 months.',
+      });
+
       const once = await runPhaseProposeTakes(ctx(), { extractor, once: true });
       expect(once.status).not.toBe('skipped');
       expect(calls).toBeGreaterThan(0);
