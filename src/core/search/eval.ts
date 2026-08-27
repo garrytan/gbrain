@@ -89,31 +89,40 @@ export interface EvalReport {
 
 /**
  * Precision@k: fraction of top-k hits that are relevant.
+ * De-duplicates hits by slug (preserving first-seen order) before scoring so
+ * duplicate result rows cannot inflate the metric.
  */
 export function precisionAtK(hits: string[], relevant: Set<string>, k: number): number {
   if (k <= 0 || hits.length === 0 || relevant.size === 0) return 0;
-  const topK = hits.slice(0, k);
+  const uniqueHits = [...new Set(hits)];
+  const topK = uniqueHits.slice(0, k);
   const relevantHits = topK.filter(h => relevant.has(h)).length;
   return relevantHits / k;
 }
 
 /**
  * Recall@k: fraction of all relevant docs found in top-k hits.
+ * De-duplicates hits by slug (preserving first-seen order) before scoring so
+ * duplicate result rows cannot inflate recall beyond 1.0.
  */
 export function recallAtK(hits: string[], relevant: Set<string>, k: number): number {
   if (k <= 0 || hits.length === 0 || relevant.size === 0) return 0;
-  const topK = hits.slice(0, k);
+  const uniqueHits = [...new Set(hits)];
+  const topK = uniqueHits.slice(0, k);
   const relevantHits = topK.filter(h => relevant.has(h)).length;
   return relevantHits / relevant.size;
 }
 
 /**
  * Mean Reciprocal Rank: 1/rank of the first relevant hit (0 if none found).
+ * De-duplicates hits by slug (preserving first-seen order) so a duplicate
+ * leading row cannot artificially depress the reciprocal rank.
  */
 export function mrr(hits: string[], relevant: Set<string>): number {
   if (hits.length === 0 || relevant.size === 0) return 0;
-  for (let i = 0; i < hits.length; i++) {
-    if (relevant.has(hits[i])) return 1 / (i + 1);
+  const uniqueHits = [...new Set(hits)];
+  for (let i = 0; i < uniqueHits.length; i++) {
+    if (relevant.has(uniqueHits[i])) return 1 / (i + 1);
   }
   return 0;
 }
@@ -131,7 +140,8 @@ export function mrr(hits: string[], relevant: Set<string>): number {
 export function ndcgAtK(hits: string[], grades: Map<string, number>, k: number): number {
   if (k <= 0 || hits.length === 0 || grades.size === 0) return 0;
 
-  const topK = hits.slice(0, k);
+  const uniqueHits = [...new Set(hits)];
+  const topK = uniqueHits.slice(0, k);
   let dcg = 0;
   for (let i = 0; i < topK.length; i++) {
     const grade = grades.get(topK[i]) ?? 0;
