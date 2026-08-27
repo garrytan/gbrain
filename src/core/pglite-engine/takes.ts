@@ -19,7 +19,7 @@ import type { SqlValue } from '../sql-query.ts';
 import { deriveResolutionTuple, finalizeScorecard } from '../takes-resolution.ts';
 import { normalizeWeightForStorage } from '../takes-fence.ts';
 import { buildTakeRows } from '../batch-rows.ts';
-import { takeRowToTake, takeHitRowToHit } from '../utils.ts';
+import { staleTakeRowToRow, takeRowToTake, takeHitRowToHit } from '../utils.ts';
 
 /** Narrow slice of PGLiteEngine the takes operations use. */
 export interface PgliteTakesDeps {
@@ -407,7 +407,7 @@ export async function listStaleTakes(deps: PgliteTakesDeps): Promise<StaleTakeRo
        ORDER BY t.id
        LIMIT 100000`
     );
-    return rows as unknown as StaleTakeRow[];
+    return rows.map((row) => staleTakeRowToRow(row as Record<string, unknown>));
   }
 
 export async function updateTakeEmbeddings(

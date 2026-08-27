@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind, TakeHit } from './engine.ts';
+import type { StaleTakeRow } from './takes-row-types.ts';
 // Leaf modules (no imports) — safe here without a cycle. Single source of
 // truth for the hash-ephemeral frontmatter keys shared with the importer.
 import { QUARANTINE_KEY, CONTENT_FLAG_KEY } from './quarantine.ts';
@@ -545,5 +546,19 @@ export function takeHitRowToHit(row: Record<string, unknown>): TakeHit {
     holder: String(row.holder),
     weight: Number(row.weight),
     score: Number(row.score),
+  };
+}
+
+/**
+ * Convert a stale-take SQL row to the numeric `StaleTakeRow` contract.
+ * Postgres returns BIGINT columns as BigInt/string values, while PGLite may
+ * already return numbers; normalize both engines at their shared boundary.
+ */
+export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
+  return {
+    take_id: Number(row.take_id),
+    page_slug: String(row.page_slug ?? ''),
+    row_num: Number(row.row_num),
+    claim: String(row.claim),
   };
 }
