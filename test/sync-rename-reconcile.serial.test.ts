@@ -2485,3 +2485,57 @@ describe('#3583 review: GATE25 — the upgrade path for someone already wedged b
     )).toHaveLength(1);
   });
 });
+
+describe('rename destination import: an errored skip must not checkpoint the rename as done', () => {
+  test('a frontmatter slug-authority rejection at the destination is retried, never falsely checkpointed', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    const repo = mkRepo({ 'people/alpha.md': personMd('Alpha', 'Alpha is a person.') });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(await engine.getPage('people/alpha')).not.toBeNull();
+
+    // Rename alpha -> beta, but the destination's frontmatter claims a slug
+    // that does not match its path. importFile enforces slug authority (the
+    // path on disk is the source of truth) and rejects this, returning
+    // status 'skipped' with an .error set — never status 'error'. Title/body
+    // stay byte-identical to alpha (only a `slug:` line is injected) so
+    // git's similarity-based rename detection still classifies this as a
+    // RENAME rather than a delete+add (a rewritten body drops similarity
+    // below git's threshold and takes a completely different code path).
+    execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
+    writeFileSync(join(repo, 'people/beta.md'), [
+      '---', 'type: person', 'title: Alpha', 'slug: totally-different', '---',
+      '', 'Alpha is a person.',
+    ].join('\n'));
+    execSync('git add -A && git commit -m "rename alpha to beta, corrupted frontmatter"', {
+      cwd: repo, stdio: 'pipe',
+    });
+
+    const first = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(first.status).toBe('blocked_by_failures');
+    // The cheap DB-level rename (updateSlug) runs unconditionally before
+    // content import is attempted, so the row is already named 'people/beta'
+    // — but its content is untouched (import never wrote anything for the
+    // rejected file): compiled_truth still reads the pre-rename body.
+    const afterFirst = await engine.getPage('people/beta');
+    expect(afterFirst).not.toBeNull();
+    expect(afterFirst?.compiled_truth).toBe('Alpha is a person.');
+
+    // Discriminating assertion: without importErrored gating the checkpoint,
+    // run 1 falsely marks `to` as done despite the recorded failure, so this
+    // SECOND run (same still-rejected content) would read "already done" and
+    // report success without ever having imported the destination. The fix
+    // makes this run fail again, identically to the first — the checkpoint
+    // is never falsely marked, so compiled_truth still has not moved.
+    const second = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(second.status).toBe('blocked_by_failures');
+    expect((await engine.getPage('people/beta'))?.compiled_truth).toBe('Alpha is a person.');
+
+    // Fixing the content and re-syncing must actually materialize the fixed
+    // content — proving the target was never falsely banked as complete.
+    writeFileSync(join(repo, 'people/beta.md'), personMd('Alpha', 'Alpha is a person, fixed.'));
+    execSync('git add -A && git commit -m "fix beta frontmatter"', { cwd: repo, stdio: 'pipe' });
+    const third = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+    expect(third.status).toBe('synced');
+    expect((await engine.getPage('people/beta'))?.compiled_truth).toBe('Alpha is a person, fixed.');
+  });
+});

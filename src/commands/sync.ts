@@ -2753,6 +2753,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
             // import; counting it as a failure would gate the bookmark forever.
             serr(`  Skipped (malformed filename): ${sanitizePathForDisplay(to)}`);
           } else if (result.status === 'skipped' && (result as { error?: string }).error) {
+            // An errored skip (frontmatter slug-authority rejection, invalid
+            // YAML, symlink refusal, oversize file, ...) means the
+            // destination never materialized — same as status 'error' below,
+            // this must gate the success sentinel + markCompleted(to), or a
+            // resumed sync would treat the rename as permanently done.
+            importErrored = true;
             failedFiles.push({ path: to, error: String((result as { error?: string }).error) });
           } else if (result.status === 'error') {
             // importImageFile (and importFile's frontmatter gate) report
