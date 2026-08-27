@@ -17,7 +17,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
-import { BudgetTracker } from '../budget/budget-tracker.ts';
+import { BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import {
   DEFAULT_MAX_COST_USD,
@@ -47,6 +47,7 @@ export async function runIngestFacts(
   const tracker = new BudgetTracker({
     maxCostUsd: opts.maxCostUsd ?? DEFAULT_MAX_COST_USD,
     label: 'transcripts-ingest-facts',
+    pricingOverrides: await loadPricingOverrides(engine),
   });
   await withBudgetTracker(tracker, () =>
     runExtractConversationFactsCore(engine, {

@@ -1309,10 +1309,10 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Link resolution (issue #972)
   'link_resolution',
   'link_resolution.global_basename',
-  // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
-  // operator had to discover these by reading source. Registered so `config
-  // set` accepts them directly. See docs/operations/spend-controls.md.
+  // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only;
+  // registered so `config set` accepts them. See docs/operations/spend-controls.md.
   'spend.posture',
+  'pricing.overrides',
   // Life Chronicle (v0.42.56.0, #2390). The release notes' enable command is
   // `gbrain config set auto_chronicle true`, but the key was never registered
   // — so the documented command failed with "Unknown config key" and the
