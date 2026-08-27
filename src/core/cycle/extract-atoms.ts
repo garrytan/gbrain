@@ -50,6 +50,7 @@
 // which made the NOT EXISTS guard ineffective on federated brains.
 
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { stripReasoningBlocks } from '../llm-json.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -1084,6 +1085,23 @@ export type AtomsParseOutcome =
   | { ok: false; reason: string };
 
 export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
+  const direct = parseAtomsOutcomeInner(raw);
+  if (direct.ok) return direct;
+  // Same reasoning-block hazard as the facts extractor: `indexOf('[')` below
+  // finds a bracket inside <think> when the model drafts its array while
+  // reasoning, so the parse fails and the page is halted. Ladder, not a
+  // pre-filter: raw first, stripped only on failure — and the ORIGINAL
+  // outcome is returned when the retry also fails, so error reasons are
+  // unchanged for non-reasoning models.
+  const stripped = stripReasoningBlocks(raw);
+  if (stripped && stripped !== raw.trim()) {
+    const retry = parseAtomsOutcomeInner(stripped);
+    if (retry.ok) return retry;
+  }
+  return direct;
+}
+
+function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);

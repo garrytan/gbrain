@@ -22,6 +22,7 @@
  */
 
 import { chat, embedOne, isAvailable } from '../ai/gateway.ts';
+import { stripReasoningBlocks } from '../llm-json.ts';
 import type { ChatResult } from '../ai/gateway.ts';
 import { INJECTION_PATTERNS } from '../think/sanitize.ts';
 import { resolveModel } from '../model-config.ts';
@@ -543,6 +544,21 @@ interface ParsedExtractorShape {
 }
 
 function parseExtractorJsonDetailed(raw: string): ParsedExtractorShape | null {
+  const direct = parseExtractorJsonDetailedInner(raw);
+  if (direct) return direct;
+  // Reasoning models emit a <think> block before the answer, and draft their
+  // JSON inside it. The substring scan below starts at the first `{`, so it
+  // spans from a draft brace inside the reasoning to the real closing brace
+  // and fails — recorded as malformed output, which then burns a retry LLM
+  // call that usually fails the same way. Ladder, not a pre-filter: raw is
+  // tried first, so a fact legitimately containing "<think>" still parses
+  // byte-identically.
+  const stripped = stripReasoningBlocks(raw);
+  if (stripped && stripped !== raw.trim()) return parseExtractorJsonDetailedInner(stripped);
+  return null;
+}
+
+function parseExtractorJsonDetailedInner(raw: string): ParsedExtractorShape | null {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
   // Strict.
   const direct = tryArrayShapeDetailed(cleaned);
