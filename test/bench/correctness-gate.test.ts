@@ -34,6 +34,25 @@ describe('correctness-gate: per-query iteration + aggregate math', () => {
     expect(result.summary.queries_errored).toBe(0);
   });
 
+  test('duplicate chunks count once in page-level recall and retrieved_count', async () => {
+    const qrels = makeQrels([
+      {
+        query_id: 'q-duplicate',
+        query: 'x',
+        relevant: [{ source_id: 'default', slug: 'a' }],
+      },
+    ]);
+    const result = await runCorrectnessGate(fakeEngine, qrels, {
+      k: 2,
+      searchFn: async () => [
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'a' },
+      ],
+    });
+    expect(result.per_query[0].recall_at_k).toBe(1);
+    expect(result.per_query[0].retrieved_count).toBe(1);
+  });
+
   test('per-query throw → errored=true; query NOT counted in aggregates; gate flagged', async () => {
     // Finding 2D: a query throw flips verdict to fail. The orchestrator records
     // the throw as a per-query failure; the caller (eval-gate.ts) treats

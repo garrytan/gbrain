@@ -13,13 +13,17 @@
  *   7. 250ms poll interval honored (custom interval respected)
  *   8. isDeadlockError matches SQLSTATE 40P01 in code field
  *   9. isDeadlockError matches "deadlock detected" in message text
+ *  10. initSchema retry catches raw 57014 setup flakes
+ *  11. initSchema retry does not wrap an exhausted per-migration retry
  */
 import { describe, test, expect } from 'bun:test';
 import {
   tryRunPendingMigrations,
   isDeadlockError,
+  MigrationRetryExhausted,
   type TryRunPendingMigrationsResult,
 } from '../src/core/migrate.ts';
+import { runInitSchemaWithRetry } from '../src/core/init-schema-retry.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 // Fake engine for typing — never used because _hooks override everything.
@@ -28,6 +32,14 @@ const fakeEngine = {} as BrainEngine;
 class FakeDeadlock extends Error {
   code = '40P01';
   constructor() { super('deadlock detected'); this.name = 'FakeDeadlock'; }
+}
+
+class FakeStatementTimeout extends Error {
+  code = '57014';
+  constructor() {
+    super('canceling statement due to statement timeout');
+    this.name = 'FakeStatementTimeout';
+  }
 }
 
 describe('isDeadlockError', () => {
@@ -55,6 +67,59 @@ describe('isDeadlockError', () => {
   test('returns false for null/undefined', () => {
     expect(isDeadlockError(null)).toBe(false);
     expect(isDeadlockError(undefined)).toBe(false);
+  });
+});
+
+describe('runInitSchemaWithRetry', () => {
+  test('retries raw statement_timeout failures from schema setup', async () => {
+    let initCalls = 0;
+    const sleeps: number[] = [];
+    const logs: string[] = [];
+
+    const result = await runInitSchemaWithRetry(fakeEngine, {
+      maxAttempts: 5,
+      backoffMs: 0,
+      log: (line) => logs.push(line),
+      _hooks: {
+        sleep: async (ms) => { sleeps.push(ms); },
+        initSchema: async () => {
+          initCalls++;
+          if (initCalls < 3) throw new FakeStatementTimeout();
+        },
+      },
+    });
+
+    expect(result.attempts).toBe(3);
+    expect(initCalls).toBe(3);
+    expect(sleeps).toEqual([0, 0]);
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toContain('statement_timeout');
+  });
+
+  test('does not double-wrap an exhausted migration retry envelope', async () => {
+    const exhausted = new MigrationRetryExhausted(
+      16,
+      'sample_migration',
+      3,
+      [],
+      new FakeStatementTimeout(),
+    );
+    let initCalls = 0;
+    const sleeps: number[] = [];
+
+    await expect(runInitSchemaWithRetry(fakeEngine, {
+      backoffMs: 0,
+      _hooks: {
+        sleep: async (ms) => { sleeps.push(ms); },
+        initSchema: async () => {
+          initCalls++;
+          throw exhausted;
+        },
+      },
+    })).rejects.toBe(exhausted);
+
+    expect(initCalls).toBe(1);
+    expect(sleeps).toEqual([]);
   });
 });
 

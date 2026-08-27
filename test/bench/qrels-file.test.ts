@@ -101,6 +101,12 @@ describe('qrels-file: math', () => {
     expect(computeRecallAtK(['a', 'b', 'c'], ['a', 'b'], 1)).toBe(0.5);
   });
 
+  test('deduplicates retrieved and relevant page keys before the cutoff', () => {
+    expect(computeRecallAtK(['a', 'a'], ['a'], 2)).toBe(1);
+    expect(computeRecallAtK(['x', 'x', 'a'], ['a'], 2)).toBe(1);
+    expect(computeRecallAtK(['a'], ['a', 'a'], 2)).toBe(1);
+  });
+
   test('computeRecallAtK empty relevant set returns 0 (defensive)', () => {
     expect(computeRecallAtK(['a'], [], 10)).toBe(0);
   });

@@ -1350,12 +1350,17 @@ describe('stub_guard_24h check (v0.34.5)', () => {
 });
 
 describe('v0.40.4 — graph_signals_coverage check', () => {
-  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
-  const { checkGraphSignalsCoverage } = require('../src/commands/doctor.ts');
+  // await import, not require: a sync require() of the ESM doctor graph makes
+  // Bun's warm transpiler cache parse `with { type: 'file' }` template assets
+  // as code (Syntax Error → "module not instantiated" cascade on re-runs).
+  let PGLiteEngine: any;
+  let checkGraphSignalsCoverage: any;
 
   let engine: any;
 
   beforeAll(async () => {
+    ({ PGLiteEngine } = await import('../src/core/pglite-engine.ts'));
+    ({ checkGraphSignalsCoverage } = await import('../src/commands/doctor.ts'));
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' });
     await engine.initSchema();
@@ -1457,12 +1462,15 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
 // ─── issue #972 — link_resolution_opportunity check ───────────────────────
 
 describe('issue #972 — link_resolution_opportunity check', () => {
-  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
-  const { checkLinkResolutionOpportunity } = require('../src/commands/doctor.ts');
+  // await import, not require — see graph_signals_coverage describe above.
+  let PGLiteEngine: any;
+  let checkLinkResolutionOpportunity: any;
 
   let engine: any;
 
   beforeAll(async () => {
+    ({ PGLiteEngine } = await import('../src/core/pglite-engine.ts'));
+    ({ checkLinkResolutionOpportunity } = await import('../src/commands/doctor.ts'));
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' });
     await engine.initSchema();

@@ -1107,44 +1107,7 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
 }
 
-export async function runAuth(args: string[]): Promise<void> {
-  const [cmd, ...rest] = args;
-  switch (cmd) {
-    case 'create': {
-      // v0.28: optional --takes-holders world,garry,brain (default: world only)
-      // #4043: optional --scopes read,write (default: full access, grandfathered)
-      const parsed = parseAuthCreateArgs(rest);
-      if (parsed.error) {
-        console.error(`Error: ${parsed.error}`);
-        process.exit(1);
-      }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
-      return;
-    }
-    case 'list': await list(); return;
-    case 'revoke': {
-      if (rest[0] === '--id') { await revokeById(rest[1] || ''); return; }
-      await revoke(rest[0]);
-      return;
-    }
-    case 'permissions': {
-      // gbrain auth permissions <name> set-takes-holders world,garry
-      await permissions(rest[0] || '', rest[1] || '', rest[2]);
-      return;
-    }
-    case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
-    case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
-    case 'revoke-client': await revokeClient(rest[0]); return;
-    case 'clients': await clientsCmd(rest); return;
-    case 'test': {
-      const tokenIdx = rest.indexOf('--token');
-      const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
-      const token = tokenIdx >= 0 ? rest[tokenIdx + 1] : '';
-      await test(url || '', token || '');
-      return;
-    }
-    default:
-      console.log(`GBrain Token Management
+const AUTH_USAGE = `GBrain Token Management
 
 Usage:
   gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
@@ -1201,7 +1164,58 @@ Usage:
                                                           clients (>90% context_pack/delta) are flagged.
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server
-`);
+`;
+
+export async function runAuth(args: string[]): Promise<void> {
+  // #4083 follow-up: print usage whenever --help/-h appears ANYWHERE in
+  // args, before dispatching to a subcommand. Without this early return,
+  // `gbrain auth create foo --help` (or revoke/register-client/... +
+  // --help) actually EXECUTES the subcommand instead of showing help,
+  // once `auth` joined CLI_ONLY_SELF_HELP and the generic --help
+  // short-circuit in cli.ts stopped intercepting it first. Same pattern
+  // as sync.ts's own `args.includes('--help') || args.includes('-h')`
+  // early-return.
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(AUTH_USAGE);
+    return;
+  }
+  const [cmd, ...rest] = args;
+  switch (cmd) {
+    case 'create': {
+      // v0.28: optional --takes-holders world,garry,brain (default: world only)
+      // #4043: optional --scopes read,write (default: full access, grandfathered)
+      const parsed = parseAuthCreateArgs(rest);
+      if (parsed.error) {
+        console.error(`Error: ${parsed.error}`);
+        process.exit(1);
+      }
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
+      return;
+    }
+    case 'list': await list(); return;
+    case 'revoke': {
+      if (rest[0] === '--id') { await revokeById(rest[1] || ''); return; }
+      await revoke(rest[0]);
+      return;
+    }
+    case 'permissions': {
+      // gbrain auth permissions <name> set-takes-holders world,garry
+      await permissions(rest[0] || '', rest[1] || '', rest[2]);
+      return;
+    }
+    case 'register-client': await registerClient(rest[0], rest.slice(1)); return;
+    case 'rescope-client': await rescopeClient(rest[0], rest.slice(1)); return;
+    case 'revoke-client': await revokeClient(rest[0]); return;
+    case 'clients': await clientsCmd(rest); return;
+    case 'test': {
+      const tokenIdx = rest.indexOf('--token');
+      const url = rest.find(a => !a.startsWith('--') && a !== rest[tokenIdx + 1]);
+      const token = tokenIdx >= 0 ? rest[tokenIdx + 1] : '';
+      await test(url || '', token || '');
+      return;
+    }
+    default:
+      console.log(AUTH_USAGE);
   }
 }
 

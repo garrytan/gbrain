@@ -156,6 +156,60 @@ describe('checkDanglingAliases (F12 source-scoped JOIN)', () => {
     const result = await checkDanglingAliases(engine);
     expect(result.check.status).toBe('warn');
     expect(result.check.message).toContain('1 alias rows');
+    expect(result.check.message).toContain('1 slug redirects');
+    expect(result.check.message).toContain('0 free-text page aliases');
+  });
+
+  it('warns when a free-text alias points at a missing page', async () => {
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       VALUES ('default', 'alice example', 'people/alice-example')`,
+    );
+    const result = await checkDanglingAliases(engine);
+    expect(result.check.status).toBe('warn');
+    expect(result.check.message).toContain('1 alias rows');
+    expect(result.check.message).toContain('0 slug redirects');
+    expect(result.check.message).toContain('1 free-text page aliases');
+  });
+
+  it('returns ok when a free-text alias points at an active page', async () => {
+    await seedPages(['note']);
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       VALUES ('default', 'page zero', 'p0')`,
+    );
+    const result = await checkDanglingAliases(engine);
+    expect(result.check.status).toBe('ok');
+  });
+
+  it('warns when a free-text alias points at a soft-deleted page', async () => {
+    await seedPages(['note']);
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       VALUES ('default', 'old page', 'p0')`,
+    );
+    await engine.softDeletePage('p0', { sourceId: 'default' });
+    const result = await checkDanglingAliases(engine);
+    expect(result.check.status).toBe('warn');
+    expect(result.check.message).toContain('1 free-text page aliases');
+  });
+
+  it('does not let another source satisfy a free-text alias target', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('alt', 'alt') ON CONFLICT DO NOTHING`,
+    );
+    await engine.putPage('shared-page', {
+      title: 'shared', type: 'note' as never,
+      compiled_truth: 'body that is long enough to pass any min-length guards in the codebase',
+      timeline: '', frontmatter: {}, source_path: 'shared-page.md',
+    }, { sourceId: 'alt' });
+    await engine.executeRaw(
+      `INSERT INTO page_aliases (source_id, alias_norm, slug)
+       VALUES ('default', 'shared', 'shared-page')`,
+    );
+    const result = await checkDanglingAliases(engine);
+    expect(result.check.status).toBe('warn');
+    expect(result.check.message).toContain('1 free-text page aliases');
   });
 
   it('does NOT false-positive across sources (F12 regression)', async () => {

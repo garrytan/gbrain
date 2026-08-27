@@ -2441,7 +2441,7 @@ export async function hybridSearchCached(
   // read/write the cache anyway.
   const pagedRequest = (opts?.offset ?? 0) !== 0;
   // #4352 follow-up — excludePrivate no longer skips the cache: the posture
-  // is folded into knobsHash (xp=, v=23), so a private-included (trusted)
+  // is folded into knobsHash (xp=), so a private-included (trusted)
   // write can never serve a private-excluding lookup and vice versa. The
   // original wholesale skip disabled the semantic cache for every remote MCP
   // caller (excludePrivate=true is their default) — exactly the

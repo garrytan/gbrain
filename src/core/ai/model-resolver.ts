@@ -77,6 +77,17 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   return { parsed, recipe };
 }
 
+/**
+ * Resolve the declared chat context window for a provider-qualified model.
+ * Model-specific recipe metadata wins over the provider-wide default.
+ * Returns undefined when the provider has no chat context declaration.
+ */
+export function resolveChatContextTokens(modelId: string): number | undefined {
+  const { parsed, recipe } = resolveRecipe(modelId);
+  const chat = recipe.touchpoints.chat;
+  return chat?.model_context_tokens?.[parsed.modelId] ?? chat?.max_context_tokens;
+}
+
 type KnownTouchpointKey = 'embedding' | 'expansion' | 'chat' | 'reranker';
 
 function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTouchpoint | ExpansionTouchpoint | ChatTouchpoint | RerankerTouchpoint | undefined {

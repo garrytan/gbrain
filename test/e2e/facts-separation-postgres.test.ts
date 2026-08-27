@@ -184,4 +184,28 @@ d("Cross-session recall test (Postgres)", () => {
     expect(bySession.some(r => r.fact === 'EXTRACTION_COMPLETE' && r.source === 'test')).toBe(true);
     expect(bySession.some(r => r.fact === 'real fact under the same entity/session (pg)')).toBe(true);
   });
+
+  test('unconsolidatedOnly filters before the result limit on real Postgres', async () => {
+    const engine = getEngine();
+    const entitySlug = 'consolidation-filter-postgres';
+    const pending = await engine.insertFact(
+      { fact: 'still pending', kind: 'fact', entity_slug: entitySlug, source: 'test' },
+      { source_id: 'default' },
+    );
+    const consolidated = await engine.insertFact(
+      { fact: 'already consolidated', kind: 'fact', entity_slug: entitySlug, source: 'test' },
+      { source_id: 'default' },
+    );
+    await engine.executeRaw(
+      `UPDATE facts SET consolidated_at = now() WHERE id = $1`,
+      [consolidated.id],
+    );
+
+    const rows = await engine.listFactsByEntity('default', entitySlug, {
+      unconsolidatedOnly: true,
+      limit: 1,
+    });
+
+    expect(rows.map(f => f.id)).toEqual([pending.id]);
+  });
 });

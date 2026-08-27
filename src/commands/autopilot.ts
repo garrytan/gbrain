@@ -1337,7 +1337,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // codex P1-3). Fresh-install brains with no sources rows fall
           // back to the legacy single autopilot-cycle so existing
           // behavior is preserved.
-          const { dispatchPerSource, dispatchGlobalMaintenance, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
+          const { dispatchPerSource, dispatchGlobalMaintenance, maybeDispatchConnectorSyncs, resolveEffectiveFanoutMax } = await import('./autopilot-fanout.ts');
           // #2194 fix #1: clamp fan-out to the worker's effective concurrency
           // (reserve ≥1 slot), gated on a LIVE supervisor so a stale audit row
           // can't shrink throughput (codex #9/D5). autopilot-cycle jobs run on
@@ -1372,6 +1372,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             } catch (e) {
               if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
             }
+          }
+          // Opt-in scheduled chat-connector sync (OV#4). Credential-gated +
+          // auto_sync-gated: fires for nobody who hasn't explicitly enabled it.
+          try {
+            await maybeDispatchConnectorSyncs(engine, queue, { slot, timeoutMs: fullCycleTimeoutMs, jsonMode });
+          } catch (e) {
+            if (jsonMode) process.stderr.write(JSON.stringify({ event: 'connector_sync_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
           }
           // On restart the process-local clock starts overdue. If persisted
           // source timestamps say every source is fresh, advance the local

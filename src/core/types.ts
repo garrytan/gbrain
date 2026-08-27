@@ -462,6 +462,10 @@ export interface SalienceOpts {
    * Default preserves v0.29.0 ranking; 'on' is opt-in.
    */
   recency_bias?: 'flat' | 'on';
+  /** Source scope (canonical precedence: array wins over scalar). Undefined =
+   *  unscoped (trusted local callers). */
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 export interface SalienceResult {
@@ -553,6 +557,11 @@ export interface AnomaliesOpts {
   lookback_days?: number;
   /** Sigma threshold. Default 3.0. */
   sigma?: number;
+  /** Source scope (canonical precedence: array wins over scalar). Applied to
+   *  BOTH the baseline and today windows so the anomaly math stays consistent.
+   *  Undefined = unscoped (trusted local callers). */
+  sourceId?: string;
+  sourceIds?: string[];
 }
 
 export interface AnomalyResult {

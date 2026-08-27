@@ -1,8 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../core/embed-skip.ts';
-// Leaf module (no flag surface of its own) — see that file for why this
-// isn't imported from extract-conversation-facts.ts directly (#4135).
-import { ALLOWED_TYPES } from '../core/facts/conversation-types.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
@@ -24,6 +21,7 @@ import { computeEffectiveDate } from '../core/effective-date.ts';
 import { parseFrontmatter } from '../core/backfill-effective-date.ts';
 import { hnswIndexExpected, hnswMaxDimsForType } from '../core/vector-index.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../version.ts';
+import { schemaVersionHealth } from '../core/schema-version-health.ts';
 import { zeroTotalContradictionsCheck } from '../core/eval-contradictions/run-health.ts';
 // Peeled doctor modules (containment sprint): each is a verbatim move out of
 // this file. doctor.ts re-exports every moved public symbol under its
@@ -130,6 +128,7 @@ export {
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
+export { computeConversationFormatCoverageCheck } from './doctor/checks/conversation-coverage.ts';
 export {
   checkSyncConsolidation,
   computePoolBudgetCheck,
@@ -211,6 +210,7 @@ import {
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
+import { computeConversationFormatCoverageCheck } from './doctor/checks/conversation-coverage.ts';
 import {
   checkSyncConsolidation,
   checkCycleFreshness,
@@ -760,6 +760,18 @@ export async function buildChecks(
   // null. Emits NOTHING on machines with no bootstrap state, so ordinary
   // brains keep a clean doctor.
   checks.push(...(await bootstrapDoctorChecks(engine)));
+
+  // 2e. Chat-connector health (D3.2): re-auth-needed / stalled-sync / drift.
+  // Credential-gated + auto_sync-gated — emits a plain "ok" (no nag) on brains
+  // with no connectors or a manual-only user.
+  if (engine) {
+    try {
+      const { connectorsHealthCheck } = await import('./doctor/checks/connectors.ts');
+      checks.push(await connectorsHealthCheck(engine));
+    } catch {
+      // best-effort; a connectors check failure must never break doctor
+    }
+  }
 
   // 3. Half-migrated Minions detection (filesystem-only).
   // If completed.jsonl has any status:"partial" entry with no later
@@ -1373,70 +1385,12 @@ export async function buildChecks(
     }
   }
 
-  // 3d.3 v0.41.13.0 — conversation_format_coverage. Scans up to 200
-  // most-recent conversation-type pages, runs parseConversation in
-  // dry mode, reports per-pattern hit counts + unmatched count. Warn
-  // at >10% unmatched with paste-ready hint pointing at
-  // `gbrain conversation-parser scan <slug>` so the operator can
-  // triage the misses interactively.
+  // 3d.3 v0.41.13.0 — conversation_format_coverage. Peeled to
+  // doctor/checks/conversation-coverage.ts (#4193) so it is unit-testable;
+  // summary-only conversation pages report separately instead of counting
+  // as parser misses. Error handling lives inside the compute function.
   if (engine) {
-    try {
-      const { readConversationBodyForParsing } = await import('../core/conversation-parser/body.ts');
-      const { parseConversation } = await import('../core/conversation-parser/parse.ts');
-      // Single source of truth for the conversation-facts type allowlist (#4135).
-      const allowedTypes = ALLOWED_TYPES;
-      // PageFilters supports singular `type` only; iterate the allowed types
-      // and cap at ~50/each to land at ~200 total max.
-      const sample: import('../core/types.ts').Page[] = [];
-      for (const t of allowedTypes) {
-        const slice = await engine.listPages({ limit: 50, type: t as import('../core/types.ts').PageType });
-        sample.push(...slice);
-      }
-      if (sample.length === 0) {
-        checks.push({
-          name: 'conversation_format_coverage',
-          status: 'ok',
-          message: 'No conversation-type pages — coverage check not applicable',
-        });
-      } else {
-        const hitsByPattern: Record<string, number> = {};
-        let unmatched = 0;
-        for (const page of sample) {
-          const body = await readConversationBodyForParsing(engine, page);
-          const result = parseConversation(body, { page, noPolish: true, noFallback: true });
-          const id = result.matched_pattern_id ?? '_no_match';
-          hitsByPattern[id] = (hitsByPattern[id] ?? 0) + 1;
-          if (result.phase === 'no_match') unmatched++;
-        }
-        const unmatchedPct = (unmatched / sample.length) * 100;
-        const breakdown = Object.entries(hitsByPattern)
-          .sort(([, a], [, b]) => b - a)
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ');
-        if (unmatchedPct > 10) {
-          checks.push({
-            name: 'conversation_format_coverage',
-            status: 'warn',
-            message:
-              `${unmatched}/${sample.length} conversation pages (${unmatchedPct.toFixed(1)}%) match NO built-in pattern. ` +
-              `Breakdown: ${breakdown}. ` +
-              `Investigate: gbrain conversation-parser scan <slug>`,
-          });
-        } else {
-          checks.push({
-            name: 'conversation_format_coverage',
-            status: 'ok',
-            message: `${sample.length} pages: ${breakdown}`,
-          });
-        }
-      }
-    } catch (err) {
-      checks.push({
-        name: 'conversation_format_coverage',
-        status: 'warn',
-        message: `Could not check conversation format coverage: ${(err as Error)?.message ?? String(err)}`,
-      });
-    }
+    checks.push(await computeConversationFormatCoverageCheck(engine));
   }
 
   // 3d.4 v0.41.13.0 — progressive_batch_audit_health. Reads last 7
@@ -1991,75 +1945,49 @@ export async function buildChecks(
   try {
     const version = await engine.getConfig('version');
     schemaVersion = parseInt(version || '0', 10);
+    checks.push({ name: 'schema_version', ...schemaVersionHealth(schemaVersion, LATEST_VERSION) });
+
+    // 6b. Schema columns — gbrain#4421/#4425. The ledger counter alone can
+    // lie: a PgBouncer transaction-mode pooler can swallow an ALTER TABLE
+    // while the migration runner still advances config.version, leaving the
+    // ledger "current" over a physically narrower table. The read-only column
+    // diff below does the same live-column check `gbrain init --migrate-only`
+    // already self-heals with — but a plain diagnostic run never issues DDL.
     if (schemaVersion > LATEST_VERSION) {
-      // Forward skew: another node migrated the shared DB past what this
-      // client knows (multi-node brain, hub + spokes on one Postgres). This
-      // client will read/write tables, columns, and indexes it doesn't know
-      // about — more dangerous than backward skew, which at least blocks on
-      // the next `apply-migrations`. See #2036. Takes precedence over the
-      // column diff below: an ahead DB is a superset of this client's
-      // expected columns, and "upgrade this client" is the real fix.
-      checks.push({
-        name: 'schema_version',
-        status: 'warn',
-        message: `Version ${schemaVersion} is AHEAD of this client's latest known version (${LATEST_VERSION}). ` +
-                 `Another node migrated this DB past what this client knows — upgrade this client before writing.`,
-      });
+      // Forward skew (schemaVersionHealth warns AHEAD above): an ahead DB is
+      // a superset of this client's expected columns — the diff below would
+      // only mislead. "Upgrade this client" is the real fix; skip the diff.
     } else if (schemaVersion >= LATEST_VERSION) {
-      // #4421: the ledger counter alone can lie — a PgBouncer transaction-
-      // mode pooler can swallow an ALTER TABLE while the migration runner
-      // still advances config.version, leaving the ledger "current" over a
-      // physically narrower table. Add a READ-ONLY column diff via
-      // detectMissingColumns (#4425 — the detection half of
-      // schema-verify.ts's verifySchema, no self-heal): when live columns
-      // are missing, downgrade to warn naming them with the migrate-only
-      // re-run hint. Diff failure is best-effort — the ledger ok stands.
-      // Dynamic import is deliberate: the positional source guard in
-      // test/doctor-schema-column-diff.test.ts pins that the diff consult
-      // lives INSIDE this ledger-current branch.
-      let columnDiffWarned = false;
+      // Ledger-current branch. Dynamic import is deliberate: the positional
+      // source guard in test/doctor-schema-column-diff.test.ts pins that the
+      // diff consult lives INSIDE this branch (a behind DB is EXPECTED to
+      // miss columns from unapplied migrations — schema_version's own warn
+      // covers that already, so the diff would only mislead there too).
+      progress.heartbeat('schema_columns');
       try {
         const { detectMissingColumns } = await import('../core/schema-verify.ts');
-        const diff = await detectMissingColumns(engine);
-        if (diff.missing.length > 0) {
-          const sample = diff.missing.slice(0, 5).map(m => `${m.table}.${m.column}`).join(', ');
-          const more = diff.missing.length > 5 ? ` (+${diff.missing.length - 5} more)` : '';
+        const detected = await detectMissingColumns(engine);
+        if (detected.missing.length === 0) {
+          checks.push({ name: 'schema_columns', status: 'ok', message: `${detected.checked} column(s) verified against live schema` });
+        } else {
+          const cols = detected.missing.map(m => `${m.table}.${m.column}`).join(', ');
           checks.push({
-            name: 'schema_version',
+            name: 'schema_columns',
             status: 'warn',
             message:
-              `Version ${schemaVersion} (latest: ${LATEST_VERSION}) but ${diff.missing.length} expected column(s) ` +
-              `are missing from the live schema: ${sample}${more}. The migration ledger advanced past a swallowed ` +
-              `ALTER TABLE (PgBouncer transaction-mode is the usual cause). Fix: gbrain init --migrate-only ` +
-              `(runs the schema self-heal); if it persists, connect directly to Postgres (not the pooler) first.`,
+              `${detected.missing.length} column(s) missing despite schema_version reporting up to date: ${cols}. ` +
+              `The migration ledger advanced past a swallowed ALTER TABLE (PgBouncer transaction-mode is the ` +
+              `usual cause). Fix: gbrain init --migrate-only (runs the schema self-heal); if it persists, ` +
+              `connect directly to Postgres (not the pooler) first.`,
           });
-          columnDiffWarned = true;
         }
-      } catch { /* read-only diff is best-effort; ledger ok stands */ }
-      if (!columnDiffWarned) {
-        checks.push({ name: 'schema_version', status: 'ok', message: `Version ${schemaVersion} (latest: ${LATEST_VERSION})` });
+      } catch {
+        checks.push({ name: 'schema_columns', status: 'warn', message: 'Could not verify live schema columns' });
       }
-    } else if (schemaVersion === 0) {
-      checks.push({
-        name: 'schema_version',
-        status: 'fail',
-        message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
-                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
-      });
-    } else {
-      checks.push({
-        name: 'schema_version',
-        status: 'warn',
-        message: `Version ${schemaVersion}, latest is ${LATEST_VERSION}. Fix: gbrain apply-migrations --yes`,
-      });
     }
   } catch {
     checks.push({ name: 'schema_version', status: 'warn', message: 'Could not check schema version' });
   }
-
-  // Note: the #4421/#4425 live-column drift diff (detectMissingColumns) is
-  // wired INSIDE the schema_version ledger-current branch above — one
-  // column-drift wiring, not a separate check.
 
   // Note: we intentionally DO NOT fail on "schema v7+ but no preferences.json".
   // That's a valid fresh-install state after `gbrain init` — the migration

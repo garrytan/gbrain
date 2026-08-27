@@ -312,6 +312,33 @@ function whichSafe(bin: string): string | null {
   }
 }
 
+/** Optional overrides for the three harness-detection probes.
+ *
+ * Production leaves every field unset, so `resolveDeps` keeps its `Bun.which`
+ * defaults. E2E tests MUST pin them: `Bun.which` resolves against the live
+ * PATH and reads the real password-database HOME, so it ignores a test's
+ * remapped HOME/PATH entirely. Without a pin, an otherwise hermetic test
+ * silently asserts something different depending on which agent CLIs the host
+ * happens to have installed — `claude` is on a developer laptop's PATH but
+ * absent from a GitHub runner, so the claude lane never ran in CI, no
+ * `claude mcp add` was exec'd, and no user-scope settings file was written.
+ */
+export interface HarnessDetectOverrides {
+  claude?: () => boolean;
+  codex?: () => boolean;
+  opencode?: () => boolean;
+}
+
+/** Narrow the overrides to the HarnessDeps keys, omitting absent probes so
+ * resolveDeps' production defaults stay in charge of anything not pinned. */
+export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDeps> {
+  return {
+    ...(o?.claude ? { detectClaude: o.claude } : {}),
+    ...(o?.codex ? { detectCodex: o.codex } : {}),
+    ...(o?.opencode ? { detectOpencode: o.opencode } : {}),
+  };
+}
+
 /** Production mint: open the configured engine just long enough to insert. */
 async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?: string[] }): Promise<MintedLegacyToken> {
   const cfg = loadConfig();

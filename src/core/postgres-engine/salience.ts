@@ -126,6 +126,13 @@ export async function getRecentSalience(deps: PgSalienceDeps, opts: SalienceOpts
     const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
       ? sql`AND p.slug NOT LIKE 'briefings/%'`
       : sql``;
+    // Source scope: array wins over scalar (canonical precedence). Parity with
+    // pglite-engine.getRecentSalience() and listEnrichCandidates().
+    const sourceCondition = opts.sourceIds && opts.sourceIds.length > 0
+      ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
     // v0.29.1: third score term via buildRecencyComponentSql. Default
     // 'flat' = v0.29.0 behavior (1 / (1 + days_old)). 'on' opts into the
     // per-prefix decay map (concepts/ evergreen, daily/ aggressive, etc.).
@@ -159,6 +166,7 @@ export async function getRecentSalience(deps: PgSalienceDeps, opts: SalienceOpts
        WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= ${boundaryIso}::timestamptz
          ${prefixCondition}
          ${excludeBriefings}
+         ${sourceCondition}
        GROUP BY p.id
        ORDER BY score DESC
        LIMIT ${limit}
@@ -254,6 +262,15 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
     const sinceEnd = new Date(sinceDate.getTime() + 86400000);
     const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
 
+    // Source scope (array wins over scalar). Applied to the baseline AND today
+    // windows so the anomaly math stays self-consistent. Parity with
+    // pglite-engine.findAnomalies().
+    const sourceCondition = opts.sourceIds && opts.sourceIds.length > 0
+      ? sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`
+      : opts.sourceId
+        ? sql`AND p.source_id = ${opts.sourceId}`
+        : sql``;
+
     // Tag cohort baseline with day densification + zero-fill (codex C4#6).
     const tagBaseline = await sql`
       WITH days AS (
@@ -267,6 +284,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
         SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
          WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
            AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+           ${sourceCondition}
       ),
       touched AS (
         SELECT t.tag,
@@ -275,6 +293,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
           FROM tags t JOIN pages p ON p.id = t.page_id
          WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
            AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+           ${sourceCondition}
          GROUP BY 1, 2
       )
       SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
@@ -294,6 +313,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
         SELECT DISTINCT p.type FROM pages p
          WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
            AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+           ${sourceCondition}
       ),
       touched AS (
         SELECT p.type,
@@ -302,6 +322,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
           FROM pages p
          WHERE p.updated_at >= ${baselineStart.toISOString()}::timestamptz
            AND p.updated_at <  ${sinceDate.toISOString()}::timestamptz
+           ${sourceCondition}
          GROUP BY 1, 2
       )
       SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
@@ -317,6 +338,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
         FROM tags t JOIN pages p ON p.id = t.page_id
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+         ${sourceCondition}
        GROUP BY 1
     `;
     const typeToday = await sql`
@@ -326,6 +348,7 @@ export async function findAnomalies(deps: PgSalienceDeps, opts: AnomaliesOpts): 
         FROM pages p
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
+         ${sourceCondition}
        GROUP BY 1
     `;
 

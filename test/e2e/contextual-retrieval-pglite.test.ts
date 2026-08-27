@@ -33,6 +33,10 @@ import {
   resetGateway,
 } from '../../src/core/ai/gateway.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../../src/core/chunkers/recursive.ts';
+import { operationsByName } from '../../src/core/operations.ts';
+import type { OperationContext } from '../../src/core/operations.ts';
+import { runReindex } from '../../src/commands/reindex.ts';
+import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 const STUB_DIMS = 1536;
 
@@ -185,5 +189,108 @@ describe('T9 reindex sweep predicate', () => {
       [MARKDOWN_CHUNKER_VERSION],
     );
     expect(rows[0].count).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('per-source CR mode on the import path (#3885)', () => {
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  async function seedSource(id: string, mode: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, contextual_retrieval_mode)
+       VALUES ($1, $1, '{}'::jsonb, $2)
+       ON CONFLICT (id) DO UPDATE SET contextual_retrieval_mode = EXCLUDED.contextual_retrieval_mode`,
+      [id, mode],
+    );
+  }
+
+  async function pageMode(slug: string, sourceId: string): Promise<string | null> {
+    const rows = await engine.executeRaw<{ mode: string | null }>(
+      `SELECT contextual_retrieval_mode AS mode FROM pages WHERE slug = $1 AND source_id = $2`,
+      [slug, sourceId],
+    );
+    return rows[0]?.mode ?? null;
+  }
+
+  function putPageCtx(sourceId: string): OperationContext {
+    return {
+      engine,
+      config: { engine: 'pglite' as const },
+      logger: { info: () => {}, warn: () => {}, error: () => {} },
+      dryRun: false,
+      remote: false,
+      sourceId,
+    };
+  }
+
+  test('importFromContent honors sources.set-cr-mode=none over global title', async () => {
+    const sourceId = 'src-none-import';
+    await seedSource(sourceId, 'none');
+    const slug = 'wiki/concepts/source-none-import';
+    await importFromContent(
+      engine,
+      slug,
+      '---\ntitle: "Source None"\n---\n\nBody that must not wrap.',
+      { sourceId },
+    );
+
+    expect(await pageMode(slug, sourceId)).toBe('none');
+    const wrapped = embedderInputs.flat();
+    expect(wrapped.length).toBeGreaterThan(0);
+    expect(wrapped[0]).not.toContain('<context>');
+  });
+
+  test('put_page (capture write path) honors per-source none', async () => {
+    const sourceId = 'src-none-capture';
+    await seedSource(sourceId, 'none');
+    const slug = 'inbox/source-none-capture';
+    const result = await operationsByName['put_page']!.handler(putPageCtx(sourceId), {
+      slug,
+      content: '---\ntitle: "Capture None"\n---\n\nCaptured body for CR source override.',
+    });
+    expect(['imported', 'created_or_updated']).toContain((result as { status: string }).status);
+    expect(await pageMode(slug, sourceId)).toBe('none');
+    expect(embedderInputs.flat()[0]).not.toContain('<context>');
+  });
+
+  test('reindex --markdown honors per-source none', async () => {
+    const sourceId = 'src-none-reindex';
+    await seedSource(sourceId, 'none');
+    const slug = 'wiki/concepts/source-none-reindex';
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, chunker_version, contextual_retrieval_mode)
+       VALUES ($1, $2, 'concept', 'Reindex None', 'Body that must not wrap after markdown reindex.', 1, NULL)`,
+      [sourceId, slug],
+    );
+
+    const result = await runReindex(engine, ['--markdown', '--json', '--limit', '10']);
+    expect(result.reindexed).toBeGreaterThanOrEqual(1);
+    expect(await pageMode(slug, sourceId)).toBe('none');
+    const wrapped = embedderInputs.flat();
+    expect(wrapped.length).toBeGreaterThan(0);
+    expect(wrapped.every((text) => !text.includes('<context>'))).toBe(true);
+  });
+
+  test('source per_chunk_synopsis beats global conservative (inline demotes to title wrap)', async () => {
+    const sourceId = 'src-synopsis-import';
+    await seedSource(sourceId, 'per_chunk_synopsis');
+    await engine.setConfig('search.mode', 'conservative');
+    try {
+      const slug = 'wiki/concepts/source-synopsis-import';
+      await importFromContent(
+        engine,
+        slug,
+        '---\ntitle: "Source Synopsis"\n---\n\nBody that should wrap at the title tier.',
+        { sourceId },
+      );
+      // Inline import refuses paid synopsis generation; it must still SEE the
+      // source override and land at title instead of global none.
+      expect(await pageMode(slug, sourceId)).toBe('title');
+      expect(embedderInputs.flat()[0]).toContain('<context>Source Synopsis');
+    } finally {
+      await engine.setConfig('search.mode', 'balanced');
+    }
   });
 });

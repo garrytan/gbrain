@@ -640,3 +640,79 @@ export async function dispatchGlobalMaintenance(
   }
   return { dispatched: true, reason: 'stale' };
 }
+
+/**
+ * Opt-in scheduled connector sync (OV#4: default OFF, daily cadence). For each
+ * provider that has a credential AND `connectors.<p>.auto_sync` truthy AND no
+ * `auth_error_at` newer than the credential's `savedAt` (a dead cookie must not
+ * burn job slots), submit a `connector-sync` job when the last sync is older
+ * than `connectors.sync_floor_min` (default 1440). Idempotency-keyed +
+ * maxPending:1 so a slow sync never stacks.
+ */
+export async function maybeDispatchConnectorSyncs(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  opts: { slot: string; timeoutMs: number; jsonMode: boolean; nowMs?: number; emit?: (l: string) => void; log?: (l: string) => void },
+): Promise<{ dispatched: string[] }> {
+  const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
+  const log = opts.log ?? ((line) => console.log(line));
+  const nowMs = opts.nowMs ?? Date.now();
+
+  const { connectorProviderNames } = await import('../core/connectors/registry.ts');
+  const { loadCredential } = await import('../core/connectors/credentials.ts');
+  const {
+    autoSyncKey,
+    authErrorAtKey,
+    lastSyncAtKey,
+    syncFloorMinKey,
+    sourceIdKey,
+    isTruthy,
+    isConnectorSyncStale,
+    DEFAULT_SYNC_FLOOR_MIN,
+  } = await import('../core/connectors/config-keys.ts');
+
+  let floorMin = DEFAULT_SYNC_FLOOR_MIN;
+  const floorCfg = await engine.getConfig(syncFloorMinKey());
+  if (floorCfg) {
+    const n = parseInt(floorCfg, 10);
+    if (Number.isFinite(n) && n >= 1) floorMin = n;
+  }
+  const sourceId = (await engine.getConfig(sourceIdKey())) || 'default';
+  const dispatched: string[] = [];
+
+  for (const provider of connectorProviderNames()) {
+    const cred = loadCredential(provider);
+    if (!cred) continue; // no credential → nothing to sync
+    if (!isTruthy(await engine.getConfig(autoSyncKey(provider)))) continue; // opt-in only
+    // A dead cookie stamps auth_error_at; skip until the user re-auths (a fresh
+    // credential's savedAt will be newer than the stale error).
+    const authErrorAt = await engine.getConfig(authErrorAtKey(provider));
+    if (authErrorAt && cred.savedAt && authErrorAt > cred.savedAt) continue;
+
+    const lastSyncAt = await engine.getConfig(lastSyncAtKey(provider));
+    if (!isConnectorSyncStale(lastSyncAt, nowMs, floorMin)) continue;
+
+    const job = await queue.add(
+      'connector-sync',
+      { provider, sourceId },
+      {
+        queue: 'default',
+        idempotency_key: `connector-sync:${provider}:${opts.slot}`,
+        max_attempts: 2,
+        timeout_ms: opts.timeoutMs,
+        maxPending: 1,
+      },
+    );
+    if (job.coalesced) {
+      if (!opts.jsonMode) log(`[dispatch] coalesced connector-sync ${provider} (already in flight)`);
+      continue;
+    }
+    dispatched.push(provider);
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'connector_sync', provider, slot: opts.slot }));
+    } else {
+      log(`[dispatch] job #${job.id} connector-sync ${provider}`);
+    }
+  }
+  return { dispatched };
+}

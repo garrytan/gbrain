@@ -10,6 +10,10 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.maxContext).toBe(200000);
   });
 
+  it('uses model-specific recipe context metadata when declared', () => {
+    expect(getProviderCapabilities('anthropic:claude-opus-4-7').maxContext).toBe(1_000_000);
+  });
+
   it('returns capabilities for OpenAI (automatic prefix caching counts)', () => {
     const caps = getProviderCapabilities('openai:gpt-5.2');
     expect(caps.supportsToolCalling).toBe(true);

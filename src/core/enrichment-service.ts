@@ -108,7 +108,9 @@ export async function enrichEntity(
   request: EnrichmentRequest,
   opts?: EnrichmentTrustOptions,
 ): Promise<EnrichmentResult> {
-  const slug = slugifyEntity(request.entityName, request.entityType);
+  const candidateSlug = slugifyEntity(request.entityName, request.entityType);
+  const sourceId = opts?.sourceId ?? 'default';
+  const slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
   const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;

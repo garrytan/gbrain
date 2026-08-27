@@ -61,7 +61,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
 }
 
 // CLI-only commands that bypass the operation layer
-export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
+export const CLI_ONLY = new Set(['init', 'reinit-pglite', 'pglite-repair', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'extract-conversation-facts', 'enrich', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'maintain', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex', 'reindex-code', 'reindex-frontmatter', 'code-callers', 'code-callees', 'reconcile-links', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror', 'takes', 'think', 'salience', 'anomalies', 'calibration', 'transcripts', 'models', 'remote', 'recall', 'forget', 'edges-backfill', 'cache', 'ze-switch', 'retrieval-upgrade', 'founder', 'brainstorm', 'lsd', 'schema', 'capture', 'onboard', 'conversation-parser', 'status', 'connect', 'connectors', 'skillopt', 'quarantine', 'self-upgrade', 'protocol', 'advisor', 'watch', 'reindex-search-vector', 'pages', 'bench', 'backfill',
   // v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep):
   // full handler at `case 'notability-eval'` but never dispatchable.
   'notability-eval',
@@ -103,6 +103,9 @@ const CLI_ONLY_SELF_HELP = new Set([
   'models',
   'cache',
   'brainstorm', 'lsd',
+  // connectors ships its own printHelp (commands/connectors/index.ts) with the
+  // per-subcommand usage; keep the generic short-circuit from hiding it.
+  'connectors',
   // v0.41.20.0 skillopt's detailed HELP constant lives in
   // src/core/skillopt/help.ts; --help routes there via the dispatcher.
   'skillopt',
@@ -193,6 +196,17 @@ const CLI_ONLY_SELF_HELP = new Set([
   // ZE interim cleanup: the retired ze-switch shim ships truthful help
   // (sunset refusal + canonical migration command); the generic stub hid it.
   'ze-switch',
+  // `gbrain takes --help` printed the generic one-line stub, so the nine
+  // subcommands (add/update/supersede/resolve/scorecard/calibration/revisit/
+  // extract/search) were undiscoverable from the CLI — the detailed usage
+  // block in runTakes (src/commands/takes.ts) was unreachable. Same holdout
+  // pattern as `capture`, `sync`, and `schema` above.
+  'takes',
+  // #4003: auth ships its own detailed usage (token/OAuth-client commands +
+  // flags) in its `default:` switch case, hit whenever the subcommand isn't
+  // one of create/list/revoke/etc — including --help. Without this entry the
+  // generic short-circuit fires first and that usage block is dead code.
+  'auth',
   // #3686 (the #578 residue): eval / storage / reindex each ship real usage —
   // eval's printHelp (15 subcommands), storage's status usage, reindex's
   // target-flag usage — that the generic one-line stub was hiding. Their
@@ -232,6 +246,9 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, () => Promise<(engine: never, arg
   // configured, matching the reader who runs `sources --help` because they
   // have no brain yet.
   sources: async () => (await import('./commands/sources.ts')).runSources as never,
+  // runConnectors's --help / no-subcommand / `providers` / `logout` branches
+  // never touch `engine` — safe engine-free for the reader with no brain yet.
+  connectors: async () => (await import('./commands/connectors/index.ts')).runConnectors as never,
   // runAgent accepts BrainEngine | null; help (incl. `register --help`) is
   // answered before any engine or job-queue work (cathedral-6).
   agent: async () => (await import('./commands/agent.ts')).runAgent as never,
@@ -1892,6 +1909,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   storage: 'storage operates on the local repo on disk. Run on the host.',
   takes: 'takes list/search/scorecard/calibration + add/update/resolve/supersede route to the brain host automatically (takes_* MCP ops). This subcommand (extract/revisit) is host-bound: run it on the host machine.',
   sources: 'sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x. For now: use `sources_list` / `sources_status` MCP tools, or run on the host.',
+  connectors: 'connectors manage provider session credentials in ~/.gbrain/connectors and sync your chat history on the host. Credentials never cross the wire — run on the host machine.',
   sweep: 'sweep runs the serve-resident maintenance passes against the LOCAL engine. Run it on the host (the serve process also runs it automatically).',
   'compile-context': 'compile-context compiles from the local brain; run it on the host install.',
   // v0.32 audit additions
@@ -2575,6 +2593,16 @@ async function handleCliOnly(command: string, args: string[]) {
     return;
   }
 
+  // Same pattern for `takes --help`. 'takes' is now in CLI_ONLY_SELF_HELP so
+  // the generic stub stays out of the way; this pre-engine-bind branch exposes
+  // the subcommand usage block without a configured brain. runTakes' help path
+  // returns before touching the engine.
+  if (command === 'takes' && (args.includes('--help') || args.includes('-h'))) {
+    const { runTakes } = await import('./commands/takes.ts');
+    await runTakes(null as never, args);
+    return;
+  }
+
   // #3686 (the #578 residue): `eval --help` reaches eval.ts's printHelp
   // engine-free. Placed AFTER the sub-owned no-DB routes above (brainbench /
   // longmemeval / run-all / cross-modal / chronicle / conversation-parser /
@@ -3169,6 +3197,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runSources(engine, args);
         break;
       }
+      case 'connectors': {
+        const { runConnectors } = await import('./commands/connectors/index.ts');
+        await runConnectors(engine, args);
+        break;
+      }
       case 'pages': {
         // v0.26.5: page-level operator commands (purge-deleted escape hatch).
         const { runPages } = await import('./commands/pages.ts');
@@ -3692,6 +3725,9 @@ ADMIN
     --public-url URL                 Public issuer URL (required behind proxy/tunnel)
   connect <mcp-url> --token <t>      Wire Claude Code to a remote gbrain (bearer token)
         [--install] [--json]         Print the paste-ready command, or --install to run it
+  auth <create|list|revoke|...>      Manage legacy tokens + OAuth 2.1 clients
+  auth --help                        Full subcommand list (register-client,
+                                     rescope-client, revoke-client, permissions, test, ...)
   watch [--json]                     Push-based context: pipe conversation turns in,
                                      volunteered brain pages stream out (#2095)
   call <tool> '<json>'               Raw tool invocation

@@ -2,6 +2,137 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.46.32.0] - 2026-08-26
+
+**The community train: 54 contributor PRs absorbed.** Wave K triaged all 141
+open PRs against the live codebase, verified each fix still real at HEAD, and
+absorbed the 54 that complement the v0.46.28.0 megawave — one commit per PR,
+contributor authorship preserved via Co-authored-by trailers, fixups applied
+where master had drifted. 32 community authors credited. This entry lists what
+lands NET-NEW on top of v0.46.29.0–v0.46.31.0: #3617, #4400, #4411, #4414,
+#4425, #4453 and issues #3729/#4416/#2036 also shipped independently in
+v0.46.29.0 — this wave's implementations of those were reconciled at merge and
+are not re-credited here.
+
+### Credits
+Absorbed with thanks from: @Masashi-Ono0611 (13 incl. #4459 whose
+implementation was superseded mid-flight by the megawave's #3885 fix — its
+e2e tests ship here), @avs-io (5), @calebhicks (4), @frxiaobei,
+@alexey-metaengage, @harjothkhara (2 each), and 26 more contributors — full
+per-PR attribution in the release PR body and each commit's trailers.
+
+
+### Added
+- Semantic takes retrieval: `gbrain takes embed` populates take embeddings and
+  `think` gains a vector retrieval arm alongside keyword takes search (#3776).
+  Migration v142 resizes `takes.embedding` to the configured embedding
+  dimension; any pre-existing take vectors (including manually embedded ones)
+  are cleared by design and repopulate on the next `gbrain takes embed`.
+
+**`gbrain smoke-test` no longer starts a surprise shell-enabled worker.** The
+worker check now asks the native supervisor status surface, which understands
+brain-scoped PID files and the queue's live database lock. A healthy managed
+worker therefore passes without creating a second unmanaged process.
+
+### Changed
+- INTENTIONAL CONTRACT CHANGE: worker repair is no longer auto-fixed. A
+  missing worker now produces an explicit
+  `gbrain jobs supervisor start --detach` repair hint instead of silently
+  launching `jobs work` with shell jobs enabled, and the smoke test exits 1
+  when nothing manages workers.
+
+### Fixed
+- `gbrain takes --help` and `gbrain auth --help` print full subcommand usage
+  without an engine (#3780, #4083); `think --take` records a take end-to-end
+  instead of silently no-oping (#4469, fixes #2556).
+- Bun 1.3.10 warm-transpiler-cache poisoning of `test/doctor.test.ts` (59-test
+  cascade on any warm re-run): sync `require()` sites converted to
+  `await import`. (The search cache key is unchanged in this release — this
+  wave's keyword-fallback fold was already covered by v0.46.29.0's re-key.)
+
+- Page ingest no longer aborts an entire document (or batch run) when the body
+  or a chunk contains a raw NUL byte or lone UTF-16 surrogate: pages body
+  columns and chunk_text are sanitized at write time in both engines, the same
+  policy as links/timeline/takes free-text. (#3998)
+- A live supervisor plus a legacy worker PID is reported as a duplicate
+  topology that requires operator review.
+- Smoke-test worker detection is hermetically covered without touching live
+  processes or global PID files.
+- Doctor health-score extraction uses POSIX `sed` instead of GNU-only
+  `grep -P`, eliminating the macOS warning and `?/100` fallback.
+- Page-retrieval metrics can no longer exceed their mathematical bounds when
+  search returns multiple chunks from one page: Precision@k, Recall@k, MRR,
+  nDCG@k, NamedThingBench, and the qrels correctness gate now share one
+  unique-page ranking primitive that keeps only the first/best occurrence of
+  each ranked page before any cutoff. Duplicate non-relevant chunks no longer
+  consume page-level ranks, and qrels ground-truth duplicates count as one
+  relevant page. Historical baselines that included duplicate page hits may
+  decrease and should be reviewed before changing quality thresholds. (#4184)
+
+### To take advantage of v0.46.32.0
+
+```bash
+gbrain upgrade
+gbrain apply-migrations --yes   # v142 resizes takes.embedding to your configured dimension
+gbrain takes embed              # repopulate take vectors (v142 clears them by design)
+gbrain doctor                   # verify
+```
+
+## [0.46.31.0] - 2026-08-25
+
+Chat connectors: connect a ChatGPT or Claude account and sync its conversation
+history into the brain, incrementally and on an opt-in schedule. This is the
+LIVE front end to the export-file lane the conversation-archive skill already
+covers — the fetch replaces the manual download, and everything downstream
+(secret redaction, per-provider slugging, long-session splitting, four-layer
+idempotency) is the same `gbrain transcripts ingest` pipeline. Providers are
+leaf modules on one registry, so Claude landed alongside ChatGPT and Perplexity
+is a filed next step.
+
+### Added
+- **`gbrain connectors`** — `auth` (cookie paste-in via stdin, so the secret
+  never lands in argv; a best-effort `--try-oauth` PKCE lane behind a flag),
+  `sync` (`--dry-run` / `--limit N` / `--full` / `--all` / `--background`),
+  `status`, `logout`, and `providers`. Credentials live file-plane at
+  `~/.gbrain/connectors/<provider>.json` (0600, dir 0700), are resolved
+  env-above-file with provenance, and never touch the DB, `sources.config`, the
+  config planes, or any MCP payload. The `connectors_status` / `connector_sync`
+  ops are local-only.
+- **Incremental sync** — a durable per-provider watermark in the config table
+  plus a trailing-window gap-heal, so a run fetches only what changed and an
+  edited-just-behind-the-watermark conversation still heals. The watermark
+  advances only on a fully clean run, so a partial run never leaves a silent
+  gap. Re-imports are free (content-hash idempotency).
+- **Opt-in automation** — a `connector-sync` minion job dispatched from the
+  autopilot tick when `connectors.<provider>.auto_sync` is enabled (daily by
+  default, credential- and auth-error-gated), plus a `gbrain doctor` check that
+  surfaces re-auth-needed / stalled-sync / provider-drift. `gbrain autopilot
+  --install` remains the harness-agnostic scheduler; a plain host cron line
+  works too.
+- **`chat-connectors` skill** + `docs/guides/chat-connectors.md` covering setup,
+  automation lanes, the security posture, and the fallback path when a provider
+  blocks server-side fetch.
+
+### Notes
+- These providers use each host's own web session, so a bot/anti-automation
+  challenge can block server-side fetch; the connector reports that honestly and
+  points you at the official export lane, which always works. Keep the cadence
+  polite (daily default) — you are automating requests on your own account.
+
+### To take advantage of v0.46.31.0
+
+**Say to your agent:** *"Connect my chatgpt account and pull my whole history into
+the brain"* — *"Connect my claude account"* — *"Keep my conversations synced
+automatically."* Your agent walks the cookie capture, the dry-run → sample → full
+sequence, and the opt-in schedule.
+
+Or by hand:
+```bash
+gbrain upgrade                                  # no migration — additive feature
+gbrain connectors auth chatgpt --cookie -       # paste your Cookie header, Ctrl-D
+gbrain connectors sync chatgpt --dry-run        # then --limit 5, then --full
+```
+
 ## [0.46.30.0] - 2026-08-25
 
 Privacy hardening pass: the read-side privacy boundary is now guarded by a

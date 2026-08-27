@@ -45,6 +45,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
+import { resolveChatContextTokens } from '../ai/model-resolver.ts';
 import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
@@ -79,25 +80,6 @@ import { PAGE_SLUG_SEG } from '../cjk.ts';
 const SUMMARY_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'u');
 
 // ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
-
-/**
- * Anthropic model id → input context window (tokens).
- * Unknown id (non-Anthropic alias, custom string) → safe 200K-token fallback
- * via `computeChunkCharBudget`. Codex finding #4: `resolveModel()` does not
- * canonicalize to Anthropic-only; this map keys on the exact strings the
- * resolver returns for known Anthropic aliases.
- */
-const MODEL_CONTEXT_TOKENS: Record<string, number> = {
-  'claude-fable-5': 1_000_000,
-  'claude-opus-5': 1_000_000,
-  'claude-sonnet-5': 1_000_000,
-  'claude-opus-4-8': 1_000_000,
-  'claude-opus-4-7': 1_000_000,
-  'claude-opus-4-6': 1_000_000,
-  'claude-sonnet-4-6': 200_000,
-  'claude-sonnet-4-5': 200_000,
-  'claude-haiku-4-5-20251001': 200_000,
-};
 
 /** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */
 export const CHARS_PER_TOKEN = 3.5;
@@ -148,8 +130,8 @@ const DEFAULT_MAX_TURNS = 16;
  *
  * Resolution:
  *   - configMaxPromptTokens (already floored at MIN_PROMPT_TOKENS) wins when set.
- *   - Else the model's MODEL_CONTEXT_TOKENS entry × HEADROOM_RATIO.
- *   - Else (non-Anthropic alias / custom id) UNKNOWN_MODEL_BUDGET_TOKENS, with
+ *   - Else the official recipe/model resolver's context declaration × HEADROOM_RATIO.
+ *   - Else (unqualified custom id / unknown provider / undeclared recipe) UNKNOWN_MODEL_BUDGET_TOKENS, with
  *     a once-per-process stderr warning.
  *
  * D7 scope: this bounds the INITIAL prompt size only. Tool-loop turn-N
@@ -163,14 +145,22 @@ export function computeChunkCharBudget(
   if (configMaxPromptTokens !== null) {
     return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
   }
-  // Lookup keyed on the bare model name (after prefix strip), mirroring
-  // ANTHROPIC_OUTPUT_CAPS in brainstorm/judges.ts: resolveModel returns
-  // provider-prefixed strings when TIER_DEFAULTS / config values carry a
-  // prefix (the current tier defaults all do), so a raw keyed lookup sent
-  // every tier-resolved brain to the unknown-model fallback — a 5x budget
-  // cut on 1M-context models.
-  const bare = splitProviderModelId(model).model || model;
-  const ctx = MODEL_CONTEXT_TOKENS[bare];
+  // Bare Claude ids are the one legacy shape resolveModel may still return;
+  // all other bare/custom ids remain unknown rather than guessing a provider.
+  const split = splitProviderModelId(model);
+  const qualified = split.provider
+    ? model
+    : model.startsWith('claude-')
+      ? normalizeModelId(model)
+      : null;
+  let ctx: number | undefined;
+  if (qualified) {
+    try {
+      ctx = resolveChatContextTokens(qualified);
+    } catch (err) {
+      if (!(err instanceof AIConfigError)) throw err;
+    }
+  }
   if (ctx === undefined) {
     warnUnknownModelOnce(model);
     return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
@@ -183,7 +173,7 @@ function warnUnknownModelOnce(model: string): void {
   if (_unknownModelWarned.has(model)) return;
   _unknownModelWarned.add(model);
   process.stderr.write(
-    `[dream] model "${model}" is not in MODEL_CONTEXT_TOKENS; ` +
+    `[dream] model "${model}" has no declared chat context window; ` +
     `using ${UNKNOWN_MODEL_BUDGET_TOKENS}-token fallback budget. ` +
     `Set dream.synthesize.max_prompt_tokens to override.\n`,
   );

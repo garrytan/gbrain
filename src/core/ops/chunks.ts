@@ -7,7 +7,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { federatedSearchScope, sourceScopeOpts } from './context.ts';
+import { federatedSearchScope, parseSourceIdParam, sourceScopeOpts } from './context.ts';
 import {
   findPrivateOnlySlugs,
   resolveExcludePrivatePages,
@@ -21,13 +21,20 @@ const resolve_slugs: Operation = {
   description: 'Fuzzy-resolve a partial slug to matching page slugs',
   params: {
     partial: { type: 'string', required: true, description: "Partial slug or title text to match, e.g. 'alice-ex' or 'meeting notes'. This is the search text param — there is no `text` param." },
+    source_id: {
+      type: 'string',
+      description:
+        "Scope resolution to a single source. Defaults to OperationContext.sourceId; when unset, an unqualified resolve spans every federated source (matching search/get_page). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
   },
   handler: async (ctx, p) => {
     // #3242: was fully UNSCOPED — the one read that leaked every source's
     // slugs to any caller (the reporter's "resolve_slugs sees them but
     // get_page doesn't" matrix). Route through the same visibility set as
-    // get_page/search: grant > federated set > scalar source.
-    const scope = federatedSearchScope(ctx);
+    // get_page/search: grant > federated set > scalar source. An explicit
+    // per-call source_id narrows through resolveRequestedScope.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'resolve_slugs', { allowAll: true });
+    const scope = federatedSearchScope(ctx, sourceIdParam);
     const candidates = await ctx.engine.resolveSlugs(p.partial as string, scope);
     // #4352 remediation: fuzzy resolution must not enumerate private slugs to
     // an untrusted caller — same gate as get_page's candidate filter (trusted

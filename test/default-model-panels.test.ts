@@ -46,3 +46,39 @@ describe('takes-quality DEFAULT_MODEL_PANEL ↔ recipe consistency', () => {
     expect(providers.size).toBe(3);
   });
 });
+
+/**
+ * The guard above only bites while recipes list LIVE models, so the recipe
+ * lists need a guard of their own. Every id here answered 404 on a real
+ * `generateContent` call; re-adding one to quiet a failing default would put
+ * the panel guard back to sleep, which is how gemini-2.0-flash came to
+ * replace the retired 1.5-pro and then sit dead in its place.
+ */
+describe('google recipe lists no retired model', () => {
+  const RETIRED = [
+    'gemini-1.5-pro',
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-exp',
+  ];
+
+  test('neither the chat nor the expansion touchpoint offers a dead model', () => {
+    const google = getRecipe('google');
+    expect(google).toBeDefined();
+    const offered = [
+      ...(google!.touchpoints.chat?.models ?? []),
+      ...(google!.touchpoints.expansion?.models ?? []),
+    ];
+    expect(offered.length).toBeGreaterThan(0);
+    for (const dead of RETIRED) {
+      expect(offered, `"${dead}" is retired and answers 404`).not.toContain(dead);
+    }
+  });
+
+  test('every model the google recipe offers is priced', () => {
+    const google = getRecipe('google')!;
+    for (const model of google.touchpoints.chat?.models ?? []) {
+      expect(canonicalLookup(`google:${model}`), `google:${model} unpriced`).toBeDefined();
+    }
+  });
+});

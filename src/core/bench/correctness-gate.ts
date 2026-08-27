@@ -18,6 +18,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { dedupeRankedKeys } from '../eval/ranked-docs.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import {
   computeExpectedTop1Hit,
@@ -70,9 +71,9 @@ export interface CorrectnessResult {
   per_query: PerQueryResult[];
 }
 
-/** Build the canonical, insertion-ordered page-key set for a SearchResult-like array. */
-function toRefKeySet(results: Array<{ source_id?: string; slug: string }>): Set<string> {
-  return new Set(results.map(r => makeRef(r.source_id ?? 'default', r.slug)));
+/** Build unique canonical `${source_id}::${slug}` keys in first/best rank order. */
+function toRankedRefKeys(results: Array<{ source_id?: string; slug: string }>): string[] {
+  return dedupeRankedKeys(results.map(r => makeRef(r.source_id ?? 'default', r.slug)));
 }
 
 async function runOneQuery(
@@ -84,7 +85,7 @@ async function runOneQuery(
   let retrieved: string[];
   try {
     const raw = await searchFn(engine, entry.query, { limit: k });
-    retrieved = [...toRefKeySet(raw)];
+    retrieved = toRankedRefKeys(raw);
   } catch (err) {
     return {
       query_id: entry.query_id,

@@ -9,6 +9,7 @@
  */
 
 import type { Operation } from './contract.ts';
+import { sourceScopeOpts } from './context.ts';
 import {
   GET_RECENT_SALIENCE_DESCRIPTION,
   FIND_ANOMALIES_DESCRIPTION,
@@ -49,16 +50,24 @@ const get_recent_salience: Operation = {
   },
   handler: async (ctx, p) => {
     const recencyBias = p.recency_bias === 'on' ? 'on' : 'flat';
+    // Scope by the caller's source (canonical sourceScopeOpts ladder: federated
+    // array > scalar > nothing), matching find_orphans/find_experts. Pre-fix
+    // this op returned brain-wide salience regardless of a source-bound OAuth
+    // client's grant — a read leak in the v0.34.1 (#861) source-isolation class
+    // that the v0.29 salience/anomaly batch missed. Trusted local callers
+    // (ctx.remote === false) still get the empty scope = full brain.
     const rows = await ctx.engine.getRecentSalience({
       days: typeof p.days === 'number' ? p.days : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       slugPrefix: typeof p.slugPrefix === 'string' ? p.slugPrefix : undefined,
       recency_bias: recencyBias,
+      ...sourceScopeOpts(ctx),
     });
     // A `visibility: private` page's slug/title/metadata must not reach
     // remote readers through the salience list (same read-leak class as the
-    // delta page arm). The salience read is unscoped, so the private check
-    // spans the same span (empty scope).
+    // delta page arm). The salience read is source-scoped above; the private
+    // probe deliberately keeps the EMPTY scope — a broader privacy check can
+    // only remove more rows (fail-closed), never leak, so don't narrow it.
     return dropPrivateOnlyRows(ctx.engine, ctx.remote, rows, r => r.slug, {});
   },
   // hidden: 'salience' is in CLI_ONLY (src/cli.ts) — runSalience owns the CLI
@@ -85,10 +94,16 @@ const find_anomalies: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    // Scope by the caller's source (same v0.34.1 #861 source-isolation class as
+    // get_recent_salience above — the v0.29 batch missed both). Applied to the
+    // baseline AND today windows inside the engine so the anomaly math stays
+    // self-consistent. Trusted local callers (ctx.remote === false) get the
+    // empty scope = full brain.
     const anomalies = await ctx.engine.findAnomalies({
       since: typeof p.since === 'string' ? p.since : undefined,
       lookback_days: typeof p.lookback_days === 'number' ? p.lookback_days : undefined,
       sigma: typeof p.sigma === 'number' ? p.sigma : undefined,
+      ...sourceScopeOpts(ctx),
     });
     // AnomalyResult.page_slugs can name `visibility: private` pages — a
     // private slug is still page metadata a remote reader must not see.
@@ -110,7 +125,9 @@ const find_anomalies: Operation = {
     // is ALL private is dropped wholly even if uncapped world pages drove
     // it (fails closed toward confidentiality); baseline_mean/stddev remain
     // private-inclusive (world-only cohort aggregation is the deferred
-    // source-scope/row-grain TODO).
+    // row-grain TODO — the source-scope half is now discharged: both the
+    // baseline and today windows are source-scoped in the engine via
+    // sourceScopeOpts above).
     // includeDeleted: the anomaly queries have no deleted_at predicate, so
     // a soft-deleted private page must still count as private-only.
     if (await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {

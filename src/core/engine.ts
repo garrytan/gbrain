@@ -326,13 +326,8 @@ export interface TakeHit {
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 
-/** v0.28 stale-takes row (mirrors StaleChunkRow shape). Embedding column intentionally omitted. */
-export interface StaleTakeRow {
-  take_id: number;
-  page_slug: string;
-  row_num: number;
-  claim: string;
-}
+import type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
+export type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
@@ -576,6 +571,8 @@ export interface NewFact {
 export interface FactListOpts {
   /** Hide expired_at IS NOT NULL rows. Default true. */
   activeOnly?: boolean;
+  /** Return only facts where consolidated_at IS NULL. Default false. */
+  unconsolidatedOnly?: boolean;
   limit?: number;
   offset?: number;
   /** Restrict to specific kinds. Default: all kinds. */
@@ -649,7 +646,11 @@ export interface TrajectoryOpts {
   sourceId?: string;
   /** Federated array scope (mutually exclusive with sourceId; the array wins when set). */
   sourceIds?: string[];
-  /** When true, filters to visibility='world' only. Set by MCP layer from ctx.remote. */
+  /**
+   * Filters to visibility='world' unless strictly `false`. FAIL-CLOSED: an
+   * omitted flag means world-only, so trusted local callers must pass
+   * `remote: false` explicitly.
+   */
   remote?: boolean;
   /** Metric filter. When set, only facts with this canonical metric label participate. */
   metric?: string;
@@ -1723,6 +1724,9 @@ export interface BrainEngine {
    */
   addTakesBatch(rows: TakeBatchInput[], opts?: BatchOpts): Promise<number>;
 
+  /** Persist embeddings for active take rows; inactive rows are ignored. */
+  updateTakeEmbeddings(rows: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number>;
+
   /** List takes filtered by holder/kind/active/etc. Resolves page_slug via JOIN. */
   listTakes(opts?: TakesListOpts): Promise<Take[]>;
 
@@ -2322,6 +2326,20 @@ export interface BrainEngine {
    * Does NOT support glob/regex on purpose — the caller knows the prefix.
    */
   listConfigKeys(prefix: string): Promise<string[]>;
+  /**
+   * Read the whole config table in one round trip, as a key -> value map.
+   *
+   * `loadConfigWithEngine()` needs ~44 config keys on every connect. Read one
+   * key at a time that is 44 round trips, which costs nothing on PGLite and
+   * dominates the wall clock on a hosted Postgres: `gbrain stats` against a
+   * Supabase brain spent seconds on reads the server answered in under 3ms
+   * total. The config table is a handful of rows, so fetching all of it is
+   * cheaper than fetching any meaningful subset of it.
+   *
+   * Callers that need a single key still use getConfig(). This is for the
+   * bulk-read path only.
+   */
+  getAllConfig(): Promise<Record<string, string>>;
 
   // Migration support
   runMigration(version: number, sql: string): Promise<void>;

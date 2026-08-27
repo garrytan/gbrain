@@ -99,12 +99,11 @@ export async function runPhaseConsolidate(
       try { await opts.yieldDuringPhase(); } catch { /* keepalive errors non-fatal */ }
     }
 
-    const facts = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
+    const unconsolidated = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
       activeOnly: true,
+      unconsolidatedOnly: true,
       limit: 100,
     });
-    // Re-filter to unconsolidated since listFactsByEntity returns all active.
-    const unconsolidated = facts.filter(f => f.consolidated_at == null);
     if (unconsolidated.length < minPerBucket) {
       bucketsSkipped += 1;
       continue;

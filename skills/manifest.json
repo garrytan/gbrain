@@ -10,6 +10,11 @@
       "description": "Route content to specialized ingestion skills. Detects input type and delegates."
     },
     {
+      "name": "chat-connectors",
+      "path": "chat-connectors/SKILL.md",
+      "description": "Connect a ChatGPT or Claude account and sync its conversation history into the brain incrementally, on a schedule. Live account lane (export files + retrieval live in conversation-archive)."
+    },
+    {
       "name": "query",
       "path": "query/SKILL.md",
       "description": "Answer questions using 3-layer search, synthesis, and citation propagation"

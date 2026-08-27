@@ -230,6 +230,49 @@ describe('context-engine assemble() — Retrieval Reflex integration', () => {
     });
   });
 
+  test('turn delivered via `prompt` with empty `messages` still fires the reflex (codex-app-server path)', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-prompt',
+        resolveEntities: (candidates, opts) =>
+          resolveEntitiesToPointers(engine, 'default', candidates, opts),
+      });
+      // Runtimes like the codex-app-server (2026.7.x) deliver the current turn
+      // via `prompt` and leave `messages` empty. The reflex must still see it.
+      const res = await ce.assemble({
+        sessionId: 's-prompt',
+        messages: [],
+        prompt: 'what do you think about Alice Example?',
+      });
+      expect(res.systemPromptAddition).toContain('Brain pages mentioned this turn');
+      expect(res.systemPromptAddition).toContain('people/alice-example');
+    });
+  });
+
+  test('`prompt` is ignored when `messages` is non-empty (no double-count, back-compat)', async () => {
+    await withEnv(REFLEX_ON, async () => {
+      await seed('people/alice-example', 'Alice Example', 'Alice is a founder.');
+      const seen: string[] = [];
+      const ce = createGBrainContextEngine({
+        workspaceDir: '/tmp/rr-test-ws-prompt-ignored',
+        resolveEntities: (candidates, opts) => {
+          seen.push(...candidates.map((c) => c.query));
+          return resolveEntitiesToPointers(engine, 'default', candidates, opts);
+        },
+      });
+      // `messages` carries the real turn; `prompt` names a DIFFERENT entity that
+      // must never reach the resolver whenever `messages` is non-empty.
+      const res = await ce.assemble({
+        sessionId: 's-prompt-ignored',
+        messages: [{ role: 'user', content: 'what do you think about Alice Example?' }],
+        prompt: 'tell me about Bob Nonexistent',
+      });
+      expect(res.systemPromptAddition).toContain('people/alice-example');
+      expect(seen.join(' ')).not.toContain('Bob Nonexistent');
+    });
+  });
+
   test('no resolver available (PGLite, no serve/host) → no throw, live context still present', async () => {
     await withEnv(REFLEX_ON, async () => {
       const ce = createGBrainContextEngine({ workspaceDir: '/tmp/rr-test-ws-2' });

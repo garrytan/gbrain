@@ -42,8 +42,11 @@ const SUPPORTED_MODELS = [
   'anthropic:claude-sonnet-5',
   'anthropic:claude-sonnet-4-6',
   'anthropic:claude-haiku-4-5',
-  // gemini-1.5-pro was retired by Google (#3510); gemini-2.0-flash replaces
-  // it in DEFAULT_MODEL_PANEL. `gemini-2-flash` stays as the legacy alias.
+  // gemini-2.5-flash holds the DEFAULT_MODEL_PANEL slot; gemini-1.5-pro
+  // (#3510) and the gemini-2.0 family before it were retired by Google. The
+  // retired ids stay listed so a `--models` run over historical results still
+  // budget-gates, but they are no longer reachable defaults.
+  'google:gemini-2.5-flash',
   'google:gemini-2.0-flash',
   'google:gemini-2-flash',
 ] as const;

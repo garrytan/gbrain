@@ -80,6 +80,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
   [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
   [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
+- **Bring in your chat history:** `gbrain transcripts ingest` imports a
+  downloaded ChatGPT / Claude export (or agent session logs); `gbrain connectors`
+  connects the account and syncs new conversations live, incrementally and on an
+  opt-in schedule (cookie/OAuth credentials stay on your machine, 0600). Full
+  guide: [`docs/guides/chat-connectors.md`](./docs/guides/chat-connectors.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
@@ -303,6 +308,7 @@ detail on demand.)
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
 | checkpoint compaction / compiled context files (`gbrain compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |
+| chat connectors (live ChatGPT/Claude history sync — `gbrain connectors`) | `docs/guides/chat-connectors.md` + the `src/core/connectors/*` entries in `KEY_FILES.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |
 | memory verbs / MCP tool surface (`--surface`) / conformance | `docs/protocol/MEMORY_VERBS_v1.md` + the `verbs*`/`surface.ts`/`protocol.ts` entries in `KEY_FILES.md` |
@@ -517,9 +523,10 @@ filed for held-out corpus growth, cross-vendor verification, hierarchical
 area-of-areas, embedding-based pre-router, and the run-1 vs run-2
 prompt-design ablation methodology.
 
-**Operational health (v0.19.1):** smoke-test (8 post-restart health checks with auto-fix
-for Bun, CLI, DB, worker, Zod CJS, gateway, API key, brain repo; user-extensible via
-`~/.gbrain/smoke-tests.d/*.sh`).
+**Operational health (v0.19.1):** smoke-test (8 post-restart health checks; bounded
+auto-fix for Bun, CLI, and Zod CJS; read-only worker topology via native supervisor
+status with duplicate detection; DB, gateway, API key, brain repo; user-extensible
+via `~/.gbrain/smoke-tests.d/*.sh`).
 
 **Conventions:** `skills/conventions/` has cross-cutting rules (quality, brain-first,
 model-routing, test-before-bulk, cross-modal). `skills/_brain-filing-rules.md` and
@@ -893,13 +900,60 @@ before considering the ship complete.
 
 Files that MUST be checked on every ship:
 - README.md — does it reflect new features, commands, or setup steps?
-- CLAUDE.md — does it reflect new files, test files, or architecture changes?
+- `docs/architecture/KEY_FILES.md` — new or changed files in `src/`, and their
+  invariants, are recorded HERE. This is the on-demand layer behind the Reference
+  map, and it is where per-file and per-version detail belongs.
+- CLAUDE.md — only if an always-loaded rule, the Reference map, or the dispatcher
+  changed. **CLAUDE.md is a map, not a log**: it is read in full at the start of every
+  session, so entries are condensed or deleted as they go stale, never appended to.
+  If an update adds a file inventory, a test inventory, or an "as of vX.Y.Z" note,
+  it belongs in the on-demand layer above instead.
 - CHANGELOG.md — does it cover every commit?
 - TODOS.md — are completed items marked done?
 - docs/ — do any guides need updating?
 
 A ship without updated docs is an incomplete ship. Period.
 
+
+## "Say to your agent" rule: every feature doc addresses the END USER (IRON RULE)
+
+GBrain is installed and operated by an AI agent. Most users never type a
+`gbrain` command — they talk to their harness (Claude Code, Codex, OpenClaw,
+Hermes, Cursor). Documentation that only shows CLI blocks serves the operator
+and abandons the end user.
+
+**The rule:** whenever a feature is added or explained in a public-facing doc
+(README, CHANGELOG, docs/guides, tutorials), include the common end-user block:
+
+    **Say to your agent:** *"<natural-language prompt>"* — *"<optional second phrasing>"*
+
+- 1-3 quoted phrases a user can literally type into ANY harness (a 4th is fine
+  when it hands off to an adjacent skill, e.g. a capture block that also points
+  at cold-start's "fill my brain"). Plain English, outcome-framed ("connect my
+  chatgpt account and pull my whole history into the brain"); don't dress a bare
+  command name as a sentence.
+- **When a skill backs the feature, the phrases MUST come from (or contain) the
+  skill's frontmatter `triggers:`** — those are what the harness actually
+  routes on (baseline routing is substring match), so the doc and the router can
+  never drift apart. Verify each phrase against the real trigger before shipping.
+  The skills section of README points at `skills/RESOLVER.md` as the full
+  phrasebook.
+- **When NO skill backs the feature (a CLI-only path), be honest:** the phrase
+  states the outcome and names the command the agent runs for it ("Run a search
+  benchmark against LongMemEval — your agent runs `gbrain eval longmemeval`"),
+  rather than implying a trigger that doesn't exist.
+- Grouping two phrases for the SAME skill with a `/` (e.g. *"Brain health"* /
+  *"check backlinks"*) is allowed; separate distinct destinations with an em-dash.
+- CLI blocks stay — they serve operators and the agents themselves. The say
+  block sits adjacent, not instead.
+- CHANGELOG: every feature entry's "To take advantage of vX" block carries a
+  say line alongside the commands.
+- Same privacy bar as everything else public: generic placeholders in the
+  phrases, never real names.
+
+Litmus test: a non-technical user reads the section and knows the exact
+sentence to type into their agent. If they'd have to translate a flag into
+English themselves, the section fails.
 
 ## Privacy rule: scrub real names from public docs
 
@@ -1579,6 +1633,7 @@ wins; fix the row.
 | "bulk ingest", "bulk import", "ingest all", "ingestion pipeline" | `skills/bulk-ingestion/SKILL.md` |
 | "ingest this publication", "ingest this whole blog", "ingest this feed", "ingest this newsletter archive" | `skills/blog-ingest/SKILL.md` |
 | "chatgpt export", "claude export", "perplexity export", "conversation history" | `skills/conversation-archive/SKILL.md` |
+| "connect my chatgpt", "connect my claude account", "sync my chat history", "chatgpt oauth", "auto-import my chats", "keep my conversations synced" | `skills/chat-connectors/SKILL.md` |
 
 ## Thinking skills (from GStack)
 
@@ -1656,7 +1711,7 @@ When multiple skills could match:
 3. If the user mentions a person/company, check if enrich or query fits better
 4. Chaining is explicit in each skill's Phases section
 5. When in doubt, ask the user (see `skills/ask-user/SKILL.md` for the choice-gate pattern)
-6. Publication/feed URL or a whole blog archive → blog-ingest; a single article/tweet URL → idea-ingest; video/audio/PDF → media-ingest; AI-chat exports or session transcripts → conversation-archive
+6. Publication/feed URL or a whole blog archive → blog-ingest; a single article/tweet URL → idea-ingest; video/audio/PDF → media-ingest; AI-chat export FILE or session transcripts → conversation-archive; CONNECT an account for live/automatic sync ("connect my chatgpt", "keep synced") → chat-connectors
 7. Identity/personality content (who the agent is, voice, persona) → soul-audit; token/structure hygiene of the always-loaded context stack → context-audit
 8. "Why is X slow/stale" measurement-first ops triage → measure-before-you-fix; code debugging ("why is this function broken") → investigate (GStack)
 
@@ -1907,6 +1962,8 @@ gbrain think "who's working on AI agents at portfolio companies?"
 
 **`gbrain think`** runs the same retrieval, then composes a synthesized answer across the results with explicit citations to the source pages AND an honest note on what the brain doesn't know yet. The gap analysis is the differentiator: the answer tells you when a page is stale, when a claim is uncited, when two pages contradict each other, when there's a hole you should fill.
 
+**Say to your agent:** *"What do we know about acme-example?"* — *"Tell me about alice-example before my meeting tomorrow"* — *"Search for who's working on AI agents."* Your agent routes these to the brain automatically; you never type the commands yourself.
+
 **Why it compounds.** Pair the brain layer with `find_trajectory` and you get answers like *"how have the company's metrics changed AND what does the team look like right now AND what did they promise / share AND when did we last meet AND what's the value-add I can offer here"*: well-scored, well-cited, in one shot. That's the strategic moat. That's why building a 150K-page brain is worth the effort.
 
 `gbrain agent run "..."` exposes the same surface to a sub-agent through the Minions queue, with crash-safe two-phase persistence. Same answers, durable.
@@ -1923,6 +1980,8 @@ SLUG=$(gbrain capture "..." --quiet)
 ```
 
 The page lands in the database and on disk in one move. Default slug `inbox/YYYY-MM-DD-<hash8>` so captures cluster in a predictable triage location. On thin-client installs the verb routes through MCP to the server: same command, same UX.
+
+**Say to your agent:** *"Remember this: ..."* — *"Save this thought to my brain"* — *"Capture this."* And to fill an empty brain from your existing life: *"Fill my brain"* (the cold-start skill walks your email, calendar, contacts, and archives one consented step at a time).
 
 For webhook ingestion (Zapier / IFTTT / Apple Shortcuts):
 
@@ -1952,6 +2011,30 @@ gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; om
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
+**Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
+
+Or connect the account and skip the manual export entirely. `gbrain connectors`
+syncs your ChatGPT and Claude conversation history live, using your own browser
+session cookie — incrementally (a durable per-provider watermark, plus a
+trailing-window gap-heal), through the same redaction + idempotency pipeline, and
+optionally on a schedule. Credentials stay on your machine (`~/.gbrain/connectors/*.json`,
+0600) and are sent only to the provider's own host:
+
+```bash
+gbrain connectors auth chatgpt --cookie -    # paste the Cookie header (stdin keeps it out of argv)
+gbrain connectors sync chatgpt --dry-run     # preview, then --limit 5, then --full
+gbrain config set connectors.chatgpt.auto_sync true   # opt-in daily auto-sync (+ gbrain autopilot --install)
+```
+
+**Say to your agent:** *"Connect my chatgpt account and pull my whole history into the brain"* — *"Connect my claude account"* — *"Keep my conversations synced automatically."* Your agent walks you through the cookie capture, runs the dry-run → sample → full sequence, and sets up the schedule if you opt in.
+
+Full contract, automation lanes, and the Cloudflare caveat: [docs/guides/chat-connectors.md](docs/guides/chat-connectors.md).
+
+(Not to be confused with the **inbound** "Connectors" above — those add gbrain
+as an MCP connector *inside* ChatGPT/Claude/Perplexity so those assistants can
+search your brain. `gbrain connectors` goes the other way: it pulls your
+conversation history *from* those accounts *into* the brain.)
+
 Third-party skillpacks can ship custom ingestion sources (Granola, Linear,
 voice, OCR) against the versioned `IngestionSource` contract at
 `gbrain/ingestion`. See [`docs/skillpack-anatomy.md`](docs/skillpack-anatomy.md).
@@ -1975,6 +2058,8 @@ gbrain schema suggest               # LLM-refined proposals on top of detect
 gbrain schema review-candidates     # human gate: promote / rename / ignore
 gbrain schema use my-pack           # activate
 ```
+
+**Say to your agent:** *"My schema isn't matching my notes — propose new types from my corpus"* — *"Add a page type for lab results to my brain's schema."* The schema-author skill runs the detect → suggest → review flow for you.
 
 The active pack threads through every read + write path: `parseMarkdown` infers page type from the pack's path prefixes; `whoknows` scopes expert routing to types declared `expert_routing: true`; `extract_facts` runs only on `extractable: true` types; the search cache folds the pack name + version into its key so cross-pack contamination is structurally impossible. Switch packs and the brain re-interprets itself; switch back and nothing's lost.
 
@@ -2007,13 +2092,15 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 
+**Say to your agent:** *"Set up autopilot"* (installs the cron that runs the loop) — *"Run dream"* — *"Did the dream cycle run?"*
+
 ## Capabilities
 
-**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). The install picker default-applies `tokenmax` (it recommends `conservative` for Haiku-class subagent tiers or keyless setups); a brain with `search.mode` unset resolves to `balanced` at query time. The cross-encoder reranker is on in `balanced` and `tokenmax`, off in `conservative` — new installs get Voyage `rerank-2.5`; brains that never set `search.reranker.model` still fall back to the deprecated ZeroEntropy `zerank-2` (hosted API ends 2026-09-04) until the September cutover. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page.
+**Hybrid search.** Vector (HNSW on pgvector) + BM25 keyword + reciprocal-rank fusion + source-tier boost + intent-aware query rewriting. Three named search modes (`conservative`, `balanced`, `tokenmax`) bundle the cost/quality knobs into a single config key. Live cost/recall comparisons in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). The install picker default-applies `tokenmax` (it recommends `conservative` for Haiku-class subagent tiers or keyless setups); a brain with `search.mode` unset resolves to `balanced` at query time. The cross-encoder reranker is on in `balanced` and `tokenmax`, off in `conservative` — new installs get Voyage `rerank-2.5`; brains that never set `search.reranker.model` still fall back to the deprecated ZeroEntropy `zerank-2` (hosted API ends 2026-09-04) until the September cutover. Per-query graph signals notice when a top result is a hub for THAT query (adjacency boost), is corroborated across team brains (cross-source boost), or is being crowded out by weak chunks from a chatty session (session demote). Run `gbrain search "<query>" --explain` to see per-stage attribution: base score, every boost that fired, what it multiplied. `gbrain doctor` ships a `graph_signals_coverage` check; `gbrain search stats` shows fire counts and failure breakdowns. Vector retrieval pools the best chunk per page, so a page surfaces on its strongest evidence instead of losing to a neighbor on one weak chunk. Queries that match a page's title phrase or a declared free-text alias (`gbrain reindex --aliases` backfills existing pages) get boosted to the page they name. Every result carries an `evidence` tag (why it matched) and a `create_safety` hint (`exists` / `probable` / `unknown`) so an agent decides whether a page already exists instead of guessing from a raw score. `gbrain search diagnose "<query>" --target <slug>` traces which retrieval layer surfaces (or misses) a page. **Say to your agent:** *"Tune my retrieval"* — *"What search mode am I running?"* — *"Why did this page rank first?"* (your agent runs `gbrain search --explain`).
 
-**Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG. **Obsidian-style vaults:** bare `[[note-name]]` wikilinks that point across folders — you wrote `[[struktura]]` but the page lives at `projects/struktura.md` — resolve by basename once you opt in with `gbrain config set link_resolution.global_basename true`. Off by default; `gbrain doctor` tells you how many edges you'd gain before you flip it. See [migrating an Obsidian vault](INSTALL_FOR_AGENTS.md#step-45-wire-the-knowledge-graph).
+**Self-wiring knowledge graph.** Every `put_page` extracts entity refs from markdown/wikilinks/typed-link syntax and writes edges with zero LLM calls. Typed edges (`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, …). Multi-hop traversal via `gbrain graph-query`. The graph is what produces the +31.4 P@5 lift over vector-only RAG. **Say to your agent:** *"Who works at acme-example?"* — *"What's the relationship between fund-a and widget-co?"* — *"What connections does alice-example have?"* **Obsidian-style vaults:** bare `[[note-name]]` wikilinks that point across folders — you wrote `[[struktura]]` but the page lives at `projects/struktura.md` — resolve by basename once you opt in with `gbrain config set link_resolution.global_basename true`. Off by default; `gbrain doctor` tells you how many edges you'd gain before you flip it. See [migrating an Obsidian vault](INSTALL_FOR_AGENTS.md#step-45-wire-the-knowledge-graph).
 
-**Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Opt-in per-job process isolation (`gbrain jobs work --job-isolation process`) runs each claimed job in its own SIGKILL-able child process, so a stuck handler dies for real and a crash takes one job instead of the whole worker; when the worker's DB health probe fails, it names the failing layer (`pool_starved` vs `server_unreachable`) instead of a blanket "DB unreachable". Sizing and rollout guidance in [`docs/guides/minions-deployment.md`](docs/guides/minions-deployment.md); probe-verdict triage in [`docs/guides/queue-operations-runbook.md`](docs/guides/queue-operations-runbook.md). Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything.
+**Job queue (Minions).** BullMQ-shaped, Postgres-native job queue. Durable subagents (LLM tool loops that survive crashes via two-phase pending→done persistence), shell jobs with audit, child jobs with cascading timeouts, rate leases for outbound providers, attachments via S3/Supabase storage. Opt-in per-job process isolation (`gbrain jobs work --job-isolation process`) runs each claimed job in its own SIGKILL-able child process, so a stuck handler dies for real and a crash takes one job instead of the whole worker; when the worker's DB health probe fails, it names the failing layer (`pool_starved` vs `server_unreachable`) instead of a blanket "DB unreachable". Sizing and rollout guidance in [`docs/guides/minions-deployment.md`](docs/guides/minions-deployment.md); probe-verdict triage in [`docs/guides/queue-operations-runbook.md`](docs/guides/queue-operations-runbook.md). Replaces "spawn subagent as fire-and-forget Promise" with something that recovers from anything. **Say to your agent:** *"Run this as a background task and tell me when it's done"* — *"Submit a gbrain job for the backfill"* — *"What's running in the background?"*
 
 **Non-English brains (FTS language config).** The Postgres full-text search tokenizer is configurable via `GBRAIN_FTS_LANGUAGE`. Defaults to `english`. Set it to any text-search configuration that exists in your Postgres instance:
 
@@ -2031,19 +2118,21 @@ gbrain reindex-search-vector --dry-run    # preview row counts
 gbrain reindex-search-vector --yes        # recreate triggers + backfill
 ```
 
-The command is idempotent (re-running with the same language is a no-op for vector content) and uses the same recreate-and-backfill primitives as the migration. For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe.
+The command is idempotent (re-running with the same language is a no-op for vector content) and uses the same recreate-and-backfill primitives as the migration. For accent-insensitive Portuguese (`pt_br`), see [docs/guides/multi-language-fts.md](docs/guides/multi-language-fts.md) for the `unaccent` + portuguese stemmer recipe. **Say to your agent:** *"Set my brain's search language to Portuguese and reindex."*
 
 **50+ curated skills** (the current list lives in [`skills/manifest.json`](skills/manifest.json)). Routing lives in [`skills/RESOLVER.md`](skills/RESOLVER.md). Covers signal capture, ingest (idea / media / meeting), enrichment, querying, brain ops, citation fixing, daily task management, cron scheduling, reports, voice, soul audit, skill creation, eval framework, and migrations. Skills are markdown files (tool-agnostic), packaged as a single skillpack the installer drops into your agent workspace.
 
-**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. `gbrain eval brainbench` runs the cross-harness memory conformance suite: know-to-ask, push precision/recall, write-back fidelity, and cross-session continuity, scored per harness seam (your OpenClaw's production pipeline plus Claude Code and Codex injection contracts) against a committed 141-fixture synthetic corpus — hermetic by default (in-memory PGLite, no keys, seconds), and CI gates every PR against master's committed baseline. Methodology in [`docs/eval/BRAINBENCH.md`](docs/eval/BRAINBENCH.md); search-mode methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md).
+**Say to your agent — the phrasebook.** You never invoke a skill by name; you say what you want and your agent routes it. Every skill declares its trigger phrases in its frontmatter, and [`skills/RESOLVER.md`](skills/RESOLVER.md) is the full human-readable phrasebook — one table of "when you say this, this skill fires." A taste: *"Ingest this PDF"* (media-ingest) — *"What's happening today?"* (briefing) — *"Fill my brain"* (cold-start) — *"Brain health"* / *"check backlinks"* (maintain — either phrase routes there) — *"Is my brain set up right?"* (gbrain-advisor) — *"Did the restart break anything?"* (smoke-test) — *"Run this as a background task"* (minion-orchestrator). If you're ever unsure what to say, ask your agent: *"What can my brain do?"* and have it read the resolver back to you.
 
-**Brain consistency.** `gbrain eval suspected-contradictions` samples retrieval pairs, layered date pre-filter, query-conditioned LLM judge, persistent cache. Surfaces conflicts between takes + facts the agent has written. Wired into the daily dream cycle.
+**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. `gbrain eval brainbench` runs the cross-harness memory conformance suite: know-to-ask, push precision/recall, write-back fidelity, and cross-session continuity, scored per harness seam (your OpenClaw's production pipeline plus Claude Code and Codex injection contracts) against a committed 141-fixture synthetic corpus — hermetic by default (in-memory PGLite, no keys, seconds), and CI gates every PR against master's committed baseline. Methodology in [`docs/eval/BRAINBENCH.md`](docs/eval/BRAINBENCH.md); search-mode methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). **Say to your agent:** *"Run a regression check on retrieval"* — *"Run a search benchmark against LongMemEval"* — your agent runs `gbrain eval brainbench` / `gbrain eval longmemeval` for the full suites.
 
-**Agent-authored schema (v0.40.7.0).** Your brain has a shape — what page types exist (`person`, `meeting`, `paper`, `case`, `lab-result`), what they link to (`attended`, `authored`, `prescribed-by`), what facts get extracted automatically. The default ships with 22 universal types, but your brain's actual shape is not the default shape. Agents can now evolve that shape on your behalf via 14 `gbrain schema` CLI verbs + a batched MCP op (`schema_apply_mutations`, admin scope, NOT localOnly so remote agents reach it over HTTPS). Atomic file locks, audit log with the agent's identity, chunked UPDATE backfill in 1000-row batches that never wedge concurrent writers. The brain stops being a pile of notes and becomes something with structure. **Why it matters:** [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator). **5-minute walkthrough:** [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md). **Agent skill:** [`skills/schema-author/SKILL.md`](skills/schema-author/SKILL.md).
+**Brain consistency.** `gbrain eval suspected-contradictions` samples retrieval pairs, layered date pre-filter, query-conditioned LLM judge, persistent cache. Surfaces conflicts between takes + facts the agent has written. Wired into the daily dream cycle. **Say to your agent:** *"Did the dream cycle run — what contradictions did it surface?"* — *"Fact-check what we have on acme-example"* (claim-by-claim live-source verification) — or have your agent run `gbrain eval suspected-contradictions` directly.
+
+**Agent-authored schema (v0.40.7.0).** Your brain has a shape — what page types exist (`person`, `meeting`, `paper`, `case`, `lab-result`), what they link to (`attended`, `authored`, `prescribed-by`), what facts get extracted automatically. The default ships with 22 universal types, but your brain's actual shape is not the default shape. Agents can now evolve that shape on your behalf via 14 `gbrain schema` CLI verbs + a batched MCP op (`schema_apply_mutations`, admin scope, NOT localOnly so remote agents reach it over HTTPS). Atomic file locks, audit log with the agent's identity, chunked UPDATE backfill in 1000-row batches that never wedge concurrent writers. The brain stops being a pile of notes and becomes something with structure. **Say to your agent:** *"Add a page type to my schema for case files"* — *"My brain has untyped pages — propose new types from my corpus."* **Why it matters:** [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — 7 killer use cases (4000 invisible meetings, founder ops brain, research brain, legal brain, team brain, agent-as-co-curator). **5-minute walkthrough:** [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md). **Agent skill:** [`skills/schema-author/SKILL.md`](skills/schema-author/SKILL.md).
 
 ## Integrations
 
-Data flowing into the brain. Each integration is a recipe — markdown + setup hints — that ships in `recipes/` and is discoverable via `gbrain integrations list`.
+Data flowing into the brain. Each integration is a recipe — markdown + setup hints — that ships in `recipes/` and is discoverable via `gbrain integrations list`. **Say to your agent:** *"Set up voice calls into my brain"* — *"Wire my email and calendar into the brain"* — your agent reads the recipe and walks the setup with you.
 
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
 - **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
@@ -2063,6 +2152,8 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 **Why the graph matters.** Vector search returns chunks that are semantically close. The graph returns chunks that are factually connected. Hybrid search pulls from both; auto-linking on every write keeps the graph fresh. Deep dive: [`docs/architecture/RETRIEVAL.md`](docs/architecture/RETRIEVAL.md).
 
 ## Troubleshooting
+
+**Say to your agent first:** *"Run a brain health check and fix what you find"* — this routes to the maintain skill, which runs `gbrain doctor` and either auto-fixes or prints the exact repair command; your agent can run the whole loop (*"Get my brain health score to 90"* uses the remediation planner with a cost cap). The sections below are for when you want the manual path.
 
 **PGLite crashes at startup with `RuntimeError: Aborted()` (often right after a macOS upgrade)?** Not a macOS incompatibility — the OS-upgrade reboot killed gbrain mid-write and tore the data dir's WAL. gbrain now repairs this automatically on the next command (data preserved, backup kept); if auto-repair is disabled or skipped, run `gbrain pglite-repair --dry-run` to diagnose and `gbrain pglite-repair --yes` to repair in place. Full recovery ladder (repair → rebuild → engine switch) in [`docs/ENGINES.md` — Troubleshooting: startup abort](docs/ENGINES.md#troubleshooting-startup-abort-runtimeerror-aborted) and [`docs/INSTALL.md`](docs/INSTALL.md#pglite-crashes-on-macos-26x-tahoe).
 
@@ -4964,9 +5055,12 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
 
 One known person/company/project card. NEVER errors on a miss.
 
-Resolution (frozen precedence): alias > exact title > slug/slug-suffix; ties
-break on most-recently-touched. Multi-hit ⇒ best match's card + runners-up in
-`suggestions`. Miss ⇒ `found: false` + keyword near-misses with
+Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
+When multiple pages share an exact title, canonical entity types (`person`,
+`company`, `organization`, `entity`) outrank note/conversation containers;
+most-recently-touched breaks ties within the same match shape. A non-entity
+exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
+runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
 `create_safety` hints.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.

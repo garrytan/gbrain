@@ -64,7 +64,7 @@ test/compile-view.test.ts	compileView — source isolation + read errors	3	readF
 test/config.test.ts	config source correctness	2	readFileSync
 test/connection-resilience.test.ts	Eng-review D3 — executeRaw has no per-call retry wrapper	3	readFileSync
 test/contextual-retrieval-service-pure.test.ts	inline import contextual synopsis containment	1	readFileSync
-test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	17	readFileSync
+test/conversation-facts-type-allowlist-drift.test.ts	(file-level)	18	readFileSync
 test/cycle-abort.test.ts	#1972 — complete cooperative-abort coverage	3	readFileSync
 test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	4	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync
@@ -239,6 +239,7 @@ test/supervisor.test.ts	recovery hook timeout bound (structural)	1	readFileSync
 test/sync-failures.test.ts	#4543 blocked output names failing files	4	bun-file,doctor-source-helper
 test/sync-failures.test.ts	Bug 9 — doctor surfaces sync failures	2	doctor-source-helper
 test/sync-failures.test.ts	Bug 9 — sync.ts CLI flag wiring	6	bun-file,doctor-source-helper
+test/sync-include-hidden.test.ts	sync.ts delta path threads includeHidden (#4027 merge guard)	1	readFileSync
 test/sync.test.ts	buildSyncManifest	9	bun-file
 test/sync.test.ts	isSyncable	8	bun-file
 test/sync.test.ts	resolveSlugByPathOrSourcePath (CJK wave v0.32.7, codex F4)	3	bun-file

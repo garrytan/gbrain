@@ -162,6 +162,67 @@ describe('#1175 — main `gbrain --help` SOURCES block matches the real subcomma
   });
 });
 
+describe('#4003 — `gbrain auth --help` reaches the detailed usage block', () => {
+  test('output contains the real auth subcommand usage, not the generic stub', () => {
+    const { stdout, status } = runCli(['auth', '--help']);
+    expect(status).toBe(0);
+    // Pre-fix: `auth` was missing from CLI_ONLY_SELF_HELP, so this printed
+    // only "gbrain auth - run gbrain --help for the full command list."
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).toContain('gbrain auth create <name>');
+    expect(stdout).toContain('gbrain auth register-client');
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
+  });
+
+  test('-h short flag also works', () => {
+    const { stdout, status } = runCli(['auth', '-h']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('main `gbrain --help` lists auth', () => {
+    const { stdout, status } = runCli(['--help']);
+    expect(status).toBe(0);
+    expect(stdout).toMatch(/^\s*auth </m);
+    expect(stdout).toMatch(/^\s*auth --help\s/m);
+  });
+});
+
+describe('#4083 follow-up — auth subcommand + --help shows usage, never executes', () => {
+  // Caught by automated PR review on #4083: once `auth` joined
+  // CLI_ONLY_SELF_HELP, the generic --help short-circuit in cli.ts stopped
+  // intercepting `gbrain auth <subcommand> --help` before it reached
+  // runAuth. Without an early --help check inside runAuth itself, a
+  // trailing --help on a real subcommand fell through to that
+  // subcommand's real handler instead of showing help — e.g. `gbrain auth
+  // create foo --help` would mint a real token named "foo".
+  test('`gbrain auth create <name> --help` shows usage, does not create a token', () => {
+    const { stdout, status } = runCli(['auth', 'create', 'definitely-not-a-real-token-name', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).not.toContain('Token created for');
+  });
+
+  test('`gbrain auth revoke <name> --help` shows usage, does not attempt a revoke', () => {
+    const { stdout, status } = runCli(['auth', 'revoke', 'definitely-not-a-real-token-name', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('`gbrain auth register-client <name> --help` shows usage, does not register a client', () => {
+    const { stdout, status } = runCli(['auth', 'register-client', 'definitely-not-a-real-client', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+  });
+
+  test('-h works the same way as --help on a subcommand', () => {
+    const { stdout, status } = runCli(['auth', 'create', 'definitely-not-a-real-token-name', '-h']);
+    expect(status).toBe(0);
+    expect(stdout).toContain('GBrain Token Management');
+    expect(stdout).not.toContain('Token created for');
+  });
+});
+
 describe('#3834 — extract flags are discoverable from both help surfaces', () => {
   const implementedFlags = [
     '--by-mention',
@@ -296,5 +357,39 @@ describe('`sources webhook --help` reaches its own detailed help, not the genera
     expect(stderr).not.toContain('Source "x" not found');
     expect(stderr).not.toContain('--github-repo');
     expect(stderr).not.toContain('TypeError');
+  });
+});
+
+describe('`gbrain takes --help` reaches the detailed subcommand block', () => {
+  test('every mutate + read subcommand is listed', () => {
+    const { stdout, status } = runCli(['takes', '--help']);
+    expect(status).toBe(0);
+    // Pre-fix these were undiscoverable from the CLI: `takes` was in CLI_ONLY
+    // but not CLI_ONLY_SELF_HELP, so the generic stub fired before runTakes.
+    expect(stdout).toContain('takes add');
+    expect(stdout).toContain('takes update');
+    expect(stdout).toContain('takes supersede');
+    expect(stdout).toContain('takes resolve');
+    expect(stdout).toContain('takes scorecard');
+    expect(stdout).toContain('takes calibration');
+    expect(stdout).toContain('takes search');
+  });
+
+  test('output is NOT the generic short-circuit fallback', () => {
+    const { stdout } = runCli(['takes', '--help']);
+    // Pre-fix output was exactly: "Usage: gbrain takes\n\ngbrain takes - run
+    // gbrain --help for the full command list."
+    expect(stdout).not.toContain('run gbrain --help for the full command list');
+    expect(stdout).not.toMatch(/^Usage: gbrain takes\s*$/m);
+    expect(stdout.split('\n').length).toBeGreaterThan(10);
+  });
+
+  test('help works with no brain configured (pre-engine-bind branch)', () => {
+    // runCli points GBRAIN_HOME at a nonexistent dir. Without the pre-engine
+    // branch this printed "No brain configured. Run: gbrain init".
+    const { stdout, status } = runCli(['takes', '--help']);
+    expect(status).toBe(0);
+    expect(stdout).not.toContain('No brain configured');
+    expect(stdout).toContain('--dir <path>');
   });
 });

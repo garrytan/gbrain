@@ -43,6 +43,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
+import { MinionQueue } from '../src/core/minions/queue.ts';
 import { hasScope } from '../src/core/scope.ts';
 
 let engine: PGLiteEngine;
@@ -130,6 +131,47 @@ describe('operations contract — every op has scope + correct mutability shape'
         `op "${op.name}" has unknown scope "${op.scope}"`,
       ).toBe(true);
     }
+  });
+
+  test('state-changing job controls declare mutating metadata', () => {
+    for (const name of ['pause_job', 'resume_job', 'replay_job', 'send_job_message']) {
+      const op = operations.find(candidate => candidate.name === name);
+      expect(op, `expected canonical op "${name}" to exist`).toBeDefined();
+      expect(op!.mutating, `state-changing op "${name}" must declare mutating`).toBe(true);
+    }
+  });
+});
+
+describe('job-control operations — dry run never changes queue state', () => {
+  test('pause_job previews without pausing, then a real call pauses', async () => {
+    await engine.setConfig('version', '130');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('sync', {});
+    const op = operations.find(candidate => candidate.name === 'pause_job')!;
+
+    const preview = await op.handler(makeContext({ remote: false, dryRun: true }), { id: job.id });
+    expect(preview).toEqual({ dry_run: true, action: 'pause_job', id: job.id });
+    expect((await queue.getJob(job.id))!.status).toBe('waiting');
+
+    const result = await op.handler(makeContext({ remote: false }), { id: job.id });
+    expect(result).toEqual({ id: job.id, status: 'paused' });
+    expect((await queue.getJob(job.id))!.status).toBe('paused');
+  });
+
+  test('resume_job previews without resuming, then a real call resumes', async () => {
+    await engine.setConfig('version', '130');
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('sync', {});
+    await queue.pauseJob(job.id);
+    const op = operations.find(candidate => candidate.name === 'resume_job')!;
+
+    const preview = await op.handler(makeContext({ remote: false, dryRun: true }), { id: job.id });
+    expect(preview).toEqual({ dry_run: true, action: 'resume_job', id: job.id });
+    expect((await queue.getJob(job.id))!.status).toBe('paused');
+
+    const result = await op.handler(makeContext({ remote: false }), { id: job.id });
+    expect(result).toEqual({ id: job.id, status: 'waiting' });
+    expect((await queue.getJob(job.id))!.status).toBe('waiting');
   });
 });
 

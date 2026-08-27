@@ -37,6 +37,17 @@ describe('scoreQuestion', () => {
     expect(scoreQuestion(q, ['a', 'b', 'c']).negative_clean).toBe(true);
     expect(scoreQuestion(q, ['a', 'bad', 'c']).negative_clean).toBe(false);
   });
+  test('deduplicates pages before hit, reciprocal-rank, recall, and hard-negative cutoffs', () => {
+    const positive: NamedThingQuestion = { family: 'title-substring', query: 'x', relevant: ['a'] };
+    const scored = scoreQuestion(positive, ['x', 'x', 'a', 'a']);
+    expect(scored.hit_at_3).toBe(true);
+    expect(scored.reciprocal_rank).toBe(0.5);
+    expect(scored.recall_at_k).toBe(1);
+    expect(scored.recall_at_10).toBe(1);
+
+    const negative: NamedThingQuestion = { family: 'hard-negative', query: 'x', forbidden: ['bad'] };
+    expect(scoreQuestion(negative, ['x', 'x', 'y', 'bad']).negative_clean).toBe(false);
+  });
 });
 
 describe('evaluateGate', () => {

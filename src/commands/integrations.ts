@@ -518,7 +518,10 @@ function heartbeatDir(id: string): string {
   return gbrainPath('integrations', id);
 }
 
-function heartbeatPath(id: string): string {
+// Exported for features.ts's heartbeat-backed "configured" check — both
+// surfaces must agree on the gbrainPath-based location (GBRAIN home
+// overrides apply; a hardcoded $HOME/.gbrain would diverge).
+export function heartbeatPath(id: string): string {
   return join(heartbeatDir(id), 'heartbeat.jsonl');
 }
 

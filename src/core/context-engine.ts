@@ -1091,7 +1091,7 @@ export function createGBrainContextEngine(ctx: {
       return { ingested: true };
     },
 
-    async assemble({ sessionId, sessionKey, messages, tokenBudget, availableTools, citationsMode }) {
+    async assemble({ sessionId, sessionKey, messages, tokenBudget, availableTools, citationsMode, prompt }) {
       // Lazy SDK load on first method call (was top-level await pre-L0-B).
       await ensureSdkLoaded();
 
@@ -1099,6 +1099,16 @@ export function createGBrainContextEngine(ctx: {
       // turn; a host that sends messages:undefined (or a non-array) must not
       // take down the whole context pipeline.
       const msgs = Array.isArray(messages) ? messages : [];
+
+      // Some OpenClaw runtimes (e.g. the codex-app-server in 2026.7.x) deliver
+      // the current user turn via `prompt` with an empty `messages` array.
+      // Synthesize a single user turn so the Retrieval Reflex still sees the
+      // text (the deterministic live-context/pass-through path is unaffected).
+      const effectiveMessages = msgs.length > 0
+        ? msgs
+        : (typeof prompt === 'string' && prompt.trim()
+            ? ([{ role: 'user', content: prompt }] as typeof msgs)
+            : msgs);
 
       // 1. Generate deterministic context (<5ms, zero LLM calls)
       const liveCtx = generateLiveContext(workspaceDir);
@@ -1131,11 +1141,11 @@ export function createGBrainContextEngine(ctx: {
       // nothing salient resolves. Detect + point, never auto-dump bodies.
       const reflexAddition = await buildReflexAddition({
         workspaceDir,
-        currentUserText: getLastUserText(msgs),
-        priorContextText: getPriorContextText(msgs),
+        currentUserText: getLastUserText(effectiveMessages),
+        priorContextText: getPriorContextText(effectiveMessages),
         // v0.43 (#2095): rolling window — assistant-introduced entities and
         // named-antecedent follow-ups from recent turns now resolve too.
-        windowTurns: getWindowTurns(msgs),
+        windowTurns: getWindowTurns(effectiveMessages),
         resolveEntities: ctx.resolveEntities,
       });
 

@@ -6,7 +6,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
@@ -39,7 +39,7 @@ import type {
 } from './types.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
-import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
+import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
@@ -785,7 +785,7 @@ export class PostgresEngine implements BrainEngine {
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date() : null;
     const rows = await sql`
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, COALESCE(${chunkerVersion}::smallint, ${MARKDOWN_CHUNKER_VERSION}), ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, COALESCE(${chunkerVersion}::smallint, ${MARKDOWN_CHUNKER_VERSION}), ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -2344,12 +2344,17 @@ export class PostgresEngine implements BrainEngine {
         `$${paramIdx++}, ${embeddingImagePh})`,
       );
 
+      // NUL/lone-surrogate cleanup ONCE into a local shared by BOTH binds:
+      // the md5() embedded_text_hash input and the stored chunk_text must see
+      // the same bytes, or the hash diverges from the sanitized stored text
+      // (and the raw NUL would still abort the INSERT via the md5 param).
+      const sanitizedChunkText = sanitizeText(chunk.chunk_text);
       // Param push order MUST match placeholder allocation order.
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
-      if (embeddingStr) params.push(chunk.chunk_text); // embedded_text_hash md5() input
+      if (embeddingStr) params.push(sanitizedChunkText); // embedded_text_hash md5() input
       params.push(
-        pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
+        pageId, chunk.chunk_index, sanitizedChunkText, chunk.chunk_source,
         chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
@@ -4705,6 +4710,8 @@ export class PostgresEngine implements BrainEngine {
     return takesImpl.listStaleTakes(this.takesDeps);
   }
 
+  async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> { return takesImpl.updateTakeEmbeddings(this.takesDeps, rowsIn, opts); }
+
   async updateTake(
     pageId: number,
     rowNum: number,
@@ -5228,6 +5235,17 @@ export class PostgresEngine implements BrainEngine {
         SELECT key FROM config WHERE key LIKE ${pattern} ESCAPE '\\' ORDER BY key
       `;
       return rows.map(r => r.key);
+    });
+  }
+
+  async getAllConfig(): Promise<Record<string, string>> {
+    return this.connRetry(async () => {
+      const rows = await this.sql<{ key: string; value: string }[]>`
+        SELECT key, value FROM config
+      `;
+      const out: Record<string, string> = {};
+      for (const row of rows) out[row.key] = row.value;
+      return out;
     });
   }
 

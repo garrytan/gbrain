@@ -7328,6 +7328,36 @@ respective shapes. Small, mechanical; pinned by `test/init-embed-check.test.ts`
   leaf module on the same `TranscriptAdapter` seam (the pattern the
   cathedral-4 "More harness adapters" follow-up below documents); the
   conversation-archive skill keeps the manual procedure for it meanwhile.
+- [ ] **P2 — Perplexity live connector.** The chat-connectors feature ships
+  ChatGPT + Claude live sync (`src/core/connectors/`). Perplexity is deferred:
+  it needs BOTH a cookie-REST provider (`providers/perplexity.ts`) AND a native
+  `perplexity` transcript adapter (`src/core/transcripts/perplexity-export.ts`)
+  since none exists — a registry stub with no adapter would route to a lane
+  that can't parse it. Until then, Perplexity uses the conversation-archive
+  manual conversion. Where: `src/core/connectors/providers/`, `registry.ts`,
+  `src/core/transcripts/`.
+- [ ] **P3 — Connector advisor collector.** Surface connector credential/sync
+  health in `gbrain advisor` (a collector in `src/core/advisor/`), mirroring the
+  `gbrain doctor` `connectors` check. Doctor covers v1; advisor is the ranked-
+  actions v2 surface.
+- [ ] **P3 — Multi-account per connector provider.** `ConnectorCredential`
+  already carries `accountId`; wire per-account credential files + routing so a
+  user can sync two ChatGPT accounts into different sources. Where:
+  `src/core/connectors/credentials.ts`, `sync.ts`.
+- [ ] **P3 — Connector attachment/image capture.** v1 is text-only. Fetch and
+  ingest conversation attachments/images (route through the existing image
+  import path). Where: `src/core/connectors/providers/*`, `import-file.ts`.
+- [ ] **P3 — Export-ZIP auto-unwrap.** Accept a raw ChatGPT/Claude export `.zip`
+  directly in `gbrain transcripts ingest` (currently "unzip first"). Adjacent to
+  connectors; benefits the export-file lane. Where: `src/core/transcripts/export-json.ts`.
+- [ ] **P3 — Nightly connector spec-target drift probe.** A
+  `conversation-parser/nightly-probe.ts`-style live probe of each connector
+  provider's API shape (list/detail), alarming when the provisional
+  `HostSpecTarget` drifts. Where: `src/core/connectors/providers/*`, a new probe.
+- [ ] **P3 — History-scoped OAuth revisit.** ChatGPT OAuth PKCE currently yields
+  codex-scoped tokens, so the connector ships it demoted behind `--try-oauth`
+  with cookie as the primary lane. Revisit if OpenAI ships a conversation-
+  history OAuth scope. Where: `src/core/connectors/providers/chatgpt.ts`.
 - [ ] **P2 — Entity-guard as a native op.** phonetic-name-guard's own changelog
   proves prose-only failed: ASR-variant entity collisions need a native check
   (registry + alias table consulted at put/import time). The wave shipped the

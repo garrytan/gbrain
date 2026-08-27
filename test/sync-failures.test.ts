@@ -243,6 +243,22 @@ describe('classifyErrorCode — error message to code mapping', () => {
     expect(classifyErrorCode('invalid UTF-8: null byte at position 3770')).toBe('NULL_BYTES');
   });
 
+  test('classifies RENAME_RECONCILE from the #3056 sentinel message (was UNKNOWN — #3479 review)', async () => {
+    const { classifyErrorCode, renameReconcileErrorMessage } = await import('../src/core/sync.ts');
+    expect(classifyErrorCode(
+      renameReconcileErrorMessage('people/carol.md', 'people/carol', 'permission denied for table pages'),
+    )).toBe('RENAME_RECONCILE');
+    // Envelope-stable: the wrapped cause must not steal the classification —
+    // the same sentinel class should not surface as STATEMENT_TIMEOUT one
+    // run and DB_DUPLICATE_KEY the next just because the cause text varies.
+    expect(classifyErrorCode(
+      renameReconcileErrorMessage('people/carol.md', 'people/carol', 'canceling statement due to statement timeout'),
+    )).toBe('RENAME_RECONCILE');
+    expect(classifyErrorCode(
+      renameReconcileErrorMessage('people/carol.md', undefined, 'duplicate key value violates unique constraint "pages_source_id_slug_key"'),
+    )).toBe('RENAME_RECONCILE');
+  });
+
   test('classifies INVALID_UTF8', async () => {
     const { classifyErrorCode } = await import('../src/core/sync.ts');
     expect(classifyErrorCode('invalid UTF-8 sequence at position 500')).toBe('INVALID_UTF8');

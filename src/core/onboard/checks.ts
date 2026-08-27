@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -43,6 +44,77 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
   } catch {
     return 0;
   }
+}
+
+const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
+  AND p.deleted_at IS NULL
+  AND ${QUARANTINE_FILTER_FRAGMENT}`;
+
+type CoverageFeature =
+  | { table: 'links'; pageIdColumn: 'to_page_id' }
+  | { table: 'timeline_entries'; pageIdColumn: 'page_id' };
+
+interface EntityCoverageSample {
+  matched: number;
+  sampleSize: number;
+}
+
+/** Parse a SQL count defensively: coverage is an operator-facing health metric,
+ * so a malformed driver value must not escape as NaN or a negative count. */
+function finiteCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+/**
+ * Count the feature numerator and denominator from the SAME sampled CTE.
+ * TABLESAMPLE BERNOULLI returns a random number of rows; deriving its
+ * denominator from `total * requestedPercent` can make coverage exceed 100%.
+ */
+async function sampleVisibleEntityCoverage(
+  engine: BrainEngine,
+  sampleClause: string,
+  feature: CoverageFeature,
+): Promise<EntityCoverageSample> {
+  try {
+    const result = await engine.executeRaw(
+      `WITH sampled_entities AS (
+         SELECT p.id
+           FROM pages p ${sampleClause}
+          WHERE ${VISIBLE_ENTITY_PREDICATE}
+       )
+       SELECT
+         COUNT(*)::int AS sample_size,
+         COUNT(*) FILTER (
+           WHERE EXISTS (
+             SELECT 1
+               FROM ${feature.table} f
+              WHERE f.${feature.pageIdColumn} = s.id
+           )
+         )::int AS matched
+         FROM sampled_entities s`,
+    );
+    const rows = (result as { rows?: Array<Record<string, unknown>> } | undefined)?.rows
+      ?? (result as Array<Record<string, unknown>> | undefined)
+      ?? [];
+    const row = rows[0] ?? {};
+    const sampleSize = finiteCount(row.sample_size);
+    // The SQL shape guarantees matched <= sample_size. Keep a defensive clamp
+    // at the rendering boundary so a driver/fixture anomaly still cannot emit
+    // impossible percentages or feed a negative value into sqrt().
+    const matched = Math.min(sampleSize, finiteCount(row.matched));
+    return { matched, sampleSize };
+  } catch {
+    return { matched: 0, sampleSize: 0 };
+  }
+}
+
+function coverageWithConfidence(sample: EntityCoverageSample): { coverage: number; ci: number } {
+  const rawCoverage = sample.sampleSize > 0 ? sample.matched / sample.sampleSize : 0;
+  const coverage = Math.min(1, Math.max(0, rawCoverage));
+  const variance = Math.max(0, coverage * (1 - coverage));
+  const ci = Math.sqrt(variance / Math.max(1, sample.sampleSize));
+  return { coverage, ci };
 }
 
 /**
@@ -152,12 +224,12 @@ async function resolveNerInferenceCapability(
 export async function checkEntityLinkCoverage(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  // Total entity pages
+  // Total visible entity pages. Quarantined pages are hidden from the brain,
+  // so they are outside both the coverage numerator and denominator.
   const totalEntities = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM pages
-       WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS count FROM pages p
+       WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
   if (totalEntities === 0) {
@@ -174,23 +246,12 @@ export async function checkEntityLinkCoverage(
     : 100;
   const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
-  // Sample query: counts entities with inbound links
-  const linkedCount = await safeCount(
+  const sample = await sampleVisibleEntityCoverage(
     engine,
-    `SELECT COUNT(*) AS count FROM (
-       SELECT p.id FROM pages p ${sampleClause}
-       WHERE p.type IN ('person', 'company', 'organization', 'entity')
-         AND p.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
-     ) sub`,
+    sampleClause,
+    { table: 'links', pageIdColumn: 'to_page_id' },
   );
-  const sampleSize = useSample
-    ? Math.max(1, Math.round(totalEntities * (samplePct / 100)))
-    : totalEntities;
-
-  const coverage = sampleSize > 0 ? linkedCount / sampleSize : 0;
-  // Wilson-ish confidence interval (1σ; ±sqrt(p(1-p)/n))
-  const ci = Math.sqrt((coverage * (1 - coverage)) / Math.max(1, sampleSize));
+  const { coverage, ci } = coverageWithConfidence(sample);
 
   const pct = Math.round(coverage * 100);
   const ciPct = (ci * 100).toFixed(1);
@@ -254,9 +315,8 @@ export async function checkTimelineCoverage(
 ): Promise<OnboardCheckResult> {
   const totalEntities = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM pages
-       WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS count FROM pages p
+       WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
   if (totalEntities === 0) {
@@ -272,21 +332,12 @@ export async function checkTimelineCoverage(
     : 100;
   const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
-  const withTimelineCount = await safeCount(
+  const sample = await sampleVisibleEntityCoverage(
     engine,
-    `SELECT COUNT(*) AS count FROM (
-       SELECT p.id FROM pages p ${sampleClause}
-       WHERE p.type IN ('person', 'company', 'organization', 'entity')
-         AND p.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)
-     ) sub`,
+    sampleClause,
+    { table: 'timeline_entries', pageIdColumn: 'page_id' },
   );
-  const sampleSize = useSample
-    ? Math.max(1, Math.round(totalEntities * (samplePct / 100)))
-    : totalEntities;
-
-  const coverage = sampleSize > 0 ? withTimelineCount / sampleSize : 0;
-  const ci = Math.sqrt((coverage * (1 - coverage)) / Math.max(1, sampleSize));
+  const { coverage, ci } = coverageWithConfidence(sample);
   const pct = Math.round(coverage * 100);
   const ciPct = (ci * 100).toFixed(1);
   const sampleNote = useSample ? ` (sampled ${samplePct.toFixed(1)}%)` : '';
@@ -557,9 +608,9 @@ export async function checkTypeProliferation(
 }
 
 /**
- * dangling_aliases (F12): surfaces slug_aliases rows whose canonical page
- * no longer exists in the pages table. Source-scoped JOIN prevents
- * cross-source false-positive deletion.
+ * dangling_aliases (F12): surfaces both slug_aliases redirects and
+ * page_aliases free-text names whose target page no longer exists.
+ * Source-scoped JOINs prevent cross-source false-positive deletion.
  *
  * v0.42 ships surface-only (no auto-GC RemediationStep). v0.43+ may add
  * `cleanup-dangling-aliases` as an auto_apply handler once detection is
@@ -572,7 +623,7 @@ export async function checkTypeProliferation(
 export async function checkDanglingAliases(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const n = await safeCount(
+  const slugAliases = await safeCount(
     engine,
     `SELECT COUNT(*) AS count FROM slug_aliases sa
      LEFT JOIN pages p
@@ -581,16 +632,30 @@ export async function checkDanglingAliases(
       AND p.deleted_at IS NULL
      WHERE p.id IS NULL`,
   );
+  const pageAliases = await safeCount(
+    engine,
+    `SELECT COUNT(*) AS count FROM page_aliases pa
+     LEFT JOIN pages p
+       ON p.slug = pa.slug
+      AND p.source_id = pa.source_id
+      AND p.deleted_at IS NULL
+     WHERE p.id IS NULL`,
+  );
+  const n = slugAliases + pageAliases;
   if (n > 0) {
     return {
       check: {
         name: 'dangling_aliases',
         status: 'warn',
         message:
-          `${n} alias rows point at deleted canonicals. Safe GC (source-scoped): ` +
+          `${n} alias rows point at missing/deleted pages ` +
+          `(${slugAliases} slug redirects; ${pageAliases} free-text page aliases). ` +
+          `Safe GC (source-scoped): ` +
           `\`DELETE FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p ` +
           `WHERE p.slug = sa.canonical_slug AND p.source_id = sa.source_id ` +
-          `AND p.deleted_at IS NULL);\``,
+          `AND p.deleted_at IS NULL); DELETE FROM page_aliases pa WHERE NOT EXISTS ` +
+          `(SELECT 1 FROM pages p WHERE p.slug = pa.slug ` +
+          `AND p.source_id = pa.source_id AND p.deleted_at IS NULL);\``,
       },
       remediations: [],  // v0.42: surface-only; auto-GC v0.43+
     };

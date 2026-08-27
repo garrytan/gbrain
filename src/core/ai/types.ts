@@ -320,6 +320,8 @@ export interface ChatTouchpoint {
    * known to honor it.
    */
   supports_structured_outputs?: boolean;
+  /** Per-model overrides for providers whose chat models have different context windows. */
+  model_context_tokens?: Record<string, number>;
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;

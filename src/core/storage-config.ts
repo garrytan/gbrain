@@ -368,6 +368,11 @@ export function isDbOnly(slug: string, config: StorageConfig): boolean {
 export const DERIVE_PHASE_DB_ONLY_DEFAULTS: readonly string[] = [
   'life/events/',
   'atoms/',
+  // synthesize_concepts writes through importFromContent without creating a
+  // backing markdown file. Keep this implicit (rather than merging it into
+  // storage.db_only) so installations that do file-back concepts are never
+  // auto-gitignored by manageGitignore.
+  'concepts/',
   'extracts/',
   'dream-cycle-summaries/',
 ];
