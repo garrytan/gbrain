@@ -5,6 +5,7 @@ import {
   ALLOWED_SCOPES,
   ALLOWED_SCOPES_LIST,
   assertAllowedScopes,
+  filterAllowedScopes,
   InvalidScopeError,
   parseScopeString,
   type Scope,
@@ -187,6 +188,24 @@ describe('assertAllowedScopes', () => {
     } catch (e) {
       expect((e as InvalidScopeError).invalidScope).toBe('flying-unicorn');
     }
+  });
+});
+
+describe('filterAllowedScopes', () => {
+  test('keeps allowed and reports dropped unknowns', () => {
+    const { allowed, dropped } = filterAllowedScopes([
+      'read', 'offline_access', 'write', 'openid', 'read',
+    ]);
+    expect(allowed).toEqual(['read', 'write']);
+    expect(dropped).toEqual(['offline_access', 'openid']);
+  });
+  test('all-unknown yields empty allowed', () => {
+    const { allowed, dropped } = filterAllowedScopes(['openid', 'offline_access']);
+    expect(allowed).toEqual([]);
+    expect(dropped).toEqual(['openid', 'offline_access']);
+  });
+  test('empty input yields empty both', () => {
+    expect(filterAllowedScopes([])).toEqual({ allowed: [], dropped: [] });
   });
 });
 

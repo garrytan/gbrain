@@ -58,6 +58,8 @@ import { createHash as _createHash } from 'crypto';
 export const DEFAULT_SOURCE_ID = 'default';
 /** Reserved sentinel paths (e.g. `<head>`) start with this; never file paths. */
 export const SENTINEL_PREFIX = '<';
+/** `<rename:…>` sentinel prefix (#3056 — a rename-reconcile delete failed). */
+export const RENAME_SENTINEL_PREFIX = '<rename:';
 export const DEFAULT_AUTOSKIP_AFTER = 3;
 const LOCK_STALE_MS = 30_000;
 const LOCK_SPIN_MS = 50;
@@ -99,6 +101,90 @@ export function isSkippablePath(path: string): boolean {
   return !path.startsWith(SENTINEL_PREFIX);
 }
 
+/** The `<rename:…>` sentinel key for a rename whose destination is `to`. */
+export function renameSentinelPath(to: string): string {
+  return `${RENAME_SENTINEL_PREFIX}${to}>`;
+}
+
+/**
+ * The one place the `<rename:…>` sentinel's error text is composed. The
+ * format is load-bearing: `parseRenameReconcileFrom` below reads the OLD
+ * path back out of it so a later run can decide whether the sentinel is
+ * orphaned (#3479 blocker 2 — a force-push can invalidate the pinned
+ * target, the destination never re-enters the diff, and the ordinary
+ * success path can then never clear the row).
+ *
+ * The slug and path slots are JSON-encoded, NOT raw prose: a raw
+ * interpolation would make the format ambiguous for a path that itself
+ * contains the ` not removed): ` delimiter, and a misparse there flows
+ * straight into the orphan probe — which could then clear a sentinel while
+ * the real duplicate still exists. JSON escaping makes the quoted span
+ * self-delimiting for ANY path bytes. The stale slug slot is always
+ * present (`?` when the resolve itself failed before it was known) so the
+ * prefix parses unambiguously, and so the blocked-run message can tell the
+ * operator exactly which row `gbrain delete` should remove.
+ */
+export function renameReconcileErrorMessage(
+  from: string,
+  staleSlug: string | undefined,
+  cause: string,
+): string {
+  const slugSlot = staleSlug === undefined ? '?' : JSON.stringify(staleSlug);
+  return (
+    `rename reconcile failed (stale row ${slugSlot} for ${JSON.stringify(from)} not removed): ${cause}`
+  );
+}
+
+/** The literal that closes the path slot in BOTH sentinel formats. */
+const RENAME_SENTINEL_DELIM = ' not removed): ';
+
+/**
+ * Recover the rename's OLD path from a `<rename:…>` sentinel's error text
+ * (written by `renameReconcileErrorMessage` — this pair owns the format).
+ * Returns undefined on anything that doesn't parse; callers treat that as
+ * "leave the row alone" (fail-closed), so a hand-edited row can never be
+ * auto-cleared on a misread.
+ *
+ * Two formats are read. The current one JSON-encodes the path, which makes
+ * the quoted span self-delimiting for any path bytes. The PRE-#3479 one
+ * interpolated the path raw and carried no slug slot:
+ *
+ *   rename reconcile failed (stale row for <path> not removed): <cause>
+ *
+ * Reading only the current format would leave anyone ALREADY wedged by
+ * #3056 before upgrading wedged forever: their ledger row cannot be parsed,
+ * so the self-heal can never prove it orphaned, so `doctor` keeps failing —
+ * the exact condition this self-heal exists to end, denied to the users who
+ * need it most (review: "incomplete fix"). The legacy branch is admitted
+ * ONLY when it is unambiguous: the raw interpolation is undecidable if the
+ * delimiter appears more than once (a path or a cause containing it), so
+ * that case still returns undefined and the row stays open. The two formats
+ * cannot be confused — the current one always has a slug slot between
+ * `stale row ` and ` for `, which the legacy pattern does not match.
+ */
+export function parseRenameReconcileFrom(error: string): string | undefined {
+  const m = /^rename reconcile failed \(stale row (?:"(?:[^"\\]|\\.)*"|\?) for ("(?:[^"\\]|\\.)*") not removed\): /.exec(error);
+  if (m) {
+    try {
+      const parsed: unknown = JSON.parse(m[1]);
+      return typeof parsed === 'string' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const legacy = /^rename reconcile failed \(stale row for (.+) not removed\): /.exec(error);
+  if (!legacy) return undefined;
+  // Undecidable if the delimiter occurs more than once: the greedy capture
+  // above would swallow a cause that contains it, and a lazy one would cut
+  // a path that contains it. Neither guess is safe when the consequence is
+  // clearing a sentinel that still guards a real duplicate.
+  let occurrences = 0;
+  for (let i = error.indexOf(RENAME_SENTINEL_DELIM); i !== -1;
+       i = error.indexOf(RENAME_SENTINEL_DELIM, i + 1)) occurrences++;
+  if (occurrences !== 1) return undefined;
+  return legacy[1] === '' ? undefined : legacy[1];
+}
+
 /**
  * Resolve the auto-skip threshold from `GBRAIN_SYNC_AUTOSKIP_AFTER`
  * (default 3). `0` disables the valve entirely (pure fail-closed).
@@ -117,6 +203,14 @@ export function resolveAutoSkipThreshold(): number {
  * ones so Postgres `duplicate key` isn't mislabeled as a YAML duplicate-key.
  */
 export function classifyErrorCode(errorMsg: string): string {
+  // `<rename:…>` sentinel envelope (#3056) — checked FIRST so the code is
+  // stable regardless of the underlying cause: the envelope wraps a raw DB
+  // error whose text would otherwise match a cause-level pattern below
+  // (STATEMENT_TIMEOUT, DB_DUPLICATE_KEY, …) and make the same sentinel
+  // class surface under different codes run to run (#3479 review). Without
+  // it the blocked-run breakdown also printed a bare `UNKNOWN: 1`.
+  if (/rename reconcile failed|RENAME_RECONCILE/i.test(errorMsg)) return 'RENAME_RECONCILE';
+
   // SLUG_MISMATCH: thrown by importFromFile() at src/core/import-file.ts.
   if (/slug.*does not match|SLUG_MISMATCH/i.test(errorMsg)) return 'SLUG_MISMATCH';
 
@@ -268,7 +362,7 @@ export function syncFailuresPath(): string {
 
 function _ledgerKey(f: { source_id: string; path: string }): string {
   // NUL separator can't appear in a source id or path.
-  return `${f.source_id} ${f.path}`;
+  return `${f.source_id}\u0000${f.path}`;
 }
 
 // ─── State mirror ───────────────────────────────────────────────────
@@ -547,6 +641,26 @@ export function clearFailures(sourceId: string, paths: string[]): void {
     const remove = new Set(paths.map(p => _ledgerKey({ source_id: sourceId, path: p })));
     const kept = entries.filter(e => !remove.has(_ledgerKey(e)));
     if (kept.length !== entries.length) _writeAll(kept);
+  });
+}
+
+/**
+ * Re-insert previously-cleared rows VERBATIM (attempts, first_seen, ts,
+ * commit, state all preserved) — the undo half of a clear that a
+ * post-clear verification found premature (#3583: the orphan-sentinel
+ * sweep's clear-then-verify restore). Skips any (source_id, path) that
+ * already has a row so it can never double-record or fight a concurrent
+ * re-record. Returns how many rows were actually restored.
+ */
+export function restoreFailures(sourceId: string, rows: SyncFailure[]): number {
+  const mine = rows.filter(r => r.source_id === sourceId);
+  if (mine.length === 0) return 0;
+  return withLedgerLock(() => {
+    const entries = loadSyncFailures();
+    const present = new Set(entries.map(e => _ledgerKey(e)));
+    const missing = mine.filter(r => !present.has(_ledgerKey(r)));
+    if (missing.length > 0) _writeAll([...entries, ...missing]);
+    return missing.length;
   });
 }
 

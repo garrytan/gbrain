@@ -27,6 +27,10 @@ import {
 } from '../core/takes-write.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
+import { embedStaleTakes } from '../core/embed-takes.ts';
+import { assertEmbeddingEnabled } from '../core/embedding-dim-check.ts';
+import { loadConfig } from '../core/config.ts';
+import { embedQuery } from '../core/embedding.ts';
 import {
   listPendingProposals,
   acceptProposal,
@@ -161,23 +165,65 @@ async function cmdList(engine: BrainEngine, args: string[]): Promise<void> {
 async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
   const query = args[0];
   if (!query) {
-    console.error('Usage: gbrain takes search "<query>" [--who h] [--json]');
+    console.error('Usage: gbrain takes search "<query>" [--semantic] [--limit N] [--json]');
     process.exit(1);
   }
   const json = flagPresent(args, '--json');
+  const semantic = flagPresent(args, '--semantic');
   const limit = parseInt(flagValue(args, '--limit') ?? '30', 10);
-  const hits = await engine.searchTakes(query, { limit });
+  let hits;
+  if (semantic) {
+    assertEmbeddingEnabled(loadConfig());
+    const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+    validateEmbeddingCreds();
+    const queryEmbedding = await embedQuery(query);
+    hits = await engine.searchTakesVector(queryEmbedding, { limit });
+  } else {
+    hits = await engine.searchTakes(query, { limit });
+  }
   if (json) {
     console.log(JSON.stringify(hits, null, 2));
     return;
   }
   if (hits.length === 0) {
-    console.log(`No takes match "${query}".`);
+    console.log(`No ${semantic ? 'semantic ' : ''}takes match "${query}".`);
     return;
   }
   for (const h of hits) {
     const score = Number(h.score).toFixed(2);
     console.log(`${h.page_slug}#${h.row_num} [${h.kind} • ${h.holder} • w=${Number(h.weight).toFixed(2)} • s=${score}]\n  ${h.claim}\n`);
+  }
+}
+
+async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
+  const dryRun = flagPresent(args, '--dry-run');
+  const json = flagPresent(args, '--json');
+  const batchSizeRaw = flagValue(args, '--batch-size');
+  const batchSize = batchSizeRaw === undefined ? undefined : Number.parseInt(batchSizeRaw, 10);
+  if (batchSize !== undefined && (!Number.isInteger(batchSize) || batchSize < 1)) {
+    console.error(`Invalid --batch-size "${batchSizeRaw}". Expected a positive integer.`);
+    process.exit(1);
+  }
+
+  if (!dryRun) {
+    assertEmbeddingEnabled(loadConfig());
+    const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+    validateEmbeddingCreds();
+  }
+
+  const result = await embedStaleTakes(engine, { batchSize, dryRun });
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (dryRun) {
+    console.log(`[dry-run] Would embed ${result.would_embed} active take(s)`);
+  } else {
+    console.log(`Embedded ${result.embedded} take(s); ${result.total_stale - result.embedded} remain stale.`);
+    if (result.failures > 0) {
+      console.error(`Failed to embed ${result.failures} take(s): ${result.failure_samples[0] ?? 'unknown error'}`);
+    }
+  }
+  if (result.failures > 0) {
+    throw new Error(`takes embedding failed for ${result.failures} take(s)`);
   }
 }
 
@@ -565,8 +611,10 @@ Subcommands:
                                           List takes for a page
   takes list [--json] [--who h] [--kind k] [--sort ...] [--expired]
                                           List all active takes across the brain (#2079)
-  takes search "<query>" [--limit N] [--json]
-                                          Keyword search across all takes
+  takes search "<query>" [--semantic] [--limit N] [--json]
+                                          Keyword search, or semantic search with --semantic
+  takes embed [--dry-run] [--batch-size N] [--json]
+                                          Embed active takes for semantic think/search retrieval (#2089)
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)
@@ -602,6 +650,7 @@ Common flags:
     // "No takes on list." — reading exactly like an empty takes table.
     case 'list':        return cmdList(engine, rest);
     case 'search':      return cmdSearch(engine, rest);
+    case 'embed':       return cmdEmbed(engine, rest);
     case 'add':         return cmdAdd(engine, rest, await resolveTakesSourceId(engine));
     case 'update':      return cmdUpdate(engine, rest, await resolveTakesSourceId(engine));
     case 'supersede':   return cmdSupersede(engine, rest, await resolveTakesSourceId(engine));

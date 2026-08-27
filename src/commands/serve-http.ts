@@ -37,7 +37,6 @@ import {
   dcrRegistrationContext,
   DEFAULT_DCR_TTL_MIN_SECONDS,
 } from '../core/oauth-provider.ts';
-import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
@@ -428,26 +427,25 @@ export async function probeHealth(
 }
 
 /**
- * Lightweight liveness probe. Races `SELECT 1` against the same timeout
- * `probeHealth` uses, returns the same tagged-union result type, but the
- * 200 body is intentionally bare: `{status, version, engine}` — no engine
- * stats. Stats moved to `/admin/api/full-stats` (admin auth) in v0.28.10
- * because `getStats()`'s six count(*) queries exceeded HEALTH_TIMEOUT_MS
- * on production brains through PgBouncer, producing false 503s that
- * triggered orchestrator restart cascades and advisory-lock pile-ups.
+ * Races an abortable `SELECT 1` against `probeHealth`'s timeout; Postgres
+ * cancels the losing query while PGLite only discards its eventual result.
  */
 export async function probeLiveness(
-  sql: SqlQuery,
+  engine: BrainEngine,
   engineName: string,
   version: string,
   timeoutMs: number = HEALTH_TIMEOUT_MS,
 ): Promise<ProbeHealthResult> {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const controller = new AbortController();
   try {
     await Promise.race([
-      sql`SELECT 1`,
+      engine.executeRaw('SELECT 1', undefined, { signal: controller.signal }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('health_timeout')), timeoutMs);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('health_timeout'));
+        }, timeoutMs);
       }),
     ]);
     return {
@@ -456,7 +454,7 @@ export async function probeLiveness(
       body: { status: 'ok', version, engine: engineName },
     };
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'unknown';
+    const msg = controller.signal.aborted ? 'health_timeout' : (e instanceof Error ? e.message : 'unknown');
     return {
       ok: false,
       status: 503,
@@ -1330,7 +1328,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // /admin/api/full-stats (requireAdmin). See probeLiveness above for the why.
   // ---------------------------------------------------------------------------
   app.get('/health', async (_req, res) => {
-    const result = await probeLiveness(sql, config.engine || 'pglite', VERSION);
+    const result = await probeLiveness(engine, config.engine || 'pglite', VERSION);
     res.status(result.status).json(result.body);
   });
 

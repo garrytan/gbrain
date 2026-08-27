@@ -64,6 +64,13 @@ describe('CANONICAL_PRICING — table integrity', () => {
     );
   });
 
+  // Retired ids stay priced so historical usage/audit rows still resolve;
+  // the live successors have to be priced for anything new to be estimated.
+  test('the live Gemini ids are priced alongside the retired ones', () => {
+    expect(CANONICAL_PRICING['google:gemini-2.5-flash']).toEqual({ input: 0.3, output: 2.5 });
+    expect(CANONICAL_PRICING['google:gemini-2.5-flash-lite']).toEqual({ input: 0.1, output: 0.4 });
+  });
+
   // #4218 drift guard extension: cache_read/cache_write are DERIVED from the
   // input rate via the exported multipliers — a hand-edited cache number that
   // drifts from input*mult fails here.

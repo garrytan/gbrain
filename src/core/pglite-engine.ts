@@ -28,7 +28,7 @@ import type {
   ReservedConnection,
   DreamVerdict, DreamVerdictInput,
   FileSpec, FileRow,
-  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow,
+  TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
   FactRow, FactInsertStatus,
@@ -88,7 +88,7 @@ import type {
 } from './types.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { executeRawJsonb, type SqlValue } from './sql-query.ts';
-import { sanitizeForJsonb, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
+import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from './batch-rows.ts';
 import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
@@ -1650,17 +1650,23 @@ export class PGLiteEngine implements BrainEngine {
     if (!includeDeleted) {
       where.push('deleted_at IS NULL');
     }
+    // #3931: anchor the tiebreak on sourceIds[0] (the caller's own resolved
+    // source — see localFederatedSourceIds) instead of a hardcoded 'default',
+    // so a shadowed slug resolves to the caller's own copy.
+    const anchorSourceId = sourceIds && sourceIds.length > 0 ? sourceIds[0] : 'default';
+    params.push(anchorSourceId);
+    const anchorParamIdx = params.length;
     const { rows } = await this.db.query(
       `SELECT id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, deleted_at,
               effective_date, effective_date_source,
               source_kind, source_uri, ingested_via, ingested_at,
               contextual_retrieval_mode
        FROM pages WHERE ${where.join(' AND ')}
-       ORDER BY (source_id = 'default') DESC, source_id ASC
+       ORDER BY (source_id = $${anchorParamIdx}) DESC, source_id ASC
        LIMIT 1`,
       params
     );
-    // Deterministic multi-source tiebreak — default-source-first, then stable
+    // Deterministic multi-source tiebreak: anchor-source-first, then stable
     // alpha. Engine parity: postgres-engine.ts carries the identical clause.
     if (rows.length === 0) return null;
     return rowToPage(rows[0] as Record<string, unknown>);
@@ -1763,7 +1769,7 @@ export class PGLiteEngine implements BrainEngine {
          ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
          ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
        RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at`,
-      [sourceId, slug, page.type, pageKind, page.title, page.compiled_truth, page.timeline || '', JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
+      [sourceId, slug, page.type, pageKind, sanitizeText(page.title), sanitizeText(page.compiled_truth), sanitizeText(page.timeline || ''), JSON.stringify(frontmatter), hash, effectiveDate, effectiveDateSource, importFilename, chunkerVersion, sourcePath, sourceKind, sourceUri, ingestedVia, ingestedAt]
     );
     // PGLite can return zero rows from INSERT ... ON CONFLICT DO UPDATE ...
     // RETURNING in no-op/trigger edge cases, which made rowToPage(undefined)
@@ -3107,14 +3113,19 @@ export class PGLiteEngine implements BrainEngine {
         `$${paramIdx++}, ${embeddingImagePh})`,
       );
 
+      // NUL/lone-surrogate cleanup ONCE into a local shared by BOTH binds:
+      // the md5() embedded_text_hash input and the stored chunk_text must see
+      // the same bytes, or the hash diverges from the sanitized stored text
+      // (and the raw NUL would still abort the INSERT via the md5 param).
+      const sanitizedChunkText = sanitizeText(chunk.chunk_text);
       // Param push order MUST match placeholder allocation order. Both
       // embedding placeholders (when present) are allocated BEFORE the
       // bulk row placeholders, so their values must be pushed first.
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
-      if (embeddingStr) params.push(chunk.chunk_text); // embedded_text_hash md5() input
+      if (embeddingStr) params.push(sanitizedChunkText); // embedded_text_hash md5() input
       params.push(
-        pageId, chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
+        pageId, chunk.chunk_index, sanitizedChunkText, chunk.chunk_source,
         chunk.model || resolvedModel, chunk.token_count || null,
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
@@ -5393,6 +5404,8 @@ export class PGLiteEngine implements BrainEngine {
     return takesImpl.listStaleTakes(this.takesDeps);
   }
 
+  async updateTakeEmbeddings(rowsIn: TakeEmbeddingInput[], opts?: BatchOpts): Promise<number> { return takesImpl.updateTakeEmbeddings(this.takesDeps, rowsIn, opts); }
+
   async updateTake(
     pageId: number,
     rowNum: number,
@@ -5868,6 +5881,13 @@ export class PGLiteEngine implements BrainEngine {
       [escaped],
     );
     return (rows as { key: string }[]).map(r => r.key);
+  }
+
+  async getAllConfig(): Promise<Record<string, string>> {
+    const { rows } = await this.db.query('SELECT key, value FROM config');
+    const out: Record<string, string> = {};
+    for (const row of rows as { key: string; value: string }[]) out[row.key] = row.value;
+    return out;
   }
 
   // Migration support

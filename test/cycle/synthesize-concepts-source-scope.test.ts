@@ -10,6 +10,14 @@
 // docs/architecture/brains-and-sources.md) every synthesized concept page
 // silently lands under the seeded 'default' source instead of the cycle's
 // source — wrong provenance, invisible to source-scoped reads.
+//
+// On v0.45.x the same missing sourceId was fatal rather than silent: the
+// existence probe there was source-agnostic, so an update to an existing
+// concept page found the row in the real source, then createVersion looked
+// it up under 'default' and threw
+//   createVersion failed: page "concepts/..." (source=default) not found
+// which killed the cycle and every phase ordered after synthesize_concepts.
+// Observed in production on a single-source brain.
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';

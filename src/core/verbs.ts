@@ -261,7 +261,8 @@ const synthesize: Operation = {
       takesHoldersAllowList: ctx.takesHoldersAllowList,
       ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
-      remote: ctx.remote === true,
+      // Fail-closed: only a context that explicitly says local gets local.
+      remote: ctx.remote !== false,
     });
 
     // [c10] runThink degrades gracefully to a no-LLM stub RESULT; the protocol

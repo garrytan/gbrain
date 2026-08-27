@@ -431,6 +431,7 @@ test-shaped segment past it.
 
 Unit tests and what they cover:
 
+- `test/facts-engine.test.ts` / `test/consolidate-valid-until.test.ts` — facts-list filtering and consolidate correctness (#4057): `unconsolidatedOnly` is applied before the 100-row limit, so newer consolidated facts cannot permanently hide older pending facts; the phase regression seeds 100 consolidated rows plus three older pending rows and requires all three to progress.
 - `test/markdown.test.ts` — frontmatter parsing; `splitBody` sentinel precedence, horizontal-rule preservation, `inferType` wiki subtypes.
 - `test/chunkers/recursive.test.ts` — chunking.
 - `test/parity.test.ts` — operations contract parity.
@@ -560,6 +561,8 @@ Unit tests and what they cover:
 ### E2E test inventory
 
 E2E tests live in `test/e2e/` and run against real Postgres+pgvector (require `DATABASE_URL`), except where noted as PGLite in-memory (no `DATABASE_URL` needed). One file outside the directory also rides the e2e lane: `test/phantom-redirect-engine-parity.test.ts` (Postgres arm; see the file taxonomy above).
+
+- `test/e2e/facts-separation-postgres.test.ts` — real-Postgres parity for cross-session facts, supersession, and the pre-limit `unconsolidatedOnly` predicate used by consolidation.
 
 - `bun run test:e2e` runs Tier 1 (mechanical, all operations, no API keys). Includes dedicated cases for the postgres-engine `addLinksBatch` / `addTimelineEntriesBatch` bind path — postgres-js's JSONB bind (`jsonb_to_recordset(($1::jsonb)->'rows')`) differs from PGLite's and gets its own coverage.
 - `test/e2e/search-quality.test.ts` — search quality against PGLite (no API keys, in-memory).

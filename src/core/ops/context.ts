@@ -15,7 +15,7 @@ import { resolve, relative, sep } from 'path';
 import { OperationError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
 import { CJK_SLUG_CHARS, PAGE_SLUG_SEG } from '../cjk.ts';
-import { ALL_SOURCES } from '../source-id.ts';
+import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
@@ -522,6 +522,40 @@ export function resolveRequestedScope(
 }
 
 /**
+ * #4329: parse a per-call `source_id` param. Pre-fix, get_page / delete_page /
+ * restore_page had NO source_id in their contracts, so an agent-passed
+ * source_id was SILENTLY dropped and the op acted on ctx.sourceId —
+ * soft-deleting the WRONG row on a multi-source brain while returning a
+ * success that named the requested slug. A caller-supplied value is either
+ * honored or rejected loudly — never ignored. `allowAll` admits the
+ * `__all__` sentinel for read ops (resolveRequestedScope collapses it per
+ * trust); destructive ops target exactly one source and reject it.
+ */
+export function parseSourceIdParam(
+  raw: unknown,
+  opName: string,
+  opts?: { allowAll?: boolean },
+): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') {
+    if (raw === ALL_SOURCES) {
+      if (opts?.allowAll === true) return raw;
+      throw new OperationError(
+        'invalid_params',
+        `${opName}: source_id '${ALL_SOURCES}' is not a valid target — this op acts on exactly one source.`,
+        'Pass the single source_id of the row to target, or omit source_id to use the ambient source scope.',
+      );
+    }
+    if (isValidSourceId(raw)) return raw;
+  }
+  throw new OperationError(
+    'invalid_params',
+    `${opName}: invalid source_id ${JSON.stringify(raw)} — must be 1-32 lowercase alnum chars with optional interior hyphens.`,
+    'Pass a registered source id (see list_sources), or omit source_id to use the ambient source scope.',
+  );
+}
+
+/**
  * #2561 / #3242 — source scope for the page-visibility read ops (`search`,
  * `query`, `get_page`, `list_pages`, `resolve_slugs`).
  *
@@ -533,11 +567,15 @@ export function resolveRequestedScope(
  * were invisible to get_page/search/list_pages while resolve_slugs leaked them).
  *
  * The expansion NEVER applies when:
- *   - a per-call `source_id` was passed (explicit wins, including `__all__`);
+ *   - a concrete per-call `source_id` was passed (explicit wins);
  *   - the resolver already produced a federated array (OAuth grant governs);
  *   - the transport didn't populate `localFederatedSourceIds` (see that
- *     field's doc: it is only set for callers with NO explicit source scope,
- *     and never from caller-controlled params — so trust stays fail-closed).
+ *     field's doc: it is transport-computed and never derived from
+ *     caller-controlled params — so trust stays fail-closed).
+ *
+ * The read-only `__all__` sentinel is equivalent to an unqualified read when
+ * it resolves to the caller's scalar floor. It may therefore use the same
+ * transport-computed federated set, but never widens an OAuth grant.
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
  * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
@@ -549,7 +587,8 @@ export function federatedSearchScope(
 ): { sourceId?: string; sourceIds?: string[] } {
   const scope = resolveRequestedScope(ctx, sourceIdParam);
   if (
-    sourceIdParam === undefined &&
+    (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) &&
+    ctx.auth?.allowedSources === undefined &&
     scope.sourceId !== undefined &&
     scope.sourceIds === undefined &&
     ctx.localFederatedSourceIds !== undefined &&

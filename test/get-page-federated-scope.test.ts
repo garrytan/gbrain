@@ -147,6 +147,52 @@ describe('engine.getPage honors sourceIds[] (federated grant)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #3931 — get_page returns a nondeterministic row when a slug is shadowed
+// across federated sources. `shared/dup` (seeded above) exists in BOTH
+// 'alpha' and 'beta' — the ambiguous case. Without an anchor-aware ORDER BY,
+// LIMIT 1 either returns planner-order-dependent rows (pre-fix) or always
+// prefers a hardcoded 'default' / lexical-first source regardless of which
+// source the caller actually resolved to (the gap left after #4219, which
+// fixed pure nondeterminism but hardcoded the anchor to 'default').
+// ---------------------------------------------------------------------------
+describe('#3931 engine.getPage same-slug shadowing across federated sources is deterministic', () => {
+  test('anchor source (sourceIds[0]) wins even when it is not lexically first', async () => {
+    // 'alpha' < 'beta' lexically, so a lexical-only tiebreak would always
+    // prefer alpha regardless of caller intent. Anchor-first must override
+    // that when the caller's own resolved source (position 0) is beta.
+    const page = await engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha'] });
+    expect(page?.title).toBe('Dup beta');
+  });
+
+  test('re-anchoring the same slug flips the winner', async () => {
+    const asAlphaAnchor = await engine.getPage('shared/dup', { sourceIds: ['alpha', 'beta'] });
+    const asBetaAnchor = await engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha'] });
+    expect(asAlphaAnchor?.title).toBe('Dup alpha');
+    expect(asBetaAnchor?.title).toBe('Dup beta');
+  });
+
+  test('anchor absent from the candidate rows falls back to lexical source_id order', async () => {
+    // 'gamma' is a real granted source but owns no 'shared/dup' page — the
+    // anchor itself has no matching row, so the tiebreak falls through to
+    // plain `source_id ASC` among the sources that DO have the page.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('gamma', 'gamma', '/tmp/gamma') ON CONFLICT (id) DO NOTHING`,
+    );
+    const page = await engine.getPage('shared/dup', { sourceIds: ['gamma', 'beta', 'alpha'] });
+    expect(page?.title).toBe('Dup alpha'); // 'alpha' < 'beta' lexically
+  });
+
+  test('repeated calls with the same scope are stable, not planner-order luck', async () => {
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => engine.getPage('shared/dup', { sourceIds: ['beta', 'alpha'] })),
+    );
+    for (const page of results) {
+      expect(page?.title).toBe('Dup beta');
+    }
+  });
+});
+
 describe('get_page handler closes the cross-source exact-read leak', () => {
   test('remote client granted only [alpha] CANNOT read a beta-only slug', async () => {
     const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['alpha'] } as any });

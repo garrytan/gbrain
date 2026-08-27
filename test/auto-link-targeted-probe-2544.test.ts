@@ -15,7 +15,8 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
@@ -100,9 +101,13 @@ describe('#2544 — auto-link behavior through put_page (targeted probe)', () =>
 
   test('resolution stays scoped to the write source', async () => {
     // Target exists ONLY in 'default'. A write into source-b must not link to it.
+    // Real writable dir: #3935 (absorbed this wave) makes put_page throw
+    // storage_error on a failed write-through, so a fake path would fail the
+    // put before scoped resolution is ever exercised.
+    const sourceBDir = mkdtempSync(join(tmpdir(), 'gbrain-2544-source-b-'));
     await engine.executeRaw(
       `INSERT INTO sources (id, name, local_path, config, created_at)
-       VALUES ('source-b', 'source-b', '/fake/source-b', '{}'::jsonb, NOW())
+       VALUES ('source-b', 'source-b', '${sourceBDir.replace(/'/g, "''")}', '{}'::jsonb, NOW())
        ON CONFLICT (id) DO NOTHING`,
     );
     await put('people/alice-example', 'A person page in default.');

@@ -26,6 +26,14 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from '
 import { dirname, resolve as resolvePath, join } from 'path';
 import { fileURLToPath } from 'url';
 
+/** Read source with CRLF normalized to LF: the parser's block-boundary and
+ *  comment-strip regexes are LF-anchored (`\n}\n`, `//[^\n]*`), so Windows
+ *  checkouts (autocrlf=true) would otherwise widen scan windows and inflate
+ *  the last command's flag list. Deterministic on every platform. */
+function readSrc(path: string): string {
+  return readFileSync(path, 'utf-8').replace(/\r\n/g, '\n');
+}
+
 const ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Flags that live deeper than the one-level module scan. Keep commented. */
@@ -46,7 +54,11 @@ const EXTRA_FLAGS: Record<string, string[]> = {
 const EXCLUDED_MODULES = ['thin-client-routing.ts'];
 
 function isExcludedModule(p: string): boolean {
-  return EXCLUDED_MODULES.some(m => p.endsWith(`/${m}`));
+  // Basename comparison is path-separator agnostic: on Windows p ends in
+  // '\\thin-client-routing.ts' so endsWith('/thin-client-routing.ts') is
+  // false and the skip silently no-ops, inflating every command that
+  // imports the router with its flags.
+  return EXCLUDED_MODULES.some(m => p.split(/[\\/]/).pop() === m);
 }
 
 /** Universal helper flags every command may see (parsed or short-circuited upstream). */
@@ -88,7 +100,11 @@ function relativeImports(src: string, fromDir: string): string[] {
  * modules back in so a peel can never silently shrink a command's flag set.
  */
 function facadeExpansion(p: string): string[] {
-  const rel = p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p;
+  // Compare in forward-slash space: on Windows p uses '\\' separators and
+  // would never match the relative-path constants below, silently skipping
+  // the peeled-module expansion. Same cross-platform drift class as the
+  // isExcludedModule separator check above.
+  const rel = (p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p).replace(/\\/g, '/');
   const collect = (dir: string): string[] => {
     if (!existsSync(dir)) return [];
     const out: string[] = [];
@@ -102,6 +118,10 @@ function facadeExpansion(p: string): string[] {
   if (rel === 'src/core/operations.ts') return collect(join(ROOT, 'src/core/ops'));
   if (rel === 'src/commands/doctor.ts') return collect(join(ROOT, 'src/commands/doctor'));
   if (rel === 'src/commands/skillpack.ts') return collect(join(ROOT, 'src/commands/skillpack'));
+  // connectors is a peeled command dir (index.ts dispatches to auth/sync/status);
+  // scan the whole dir at module depth so a safety flag consumed in a subcommand
+  // module (sync.ts: `=== '--dry-run'`) carries its evidence into depth-zero.
+  if (rel === 'src/commands/connectors/index.ts') return collect(join(ROOT, 'src/commands/connectors'));
   if (rel === 'src/commands/sync.ts') {
     // Only the modules PEELED OUT of sync.ts (their text used to live inside
     // it). Pre-existing sync-* siblings were always ordinary deps — sweeping
@@ -120,7 +140,7 @@ function facadeExpansion(p: string): string[] {
 }
 
 export function buildFlagRegistry(): Record<string, string[]> {
-  const cliSource = readFileSync(join(ROOT, 'src/cli.ts'), 'utf-8');
+  const cliSource = readSrc(join(ROOT, 'src/cli.ts'));
 
   // CLI_ONLY membership (the single source of truth in src/cli.ts). Strip
   // line comments first — the set literal carries commentary whose quoted
@@ -200,11 +220,11 @@ export function buildFlagRegistry(): Record<string, string[]> {
       // imports scan at dep depth — exactly the pre-peel walk.
       const surface = [modPath, ...facadeExpansion(modPath)];
       for (const sfPath of surface) {
-        const sfSrc = readFileSync(sfPath, 'utf-8');
+        const sfSrc = readSrc(sfPath);
         depthZeroText += sfSrc;
         for (const f of flagsInText(sfSrc)) { flags.add(f); depthZero.add(f); }
         for (const dep of relativeImports(sfSrc, dirname(sfPath))) {
-          for (const f of flagsInText(readFileSync(dep, 'utf-8'))) flags.add(f);
+          for (const f of flagsInText(readSrc(dep))) flags.add(f);
         }
       }
     }

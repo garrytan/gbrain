@@ -44,7 +44,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 24 (…; 21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415)', () => {
+  test('version is 26 (…; 21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 negative-offset cache-skip gap #4358 residual; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -84,7 +84,7 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // #4352 follow-up: 22→23 excludePrivate posture fold (xp=) — replaces
     // the wholesale cache skip that disabled caching for remote callers.
     // #4358 residual: 23→24 negative-offset cache-skip gap.
-    // 24→25: kof= (keyword AND→OR fallback knob) joins the key.
+    // 24→25 (#3617): kof= (keyword AND→OR fallback knob) joins the key.
     // 25→26: sal=/rec=/ipat= — salience/recency + intent_patterns fold (#4415).
     expect(KNOBS_HASH_VERSION).toBe(26);
   });

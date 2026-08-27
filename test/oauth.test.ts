@@ -1018,7 +1018,7 @@ describe('redirect_uri validation (DCR)', () => {
         scope: 'read',
         token_endpoint_auth_method: 'client_secret_post',
       }),
-    ).rejects.toThrow(/https/);
+    ).rejects.toThrow(/https|loopback|custom scheme/i);
   });
 
   test('non-URL string is rejected', async () => {
@@ -1031,6 +1031,59 @@ describe('redirect_uri validation (DCR)', () => {
         token_endpoint_auth_method: 'client_secret_post',
       }),
     ).rejects.toThrow();
+  });
+
+  test('native-app custom scheme redirect_uri is allowed (RFC 8252 §7.1)', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'warp-custom-scheme',
+      redirect_uris: ['warp://oauth/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    const stored = await provider.clientsStore.getClient(result.client_id);
+    expect(stored!.redirect_uris).toEqual(['warp://oauth/callback']);
+  });
+
+  test('browser pseudo-schemes are rejected in the custom-scheme branch', async () => {
+    // javascript:/data:/vbscript:/blob: are not native-app schemes — a
+    // "redirect" to one is script injection. The custom-scheme allow branch
+    // must not let them through.
+    for (const uri of [
+      'javascript://alert(1)',
+      'data://text/html;base64,PGh0bWw+',
+      'vbscript://msgbox',
+      'blob://example.com/uuid',
+    ]) {
+      await expect(
+        provider.clientsStore.registerClient!({
+          client_name: 'pseudo-scheme-client',
+          redirect_uris: [uri],
+          grant_types: ['authorization_code'],
+          scope: 'read',
+          token_endpoint_auth_method: 'none',
+        }),
+      ).rejects.toThrow(/pseudo-scheme/);
+    }
+  });
+
+  test('DCR validation failures throw InvalidClientMetadataError (not plain Error)', async () => {
+    const { InvalidClientMetadataError } = await import(
+      '@modelcontextprotocol/sdk/server/auth/errors.js'
+    );
+    try {
+      await provider.clientsStore.registerClient!({
+        client_name: 'http-rejected-type',
+        redirect_uris: ['http://example.com/callback'],
+        grant_types: ['authorization_code'],
+        scope: 'read',
+        token_endpoint_auth_method: 'client_secret_post',
+      });
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InvalidClientMetadataError);
+    }
   });
 
   // pgArray escape regression: an element containing a comma must be stored
@@ -1318,16 +1371,38 @@ describe('v0.28 ALLOWED_SCOPES allowlist', () => {
     }
   });
 
-  test('registerClient (DCR) rejects unknown scope strings', async () => {
-    await expect(
-      provider.clientsStore.registerClient!({
-        client_name: 'dcr-bad-scope',
+  test('registerClient (DCR) filters unknown scopes and keeps allowed ones', async () => {
+    // DCR is unauthenticated and clients (rmcp / OIDC-flavored stacks) often
+    // append offline_access etc. Filter unknowns instead of 500ing.
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-filter-scope',
+      redirect_uris: ['https://example.com/cb'],
+      grant_types: ['authorization_code'],
+      scope: 'read write offline_access openid',
+      token_endpoint_auth_method: 'none',
+    } as any);
+    expect(result.scope).toBe('read write');
+    const stored = await provider.clientsStore.getClient(result.client_id);
+    expect(stored!.scope).toBe('read write');
+  });
+
+  test('registerClient (DCR) rejects when every requested scope is unknown', async () => {
+    const { InvalidClientMetadataError } = await import(
+      '@modelcontextprotocol/sdk/server/auth/errors.js'
+    );
+    try {
+      await provider.clientsStore.registerClient!({
+        client_name: 'dcr-all-unknown-scope',
         redirect_uris: ['https://example.com/cb'],
         grant_types: ['authorization_code'],
-        scope: 'read bogus_scope',
-        token_endpoint_auth_method: 'client_secret_post',
-      } as any),
-    ).rejects.toThrow(/Unknown scope/);
+        scope: 'openid offline_access',
+        token_endpoint_auth_method: 'none',
+      } as any);
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InvalidClientMetadataError);
+      expect((e as Error).message).toMatch(/No recognized scopes/);
+    }
   });
 });
 
@@ -1769,7 +1844,9 @@ describe('v0.41.3 DCR validator (T5)', () => {
   test('DCR rejects unknown token_endpoint_auth_method — closes --enable-dcr loose path', async () => {
     // Pre-v0.41.3 the DCR registration handler defaulted to 'client_secret_post'
     // for any unknown value, silently swallowing typos. T5 throws so the bad
-    // input fails loud — same gate as CLI + admin paths.
+    // input fails loud. DCR wraps the inner InvalidTokenEndpointAuthMethodError
+    // as InvalidClientMetadataError so the MCP SDK returns HTTP 400 instead of
+    // opaque 500 (Warp/rmcp regression).
     await expect(
       provider.clientsStore.registerClient!({
         client_name: 'dcr-bad-test',
@@ -1778,7 +1855,7 @@ describe('v0.41.3 DCR validator (T5)', () => {
         redirect_uris: ['https://example.test/cb'],
         token_endpoint_auth_method: 'frobnicate',
       } as any),
-    ).rejects.toThrow(InvalidTokenEndpointAuthMethodError);
+    ).rejects.toThrow(InvalidClientMetadataError);
   });
 
   test('DCR accepts "none" → public PKCE client', async () => {

@@ -75,10 +75,12 @@ import {
   codexBlockOwnsName,
   codexPluginProvidesName,
   ensureHarnessHome,
+  harnessDetectDeps,
   parseHarnessArgs,
   removeHarness,
   statusHarness,
   type HarnessDeps,
+  type HarnessDetectOverrides,
 } from '../core/bootstrap/harness.ts';
 import { claudeUserSettingsPath, codexConfigPath, opencodeConfigDir, opencodeGlobalConfigPath, opencodeProjectConfigPath } from '../core/bootstrap/host-specs.ts';
 import {
@@ -1625,7 +1627,7 @@ export function workspaceBrainStats(ws: string): { sources: string[]; pages: num
 
 /** `gbrain bootstrap harness` (#4043) — machine-level, no workspace, no
  * agent.json. Locks on the gbrain HOME (there is no workspace to lock). */
-async function runHarness(rest: string[], home: string, runner: ExecRunner): Promise<number> {
+async function runHarness(rest: string[], home: string, runner: ExecRunner, detect?: HarnessDetectOverrides): Promise<number> {
   const flags = parseHarnessArgs(rest);
   if (flags.error) {
     console.error(flags.error);
@@ -1639,6 +1641,7 @@ async function runHarness(rest: string[], home: string, runner: ExecRunner): Pro
     gbrainBin: resolveGbrainBin(),
     isTTY: process.stdout.isTTY === true,
     prompt: promptLine,
+    ...harnessDetectDeps(detect),
   };
   // [X12] --status is READ-ONLY: no home mkdir, no lock — it must work (and
   // stay side-effect-free) even while an apply/remove holds the mutex.
@@ -1866,6 +1869,8 @@ export interface RunBootstrapOpts {
   /** Spawn seam for the opencode `mcp list` probe (tests capture argv, cwd,
    * and env; the default holds a real Bun.spawn handle so timeouts kill). */
   probeSpawn?: OpencodeProbeSpawn;
+  /** Harness-detection seam; see HarnessDetectOverrides in core/bootstrap/harness.ts. */
+  harnessDetect?: HarnessDetectOverrides;
 }
 
 /** Dispatch. Returns the process exit code (cli.ts passes it to setCliExitVerdict). */
@@ -1974,7 +1979,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         code = await runUninstall(ws, rest, home, runner);
         break;
       case 'harness':
-        code = await runHarness(rest, home, runner);
+        code = await runHarness(rest, home, runner, opts.harnessDetect);
         break;
       default:
         return 2; // unreachable

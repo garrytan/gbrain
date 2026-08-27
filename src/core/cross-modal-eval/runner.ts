@@ -264,8 +264,26 @@ async function callSlot(
   }
 }
 
-function buildPrompt(task: string, dimensions: string[], output: string): string {
+/**
+ * The JSON key a judge must use for a dimension: the label before the
+ * ` — ` separator (whole trimmed string when a custom dimension has none).
+ * Exported for the prompt-pinning test.
+ */
+export function dimensionScoreKey(dimension: string): string {
+  return dimension.split('—')[0].trim();
+}
+
+/** Exported for the judge-key pinning test only. */
+export function buildPrompt(task: string, dimensions: string[], output: string): string {
   const dimList = dimensions.map((d, i) => `${i + 1}. ${d}`).join('\n');
+  // Root-cause fix for cross-model dimension splits (#3491, the #4338
+  // approach): pin the exact "scores" keys instead of the old "dim_1_name"
+  // placeholder that let each judge invent its own spelling/casing.
+  // aggregate.ts's trim+lowercase normalization stays as the deterministic
+  // backstop for judges that ignore the pinning.
+  const scoreKeys = dimensions
+    .map((d) => `    ${JSON.stringify(dimensionScoreKey(d))}: { "score": N, "feedback": "..." },`)
+    .join('\n');
   return [
     'You are a strict quality evaluator. Given a TASK and an OUTPUT, evaluate whether the output achieves the task goals.',
     '',
@@ -284,11 +302,10 @@ function buildPrompt(task: string, dimensions: string[], output: string): string
     '',
     'Then list exactly 10 specific, actionable improvements — concrete changes with examples, prioritized by impact.',
     '',
-    'Respond in JSON only (no markdown fences):',
+    'Respond in JSON only (no markdown fences), using EXACTLY these keys under "scores":',
     '{',
     '  "scores": {',
-    '    "dim_1_name": { "score": N, "feedback": "..." },',
-    '    ...',
+    scoreKeys,
     '  },',
     '  "overall": N,',
     '  "improvements": ["1. ...", "2. ...", ... "10. ..."]',

@@ -293,6 +293,39 @@ describe('runExtractFacts — happy path', () => {
     expect(cleanRows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Clean']);
   });
 
+  test('#3625: a Facts fence below the timeline sentinel is loud-skipped, never treated as absence', async () => {
+    await putPage('people/carol', FACT_FENCE(
+      `| 1 | Seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+    ));
+    await runExtractFacts(engine, { slugs: ['people/carol'] });
+
+    // splitBody() would route a fence placed below the timeline sentinel
+    // into page.timeline instead of compiled_truth (the LLM-composed shape
+    // the issue describes). Simulate that post-split state directly: the
+    // fence is present on the page, just in the wrong column.
+    await engine.putPage('people/carol', {
+      title: 'people/carol',
+      type: 'person',
+      compiled_truth: '# Page\n\nBody.\n\n<!-- timeline -->\n',
+      frontmatter: {},
+      timeline: FACT_FENCE(
+        `| 1 | Seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,
+      ),
+    });
+
+    const r = await runExtractFacts(engine, { slugs: ['people/carol'] });
+
+    expect(r.warnings.some(w => w.includes('FACTS_FENCE_BELOW_SENTINEL'))).toBe(true);
+    expect(r.factsDeleted).toBe(0);
+    expect(r.factsInserted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = 'people/carol'`,
+    );
+    expect(rows.rows.map((row: { fact: string }) => row.fact)).toEqual(['Seeded']);
+  });
+
   test('page with no facts fence → DB facts for that page wiped (empty fence reconciles to empty index)', async () => {
     await putPage('people/alice', FACT_FENCE(
       `| 1 | seeded | fact | 1.0 | world | medium | 2026-01-01 |  | s |  |`,

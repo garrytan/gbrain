@@ -177,9 +177,12 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
 
 One known person/company/project card. NEVER errors on a miss.
 
-Resolution (frozen precedence): alias > exact title > slug/slug-suffix; ties
-break on most-recently-touched. Multi-hit ⇒ best match's card + runners-up in
-`suggestions`. Miss ⇒ `found: false` + keyword near-misses with
+Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
+When multiple pages share an exact title, canonical entity types (`person`,
+`company`, `organization`, `entity`) outrank note/conversation containers;
+most-recently-touched breaks ties within the same match shape. A non-entity
+exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
+runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
 `create_safety` hints.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.

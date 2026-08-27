@@ -31,10 +31,10 @@
  *
  * Drives a real store→hit roundtrip (mocked `embed`/`embedQuery` for a
  * deterministic vector, real PGLite SemanticQueryCache — same pattern as
- * test/hybrid-cached-hit-budget-meta.serial.test.ts) with 30 keyword-
+ * test/hybrid-cached-hit-budget-meta.serial.test.ts) with 60 keyword-
  * findable pages spread across 6 page types (dedup's type-diversity layer
  * caps any one type at 60% of the result set, so a single type would
- * silently shrink the pool below 25 regardless of this fix). `autocut` and
+ * silently shrink the pool below 50 regardless of this fix). `autocut` and
  * `relationalRetrieval` are forced off per-call so the result count is
  * driven only by the limit slice under test, not by an unrelated cliff cut
  * or graph arm.
@@ -78,7 +78,7 @@ let tmpHome: string;
 const savedGbrainHome = process.env.GBRAIN_HOME;
 
 const PAGE_TYPES = ['note', 'company', 'person', 'decision', 'concept', 'idea'];
-const PAGE_COUNT = 30; // > balanced searchLimit (25), so the bug (slice to 20) is observable.
+const PAGE_COUNT = 60; // > tokenmax searchLimit (50), so every mode's cap — not the pool — drives the count.
 const KEYWORD = 'gbrain4356widget';
 
 beforeAll(async () => {
@@ -168,6 +168,33 @@ describe('cache HIT — limit honors the resolved mode (#4356)', () => {
     });
     expect(hitMeta?.cache?.status).toBe('hit');
     expect(hitResults.length).toBe(missResults.length);
+  });
+
+  test('tokenmax mode, limit omitted: miss and hit both return searchLimit=50 (above the old flat 20)', async () => {
+    let missMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const missResults = await hybridSearchCached(engine, KEYWORD, {
+      mode: 'tokenmax',
+      autocut: false,
+      relationalRetrieval: false,
+      onMeta: (m) => { missMeta = m; },
+    });
+    expect(missMeta?.cache?.status).toBe('miss');
+    // Sanity: the 60-page pool keeps the mode's searchLimit (50), not the
+    // pool size, as the cap — same reasoning as the balanced test above.
+    expect(missResults.length).toBe(50);
+
+    await awaitPendingSearchCacheWrites();
+
+    let hitMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const hitResults = await hybridSearchCached(engine, KEYWORD, {
+      mode: 'tokenmax',
+      autocut: false,
+      relationalRetrieval: false,
+      onMeta: (m) => { hitMeta = m; },
+    });
+    expect(hitMeta?.cache?.status).toBe('hit');
+    expect(hitResults.length).toBe(missResults.length);
+    expect(hitResults.length).toBe(50);
   });
 
   test('explicit numeric limit round-trips through a hit (limit is folded into knobsHash, so a hit only ever serves a lookup with the SAME resolved limit as the write — this pins that path still behaves, not just the mode-default path above)', async () => {

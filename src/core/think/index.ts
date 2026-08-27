@@ -127,9 +127,11 @@ export interface RunThinkOpts {
    */
   allowedSources?: string[];
   /**
-   * v0.40.2.0 — scalar projection of `OperationContext.remote`. When
-   * true, trajectory queries apply `visibility='world'` filter (mirrors
-   * the recall posture for untrusted callers). CLI defaults to false.
+   * v0.40.2.0 — scalar projection of `OperationContext.remote`. Trajectory
+   * queries apply the `visibility='world'` filter unless this is strictly
+   * `false` (FAIL-CLOSED). Every trusted caller (CLI, dream cycle) passes
+   * `remote: false` explicitly; omitting it degrades trajectory injection
+   * to world-only rows.
    */
   remote?: boolean;
 }

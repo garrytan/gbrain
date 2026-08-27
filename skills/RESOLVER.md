@@ -56,6 +56,7 @@ wins; fix the row.
 | "bulk ingest", "bulk import", "ingest all", "ingestion pipeline" | `skills/bulk-ingestion/SKILL.md` |
 | "ingest this publication", "ingest this whole blog", "ingest this feed", "ingest this newsletter archive" | `skills/blog-ingest/SKILL.md` |
 | "chatgpt export", "claude export", "perplexity export", "conversation history" | `skills/conversation-archive/SKILL.md` |
+| "connect my chatgpt", "connect my claude account", "sync my chat history", "chatgpt oauth", "auto-import my chats", "keep my conversations synced" | `skills/chat-connectors/SKILL.md` |
 
 ## Thinking skills (from GStack)
 
@@ -133,7 +134,7 @@ When multiple skills could match:
 3. If the user mentions a person/company, check if enrich or query fits better
 4. Chaining is explicit in each skill's Phases section
 5. When in doubt, ask the user (see `skills/ask-user/SKILL.md` for the choice-gate pattern)
-6. Publication/feed URL or a whole blog archive → blog-ingest; a single article/tweet URL → idea-ingest; video/audio/PDF → media-ingest; AI-chat exports or session transcripts → conversation-archive
+6. Publication/feed URL or a whole blog archive → blog-ingest; a single article/tweet URL → idea-ingest; video/audio/PDF → media-ingest; AI-chat export FILE or session transcripts → conversation-archive; CONNECT an account for live/automatic sync ("connect my chatgpt", "keep synced") → chat-connectors
 7. Identity/personality content (who the agent is, voice, persona) → soul-audit; token/structure hygiene of the always-loaded context stack → context-audit
 8. "Why is X slow/stale" measurement-first ops triage → measure-before-you-fix; code debugging ("why is this function broken") → investigate (GStack)
 

@@ -130,11 +130,16 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // usage/audit rows still price. Not a valid default — it's deliberately
   // absent from the google recipe's chat list.
   'google:gemini-1.5-pro':                { input:  1.25, output:  5.00 },
-  // Gemini 2.0 Flash: $0.10 in / $0.40 out (verified 2026-06-03). Reconciled
-  // from a stale $0.30/$1.20 entry that had drifted in takes-quality-eval.
-  // `gemini-2-flash` kept as an alias for the legacy id spelling.
+  // The whole `gemini-2.0` family was retired the same way; kept for the same
+  // reason, and equally absent from the recipe's chat list. `gemini-2-flash`
+  // is the legacy id spelling of `gemini-2.0-flash` — keep the pair in
+  // lockstep (the drift guard asserts they agree).
   'google:gemini-2.0-flash':              { input:  0.10, output:  0.40 },
   'google:gemini-2-flash':                { input:  0.10, output:  0.40 },
+  // Gemini 2.5 Flash / Flash-Lite: the live successors, and what the recipe
+  // lists today. Rates from Google's published pricing (2026-08-02).
+  'google:gemini-2.5-flash':              { input:  0.30, output:  2.50 },
+  'google:gemini-2.5-flash-lite':         { input:  0.10, output:  0.40 },
 
   // ── Together / DeepSeek (cross-modal-eval panel) ───────────────────────
   'together:meta-llama/Llama-3.3-70B-Instruct-Turbo': { input: 0.88, output: 0.88 },

@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/chat-connectors. Each positive intent
+// includes at least one trigger string as a substring (structural matcher
+// requirement) while paraphrasing real user phrasing. This skill owns the LIVE
+// account-connected sync; the export-FILE lane + retrieval belong to
+// conversation-archive.
+{"intent":"connect my chatgpt account and pull my whole history into the brain","expected_skill":"chat-connectors"}
+{"intent":"connect my claude account so new conversations land in gbrain","expected_skill":"chat-connectors"}
+{"intent":"sync my chat history from ChatGPT every day automatically","expected_skill":"chat-connectors"}
+{"intent":"set up chatgpt oauth so gbrain can read my conversations","expected_skill":"chat-connectors"}
+{"intent":"auto-import my chats from Claude on a schedule","expected_skill":"chat-connectors"}
+{"intent":"keep my conversations synced without me downloading an export each time","expected_skill":"chat-connectors"}
+// Boundary vs conversation-archive: a DOWNLOADED export file, or any retrieval
+// question ("when did I first discuss X"), routes to conversation-archive, not here.

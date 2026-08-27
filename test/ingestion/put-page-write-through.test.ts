@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
-import { operations } from '../../src/core/operations.ts';
+import { operations, OperationError } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { resetGateway } from '../../src/core/ai/gateway.ts';
 
@@ -184,14 +184,16 @@ describe('put_page write-through — config edge cases', () => {
     expect(result.write_through?.skipped).toBe('no_repo_configured');
   });
 
-  test('repo path points at a missing directory → skipped repo_not_found', async () => {
+  test('repo path points at a missing directory → put_page rejects, no orphan row', async () => {
     await engine.setConfig('sync.repo_path', path.join(tmpRoot, 'does-not-exist'));
     const ctx = makeCtx();
-    const result = (await putPage.handler(ctx, {
-      slug: 'inbox/missing-repo',
-      content: '---\ntitle: M\n---\n\nbody',
-    })) as { write_through?: { skipped?: string } };
-    expect(result.write_through?.skipped).toBe('repo_not_found');
+    await expect(
+      putPage.handler(ctx, {
+        slug: 'inbox/missing-repo',
+        content: '---\ntitle: M\n---\n\nbody',
+      }),
+    ).rejects.toBeInstanceOf(OperationError);
+    expect(await ctx.engine.getPage('inbox/missing-repo', { sourceId: 'default' })).toBeNull();
   });
 });
 
@@ -214,7 +216,7 @@ describe('put_page write-through — multi-source filing', () => {
 });
 
 describe('put_page write-through — failure isolation', () => {
-  test('disk-write failure does not roll back DB', async () => {
+  test('disk-write failure rejects the call and rolls back the new page (no index-only orphan)', async () => {
     // Point the config at a path that exists but isn't writable so the
     // write fails. Best portable trick: a regular file (writeFileSync to
     // a path inside a regular file fails with ENOTDIR).
@@ -223,18 +225,17 @@ describe('put_page write-through — failure isolation', () => {
     await engine.setConfig('sync.repo_path', blockFile);
 
     const ctx = makeCtx();
-    const result = (await putPage.handler(ctx, {
-      slug: 'inbox/fail-isolated',
-      content: '---\ntitle: F\n---\n\nbody',
-    })) as { write_through?: { skipped?: string; error?: string } };
-    // Either skipped (existsSync sees a file, not a dir) or error during write.
-    expect(
-      result.write_through?.skipped === 'repo_not_found' ||
-        typeof result.write_through?.error === 'string',
-    ).toBe(true);
+    await expect(
+      putPage.handler(ctx, {
+        slug: 'inbox/fail-isolated',
+        content: '---\ntitle: F\n---\n\nbody',
+      }),
+    ).rejects.toBeInstanceOf(OperationError);
 
-    // DB write succeeded.
+    // The markdown file is the system of record; a page that only exists
+    // as a DB row is an orphan the caller can't see or fix. Since this was
+    // a brand-new slug, the failed write is rolled back entirely.
     const page = await engine.getPage('inbox/fail-isolated');
-    expect(page).not.toBeNull();
+    expect(page).toBeNull();
   });
 });

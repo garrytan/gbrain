@@ -234,6 +234,14 @@ describe('undeclared_db_only_pages (#2784)', () => {
     expect(c.message).toContain('life/events/');
   });
 
+  test('native synthesize_concepts output is implicitly declared', async () => {
+    const repo = makeRepo();
+    await addSource('src-a', repo);
+    await addPage('concepts/generated-theme', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('ok');
+  });
+
   test('declared db_only prefix in gbrain.yml keeps the check quiet', async () => {
     const repo = makeRepo();
     writeFileSync(join(repo, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/\n');

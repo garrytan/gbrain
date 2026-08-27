@@ -246,7 +246,7 @@ describe('searchKeyword — D2 AND→OR fallback', () => {
   });
 });
 
-describe('hybridSearch — search.keywordOrFallback knob (v=15)', () => {
+describe('hybridSearch — search.keywordOrFallback knob (v=25)', () => {
   // Title deliberately shares no token with the query so the D1 title arm
   // can't rescue the page — isolates the keyword arm's OR retry, which is
   // what the knob gates.

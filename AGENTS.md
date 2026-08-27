@@ -67,6 +67,11 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
 - **Configure:** [`docs/ENGINES.md`](./docs/ENGINES.md),
   [`docs/guides/live-sync.md`](./docs/guides/live-sync.md),
   [`docs/mcp/DEPLOY.md`](./docs/mcp/DEPLOY.md).
+- **Bring in your chat history:** `gbrain transcripts ingest` imports a
+  downloaded ChatGPT / Claude export (or agent session logs); `gbrain connectors`
+  connects the account and syncs new conversations live, incrementally and on an
+  opt-in schedule (cookie/OAuth credentials stay on your machine, 0600). Full
+  guide: [`docs/guides/chat-connectors.md`](./docs/guides/chat-connectors.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),

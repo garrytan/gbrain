@@ -60,6 +60,7 @@ describe('v0.40.2.0 back-compat — event rows ignored by metric callers', () =>
     // Pull all points (kind:'all' default) — includes the event row.
     const allPoints = await engine.findTrajectory({
       entitySlug: 'companies/acme-test',
+      remote: false,
     });
     expect(allPoints.length).toBe(4);
     expect(allPoints.some(p => p.event_type === 'meeting')).toBe(true);
@@ -68,6 +69,7 @@ describe('v0.40.2.0 back-compat — event rows ignored by metric callers', () =>
     const metricPoints = await engine.findTrajectory({
       entitySlug: 'companies/acme-test',
       kind: 'metric',
+      remote: false,
     });
     expect(metricPoints.length).toBe(3);
     expect(metricPoints.every(p => p.event_type === null)).toBe(true);
@@ -85,6 +87,7 @@ describe('v0.40.2.0 back-compat — event rows ignored by metric callers', () =>
   test('computeFounderScorecard ignores event rows in per-metric math', async () => {
     const allPoints = await engine.findTrajectory({
       entitySlug: 'companies/acme-test',
+      remote: false,
     });
 
     const withEventRows = computeFounderScorecard({
@@ -113,6 +116,7 @@ describe('v0.40.2.0 back-compat — event rows ignored by metric callers', () =>
   test('founder-scorecard math does not throw NaN on mixed input', async () => {
     const allPoints = await engine.findTrajectory({
       entitySlug: 'companies/acme-test',
+      remote: false,
     });
     const scorecard = computeFounderScorecard({
       entitySlug: 'companies/acme-test',
@@ -129,6 +133,7 @@ describe('v0.40.2.0 back-compat — event rows ignored by metric callers', () =>
   test('kind: "all" returns event row in chronological position', async () => {
     const points = await engine.findTrajectory({
       entitySlug: 'companies/acme-test',
+      remote: false,
     });
     // Chronological order: 2026-01-01, 2026-04-01, 2026-05-15 (event), 2026-07-01
     expect(points.map(p => p.valid_from.toISOString().slice(0, 10))).toEqual([

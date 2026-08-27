@@ -80,8 +80,9 @@ export async function runMigrateOnlyCore(opts?: { timeoutMs?: number }): Promise
   const engine = await createEngine(toEngineConfig(config));
   try {
     await engine.connect(toEngineConfig(config));
+    const { runInitSchemaWithRetry } = await import('../../core/init-schema-retry.ts');
     await withTimeout(
-      engine.initSchema(),
+      runInitSchemaWithRetry(engine).then(() => undefined),
       timeoutMs,
       `schema init timed out after ${Math.round(timeoutMs / 1000)}s`,
     );

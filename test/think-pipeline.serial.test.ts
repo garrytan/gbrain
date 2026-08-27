@@ -519,6 +519,19 @@ describe('runThink — #1698 explicit-model hard error', () => {
 });
 
 describe('runThink + persistSynthesis — #1698 never persist empty', () => {
+  test('#3734: question embedder is called for vector takes retrieval', async () => {
+    let embeddedQuestion: string | undefined;
+    await runThink(engine, {
+      question: 'Which claims matter?',
+      embedQuestion: async (question) => {
+        embeddedQuestion = question;
+        return new Float32Array(4).fill(0.25);
+      },
+      stubResponse: { answer: 'has content', citations: [], gaps: [] },
+    });
+    expect(embeddedQuestion).toBe('Which claims matter?');
+  });
+
   test('empty-but-valid-JSON answer → synthesisOk false → persist-skip signal', async () => {
     const result = await runThink(engine, {
       question: 'empty answer test',

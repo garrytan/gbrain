@@ -17,6 +17,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { runThink, persistSynthesis, type ThinkLLMClient } from '../think/index.ts';
 import { resolveModel } from '../model-config.ts';
+import { embedQuery } from '../embedding.ts';
 import { BudgetMeter } from './budget-meter.ts';
 
 /**
@@ -160,9 +161,14 @@ export async function runPhaseAutoThink(
     try {
       const result = await runThink(engine, {
         question: q,
+        // #3734: auto-think uses same vector takes retrieval as interactive think.
+        embedQuestion: (text) => embedQuery(text),
         save: config.autoCommit,
         client: opts.client,
         model: modelId,
+        // Fail-closed trust: the local dream cycle must say so explicitly, or
+        // trajectory injection degrades to visibility='world' rows.
+        remote: false,
       });
       // #1698: an empty synthesis (no LLM available / malformed output / empty-JSON answer)
       // must NOT count as complete or advance the cooldown — that is the same silent-success

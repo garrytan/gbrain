@@ -927,9 +927,9 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // D8 convention). Same one-time global cold-miss pattern as the bumps
 // above; refills within cache.ttl_seconds (3600s).
 //
-// bump 24→25: `kof=` (keyword AND→OR fallback knob) joins the key. The PR
-// authored this as 23→24, but 24 was claimed by the negative-offset bump
-// above while it was open, so it takes the next free number per the D8
+// bump 24→25 (#3617): `kof=` (keyword AND→OR fallback knob) joins the key.
+// The PR authored this as 23→24, but 24 was claimed by the negative-offset
+// bump above while it was open, so it takes the next free number per the D8
 // convention. Same one-time global cold-miss pattern as the bumps above.
 //
 // bump 25→26 folds salience/recency + intent_patterns (#4415) — wave-g. Three
@@ -1158,7 +1158,7 @@ export function knobsHash(
     // Strict `=== true` mirrors the enforcement predicate so undefined and
     // false (both private-included) hash identically.
     `xp=${ctx?.excludePrivate === true ? 1 : 0}`,
-    // v=25 addition (append-only): keyword AND→OR fallback knob. A
+    // v=25 addition (#3617, append-only): keyword AND→OR fallback knob. A
     // fallback-on write (OR-relaxed rows blended in) must not be served
     // to a fallback-off lookup — the zero-strict-recall result sets are
     // disjoint (relaxed rows vs empty keyword arm). `?? true` mirrors the

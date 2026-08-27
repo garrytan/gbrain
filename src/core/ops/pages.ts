@@ -22,7 +22,6 @@ import type { WriterLintPayload } from '../output/post-write.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { isValidSourceId, ALL_SOURCES } from '../source-id.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
@@ -33,44 +32,11 @@ import {
   enforceClientSlugFence,
   federatedSearchScope,
   normalizeSlugPrefix,
+  parseSourceIdParam,
   validatePageSlug,
 } from './context.ts';
 
 // --- Page CRUD ---
-
-/**
- * #4329: parse a per-call `source_id` param. Pre-fix, get_page / delete_page /
- * restore_page had NO source_id in their contracts, so an agent-passed
- * source_id was SILENTLY dropped and the op acted on ctx.sourceId —
- * soft-deleting the WRONG row on a multi-source brain while returning a
- * success that named the requested slug. A caller-supplied value is either
- * honored or rejected loudly — never ignored. `allowAll` admits the
- * `__all__` sentinel for read ops (resolveRequestedScope collapses it per
- * trust); destructive ops target exactly one source and reject it.
- */
-function parseSourceIdParam(
-  raw: unknown,
-  opName: string,
-  opts?: { allowAll?: boolean },
-): string | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw === 'string') {
-    if (raw === ALL_SOURCES) {
-      if (opts?.allowAll === true) return raw;
-      throw new OperationError(
-        'invalid_params',
-        `${opName}: source_id '${ALL_SOURCES}' is not a valid target — this op acts on exactly one source.`,
-        'Pass the single source_id of the row to target, or omit source_id to use the ambient source scope.',
-      );
-    }
-    if (isValidSourceId(raw)) return raw;
-  }
-  throw new OperationError(
-    'invalid_params',
-    `${opName}: invalid source_id ${JSON.stringify(raw)} — must be 1-32 lowercase alnum chars with optional interior hyphens.`,
-    'Pass a registered source id (see list_sources), or omit source_id to use the ambient source scope.',
-  );
-}
 
 /**
  * #4329 (S1-tightened): write-authority gate for a per-call source_id on the
@@ -554,8 +520,8 @@ const put_page: Operation = {
     // v0.38 put_page write-through (ingestion cathedral):
     // After importFromContent succeeds, if `sync.repo_path` resolves to a
     // real directory, persist the markdown file to disk alongside the DB
-    // row. Failures non-fatal — DB write is durable; subsequent sync
-    // reconciles drift.
+    // row. A failure here is fatal to the call (see the check right below)
+    // except for the deliberate DB-only configurations.
     //
     // Trust gating:
     //   - Subagent sandbox (viaSubagent without allowedSlugPrefixes) → DB-only.
@@ -585,6 +551,42 @@ const put_page: Operation = {
       writeThrough = { written: false, skipped: 'subagent_sandbox' };
     } else if (ctx.dryRun) {
       writeThrough = { written: false, skipped: 'dry_run' };
+    }
+
+    // The markdown file is the system of record (docs/architecture/
+    // system-of-record.md); the DB row is a derived cache. The deliberate,
+    // by-design DB-only outcomes are `no_repo_configured` (no `sync.repo_path`
+    // set at all), `disabled_by_config` (operator opted out via
+    // `sync.write_through=false`), `subagent_sandbox`, and `dry_run` (no real
+    // write was supposed to happen). Every other non-written outcome — a
+    // thrown write error, or a guard that REFUSED to write into an existing
+    // repo (missing dir, sibling-source collision, escaped path, case-fold
+    // clash, unreadable row) — means a file was supposed to exist and
+    // doesn't, so put_page must not report success.
+    if (writeThrough && !writeThrough.written
+      && writeThrough.skipped !== 'no_repo_configured'
+      && writeThrough.skipped !== 'disabled_by_config'
+      && writeThrough.skipped !== 'subagent_sandbox'
+      && writeThrough.skipped !== 'dry_run') {
+      // Roll back rather than leave an index-only orphan, but only when this
+      // call is what created the row: created_at === updated_at is set by
+      // the SAME insert statement (the ON CONFLICT UPDATE branch never
+      // touches created_at), so equality here means "brand new, this call."
+      // An update (or a dedup hit resolved to a pre-existing page) is left
+      // alone — the prior file on disk still matches the prior DB content.
+      try {
+        const row = await ctx.engine.getPage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+        if (row && row.created_at.getTime() === row.updated_at.getTime()) {
+          await ctx.engine.deletePage(result.slug, { sourceId: ctx.sourceId ?? 'default' });
+        }
+      } catch {
+        // best-effort; the error thrown below still surfaces the failure
+      }
+      throw new OperationError(
+        'storage_error',
+        `put_page: the page content could not be written to disk (${writeThrough.skipped ?? writeThrough.error}).`,
+        'Check that the configured repo path exists and is writable, then retry.',
+      );
     }
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own

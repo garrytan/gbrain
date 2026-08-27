@@ -23,7 +23,7 @@
  * decisions don't depend on it.
  */
 
-import { resolveRecipe } from './model-resolver.ts';
+import { resolveChatContextTokens, resolveRecipe } from './model-resolver.ts';
 import { listRecipes } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
@@ -131,7 +131,7 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     supportsThinking: typeof chat.thinking_by_default === 'function'
       ? chat.thinking_by_default(parsed.modelId)
       : chat.thinking_by_default === true,
-    maxContext: chat.max_context_tokens ?? 128_000,
+    maxContext: resolveChatContextTokens(modelString) ?? 128_000,
   };
 }
 

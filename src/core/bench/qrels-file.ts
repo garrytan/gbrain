@@ -24,6 +24,8 @@
  * Compares are on `${source_id}::${slug}` strings everywhere.
  */
 
+import { dedupeRankedKeys } from '../eval/ranked-docs.ts';
+
 export const QRELS_FILE_SCHEMA_VERSION = 1 as const;
 
 /** Defaults when neither qrels-file nor CLI flags set them. */
@@ -199,14 +201,14 @@ export function parseQrelsFile(content: string): QrelsFile {
  * Returns a number in [0, 1].
  */
 export function computeRecallAtK(retrieved: string[], relevant: string[], k: number): number {
-  if (relevant.length === 0) return 0;
+  if (k <= 0 || relevant.length === 0) return 0;
   const relevantSet = new Set(relevant);
-  const topK = retrieved.slice(0, k);
+  const topK = dedupeRankedKeys(retrieved).slice(0, k);
   let hits = 0;
   for (const r of topK) {
     if (relevantSet.has(r)) hits++;
   }
-  return hits / relevant.length;
+  return hits / relevantSet.size;
 }
 
 /**

@@ -140,6 +140,7 @@ describe('e2e/think-trajectory: temporal intent end-to-end', () => {
     const { client, captured } = captureClient();
 
     const result = await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -164,6 +165,7 @@ describe('e2e/think-trajectory: temporal intent end-to-end', () => {
     const { client, captured } = captureClient();
 
     await runThink(engine, {
+      remote: false,
       question: 'What is the current role for marco?',
       client,
     });
@@ -182,6 +184,7 @@ describe('e2e/think-trajectory: other intent short-circuits', () => {
     const { client, captured } = captureClient();
 
     await runThink(engine, {
+      remote: false,
       question: 'Summarize the company',
       client,
     });
@@ -201,6 +204,7 @@ describe('e2e/think-trajectory: kill switch via think.trajectory_enabled', () =>
 
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -218,6 +222,7 @@ describe('e2e/think-trajectory: empty brain (no facts) graceful no-op', () => {
     const { client, captured } = captureClient();
 
     const result = await runThink(engine, {
+      remote: false,
       question: 'When did Marco last switch jobs?',
       client,
     });
@@ -235,6 +240,7 @@ describe('e2e/think-trajectory: multi-entity ordering deterministic', () => {
 
     // Question references both Marco and Acme — both have facts.
     await runThink(engine, {
+      remote: false,
       question: 'when did marco at acme last change roles',
       client,
     });
@@ -273,6 +279,7 @@ describe('e2e/think-trajectory: prompt sanitization end-to-end', () => {
 
     const { client, captured } = captureClient();
     await runThink(engine, {
+      remote: false,
       question: 'When did I meet eve?',
       client,
     });

@@ -7,7 +7,7 @@ import { existsSync, readFileSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { isAbsolute, join, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
-import { resolveSlugForPath } from './sync.ts';
+import { resolveSlugForPath, DEFAULT_SOURCE_ID } from './sync.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { loadStorageConfig } from './storage-config.ts';
 
@@ -33,18 +33,27 @@ export async function resolveSlugByPathOrSourcePath(
   // resolveSlugsByPaths so single-call and batched paths share one SQL
   // owner + one fallback semantic. One Map allocation per single-call;
   // negligible cost. When sourceId is undefined (legacy unscoped callers),
-  // fall back to the original executeRaw shape — the batch method
-  // requires sourceId to prevent the multi-source-bug-class on its new
-  // surface (D5). The unscoped fallback preserves back-compat.
+  // a direct executeRaw runs instead — the batch method requires sourceId
+  // to prevent the multi-source-bug-class on its new surface (D5). That
+  // branch is NOT the historical unscoped query any more; see below.
   try {
     if (sourceId) {
       const m = await engine.resolveSlugsByPaths([path], { sourceId });
       const slug = m.get(path);
       if (slug) return slug;
     } else {
+      // #3583 gate14: scoped to 'default', matching every WRITE the bare
+      // no-sourceId path performs (updateSlug, deletePage, the rename
+      // bookkeeping repair — all default-scoped). The historical unscoped
+      // form could hand back a row from ANOTHER source that happened to
+      // share the source_path; the rename loop takes this return value
+      // directly as its cheap-move target, so that foreign slug went to
+      // updateSlug, the default-scoped move silently no-opped, and the
+      // fallback import landed under a cross-source dedup. Resolve and
+      // mutate must agree on the scope.
       const rows = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE source_path = $1 LIMIT 1`,
-        [path],
+        `SELECT slug FROM pages WHERE source_path = $1 AND source_id = $2 LIMIT 1`,
+        [path, DEFAULT_SOURCE_ID],
       );
       if (rows.length > 0 && rows[0].slug) return rows[0].slug;
     }
@@ -304,6 +313,21 @@ export function git(
     maxBuffer: 100 * 1024 * 1024,
     ...(silenceStderr ? { stdio: ['ignore', 'pipe', 'pipe'] as const } : {}),
   }).trim();
+}
+
+/**
+ * git() minus the trim — REQUIRED for NUL-delimited listings (`ls-files -z`,
+ * `ls-tree -z`): a filename that begins with a space is the FIRST entry of
+ * the listing, and trim() silently rewrites it into a different path (#3583
+ * review — the misread let a decoy blob stand in for the real file and a
+ * live page was deleted on the corrupted evidence).
+ */
+export function gitRawOutput(repoPath: string, args: string[]): string {
+  return execFileSync('git', buildGitInvocation(repoPath, args, []), {
+    encoding: 'utf-8',
+    timeout: 30000,
+    maxBuffer: 100 * 1024 * 1024,
+  });
 }
 
 /**

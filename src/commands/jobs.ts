@@ -112,6 +112,11 @@ const GATEWAY_REFRESH_JOB_NAMES = new Set([
   'extract_facts',
   'extract-atoms-drain',
   'embed-backfill',
+  // connector-sync's PGLite embed kickoff calls runEmbedCore inline (the
+  // embedding gateway), so it must see a refreshed gateway config like the
+  // other embed jobs — otherwise a worker booted before `config set` embeds
+  // nothing on the catch-up.
+  'connector-sync',
   'extract-takes-from-pages',
   'embed-catch-up',
   // #3387: chronicle_extract's judge is a gateway chat call — without the
@@ -2945,6 +2950,13 @@ export async function registerBuiltinHandlers(
   registerBuiltinJob(worker, engine, 'embed-backfill', async (job) => {
     const { makeEmbedBackfillHandler } = await import('../core/minions/handlers/embed-backfill.ts');
     return await makeEmbedBackfillHandler(engine)(job);
+  });
+  // connector-sync: fetch a chat provider's history and ingest it. Fetch+ingest
+  // needs no LLM, but the PGLite embed kickoff calls runEmbedCore inline, so
+  // it's in GATEWAY_REFRESH_JOB_NAMES (gateway refresh before the handler).
+  registerBuiltinJob(worker, engine, 'connector-sync', async (job) => {
+    const { makeConnectorSyncHandler } = await import('../core/minions/handlers/connector-sync.ts');
+    return await makeConnectorSyncHandler(engine)(job);
   });
 
   // v0.41.18.0 (A10, T7): extract-ner handler for the gbrain onboard

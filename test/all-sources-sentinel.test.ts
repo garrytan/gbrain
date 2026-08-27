@@ -142,6 +142,51 @@ describe('__all__ is never narrower than an unqualified read', () => {
     // …and __all__ must be a superset of that: the whole brain ({}).
     const all = ctxOf({ remote: false, sourceId: '__all__' });
     expect(federatedSearchScope(all)).toEqual({});
+
+    // An explicit sentinel keeps trusted-local whole-brain semantics too.
+    expect(federatedSearchScope(unqualified, '__all__')).toEqual({});
+  });
+
+  test('grantless stdio treats explicit __all__ like an omitted source', () => {
+    const ctx = ctxOf({
+      remote: true,
+      sourceId: 'default',
+      localFederatedSourceIds: ['default', 'src-a', 'src-b'],
+    });
+
+    expect(federatedSearchScope(ctx)).toEqual({
+      sourceIds: ['default', 'src-a', 'src-b'],
+    });
+    expect(federatedSearchScope(ctx, '__all__')).toEqual({
+      sourceIds: ['default', 'src-a', 'src-b'],
+    });
+    expect(federatedSearchScope(ctx, 'src-a')).toEqual({ sourceId: 'src-a' });
+  });
+
+  test('remote scalar scope stays pinned when no transport federation exists', () => {
+    const ctx = ctxOf({ remote: true, sourceId: 'src-b' });
+    expect(federatedSearchScope(ctx, '__all__')).toEqual({ sourceId: 'src-b' });
+  });
+
+  test('OAuth grants, including empty grants, stay authoritative over local federation', () => {
+    const localFederatedSourceIds = ['default', 'src-a', 'src-b'];
+    const granted = ctxOf({
+      remote: true,
+      sourceId: 'default',
+      localFederatedSourceIds,
+      auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['tenant-a', 'tenant-b'] } as any,
+    });
+    expect(federatedSearchScope(granted, '__all__')).toEqual({
+      sourceIds: ['tenant-a', 'tenant-b'],
+    });
+
+    const emptyGrant = ctxOf({
+      remote: true,
+      sourceId: 'default',
+      localFederatedSourceIds,
+      auth: { token: 't', clientId: 'c', scopes: [], allowedSources: [] } as any,
+    });
+    expect(federatedSearchScope(emptyGrant, '__all__')).toEqual({ sourceId: 'default' });
   });
 });
 

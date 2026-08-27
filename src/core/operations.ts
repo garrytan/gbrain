@@ -99,6 +99,7 @@ import { salienceOperations } from './ops/salience.ts';
 
 import { volunteer_context, find_experts, find_contradictions, find_trajectory } from './ops/insights.ts';
 import { transcriptsOperations } from './ops/transcripts.ts';
+import { connectorsOperations } from './ops/connectors.ts';
 import { sourcesOperations } from './ops/sources.ts';
 import { factsOperations } from './ops/facts.ts';
 import { codeIntelOperations } from './ops/code-intel.ts';
@@ -176,7 +177,7 @@ export const operations: Operation[] = [
   ...requestToolsOperations,
   // v0.29: Salience + anomalies (get_recent_salience, find_anomalies —
   // ops/salience.ts) + recent transcripts (ops/transcripts.ts)
-  ...salienceOperations, ...transcriptsOperations,
+  ...salienceOperations, ...transcriptsOperations, ...connectorsOperations,
   // v0.42.x (#2390): Life Chronicle timeline reads + ontology +
   // volunteer_chronicle/backfill — ops/chronicle.ts
   ...chronicleOperations,

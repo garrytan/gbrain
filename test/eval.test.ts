@@ -49,6 +49,10 @@ describe('precisionAtK', () => {
     expect(precisionAtK(['a', 'b'], relevant, 10)).toBeCloseTo(2 / 10);
   });
 
+  test('duplicate chunks count as one page while the denominator remains k', () => {
+    expect(precisionAtK(['a', 'a'], new Set(['a']), 2)).toBe(0.5);
+  });
+
   test('empty hits → 0', () => {
     expect(precisionAtK([], new Set(['a']), 5)).toBe(0);
   });
@@ -86,6 +90,11 @@ describe('recallAtK', () => {
     const relevant = new Set(['a', 'b']);
     // 'b' is at rank 5, beyond k=3
     expect(recallAtK(['a', 'x', 'y', 'z', 'b'], relevant, 3)).toBeCloseTo(1 / 2);
+  });
+
+  test('deduplicates before the cutoff and cannot count one relevant page twice', () => {
+    expect(recallAtK(['a', 'a'], new Set(['a']), 2)).toBe(1);
+    expect(recallAtK(['x', 'x', 'a'], new Set(['a']), 2)).toBe(1);
   });
 
   test('empty hits → 0', () => {
@@ -130,6 +139,10 @@ describe('mrr', () => {
     // 'b' is rank 2, 'c' is rank 3 — MRR should use 'b' at rank 2
     expect(mrr(['x', 'b', 'c'], new Set(['b', 'c']))).toBeCloseTo(0.5);
   });
+
+  test('duplicate non-relevant chunks do not consume page-level ranks', () => {
+    expect(mrr(['x', 'x', 'a'], new Set(['a']))).toBeCloseTo(0.5);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -146,6 +159,10 @@ describe('ndcgAtK', () => {
   test('single relevant doc at rank 1 → 1.0', () => {
     const grades = new Map([['a', 1]]);
     expect(ndcgAtK(['a', 'x', 'y'], grades, 5)).toBeCloseTo(1.0);
+  });
+
+  test('a repeated relevant page receives gain once and remains bounded at 1', () => {
+    expect(ndcgAtK(['a', 'a'], new Map([['a', 1]]), 2)).toBe(1);
   });
 
   test('single relevant doc at rank 2 → less than 1', () => {
