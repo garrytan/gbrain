@@ -14,6 +14,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
+import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
 
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
@@ -102,7 +103,7 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {} }, instructions: GBRAIN_MCP_INSTRUCTIONS },
   );
 
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical

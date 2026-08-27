@@ -109,6 +109,19 @@ describe('buildToolDefs', () => {
       expect(Array.isArray(def.inputSchema.required)).toBe(true);
     }
   });
+
+  test('put_page warns that content is a whole-page replacement and requires a canonical read first', () => {
+    const putPage = buildToolDefs(operations).find(def => def.name === 'put_page');
+    expect(putPage).toBeDefined();
+
+    const content = putPage!.inputSchema.properties.content as { description?: string };
+    for (const description of [putPage!.description, content.description]) {
+      expect(description).toContain('REPLACES the entire page');
+      expect(description).toContain('not a partial edit');
+      expect(description).toContain('get_page');
+      expect(description).toContain('include_content:true');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

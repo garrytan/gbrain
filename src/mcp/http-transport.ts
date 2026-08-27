@@ -28,6 +28,7 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
+import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
 import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -395,6 +396,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               protocolVersion: '2025-03-26',
               serverInfo: { name: 'gbrain', version: VERSION },
               capabilities: { tools: {} },
+              instructions: GBRAIN_MCP_INSTRUCTIONS,
             },
             jsonrpc: '2.0',
             id,

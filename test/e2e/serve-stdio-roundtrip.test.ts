@@ -33,6 +33,7 @@ import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { VERB_NAMES } from '../../src/core/verbs.ts';
+import { GBRAIN_MCP_INSTRUCTIONS } from '../../src/mcp/instructions.ts';
 
 // Distinctive token so keyword search can't accidentally match anything else.
 const MARKER = 'qantani-marker-9f3z';
@@ -129,6 +130,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
 
   test('initialize handshake + tools/list exposes the core retrieval tools', async () => {
     expect(connected).toBe(true);
+    expect(client!.getInstructions()).toBe(GBRAIN_MCP_INSTRUCTIONS);
     const { tools } = await client!.listTools();
     const names = new Set(tools.map((t) => t.name));
     // The core MCP tools the connect LEARN_INSTRUCTION promises always work.
