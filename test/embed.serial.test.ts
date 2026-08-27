@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { DbLockHandle } from '../src/core/db-lock.ts';
 
 // Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
 // the mocked embedBatch. We track max concurrent invocations via a counter
@@ -83,6 +84,8 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
   delete process.env.GBRAIN_EMBED_TIME_BUDGET_MS;
+  delete process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS;
+  delete process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -204,6 +207,63 @@ describe('runEmbed --all (parallel)', () => {
     await runEmbedCore(engine, { stale: true, signal: ac.signal });
 
     expect(invalidateCalled).toBe(false);
+  });
+
+  test('#4599 --stale: cleanup aborts an in-flight single-flight heartbeat refresh', async () => {
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS = '5';
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS = '1000';
+
+    let refreshCalls = 0;
+    let refreshSawSignal = false;
+    let finishRefresh: (outcome: string) => void = () => {};
+    const refreshOutcome = new Promise<string>((resolve) => { finishRefresh = resolve; });
+    const fakeLock: DbLockHandle = {
+      id: 'fake-hanging-refresh',
+      acquiredAt: '0',
+      release: async () => {},
+      refresh: async (opts?: { signal?: AbortSignal }) => {
+        refreshCalls++;
+        if (!opts?.signal) {
+          finishRefresh('missing-signal');
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return true;
+        }
+        refreshSawSignal = true;
+        return await new Promise<boolean>((resolve) => {
+          opts.signal!.addEventListener('abort', () => {
+            finishRefresh('aborted');
+            resolve(true);
+          }, { once: true });
+          setTimeout(() => {
+            finishRefresh('not-aborted');
+            resolve(true);
+          }, 200);
+        });
+      },
+    };
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 0,
+      countStaleChunks: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return 0;
+      },
+    });
+
+    const result = await runEmbedCore(engine, {
+      stale: true,
+      singleFlight: true,
+      quiet: true,
+      heldLocks: [fakeLock],
+    });
+    const outcome = await Promise.race([
+      refreshOutcome,
+      new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 500)),
+    ]);
+
+    expect(result.embedded).toBe(0);
+    expect(refreshCalls).toBeGreaterThan(0);
+    expect(refreshSawSignal).toBe(true);
+    expect(outcome).toBe('aborted');
   });
 
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {
