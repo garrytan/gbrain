@@ -1174,6 +1174,14 @@ export interface BrainEngine {
    */
   sumStaleChunkChars(opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): Promise<number>;
   /**
+   * 페이지에 chunk가 하나 이상 있고, 모든 chunk의 활성 embedding이 존재하며
+   * model과 embedded_text_hash가 현재 chunk_text의 provenance와 일치하면 true.
+   */
+  hasCompletePageEmbeddingProvenance(
+    slug: string,
+    opts: { sourceId?: string; model: string },
+  ): Promise<boolean>;
+  /**
    * Stamp `pages.embedding_signature = signature` for one page. Called after
    * a page's chunks are (re)embedded so a later model swap can detect it as
    * stale. Idempotent. No-op if the page doesn't exist.

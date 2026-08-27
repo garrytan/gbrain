@@ -2486,7 +2486,7 @@ export class PostgresEngine implements BrainEngine {
     // S2: embedding_is_null reports the registry-ACTIVE column's truth —
     // `embed <page>` filters on it, so legacy-column truth would re-embed
     // every chunk on every pass on a registry-routed brain.
-    const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
+    const colId = await this.activeEmbeddingColId();
     const includeEmbedding = opts?.includeEmbedding === true;
     // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING).
     return await this.withScopedReadTransaction(sourceIds, sourceIds ? undefined : scalarSourceId, async (tx) => {
@@ -2600,6 +2600,26 @@ export class PostgresEngine implements BrainEngine {
       UPDATE pages SET embedding_signature = ${opts.signature}
       WHERE slug = ${slug} AND source_id = ${opts.sourceId ?? 'default'}
     `;
+  }
+
+  async hasCompletePageEmbeddingProvenance(
+    slug: string,
+    opts: { sourceId?: string; model: string },
+  ): Promise<boolean> {
+    const colId = await this.activeEmbeddingColId({ fallbackToLegacy: true });
+    const rows = await this.sql.unsafe(
+      `SELECT count(*) > 0
+              AND bool_and(
+                cc.${colId} IS NOT NULL
+                AND cc.model = $1
+                AND cc.embedded_text_hash = md5(cc.chunk_text)
+              ) AS complete
+         FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE p.slug = $2 AND p.source_id = $3`,
+      [opts.model, slug, opts.sourceId ?? 'default'],
+    );
+    return (rows[0] as { complete?: boolean } | undefined)?.complete === true;
   }
 
   async invalidateStaleSignatureEmbeddings(opts: { signature: string; sourceId?: string; includeNullSignature?: boolean }): Promise<number> {
