@@ -64,7 +64,7 @@ import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
-import { assertOutboundImageEmbeddingAllowed, assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
+import { assertOutboundChatAllowed, assertOutboundImageEmbeddingAllowed, assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
@@ -2911,7 +2911,7 @@ export async function expand(query: string): Promise<string[]> {
     const viaText = async (): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
-        textResult = await _generateTextTransport({
+        textResult = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
           model,
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
@@ -2931,7 +2931,7 @@ export async function expand(query: string): Promise<string[]> {
       // generic, so `object` would be `{}`.)
       let result: { object?: { queries?: string[] }; usage?: unknown };
       try {
-        result = await _generateObjectTransport({
+        result = await (assertOutboundChatAllowed("generateObject"), _generateObjectTransport)({
           model,
           schema: ExpansionSchema,
           // Name the schema. On the native-anthropic path the SDK turns the schema
@@ -2963,7 +2963,7 @@ export async function expand(query: string): Promise<string[]> {
       // schema (strict validation), and fall back to the text path if it is
       // rejected at call time so a mis-declared capability never drops expansion.
       try {
-        const result = await _generateObjectTransport({
+        const result = await (assertOutboundChatAllowed("generateObject"), _generateObjectTransport)({
           model,
           schema: ExpansionSchema,
           // Same schema name+description as the native branch above: an
@@ -3058,7 +3058,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     recordSpendOnTracker(tracker, ocrModelId, label, tokens);
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
-    result = await _generateTextTransport({
+    result = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
       model,
       // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
       abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
@@ -3993,7 +3993,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     : opts.system;
 
   try {
-    const result = await _generateTextTransport({
+    const result = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
       model,
       system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,

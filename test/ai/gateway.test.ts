@@ -16,7 +16,7 @@ import {
   getExpansionModel,
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
-import { OutboundGateError, assertOutboundImageEmbeddingAllowed, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
+import { OutboundGateError, assertOutboundChatAllowed, assertOutboundImageEmbeddingAllowed, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
 // afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
@@ -168,6 +168,29 @@ describe('outbound embedding gate', () => {
       else process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = prev.required;
       if (prev.allowImage === undefined) delete process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE;
       else process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE = prev.allowImage;
+    }
+  });
+
+  test('the chat surface is closed under GATE_REQUIRED', () => {
+    const prev = process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
+    // Outside the ingest child the chat surface stays open — this guard is
+    // about the process that holds an embedding key, not about gbrain at large.
+    delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
+    expect(() => assertOutboundChatAllowed('generateText')).not.toThrow();
+
+    process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = '1';
+    try {
+      let caught: unknown;
+      try {
+        assertOutboundChatAllowed('generateText');
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(OutboundGateError);
+      expect((caught as OutboundGateError).ruleId).toBe('chat-surface-closed:generateText');
+    } finally {
+      if (prev === undefined) delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
+      else process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = prev;
     }
   });
 
