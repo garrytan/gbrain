@@ -132,7 +132,10 @@ export async function runConversationParserNightlyProbe(
     return {
       ...baseResult,
       outcome: 'no_embedding_key',
-      reason: 'no Anthropic key configured (polish/fallback would be no-ops)',
+      // Autopilot passes provider-generic chat availability here, and parser
+      // polish/fallback route through the AI Gateway. Keep the historical
+      // outcome value for compatibility, but do not diagnose one provider.
+      reason: 'no chat model available (polish/fallback would be no-ops)',
     };
   }
 
