@@ -149,6 +149,20 @@ export class OutboundGateError extends Error {
  * DLP + an approval path), refuse it outright rather than let it slip past a
  * gate that structurally cannot inspect it.
  */
+/**
+ * The ingest child holds an embedding provider key. gbrain's model resolver
+ * falls back to a "key-aware default" when the pinned chat model has no key,
+ * so pinning `disabled:disabled` does not actually stop a chat call — it just
+ * picks whatever the available key can reach, which is the same key. The
+ * 2026-08-26 exception covers a named embedding provider only, so under
+ * GATE_REQUIRED the chat surface is refused outright rather than configured
+ * away.
+ */
+export function assertOutboundChatAllowed(label: string): void {
+  if (process.env.GBRAIN_OUTBOUND_GATE_REQUIRED !== '1') return;
+  throw new OutboundGateError(`chat-surface-closed:${label}`, 0, 0);
+}
+
 export function assertOutboundImageEmbeddingAllowed(kinds: readonly string[]): void {
   if (!OUTBOUND_GATE_ENABLED) return;
   if (process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE === '1' && !gateRequired()) return;
