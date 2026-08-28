@@ -95,7 +95,7 @@ export function isMustAbortError(err: unknown): boolean {
 
 /** Per-item failure record stored in `SlidingPoolResult.failures`. */
 export interface PoolFailure {
-  /** Index in the original items array. */
+  /** Index in the original items array (arrays) or the pull sequence number (streams). */
   idx: number;
   /** Caller-provided label (defaults to `String(item)`). */
   label: string;
@@ -104,9 +104,17 @@ export interface PoolFailure {
 }
 
 export interface SlidingPoolOpts<T> {
-  /** Pre-enumerated work list. Empty input is a no-op (returns immediately). */
-  items: readonly T[];
-  /** Worker count. Clamped to `[1, items.length]` internally. */
+  /**
+   * Work items. An array is claimed by index (the atomic `nextIdx++` claim
+   * below); empty input is a no-op. An `AsyncIterable` (typically an async
+   * generator) is pulled lazily: workers take the next item as soon as they
+   * free up, so a slow producer never becomes a barrier and memory stays at
+   * `workers` items plus whatever the producer buffers. Pulls are serialized
+   * through one promise chain, so any AsyncIterable is safe, not only
+   * generators. `onProgress` receives `total = -1` for streams.
+   */
+  items: readonly T[] | AsyncIterable<T>;
+  /** Worker count. Arrays clamp it to `[1, items.length]`; streams use `max(1, workers)`. */
   workers: number;
   /**
    * Per-item work. Receives item + its position in `items` + the worker
@@ -168,22 +176,30 @@ export interface SlidingPoolResult {
  * Returns when every item has been claimed AND every worker has
  * finished its current item, OR when aborted.
  *
- * Empty `items` returns immediately with zeroed result. Worker count
- * is clamped to `[1, items.length]` so we never spawn more workers
- * than work.
+ * Empty `items` returns immediately with zeroed result. For arrays the
+ * worker count is clamped to `[1, items.length]` so we never spawn more
+ * workers than work; a stream has no known length, so it gets
+ * `max(1, workers)`.
+ *
+ * Hard failures (a must-abort error from an item, or a stream producer
+ * rejecting a pull): the pool stops claiming, aborts the local signal so
+ * sibling workers finish their current item and stop, waits for every
+ * worker, then rethrows the error. No worker is left running detached after
+ * the pool has reported failure.
  */
 export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<SlidingPoolResult> {
-  const items = opts.items;
-  const total = items.length;
+  const stream = isAsyncIterable(opts.items) ? opts.items : null;
+  const items: readonly T[] = stream ? [] : (opts.items as readonly T[]);
+  const total = stream ? -1 : items.length;
   const result: SlidingPoolResult = {
     processed: 0,
     errored: 0,
     aborted: false,
     failures: [],
   };
-  if (total === 0) return result;
-
-  const workerCount = Math.max(1, Math.min(opts.workers, total));
+  if (!stream && total === 0) return result;
+  const requested = Number.isFinite(opts.workers) ? opts.workers : 1;
+  const workerCount = stream ? Math.max(1, requested) : Math.max(1, Math.min(requested, total));
   const labelFn = opts.failureLabel ?? ((x: T) => String(x));
   // Local AbortController composed with the caller's signal so a
   // must-abort error from one worker also signals every other worker's
@@ -207,33 +223,74 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
   // that put an `await` between the `nextIdx` read and write OR import
   // `worker_threads` alongside this module.
   let nextIdx = 0;
-
+  // Stream path: one serialized pull chain so concurrent workers never call
+  // `next()` on a non-generator AsyncIterable out of order.
+  const iterator = stream ? stream[Symbol.asyncIterator]() : null;
+  let pullChain: Promise<IteratorResult<T>> = Promise.resolve({ done: true, value: undefined as never });
+  let streamIdx = 0;
+  // First producer rejection. Recorded by the worker that saw it, rethrown
+  // after every worker has finished its current item. (A holder object: TS
+  // does not see assignments made inside the worker closure.)
+  const producer: { failure: { error: unknown } | null } = { failure: null };
+  // First must-abort error (BudgetExhausted etc.). Same drain-then-rethrow
+  // discipline as a producer failure.
+  const mustAbort: { failure: { error: unknown } | null } = { failure: null };
+  const pullStream = (): Promise<IteratorResult<T>> => {
+    const pull = () => (iterator as AsyncIterator<T>).next();
+    pullChain = pullChain.then(pull, pull);
+    return pullChain;
+  };
   async function worker(workerIdx: number): Promise<void> {
     while (true) {
       if (localAbort.signal.aborted) {
         result.aborted = true;
         return;
       }
-      if (nextIdx >= total) return;
-      // ATOMICITY INVARIANT: this line is the load-bearing claim.
-      // Read + increment must remain a single synchronous statement.
-      // Do NOT insert `await` between them. See module header.
-      const idx = nextIdx++;
-      const item = items[idx];
+      let idx: number;
+      let item: T;
+      if (stream) {
+        let pulled: IteratorResult<T>;
+        try {
+          pulled = await pullStream();
+        } catch (err) {
+          // The producer threw (a listPages statement timeout, a dead DB
+          // socket, its own abort). Stop claiming and let the siblings
+          // finish their current item; the error surfaces after the join.
+          if (!producer.failure) producer.failure = { error: err };
+          result.aborted = true;
+          localAbort.abort();
+          return;
+        }
+        if (localAbort.signal.aborted) {
+          result.aborted = true;
+          return;
+        }
+        if (pulled.done) return;
+        idx = streamIdx++;
+        item = pulled.value;
+      } else {
+        // Array path: the claim below MUST stay one synchronous statement
+        // (see the ATOMICITY INVARIANT in the header).
+        if (nextIdx >= total) return;
+        idx = nextIdx++;
+        item = items[idx];
+      }
       try {
         await opts.onItem(item, idx, workerIdx);
         result.processed++;
         opts.onProgress?.(result.processed, total);
       } catch (err) {
         // D13: must-abort error classes (BudgetExhausted, etc.) bypass
-        // onError and hard-abort the pool. Rethrowing propagates up
-        // through Promise.all; the local abort signals other workers.
+        // onError and hard-abort the pool: the local abort signals the
+        // other workers, every worker finishes its current item, and the
+        // error is rethrown after the join (see the function doc).
         if (isMustAbortError(err)) {
           result.aborted = true;
           result.errored++;
           result.failures.push({ idx, label: labelFn(item), error: err });
+          if (!mustAbort.failure) mustAbort.failure = { error: err };
           localAbort.abort();
-          throw err;
+          return;
         }
         result.errored++;
         result.failures.push({ idx, label: labelFn(item), error: err });
@@ -254,9 +311,20 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
     );
   } finally {
     if (opts.signal) opts.signal.removeEventListener('abort', onCallerAbort);
+    // Close the generator on every exit path (abort, must-abort, or plain
+    // exhaustion): a no-op when it already finished, and it runs the
+    // producer's finally blocks when it did not.
+    if (iterator && typeof iterator.return === 'function') {
+      try { await iterator.return(undefined); } catch { /* producer cleanup is best-effort */ }
+    }
   }
-
+  if (mustAbort.failure) throw mustAbort.failure.error;
+  if (producer.failure) throw producer.failure.error;
   return result;
+}
+
+function isAsyncIterable<T>(x: readonly T[] | AsyncIterable<T>): x is AsyncIterable<T> {
+  return typeof (x as AsyncIterable<T>)[Symbol.asyncIterator] === 'function';
 }
 
 /**

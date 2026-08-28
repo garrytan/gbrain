@@ -464,3 +464,339 @@ describe('runSlidingPool — worker slot index passed to onItem', () => {
     expect(slotsSeen.size).toBe(5);
   });
 });
+
+describe('runSlidingPool — AsyncIterable items (stream path)', () => {
+  async function* count(n: number, delayMs = 0): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) {
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      yield i;
+    }
+  }
+
+  test('pulls lazily with bounded concurrency and processes every item once', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const seen: number[] = [];
+    const r = await runSlidingPool({
+      items: count(12),
+      workers: 3,
+      onItem: async (item) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((res) => setTimeout(res, 5));
+        seen.push(item);
+        inFlight--;
+      },
+    });
+    expect(r.processed).toBe(12);
+    expect(r.errored).toBe(0);
+    expect(seen.sort((a, b) => a - b)).toEqual(Array.from({ length: 12 }, (_, i) => i));
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+  });
+
+  test('a slow producer feeds workers as items arrive (no barrier)', async () => {
+    const started: number[] = [];
+    const r = await runSlidingPool({
+      items: count(6, 8),
+      workers: 4,
+      onItem: async (item) => {
+        started.push(Date.now());
+        await new Promise((res) => setTimeout(res, 1));
+        void item;
+      },
+    });
+    expect(r.processed).toBe(6);
+    // Items were consumed one by one as produced, not in one block at the end.
+    // 5 producer gaps of 8 ms; the margin absorbs early timer wakeups.
+    expect(started[5] - started[0]).toBeGreaterThanOrEqual(25);
+  });
+
+  test('error policy continue counts the failure and keeps pulling', async () => {
+    const r = await runSlidingPool({
+      items: count(5),
+      workers: 2,
+      onItem: async (item) => {
+        if (item === 2) throw new Error('boom');
+      },
+      onError: 'continue',
+      failureLabel: (i) => `item-${i}`,
+    });
+    expect(r.processed).toBe(4);
+    expect(r.errored).toBe(1);
+    expect(r.failures[0].label).toBe('item-2');
+  });
+
+  test('caller abort stops pulling and closes the generator', async () => {
+    let closed = false;
+    async function* endless(): AsyncGenerator<number> {
+      try {
+        for (let i = 0; i < 1000; i++) yield i;
+      } finally {
+        closed = true;
+      }
+    }
+    const ac = new AbortController();
+    const r = await runSlidingPool({
+      items: endless(),
+      workers: 2,
+      signal: ac.signal,
+      onItem: async (item) => {
+        if (item === 3) ac.abort();
+        await new Promise((res) => setTimeout(res, 2));
+      },
+    });
+    expect(r.aborted).toBe(true);
+    expect(r.processed).toBeLessThan(1000);
+    expect(closed).toBe(true);
+  });
+});
+
+describe('runSlidingPool — AsyncIterable items: error and edge paths', () => {
+  class FakeBudgetExhausted extends Error {
+    readonly tag = 'BUDGET_EXHAUSTED' as const;
+    constructor() {
+      super('cap exhausted');
+      this.name = 'BudgetExhausted';
+    }
+  }
+
+  test('an empty stream is a no-op: no onItem call, zeroed result', async () => {
+    async function* none(): AsyncGenerator<number> {}
+    let calls = 0;
+    const r = await runSlidingPool({
+      items: none(),
+      workers: 3,
+      onItem: async () => {
+        calls++;
+      },
+    });
+    expect(calls).toBe(0);
+    expect(r).toEqual({ processed: 0, errored: 0, aborted: false, failures: [] });
+  });
+
+  test('a producer that throws mid-stream rejects the pool with its error and runs its finally', async () => {
+    let closed = false;
+    async function* faulty(): AsyncGenerator<number> {
+      try {
+        yield 0;
+        yield 1;
+        throw new Error('producer exploded');
+      } finally {
+        closed = true;
+      }
+    }
+    const seen: number[] = [];
+    await expect(
+      runSlidingPool({
+        items: faulty(),
+        workers: 2,
+        onItem: async (i) => {
+          seen.push(i);
+        },
+      }),
+    ).rejects.toThrow('producer exploded');
+    expect(closed).toBe(true);
+    expect(seen.sort()).toEqual([0, 1]);
+  });
+
+  test('a must-abort error from a streamed item rethrows and closes the producer', async () => {
+    let closed = false;
+    let produced = 0;
+    async function* endless(): AsyncGenerator<number> {
+      try {
+        for (let i = 0; i < 1000; i++) {
+          produced++;
+          yield i;
+        }
+      } finally {
+        closed = true;
+      }
+    }
+    let threw: unknown = null;
+    try {
+      await runSlidingPool({
+        items: endless(),
+        workers: 3,
+        onError: 'continue', // must-abort bypasses this
+        onItem: async (i) => {
+          if (i === 4) throw new FakeBudgetExhausted();
+          await new Promise((res) => setTimeout(res, 1));
+        },
+      });
+    } catch (e) {
+      threw = e;
+    }
+    expect((threw as FakeBudgetExhausted | null)?.tag).toBe('BUDGET_EXHAUSTED');
+    expect(closed).toBe(true);
+    expect(produced).toBeLessThan(1000);
+  });
+
+  test("onError 'abort' on a stream stops pulling and closes the producer", async () => {
+    let closed = false;
+    async function* endless(): AsyncGenerator<number> {
+      try {
+        for (let i = 0; i < 1000; i++) yield i;
+      } finally {
+        closed = true;
+      }
+    }
+    const r = await runSlidingPool({
+      items: endless(),
+      workers: 2,
+      onError: 'abort',
+      onItem: async (i) => {
+        if (i === 2) throw new Error('boom');
+      },
+    });
+    expect(r.aborted).toBe(true);
+    expect(r.errored).toBe(1);
+    expect(r.failures[0].label).toBe('2');
+    expect(r.processed).toBeLessThan(1000);
+    expect(closed).toBe(true);
+  });
+
+  test('a signal aborted before start pulls nothing from the stream (iterator without return())', async () => {
+    let pulls = 0;
+    const source: AsyncIterable<number> = {
+      [Symbol.asyncIterator]() {
+        let i = 0;
+        return {
+          next: async () => {
+            pulls++;
+            return i < 3 ? { done: false, value: i++ } : { done: true, value: undefined as never };
+          },
+        };
+      },
+    };
+    const ac = new AbortController();
+    ac.abort();
+    let calls = 0;
+    const r = await runSlidingPool({
+      items: source,
+      workers: 2,
+      signal: ac.signal,
+      onItem: async () => {
+        calls++;
+      },
+    });
+    expect(r.aborted).toBe(true);
+    expect(pulls).toBe(0);
+    expect(calls).toBe(0);
+  });
+
+  test('a plain AsyncIterable (no generator) is pulled one next() at a time under concurrent workers', async () => {
+    let inNext = 0;
+    let overlap = 0;
+    let i = 0;
+    const source: AsyncIterable<number> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => {
+            inNext++;
+            if (inNext > 1) overlap++;
+            await new Promise((res) => setTimeout(res, 2));
+            inNext--;
+            return i < 7 ? { done: false, value: i++ } : { done: true, value: undefined as never };
+          },
+        };
+      },
+    };
+    const seen: number[] = [];
+    const r = await runSlidingPool({
+      items: source,
+      workers: 4,
+      onItem: async (v) => {
+        seen.push(v);
+      },
+    });
+    expect(overlap).toBe(0);
+    expect(r.processed).toBe(7);
+    expect(seen.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  test('stream idx is the pull order; failures carry it; onProgress reports total -1', async () => {
+    async function* count(): AsyncGenerator<string> {
+      yield 'a';
+      yield 'b';
+      yield 'c';
+    }
+    const idxs: Array<[string, number]> = [];
+    const totals: number[] = [];
+    const r = await runSlidingPool({
+      items: count(),
+      workers: 2,
+      onItem: async (item, idx) => {
+        idxs.push([item, idx]);
+        if (item === 'b') throw new Error('nope');
+      },
+      onProgress: (_done, total) => {
+        totals.push(total);
+      },
+    });
+    expect(idxs.sort()).toEqual([['a', 0], ['b', 1], ['c', 2]]);
+    expect(r.failures).toEqual([{ idx: 1, label: 'b', error: expect.any(Error) }]);
+    expect(totals).toEqual([-1, -1]);
+  });
+});
+
+describe('runSlidingPool — stream producer failure drains in-flight work (2026-08-28 review)', () => {
+  test('the producer error surfaces only after in-flight items finish, and siblings stop claiming', async () => {
+    let done = 0;
+    let pulls = 0;
+    async function* producer(): AsyncGenerator<number> {
+      pulls++;
+      yield 200;
+      pulls++;
+      yield 10;
+      pulls++;
+      throw new Error('producer boom');
+    }
+    await expect(
+      runSlidingPool({
+        items: producer(),
+        workers: 2,
+        onItem: async (ms: number) => {
+          await new Promise((r) => setTimeout(r, ms));
+          done++;
+        },
+      }),
+    ).rejects.toThrow('producer boom');
+    // Both items ran to completion before the pool rejected: the 200 ms item
+    // was mid-flight when the producer threw and was not left detached.
+    expect(done).toBe(2);
+    expect(pulls).toBe(3);
+  });
+
+  test('a must-abort error is rethrown only after in-flight siblings finish', async () => {
+    let done = 0;
+    class FakeBudget extends Error {
+      readonly tag = 'BUDGET_EXHAUSTED' as const;
+    }
+    await expect(
+      runSlidingPool({
+        items: [200, 1, 2, 3],
+        workers: 2,
+        onItem: async (ms: number) => {
+          if (ms === 1) throw new FakeBudget('cap');
+          await new Promise((r) => setTimeout(r, ms));
+          done++;
+        },
+      }),
+    ).rejects.toMatchObject({ tag: 'BUDGET_EXHAUSTED' });
+    // The 200 ms item was mid-flight when the cap hit and ran to completion;
+    // nothing after the cap was claimed.
+    expect(done).toBe(1);
+  });
+
+  test('a non-finite worker count runs one worker instead of none', async () => {
+    async function* three(): AsyncGenerator<number> {
+      yield 1;
+      yield 2;
+      yield 3;
+    }
+    const r = await runSlidingPool({ items: three(), workers: Number.NaN, onItem: async () => {} });
+    expect(r.processed).toBe(3);
+    expect(r.aborted).toBe(false);
+  });
+});
