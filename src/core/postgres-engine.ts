@@ -1013,6 +1013,9 @@ export class PostgresEngine implements BrainEngine {
     // v0.45.7 keyset (updated_at, slug) supersedes updated_after when set.
     const keyset = filters?.updatedAfterKeyset;
     const updatedCondition = keyset
+      // Exact only when the cursor carries the column's microseconds: callers
+      // resume from `Page.updated_at_iso` (projected below), never from a JS
+      // Date, which would re-select every row in the last row's millisecond.
       ? sql`AND (p.updated_at > ${keyset.updatedAt}::timestamptz OR (p.updated_at = ${keyset.updatedAt}::timestamptz AND p.slug > ${keyset.slug}))`
       : updatedAfter
         ? sql`AND p.updated_at > ${updatedAfter}::timestamptz`
@@ -1058,7 +1061,7 @@ export class PostgresEngine implements BrainEngine {
     // `app.scopes` from filters; when disabled, it's a pass-through.
     return await this.withScopedReadTransaction(filters?.sourceIds, filters?.sourceId, async (tx) => {
       const rows = await tx`
-        SELECT p.* FROM pages p
+        SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
         WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}

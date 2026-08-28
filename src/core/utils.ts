@@ -204,6 +204,8 @@ export function rowToPage(row: Record<string, unknown>): Page {
     emotional_weight: row.emotional_weight == null ? undefined : Number(row.emotional_weight),
     created_at: new Date(row.created_at as string),
     updated_at: new Date(row.updated_at as string),
+    // Microsecond-exact ISO, projected by listPages for keyset resumption.
+    ...(row.updated_at_iso !== undefined && { updated_at_iso: String(row.updated_at_iso) }),
     ...(deletedAt !== undefined && { deleted_at: deletedAt }),
     // v0.29.1 (columns added in migration v41). Optional in SELECT projection.
     ...(effectiveDate !== undefined && { effective_date: effectiveDate }),
