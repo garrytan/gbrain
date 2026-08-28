@@ -80,6 +80,12 @@ export const KNOWN_LINK_TYPES: ReadonlySet<string> = new Set([
   'source',
   'related_to',
   'wikilink_basename',
+  // Open-loop engine (google source kind): thread-page → person-page edges
+  // written by loops-extract.ts with link_source 'google-loops'.
+  //   owes_to              — the account owner promised something to them
+  //   awaiting_reply_from  — the account owner is waiting on them
+  'owes_to',
+  'awaiting_reply_from',
 ]);
 
 // Seeds that are pronouns / generic nouns, not entities. If a pattern's seed

@@ -8,6 +8,7 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
+import { sourceScopeOpts } from './context.ts';
 
 // --- v0.28: whoami + sources management ---
 
@@ -163,17 +164,19 @@ const sources_list: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { listSources } = await import('../sources-ops.ts');
-    // #4433: row-filter the listing to the caller's federated source grant —
-    // a client whose grant excludes a source must not learn that source's
-    // id, name, or page_count. The filter mirrors EXACTLY the boundary
-    // resolveRequestedScope enforces on explicit per-call `source_id` reads
-    // (a non-empty ctx.auth.allowedSources array): the listing shows
-    // precisely the sources the caller could actually read. Trusted local
-    // CLI and remote callers WITHOUT such a grant (the scalar
-    // default-source floor, which today may read any source by naming it
-    // explicitly) keep the full listing.
-    const granted = ctx.remote !== false ? ctx.auth?.allowedSources : undefined;
-    const allowedSourceIds = granted && granted.length > 0 ? granted : undefined;
+    // #4433: row-filter the listing to the caller's source scope — a client
+    // whose scope excludes a source must not learn that source's id, name,
+    // or page_count. Wave-L posture (maintainer decision, supersedes the
+    // wave-g "scalar callers keep the full listing" carve-out): EVERY
+    // untrusted caller (anything not strictly remote === false) is confined
+    // through the canonical sourceScopeOpts ladder, matching the rest of
+    // the read-op surface — federated grant > scalar bound source >
+    // fail-closed '__all__' (the sentinel passes through as a literal that
+    // matches no real source id, so it yields an empty listing rather than
+    // the whole registry). Trusted local CLI keeps the full operator view.
+    const scope = ctx.remote === false ? {} : sourceScopeOpts(ctx);
+    const allowedSourceIds =
+      scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : undefined);
     return {
       sources: await listSources(ctx.engine, {
         includeArchived: (p.include_archived as boolean) === true,

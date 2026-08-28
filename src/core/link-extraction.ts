@@ -1679,3 +1679,40 @@ export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<bool
   const normalized = val.trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
+
+/**
+ * Read the `link_resolution.cross_source` config flag. Defaults to FALSE
+ * (opt-in only; the historical same-source-or-'default' edge gate is
+ * preserved for existing brains).
+ *
+ * When TRUE: a wikilink whose target slug exists ONLY in other sources
+ * (neither the origin page's source nor 'default') still produces an edge,
+ * with `to_source_id` picked deterministically (lexicographically smallest
+ * matching source). When FALSE, those candidates are dropped — but counted
+ * and surfaced in the extract summary, never silent (issue #2589: the drop
+ * was previously indistinguishable from an unresolved link).
+ *
+ * SCOPE: the DB extract paths only (`extract links --source db`,
+ * `extract --stale`) — they resolve against the full multi-source slug map.
+ * The FS-walk paths (dir-driven, incl. the autopilot cycle's extract phase)
+ * build their slug set from the walked files of ONE source, so cross-source
+ * targets aren't resolvable there; FS-walk parity is a filed follow-up.
+ *
+ * Resolution order (highest → lowest):
+ *   1. Env var `GBRAIN_LINK_RESOLUTION_CROSS_SOURCE=1` (operator override)
+ *   2. DB plane via `engine.getConfig('link_resolution.cross_source')`
+ *   3. Default false
+ *
+ * Closes https://github.com/garrytan/gbrain/issues/2589.
+ */
+export async function isCrossSourceLinksEnabled(engine: BrainEngine): Promise<boolean> {
+  const envVal = process.env.GBRAIN_LINK_RESOLUTION_CROSS_SOURCE;
+  if (envVal != null) {
+    const normalized = envVal.trim().toLowerCase();
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  }
+  const val = await engine.getConfig('link_resolution.cross_source');
+  if (val == null) return false;
+  const normalized = val.trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+}

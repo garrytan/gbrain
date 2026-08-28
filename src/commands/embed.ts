@@ -73,6 +73,42 @@ function recordFailure(result: EmbedResult, chunkCount: number, slug: string, e:
   }
 }
 
+/**
+ * #3622: failure quarantine for the --stale path. A page whose embed makes
+ * NO progress keeps all its NULL chunks, so every stale pass re-sends the
+ * identical request — a page that fails deterministically (e.g. always
+ * outlives a local server's timeout) is retried forever, and against a
+ * serial embedding server (ollama `-np 1`) the abandoned work compounds
+ * into congestion collapse. After GBRAIN_EMBED_QUARANTINE_AFTER consecutive
+ * zero-progress attempts (default 3) a page is skipped for the rest of this
+ * process; an attempt that embeds ANY chunk resets its counter (#3037
+ * partial progress shrinks the stale set, so the next pass sends a smaller
+ * request, not the identical doomed one). Process-lifetime by design: a
+ * long-lived autopilot stops re-sending doomed pages every cycle, while a
+ * restart (or frontmatter.embed_skip for a permanent block) lets the
+ * operator retry deliberately. Keyed `${source_id}::${slug}` to match the
+ * stale-batch grouping.
+ */
+const _embedFailureCounts = new Map<string, number>();
+
+/** Test seam: clear quarantine state between test runs. */
+export function _resetEmbedQuarantineForTest(): void {
+  _embedFailureCounts.clear();
+}
+
+function embedQuarantineThreshold(): number {
+  const raw = parseInt(process.env.GBRAIN_EMBED_QUARANTINE_AFTER || '3', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+}
+
+/** #3622: count a zero-progress attempt; announce the page's quarantine once. */
+function noteEmbedQuarantineFailure(key: string, slug: string): void {
+  const failures = (_embedFailureCounts.get(key) ?? 0) + 1;
+  _embedFailureCounts.set(key, failures);
+  if (failures === embedQuarantineThreshold()) {
+    serr(`\n  [embed] ${slug}: ${failures} consecutive failed attempt(s) — quarantined for the rest of this process`);
+  }
+}
 export interface EmbedOpts {
   /** Embed ALL pages (every chunk). */
   all?: boolean;
@@ -1691,7 +1727,15 @@ async function embedAllStale(
         else byKey.set(key, [row]);
       }
 
-      const keys = Array.from(byKey.keys());
+      // #3622: keep quarantined pages out of the pool. The keyset cursor
+      // still advances past their rows, so a fully-quarantined batch can
+      // never spin the loop.
+      const QUARANTINE_AFTER = embedQuarantineThreshold();
+      const allKeys = Array.from(byKey.keys());
+      const keys = allKeys.filter(k => (_embedFailureCounts.get(k) ?? 0) < QUARANTINE_AFTER);
+      if (keys.length < allKeys.length) {
+        serr(`\n  [embed] skipping ${allKeys.length - keys.length} page(s) quarantined after ${QUARANTINE_AFTER} consecutive failed embed attempts (this process); set frontmatter.embed_skip to skip permanently, or restart to retry`);
+      }
       result.total_chunks += batch.length;
 
       async function embedOneKey(key: string) {
@@ -1757,12 +1801,16 @@ async function embedAllStale(
             recordFailure(result, failed, slug, firstError);
             serr(`\n  ${slug}: ${failed} chunk(s) failed to embed; embedded the other ${stale.length - failed}`);
           }
+          // #3622: reaching here means at least one chunk persisted (a total
+          // embed failure throws) — progress, so the quarantine counter resets.
+          _embedFailureCounts.delete(key);
         } catch (e: unknown) {
           // Budget/abort-fired cancellations are expected on the way out; don't
           // spam per-page "Error embedding" lines when we're shutting down.
           if (effectiveSignal.aborted) return;
           recordFailure(result, stale.length, slug, e);
           serr(`\n  Error embedding ${slug}: ${e instanceof Error ? e.message : e}`);
+          noteEmbedQuarantineFailure(key, slug);
         }
         totalProcessedPages++;
         result.pages_processed++;

@@ -199,11 +199,13 @@ describe('doctor command', () => {
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
-    // Signature is (engine, args, dbSource?) — third param is optional and
-    // used by --fast to distinguish "no config" from "user skipped DB check".
-    // Function.length counts required params only (JS ignores ?-marked).
+    // Signature is (engine, args, dbSource?, connectError?) — third param is
+    // optional and used by --fast to distinguish "no config" from "user
+    // skipped DB check"; fourth (db-availability wave) carries the connect
+    // error so the null-engine path can synthesize a classified `connection`
+    // check instead of omitting it entirely on a total outage.
     expect(runDoctor.length).toBeGreaterThanOrEqual(2);
-    expect(runDoctor.length).toBeLessThanOrEqual(3);
+    expect(runDoctor.length).toBeLessThanOrEqual(4);
   });
 
   test('doctor --json suppresses implicit progress unless --progress-json is explicit', async () => {

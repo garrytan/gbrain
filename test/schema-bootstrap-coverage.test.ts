@@ -939,6 +939,14 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // statement shape, doctor's extract_health falls back to a 0-column
   // query). Column-only, no bootstrap probe needed.
   'extract_rollup_7d.expected_limit_count',
+  // #4069 (migration v143) — verdict TTL column. Same precedent as the
+  // triage-v1 columns above: dream_verdicts is migration-created on PGLite
+  // (v30, absent from PGLITE_SCHEMA_SQL), so no schema-blob forward
+  // reference can exist, and dream_verdicts_expires_idx is created INSIDE
+  // the same v143 migration. The migration chain always runs before any
+  // reader, so getDreamVerdict's expiry predicate sees the column on old
+  // brains too.
+  'dream_verdicts.expires_at',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {

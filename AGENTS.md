@@ -74,6 +74,12 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   guide: [`docs/guides/chat-connectors.md`](./docs/guides/chat-connectors.md).
 - **Debug:** [`docs/GBRAIN_VERIFY.md`](./docs/GBRAIN_VERIFY.md),
   [`docs/guides/minions-fix.md`](./docs/guides/minions-fix.md), `gbrain doctor --fix`.
+  Database unreachable — or any `GBRAIN_DB_ACCESS <reason>` marker in gbrain
+  output: `gbrain engine status --probe` (which engine, where its URL comes from,
+  classified reachability), then `gbrain db-repair` to diagnose and
+  `gbrain db-repair --yes` to apply safe fixes. All three are engine-free — they
+  work while the database is down. Full loop:
+  [`docs/ENGINES.md`](./docs/ENGINES.md#engine-detection-and-access-repair).
 - **Migrate / upgrade:** `gbrain upgrade` (binary self-update + schema migrations + post-upgrade prompts),
   [`docs/UPGRADING_DOWNSTREAM_AGENTS.md`](./docs/UPGRADING_DOWNSTREAM_AGENTS.md),
   [`skills/migrations/`](./skills/migrations/), `gbrain apply-migrations --yes` (manual schema-only).
@@ -108,6 +114,17 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   to opt out). Non-metric event rows (`meeting`, `job_change`,
   `location_change`) ride through the same pipeline via `facts.event_type`;
   pass `kind: 'event'` or `'all'` to `find_trajectory` to query them.
+- **Answer "who is waiting on me?":** connect the user's Google account once
+  (`gbrain google setup` — two user interactions; relay the `[SHOW USER]`
+  blocks verbatim), then `gbrain waiting --json` returns the ranked people
+  waiting on the user, what they promised, evidence quotes, and Gmail deep
+  links. Manage loops with `gbrain loops done|drop|mute`. It refuses on
+  stale data and names the exact sync command to run first. Guides:
+  [`docs/guides/google-connect.md`](./docs/guides/google-connect.md) (setup +
+  every error and its fix),
+  [`docs/guides/open-loops.md`](./docs/guides/open-loops.md) (how detection
+  works); the harness protocol lives in
+  [`skills/google-loops/SKILL.md`](./skills/google-loops/SKILL.md).
 - **Everything else:** [`./llms.txt`](./llms.txt) is the full documentation map.
   [`./llms-full.txt`](./llms-full.txt) is the same map with core docs inlined for
   single-fetch ingestion.

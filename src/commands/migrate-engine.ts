@@ -226,6 +226,73 @@ async function factsColumns(engine: BrainEngine): Promise<string[]> {
  * `consolidated_at` still marks the rows as promoted, so the consolidate
  * phase won't double-promote them.
  */
+/**
+ * v0.47 open-loop engine: open_loops + loop_suppressions carry
+ * NON-derivable state (manual mutes, manual done/dropped decisions) — a
+ * Gmail re-sync on the target cannot reconstruct them, so the engine
+ * migration copies them like facts. Column-intersection + table_missing
+ * tolerance mirrors copyMigrationFacts; ids are preserved (fact_id
+ * references survive because facts ids are preserved too).
+ */
+export interface MigrateSimpleTableResult {
+  copied: number;
+  failed: number;
+  table_missing: boolean;
+}
+
+export async function copyMigrationSimpleTable(
+  source: BrainEngine,
+  target: BrainEngine,
+  table: 'open_loops' | 'loop_suppressions',
+  onRow?: () => void,
+): Promise<MigrateSimpleTableResult> {
+  const colsOf = async (engine: BrainEngine): Promise<string[]> => {
+    try {
+      const rows = await engine.executeRaw<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_schema = current_schema() AND table_name = $1`,
+        [table],
+      );
+      return rows.map((r) => r.column_name);
+    } catch {
+      return [];
+    }
+  };
+  const sourceCols = await colsOf(source);
+  if (sourceCols.length === 0) return { copied: 0, failed: 0, table_missing: true };
+  const targetColSet = new Set(await colsOf(target));
+  if (targetColSet.size === 0) return { copied: 0, failed: 0, table_missing: true };
+  const cols = sourceCols.filter((c) => targetColSet.has(c));
+
+  const rows = await source.executeRaw<Record<string, unknown>>(
+    `SELECT ${cols.map((c) => (c === 'evidence' ? 'evidence::text AS evidence' : `"${c}"`)).join(', ')} FROM ${table} ORDER BY id`,
+  );
+  await target.executeRaw(`DELETE FROM ${table}`);
+  const insertSql = `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(', ')})
+    VALUES (${cols.map((c, i) => (c === 'evidence' ? `$${i + 1}::text::jsonb` : `$${i + 1}`)).join(', ')})`;
+  const result: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: false };
+  for (const raw of rows) {
+    const row = nullifyUndefinedColumns(raw);
+    try {
+      await target.executeRaw(insertSql, cols.map((c) => row[c]));
+      result.copied++;
+    } catch {
+      result.failed++;
+    }
+    onRow?.();
+  }
+  // Explicit-id copy leaves the BIGSERIAL sequence at 1 — the first new
+  // insert would collide with a copied row's PRIMARY KEY (and the ON
+  // CONFLICT dedup arbiter does NOT absorb a pkey 23505). Mirror the facts
+  // copy's setval.
+  try {
+    await target.executeRaw(
+      `SELECT setval(pg_get_serial_sequence('${table}', 'id'), (SELECT COALESCE(MAX(id), 0) + 1 FROM ${table}), false)`,
+    );
+  } catch { /* sequence bump is best-effort on exotic schemas */ }
+  return result;
+}
+
 export async function copyMigrationFacts(
   source: BrainEngine,
   target: BrainEngine,
@@ -893,6 +960,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const rowCounts: PageCopyCounts = { chunks: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
   let linksCopied = 0;
   let factsResult: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
+  let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
+  let loopSuppressionsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
   let configResult: { copied: number; skipped: string[] } = { copied: 0, skipped: [] };
   try {
     sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
@@ -977,6 +1046,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     console.log('Copying facts...');
     progress.start('migrate.copy_facts');
     factsResult = await copyMigrationFacts(sourceEngine, targetEngine, () => progress.tick(1));
+    openLoopsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'open_loops', () => progress.tick(1));
+    loopSuppressionsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'loop_suppressions', () => progress.tick(1));
     progress.finish();
     if (factsResult.failed.length > 0) {
       console.error(`\n${factsResult.failed.length} fact row(s) FAILED to copy:`);
@@ -1065,6 +1136,12 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     ].filter(Boolean).join('; ');
     summaryRow('facts', factsNotes ? `${factsResult.copied} (${factsNotes})` : String(factsResult.copied));
   }
+  const loopsRow = (label: string, r: MigrateSimpleTableResult) =>
+    summaryRow(label, r.table_missing
+      ? '0 (source schema predates the open-loop tables)'
+      : r.failed > 0 ? `${r.copied} (${r.failed} FAILED)` : String(r.copied));
+  loopsRow('open loops', openLoopsResult);
+  loopsRow('loop suppressions', loopSuppressionsResult);
   summaryRow('config rows', configResult.skipped.length > 0
     ? `${configResult.copied} (skipped engine-local: ${configResult.skipped.join(', ')})`
     : String(configResult.copied));

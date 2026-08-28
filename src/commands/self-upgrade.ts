@@ -99,5 +99,9 @@ export async function runSelfUpgrade(args: string[]): Promise<void> {
   }
 
   // Apply: delegate to the hardcoded upgrade path (full swap + post-upgrade).
-  await runUpgrade([]);
+  // Pass the fetched target so runUpgrade can detect exact-tag no-op
+  // "upgrades" instead of reporting false success (#4366).
+  await runUpgrade([], {
+    targetVersion: latest && isValidVersionString(latest) ? latest : undefined,
+  });
 }

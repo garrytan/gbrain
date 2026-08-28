@@ -255,8 +255,8 @@ describe('v0.41 T4: gbrain-everything meta-pack shape', () => {
 describe('#2117: gbrain-base-v2 ships link-inference regexes + explicit phases', () => {
   const pack = loadPack('gbrain-base-v2');
 
-  test('version bumped to 1.1.0 (regex + phases addition propagates by name)', () => {
-    expect(pack.version).toBe('1.1.0');
+  test('version bumped to 1.2.0 (open-loop link verbs owes_to/awaiting_reply_from)', () => {
+    expect(pack.version).toBe('1.2.0');
   });
 
   test('declares the 4 v1 inference regexes (founded/invested_in/advises/works_at)', () => {

@@ -28,6 +28,17 @@ timeout = 60_000
 # GBRAIN_TEST_ALLOW_DATABASE_URL=1 opt-in that the e2e wrappers set at their
 # own subprocess boundary. See test/helpers/database-url-guard-preload.ts.
 #
+# operator-env-preload (#4023): drop the operator's ambient CONDUCTOR_/MCP_/
+# OPENCLAW_ workspace context and GBRAIN_ config overrides (a stray
+# GBRAIN_SOURCE, GBRAIN_CYCLE_FRESHNESS_WARN_HOURS, ...) that run-e2e.sh
+# already scrubs for the E2E lane but the unit lane inherited. Runs right
+# after the database-url guard so every later preload — especially
+# legacy-embedding-preload's `env: {...process.env}` snapshot — sees the
+# scrubbed environment. Test-machinery vars the runners/CI export
+# (GBRAIN_TEST_*, GBRAIN_CI_*, GBRAIN_E2E_*, GBRAIN_REAL_*, GBRAIN_HOME,
+# GBRAIN_DATABASE_URL, snapshot/bin fast paths) survive via keep-lists. See
+# test/helpers/operator-env-preload.ts.
+#
 # gbrain-home-preload: point GBRAIN_HOME at per-run scratch so tests never
 # read (or clobber) the operator's real ~/.gbrain config/brain — the live
 # config.json changing mid-day flipped 27 config-honoring cycle/dream tests
@@ -46,4 +57,4 @@ timeout = 60_000
 # 183 failures + 15-minute retry hangs on an OPENAI-only shell). The e2e
 # wrapper sets GBRAIN_TEST_KEEP_PROVIDER_KEYS=1 to opt back in. See
 # test/helpers/provider-keys-preload.ts.
-preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]
+preload = ["./test/helpers/database-url-guard-preload.ts", "./test/helpers/operator-env-preload.ts", "./test/helpers/provider-keys-preload.ts", "./test/helpers/legacy-embedding-preload.ts", "./test/helpers/audit-dir-preload.ts", "./test/helpers/sync-failures-preload.ts", "./test/helpers/gbrain-home-preload.ts", "./test/helpers/git-hermetic-preload.ts"]

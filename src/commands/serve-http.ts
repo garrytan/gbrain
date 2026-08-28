@@ -19,6 +19,7 @@ import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash, createHmac } from 'crypto';
 import { safeHexEqual } from '../core/timing-safe.ts';
 import { isValidRepoName } from '../core/github-source.ts';
+import { createMetricsCounters, metricsTrackingMiddleware, renderPrometheusMetrics } from './serve-http-metrics.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -981,6 +982,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   app.use(cookieParser());
 
+  // #3893 (reimplemented from @y2688): request metrics. Mounted here, BEFORE
+  // every route — Express only applies `app.use` middleware to routes
+  // registered after it, and the original PR mounted the tracker after most
+  // routes, so they were never counted. The /metrics route itself lives
+  // below requireAdmin's definition.
+  const metricsCounters = createMetricsCounters();
+  app.use(metricsTrackingMiddleware(metricsCounters));
+
   // ---------------------------------------------------------------------------
   // CORS (v0.41.3, T7 — default-deny on every OAuth endpoint)
   // ---------------------------------------------------------------------------
@@ -1486,6 +1495,14 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     }
     next();
   }
+
+  // #3893 (reimplemented from @y2688): Prometheus exposition. Admin-gated —
+  // request/error/latency series profile a personal brain's usage, so this
+  // is not a public surface (the original PR served it unauthenticated).
+  app.get('/metrics', requireAdmin, (_req: Request, res: Response) => {
+    res.set('Content-Type', 'text/plain; version=0.0.4');
+    res.send(renderPrometheusMetrics(metricsCounters));
+  });
 
   // ---------------------------------------------------------------------------
   // Admin API endpoints

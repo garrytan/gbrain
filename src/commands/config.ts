@@ -9,13 +9,7 @@ import {
   EmbeddingColumnConfigError,
 } from '../core/search/embedding-column.ts';
 
-function redactUrl(url: string): string {
-  // Redact password in postgresql:// URLs
-  return url.replace(
-    /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
-    '$1***$3',
-  );
-}
+import { redactPgUrl } from '../core/url-redact.ts';
 
 // v0.36.x #892: sensitive config-key allowlist. The `show` path used a
 // loose `.includes('key')` check that also redacts (works); the `set` path
@@ -44,6 +38,18 @@ export function isSensitiveConfigKey(key: string): boolean {
  * Keep in sync with the `envFromConfig` mappings in
  * src/core/ai/build-gateway-config.ts.
  */
+/** Dotted keys that are FILE-plane canonical (nested under a group in
+ * ~/.gbrain/config.json) — read by engine-free processes via
+ * loadConfigFileOnly. ONE list for both the `set` and `unset` lanes so the
+ * next key cannot be added to only one branch (which would silently route
+ * `unset` to the DB plane). */
+const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
+  'push.allow_unverified_remote',
+  'hooks.stop_push_debounce_min',
+  'backup.check_enabled',
+  'backup.check_interval_days',
+]);
+
 export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openai_api_key',
   'anthropic_api_key',
@@ -51,12 +57,17 @@ export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',
+  'litellm_api_key',
+  'together_api_key',
   'google_api_key',
   'azure_openai_api_key', // #4031: mergedProviderEnv reads the file plane only
 ];
 
 export function redactConfigValue(key: string, value: string): string {
-  if (value.includes('postgresql://')) return redactUrl(value);
+  // Both scheme spellings — the old local regex only matched postgresql://,
+  // so a postgres:// DSN's password echoed in the clear. redactPgUrl is the
+  // canonical single home (drops the whole userinfo, both schemes).
+  if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
   return value;
 }
@@ -64,6 +75,84 @@ export function redactConfigValue(key: string, value: string): string {
 // #3661: the flags `config set` actually honors. Everything else that looks
 // like a flag is rejected before the write — see the gate in the `set` branch.
 const CONFIG_SET_KNOWN_FLAGS = ['--force', '--coverage-override', '--yes'];
+
+/**
+ * db-availability loop (5c): the DB-connection keys are FILE-plane canonical —
+ * `loadConfig()` never reads them from the DB plane, so the old fall-through
+ * to `engine.setConfig` was a silent no-op that even read back "correctly"
+ * via `config get` (from the DB plane). Worse, it was CIRCULAR: `config` sat
+ * behind connectEngine, so "fix your URL with config set database_url" died
+ * on the exact connection error it was meant to fix.
+ *
+ *   database_url / database_path → ROUTED to the file plane (the
+ *     FILE_PLANE_API_KEYS pattern — the intent is satisfiable as typed);
+ *     engine is inferred from whichever key was set.
+ *   engine → HARD-REFUSED with the recipe (the embedding_model treatment):
+ *     a direct engine flip without a data migration splits the brain across
+ *     two stores. No --force escape.
+ *
+ * Returns true when the key was handled (caller returns). Engine-free by
+ * construction — dispatched BEFORE connectEngine via tryRunConfigEngineFree.
+ */
+export async function handleDbPlaneRoutedKeys(key: string, value: string): Promise<boolean> {
+  if (key === 'engine') {
+    console.error('[config] engine is INFERRED from database_url / database_path — it is never set directly.');
+    console.error('[config] To move your data between engines:  gbrain migrate --to <supabase|pglite>');
+    console.error('[config] To point at a different database:   gbrain config set database_url <conn>  (or gbrain init --url <conn>)');
+    console.error('[config] No --force escape: an engine flip without a data migration splits the brain across two stores.');
+    process.exit(1);
+  }
+  if (key !== 'database_url' && key !== 'database_path') return false;
+  if (key === 'database_url' && !/^postgres(ql)?:\/\//.test(value)) {
+    console.error('[config] database_url must be a postgres:// or postgresql:// connection string.');
+    process.exit(1);
+  }
+  const { isThinClient, loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+  const cfg = (loadConfigFileOnly() ?? {}) as Parameters<typeof saveConfig>[0] & Record<string, unknown>;
+  // Thin-client guard (same bar as db-repair and init's re-run refusal):
+  // writing a local engine + URL into a remote_mcp config would create the
+  // hybrid local/remote state init explicitly refuses to create.
+  if (isThinClient(cfg as Parameters<typeof isThinClient>[0])) {
+    console.error('[config] this machine is a thin client (remote MCP) — a local database_url would conflict with the remote setup.');
+    console.error('[config] To convert it to a local brain deliberately: gbrain init --url <conn> --force');
+    process.exit(1);
+  }
+  const priorEngine = cfg.engine;
+  if (key === 'database_url') {
+    cfg.database_url = value;
+    cfg.engine = 'postgres';
+    delete cfg.database_path;
+  } else {
+    cfg.database_path = value;
+    cfg.engine = 'pglite';
+    delete cfg.database_url;
+  }
+  saveConfig(cfg);
+  console.log(`Set ${key} = ${redactConfigValue(key, value)} (file plane: ~/.gbrain/config.json; engine inferred: ${cfg.engine})`);
+  if (priorEngine && priorEngine !== cfg.engine) {
+    // Pointing at the other engine's plane is a legitimate re-point, but it
+    // does NOT move data — say so, or the flip reads as a lossless switch.
+    console.error(
+      `[config] note: engine flipped ${priorEngine} → ${cfg.engine}. Existing ${priorEngine} data was NOT moved — ` +
+        `to move it, use: gbrain migrate --to ${cfg.engine === 'postgres' ? 'supabase' : 'pglite'}`,
+    );
+  }
+  return true;
+}
+
+/**
+ * Engine-free `config set` dispatch for the DB-connection keys. Called from
+ * handleCliOnly BEFORE connectEngine — these are exactly the keys you need
+ * to change when the engine can't connect. Returns true when handled.
+ */
+export async function tryRunConfigEngineFree(args: string[]): Promise<boolean> {
+  if (args[0] !== 'set') return false;
+  const key = args[1];
+  const value = args.slice(2).find((a) => !a.startsWith('-'));
+  if (!key || value === undefined) return false; // let the engine path print usage
+  if (key !== 'database_url' && key !== 'database_path' && key !== 'engine') return false;
+  return handleDbPlaneRoutedKeys(key, value);
+}
 
 export async function runConfig(engine: BrainEngine, args: string[]) {
   const action = args[0];
@@ -121,10 +210,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
-    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+    if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
-      const [top, leaf] = key.split('.') as ['push' | 'hooks', string];
+      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup', string];
       const branch = cfg?.[top] as Record<string, unknown> | undefined;
       if (cfg && branch && leaf in branch) {
         delete branch[leaf];
@@ -159,8 +248,12 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     return;
   }
 
-  const key = args[1];
-  const value = args[2];
+  // #3943: `--raw` (get's redaction opt-out) may appear before the key, so
+  // strip it from the positional scan rather than reading args[1] blindly.
+  const rawFlag = args.includes('--raw');
+  const positionals = args.filter((a) => a !== '--raw');
+  const key = positionals[1];
+  const value = positionals[2];
 
   if (action === 'get' && key) {
     // #2120: `get` used to read only the DB plane, so a runtime-effective key
@@ -180,7 +273,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const dbVal = await engine.getConfig(key);
     const val = fileVal !== undefined && fileVal !== null ? fileVal : dbVal;
     if (val !== null && val !== undefined) {
-      console.log(typeof val === 'string' ? val : JSON.stringify(val));
+      // #3943: redact by default like `show`/`set` — `get` output lands in
+      // agent transcripts and shell history; scripts opt out with the flag.
+      const out = typeof val === 'string' ? val : JSON.stringify(val);
+      console.log(rawFlag ? out : redactConfigValue(key, out));
       if (fileVal !== undefined && fileVal !== null) {
         const shadow = dbVal !== null && dbVal !== undefined
           ? ' — a DB-plane value also exists and is shadowed at runtime'
@@ -222,7 +318,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // `sources push` child) via loadConfigFileOnly, which never sees the DB
     // plane — and the DB plane is unreadable anyway while a `gbrain serve`
     // holds the single-writer lock. Route them to ~/.gbrain/config.json.
-    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+    if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
       const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
       if (key === 'push.allow_unverified_remote') {
@@ -237,6 +333,20 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
               'gbrain config set push.allow_unverified_remote false',
           );
         }
+      } else if (key === 'backup.check_enabled') {
+        const on = isConfigTruthy(value);
+        cfg.backup = { ...(cfg.backup ?? {}), check_enabled: on };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+      } else if (key === 'backup.check_interval_days') {
+        const n = Number.parseInt(value, 10);
+        if (!Number.isFinite(n) || n < 1) {
+          console.error(`[config] ${key} must be an integer >= 1 (days between automatic backup checks)`);
+          process.exit(1);
+        }
+        cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
       } else {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n < 0) {
@@ -249,6 +359,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       return;
     }
+    // DB-connection keys route to the file plane (or refuse, for `engine`) —
+    // single home in handleDbPlaneRoutedKeys, shared with the engine-free
+    // pre-connectEngine dispatch.
+    if (await handleDbPlaneRoutedKeys(key, value)) return;
+
     // Vendor credentials are file-plane canonical (see FILE_PLANE_API_KEYS).
     // Routed, not refused: unlike embedding_model there is nothing to re-init,
     // so the user's intent is satisfiable exactly as typed.

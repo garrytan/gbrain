@@ -110,7 +110,7 @@ const schema_lint: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { runAllLintRules } = await import('../schema-pack/lint-rules.ts');
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadActivePack, resolveLoadedPack } = await import('../schema-pack/load-active.ts');
     const { loadConfig, gbrainPath } = await import('../config.ts');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
@@ -128,7 +128,9 @@ const schema_lint: Operation = {
       }
       if (!path) return { error: 'pack_not_found', pack: packName };
       const { loadPackFromFile: loader } = await import('../schema-pack/loader.ts');
-      manifest = loader(path);
+      // #4373: lint the MERGED manifest so extends-inherited page types
+      // count as declared — parity with the active-pack branch below.
+      manifest = (await resolveLoadedPack(loader(path))).manifest;
     } else {
       const resolved = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId });
       manifest = resolved.manifest;

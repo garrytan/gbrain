@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { BrainEngine } from '../core/engine.ts';
+import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
@@ -684,6 +685,9 @@ function installStdioLifecycle(
       }
       if (stdinSawData) { stdinSawData = false; return; } // active — re-arm
       if (sweepInFlight) return; // never overlap sweeps
+      // Degraded mode (db-availability 4c): background sweeps must not burn
+      // the min-interval reconnect budget — tool calls own recovery.
+      if (isEngineDegradedForServe(engine)) return;
       sweepInFlight = true;
       Promise.resolve()
         .then(() => runIdleSweep(engine))

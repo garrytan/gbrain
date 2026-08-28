@@ -12,7 +12,7 @@ import { clampSearchLimit } from '../engine.ts';
 import type { Page, PageType } from '../types.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { writePageThrough, type WriteThroughResult } from '../write-through.ts';
+import { writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
@@ -1112,6 +1112,18 @@ const delete_page: Operation = {
     const sourceOpts = requestedSource
       ? { sourceId: requestedSource }
       : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #4022 trust gating: sandbox subagents (viaSubagent without
+    // allowedSlugPrefixes) stay DB-only, matching put_page's write-through gate.
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    // #4022: resolve the artifact target BEFORE softDeletePage stamps
+    // deleted_at — resolvePageWriteTarget reads the recorded source_path from
+    // active rows only, so a post-stamp resolution would fall back to the
+    // slug-derived twin and miss the real artifact.
+    const wtSourceId = sourceOpts.sourceId ?? 'default';
+    const target = isSandboxSubagent
+      ? undefined
+      : await resolvePageWriteTarget(ctx.engine, slug, wtSourceId);
     // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
     // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
     // tests. softDeletePage returns null when the slug is unknown OR already
@@ -1126,9 +1138,18 @@ const delete_page: Operation = {
       }
       return { status: 'already_soft_deleted', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), deleted_at: existing.deleted_at };
     }
+    // #4022: remove the on-disk artifact too. Pre-fix this was DB-only, so the
+    // deleted page's `.md` survived, any timer-based commit (snapshot cron,
+    // hardened post-commit push) pushed it back into git, and the next
+    // `gbrain sync` resurrected the page. Best-effort like put_page's
+    // write-through: a skip/error never fails the delete (the DB row is the
+    // durable sink and the stale file reconciles on the next sync).
+    const writeThrough = isSandboxSubagent
+      ? { removed: false, skipped: 'subagent_sandbox' as const }
+      : await deletePageThrough(ctx.engine, slug, { sourceId: wtSourceId, logger: ctx.logger, target });
     // Echo the targeted source so a multi-source caller can verify WHICH row
     // the delete landed on (#4329's false-confidence failure mode).
-    return { status: 'soft_deleted', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), recoverable_until: 'now + 72h via restore_page' };
+    return { status: 'soft_deleted', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), recoverable_until: 'now + 72h via restore_page', write_through: writeThrough };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
 };
@@ -1162,7 +1183,18 @@ const restore_page: Operation = {
       }
       return { status: 'already_active', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}) };
     }
-    return { status: 'restored', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}) };
+    // #4022: re-render the artifact — delete_page now removes it, so without
+    // this a restored page has a DB row and no file, and `sync --full`'s
+    // delete-reconcile treats the missing artifact as a user deletion,
+    // silently re-deleting the page that was just restored. Keeps the two
+    // sinks symmetric across the delete/restore pair; sandbox subagents stay
+    // DB-only, matching put_page's trust gate.
+    const isSandboxSubagent = ctx.viaSubagent === true
+      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
+    const writeThrough = isSandboxSubagent
+      ? { written: false, skipped: 'subagent_sandbox' as const }
+      : await writePageThrough(ctx.engine, slug, { sourceId: sourceOpts.sourceId, logger: ctx.logger });
+    return { status: 'restored', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), write_through: writeThrough };
   },
   cliHints: { name: 'restore', positional: ['slug'] },
 };

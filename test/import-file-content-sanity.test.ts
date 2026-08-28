@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -250,6 +250,26 @@ describe('importFromContent — soft-block (D9 transition + embed_skip)', () => 
       await importFromContent(engine, 'test/big2', content, { noEmbed: true });
       const chunks = await engine.getChunks('test/big2');
       expect(chunks.length).toBe(0);
+    });
+  });
+
+  test('soft-block notice fires through console.warn, not bare stderr (#3893)', async () => {
+    await withIsolatedHome(async () => {
+      // #3893 (reimplemented from @y2688): a bare process.stderr.write is
+      // invisible to console-level operator hooks and log collectors — the
+      // oversized soft_block silently drops embedding, so its notice must
+      // go through console.warn.
+      const warnSpy = spyOn(console, 'warn');
+      try {
+        const content = FRONTMATTER + 'a'.repeat(600_000);
+        await importFromContent(engine, 'test/warn-visibility', content, { noEmbed: true });
+        const messages = warnSpy.mock.calls.map(args => args.map(String).join(' '));
+        expect(messages.some(m =>
+          m.includes('content-sanity flag (oversized)') && m.includes('test/warn-visibility'),
+        )).toBe(true);
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
   });
 });

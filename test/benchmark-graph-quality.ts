@@ -576,10 +576,15 @@ async function measureAggregate(
   for (const q of AGGREGATE_QUERIES) {
     const candidates = seeds.filter(s => s.slug.startsWith(`${q.kind}/`)).map(s => s.slug);
 
-    // C: structured backlink counts.
-    const counts = await engine.getBacklinkCounts(candidates);
+    // C: structured backlink counts (page-id-keyed since #4380; single
+    // default-source benchmark brain, so slug→id is unambiguous).
+    const idRows = await engine.executeRaw<{ id: number; slug: string }>(
+      `SELECT id, slug FROM pages WHERE slug = ANY($1::text[])`, [candidates],
+    );
+    const idBySlug = new Map(idRows.map(r => [r.slug, r.id]));
+    const counts = await engine.getBacklinkCounts(idRows.map(r => r.id));
     const cTop = candidates
-      .map(s => ({ slug: s, n: counts.get(s) ?? 0 }))
+      .map(s => ({ slug: s, n: counts.get(idBySlug.get(s) ?? -1) ?? 0 }))
       .sort((a, b) => b.n - a.n)
       .slice(0, q.topN)
       .map(x => x.slug);
@@ -751,11 +756,11 @@ async function measureRanking(
     .sort((a, b) => b.score - a.score)
     .filter(r => { if (seenWithout.has(r.slug)) return false; seenWithout.add(r.slug); return true; });
 
-  const allSlugs = sortedWithout.map(r => r.slug);
-  const counts = await engine.getBacklinkCounts(allSlugs);
+  const allIds = sortedWithout.map(r => r.page_id);
+  const counts = await engine.getBacklinkCounts(allIds);
   const boosted = sortedWithout.map(r => ({
     ...r,
-    score: r.score * (1 + 0.05 * Math.log(1 + (counts.get(r.slug) ?? 0))),
+    score: r.score * (1 + 0.05 * Math.log(1 + (counts.get(r.page_id) ?? 0))),
   }));
   // boosted is already deduped (sortedWithout was). Just re-sort by new score.
   const sortedWith = [...boosted].sort((a, b) => b.score - a.score);

@@ -107,6 +107,7 @@ import { embeddingMigrationOperations } from './ops/embedding-migration.ts';
 import { imageOperations } from './ops/image.ts';
 import { schemaPacksOperations } from './ops/schema-packs.ts';
 import { skilloptOperations } from './ops/skillopt.ts';
+import { loopsOperations } from './ops/loops.ts';
 import { chronicleOperations } from './ops/chronicle.ts';
 import { extractionOperations } from './ops/extraction.ts';
 import { entityIdentityOperations } from './ops/entity-identity.ts';
@@ -210,6 +211,8 @@ export const operations: Operation[] = [
   ...schemaPacksOperations,
   // v0.41.18.0 run_onboard + v0.41.20.0 run_skillopt — ops/skillopt.ts
   ...skilloptOperations,
+  // v0.47: open-loop engine (who is waiting on you) — ops/loops.ts
+  ...loopsOperations,
 ];
 
 // ---------------------------------------------------------------------------
@@ -289,6 +292,8 @@ const OP_AREAS: Record<string, string> = {
   // #4224 cross-source entity identity (v1 manual-only)
   entity_identity_link: 'entities', entity_identity_unlink: 'entities',
   entity_identity_list: 'entities',
+  // v0.47 open-loop engine (google source kind)
+  open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops',
   // insight / signal reads
   get_recent_salience: 'insights', find_anomalies: 'insights',
   find_contradictions: 'insights', find_experts: 'insights',

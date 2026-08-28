@@ -463,6 +463,14 @@ export interface DreamVerdict {
   triage_version: number | null;
 }
 
+/**
+ * Lifetime of a cached dream verdict (#4069). `triage_version`/`model` already
+ * invalidate rows semantically; this is the TEMPORAL bound — rows for deleted
+ * or re-hashed transcripts age out, long-lived transcripts re-judge at this
+ * cadence. Mirrored by the '30 days' defaults in migration v138 + schema.sql.
+ */
+export const DREAM_VERDICT_TTL_SECONDS = 30 * 86400;
+
 /** Input shape for putDreamVerdict — judged_at defaults to now() server-side. */
 export interface DreamVerdictInput {
   worth_processing: boolean;
@@ -582,6 +590,15 @@ export interface FactListOpts {
    * are returned. Remote (untrusted) callers must supply ['world'].
    */
   visibility?: FactVisibility[];
+  /**
+   * Case-insensitive substring filter on fact text, applied IN SQL (before
+   * limit). A client-side post-limit grep silently returns nothing for
+   * high-cardinality entities — the match may sit outside the newest-N
+   * window (found by the 2026-08-06 memory eval on an entity with hundreds
+   * of facts). LIKE wildcards in the needle are escaped; plain substring
+   * semantics only.
+   */
+  grep?: string;
   /**
    * When true, `listFactsSince`'s `since` comparison and ORDER BY use
    * COALESCE(valid_from, created_at) — event time — instead of creation
@@ -1474,11 +1491,12 @@ export interface BrainEngine {
     opts?: RelationalFanoutOpts,
   ): Promise<RelationalFanoutRow[]>;
   /**
-   * For a list of slugs, return how many inbound links each has.
+   * For a list of page ids, return how many inbound links each has.
    * Used by hybrid search backlink boost. Single SQL query, not N+1.
-   * Slugs with zero inbound links are present in the map with value 0.
+   * Keyed by page id — NOT slug — so namesake slugs across sources never
+   * share or sum counts (#4380). Ids with zero links map to 0.
    */
-  getBacklinkCounts(slugs: string[]): Promise<Map<string, number>>;
+  getBacklinkCounts(pageIds: number[]): Promise<Map<number, number>>;
   /**
    * v0.40.4 — for a list of page_ids, return adjacency aggregates
    * restricted to the subgraph induced by them. Returns ALL pages with
@@ -1824,6 +1842,11 @@ export interface BrainEngine {
   // page-scoped — transcripts being judged aren't pages yet.
   getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null>;
   putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void>;
+  /**
+   * Delete expired dream verdicts; returns rows removed. Best-effort
+   * housekeeping — reads already treat expired rows as misses (#4069).
+   */
+  sweepDreamVerdicts(): Promise<number>;
 
   // ============================================================
   // v0.32.6 Contradiction probe — batched takes fetch + cache + trends

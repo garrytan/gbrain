@@ -393,9 +393,20 @@ async function runLinksTimelinePass(
       }
     }
     const { allSlugs, slugToSources } = await lookupRefsForSlugs(engine, [...needed]);
+    // #3478: the 'default' fallback is a federation feature — a sweep over an
+    // isolated source must not push cross-source edges. Single-row fetchSource
+    // (not loadAllSources) keeps the sweep's bounded-cost discipline; a missing
+    // sources row fails closed to isolated.
+    const { fetchSource, isSourceFederated } = await import('./sources-load.ts');
+    const sourceRow = await fetchSource(engine, sourceId);
+    const allowCrossSource = sourceRow !== null && isSourceFederated(sourceRow.config);
     for (const { slug, candidates } of pageCandidates) {
       for (const c of candidates) {
-        const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources);
+        // #2589: a cross_source drop here means the target exists only in
+        // other sources and cross-source links are off — the sweep skips it
+        // exactly like the extract paths do (extract.ts counts these; the
+        // sweep has no drop ledger).
+        const resolved = resolveCandidateSources(c, slug, sourceId, allSlugs, slugToSources, allowCrossSource);
         if (!resolved.ok) continue;
         linkBatch.push({
           from_slug: resolved.fromSlug,

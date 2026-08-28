@@ -77,6 +77,7 @@ wins; fix the row.
 | Task add/remove/complete/defer/review | `skills/daily-task-manager/SKILL.md` |
 | Morning prep, meeting context, day planning | `skills/daily-task-prep/SKILL.md` |
 | Daily briefing, "what's happening today" | `skills/briefing/SKILL.md` |
+| "connect gmail" / "connect google", "who is waiting on me", "open loops", "unanswered email" | `skills/google-loops/SKILL.md` |
 | Cron scheduling, quiet hours, job staggering | `skills/cron-scheduler/SKILL.md` |
 | "get more out of gbrain", "is my brain set up right", "weekly brain checkup", "advise me on my brain", "gbrain advisor" | `skills/gbrain-advisor/SKILL.md` |
 | Save or load reports | `skills/reports/SKILL.md` |
@@ -87,6 +88,7 @@ wins; fix the row.
 | "Is gbrain healthy?", morning health check, skillpack-check | `skills/skillpack-check/SKILL.md` |
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
+| `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
 | "Validate skills", skill health check | `skills/testing/SKILL.md` |
 | Webhook setup, external event processing | `skills/webhook-transforms/SKILL.md` |
@@ -105,6 +107,7 @@ wins; fix the row.
 | "Now what?", "fill my brain", "cold start", "bootstrap my data", "import my data", "what should I import first" | `skills/cold-start/SKILL.md` |
 | "agent workspace bootstrap", "install gbrain into this agent workspace", "gbrain bootstrap", "paste-in install", "set up the maintenance sweep" | Run `gbrain bootstrap` (paste-in workspace install: interview + identity files + hooks + sweep). See `docs/guides/bootstrap.md` |
 | "wire this box's coding agents to the brain", "framework-spawned sessions need brain access", "wire gbrain hooks without a workspace", "hook Claude Code/Codex to the running serve" | Run `gbrain bootstrap harness --yes` (machine-level wiring to a running `serve --http`: scoped token + user-scope MCP + headless pre-approval + hooks; no agent.json). See the "Local harness mode" section of `docs/guides/bootstrap.md` |
+| "which gbrain engine", "pglite or postgres", "gbrain engine status", "upgrade to postgres", "switch gbrain to postgres", "install postgres for gbrain", "move my brain to supabase", "set up postgres for the brain" | `skills/postgres-adopt/SKILL.md` |
 | "Migrate from Obsidian/Notion/Logseq" | `skills/migrate/SKILL.md` |
 | "Switch embedding provider" / "migrate my embeddings" / "switch reranker" / "ZeroEntropy" / "provider_sunset" / "search stopped working after a provider shutdown" | `skills/migrations/v0.46.3.0.md` |
 | Brain health check, maintenance run | `skills/maintain/SKILL.md` |

@@ -258,6 +258,11 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   takes_calibration: 'ok',
   extraction_pending: 'ok',
   entity_identity_list: 'ok',
+  // v0.47 open-loop engine: remote callers get the fail-closed REDACTED
+  // envelope (counts + counterparty + summary + due; verbatim quotes, deep
+  // links, and the injectable text digest are trusted-local only — pinned
+  // in test/ops-loops.test.ts). Succeeds without corpus-marker requirement.
+  open_loops: 'ok',
   get_active_schema_pack: 'ok',
   list_schema_packs: 'ok',
   schema_stats: 'ok',
@@ -324,6 +329,12 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   run_onboard: 'ok',
   run_skillopt: 'error',
   sources_add: 'error',
+  // v0.47 open-loop mutators: the sweep's generic invocation omits required
+  // params (id/status, kind/value) → validation error. Remote-scope
+  // semantics are pinned in test/ops-loops.test.ts (single-source grant
+  // required for loops_close; loops_mute denied outside caller scope).
+  loops_close: 'error',
+  loops_mute: 'error',
   sources_remove: 'error',
   submit_job: 'error',
   get_job: 'error',

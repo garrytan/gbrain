@@ -386,6 +386,41 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     expect(providerOptions).toBeUndefined();
   });
 
+  test('call-scoped providerOptions merge last without dropping configured siblings', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'deepseek:deepseek-v4-flash',
+      provider_chat_options: {
+        deepseek: { temperature: 0.2 },
+      },
+      env: { DEEPSEEK_API_KEY: 'fake' },
+    }, {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      deepseek: { temperature: 0.2, thinking: { type: 'disabled' } },
+    });
+  });
+
+  test('call-scoped providerOptions win over configured options on key conflict', async () => {
+    // The call site pins behavior it depends on (e.g. the triage judge
+    // disabling DeepSeek thinking); config-level provider_chat_options must
+    // not silently override it.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'deepseek:deepseek-v4-flash',
+      provider_chat_options: {
+        deepseek: { thinking: { type: 'enabled' } },
+      },
+      env: { DEEPSEEK_API_KEY: 'fake' },
+    }, {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      deepseek: { thinking: { type: 'disabled' } },
+    });
+  });
+
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
     // gbrain#2490: this call-level cacheControl is real (not a no-op) —
     // @ai-sdk/anthropic serializes it as the Anthropic API's documented

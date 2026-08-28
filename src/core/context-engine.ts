@@ -16,6 +16,7 @@
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { buildReflexAddition, warmReflex, type ResolveEntitiesFn as ReflexResolveEntitiesFn } from './context/reflex.ts';
+import { backupNagReadOnlyConsult, backupNoticeText, loadBackupStatus } from './backup/status-file.ts';
 // Types inlined from openclaw/plugin-sdk to avoid hard dependency during development.
 // At runtime inside OpenClaw, the real SDK is available; these types ensure build compat.
 
@@ -813,6 +814,13 @@ export function createGBrainContextEngine(ctx: {
     checkpointMemo.set(sessionId, memo);
   }
   let _envelope: string | null = null;
+  // Monthly backup-coverage line: in-process 24h latch. assemble() composes
+  // server-side and cannot know delivery, so this channel NEVER writes nag
+  // state (read-only consult of the shared dampener + global monthly cap).
+  // The latch advances on every CONSULT (not just shows) so a long-lived
+  // serve pays at most one file read per 24h — an ok verdict must not cost
+  // I/O on every turn, and a repeat line stays impossible.
+  let _backupCheckedAt = 0;
   async function envelope(): Promise<string> {
     if (_envelope !== null) return _envelope;
     try {
@@ -1158,6 +1166,22 @@ export function createGBrainContextEngine(ctx: {
       if (checkpointBlock) parts.push(checkpointBlock);
       if (memoryAddition) parts.push(memoryAddition);
       if (reflexAddition) parts.push(reflexAddition);
+
+      // Monthly backup-coverage warning (⚠ idiom, model-visible). Bounded by
+      // the recording channels' budget without ever spending it; fail-open.
+      try {
+        const now = Date.now();
+        if (now - _backupCheckedAt > 24 * 60 * 60 * 1000) {
+          _backupCheckedAt = now;
+          const backupStatus = loadBackupStatus();
+          if (backupStatus && backupNagReadOnlyConsult(backupStatus, now)) {
+            const note = backupNoticeText(backupStatus, 'human');
+            if (note) parts.push(`- ⚠️ ${note}`);
+          }
+        }
+      } catch {
+        /* a notice must never break context assembly */
+      }
 
       // 4. Pass through messages unchanged (legacy assembly)
       return {

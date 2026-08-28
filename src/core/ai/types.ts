@@ -497,6 +497,13 @@ export interface AIGatewayConfig {
    * Allows brains using OpenAI for text to use Voyage for image embeddings.
    */
   embedding_multimodal_model?: string;
+  /**
+   * Separate model for image OCR (e.g. "openai:gpt-4o-mini"). When set,
+   * generateOcrText() routes to this model instead of expansion_model.
+   * A direct "provider:model" string like embedding_multimodal_model —
+   * deliberately never models.tier-resolved (#4107).
+   */
+  embedding_image_ocr_model?: string;
   /** Current expansion model as "provider:modelId". */
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */

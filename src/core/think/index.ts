@@ -150,12 +150,13 @@ export interface ThinkResponse {
  * non-empty gather). `ok` is the only value that marks a real answer.
  */
 export type ThinkSynthesisStatus =
-  | 'ok'              // parsed JSON with a non-empty answer
-  | 'empty_answer'    // parsed JSON, answer empty
-  | 'not_json'        // unparseable output: malformed JSON, refusals, the graceful sentinel
-  | 'no_llm'          // no key configured — gather-only stub
-  | 'model_unusable'  // configured model failed the probe (unknown provider/model)
-  | 'llm_error';      // client.create() threw (429 / timeout / 5xx / network)
+  | 'ok'                // parsed JSON with a non-empty answer
+  | 'empty_answer'      // parsed JSON, answer empty
+  | 'not_json'          // unparseable output: malformed JSON, refusals, the graceful sentinel
+  | 'output_truncated'  // unparseable because stop_reason=max_tokens cut the envelope (#4375)
+  | 'no_llm'            // no key configured — gather-only stub
+  | 'model_unusable'    // configured model failed the probe (unknown provider/model)
+  | 'llm_error';        // client.create() threw (429 / timeout / 5xx / network)
 
 export interface ThinkResult {
   question: string;
@@ -229,12 +230,18 @@ const THINKING_DEFAULT_MAX_OUTPUT_TOKENS = 16000;
 // 4000 default.
 const OPENAI_REASONING_MODEL_RE = /^openai[:/](?:gpt-5|o[0-9]+)(?:[.-]|$)/i;
 const OPENAI_CHAT_SNAPSHOT_RE = /-chat(?:-|$)/i; // gpt-5-chat-latest, gpt-5.2-chat-latest
+// #4375: the default deep tier (anthropic:claude-opus-4-7) routinely needs
+// more than 4000 tokens for the synthesis JSON envelope; at 4000 the envelope
+// truncates mid-stream. Anthropic-scoped only (same spelling variants as
+// THINKING_BY_DEFAULT_MODEL_RE), so provider hard caps (DeepSeek 8192,
+// gpt-4o) are unaffected; providers bill actual tokens, not the cap.
+const ANTHROPIC_CLAUDE_4X_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-(?:opus|sonnet|haiku)-4-\d/i;
 export function maxOutputTokensFor(modelStr: string): number {
   const openaiReasoning =
     OPENAI_REASONING_MODEL_RE.test(modelStr) && !OPENAI_CHAT_SNAPSHOT_RE.test(modelStr);
   // Shared name-based predicate (#4087: one source of truth in gateway.ts —
   // provider-prefixed + bare Claude 5 spellings, never 3.5-era models).
-  if (isThinkingByDefaultModel(modelStr) || openaiReasoning) {
+  if (isThinkingByDefaultModel(modelStr) || openaiReasoning || ANTHROPIC_CLAUDE_4X_MODEL_RE.test(modelStr)) {
     return THINKING_DEFAULT_MAX_OUTPUT_TOKENS;
   }
   // Recipe-declared thinking-by-default (gbrain#4172, e.g. DeepSeek v4):
@@ -817,11 +824,20 @@ export async function runThink(
       const text = block && 'text' in block ? block.text : '';
       const parsed = tryParseJSON(text);
       if (!parsed || typeof parsed !== 'object') {
-        warnings.push('LLM_OUTPUT_NOT_JSON');
+        // #4375: a max_tokens stop means the envelope was CUT, not malformed —
+        // label it honestly so operators raise the budget instead of chasing
+        // model-output bugs. The adapter maps gateway 'length' to 'max_tokens'.
+        const stop = (created as { stop_reason?: string }).stop_reason;
+        if (stop === 'max_tokens') {
+          warnings.push('LLM_OUTPUT_TRUNCATED');
+          synthesisStatus = 'output_truncated';
+        } else {
+          warnings.push('LLM_OUTPUT_NOT_JSON');
+          // Refusals + the graceful sentinel land here too — coarse on purpose
+          // (no dedicated status; the raw text stays in `answer` for consumers).
+          synthesisStatus = 'not_json';
+        }
         synthesisOk = false;  // #1698: malformed output (and the non-JSON graceful sentinel)
-        // Refusals + the graceful sentinel land here too — coarse on purpose
-        // (no dedicated status; for PROSE the raw text stays in `answer`).
-        synthesisStatus = 'not_json';
         // #4509: a malformed JSON envelope (max-token truncation is the
         // common cause) previously shipped VERBATIM as the user-facing
         // answer. Salvage the answer/citations/gaps fields tolerantly; when
@@ -853,6 +869,18 @@ export async function runThink(
   const resolved = resolveCitations(response.citations, response.answer);
   if (resolved.warnings.length > 0) {
     for (const w of resolved.warnings) warnings.push(w);
+  }
+
+  // #4376: close resolved citations against the gathered evidence — a cited
+  // slug absent from every gather stream is unverifiable provenance. Warn-only;
+  // the never-fail synthesis contract (cite-render.ts) stays intact.
+  const gatheredSlugs = new Set<string>([
+    ...gather.pages.map(p => p.slug),
+    ...gather.takes.map(t => t.page_slug),
+    ...gather.graphSlugs,
+  ]);
+  for (const slug of new Set(resolved.citations.map(c => c.page_slug))) {
+    if (!gatheredSlugs.has(slug)) warnings.push(`CITATION_NOT_IN_GATHER:${slug}`);
   }
 
   // Round-loop scaffolding (rounds > 1 currently re-runs without gap-driven retrieval).

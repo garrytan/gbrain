@@ -386,6 +386,13 @@ their last embedding. For large brains (>5000 pages), run this with nohup:
 nohup gbrain embed --stale > /tmp/gbrain-embed.log 2>&1 &
 ```
 
+### Monthly backup check
+
+Run `gbrain backup status` and relay anything red. It verifies every knowledge
+repo (and the agent workspace) has a git remote — local-only means a disk loss
+loses it. Fixes are printed inline (`gbrain bootstrap repo`, `git remote add`,
+`gbrain sources harden <id>`).
+
 ### Daily verification
 
 Verify sync is running: check `gbrain stats` and confirm `last_sync` is within

@@ -164,6 +164,10 @@ Configure it via:
 gbrain config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres"
 ```
 
+This writes `~/.gbrain/config.json` (file-plane routed) and infers
+`engine: postgres` — it works even when the database is unreachable, so you can
+also use it later to point an existing brain at a new URL.
+
 ### 7c. Fix the IPv4 gotcha for migrations, DDL, and worker locks
 
 The transaction pooler (7b) carries your normal reads and writes over IPv4. But GBrain runs schema migrations, DDL, and background-worker locks on a *direct* connection, which it derives from your pooler URL by swapping the host to `db.YOUR-PROJECT.supabase.co:5432`. That direct host is **IPv6-only**. On an IPv4-only host (most Render plans), reads work but migrations hang and worker locks orphan, often silently.

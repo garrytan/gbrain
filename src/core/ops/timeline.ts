@@ -7,7 +7,14 @@
  */
 
 import type { Operation } from './contract.ts';
-import { enforceSubagentSlugFence, enforceClientSlugFence, sourceScopeOpts } from './context.ts';
+import {
+  enforceSubagentSlugFence,
+  enforceClientSlugFence,
+  reclassifyMutationTimePageMiss,
+  requireWritablePage,
+  sourceScopeOpts,
+} from './context.ts';
+import { PageMissingError } from '../engine-errors.ts';
 import { slugHiddenFromCaller } from '../search/private-visibility.ts';
 import { writeTimelineEntryThrough } from '../timeline-write-through.ts';
 
@@ -54,6 +61,10 @@ const add_timeline_entry: Operation = {
     }
     // v0.31.8 (D7): thread ctx.sourceId.
     const sourceOpts = ctx.sourceId ? { sourceId: ctx.sourceId } : {};
+    // #4109: source-boundary diagnostics before the write-through/insert —
+    // a page readable only from another granted source must come back as
+    // permission_denied, not the engine's exact-source "not found".
+    await requireWritablePage(ctx, p.slug as string, 'add_timeline_entry', 'page');
     // #1856: on an FS/git-canonical brain (a disk target resolves for this
     // page), route the entry through the page/facts write-through seam so the
     // canonical markdown gains the bullet too — a DB-only insert stranded the
@@ -100,12 +111,22 @@ const add_timeline_entry: Operation = {
     // raw input tuple would recreate the duplicate class on the error path
     // (raw row now + re-extracted canonical row later).
     const canonical = writeThrough?.entry;
-    const inserted = await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries on DB-only brains; FS-canonical brains route through writeTimelineEntryThrough above
-      date: canonical?.date ?? date,
-      source: canonical ? canonical.source : entryInput.source,
-      summary: canonical ? canonical.summary : entryInput.summary,
-      detail: entryInput.detail,
-    }, sourceOpts);
+    let inserted: boolean;
+    try {
+      inserted = await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries on DB-only brains; FS-canonical brains route through writeTimelineEntryThrough above
+        date: canonical?.date ?? date,
+        source: canonical ? canonical.source : entryInput.source,
+        summary: canonical ? canonical.summary : entryInput.summary,
+        detail: entryInput.detail,
+      }, sourceOpts);
+    } catch (error) {
+      // Page hard-deleted between preflight and insert: reclassify the typed
+      // engine miss instead of surfacing it as internal_error.
+      if (error instanceof PageMissingError) {
+        return reclassifyMutationTimePageMiss(ctx, error.slug, 'add_timeline_entry', error.endpoint);
+      }
+      throw error;
+    }
     const writeThroughReport = {
       written: false,
       skipped: isSandboxSubagent ? 'subagent_sandbox' : (writeThrough?.skipped ?? 'db_only'),

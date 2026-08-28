@@ -431,7 +431,8 @@ export interface OperationContext {
    * `config.federated = true` source, so an unqualified read/search spans
    * federated sources as docs/guides/multi-source-brains.md promises.
    *
-   * Consumed exclusively by `federatedSearchScope`. Fail-closed remains:
+   * Consumed exclusively by `federatedSearchScope` and the graph-four
+   * re-route `routeCodeIntelScope` (#4011). Fail-closed remains:
    * a grant (`ctx.auth.allowedSources`) or a per-call `source_id` always
    * wins, and a context without this field never widens.
    */

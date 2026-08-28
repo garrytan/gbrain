@@ -51,11 +51,16 @@ sources to get you from zero to useful in one session.
 ## Contract
 
 - Every import phase is gated on user consent (ask-user pattern) before proceeding.
-- **Google/social API access goes through ClawVisor.** The agent never holds raw OAuth
-  tokens or API keys. This is a safety requirement, not a preference. ClawVisor vaults
-  credentials, enforces task-scoped authorization, logs every API call, and requires
-  human approval for destructive operations. If the user doesn't want ClawVisor, the
-  only safe alternative is offline file exports (Google Takeout, Twitter archive download).
+- **The agent never holds raw OAuth tokens or API keys.** This is a safety
+  requirement, not a preference. Three paths satisfy it for Google data:
+  the native connector (`gbrain google setup` — tokens live in gbrain's
+  credential vault, mode 0600, never in the agent's context; see
+  `docs/guides/google-connect.md` and `skills/google-loops/SKILL.md`),
+  ClawVisor (a hosted credential gateway that vaults credentials,
+  enforces task-scoped authorization, logs every API call, and requires
+  human approval for destructive operations — needs a harness with the
+  integration), or offline file exports (Google Takeout, Twitter archive
+  download).
 - Each phase is independently valuable — the user can stop after any phase and still
   have a useful brain.
 - Progress is tracked in `~/.gbrain/cold-start-state.json` so interrupted sessions
@@ -87,9 +92,12 @@ Data sources ranked by **information density × ease of import**:
 
 **Harness check first.** ClawVisor requires an agent host with a ClawVisor
 integration (for example, an OpenClaw deployment). On harnesses without one,
-such as Codex or Claude Code, skip this phase: the documented default for
-Contacts, Calendar, and Gmail is a [Google Takeout](https://takeout.google.com)
-export, which covers all three offline (contacts CSV, calendar ICS, Gmail mbox).
+such as Codex or Claude Code, skip this phase: the default for Contacts,
+Calendar, and Gmail is the native connector — `gbrain google setup` (live
+sync; tokens in gbrain's local credential vault, never with the agent; see
+`skills/google-loops/SKILL.md`) — with a
+[Google Takeout](https://takeout.google.com) export as the offline
+alternative covering all three (contacts CSV, calendar ICS, Gmail mbox).
 Phases 2-4 below document the Takeout path first.
 
 > **Safety boundary:** An AI agent with raw OAuth tokens to your Gmail, Calendar,
@@ -149,13 +157,17 @@ Do NOT fall back to direct OAuth. Instead, proceed with offline-only imports:
 - **Phase 8** (meeting transcripts) — works from exported transcripts
 
 Tell the user:
-> "No problem. We'll work from file-based sources: a Google Takeout export
-> covers Contacts, Calendar, and Gmail. You can set up ClawVisor anytime for
-> live sync instead of point-in-time exports."
+> "No problem. Two options: the native connector (`gbrain google setup`) does
+> live Gmail/Calendar/Contacts sync with your own OAuth app — tokens stay in
+> gbrain's local credential vault, never with me — or a Google Takeout export
+> covers all three as a point-in-time snapshot."
 
-**Do NOT offer direct OAuth as an alternative.** An agent holding raw Google
-tokens is a security liability. The skill should not teach agents to store
-credentials they shouldn't have.
+**Do NOT hold raw Google tokens yourself.** An agent holding tokens in its
+context is a security liability. The native connector is the sanctioned
+OAuth path precisely because gbrain vaults the tokens (0600 file, redacted
+listings) and the agent only ever runs CLI commands; secrets travel by file
+or env intake, never argv or chat. See `skills/google-loops/SKILL.md` for
+the exact protocol.
 
 ## Phase 1: Existing Markdown / Obsidian Import
 

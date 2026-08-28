@@ -812,6 +812,55 @@ CREATE INDEX IF NOT EXISTS idx_chat_usage_log_created
 CREATE INDEX IF NOT EXISTS idx_chat_usage_log_model
   ON chat_usage_log (model, created_at);
 
+-- open_loops (migration v144): the Gmail-first open-loop engine's structured
+-- record — "who is waiting on you, what you promised". Deduped per source on
+-- dedup_key; loops close by state transition, never delete. fact_id projects
+-- LLM-extracted commitments into the facts table so entity cards see them.
+CREATE TABLE IF NOT EXISTS open_loops (
+  id                 BIGSERIAL PRIMARY KEY,
+  source_id          TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  dedup_key          TEXT NOT NULL,
+  loop_type          TEXT NOT NULL CHECK (loop_type IN (
+                       'commitment_owed_by_me','commitment_owed_to_me',
+                       'unanswered_inbound','unanswered_outbound','decision_pending')),
+  counterparty_slug  TEXT,
+  counterparty_email TEXT,
+  summary            TEXT NOT NULL,
+  evidence           JSONB NOT NULL DEFAULT '[]'::jsonb,
+  thread_id          TEXT,
+  page_slug          TEXT,
+  due_at             TIMESTAMPTZ,
+  status             TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','dropped','stale')),
+  detector           TEXT NOT NULL CHECK (detector IN ('deterministic_thread','llm_extract','manual')),
+  confidence         REAL NOT NULL DEFAULT 1.0,
+  fact_id            BIGINT,
+  opened_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_activity_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_at          TIMESTAMPTZ,
+  closed_by          TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT open_loops_dedup UNIQUE (source_id, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS open_loops_status_idx
+  ON open_loops (source_id, status, last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS open_loops_counterparty_idx
+  ON open_loops (source_id, counterparty_slug) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS open_loops_thread_idx
+  ON open_loops (source_id, thread_id) WHERE status = 'open';
+
+-- loop_suppressions (migration v144): `gbrain loops mute <sender|thread>` —
+-- the detector's user feedback loop. Suppressed senders/threads never open
+-- new loops (existing loops keep their state).
+CREATE TABLE IF NOT EXISTS loop_suppressions (
+  id         BIGSERIAL PRIMARY KEY,
+  source_id  TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL CHECK (kind IN ('sender','thread')),
+  value      TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT loop_suppressions_uniq UNIQUE (source_id, kind, value)
+);
+
 -- migration_impact_log moved BELOW minion_jobs (was here, lines 645-676)
 -- because its `job_id BIGINT REFERENCES minion_jobs(id)` FK requires
 -- minion_jobs to exist FIRST during SCHEMA_SQL replay. v0.41.25.0 fix.
@@ -1171,8 +1220,12 @@ CREATE TABLE IF NOT EXISTS dream_verdicts (
   entities         JSONB,
   model            TEXT,
   triage_version   INT,
+  -- #4069 (migration v138): 30-day verdict TTL. Reads treat expired rows as
+  -- misses; the synthesize phase sweeps them best-effort.
+  expires_at       TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '30 days'),
   PRIMARY KEY (file_path, content_hash)
 );
+CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx ON dream_verdicts (expires_at);
 
 -- ============================================================
 -- Cycle coordination lock — v0.17 runCycle primitive

@@ -31,7 +31,7 @@ This skill guarantees:
 ## Phases
 
 1. **Load calendar.** Check today's meetings. For each: load attendee brain pages, recent timeline, open threads.
-2. **Check yesterday's threads.** Search brain for yesterday's timeline entries. Flag anything unresolved.
+2. **Check yesterday's threads.** When google sources exist, `gbrain waiting --json` is the real data source for open threads and unanswered items — prefer it over prose heuristics (it carries loop rows with counterparty, due date, and evidence; see `skills/google-loops/SKILL.md`). Otherwise, search brain for yesterday's timeline entries. Flag anything unresolved.
 3. **Review active tasks.** Load `ops/tasks` from brain. Surface P0 and P1 items.
 4. **Compile prep briefing.** Per-meeting context cards + open threads + task priorities.
 

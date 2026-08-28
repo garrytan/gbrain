@@ -59,6 +59,7 @@ import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-com
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
+import { throwIfAborted } from '../abort-check.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
 // allow-list loader to filing-rules.ts (#2397); patterns.ts and the
@@ -289,6 +290,10 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 export interface SynthesizePhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
+   *  cancelled cycle must stop judge calls, inline children, and every
+   *  derived-state write instead of running out the force-evict grace. */
+  signal?: AbortSignal;
   /** Generic in-cycle keepalive for cycle-lock TTL renewal during long waits. */
   yieldDuringPhase?: () => Promise<void>;
   /**
@@ -356,6 +361,7 @@ export async function runPhaseSynthesize(
     opts.brainDir = resolve(opts.brainDir);
   }
   try {
+    throwIfAborted(opts.signal, '[dream] synthesize');
     const config = await loadSynthConfig(engine);
 
     // #4168 sibling: clamp the child-subagent budgets to the REAL remaining
@@ -433,6 +439,16 @@ export async function runPhaseSynthesize(
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
     }
 
+    // Best-effort housekeeping (#4069): expiry is enforced on reads
+    // regardless, so a sweep failure must not block synthesis when the
+    // database is otherwise usable.
+    try {
+      const swept = await engine.sweepDreamVerdicts();
+      if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
+    } catch (e) {
+      process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+
     // Scored triage (#4152): cached in dream_verdicts, judged on miss by the
     // utility-tier model through a bounded pool with a wall-clock miss budget.
     // Provider-aware judge client routes through gateway.chat, so any
@@ -446,6 +462,7 @@ export async function runPhaseSynthesize(
       threshold: config.triage.threshold,
       concurrency: config.triage.concurrency,
       maxMs: config.triage.maxMs,
+      signal: opts.signal,
     }, opts.yieldDuringPhase);
     const verdicts = pass.reports;
 
@@ -600,6 +617,9 @@ export async function runPhaseSynthesize(
     // quota is admission-space; both stop further submits this run).
     const budgetExhaustedDeferrals: string[] = [];
     for (const t of worthProcessing) {
+      // #4077: never submit new children after cancellation; the finally's
+      // reconcilePrivateQueue cancels anything already submitted.
+      throwIfAborted(opts.signal, '[dream] synthesize fan-out');
       if (quotaHit) {
         skipReports.push({ filePath: t.filePath, reason: 'admission_quota: submission stopped this run' });
         continue;
@@ -874,6 +894,7 @@ export async function runPhaseSynthesize(
     await runSubagentsInline(
       engine, queue, childQueueName, renewPrivateQueueLease,
       undefined, undefined, effectiveConcurrency, opts.deadlineAtMs ?? null,
+      opts.signal ?? null,
     );
     // Captured HERE: everything after this line (waiters, collection,
     // provenance, reverse-writes, backfill) is post-drain phase work and must
@@ -912,7 +933,12 @@ export async function runPhaseSynthesize(
           timeoutMs: Math.min(config.subagentWaitTimeoutMs, remainingParentMs),
           pollMs: 5 * 1000,
           renew: renewPrivateQueueLease,
+          signal: opts.signal,
         });
+        // #4077: on abort the wait returns its last snapshot instead of
+        // throwing — unwind before recording a non-terminal status as an
+        // outcome (finally cancels the still-live children).
+        throwIfAborted(opts.signal, '[dream] synthesize completion wait');
         // Turn telemetry: surfaces max_turns cap pressure in details.synthesis
         // so the 30→16 default can be re-litigated on data. #4216 adds the
         // execution-path markers so operators see oneshot vs fallback mix.
@@ -955,10 +981,10 @@ export async function runPhaseSynthesize(
     // of every child-written page BEFORE reverse-rendering, so generated pages
     // are queryable (`frontmatter->>'dream_generated'`) and a later put_page
     // write-through (which re-renders from the DB row) can't erase the stamp.
-    await stampDreamProvenance(engine, writtenRefs, summaryDate);
+    await stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
@@ -966,8 +992,12 @@ export async function runPhaseSynthesize(
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId);
+      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId, opts.signal);
     }
+
+    // #4077: nothing below runs for a cancelled cycle — no phase-end embed
+    // spend, no cooldown stamp (the next run must retry these transcripts).
+    throwIfAborted(opts.signal, '[dream] synthesize completion');
 
     // CDX-8: deferred-embed closure. Oneshot children write chunks with
     // `embedding IS NULL`; the global `embed` phase only runs on SOME
@@ -1511,9 +1541,10 @@ async function checkCooldown(
 
 // ── Significance judge (gateway-routed; provider-agnostic) ──────────────
 //
-// The JudgeClient interface is unchanged for test-seam stability — existing
-// tests that pass a mock client to judgeSignificance keep working byte-
-// identically. Only the construction path moved from `new Anthropic()` to
+// The JudgeClient interface keeps the legacy create(params) call shape for
+// test-seam stability — existing mocks keep working (the options bag is
+// optional, #4077 cooperative cancellation). Only the construction path
+// moved from `new Anthropic()` to
 // `gateway.chat()` so any provider with a registered recipe (Anthropic,
 // DeepSeek, OpenRouter, Voyage, Ollama, llama-server, etc.) is reachable
 // via `gbrain config set models.dream.synthesize_verdict <provider>:<model>`.
@@ -1525,7 +1556,10 @@ async function checkCooldown(
 // for AIConfigError surfacing mid-run.
 
 export interface JudgeClient {
-  create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+  create: (
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    options?: { signal?: AbortSignal },
+  ) => Promise<Anthropic.Message>;
 }
 
 /**
@@ -1563,7 +1597,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
   if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) return null;
 
   return {
-    create: async (params): Promise<Anthropic.Message> => {
+    create: async (params, options): Promise<Anthropic.Message> => {
       // Map Anthropic.MessageCreateParamsNonStreaming → gateway.ChatOpts.
       // `judgeSignificance` always sends string content + string system,
       // and the adapter only TEXT-flattens the array-of-blocks shape —
@@ -1590,6 +1624,16 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         system,
         messages,
         maxTokens: params.max_tokens,
+        // DeepSeek v4 thinks by default and bills reasoning as OUTPUT tokens
+        // against max_tokens (recipe thinking_by_default, #4172). The judge
+        // wants only the small JSON verdict, so pin thinking off per-call —
+        // the openai-compatible adapter spreads providerOptions[recipe.id]
+        // into the wire body, where `thinking` is DeepSeek's documented knob.
+        ...(v.parsed.providerId === 'deepseek'
+          ? { providerOptions: { deepseek: { thinking: { type: 'disabled' } } } }
+          : {}),
+        // #4077: a cancelled cycle tears down the in-flight judge call too.
+        abortSignal: options?.signal,
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
@@ -1719,7 +1763,7 @@ export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
   verdictModel = 'claude-haiku-4-5-20251001',
-  opts: { maxChars?: number; maxTokens?: number } = {},
+  opts: { maxChars?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): Promise<TriageResult> {
   const maxChars = Math.max(1000, opts.maxChars ?? DEFAULT_TRIAGE_MAX_CHARS);
   const { text: trimmed, sampledPct } = buildTriageSample(t.content, maxChars);
@@ -1763,7 +1807,7 @@ two reasons. Quote verbatim; never paraphrase inside "quote".`;
     max_tokens: opts.maxTokens ?? DEFAULT_TRIAGE_MAX_TOKENS,
     system: sys,
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
-  });
+  }, { signal: opts.signal });
 
   // stop_reason === 'max_tokens' means the response was cut off; 'refusal'
   // means the model refused or a content filter blocked it. Even if a
@@ -1941,6 +1985,9 @@ export interface TriagePassCfg {
   concurrency: number;
   /** Wall-clock budget (ms) for cache-MISS judging; 0 = unlimited. Hits are always free. */
   maxMs: number;
+  /** #4077: cooperative cancellation — no new judge pulls, no post-abort
+   *  dream_verdicts writes; the abort unwinds the pass (phase fails). */
+  signal?: AbortSignal;
   /** Retriage: ignore the cache entirely. */
   force?: boolean;
   /** Retriage --since: cached rows judged before this instant are stale (re-judged). */
@@ -2088,12 +2135,16 @@ export async function runTriagePass(
       };
       return;
     }
+    // #4077: never START a judge call after cancellation; the in-flight call
+    // below rides the same signal via the gateway's abortSignal.
+    throwIfAborted(cfg.signal, '[dream] significance judge');
     try {
       let triage: TriageResult;
       try {
         triage = await judgeSignificance(judge, t, cfg.model, {
           maxChars: cfg.maxChars,
           maxTokens: cfg.maxTokens,
+          signal: cfg.signal,
         });
       } finally {
         // Spend accounting (outside-voice CX3): the paid call happened whether
@@ -2125,6 +2176,9 @@ export async function runTriagePass(
         };
         return;
       }
+      // #4077: a cancelled cycle must not bank new dream_verdicts rows for
+      // work it is abandoning — the next run re-judges from a clean slate.
+      throwIfAborted(cfg.signal, '[dream] significance judge');
       await engine.putDreamVerdict(t.filePath, t.contentHash, {
         worth_processing: triage.worth_processing,
         reasons: triage.reasons,
@@ -2560,10 +2614,14 @@ async function stampDreamProvenance(
   engine: BrainEngine,
   refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
   cycleDate: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
   for (const { slug, source_id, raw_source } of refs) {
+    // #4077: per-row abort check — the per-row try below is only for stamp
+    // failures and must not swallow the cancellation unwind.
+    throwIfAborted(signal, '[dream] synthesize provenance');
     try {
       await executeRawJsonb(
         engine,
@@ -2594,14 +2652,19 @@ async function reverseWriteRefs(
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
   nativeSourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
+    throwIfAborted(signal, '[dream] synthesize reverse-write');
     // v0.32.8 F6: validate source_id is filesystem-safe before any join().
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
+    // #4077: re-check after the row reads — an abort that lands during
+    // getPage/getTags must not reach this ref's file write.
+    throwIfAborted(signal, '[dream] synthesize reverse-write');
     try {
       const md = renderPageToMarkdown(page, tags);
       // v0.32.8 F6: foreign-source pages land at brainDir/.sources/<id>/<slug>.md
@@ -2656,7 +2719,9 @@ async function writeSummaryPage(
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
   sourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal, '[dream] synthesize summary');
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
 

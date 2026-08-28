@@ -34,6 +34,7 @@ import { CostTracker, estimateUpperBoundCost } from './cost-tracker.ts';
 import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
+import { resolveTierDefault } from '../model-config.ts';
 import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
@@ -54,7 +55,6 @@ import {
 } from './types.ts';
 
 const DEFAULT_TOP_K = 5;
-const DEFAULT_JUDGE_MODEL = 'anthropic:claude-haiku-4-5';
 const DEFAULT_MAX_PAIR_CHARS = 1500;
 
 /** Caller-supplied judge function signature; defaults to judgeContradiction. */
@@ -270,7 +270,10 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
 
 async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResult> {
   const startedAt = Date.now();
-  const judgeModel = opts.judgeModel ?? DEFAULT_JUDGE_MODEL;
+  // #3813: key-aware tier default, not a hardcoded Anthropic model — an
+  // OPENAI_API_KEY-only install must not route the judge to an unservable
+  // provider.
+  const judgeModel = opts.judgeModel ?? resolveTierDefault('utility');
   const topK = Math.max(1, opts.topK ?? DEFAULT_TOP_K);
   const sampling = opts.sampling ?? 'deterministic';
   const budgetUsd = opts.budgetUsd ?? 5.0;

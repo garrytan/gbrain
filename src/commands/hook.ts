@@ -89,6 +89,15 @@ import {
   summarizePushStatuses,
   workspaceRootHash,
 } from '../core/workspace-push.ts';
+import {
+  backupCheckDisabled,
+  backupNagGate,
+  backupNoticeText,
+  backupSpawnDue,
+  isBackupStatusStale,
+  loadBackupStatus,
+  recordBackupSpawn,
+} from '../core/backup/status-file.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
 
 // ── Tunables ────────────────────────────────────────────────────────────────
@@ -167,6 +176,8 @@ export interface HookIo {
    * gated bootstrap workspace root; throwing marks the push unavailable.
    */
   spawnPush?: (root: string) => void;
+  /** TEST SEAM: detached backup-check spawner (default spawnDetachedBackupCheck). */
+  spawnBackupCheck?: () => void;
   /** TEST SEAM: user-prompt deadline override (wall-clock flake control). */
   userPromptDeadlineMs?: number;
   /** TEST SEAM: compact deadline override (drives the per-step degrade paths). */
@@ -446,6 +457,9 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   let outcome: HookHeartbeatEntry['outcome'] = 'ok';
   let reason: string | undefined;
   const out: string[] = [];
+  // Deferred nag records: fire ONLY after the digest actually reached stdout
+  // (record-after-write — a deadline-suppressed note must re-fire next time).
+  const deferredRecords: Array<() => void> = [];
 
   try {
     const j = await readStdinJson(io, 250);
@@ -463,6 +477,14 @@ async function hookSessionStart(io: HookIo): Promise<number> {
       // 3. Push staleness [B4].
       const pushNote = await pushStatusNote();
       if (pushNote) out.push(pushNote);
+
+      // 3b. Monthly backup-coverage note (cache read; bounded by the shared
+      //     nag gate — dampener + per-channel ceiling + global monthly cap).
+      const backupNote = backupSessionStartNote();
+      if (backupNote) {
+        out.push(backupNote.text);
+        deferredRecords.push(backupNote.record);
+      }
 
       // 4. Visible degradation [B3] + parser-drift status file [G3].
       const failNote = await hookFailureNotice();
@@ -532,7 +554,16 @@ async function hookSessionStart(io: HookIo): Promise<number> {
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).
     const text = out.filter(Boolean).join('\n\n');
-    if (text) write(io, text + '\n');
+    if (text) {
+      write(io, text + '\n');
+      for (const record of deferredRecords) {
+        try {
+          record();
+        } catch {
+          /* fail-open — worst case the note re-fires */
+        }
+      }
+    }
   } catch (e) {
     outcome = 'error';
     reason = errorCode(e); // fail-open: empty stdout, exit 0
@@ -986,6 +1017,65 @@ function pendingPushFailureBanner(): { text: string; record: () => void } | null
   }
 }
 
+// ── monthly backup-coverage notices (cache readers; engine-free) ────────────
+
+/**
+ * Shared body for the two hook-borne backup notices: cache read + the shared
+ * nag gate on the given channel; the returned record() is deferred until the
+ * text actually reached stdout (record-after-write). backupNoticeText already
+ * caps the body at its 300-char budget — the short prefix on top stays far
+ * inside the payload cap, so no second slice (a slice here chopped the
+ * trailing call-to-action).
+ */
+function backupHookNotice(channel: string, prefix: string): { text: string; record: () => void } | null {
+  try {
+    if (backupCheckDisabled()) return null;
+    const s = loadBackupStatus();
+    if (!s || s.overall !== 'warn') return null;
+    const gate = backupNagGate(channel, s);
+    if (!gate.show) return null;
+    const t = backupNoticeText(s, 'human');
+    if (!t) return null;
+    return { text: `${prefix}${t}`, record: gate.record };
+  } catch {
+    return null;
+  }
+}
+
+/** Session-start digest note ('hook-note' channel). */
+function backupSessionStartNote(): { text: string; record: () => void } | null {
+  return backupHookNotice('hook-note', 'Backup check: ');
+}
+
+/**
+ * The backup banner for the user-prompt payload ('hook-banner' channel). Same
+ * delivery rail as the push-failure banner (systemMessage + additionalContext);
+ * the push failure wins the single banner slot — this one only fires when no
+ * push failure is pending.
+ */
+function pendingBackupBanner(): { text: string; record: () => void } | null {
+  return backupHookNotice('hook-banner', 'NOTICE: ');
+}
+
+/**
+ * Fire-and-forget `gbrain backup check --quiet` as a DETACHED child (the
+ * spawnDetachedPush pattern). The child re-resolves everything itself and
+ * exits 0 silently when the PGLite lock is held by a live serve — that
+ * install is covered by the serve-side refresher instead.
+ */
+function spawnDetachedBackupCheck(): void {
+  const exec = process.execPath ?? '';
+  const checkArgs = ['backup', 'check', '--quiet'];
+  const argv = /[/\\]gbrain(\.exe)?$/.test(exec) ? checkArgs : [process.argv[1], ...checkArgs];
+  const child = spawn(exec, argv, {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+  });
+  child.on('error', () => {});
+  child.unref();
+}
+
 // ── user-prompt [ENG-1, S3#8, A9] ───────────────────────────────────────────
 
 interface UserPromptOutcome {
@@ -1012,7 +1102,10 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
   let wrotePayload = false;
 
   const work = (async (): Promise<UserPromptOutcome> => {
-    banner = io.disablePushBanner ? null : pendingPushFailureBanner();
+    // Push failure wins the single banner slot; the monthly backup notice
+    // rides the same rail (systemMessage + additionalContext) when no push
+    // failure is pending. Both are cache/file readers, budgeted by the race.
+    banner = io.disablePushBanner ? null : (pendingPushFailureBanner() ?? pendingBackupBanner());
     const j = await readStdinJson(io, 300);
     if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
 
@@ -1531,6 +1624,21 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
         // defer the push so we never publish to an unverified-privacy origin.
         reason = 'push_deferred_repo_pending';
       }
+    }
+  } catch {
+    /* best effort */
+  }
+
+  // Monthly backup-coverage recompute — detached, 24h-debounced via the nag
+  // state file (no sidecar). Covers hooks-without-serve installs; a serve
+  // holding the PGLite lock makes the child a benign no-op (exit 0, no cache
+  // write) and the serve refresher owns that install instead.
+  try {
+    if (!backupCheckDisabled() && backupSpawnDue() && isBackupStatusStale(loadBackupStatus())) {
+      // Recorded BEFORE the spawn (the stop-push precedent) so repeated
+      // fail-fast children stay debounced.
+      recordBackupSpawn();
+      (io.spawnBackupCheck ?? spawnDetachedBackupCheck)();
     }
   } catch {
     /* best effort */

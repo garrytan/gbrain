@@ -41,10 +41,16 @@ import type { Page, PageType } from '../types.ts';
 import { loadAllowedSlugPrefixes, loadOutputRoot, runSubagentsInline } from './synthesize.ts';
 import { probeChatModel } from '../ai/gateway.ts';
 import { normalizeModelId } from '../model-id.ts';
+import { throwIfAborted } from '../abort-check.ts';
 
 export interface PatternsPhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
+   *  cancelled cycle must stop the inline child and every derived-state
+   *  write instead of running out the force-evict grace. Mirrors
+   *  synthesize.ts's `signal`. */
+  signal?: AbortSignal;
   yieldDuringPhase?: () => Promise<void>;
   /**
    * issue #2860 — `gbrain dream --phase patterns --once`. Bypasses the
@@ -126,6 +132,7 @@ export async function runPhasePatterns(
   const start = Date.now();
   let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   try {
+    throwIfAborted(opts.signal, '[dream] patterns');
     const config = await loadPatternsConfig(engine);
 
     if (!config.enabled) {
@@ -250,12 +257,18 @@ export async function runPhasePatterns(
       }
       throw e;
     }
+    // #4077: cancelled between submit and drain — unwind now; the finally's
+    // reconcilePrivateQueue cancels the just-submitted child.
+    throwIfAborted(opts.signal, '[dream] patterns subagent');
 
     // Drain this phase's private child queue inline so the parent observes
     // the terminal state instead of polling waitForCompletion until
     // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
     // parent job otherwise deadlocks a fully-occupied worker (#2050).
-    await runSubagentsInline(engine, queue, childQueueName, renewPrivateQueueLease);
+    await runSubagentsInline(
+      engine, queue, childQueueName, renewPrivateQueueLease,
+      undefined, undefined, 1, null, opts.signal ?? null,
+    );
 
     let outcome: MinionJobStatus | 'timeout';
     try {
@@ -263,7 +276,11 @@ export async function runPhasePatterns(
         timeoutMs: budgets.waitTimeoutMs,
         pollMs: 5 * 1000,
         renew: renewPrivateQueueLease,
+        signal: opts.signal,
       });
+      // #4077: on abort the wait returns its last snapshot instead of
+      // throwing — unwind before treating it as an outcome.
+      throwIfAborted(opts.signal, '[dream] patterns completion wait');
       outcome = final.status;
     } catch (e) {
       if (e instanceof TimeoutError) {
@@ -291,10 +308,13 @@ export async function runPhasePatterns(
     // SubagentHandlerData.source_id), so getPage/getTags read the same row the
     // child wrote, and the reverse-write treats it as the native source.
     const cycleSourceId = opts.sourceId ?? 'default';
+    // #4077: no post-abort derived-state writes (collection is a read, but
+    // the reverse-write below dual-writes files).
+    throwIfAborted(opts.signal, '[dream] patterns output');
     const writtenRefs = await collectChildPutPageSlugs(engine, [job.id], cycleSourceId);
 
     // Reverse-write to fs.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     const details = {
       reflections_considered: reflections.length,
@@ -557,15 +577,20 @@ async function reverseWriteRefs(
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
   nativeSourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
+    throwIfAborted(signal, '[dream] patterns reverse-write');
     // v0.32.8 F6: guard against malformed source_id (would let join() break
     // out of brainDir). validateSourceId throws on `..`, `/`, etc.
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
+    // #4077: re-check after the row reads — an abort that lands during
+    // getPage/getTags must not reach this ref's file write.
+    throwIfAborted(signal, '[dream] patterns reverse-write');
     try {
       const md = renderPageToMarkdown(page, tags);
       // v0.32.8 F6: foreign-source pages land under brainDir/.sources/<id>/<slug>.md

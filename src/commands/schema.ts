@@ -33,6 +33,7 @@ import {
   removePrefixFromType,
   removeTypeFromPack,
   resolveActivePackNameOnly,
+  resolveLoadedPack,
   loadPackFromFile,
   parseSchemaPackManifest,
   runStatsCore,

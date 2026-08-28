@@ -79,7 +79,10 @@ describe('both serve transports bind through the shared helper (#4474)', () => {
   it('the stdio MCP path wires bindResolveIpcForServe with teardown', async () => {
     const src = await readSrc('src/mcp/server.ts').text();
     expect(src).toContain('bindResolveIpcForServe(');
-    expect(src).toContain('ipcBinding.close()');
+    // Optional chain since the db-availability wave: degraded-mode serve
+    // defers the IPC bind until first reconnect, so shutdown may run with
+    // the binding still null. The teardown wiring is what this pins.
+    expect(src).toContain('ipcBinding?.close()');
   });
 
   it('bootstrap verify prefers a live serve socket over self-creating one', async () => {

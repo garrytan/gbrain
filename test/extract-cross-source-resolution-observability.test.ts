@@ -26,7 +26,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
       ['origin-page', ['source-a']],
       ['target-page', ['source-a']],
     ]);
-    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources);
+    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources, true);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.fromSourceId).toBe('source-a');
@@ -40,7 +40,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
       ['origin-page', ['source-a']],
       ['target-page', ['default']],
     ]);
-    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources);
+    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources, true);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.toSourceId).toBe('default');
   });
@@ -48,7 +48,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
   test('reason=missing_target when the target slug is not in allSlugs at all', () => {
     const allSlugs = new Set(['origin-page']);
     const slugToSources = new Map<string, string[]>([['origin-page', ['source-a']]]);
-    const r = resolveCandidateSources(candidate('nonexistent-page'), 'origin-page', 'source-a', allSlugs, slugToSources);
+    const r = resolveCandidateSources(candidate('nonexistent-page'), 'origin-page', 'source-a', allSlugs, slugToSources, true);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('missing_target');
   });
@@ -56,7 +56,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
   test('reason=missing_from when the origin slug is not in allSlugs', () => {
     const allSlugs = new Set(['target-page']);
     const slugToSources = new Map<string, string[]>([['target-page', ['source-a']]]);
-    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources);
+    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources, true);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('missing_from');
   });
@@ -76,6 +76,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
       'comms-imessage',
       allSlugs,
       slugToSources,
+      true,
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('cross_source');
@@ -87,7 +88,7 @@ describe('resolveCandidateSources — reason attribution (#2589)', () => {
       ['origin-page', ['source-a']],
       ['target-page', ['source-b']],
     ]);
-    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources);
+    const r = resolveCandidateSources(candidate('target-page'), 'origin-page', 'source-a', allSlugs, slugToSources, true);
     expect(r).not.toHaveProperty('toSourceId');
     expect(r).not.toHaveProperty('fromSourceId');
   });

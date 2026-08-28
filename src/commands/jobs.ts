@@ -123,6 +123,9 @@ const GATEWAY_REFRESH_JOB_NAMES = new Set([
   // refresh a worker booted before `config set` never saw the DB-plane chat
   // model and every extraction silently returned no_events.
   'chronicle_extract',
+  // Open-loop commitment extraction (google source kind): same judge shape
+  // as chronicle_extract, same stale-gateway failure class.
+  'loops_extract',
 ]);
 
 function registerBuiltinJob(
@@ -2328,6 +2331,19 @@ export async function registerBuiltinHandlers(
       tz,
       signal: (job as { signal?: AbortSignal }).signal,
     });
+  });
+
+  // Open-loop commitment/decision extraction over google-source email pages
+  // (src/core/google/loops-extract.ts). Enqueued by runGoogleSync on trickle
+  // threads within the recent window, idempotency-keyed per page revision,
+  // capped per sweep. Kill switch: config loops.extraction_enabled.
+  registerBuiltinJob(worker, engine, 'loops_extract', async (job) => {
+    const slug = typeof job.data.slug === 'string' ? job.data.slug : undefined;
+    const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
+    if (!slug || !sourceId) throw new Error('loops_extract job requires data.slug and data.sourceId');
+    const threadId = typeof job.data.threadId === 'string' ? job.data.threadId : undefined;
+    const { runLoopsExtract } = await import('../core/google/loops-extract.ts');
+    return await runLoopsExtract(engine, { slug, sourceId, ...(threadId ? { threadId } : {}) });
   });
 
   // v0.41.39 (#1700) — enrich. NOT in PROTECTED_JOB_NAMES: per-call cost is

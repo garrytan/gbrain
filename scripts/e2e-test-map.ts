@@ -101,6 +101,8 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/schema-drift.test.ts",
     // #3391: includeNullSignature stale predicates (engine parity).
     "test/e2e/migrate-embeddings-postgres.test.ts",
+    // #4109: FOR KEY SHARE deletion-race behavior of addLink/addTimelineEntry.
+    "test/e2e/source-boundary-mutation-postgres.test.ts",
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
@@ -117,6 +119,7 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
     "test/e2e/migrate-embeddings-postgres.test.ts",
+    "test/e2e/source-boundary-mutation-postgres.test.ts",
   ],
   "src/core/pglite-engine/**": [
     "test/e2e/postgres-bootstrap.test.ts",

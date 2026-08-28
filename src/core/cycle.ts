@@ -2097,9 +2097,10 @@ export async function runCycle(
       };
   let lockStolenAbort = false;
   // Raced variant for the 5 long phases (synthesize / extract_atoms / patterns
-  // / synthesize_concepts / consolidate): their opts can't carry a signal yet
-  // (W6), so a steal must be able to stop the WAIT even though the phase's
-  // in-flight work runs to its own bounded timeout. Steal-free cycles behave
+  // / synthesize_concepts / consolidate): even where their opts now carry the
+  // signal (#4077 synthesize/patterns, consolidate), a steal must be able to
+  // stop the WAIT while the phase unwinds cooperatively; extract_atoms and
+  // synthesize_concepts still can't carry one (W6). Steal-free cycles behave
   // byte-identically to timePhase.
   const racedTimePhase = <T,>(fn: () => Promise<T>) => raceStolen(timePhase(fn));
 
@@ -2245,6 +2246,10 @@ export async function runCycle(
           // (explicit --source wins, else derived from the checkout dir).
           sourceId: cycleSourceId,
           once: opts.onceForPhase === 'synthesize',
+          // #4077: combined external-abort + lock-steal signal, so a
+          // cancelled cycle stops judge calls, inline children, and
+          // derived-state writes instead of running out the grace period.
+          signal: cycleSignal,
           // #4168 sibling: clamp child-subagent timeouts to the remaining
           // job budget (same collision shape as propose_takes, cross-process
           // timeout domain — clamped via the patterns.ts childBudget template).
@@ -2466,6 +2471,8 @@ export async function runCycle(
           // source owns the page, which is what doctor reports as
           // multi_source_drift.
           sourceId: cycleSourceId,
+          // #4077: same cooperative-cancellation threading as synthesize.
+          signal: cycleSignal,
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

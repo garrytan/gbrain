@@ -130,7 +130,9 @@ env as `GBRAIN_DATABASE_URL`. The job row in `minion_jobs.data` stores
 `inherit: ["database_url"]` — **names only, never values**. The shell-audit
 JSONL records the same. Pre-enqueue validation rejects the submission if the
 worker can't resolve the requested key, with a paste-ready
-`gbrain config set database_url <value>` hint.
+`gbrain config set database_url <value>` hint (that command is file-plane
+routed — it writes `~/.gbrain/config.json`, exactly where the worker's
+`loadConfig()` looks, and works even when the DB is unreachable).
 
 **Why not just write the URL into `env:` directly?** You *can*:
 

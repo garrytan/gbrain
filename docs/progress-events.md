@@ -171,6 +171,11 @@ Stable phase names shipped in v0.15.2:
   once per repo with that repo's item count as total — counts are only
   known after each repo's enumeration — and every item ticks exactly once;
   scope resolution, per-repo listing and detail fetches emit heartbeats)
+- `sync.google_materialize` (google-kind source sweep: no `total` — the
+  newest-first Gmail backfill drains a window whose size isn't known up
+  front — with one tick per Gmail thread materialized, `note` carrying the
+  thread id; the contacts, calendar, and gmail service sweeps each emit
+  heartbeats while they run)
 
 Sub-phases exposed via `child()`:
 

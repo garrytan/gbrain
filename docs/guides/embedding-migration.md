@@ -47,10 +47,10 @@ the explicit escape hatch.
   1280d brain keeps its column (no schema rebuild). No reranker coverage on
   the OpenAI key.
 
-Set the target's API key via `export VOYAGE_API_KEY=...` (or edit
-`~/.gbrain/config.json` directly) — do NOT use `gbrain config set
-voyage_api_key`: that writes the DB plane, which the embedding pipeline never
-reads.
+Set the target's API key via `export VOYAGE_API_KEY=...`, via
+`gbrain config set voyage_api_key ...` (API keys are routed to the file
+plane, which the provider pipeline reads), or by editing
+`~/.gbrain/config.json` directly.
 
 **Pick `--dim` = your brain's current column width when the target supports
 it.** A different width triggers the destructive schema transition (column +

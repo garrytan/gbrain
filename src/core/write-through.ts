@@ -196,8 +196,47 @@ export async function isWriteThroughDisabled(engine: BrainEngine): Promise<boole
 
 /** Resolved disk target for a page's canonical markdown artifact. */
 export type PageWriteTarget =
-  | { ok: true; filePath: string; writeRoot: string }
+  | {
+      ok: true;
+      filePath: string;
+      writeRoot: string;
+      /**
+       * `filePath` expressed in the file scanner's `pages.source_path`
+       * convention (#774: git-root-relative when the scan root sits inside a
+       * git repo, scan-root-relative otherwise; forward slashes). What
+       * writePageThrough binds onto a source_path=NULL row after the file
+       * materializes (#4247).
+       */
+      sourcePathToBind: string;
+    }
   | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
+
+/**
+ * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
+ * root a sync of this source walks). Mirrors sync's #774 rule — a scan root
+ * INSIDE a git repo records GIT-ROOT-relative paths (scoped sync), a git-root
+ * or non-git root records root-relative — and must stay the exact inverse of
+ * `resolveSourceLocalFilePath` (markdown.ts): delete-reconcile keys on this
+ * form, so a local_path-relative bind for a subdirectory-scoped source would
+ * read as stale and sweep the page while its file is still on disk.
+ */
+function scannerSourcePath(scanRoot: string, filePath: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- scanRoot is the operator-written sources.local_path / sync.repo_path config root; canonicalizing it here mints no fs read/write path
+  const absRoot = resolve(scanRoot);
+  let cursor = absRoot;
+  while (true) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- cursor only walks UP (dirname) from the operator-config root joined with the literal '.git' segment; existsSync boolean probe, no content ever read or served
+    if (existsSync(join(cursor, '.git'))) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- filePath was proven inside writeRoot by isWriteTargetContained before the sole call site (resolvePageWriteTarget); output is an in-memory source_path string, not an fs operand
+      return relative(cursor, resolve(filePath)).replaceAll('\\', '/');
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: containment-checked filePath relative to the operator-config root, string minting only
+  return relative(absRoot, resolve(filePath)).replaceAll('\\', '/');
+}
 
 /**
  * Compute the ONE file a (source, slug) pair lives in on disk.
@@ -242,6 +281,7 @@ export async function resolvePageWriteTarget(
 ): Promise<PageWriteTarget> {
   let filePath: string;
   let writeRoot: string;
+  let scanRoot: string;
   const srcRows = await engine.executeRaw<{ local_path: string | null }>(
     `SELECT local_path FROM sources WHERE id = $1`,
     [sourceId],
@@ -269,6 +309,7 @@ export async function resolvePageWriteTarget(
       ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath) ?? join(sourceLocalPath, `${slug}.md`)
       : join(sourceLocalPath, recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
     writeRoot = sourceLocalPath;
+    scanRoot = sourceLocalPath;
   } else {
     const repoPath = await engine.getConfig('sync.repo_path');
     if (!repoPath) {
@@ -290,6 +331,9 @@ export async function resolvePageWriteTarget(
     const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
     filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
     writeRoot = repoPath;
+    // pageRoot, not repoPath: a later `sources add --path <pageRoot>` scan
+    // walks pageRoot, so the bind must speak that scan's convention.
+    scanRoot = pageRoot;
   }
 
   // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
@@ -301,7 +345,7 @@ export async function resolvePageWriteTarget(
     return { ok: false, skipped: 'path_escapes_source_root' };
   }
 
-  return { ok: true, filePath, writeRoot };
+  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
 }
 
 /**
@@ -329,7 +373,7 @@ export async function writePageThrough(
     if (!target.ok) {
       return { written: false, skipped: target.skipped };
     }
-    const { filePath, writeRoot } = target;
+    const { filePath, writeRoot, sourcePathToBind } = target;
 
     const writtenPage = await engine.getPage(slug, { sourceId });
     if (!writtenPage) {
@@ -388,6 +432,26 @@ export async function writePageThrough(
       throw writeErr;
     }
 
+    // #4247: a page born via put/capture/reverse-write keeps source_path=NULL
+    // forever — mtime-watermark incremental sync never rescans an untouched
+    // file — so bind the just-materialized file of record now. NULL-guarded so
+    // a scanner-recorded path is never rewritten; best-effort because row and
+    // file are already durable and a full sync can still heal the bookkeeping.
+    try {
+      await engine.executeRaw(
+        `UPDATE pages
+            SET source_path = $1
+          WHERE source_id = $2
+            AND slug = $3
+            AND deleted_at IS NULL
+            AND source_path IS NULL`,
+        [sourcePathToBind, sourceId, slug],
+      );
+    } catch (bindErr) {
+      const msg = bindErr instanceof Error ? bindErr.message : String(bindErr);
+      opts.logger?.warn(`[write-through] wrote ${slug} but could not bind source_path: ${msg}`);
+    }
+
     // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
     // commit the artifact so it reaches git — pre-fix, write-through content
     // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
@@ -416,5 +480,75 @@ export async function writePageThrough(
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
     return { written: false, error: msg };
+  }
+}
+
+export interface DeleteThroughResult {
+  /** True when an artifact existed and was unlinked. */
+  removed: boolean;
+  /** The path that was removed (or would have been). */
+  path?: string;
+  /**
+   * Non-error reasons nothing was removed. Shares the target-resolution skip
+   * vocabulary (kept in lockstep via the Extract), plus:
+   *   - disabled_by_config: the operator opted the brain out of the disk sink.
+   *   - file_not_present: the page had no artifact on disk (DB-only page, or
+   *     already removed by hand) — a clean no-op, not a failure.
+   */
+  skipped?: 'disabled_by_config' | 'file_not_present' | Extract<PageWriteTarget, { ok: false }>['skipped'];
+  /** Set when the unlink itself threw (EACCES, EPERM, read-only mount). */
+  error?: string;
+}
+
+/**
+ * Remove the on-disk markdown artifact for `slug` — the delete-side counterpart
+ * to `writePageThrough` (#4022).
+ *
+ * Why this exists: `put_page`/capture write BOTH sinks (DB row + `.md` file),
+ * but `delete_page` used to touch only the DB. The orphaned file then outlived
+ * the page, and on any repo whose brain is committed on a timer (a `snapshot`
+ * cron, `sources harden`'s post-commit push) the deleted page's artifact gets
+ * committed back into git *after* deletion — so the page reappears on the next
+ * `gbrain sync`, silently resurrecting content the user deleted.
+ *
+ * Deliberately mirrors `writePageThrough`'s contract: never throws, reports via
+ * `skipped`/`error`, and resolves its target through the shared
+ * `resolvePageWriteTarget` so the two planes cannot disagree about which file
+ * backs a page. The DB row remains the durable sink — a failure here leaves a
+ * stale file that the next `gbrain sync` reconciles, never a lost row.
+ *
+ * `opts.target`: resolvePageWriteTarget reads the recorded `source_path` from
+ * ACTIVE rows only, so the delete_page op resolves the target BEFORE
+ * `softDeletePage` stamps `deleted_at` and passes it here. Resolving after the
+ * stamp would miss the recorded path, fall back to the slug-derived twin, and
+ * report a clean `file_not_present` no-op while the REAL artifact stayed on
+ * disk — the very silent-no-op class this helper exists to close.
+ */
+export async function deletePageThrough(
+  engine: BrainEngine,
+  slug: string,
+  opts: { sourceId?: string; logger?: WriteThroughLogger; target?: PageWriteTarget } = {},
+): Promise<DeleteThroughResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  try {
+    // `sync.write_through=false` means the operator opted this brain out of
+    // the disk sink entirely — never unlink files gbrain does not own.
+    if (await isWriteThroughDisabled(engine)) {
+      return { removed: false, skipped: 'disabled_by_config' };
+    }
+    const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
+    if (!target.ok) return { removed: false, skipped: target.skipped };
+    const { filePath } = target;
+
+    if (!existsSync(filePath)) {
+      return { removed: false, path: filePath, skipped: 'file_not_present' };
+    }
+
+    unlinkSync(filePath);
+    return { removed: true, path: filePath };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);
+    return { removed: false, error: msg };
   }
 }

@@ -42,6 +42,7 @@ import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import { RateLeaseUnavailableError, leaseFullBackoffMs } from '../minions/rate-leases.ts';
 import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
+import { anySignal, throwIfAborted } from '../abort-check.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
 
 /**
@@ -124,17 +125,22 @@ export async function runSubagentsInline(
    *  loop's LAST claimed child may still overrun the parent by up to its
    *  own clamped timeout. */
   deadlineAtMs: number | null = null,
+  /** #4077: cooperative cancellation from the enclosing cycle/minion job.
+   *  Checked before every claim and combined into ctx.signal so an in-flight
+   *  handler stops too; the current child is cancelled (truthful 'cancelled',
+   *  not dead or a burned delayed retry) before the drain unwinds. */
+  signal: AbortSignal | null = null,
 ): Promise<void> {
   const n = Math.max(1, Math.floor(concurrency));
   if (n === 1) {
     // Serial fast path: identical semantics to the pre-#4194 drain.
-    await drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, 0, null, deadlineAtMs);
+    await drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, 0, null, deadlineAtMs, signal);
     return;
   }
   const poolAbort = new AbortController();
   const settled = await Promise.allSettled(
     Array.from({ length: n }, (_, loopIdx) =>
-      drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, loopIdx, poolAbort, deadlineAtMs)),
+      drainLoop(engine, queue, queueName, yieldDuringPhase, handler, lockMs, loopIdx, poolAbort, deadlineAtMs, signal)),
   );
   // allSettled (not all): a rejecting loop must not strand siblings'
   // in-flight children mid-record. The first non-retryable rejection is
@@ -153,6 +159,7 @@ async function drainLoop(
   loopIdx: number,
   poolAbort: AbortController | null,
   deadlineAtMs: number | null = null,
+  signal: AbortSignal | null = null,
 ): Promise<void> {
   // #3555 interaction: the drain's queue ops used to be bare awaits, so a
   // transient pooler reap mid-drain threw out of the loop and stranded the
@@ -179,6 +186,9 @@ async function drainLoop(
       // Shared-abort check: a sibling loop hit a non-retryable failure. Stop
       // claiming new children; the sibling's rejection carries the cause.
       if (poolAbort?.signal.aborted) return;
+      // #4077: external cancellation unwinds the drain — unclaimed children
+      // stay 'waiting' for the phase finally's reconcilePrivateQueue.
+      throwIfAborted(signal, '[dream] inline drain');
       // #4168 adversarial: stop claiming when the parent budget cannot fit
       // another child. Already-running work is unaffected; unclaimed
       // children stay 'waiting' for the caller's cancel-and-defer pass.
@@ -256,7 +266,10 @@ async function drainLoop(
         name: job.name,
         data: job.data,
         attempts_made: job.attempts_made,
-        signal: abort.signal,
+        // #4077: fold the phase's cancellation into the per-job signal so an
+        // in-flight handler (mid-LLM-call) stops without waiting for its own
+        // timeout; `abort` stays the loop-local source for timedOut below.
+        signal: anySignal(abort.signal, signal),
         deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
         shutdownSignal: shutdown.signal,
         updateProgress: async (progress: unknown) => {
@@ -388,6 +401,14 @@ async function drainLoop(
         );
       };
       try {
+        // #4077: external cancellation outranks outcome recording — a child
+        // stopped by the phase's abort must read 'cancelled', never dead or a
+        // burned delayed retry. Cancel is best-effort; the phase finally's
+        // reconcilePrivateQueue is the backstop.
+        if (signal?.aborted) {
+          try { await queue.cancelJob(job.id); } catch { /* reconcile backstop */ }
+          throwIfAborted(signal, '[dream] inline drain');
+        }
         try {
           await record();
         } catch (recordErr) {

@@ -7,12 +7,18 @@
  * the loud warning) and the read half (configAllowsUnverifiedRemote).
  */
 import { describe, test, expect } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runConfig } from '../src/commands/config.ts';
 import { configAllowsUnverifiedRemote } from '../src/core/workspace-push.ts';
+import {
+  BACKUP_INTERVAL_DAYS_DEFAULT,
+  backupCheckDisabled,
+  backupIntervalMs,
+  __setBackupIntervalForTests,
+} from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -66,6 +72,104 @@ describe('config set — file-plane bootstrap hook-lane keys [D18]', () => {
       await captureLog(() => runConfig(noEngine, ['set', 'hooks.stop_push_debounce_min', '0']));
       cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { hooks?: { stop_push_debounce_min?: number } };
       expect(cfg.hooks?.stop_push_debounce_min).toBe(0);
+    });
+  });
+});
+
+/**
+ * backup.* keys are FILE-plane canonical for the same reason as the hook-lane
+ * keys: their readers (backupCheckDisabled / backupIntervalMs in
+ * src/core/backup/status-file.ts) are engine-free — `gbrain hook`, the cli.ts
+ * startup rail, and the MCP dispatch notice all resolve through
+ * loadConfigFileOnly, which never sees the DB plane. These tests pin the write
+ * half (runConfig routes the nested keys to ~/.gbrain/config.json) AND the
+ * read half (the status-file resolvers flip on the same file).
+ */
+describe('config set — backup.* file-plane keys', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** Validation-error idiom: console.error + process.exit(1) → capture the
+   * error stream and turn exit into a recoverable sentinel throw. */
+  async function captureErrExit(fn: () => Promise<void>): Promise<{ err: string; exitCode: number | undefined }> {
+    const origErr = console.error;
+    const origExit = process.exit;
+    let err = '';
+    let exitCode: number | undefined;
+    console.error = (...a: unknown[]) => { err += a.map(String).join(' ') + '\n'; };
+    (process as { exit: unknown }).exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error('__exit__');
+    }) as unknown as typeof process.exit;
+    try {
+      await fn();
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== '__exit__') throw e;
+    } finally {
+      console.error = origErr;
+      process.exit = origExit;
+    }
+    return { err, exitCode };
+  }
+
+  test('backup.check_enabled: false lands NESTED on the file plane and flips backupCheckDisabled(); true flips it back; unset restores the default', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-backup-'));
+    // Clear the env kill switch — backupCheckDisabled consults it first.
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_BACKUP_CHECK: undefined }, async () => {
+      const out = await captureLog(() => runConfig(noEngine, ['set', 'backup.check_enabled', 'false']));
+      expect(out).toContain('Set backup.check_enabled = false');
+      expect(out).toContain('file plane');
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      let cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { backup?: { check_enabled?: boolean } };
+      expect(cfg.backup?.check_enabled).toBe(false); // nested, not a flat dotted key
+      // The engine-free read half sees the same file.
+      expect(backupCheckDisabled()).toBe(true);
+
+      // set true → re-enabled.
+      await captureLog(() => runConfig(noEngine, ['set', 'backup.check_enabled', 'true']));
+      cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { backup?: { check_enabled?: boolean } };
+      expect(cfg.backup?.check_enabled).toBe(true);
+      expect(backupCheckDisabled()).toBe(false);
+
+      // unset → key removed from the file, default (enabled) restored.
+      const out2 = await captureLog(() => runConfig(noEngine, ['unset', 'backup.check_enabled']));
+      expect(out2).toContain('Unset backup.check_enabled (file plane)');
+      cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { backup?: { check_enabled?: boolean } };
+      expect(cfg.backup?.check_enabled).toBeUndefined();
+      expect(backupCheckDisabled()).toBe(false);
+    });
+  });
+
+  test('backup.check_interval_days: 7 lands nested and backupIntervalMs() = 7d; unset restores the 30d default', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-backup2-'));
+    // Env resolves ABOVE config in backupIntervalMs — clear it; also clear any
+    // leftover test-seam override so the config value is what resolves.
+    __setBackupIntervalForTests(null);
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_BACKUP_CHECK_DAYS: undefined }, async () => {
+      const out = await captureLog(() => runConfig(noEngine, ['set', 'backup.check_interval_days', '7']));
+      expect(out).toContain('Set backup.check_interval_days = 7');
+      expect(out).toContain('file plane');
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { backup?: { check_interval_days?: number } };
+      expect(cfg.backup?.check_interval_days).toBe(7);
+      expect(backupIntervalMs()).toBe(7 * DAY);
+
+      // unset → default interval restored.
+      await captureLog(() => runConfig(noEngine, ['unset', 'backup.check_interval_days']));
+      expect(backupIntervalMs()).toBe(BACKUP_INTERVAL_DAYS_DEFAULT * DAY);
+    });
+  });
+
+  test('backup.check_interval_days: "0" and "abc" are refused (exit 1, nothing written)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-backup3-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_BACKUP_CHECK_DAYS: undefined }, async () => {
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      for (const bad of ['0', 'abc']) {
+        const { err, exitCode } = await captureErrExit(() =>
+          runConfig(noEngine, ['set', 'backup.check_interval_days', bad]));
+        expect(exitCode).toBe(1);
+        expect(err).toContain('backup.check_interval_days must be an integer >= 1');
+        expect(existsSync(cfgPath)).toBe(false); // the refused set wrote NOTHING
+      }
     });
   });
 });

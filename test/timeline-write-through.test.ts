@@ -324,7 +324,7 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     // deletes the fence-owned fact rows.
     const fence = await writeFactsToFence(
       engine,
-      { sourceId: 'default', localPath: brainDir, slug },
+      { sourceId: 'default', localPath: brainDir, slug, resolutionSource: 'exact_page' },
       [fenceFact('Founded Widget-Co in 2017')],
     );
     expect(fence.inserted).toBe(1);
@@ -360,7 +360,7 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     const filePath = await seedPage(slug, body);
     await writeFactsToFence(
       engine,
-      { sourceId: 'default', localPath: brainDir, slug },
+      { sourceId: 'default', localPath: brainDir, slug, resolutionSource: 'exact_page' },
       [fenceFact('Fence row that must stay last')],
     );
 
@@ -390,7 +390,7 @@ describe('wave-C review: splice-under-lock, never whole-file regeneration', () =
     const [fenceRes, opRes] = await Promise.all([
       writeFactsToFence(
         engine,
-        { sourceId: 'default', localPath: brainDir, slug },
+        { sourceId: 'default', localPath: brainDir, slug, resolutionSource: 'exact_page' },
         [fenceFact('Concurrent fence fact')],
       ),
       addTimelineEntryOp.handler(makeCtx(), {

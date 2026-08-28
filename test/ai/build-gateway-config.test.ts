@@ -161,6 +161,46 @@ describe('buildGatewayConfig config-plane API-key folding', () => {
     });
   });
 
+  // Same seam for LiteLLM + Together, closed alongside litellm's chat
+  // touchpoint (v0.42.61.0): once litellm became a full chat provider,
+  // daemon/launchd/MCP contexts hit the same config-plane gap voyage did
+  // (#2662). The fold lives in mergedProviderEnv (src/core/ai/provider-env.ts).
+  test('litellm_api_key folds into gateway env as LITELLM_API_KEY', async () => {
+    await withEnv({ LITELLM_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        litellm_api_key: 'sk-llm-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LITELLM_API_KEY).toBe('sk-llm-config-plane');
+    });
+  });
+
+  test('a real LITELLM_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ LITELLM_API_KEY: 'sk-llm-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        litellm_api_key: 'sk-llm-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.LITELLM_API_KEY).toBe('sk-llm-env-plane');
+    });
+  });
+
+  test('together_api_key folds into gateway env as TOGETHER_API_KEY', async () => {
+    await withEnv({ TOGETHER_API_KEY: undefined }, async () => {
+      const cfg = buildGatewayConfig({
+        together_api_key: 'sk-tg-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.TOGETHER_API_KEY).toBe('sk-tg-config-plane');
+    });
+  });
+
+  test('a real TOGETHER_API_KEY process.env value wins over the config-plane fallback', async () => {
+    await withEnv({ TOGETHER_API_KEY: 'sk-tg-env-plane' }, async () => {
+      const cfg = buildGatewayConfig({
+        together_api_key: 'sk-tg-config-plane',
+      } as unknown as GBrainConfig);
+      expect(cfg.env.TOGETHER_API_KEY).toBe('sk-tg-env-plane');
+    });
+  });
+
   // #3500: the google recipe reads GOOGLE_GENERATIVE_AI_API_KEY; before this
   // fold the ONLY configuration route was exporting that exact env name.
   test('google_api_key folds into gateway env as GOOGLE_GENERATIVE_AI_API_KEY', async () => {
@@ -269,6 +309,22 @@ describe('buildGatewayConfig env empty-string clobber guard (#1249)', () => {
         expect(cfg.env.GBRAIN_TEST_FALSE_VAL).toBe('false');
       },
     );
+  });
+});
+
+describe('buildGatewayConfig OCR-model threading (#4107)', () => {
+  // The config key was declared/env-merged/DB-merged in config.ts but never
+  // picked into AIGatewayConfig, so generateOcrText() could not see it.
+  test('embedding_image_ocr_model reaches the gateway config', () => {
+    const cfg = buildGatewayConfig({
+      embedding_image_ocr_model: 'deepseek:deepseek-v4-pro',
+    } as unknown as GBrainConfig);
+    expect(cfg.embedding_image_ocr_model).toBe('deepseek:deepseek-v4-pro');
+  });
+
+  test('absent embedding_image_ocr_model stays undefined (expansion fallback signal preserved)', () => {
+    const cfg = buildGatewayConfig(baseConfig);
+    expect(cfg.embedding_image_ocr_model).toBeUndefined();
   });
 });
 

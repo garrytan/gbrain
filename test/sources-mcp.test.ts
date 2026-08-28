@@ -80,13 +80,14 @@ function findOp(name: string): Operation {
   return op;
 }
 
-function ctxRemote(scopes: string[]): OperationContext {
+function ctxRemote(scopes: string[], allowedSources?: string[]): OperationContext {
   const auth: AuthInfo = {
     token: 'gbrain_at_xxx',
     clientId: 'gbrain_cl_test',
     clientName: 'test-client',
     scopes,
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    ...(allowedSources ? { allowedSources } : {}),
   };
   return {
     engine: engine as any,
@@ -154,7 +155,9 @@ describe('sources_* handlers — happy path', () => {
         url: 'https://github.com/example/repo',
       });
       const listOp = findOp('sources_list');
-      const result = (await listOp.handler(ctxRemote(['read']), {})) as any;
+      // #4433 wave-L: sources_list confines remote callers to their scope,
+      // so the listing caller needs a grant covering the source it asserts on.
+      const result = (await listOp.handler(ctxRemote(['read'], ['mcp-list-test']), {})) as any;
       expect(Array.isArray(result.sources)).toBe(true);
       const found = result.sources.find((s: any) => s.id === 'mcp-list-test');
       expect(found).toBeDefined();
@@ -339,7 +342,9 @@ describe('sources_list — include_archived honored (was silently leaking)', () 
       );
 
       const listOp = findOp('sources_list');
-      const result = (await listOp.handler(ctxRemote(['read']), {})) as any;
+      // #4433 wave-L: grant covers the archived source, so the absence below
+      // pins the archived filter itself rather than the scope confinement.
+      const result = (await listOp.handler(ctxRemote(['read'], ['archived-src']), {})) as any;
       const found = result.sources.find((s: any) => s.id === 'archived-src');
       expect(found).toBeUndefined();
     });
@@ -358,7 +363,7 @@ describe('sources_list — include_archived honored (was silently leaking)', () 
       );
 
       const listOp = findOp('sources_list');
-      const result = (await listOp.handler(ctxRemote(['read']), {
+      const result = (await listOp.handler(ctxRemote(['read'], ['archived-included']), {
         include_archived: true,
       })) as any;
       const found = result.sources.find((s: any) => s.id === 'archived-included');

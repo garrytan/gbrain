@@ -195,19 +195,29 @@ Body.
     expect(bare!.frontmatter.output_paths).toEqual([]);
   });
 
-  test('the shipped calendar-to-brain recipe declares heartbeat_max_age + output_paths', () => {
+  test('the shipped calendar-to-brain recipe rides the native connector: no output_paths, command probe instead of heartbeat_max_age', () => {
+    // v0.47 rewrote the recipe onto the native google source kind: event
+    // pages land in the source's MANAGED dir (not the brain repo), so there
+    // is deliberately no repo-relative output for the collision check to
+    // guard, and freshness is enforced natively (`gbrain waiting` refuses on
+    // stale sources) instead of via a recipe heartbeat whose id would not
+    // match the connector's funnel path.
     const content = require('node:fs').readFileSync(
       join(import.meta.dir, '..', 'recipes', 'calendar-to-brain.md'),
       'utf-8',
     );
     const parsed = parseRecipe(content, 'calendar-to-brain.md');
     expect(parsed).not.toBeNull();
-    expect(parsed!.frontmatter.output_paths).toEqual(['daily/calendar/']);
+    expect(parsed!.frontmatter.output_paths).toEqual([]);
     const hb = parsed!.frontmatter.health_checks.find(
       (c: any) => typeof c === 'object' && c.type === 'heartbeat_max_age',
+    );
+    expect(hb).toBeUndefined();
+    const probe = parsed!.frontmatter.health_checks.find(
+      (c: any) => typeof c === 'object' && c.type === 'command',
     ) as any;
-    expect(hb).toBeDefined();
-    expect(hb.max_age).toBe('48h');
+    expect(probe).toBeDefined();
+    expect(probe.argv).toEqual(['gbrain', 'google', 'status', '--json']);
   });
 
   test('getConfiguredCollectorOutputs includes secretless recipes with output_paths', async () => {

@@ -15,11 +15,30 @@ import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
 import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
+import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 
 export async function resolveMcpStdioSourceScope(
   engine: BrainEngine,
   cwd: string = process.cwd(),
 ): Promise<{ sourceId: string; localFederatedSourceIds?: string[]; tier: import('../core/source-resolver.ts').SourceTier }> {
+  // Degraded mode (db-availability 4c): short-circuit WITHOUT touching the
+  // engine. This site runs before EVERY dispatch and its catch below
+  // swallows errors into sourceId 'default' — letting it hit a degraded
+  // engine would both consume the one reconnect attempt (before the handler
+  // whose classified envelope the agent needs) and eat the error silently.
+  // A well-formed GBRAIN_SOURCE binding is still honored (engine-free, same
+  // rule as the catch below); otherwise seed_default keeps --source-guard
+  // fail-closed on writes. No call ever EXECUTES under this fallback scope
+  // against a live engine: the degraded proxy throws while dead, and the
+  // one call whose access triggers a successful reconnect gets
+  // DegradedRecoveredRetryError instead of a result (see degraded-engine.ts).
+  if (isEngineDegraded(engine)) {
+    const { isValidSourceId } = await import('../core/source-id.ts');
+    const env = process.env.GBRAIN_SOURCE;
+    return env && isValidSourceId(env)
+      ? { sourceId: env, tier: 'env' }
+      : { sourceId: 'default', tier: 'seed_default' };
+  }
   try {
     const { resolveSourceWithTier, localFederatedSourceIds } = await import('../core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, null, cwd);
@@ -65,6 +84,15 @@ export async function stdioVisibleTools(
   surfacedOps: Operation[],
 ): Promise<Operation[]> {
   if (!surfacedOps.some(op => op.publishGateKey)) return surfacedOps;
+  // Degraded serve (db-availability 4c): fail-closed WITHOUT touching the
+  // engine. The gate read below can hit engine.getConfig, which on the
+  // degraded wrapper would burn the one lazy reconnect attempt — and stall
+  // the client's INITIAL tools/list handshake behind the reconnect's wait
+  // cap. Recovery re-sends tools/list_changed, so the full catalog returns.
+  if (isEngineDegraded(engine)) {
+    const hidden = new Set(surfacedOps.filter(o => o.publishGateKey).map(o => o.name));
+    return surfacedOps.filter(op => !hidden.has(op.name));
+  }
   let gateDisabled: ReadonlySet<string>;
   try {
     gateDisabled = await disabledOpsForPublishGates(engine, loadConfig());
@@ -103,7 +131,14 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
   const server = new Server(
     { name: 'gbrain', version: VERSION },
-    { capabilities: { tools: {} }, instructions: GBRAIN_MCP_INSTRUCTIONS },
+    // listChanged: a client that handshakes during DEGRADED mode receives the
+    // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
+    // op on engine failure) and caches it — recovery sends the notification
+    // so the full catalog comes back without a harness restart.
+    {
+      capabilities: { tools: { listChanged: true } },
+      instructions: GBRAIN_MCP_INSTRUCTIONS,
+    },
   );
 
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
@@ -192,35 +227,60 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  // Retrieval Reflex (#1981, D9=C): the resolve/turn_context/context_pack
-  // (+ delegated sync/sweep) IPC listener. Wiring shared with `serve --http`
-  // via bindResolveIpcForServe (#4474) — best-effort; failure to bind never
-  // blocks the MCP server.
-  const ipcBinding = await bindResolveIpcForServe(
-    engine,
-    (await resolveMcpStdioSourceScope(engine)).sourceId,
-  );
-
-  // v0.45.7 ambient recall: age out stale session cursors once per serve boot
-  // (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
-  gcSessionContextState(engine).catch(() => {});
-
-  // Startup maintenance sweep [ENG-5][CX-P0.1+P0.3]: the serve process is
-  // the lock owner, so it runs the bounded sweep that ingests the corpus +
-  // reconciles fences/links/timeline for recent workspace writes. Same
-  // best-effort shape as the resolve-IPC block above: fires once ~3s after
-  // connect, unref'd (can never hold the process open), all errors
-  // swallowed inside armStartupSweep. Kill switch: GBRAIN_SWEEP=0 (checked
-  // inside the helper). Lazy import keeps sweep code off the boot path.
+  // Engine-dependent boot: the resolve-IPC listener, session-cursor GC, and
+  // the startup maintenance sweep all touch the engine. In DEGRADED mode
+  // (db-availability 4c) they are DEFERRED until the first successful
+  // reconnect — running them against a dead engine would burn reconnect
+  // attempts on background work instead of tool calls.
+  let ipcBinding: { close: () => void } | null = null;
   let startupSweep: { cancel: () => void } | null = null;
-  try {
-    const { armStartupSweep } = await import('../core/sweep.ts');
-    const { sourceId } = await resolveMcpStdioSourceScope(engine);
-    startupSweep = armStartupSweep(engine, {
-      sourceId,
+  const bootEngineDependents = async (): Promise<void> => {
+    // Retrieval Reflex (#1981, D9=C): the resolve/turn_context/context_pack
+    // (+ delegated sync/sweep) IPC listener. Wiring shared with `serve --http`
+    // via bindResolveIpcForServe (#4474) — best-effort; failure to bind never
+    // blocks the MCP server.
+    ipcBinding = await bindResolveIpcForServe(
+      engine,
+      (await resolveMcpStdioSourceScope(engine)).sourceId,
+    );
+
+    // v0.45.7 ambient recall: age out stale session cursors once per serve boot
+    // (7-day TTL, indexed DELETE). Best-effort — GC failure never blocks serve.
+    gcSessionContextState(engine).catch(() => {});
+
+    // Startup maintenance sweep [ENG-5][CX-P0.1+P0.3]: the serve process is
+    // the lock owner, so it runs the bounded sweep that ingests the corpus +
+    // reconciles fences/links/timeline for recent workspace writes. Same
+    // best-effort shape as the resolve-IPC block above: fires once ~3s after
+    // connect, unref'd (can never hold the process open), all errors
+    // swallowed inside armStartupSweep. Kill switch: GBRAIN_SWEEP=0 (checked
+    // inside the helper). Lazy import keeps sweep code off the boot path.
+    try {
+      const { armStartupSweep } = await import('../core/sweep.ts');
+      const { sourceId } = await resolveMcpStdioSourceScope(engine);
+      startupSweep = armStartupSweep(engine, {
+        sourceId,
+      });
+    } catch {
+      /* startup sweep is best-effort; never block serve */
+    }
+  };
+
+  if (isEngineDegraded(engine)) {
+    // Structured enter/exit lines for harness-log forensics.
+    process.stderr.write('[gbrain-serve] DEGRADED: database unreachable at startup — tool calls return classified errors (GBRAIN_DB_ACCESS) and the server reconnects automatically. Fix: gbrain db-repair. Kill switch: GBRAIN_SERVE_DEGRADED=0.\n');
+    onEngineRecovered(engine, () => {
+      // A reconnect can complete while shutdown is already draining (stdin
+      // EOF during the attempt) — booting IPC/sweep on an exiting process
+      // would leak a socket binding past the shutdown close.
+      if (shuttingDown) return;
+      process.stderr.write('[gbrain-serve] RECOVERED: database reachable — full service restored.\n');
+      // Refresh clients holding the degraded (gate-hidden) tool catalog.
+      Promise.resolve(server.sendToolListChanged()).catch(() => { /* best-effort */ });
+      bootEngineDependents().catch(() => { /* deferred boot is best-effort */ });
     });
-  } catch {
-    /* startup sweep is best-effort; never block serve */
+  } else {
+    await bootEngineDependents();
   }
 
   // Exit cleanly when MCP client disconnects (stdin EOF) or on signals.
@@ -232,7 +292,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     shuttingDown = true;
     process.stderr.write(`[gbrain-serve] shutdown: ${reason}\n`);
     try { startupSweep?.cancel(); } catch { /* noop */ }
-    ipcBinding.close();
+    ipcBinding?.close();
     // Cathedral 5: abort the in-flight checkpoint harvest + drop its queue
     // BEFORE engine.disconnect — the background-work registry's drain is
     // CLI-exit-only by contract, and a fire-and-forget DB writer surviving

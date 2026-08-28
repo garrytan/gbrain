@@ -470,6 +470,9 @@ export function configureGateway(config: AIGatewayConfig): void {
     // fail with a cryptic wrong-width error at embed time. Keep it honest.
     embedding_dimensions: config.embedding_dimensions,
     embedding_multimodal_model: config.embedding_multimodal_model,
+    // #4107: stays undefined when unset so getImageOcrModel() keeps the
+    // "fall back to the expansion model" signal honest.
+    embedding_image_ocr_model: config.embedding_image_ocr_model,
     expansion_model: config.expansion_model ?? DEFAULT_EXPANSION_MODEL,
     chat_model: config.chat_model ?? DEFAULT_CHAT_MODEL,
     chat_fallback_chain: config.chat_fallback_chain,
@@ -837,6 +840,16 @@ export function getExpansionModel(): string {
   return requireConfig().expansion_model ?? DEFAULT_EXPANSION_MODEL;
 }
 
+/**
+ * #4107: the model generateOcrText() routes to — `embedding_image_ocr_model`
+ * when set, else the expansion model. A direct "provider:model" string like
+ * embedding_multimodal_model (never models.tier-resolved), so `gbrain config
+ * set embedding_image_ocr_model` points OCR exactly where the user aimed it.
+ */
+export function getImageOcrModel(): string {
+  return requireConfig().embedding_image_ocr_model ?? getExpansionModel();
+}
+
 export function getChatModel(): string {
   return requireConfig().chat_model ?? DEFAULT_CHAT_MODEL;
 }
@@ -955,7 +968,14 @@ export function diagnoseEmbedding(modelOverride?: string): EmbeddingDiagnosis {
   }
 
   const required = recipe.auth_env?.required ?? [];
-  const missing = required.filter(k => !_config!.env[k]);
+  // #4385: a configured OPENAI_BASE_URL points native-openai embedding at a
+  // keyless local OpenAI-compatible server, so the override satisfies the
+  // key requirement — mirrors instantiateEmbedding's placeholder path.
+  const keylessBaseUrl =
+    recipe.implementation === 'native-openai' && !!resolveNativeBaseUrl('openai', _config);
+  const missing = required.filter(
+    k => !_config!.env[k] && !(keylessBaseUrl && k === 'OPENAI_API_KEY'),
+  );
   if (missing.length > 0) {
     return {
       ok: false,
@@ -1601,12 +1621,15 @@ async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any;
 function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayConfig): any {
   switch (recipe.implementation) {
     case 'native-openai': {
-      const apiKey = cfg.env.OPENAI_API_KEY;
+      const baseURL = resolveNativeBaseUrl('openai', cfg);
+      // #4385: a base-URL override targets a local OpenAI-compatible server
+      // (LM Studio, vLLM) that ignores auth — the SDK only requires a
+      // non-empty key, so use the same placeholder as defaultResolveAuth.
+      const apiKey = cfg.env.OPENAI_API_KEY ?? (baseURL ? 'unauthenticated' : undefined);
       if (!apiKey) throw new AIConfigError(
         `OpenAI embedding requires OPENAI_API_KEY.`,
         recipe.setup_hint,
       );
-      const baseURL = resolveNativeBaseUrl('openai', cfg);
       const client = createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
@@ -1826,7 +1849,17 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const expected = effectiveDims;
 
   const embedding = recipe.touchpoints?.embedding;
-  const maxBatchTokens = embedding?.max_batch_tokens;
+  // GBRAIN_EMBED_MAX_BATCH_TOKENS (#3622): operator-declared cap for recipes
+  // that ship without one (ollama/llama-server/litellm declare no_batch_cap
+  // because real capacity depends on the operator's local server). Without
+  // any cap, a page's entire chunk set goes out as ONE request — on a serial
+  // local server that can outlive the embed timeout and starve the queue.
+  // Recipe-declared caps always win; invalid values are ignored. Read from
+  // the configure-time env snapshot (Codex C3), never process.env at call
+  // time — buildGatewayConfig folds the operator's process env into it.
+  const envCapRaw = parseInt(cfg.env?.GBRAIN_EMBED_MAX_BATCH_TOKENS ?? '', 10);
+  const envCap = Number.isFinite(envCapRaw) && envCapRaw > 0 ? envCapRaw : undefined;
+  const maxBatchTokens = embedding?.max_batch_tokens ?? envCap;
   const charsPerToken = embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
 
   // Pre-split is gated on max_batch_tokens. Recipes without it (e.g. OpenAI)
@@ -2871,7 +2904,8 @@ export async function expand(query: string): Promise<string[]> {
 
 /**
  * Cherry-1: opt-in OCR pass for ingested images. Uses the configured
- * expansion model (default: DEFAULT_EXPANSION_MODEL) with a prompt explicitly
+ * `embedding_image_ocr_model` when set (#4107), else the expansion model
+ * (default: DEFAULT_EXPANSION_MODEL), with a prompt explicitly
  * instructing the model to NOT interpret instructions embedded in the
  * image (mitigation for OCR-as-prompt-injection).
  *
@@ -2883,8 +2917,15 @@ export async function expand(query: string): Promise<string[]> {
  * keeping the gateway focused on the LLM call.
  */
 export async function generateOcrText(imageBytes: Buffer, mime: string): Promise<string> {
-  if (!isAvailable('expansion')) return '';
-  const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
+  // Unconfigured gateway stays a silent '' no-op (the pre-#4107 isAvailable
+  // gate's behavior), never a requireConfig() throw.
+  if (!_config) return '';
+  const ocrModel = getImageOcrModel();
+  // Fail-closed on a misconfigured OCR model (provider without an expansion
+  // touchpoint, or unkeyed): '' rather than silently OCRing with the
+  // expansion model.
+  if (!isAvailable('expansion', ocrModel)) return '';
+  const { model, recipe, modelId } = await resolveExpansionProvider(ocrModel);
   const base64 = imageBytes.toString('base64');
   const systemPrompt = [
     'Extract any visible text from this image VERBATIM.',
@@ -3274,6 +3315,13 @@ export interface ChatOpts {
   tools?: ChatToolDef[];
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  /**
+   * Per-call provider options keyed by recipe id, deep-merged LAST — after
+   * the derived cache markers and configured `provider_chat_options` — so a
+   * call site can pin provider behavior it depends on (e.g. the triage judge
+   * disabling DeepSeek thinking) without config silently overriding it.
+   */
+  providerOptions?: Record<string, Record<string, unknown>>;
   /**
    * Ask for the stable prefix (system prompt + last tool def) to be cached.
    * Silently ignored on providers whose recipe declares no prompt caching.
@@ -3733,7 +3781,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 
   const tools = toAISDKTools(opts.tools);
 
-  const providerOptions: Record<string, any> = {};
+  let providerOptions: Record<string, any> = {};
   if (useCache) {
     // Call-level `providerOptions.anthropic.cacheControl` is NOT a no-op:
     // @ai-sdk/anthropic 3.0.47+ passes it through as a top-level
@@ -3772,6 +3820,8 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (promptCacheKey) providerOptions.openai = { promptCacheKey };
   }
   applyConfiguredChatProviderOptions(providerOptions, cfg, recipe.id, modelId);
+  // Call-scoped options merge last so they win over configured siblings.
+  providerOptions = deepMergeRecords(providerOptions, opts.providerOptions);
 
   // Derive ONE canonical cache-control value AFTER config merging and reuse
   // it for every breakpoint (system block, last tool def, call-level). If

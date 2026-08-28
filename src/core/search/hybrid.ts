@@ -21,6 +21,7 @@ import type {
 } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
+import { isDbAccessFailure } from '../pg-access-classify.ts';
 import { resolveEmbeddingColumn, isCacheSafe } from './embedding-column.ts';
 import { resolveHardExcludes } from './source-boost.ts';
 import {
@@ -229,7 +230,9 @@ const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
 /**
  * Apply backlink boost to a result list in place. Mutates each result's score
  * by (1 + BACKLINK_BOOST_COEF * log(1 + count)). Pure data transform; no DB call.
- * Caller fetches counts via engine.getBacklinkCounts.
+ * Caller fetches counts via engine.getBacklinkCounts. Counts are keyed by
+ * page_id, not slug, so namesake slugs across sources never share a boost
+ * (#4380).
  *
  * v0.35.6.0 — floor-ratio gate. When `floorThreshold` is provided, results
  * with `r.score < floorThreshold` are SKIPPED (no boost applied). NaN scores
@@ -245,13 +248,13 @@ const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
  */
 export function applyBacklinkBoost(
   results: SearchResult[],
-  counts: Map<string, number>,
+  counts: Map<number, number>,
   floorThreshold?: number,
 ): void {
   for (const r of results) {
     if (!Number.isFinite(r.score)) continue;
     if (floorThreshold !== undefined && r.score < floorThreshold) continue;
-    const count = counts.get(r.slug) ?? 0;
+    const count = counts.get(r.page_id) ?? 0;
     if (count > 0) {
       const factor = 1.0 + BACKLINK_BOOST_COEF * Math.log(1 + count);
       r.score *= factor;
@@ -550,8 +553,8 @@ export async function runPostFusionStages(
   // Backlink stage (existing behavior, preserved).
   if (opts.applyBacklinks) {
     try {
-      const slugs = Array.from(new Set(results.map(r => r.slug)));
-      const counts = await engine.getBacklinkCounts(slugs);
+      const pageIds = Array.from(new Set(results.map(r => r.page_id)));
+      const counts = await engine.getBacklinkCounts(pageIds);
       applyBacklinkBoost(results, counts, floorThreshold);
     } catch {
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
@@ -1346,11 +1349,21 @@ export async function hybridSearch(
   // SIGNAL (Reviewer F2): a SQL error (e.g. a pre-search_vector brain)
   // degrades to no title candidates, but warns once per process so a
   // broken engine arm cannot ship dark.
+  // db-availability loop: per-arm fail-open is for DEGRADED arms (schema
+  // gaps, pre-migration brains) — it must never convert a DEAD DATABASE into
+  // an empty success. Capture access-class errors PER ARM; rethrow only when
+  // BOTH lexical arms FAILED with one (an arm that succeeded — even with
+  // zero rows — proves the DB is alive, and the vector arms may still
+  // serve). The classified database_error envelope (GBRAIN_DB_ACCESS
+  // marker) then reaches the caller instead of a silent [].
+  let keywordAccessError: unknown = null;
+  let titleAccessError: unknown = null;
   const [keywordResults, titleResults]: [SearchResult[], SearchResult[]] =
     earlyModality === 'image'
       ? [[], []]
       : await Promise.all([
           engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
+            if (isDbAccessFailure(err)) keywordAccessError = err;
             warnOncePerProcess(
               'search-keyword-arm-failed',
               `[gbrain] searchKeyword arm failed (fail-open, keyword candidates skipped): ` +
@@ -1359,6 +1372,7 @@ export async function hybridSearch(
             return [] as SearchResult[];
           }),
           engine.searchTitles(query, searchOpts).catch((err: unknown) => {
+            if (isDbAccessFailure(err)) titleAccessError = err;
             warnOncePerProcess(
               'search-titles-arm-failed',
               `[gbrain] searchTitles arm failed (fail-open, title candidates skipped): ` +
@@ -1367,6 +1381,9 @@ export async function hybridSearch(
             return [] as SearchResult[];
           }),
         ]);
+  if (keywordAccessError && titleAccessError) {
+    throw keywordAccessError;
+  }
   // #3783 — stamp lexical-arm membership pre-fusion so evidence's
   // keyword_exact label is earned by an actual FTS hit, never by a solid
   // blended score alone. Both arms are the lexical-evidence class (chunk

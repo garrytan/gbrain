@@ -11,6 +11,7 @@ import type {
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { escapeLikePattern } from '../cjk.ts';
 
 /** Narrow slice of PGLiteEngine the facts operations use. */
 export interface PgliteFactsDeps {
@@ -415,10 +416,13 @@ export async function listSupersessions(
   }
 
 export async function countUnconsolidatedFacts(deps: PgliteFactsDeps, source_id: string): Promise<number> {
+    // Audit checkpoint rows never set consolidated_at, so without the source
+    // exclusion each one counts as forever-pending consolidation backlog.
     const r = await deps.db.query<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM facts
-       WHERE source_id = $1 AND consolidated_at IS NULL AND expired_at IS NULL`,
-      [source_id],
+       WHERE source_id = $1 AND consolidated_at IS NULL AND expired_at IS NULL
+         AND NOT (source = ANY($2::text[]))`,
+      [source_id, [...AUDIT_ROW_SOURCES]],
     );
     return Number(r.rows[0]?.count ?? 0);
   }
@@ -639,6 +643,13 @@ async function _listFacts(
     if (opts.visibility && opts.visibility.length > 0) {
       whereParts.push(`visibility = ANY($visibility)`);
       params.visibility = opts.visibility;
+    }
+    if (opts.grep && opts.grep.trim()) {
+      // SQL-side substring filter (before limit) — a client-side post-limit
+      // grep silently misses matches outside the newest-N window on
+      // high-cardinality entities. Parity with the postgres engine.
+      whereParts.push(`fact ILIKE $grepPat ESCAPE '\\'`);
+      params.grepPat = '%' + escapeLikePattern(opts.grep.trim()) + '%';
     }
     for (const c of opts.whereClauses ?? []) whereParts.push(c);
     Object.assign(params, opts.whereParams ?? {});

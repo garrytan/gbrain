@@ -148,6 +148,61 @@ describe('gbrain extract --stale', () => {
     expect(await engine.countStalePagesForExtraction()).toBe(2);
   });
 
+  test('#3478: isolated source does not create a cross-source fallback link', async () => {
+    // $N::text::jsonb (never bare ::jsonb on a stringified param) per the
+    // JSONB invariant in CLAUDE.md.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      ['isolated-kb', JSON.stringify({ federated: false })],
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/private',
+        companyPage('Private', '[Alice](people/alice) advises Private.'),
+        { sourceId: 'isolated-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'isolated-kb']);
+
+      // The target exists only in 'default'; a non-federated source must NOT
+      // fall back across the source boundary (edge would leak isolated pages
+      // into cross-source graph reads).
+      const links = await engine.getLinks('companies/private', { sourceId: 'isolated-kb' });
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(false);
+    } finally {
+      // truncateAll clears pages but not sources — remove the fixture row so
+      // later tests in this file see the pristine sources table.
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'isolated-kb'`);
+    }
+  });
+
+  test('#3478: federated source preserves the cross-source default fallback', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      ['shared-kb', JSON.stringify({ federated: true })],
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/shared',
+        companyPage('Shared', '[Alice](people/alice) advises Shared.'),
+        { sourceId: 'shared-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'shared-kb']);
+
+      // The target exists only in default, so a created edge proves the
+      // federated fallback stayed enabled.
+      const links = await engine.getLinks('companies/shared', { sourceId: 'shared-kb' });
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(true);
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'shared-kb'`);
+    }
+  });
+
   test('CRITICAL (CDX-1): page edited after stamp is re-extracted', async () => {
     await engine.putPage('people/alice', personPage('Alice'));
     await engine.putPage('companies/acme', companyPage('Acme', 'No links yet.'));

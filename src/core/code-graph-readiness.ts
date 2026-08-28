@@ -85,8 +85,13 @@ function effectiveSourceId(scope: ReadinessScope): string | undefined {
   return scope.allSources ? undefined : scope.sourceId;
 }
 
-/** EXISTS probe: does any code chunk exist in scope? Matches the def/refs result query. */
-async function codeChunksExist(engine: BrainEngine, sourceId: string | undefined): Promise<boolean> {
+/**
+ * EXISTS probe: does any code chunk exist in scope? Matches the def/refs result
+ * query. Exported for the graph-four federated re-route (#4011,
+ * ops/context.ts `routeCodeIntelScope`) so routing and readiness share ONE
+ * "has code" predicate and can never disagree.
+ */
+export async function codeChunksExist(engine: BrainEngine, sourceId: string | undefined): Promise<boolean> {
   const params: unknown[] = [];
   let scopeClause = '';
   if (sourceId) {

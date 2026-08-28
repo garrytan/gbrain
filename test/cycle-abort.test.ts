@@ -205,3 +205,44 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     expect(read('../src/commands/lint.ts')).toContain('if (isAborted(opts.signal)) break;');
   });
 });
+
+describe('#4077 — synthesize/patterns cooperative-abort threading', () => {
+  test('cycle.ts forwards cycleSignal into the synthesize and patterns phase opts', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle.ts', import.meta.url), 'utf8');
+    const body = src.slice(src.indexOf('export async function runCycle'));
+    // Bounded to each call's own opts literal — an unanchored [\s\S]*? regex
+    // would false-pass on consolidate's `signal: cycleSignal` further down.
+    const callOf = (fnName: string): string => {
+      const start = body.indexOf(`${fnName}(engine, {`);
+      expect(start).toBeGreaterThan(-1);
+      return body.slice(start, body.indexOf('}))', start));
+    };
+    // W0 posture: phases receive the COMBINED cycleSignal (external abort +
+    // lock steal), same as consolidate — not the raw opts.signal.
+    expect(callOf('runPhaseSynthesize')).toContain('signal: cycleSignal,');
+    expect(callOf('runPhasePatterns')).toContain('signal: cycleSignal,');
+  });
+
+  test('synthesize threads its signal through judge, inline drain, and completion wait', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle/synthesize.ts', import.meta.url), 'utf8');
+    expect(src).toContain('signal?: AbortSignal');
+    // Triage pass carries the signal into every judge call (gateway abortSignal).
+    expect(src).toMatch(/judgeSignificance\(judge, t, cfg\.model, \{[\s\S]*?signal: cfg\.signal,[\s\S]*?\}\)/);
+    expect(src).toMatch(/runSubagentsInline\([\s\S]{0,240}?opts\.signal/);
+    expect(src).toMatch(/waitForCompletionRenewing\(queue, jobId, \{[\s\S]*?signal: opts\.signal,/);
+    // Write boundaries downstream of the drain are signal-guarded.
+    expect(src).toContain('stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal)');
+    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
+  });
+
+  test('patterns sibling threads the same signal through inline drain, wait, and reverse-write', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('../src/core/cycle/patterns.ts', import.meta.url), 'utf8');
+    expect(src).toContain('signal?: AbortSignal');
+    expect(src).toMatch(/runSubagentsInline\([\s\S]{0,240}?opts\.signal/);
+    expect(src).toMatch(/waitForCompletionRenewing\(queue, job\.id, \{[\s\S]*?signal: opts\.signal,/);
+    expect(src).toContain('reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal)');
+  });
+});

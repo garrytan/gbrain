@@ -41,7 +41,7 @@ This skill guarantees:
 |---|------|----------|
 | 1 | Bun runtime | Install from bun.sh |
 | 2 | GBrain CLI loads | Reinstall deps |
-| 3 | GBrain database (doctor) | — |
+| 3 | GBrain database (engine identity via `gbrain engine status --json`, then `doctor --json`'s `connection` check) | `gbrain db-repair --yes`, re-test |
 | 4 | GBrain worker process | — (native supervisor status + duplicate detection) |
 | 5 | OpenClaw Codex plugin (Zod CJS); skips if OpenClaw absent | `npm install zod@4 --force` |
 | 6 | OpenClaw gateway; skips if OpenClaw absent | — (may not be started yet) |

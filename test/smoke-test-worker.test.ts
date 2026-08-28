@@ -20,6 +20,12 @@ function runSmoke(opts: { supervisorRunning: boolean; legacyPid?: number }) {
 printf '%s\\n' "$*" >> "$SMOKE_BUN_CALLS"
 case " $* " in
   *" --help "*) exit 0 ;;
+  *" engine status --json "*)
+    printf '%s\\n' '{"schema_version":1,"effective_engine":"postgres","db_url_source":"env:GBRAIN_DATABASE_URL"}'
+    exit 0 ;;
+  *" doctor --json "*)
+    printf '%s\\n' '{"checks":[{"name":"connection","status":"ok"}],"health_score":97}'
+    exit 0 ;;
   *" doctor "*) printf '%s\\n' 'GBrain Health Check' 'Health score: 97'; exit 0 ;;
   *" jobs supervisor status --json "*)
     if [ "$SMOKE_SUPERVISOR_RUNNING" = 1 ]; then

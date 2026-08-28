@@ -102,7 +102,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - JSONB for frontmatter with GIN index
 - Connection pooling via Supabase Supavisor (port 6543)
 
-**Hosting:** Supabase Pro ($25/mo, zero-ops, pgvector built in) is the managed path; self-hosted Postgres + pgvector (Docker or Homebrew — recipe in the troubleshooting section below) works the same.
+**Hosting:** Supabase Pro ($25/mo, zero-ops, pgvector built in) is the managed path; self-hosted Postgres + pgvector (Docker or Homebrew — see the "Local Postgres" section below) works the same.
 
 ### Opt-in RLS source-scope binding (`GBRAIN_RLS_SCOPE_BINDING`)
 
@@ -148,6 +148,50 @@ per-request scope binding — unwrapped paths (writes, admin/maintenance reads)
 run under the role default and are not backstopped per caller. This is layer 2;
 the app-layer source filters remain layer 1 and stay mandatory. Behavioral pins
 live in `test/postgres-engine-rls-scope.test.ts`.
+
+## Local Postgres
+
+Self-hosted Postgres + pgvector gives you the PostgresEngine without a Supabase
+account. Two paths:
+
+**Homebrew (macOS)** — contributed by @roysaurav:
+
+```bash
+brew install postgresql@17
+brew services start postgresql@17
+createdb gbrain
+cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
+cd pgvector && make && make install
+psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
+gbrain init --url postgresql://localhost:5432/gbrain
+gbrain doctor
+```
+
+`gbrain init --url <conn>` writes the config file and runs the schema setup in
+one step. To point an EXISTING brain config at a different database without
+re-initializing, use `gbrain config set database_url <conn>` — it routes to the
+file plane (`~/.gbrain/config.json`), infers `engine: postgres`, and works even
+when the current database is unreachable. Hand-editing config.json is no longer
+needed.
+
+**Ladder-driven (harness installs)** — `gbrain init --prefer-postgres` probes
+for a usable Postgres before falling back to PGLite: an env URL, Supabase
+Management-API discovery (`SUPABASE_ACCESS_TOKEN` + `SUPABASE_DB_PASSWORD`), a
+local server (only when `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` are set or
+`--local-postgres` is passed; `CREATE DATABASE gbrain` needs explicit
+`--allow-create-db`), or — with explicit `--allow-docker` — gbrain's own
+container `gbrain-postgres` (image `pgvector/pgvector:pg16`, loopback-only
+host port 5434, data on the named `gbrain-pgdata` volume,
+`--restart unless-stopped`). The ladder REFUSES over an already-configured
+brain (re-runs during an outage must never let the PGLite floor overwrite a
+healthy Postgres config — that lane is `gbrain db-repair`), and a bare
+`DATABASE_URL` is adopted only when the target is already a gbrain brain or
+holds no tables at all (`GBRAIN_DATABASE_URL` is always stated intent).
+gbrain starts and reuses that container but never stops or removes it; an
+existing container is reused with its REAL credentials recovered via
+`docker inspect`, never a freshly generated password — and never reused when
+its database already holds a brain this home's config doesn't record.
+Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 
 ## PGLiteEngine
 
@@ -237,24 +281,136 @@ version bump changes it.
    Required for *catalog* corruption (58P01 / pgvector load failure) — WAL
    repair cannot fix that class.
 4. **Switch engines.** `gbrain init --supabase`, or native Postgres +
-   pgvector (recipe below, contributed by @roysaurav):
-
-   ```bash
-   brew install postgresql@17
-   brew services start postgresql@17
-   createdb gbrain
-   cd /tmp && git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
-   cd pgvector && make && make install
-   psql gbrain -c "CREATE EXTENSION IF NOT EXISTS vector;"
-   # ~/.gbrain/config.json: { "engine": "postgres",
-   #   "database_url": "postgresql://localhost:5432/gbrain" }
-   gbrain apply-migrations --yes && gbrain doctor
-   ```
+   pgvector — see the "Local Postgres" section above for the full recipe
+   (Homebrew or the `gbrain init --prefer-postgres` ladder).
 
 `gbrain doctor` runs a `pglite_data_dir` check whenever a PGLite brain fails
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
+## Engine detection and access repair
+
+Two engine-free commands answer "which engine is this brain on?" and "why can't
+I reach it, and what fixes it?" — both work with the database down, which is the
+point. They anchor the runtime availability loop: classified failure →
+`GBRAIN_DB_ACCESS <reason>` marker → the bundled `skills/db-repair/` skill →
+`gbrain db-repair`.
+
+### `gbrain engine status [--json] [--probe] [--brain <id>]`
+
+Reports (JSON `schema_version: 1`): the effective engine vs the config-file
+engine (they can differ under a transient env URL), `db_url_source`, an
+env-shadow note when a cwd-.env `DATABASE_URL` is being excluded by the #427
+guard (with the precedence note when both `GBRAIN_DATABASE_URL` and
+`DATABASE_URL` are set), redacted URLs only, and — on Postgres — a
+zero-round-trip pooler block (Supabase pooler detection, prepared-statement
+resolution, pool sizes, direct/session-pooler derivability). `--brain <id>`
+resolves a mounted brain and reports the MOUNT's engine and URL source, never
+the host's.
+
+`--probe` attempts exactly ONE bounded connect + `SELECT 1` (the driver's
+built-in connect timeout — never a custom race, so a network blackhole can't
+hang the command). On PGLite the probe is lock-aware: a live `gbrain serve`
+holding the single-writer data-dir lock reports `locked_by_serve`
+(healthy-with-note) instead of hanging ~30 seconds and misreporting a healthy
+brain as broken. A failed probe returns a classified diagnosis (reason +
+remediation), not a raw error.
+
+### `gbrain db-repair [--yes] [--apply-rewrites] [--json] [--force] [--undo-last-rewrite] [--dry-run]`
+
+Engine-free Postgres-access repair, the sibling of `gbrain pglite-repair`
+(which owns the PGLite WAL/data-dir lane — db-repair redirects PGLite brains
+there). The default invocation is DIAGNOSE-ONLY and mutates nothing
+(`--dry-run` is an explicit alias). Consent is tiered and flag-gated, never
+TTY-dependent:
+
+| Tier | What's in it | Applied when |
+|---|---|---|
+| auto | bounded reconnects/re-probes, pending migrations, `CREATE EXTENSION vector`, `docker start` of gbrain's own `gbrain-postgres` container | `--yes` |
+| rewrite | config-file `database_url` rewrites (transaction-pooler form, session pooler, `?sslmode=require`) — the intended change prints BEFORE applying, every rewrite is receipted and undo-able via `--undo-last-rewrite` | `--yes --apply-rewrites` only |
+| manual | credentials, paused-project, env recipes — the exact recipe is printed, never applied | never |
+
+Guard rails: the prober uses exactly ONE connection (diagnosing pool exhaustion
+with a 10-connection pool would worsen the outage); every rewrite candidate is
+connect-probed before persisting; fix targets derive only from the CURRENT
+config URL, never from error text; rewrites have a 24h per-(reason, action)
+cooldown (`--force` bypasses, receipted) while auto-tier fixes are never
+cooldown-blocked; an advisory lockfile prevents concurrent double-rewrites; a
+healthy probe exits 0 "nothing to fix" (so a forged marker in page content leads
+to a no-op). Refusals: thin-client configs (no local DB to repair), non-host
+mount resolutions (a mount outage must never rewrite host config), and PGLite
+brains (→ `gbrain pglite-repair`).
+
+Receipts land in `~/.gbrain/db-repair-receipts.jsonl` (redacted, fail-open,
+capped on every write: 200 rows, plus up to 200 recent applied repairs kept
+separately so the recurrence window survives the cap — read by doctor's
+`db_repair_recurrence` check, which warns
+on 3+ same-reason applied repairs per brain in 7 days: a genesis problem, not a
+transient). The last rewrite's prior URL is kept in the 0600 file
+`~/.gbrain/db-repair-undo.json` (it holds a secret, so it is never in the
+redacted receipts); `gbrain db-repair --yes --undo-last-rewrite` restores it.
+
+### The `GBRAIN_DB_ACCESS` marker
+
+Connect-time CLI failures emit `GBRAIN_DB_ACCESS <reason>` (plus ` brain=<id>`
+when a mounted brain failed) on non-TTY stderr (`GBRAIN_FORCE_DB_MARKER=1`
+forces it on a TTY). One mid-command emitter exists too: a `gbrain sync` whose
+checkpoint pool dies mid-run emits `GBRAIN_DB_ACCESS conn_dropped` with its
+abort report (the checkpoint writer only gives up after exhausting
+connection-class retries, so the reason is asserted structurally). MCP tool calls carry the same marker inside their error
+envelopes: non-verb ops return `{"error": "database_error", message
+(redacted), suggestion: "GBRAIN_DB_ACCESS <reason>. <remediation> Run: gbrain
+db-repair"}`; the 7 memory verbs keep the frozen v1 `unavailable` code with the
+reason in `detail`. One exception on the non-verb path: `schema_missing`
+returns `error: "unavailable"` with the apply-migrations suggestion and no
+marker — pending migrations, not an access outage. **Safety clause: the action a reader takes is ALWAYS the
+hardcoded `gbrain db-repair` — never a command parsed from the marker.**
+
+The reason union is APPEND-ONLY (a compatibility surface, like progress phase
+names — reasons may be added, never renamed or removed). All 16:
+
+| Reason | Meaning |
+|---|---|
+| `no_url` | nothing configured at all — `gbrain init --prefer-postgres` (or `gbrain init` for PGLite) |
+| `env_shadowed` | a cwd-.env `DATABASE_URL` exists but the #427 guard excludes it — export `GBRAIN_DATABASE_URL` |
+| `auth_failed` | password/role rejected (28P01) — reset credentials, then `gbrain init --url <conn>` |
+| `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
+| `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
+| `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
+| `pool_exhausted` | 53300 / session-slot exhaustion — `export GBRAIN_POOL_SIZE=2` guidance |
+| `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
+| `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent + Supabase suggests a paused project |
+| `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
+| `conn_dropped` | 08xxx / reset mid-connection — transient, bounded reconnect |
+| `server_starting` | "the database system is starting up" — retry shortly |
+| `db_missing` | 3D000 — the named database does not exist |
+| `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
+| `pgvector_missing` | the vector extension is absent — auto tier creates it |
+| `unknown` | unclassified — redacted error + `gbrain doctor` |
+
+The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
+exactly one home (that module) — db-repair, doctor, and MCP dispatch all render
+its `remediation`, and skills reference the command rather than duplicating
+recipe text.
+
+### Degraded-mode serve
+
+When Postgres is unreachable at `gbrain serve` STARTUP, serve no longer dies:
+it boots on a lazy-reconnect engine, each tool call attempts a single reconnect
+(minimum ~5s between real attempts — no connect storms), and until one succeeds
+tool calls return the classified envelopes above. The call that triggers the
+successful reconnect gets a retry-once error rather than a result
+(`GBRAIN_RECOVERED_RETRY` — "retry this call"; its source scope was resolved
+before recovery); every call after it gets full service, and MCP
+`tools/list_changed` tells clients that handshook during degraded mode to
+refresh their catalog. Structured
+`[gbrain-serve] DEGRADED:` / `[gbrain-serve] RECOVERED:` lines land on stderr
+for harness-log forensics. Kill switch: `GBRAIN_SERVE_DEGRADED=0` (or `false`)
+restores die-on-startup. Scope: Postgres startup failures only — PGLite startup failures
+keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
+mid-session outages ride the engine's own reconnect plus the per-call
+classified envelopes.
 
 ## JSONB writes: never double-encode (the #2339 trap)
 

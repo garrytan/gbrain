@@ -149,6 +149,46 @@ function recordReap(dataDir: string): void {
   } catch { /* best-effort — a marker write failure must not block acquisition */ }
 }
 
+export interface LockHolderInfo {
+  /** true only when a LIVE process holds the lock. */
+  held: boolean;
+  pid?: number;
+  /** true when the live holder is a `gbrain serve` (the MCP single-writer). */
+  serve?: boolean;
+  subcommand?: string;
+}
+
+/**
+ * READ-ONLY lock inspection for status surfaces (`gbrain engine status`,
+ * smoke-test). Never reaps, never mkdirs, never blocks — the whole point is
+ * to answer "would a connect attempt hang on the single-writer lock?"
+ * without touching the lock. A dead-PID holder reads as `held: false`
+ * (a real acquire would reap it), so status doesn't misreport a crashed
+ * process as an active writer.
+ */
+export function inspectLockHolder(dataDir: string | undefined): LockHolderInfo {
+  const lockDir = getLockDir(dataDir);
+  if (!lockDir || !existsSync(lockDir)) return { held: false };
+  try {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- lockDir derives from the OPERATOR's configured PGLite data dir (getLockDir over database_path), LOCK_FILE is a module constant; read-only inspection of the operator's own lock file, same trusted-local shape as this module's pre-existing join sites, never remote input
+    const lockData = JSON.parse(readFileSync(join(lockDir, LOCK_FILE), 'utf-8'));
+    const pid = typeof lockData.pid === 'number' ? lockData.pid : undefined;
+    const alive = pid !== undefined && isProcessAlive(pid);
+    if (!alive) return { held: false, pid };
+    return {
+      held: true,
+      pid,
+      serve: isServeCommand(lockData),
+      subcommand: typeof lockData.subcommand === 'string' ? lockData.subcommand : undefined,
+    };
+  } catch {
+    // Corrupt/unreadable lock file: liveness is unknowable. Report held so a
+    // status surface stays conservative (a probe COULD block); acquire-time
+    // logic has its own corrupt-lock handling.
+    return { held: true };
+  }
+}
+
 /** Milliseconds since the last recorded reap on this data dir, or null. */
 export function msSinceLastReap(dataDir: string | undefined): number | null {
   if (!dataDir) return null;

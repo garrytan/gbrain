@@ -33,6 +33,7 @@
 import { chat, type ChatOpts, type ChatResult } from './ai/gateway.ts';
 import { logSynopsisFailure, type SynopsisFailureKind } from './audit-synopsis.ts';
 import { sanitizeSynopsis } from './embedding-context.ts';
+import { resolveTierDefault } from './model-config.ts';
 
 /**
  * Default cap on synopsis output tokens. ~200 tokens gives 50-100 token
@@ -46,7 +47,12 @@ import { sanitizeSynopsis } from './embedding-context.ts';
  */
 export const SYNOPSIS_MAX_TOKENS = 200;
 
-/** Default model when caller doesn't override. Resolves through the gateway. */
+/**
+ * Stable synopsis-model anchor for corpus_generation hashing (title-mode
+ * pages and the inline import path) — NOT the live chat default. Changing
+ * this string invalidates prior embeddings via the D27 P1-5 contract; the
+ * live default is the key-aware utility tier (#3813).
+ */
 export const DEFAULT_SYNOPSIS_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 
 /**
@@ -158,7 +164,9 @@ export async function generatePerChunkSynopsis(
   const maxTokens = args.maxTokens ?? SYNOPSIS_MAX_TOKENS;
 
   const chatOpts: ChatOpts = {
-    model: args.model ?? DEFAULT_SYNOPSIS_MODEL,
+    // #3813: key-aware tier default, not the hardcoded hash anchor above —
+    // an OPENAI_API_KEY-only install must not route to Anthropic.
+    model: args.model ?? resolveTierDefault('utility'),
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens,

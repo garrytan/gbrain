@@ -210,12 +210,39 @@ describe('meta-hook cache hygiene (bounded, expired-entry eviction)', () => {
 
     // Rebuild path throws (dispatch absorbs this in production). The expired
     // entry must NOT survive the failed rebuild — delete happens on read-miss.
-    const boomEngine = {
-      listFactsBySession: async () => { throw new Error('boom'); },
-      listFactsSince: async () => { throw new Error('boom'); },
-    } as unknown as BrainEngine;
-    await expect(getBrainHotMemoryMeta('get_stats', ctx({ engine: boomEngine }))).rejects.toThrow('boom');
-    expect(cache.size).toBe(0);
+    // Same ENGINE as the warm call: the cache key folds engine identity (a
+    // different engine is a different key and never touches this entry; its
+    // expired corpse is reaped by the overflow eviction, which picks
+    // oldest-expiry first).
+    // Instance-property shadows over the prototype methods; deleted in
+    // finally so the shared engine is intact for later tests.
+    const mutable = engine as unknown as Record<string, unknown>;
+    mutable.listFactsBySession = async () => { throw new Error('boom'); };
+    mutable.listFactsSince = async () => { throw new Error('boom'); };
+    try {
+      await expect(getBrainHotMemoryMeta('get_stats', ctx())).rejects.toThrow('boom');
+      expect(cache.size).toBe(0);
+    } finally {
+      delete mutable.listFactsBySession;
+      delete mutable.listFactsSince;
+    }
+  });
+
+  test('cache never serves one engine\'s payload to another engine (cross-brain isolation)', async () => {
+    // One process, two brains, identical source/tier/session: the hot-memory
+    // cache key folds ENGINE identity, so brain B is never served brain A's
+    // facts inside the TTL. This is the CI shard-7 leak (a conformance
+    // suite's fact surfacing in the privacy sweep's _meta) and the hosted
+    // multi-tenant cross-brain leak, pinned.
+    await engine.insertFact(
+      { fact: 'engine-A hot fact', kind: 'fact', entity_slug: 'engine-a-iso', visibility: 'world', source: 'test' },
+      { source_id: 'default' },
+    );
+    const a = await getBrainHotMemoryMeta('get_stats', ctx());
+    expect(JSON.stringify(a ?? {})).toContain('engine-A hot fact');
+    const engineB = emptyEngine();
+    const b = await getBrainHotMemoryMeta('get_stats', ctx({ engine: engineB }));
+    expect(JSON.stringify(b ?? {})).not.toContain('engine-A hot fact');
   });
 
   test('max-entries bound holds under many distinct (caller-controlled) session ids', async () => {

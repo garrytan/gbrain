@@ -238,6 +238,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
   if (paragraphs.length === 0) return [];
 
   const { chat } = await import('../core/ai/gateway.ts');
+  const { resolveTierDefault } = await import('../core/model-config.ts');
 
   const system = [
     'Classify each paragraph into HIGH, MEDIUM, or LOW notability for personal-knowledge memory:',
@@ -256,7 +257,8 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
 
   try {
     const result = await chat({
-      model: 'anthropic:claude-haiku-4-5-20251001',
+      // #3813: key-aware tier default, not a hardcoded Anthropic model.
+      model: resolveTierDefault('utility'),
       system,
       messages: [{ role: 'user', content: userMsg }],
       maxTokens: 200,

@@ -39,22 +39,32 @@ gbrain init --pglite
 
 > **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && bun install && bun link`.
 
-The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. To switch later:
+The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. Agent-harness installs that want Postgres first can run the ladder instead:
+
+```bash
+gbrain init --prefer-postgres    # env URL → Supabase token discovery → local Postgres → opt-in docker → PGLite
+```
+
+To switch later:
 
 ```bash
 gbrain migrate --to supabase     # PGLite → Postgres
 gbrain migrate --to pglite       # Postgres → PGLite (rare)
 ```
 
+If Postgres access ever breaks at runtime, `gbrain engine status --probe` diagnoses it and `gbrain db-repair` fixes it — see the "Engine detection and access repair" section of [`docs/ENGINES.md`](ENGINES.md).
+
 For shared / large / multi-machine deployments (a team or company brain with multiple users hitting one server over HTTP MCP with OAuth scoping per user), follow the dedicated walkthrough: **[Tutorial: set up GBrain as your company brain](tutorials/company-brain.md)**.
 
-API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them via env or by editing `~/.gbrain/config.json` directly — do NOT use `gbrain config set` for API keys (that writes the DB plane, which the embedding pipeline never reads):
+API keys live in `~/.gbrain/config.json` (file plane) or env vars (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`). Set them via env, or with `gbrain config set <KEY> <value>` — vendor API keys (and `database_url`/`database_path`) are file-plane routed, so the write lands where the pipeline actually reads it:
 
 ```bash
 export VOYAGE_API_KEY=pa-...          # default embedding (voyage-4) + reranker (rerank-2.5) — one key
 export OPENAI_API_KEY=sk-...          # alternative embeddings; also powers automatic fact extraction + chat models
 export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models; also improves search via query expansion
 ```
+
+Reading a value back: `gbrain config get <key>` prints redacted by default — sensitive keys (any `key`/`secret`/`token`/`password`-segmented name) print `***`, and a `postgres://` / `postgresql://` value like `database_url` has its `user:password` userinfo replaced with `***` (host, port, database, and query string preserved) — because `get` output lands in agent transcripts and shell history. Scripts that need the real value pass `--raw` (accepted before or after the key). `config show` and the `Set <key> = ...` confirmation that `config set` prints redact the same way. `get` keeps stdout a bare value and reports which plane answered (file/env or DB) on stderr.
 
 Chat-shaped features (automatic fact extraction, enrichment, synthesis, query
 expansion) route to whichever supported chat key is present (Anthropic or

@@ -319,13 +319,19 @@ export async function checkLinkResolutionOpportunity(
 export async function checkAbandonedThreads(engine: BrainEngine): Promise<Check> {
   try {
     const rows = await engine.executeRaw<{ count: number }>(
+      // since_date is TEXT and may be month-precision ('YYYY-MM'); 'YYYY-MM'::date
+      // throws "invalid input syntax for type date", so normalize to the 1st
+      // before casting — same guarded cast as the detail query in serve-http.ts
+      // (`gbrain calibration` abandoned-threads), which must stay in lockstep so
+      // the doctor count matches the listing it points users at.
       `SELECT COUNT(*)::int AS count FROM takes
          WHERE active = true
            AND resolved_at IS NULL
            AND superseded_by IS NULL
            AND weight >= 0.7
            AND since_date IS NOT NULL
-           AND since_date::date < (now() - INTERVAL '12 months')`,
+           AND (since_date || CASE WHEN length(since_date) = 7 THEN '-01' ELSE '' END)::date
+               < (now() - INTERVAL '12 months')`,
     );
     const count = rows[0]?.count ?? 0;
     if (count === 0) {

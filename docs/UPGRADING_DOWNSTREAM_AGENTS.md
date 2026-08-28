@@ -586,8 +586,12 @@ correlation token, or a secret you know is OK to persist), pass it via
 
 **Worker setup** (one-time, per host):
 
-- `gbrain config set database_url postgresql://...` (or any other key you
-  want available for inherit)
+- `gbrain config set database_url postgresql://...` — file-plane routed
+  (writes `~/.gbrain/config.json`, which is where inherit's `loadConfig()`
+  resolution looks; works even when the DB is unreachable). The vendor API
+  keys (`anthropic_api_key`, `voyage_api_key`, ...) route to the file plane
+  the same way; other config keys write the DB plane, which `loadConfig()`
+  does not read — put those in the file or env directly
 - OR put the key in `~/.gbrain/config.json` directly
 - OR set `GBRAIN_DATABASE_URL` / `DATABASE_URL` / per-provider env on the
   worker process

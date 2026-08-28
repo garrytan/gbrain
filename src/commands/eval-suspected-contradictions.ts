@@ -30,7 +30,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { resolveModel } from '../core/model-config.ts';
+import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 import {
   PreFlightBudgetError,
   runContradictionProbe,
@@ -323,15 +323,16 @@ async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
   }
 
   // v0.34 / Lane C: route the judge model through resolveModel so the user's
-  // models.eval.contradictions_judge config key + Haiku-tier default + global
-  // models.default override + env var all compose correctly. The --judge CLI
-  // flag still wins as the highest-precedence override.
+  // models.eval.contradictions_judge config key + key-aware utility-tier
+  // default + global models.default override + env var all compose correctly.
+  // The --judge CLI flag still wins as the highest-precedence override.
   const judgeModel = await resolveModel(engine, {
     cliFlag: f.judge,
     configKey: 'models.eval.contradictions_judge',
     tier: 'utility',
     envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL',
-    fallback: 'anthropic:claude-haiku-4-5',
+    // #3813: last-resort fallback stays key-aware, never hardcoded Anthropic.
+    fallback: resolveTierDefault('utility'),
   });
 
   // #1784: annotate the budget when it's the silent non-TTY default ($1) so the

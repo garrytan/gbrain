@@ -22,7 +22,7 @@ brain-first skill set:
 ```
 
 Two **persona variants** ship from the same marketplace — curated subsets
-for sessions that don't want all 65 skills in the native manifest:
+for sessions that don't want all 67 skills in the native manifest:
 
 ```
 /plugin install gbrain-coding@gbrain    # brain-first coding persona

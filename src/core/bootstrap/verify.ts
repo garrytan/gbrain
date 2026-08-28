@@ -49,6 +49,7 @@ import { readManifest, writeManifest } from './format.ts';
 import { status as interviewStatus } from './interview.ts';
 import { gitOriginUrl, hooksInstalled } from './status.ts';
 import { resolveSourceId } from '../source-resolver.ts';
+import { auditWritebackContract } from './contract.ts';
 import {
   ensureIpcSecret,
   resolveSocketPath,
@@ -269,6 +270,21 @@ function checkByteFloors(ws: string): VerifyCheck {
   } catch (e) {
     return { id, ok: false, detail: `byte-floor check failed: ${(e as Error).message}` };
   }
+}
+
+/** A healthy retrieval surface without a same-turn write-back contract is a
+ * one-way memory: useful now, stale later. Fresh bootstrap renders this gate;
+ * the check catches pre-bootstrap/custom workspaces and points at the
+ * additive repair command rather than overwriting their AGENTS.md. */
+export function checkWritebackContract(ws: string): VerifyCheck {
+  const audit = auditWritebackContract(ws);
+  return audit.ok
+    ? { id: 'writeback_contract', ok: true, detail: audit.detail }
+    : {
+        id: 'writeback_contract',
+        ok: false,
+        detail: `${audit.detail}. Fix: run \`gbrain bootstrap contract --repair\` from the workspace (or pass --workspace explicitly).`,
+      };
 }
 
 /** Tracked files via git; falls back to the rendered file set + state/ when
@@ -1093,6 +1109,7 @@ export async function verifyWorkspace(
 
   checks.push(checkTokenSweep(ws));
   checks.push(checkByteFloors(ws));
+  checks.push(checkWritebackContract(ws));
   checks.push(checkSecretScan(ws));
   checks.push(checkDenyGlobs(ws));
   checks.push(await checkRepoPrivacy(ws));

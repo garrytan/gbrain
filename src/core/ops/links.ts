@@ -8,7 +8,14 @@
  */
 
 import type { Operation } from './contract.ts';
-import { enforceClientSlugFence, linkReadScopeOpts, sourceScopeOpts } from './context.ts';
+import {
+  enforceClientSlugFence,
+  linkReadScopeOpts,
+  reclassifyMutationTimePageMiss,
+  requireWritablePage,
+  sourceScopeOpts,
+} from './context.ts';
+import { PageMissingError } from '../engine-errors.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 import { findPrivateOnlySlugs, resolveExcludePrivatePages } from '../search/private-visibility.ts';
@@ -91,12 +98,24 @@ const add_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId, originSourceId: ctx.sourceId }
       : undefined;
-    await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
-      p.from as string, p.to as string,
-      (p.context as string) || '', (p.link_type as string) || '',
-      linkSource, undefined, undefined,
-      linkOpts,
-    );
+    // #4109: per-endpoint source-boundary diagnostics before the mutation.
+    await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
+    await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
+    try {
+      await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
+        p.from as string, p.to as string,
+        (p.context as string) || '', (p.link_type as string) || '',
+        linkSource, undefined, undefined,
+        linkOpts,
+      );
+    } catch (error) {
+      // An endpoint hard-deleted between preflight and mutation: reclassify
+      // the typed engine miss instead of surfacing it as internal_error.
+      if (error instanceof PageMissingError) {
+        return reclassifyMutationTimePageMiss(ctx, error.slug, 'add_link', error.endpoint);
+      }
+      throw error;
+    }
     return { status: 'ok' };
   },
   cliHints: { name: 'link', aliases: ['link-add'], positional: ['from', 'to'] },

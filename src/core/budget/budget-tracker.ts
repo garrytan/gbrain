@@ -359,6 +359,15 @@ function costForUsage(
 
 export class BudgetTracker {
   private cumulativeUsd = 0;
+  /**
+   * #4365 — sum of projections reserved but not yet record()ed. Concurrent
+   * callers (e.g. skillopt's validation gate, concurrency 4) all pass
+   * admission against cumulativeUsd alone, breaching the cap by up to
+   * (N-1)×per-call cost. Admission checks cumulative + outstanding instead.
+   */
+  private outstandingUsd = 0;
+  /** FIFO of unsettled projections keyed `${modelId}|${kind}` (gateway pairs reserve→record 1:1). */
+  private readonly outstandingByKey = new Map<string, number[]>();
   private callsRecorded = 0;
   private readonly startedAt: number;
   private readonly auditPath: string;
@@ -473,7 +482,7 @@ export class BudgetTracker {
     }
 
     if (this.opts.maxCostUsd !== undefined) {
-      const after = this.cumulativeUsd + projected;
+      const after = this.cumulativeUsd + this.outstandingUsd + projected;
       if (after > this.opts.maxCostUsd) {
         appendAuditLine(this.auditPath, {
           schema_version: 1,
@@ -485,15 +494,23 @@ export class BudgetTracker {
           sub_label: estimate.label,
           projected_cost_usd: projected,
           cumulative_cost_usd: this.cumulativeUsd,
+          outstanding_usd: this.outstandingUsd,
           max_cost_usd: this.opts.maxCostUsd,
         });
         this.fireExhausted();
         throw new BudgetExhausted(
           `${this.opts.label}: projected cost $${after.toFixed(4)} exceeds --max-cost $${this.opts.maxCostUsd.toFixed(2)} ` +
-            `(cumulative $${this.cumulativeUsd.toFixed(4)} + this call $${projected.toFixed(4)})`,
+            `(cumulative $${this.cumulativeUsd.toFixed(4)} + outstanding $${this.outstandingUsd.toFixed(4)} + this call $${projected.toFixed(4)})`,
           { reason: 'cost', spent: this.cumulativeUsd, cap: this.opts.maxCostUsd, modelId: estimate.modelId },
         );
       }
+      // Admission passed — hold the projection until record() settles it so
+      // parallel reserve() calls can't all admit against the same cumulative.
+      const key = `${estimate.modelId}|${estimate.kind}`;
+      const queue = this.outstandingByKey.get(key) ?? [];
+      queue.push(projected);
+      this.outstandingByKey.set(key, queue);
+      this.outstandingUsd += projected;
     }
 
     appendAuditLine(this.auditPath, {
@@ -549,6 +566,7 @@ export class BudgetTracker {
       return;
     }
 
+    this.settleReservation(actual.modelId, kind);
     this.cumulativeUsd += cost;
     appendAuditLine(this.auditPath, {
       schema_version: 1,
@@ -585,6 +603,34 @@ export class BudgetTracker {
       maxRuntimeMs: this.opts.maxRuntimeMs,
       callsRecorded: this.callsRecorded,
     };
+  }
+
+  /**
+   * Release the oldest unsettled reservation for this call's model+kind.
+   * Exact key first; on miss, the oldest same-kind entry — gateway.chat
+   * reserves with the pre-resolution model string (alias/bare/slash form)
+   * but records `${recipe.id}:${modelId}`, and a missed pop would leak
+   * phantom outstanding budget for the tracker's lifetime. Records with no
+   * reservation at all (expand/OCR spend sites) pop nothing.
+   */
+  private settleReservation(modelId: string, kind: BudgetKind): void {
+    let key = `${modelId}|${kind}`;
+    let queue = this.outstandingByKey.get(key);
+    if (!queue || queue.length === 0) {
+      const suffix = `|${kind}`;
+      queue = undefined;
+      for (const [k, q] of this.outstandingByKey) {
+        if (k.endsWith(suffix) && q.length > 0) {
+          key = k;
+          queue = q;
+          break;
+        }
+      }
+    }
+    if (!queue || queue.length === 0) return;
+    const amount = queue.shift()!;
+    if (queue.length === 0) this.outstandingByKey.delete(key);
+    this.outstandingUsd = Math.max(0, this.outstandingUsd - amount);
   }
 
   /** Internal helper: throw BudgetExhausted(reason:'runtime') when the wall-clock cap fires. */

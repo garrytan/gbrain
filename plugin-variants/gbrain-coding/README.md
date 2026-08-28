@@ -1,9 +1,9 @@
-<!-- gbrain-plugin-tree-stamp: 0.46.32.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.47.3.0 -->
 # gbrain-coding (generated persona variant — do not hand-edit)
 
 Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant.
 
-18 skills curated from the gbrain plugin lane (persona
+20 skills curated from the gbrain plugin lane (persona
 `coding-agent` in `skills/plugin-lanes.json#personas`, one recorded
 reason per skill). Install exactly ONE gbrain plugin per machine — every
 variant serves the same `gbrain` MCP server name, so two installed variants

@@ -115,11 +115,11 @@ describe('gbrain schema CLI (Phase C)', () => {
   test('schema show exposes bundled gbrain-base-v2 successor pack', () => {
     const r = gbrain(['schema', 'show', 'gbrain-base-v2']);
     expect(r.code).toBe(0);
-    // #2117: v2 bumped to 1.1.0 (NER inference regexes + advises verb +
-    // explicit phases); 14 link verbs became 15 with `advises`.
-    expect(r.stdout).toContain('gbrain-base-v2 v1.1.0');
+    // v1.2.0 (v0.47 open-loop engine): +owes_to +awaiting_reply_from — 15
+    // link verbs became 17. (#2117 history: 14 became 15 with `advises`.)
+    expect(r.stdout).toContain('gbrain-base-v2 v1.2.0');
     expect(r.stdout).toContain('Page types (');
-    expect(r.stdout).toContain('Link verbs (15)');
+    expect(r.stdout).toContain('Link verbs (17)');
   });
 
   test('schema active loads configured gbrain-recommended with real types', () => {

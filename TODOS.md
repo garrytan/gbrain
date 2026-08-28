@@ -1,16 +1,118 @@
 # TODOS
 
+## Gmail open-loop engine follow-ups (filed 2026-08-25, follow-up from the gmail-open-loop-engine wave)
+
+- [ ] **P1 — gbrain.io hosted OAuth relay: server build + CASA clock.**
+  **What:** implement the consent relay specified in
+  `docs/designs/HOSTED_OAUTH_RELAY.md` (session create → server-side exchange
+  → one-time claim, zero retention; refresh endpoint; `/api/creds/import`).
+  The CLI half already ships (`src/core/creds/relay-client.ts`, gated by
+  `GBRAIN_OAUTH_RELAY_URL`; conformance spec = `test/creds-relay-client.test.ts`).
+  **Why:** cuts "connect Gmail" from ~8 min (BYO console dance) to ~30 s.
+  **Blocker to start NOW regardless of build order:** Google CASA security
+  assessment for the restricted `gmail.readonly` scope — weeks-to-months lead
+  time; brand verification + privacy policy + scope justification.
+  **Effort:** server M; verification track L (calendar time).
+
+- [ ] **P2 — Gmail Pub/Sub push lane.** **What:** `users.watch` + a webhook
+  route beside `POST /webhooks/github` for instant thread refresh (the third
+  freshness layer github already has). **Where to start:**
+  `src/commands/serve-http.ts` webhook cluster; `runGoogleSync` already
+  supports targeted thread processing. **Effort:** M.
+
+- [ ] **P2 — Fulfillment-by-reply auto-close for commitment loops.**
+  **What:** v1 closes commitment loops manually or by staleness; detect
+  "I sent the deck" replies and close `commitment_owed_by_me` loops
+  automatically (LLM judge over the closing message, all-or-nothing barrier).
+  **Where to start:** `src/core/google/loops-extract.ts` (extend the judge
+  schema with `fulfills` references). **Effort:** M.
+
+- [ ] **P3 — Dropbox + Mac-companion credential providers.** **What:** the
+  vault + provider registry (`src/core/creds/`) ship Google-only; add
+  `providers/dropbox.ts` (OAuth2) and a bearer-token provider for the Mac
+  companion app (iMessage/Photos/Health context). The vault schema already
+  carries `kind: 'bearer' | 'api_key'`. **Effort:** S each.
+
+- [ ] **P3 — Remote `open_loops` auth predicate refinement.** **What:** v1
+  redacts verbatim quotes for every `ctx.remote !== false` caller; hosted
+  gbrain.io will want an "authenticated owner" predicate that widens evidence
+  for the brain's own user over HTTP. **Where to start:**
+  `src/core/ops/loops.ts` redaction seam; OAuth scopes in
+  `src/core/oauth-provider.ts`. **Effort:** M.
+
+- [ ] **P3 — Co-recipient-reply configurability + loop-detect corpus growth.**
+  **What:** the detector treats any later message as answering an inbound ask;
+  make co-recipient replies configurable (`loops.corecipient_answers`) and
+  keep growing the labeled fixture corpus (`test/google-loop-detect.test.ts`)
+  with every observed false-positive class. **Effort:** S, ongoing.
+
+- [ ] **P3 — Turn-flip close precision: auto-reply + third-party + spoof
+  hardening.** **What:** any non-noise counterparty message closes
+  `unanswered_outbound` as `reply_detected` — an OOO auto-reply
+  (`Auto-Submitted`/`X-Autoreply` headers, currently not fetched), a
+  third-party chime-in from someone other than the loop's counterparty, or a
+  message spoofing one of `myAddresses` all count as answers. Fetch the
+  relevant headers in `google-clients.ts:getThread` and teach
+  `loop-detect.ts` to hold instead of close on them. **Effort:** M
+  (adversarial-review follow-up from the v0.47.0.0 wave).
+
+- [ ] **P3 — Commitment dedup on model-worded text.** **What:**
+  `commit:<sha8({t,d,x: text.toLowerCase()})>` mints a NEW loop row whenever
+  re-extraction rephrases the commitment — duplicates accumulate over a
+  thread's life. Consider per-(thread, direction) replace semantics or fuzzy
+  dedup before upsert (`src/core/google/loops-extract.ts`). **Effort:** M.
+
+- [ ] **P3 — Delta lane history pagination cap has no partial mode.**
+  **What:** `listHistoryThreadIds` throws at the 500-page safety cap (a
+  partial history drain must not advance the cursor), so an extremely busy
+  account re-throws each run until the historyId expires (~1 week) and the
+  bounded windowed fallback takes over. Consider chunked history draining
+  with an intermediate cursor commit. **Effort:** M, affects only extreme
+  volumes. Related: same-second sibling messages at an exact whole-second
+  backfill floor can be skipped across the cap boundary (rare; needs
+  overlap-by-1s on the `before:` bound).
+
+- [ ] **P2 — Recipe readiness checks don't see the credential vault.**
+  **What:** the email/calendar/credential recipes' `any_of` readiness gate
+  only recognizes `GOOGLE_CLIENT_ID` in the env
+  (`src/commands/integrations.ts` branchSatisfiedByEnv +
+  `src/commands/features.ts` RECIPE_META), so a vault-only connect
+  (`--client-json`) leaves all three recipes showing "not configured" in
+  `gbrain integrations list` while the connector works fine. Add a
+  `credential_exists` check type that consults the vault
+  (`src/core/creds/vault.ts` list()). **Effort:** S (flagged by
+  /document-release on the v0.47.0.0 wave).
+
+- [ ] **P3 — Per-loop staleness marker for mixed-freshness brains.**
+  **What:** `open_loops.stale` is true only when EVERY google source is
+  stale; a brain with one fresh and one 3-week-dead source presents the dead
+  source's loops as fresh. Attach per-loop `source_stale` (the per-source
+  flag already computed in `googleSourceFreshness`) and render it in the
+  digest. **Effort:** S.
+## v0.46.32.0 post-release doc audit follow-ups (filed 2026-08-26)
+
+- [ ] **P2 — `gbrain import --include-hidden` is accepted but silently ignored.**
+  **What:** either parse `--include-hidden` in the import CLI and thread it into
+  `collectSyncableFiles` (which already takes `includeHidden` — the sync path uses
+  it), or drop the flag from import's registry surface. **Why:** the generated
+  flag registry lists the flag for `import`, so the CLI accepts it without effect
+  — a user waiving a dot-directory on a one-shot import gets silent exclusion,
+  the exact silent-kill class #4027 fixed for sync. **Context:** found by the
+  v0.46.32.0 cross-model doc review (follow-up from v0.46.32.0);
+  `src/commands/import.ts` never reads the flag, `src/cli.ts` passes bare args to
+  `runImport`; the library plumbing is done, only arg parsing + one test are
+  missing. **Depends on:** nothing.
+
 ## Daemon env-file lane follow-ups (#2608 / #4443 takeover, filed 2026-08-21)
 
-- [ ] **P3 — Fix the stale `config set` DB-plane claim in the install docs.**
-  **What:** `INSTALL_FOR_AGENTS.md` and `docs/INSTALL.md` say `gbrain config set`
-  "writes the DB plane, which the provider pipeline never reads" — but
-  `src/commands/config.ts` (FILE_PLANE_API_KEYS, ~line 259) routes API keys to
-  the file plane (routed, not refused), which `mergedProviderEnv` folds.
-  **Why:** the docs teach a prohibition whose stated rationale is no longer
-  true; either document the routing or remove the scare. **Where to start:**
-  `src/commands/config.ts` FILE_PLANE_API_KEYS; both install docs; regen
-  `bun run build:llms`. **Effort:** S.
+- [x] **P3 — Fix the stale `config set` DB-plane claim in the install docs.**
+  **Completed:** v0.46.31.0 (2026-08-26). The db-availability wave's config-plane
+  work rewrote the `INSTALL_FOR_AGENTS.md` and `docs/INSTALL.md` copy to document
+  the file-plane routing, and the post-push docs sweep fixed the last remaining
+  copy of the stale claim in `docs/guides/embedding-migration.md`
+  (`gbrain config set voyage_api_key` is file-plane routed via
+  `FILE_PLANE_API_KEYS`, which `mergedProviderEnv` reads). `bun run build:llms`
+  regenerated in the same commits.
 
 - [ ] **P3 — Refresh file-plane keys in the autopilot tick.** **What:** call
   `refreshGatewayEnvFromFilePlane()` (`src/core/ai/gateway.ts:~497`, today only
@@ -61,12 +163,11 @@
   Per-source `gbrain sync --source X` delegates today, so this is convenience,
   not capability. Start: `src/commands/sync-delegate.ts` (the `--all` refusal),
   `src/core/serve-sync-runner.ts`. Effort: M (CC: S). Priority: P3.
-- [ ] **P3 — `serve --http` sync IPC.** **What:** register the resolve-IPC
-  listener (and the sync kinds) on the HTTP serve path. **Why:** delegation is
-  stdio-serve-only — an HTTP serve still forces stop-the-serve syncs.
-  **Context:** `src/commands/serve-http.ts` is at its module-size cap; the
-  wiring needs its own module. The IPC block in `src/mcp/server.ts:186` is the
-  shape to extract/share. Effort: M (CC: S). Priority: P3.
+- [x] **P3 — `serve --http` sync IPC.** DONE (#4474): the stdio IPC block is
+  extracted to `src/mcp/resolve-ipc-binding.ts` (`bindResolveIpcForServe`) and
+  both serve transports bind it — resolve/turn_context/context_pack AND the
+  sync/sweep kinds now work under `serve --http`. Pinned by
+  `test/resolve-ipc-binding.test.ts`.
 - [ ] **P3 — delegated post-sync steps.** **What:** the direct-CLI post-steps
   (`manageGitignoreAtGitRoot`, the extraction-lag nudge) don't run for
   delegated syncs. **Why:** both need an engine or repo-adjacent context the
@@ -2217,6 +2318,48 @@ job) and sync. See CLAUDE.md "Pace Mode".
   `embed --stale --pace --progress-json` caps concurrency + emits telemetry;
   single-flight rejects a 2nd concurrent run; lock heartbeat advances during a
   paced sleep (short-TTL). Unit coverage (`db-pacer`/`pace-mode`) already ships.
+## monthly backup-check follow-ups (filed with the backup-coverage feature)
+
+- [ ] **P2 — Opt-in network push-probe for the backup check (`gbrain backup check --probe`).**
+  **What:** authed `pushProbe` (`src/core/git-remote.ts:598`) per asset proving the remote
+  is actually PUSHABLE, with TTL-cached verdicts (the `repo-visibility.ts` 1h-cache idiom).
+  **Why:** "has origin" doesn't prove "can push" — a revoked PAT or protected branch passes
+  today's local-only check while the backup silently rots. **Pros:** turns the verdict from
+  "configured" into "verified". **Cons:** network + auth in a check that is deliberately
+  offline today; must stay opt-in. **Context:** v1 holds the no-network line by design; the
+  seam is `BackupCoverageOpts` in `src/core/backup/coverage.ts` (add a `probe` flag beside
+  `localGitProbes`). Effort: M → S with CC. Depends on: the backup-check feature (landed).
+- [ ] **P2 — Codex/opencode hook lanes for parity with Claude Code.**
+  **What:** flip `CODEX_HAS_HOOKS`/`OPENCODE_HAS_HOOKS` (`src/core/bootstrap/host-specs.ts:341/:421`)
+  and wire `gbrain hook` into codex 0.147+'s hooks.json so those harnesses get the
+  session-start digest + banner rail. **Why:** today their only backup-notice reach is the
+  MCP aggregate block + CLI stderr; Claude Code users get a human-visible systemMessage.
+  **Pros:** closes the harness-reach gap for every hook-borne notice, not just backup.
+  **Cons:** new host-integration surface to maintain per harness release. **Context:** the
+  backup check's render channels are already shaped for it — a codex hook lane would reuse
+  `backupSessionStartNote`/`pendingBackupBanner` unchanged. Effort: L → M with CC.
+- [ ] **P3 — Neutralize repo-local git config execution vectors in the read-only probe env.**
+  **What:** add `-c core.fsmonitor= -c core.hooksPath=` (and consider `core.sshCommand`) to the
+  read-only git probe invocations (`GIT_ENV` / `buildGitInvocation` consumers: `hasOriginRemote`,
+  `isWorkingTreeDirty`, `detectDefaultBranch`, `aheadCount`, the backup-coverage probes).
+  **Why:** `git status` honors `core.fsmonitor` from the TARGET repo's own `.git/config`; the
+  backup check now runs probes automatically and periodically across every source root, so a
+  hostile config planted inside any registered tree executes monthly without user action.
+  **Cons:** touches every existing git caller (sync, doctor, durability) — needs its own test
+  sweep; exploiting already requires local write access (D4 holds), so this is defense-in-depth.
+  **Where to start:** `src/core/git-remote.ts:GIT_ENV` + `src/core/sync-git.ts:buildGitInvocation`.
+- [ ] **P3 — Notice-center rail: one cross-feature nag system.**
+  **What:** extract a shared notice rail (per-channel nag state, dampening, render
+  adapters) and migrate the backup nag, the push-failure banner (`hook.ts`
+  `pendingPushFailureBanner` + `.announced` sidecars), and the upgrade nag
+  (`self-upgrade.ts` snooze) onto it. **Why:** three parallel nag systems with three state
+  formats is debt; every new periodic notice re-invents cadence + budget logic. **Pros:**
+  one budget across ALL notices (no cross-feature nag pileups); one place to test.
+  **Cons:** touches load-bearing hook code; needs migration for existing state files.
+  **Context:** `src/core/backup/status-file.ts`'s gate (per-channel entries + dampener +
+  global monthly cap, enforced uniformly in `record()`) is deliberately shaped as the seed.
+  Effort: M-L. Blocked by: the backup-check feature shipping first.
+
 ## brain-repo durability follow-ups (filed v0.42.48.0)
 
 - [ ] **P3 — gbrain write-path calls commit-push synchronously when durability is on.**
@@ -7790,3 +7933,119 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   High blast radius: touches every read op; do NOT attempt until both
   sweeps (read-side, landed; write-side, P2 above) are in place as safety
   nets. Effort: L. Depends on: the P2 write-side sweep.
+
+## DB-availability loop follow-ups (filed 2026-08-25, engine-detection / db-repair / prefer-postgres wave)
+
+- [ ] **P3 — `_meta.brain_health` one-shot channel after a successful repair.**
+  Today a recovered brain announces itself only via the serve-side
+  `tools/list_changed` + the `[gbrain-serve] RECOVERED` stderr line; the AGENT
+  facing the brain learns nothing in-band. Add a one-shot `_meta.brain_health`
+  block to the FIRST successful op response after a degraded→recovered
+  transition (and after a `db-repair` `outcome:'applied'` receipt newer than
+  the session start), so the agent can tell the operator "the brain is back,
+  here's what was fixed" without polling `engine status`. One-shot per
+  transition, never a steady-state field. Effort: S.
+- [ ] **P3 — full sslmode handling beyond the ssl_required rewrite.**
+  db-repair's `?sslmode=require` append is the repo's FIRST sslmode support
+  and deliberately minimal. Missing: parsing/validating an existing `sslmode`
+  param (a URL already carrying `sslmode=disable` gets a conflicting
+  `&sslmode=require` appended — last-wins works on libpq semantics but is
+  ugly), the other modes (`verify-ca`/`verify-full` need CA material we can't
+  conjure), and surfacing the effective ssl posture in `engine status`'s
+  pooler block. Effort: S-M.
+- [ ] **P3 — finish TODOS #1231: doctor `connection_routing` check.**
+  `ConnectionManager.describeMode()` and `healthCheck()` now have their first
+  real caller (`engine status --probe` reports `mode` + `pool_latency_ms`),
+  which retires the "zero-caller outside tests" blocker in the original
+  entry. Remaining: the actual doctor check naming the routing mode,
+  kill-switch state, and per-pool probe latency (the four files whose
+  comments reference the check as if it existed still do). Effort: S.
+- [ ] **P3 — generalize the classify→marker→skill→repair loop to other
+  subsystems.** The pattern (data-driven reason table + append-only union,
+  pre-redacted remediation single-homed in the classifier, a stderr/envelope
+  marker literal-matched by a bundled skill, an engine-free repair command
+  with tiered flag-gated consent) is proven for Postgres access; the
+  embedding-provider/gateway lane has the same "gbrain goes dark with a raw
+  error" failure class (429/401/quota/base-url misconfig). Sketch: a future
+  `GBRAIN_AI_ACCESS <reason>` marker + `gbrain ai-repair`-shaped diagnose
+  surface. Do NOT bolt AI reasons onto `PgAccessReason` — separate union,
+  separate marker prefix. Effort: M-L.
+- [ ] **P3 — TODOS #1050 (keyless cold-home serve) × `--prefer-postgres`.**
+  Degraded-mode serve now covers the "configured brain, dead DB" half of
+  #1050 (serve boots and self-heals instead of dying), but the NO-CONFIG
+  cold-home half still exits inside `connectEngine` before serve's degraded
+  catch (deliberate — there is nothing to reconnect TO). When keyless
+  cold-home boot lands, wire it through the same ladder entry
+  (`gbrain init --prefer-postgres`) so a first-boot harness lands on the
+  best available engine instead of hardcoding PGLite, and re-check the
+  init-ladder's existing-config refusal still holds (a cold-home boot must
+  not become a config-overwrite vector). Effort: M (blocked on #1050's own
+  design). Follow-up from v0.46.31.0.
+- [ ] **P3 — scope the CLI bottom-handler's GBRAIN_DB_ACCESS marker to
+  engine-originated errors.** The top-level rejection handler classifies
+  EVERY uncaught error, and connection-class patterns (ECONNREFUSED,
+  getaddrinfo, ETIMEDOUT) also match failures from non-DB dependencies (a
+  webhook fetch, an Ollama endpoint, a remote MCP URL) — a false marker
+  sends agents into the db-repair skill. Bounded today by the forged-marker
+  defense (db-repair probes healthy → exit 0 no-op), but it burns an agent
+  loop and the printed `Run: gbrain db-repair` can displace the real
+  remediation. Fix shape: tag errors at the engine/connect layer (a symbol
+  or error subclass) and emit the marker only for tagged errors; untagged
+  errors keep redaction but drop the marker. Effort: M. Follow-up from
+  v0.46.31.0 (adversarial review).
+- [ ] **P3 — mount-targeted db-repair.** v1 deliberately refuses when the
+  brain axis resolves to a non-host mount (a mount outage must never rewrite
+  host config) and prints the mount's diagnosis + recipe. The follow-up:
+  `gbrain db-repair --brain <mount-id>` that probes and repairs against the
+  MOUNT's own config entry (rewrites edit the mounts registry row, receipts
+  key on the mount's brain_id — the recurrence check already sums per
+  brain_id, so no reader change). Effort: M.
+- [ ] **P3 — marker coverage for remaining in-command CLI catch sites.** The
+  connect-time choke point (top-level rejection handler + the no-config exit)
+  plus sync's checkpoint-dead abort cover the dominant "gbrain went dark"
+  class. Embed's HARD DB failures propagate to the bottom choke point (the
+  CLI wrapper's `failures > 0` verdict is per-chunk soft failures — mostly
+  embedding-provider-side, which the Postgres classifier deliberately does
+  not own; that lane is the `GBRAIN_AI_ACCESS` generalization entry above).
+  Other in-command catches still print legacy text with no `GBRAIN_DB_ACCESS`
+  marker when their failure classifies as a DB-access reason (candidates:
+  doctor's non-fallback DB errors mid-run, extract/import bulk loops, jobs
+  work loop). Sweep the catch sites, route message text through the
+  redactors, and emit the marker where `isDbAccessFailure` says so. Effort: M.
+## Wave-K follow-ups (filed from v0.46.30.0 wave-k)
+
+- [ ] **P3 — Wave-orchestration tooling: `scripts/wave-manifest.ts`.**
+  **What:** a script that owns the fix-wave snapshot → manifest → absorb
+  pipeline (enumerate approved fix branches, emit the ordered pick manifest
+  with shas/files/kind, verify each pick's reachability, and record
+  absorb/defer outcomes). **Why:** every wave re-derives this by hand —
+  pass coordination facts, tsv-ownership rows, and pick order live in ad-hoc
+  JSON + prompts, and a transcription slip silently reorders or drops a fix.
+  **Context:** follow-up from v0.46.30.0 wave-k; see
+  `.context/wave-k/trainB-assembly.json` for the shape a generator should
+  emit. **Effort:** M.
+
+- [ ] **P3 — GitHub label-system consolidation.** **What:** collapse the old
+  `p0/p1/p2` + `verified-real` label family into the newer `triage:*` scheme
+  (one migration pass over open issues, then delete the legacy labels).
+  **Why:** wave triage currently matches BOTH families, so a query against
+  one family undercounts and severity sorts disagree between tools.
+  **Context:** follow-up from v0.46.30.0 wave-k. **Effort:** S.
+
+- [ ] **P2 — PR-triggered full-e2e opt-in label for wave-scale PRs.**
+  **What:** a `ci:full-e2e` (name TBD) PR label that runs the full 202-file
+  e2e matrix on the PR head instead of waiting for nightly. **Why:** wave
+  trains land tens of picks per PR; today the full matrix is nightly-only, so
+  a train-wide e2e regression surfaces a day after merge instead of on the
+  PR. **Context:** follow-up from v0.46.30.0 wave-k; blocked on
+  workflow-scope push credentials (the workflow file change can't ship from
+  a fix branch without them). **Effort:** M.
+
+- [ ] **P3 — #4364 verify note: `--list` DB probe misclassifies an empty
+  brain.** **What:** `apply-migrations --list`'s probe labels a
+  reachable-but-uninitialized DB "UNREACHABLE (relation config does not
+  exist)". Classify post-connect query errors (undefined table/relation) as
+  connected-uninitialized instead of unreachable. **Why:** the current label
+  sends operators debugging connectivity when the fix is `gbrain init`.
+  **Context:** follow-up from v0.46.30.0 wave-k, filed by #4364's verifier;
+  `src/commands/apply-migrations.ts` probe branch. **Effort:** S.

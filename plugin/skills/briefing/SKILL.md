@@ -95,6 +95,20 @@ Run these BEFORE composing the briefing sections. All four pulls are read-only.
    may miss the right source. Thin-client installs (`gbrain init --mcp-only`)
    route through the remote brain transparently.
 
+0e. **Open loops (when google sources exist).** Pull who is waiting on the
+   user and what they promised:
+
+   ```bash
+   gbrain waiting --json
+   ```
+
+   Fold the top counterparties (what's owed, due dates, evidence quotes,
+   deep links) into the ACTION ITEMS section — these are real loop rows, not
+   inferred follow-ups, so they outrank prose heuristics. `waiting` refuses
+   on stale google sources (no successful sync in 24h) and names the exact
+   fix — that's by design: run the sync it names, then retry (see
+   `skills/google-loops/SKILL.md`).
+
 ## Phases
 
 1. **Today's meetings.** For each meeting on the calendar:

@@ -182,6 +182,14 @@ limit slice → token-budget enforcement (per mode bundle)
 results (+ retrieval-confidence grade in query-op meta — crag.ts)
 ```
 
+Per-arm fail-open has one deliberate exception: when BOTH lexical arms
+(`searchKeyword` + `searchTitles`) come back empty because of an ACCESS-class
+failure (`isDbAccessFailure` in `src/core/pg-access-classify.ts` — the DB
+itself is unreachable, not a schema gap), `hybridSearch` rethrows the arm
+error instead of returning an empty result set. A dead database must surface
+as the classified `database_error` envelope, never as a silent "no results".
+Schema-class arm failures (pre-migration brains) keep the fail-open contract.
+
 The stage order is pinned by `hybridSearch` in `src/core/search/hybrid.ts`:
 dedup runs BEFORE the reranker (so the reranker sees a diverse candidate pool,
 capped by its own `topNIn`), the alias hop runs AFTER the reranker (so a query

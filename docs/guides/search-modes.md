@@ -32,7 +32,7 @@ The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`):
 - **`tokenmax`** — no token budget, LLM query expansion on, 50 results.
   Pairs with an expensive downstream model you want fully fed.
 
-Two of the knobs deserve a sentence:
+Three of the knobs deserve a sentence:
 
 - **`expansion`** rewrites your query into multiple variants via a cheap
   LLM call per search (adds roughly $1.50 per 1K queries) — better recall,
@@ -41,6 +41,11 @@ Two of the knobs deserve a sentence:
   questions ("who invested in X", "what connects A and B"); it's a pure
   no-op for non-relational queries. The `query` op's `relational` flag
   forces it on/off per call.
+- **`keywordOrFallback`** (on in every mode; config key
+  `search.keywordOrFallback`) relaxes the keyword and title arms from AND
+  to OR when strict AND matching finds nothing, so a multi-word query still
+  gets keyword recall instead of leaning on vectors alone. Set the config
+  key to `false` to keep strict AND matching.
 
 ### Setting and resolving the mode
 

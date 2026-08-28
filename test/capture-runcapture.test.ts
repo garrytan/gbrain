@@ -23,7 +23,7 @@ import { describe, test, expect } from 'bun:test';
 import { __testing as captureTesting } from '../src/commands/capture.ts';
 import { computeContentHash } from '../src/core/ingestion/types.ts';
 
-const { detectBinaryNullByte, normalizeForHash, maybeRewriteSourceFkError } = captureTesting;
+const { detectBinaryNullByte, detectBinarySignature, normalizeForHash, maybeRewriteSourceFkError } = captureTesting;
 
 describe('CV10 — binary file guard (detectBinaryNullByte)', () => {
   test('returns -1 on plain ASCII', () => {
@@ -79,6 +79,72 @@ describe('CV10 — binary file guard (detectBinaryNullByte)', () => {
 
   test('empty buffer returns -1', () => {
     expect(detectBinaryNullByte(Buffer.alloc(0))).toBe(-1);
+  });
+});
+
+describe('magic-byte binary guard (detectBinarySignature)', () => {
+  // The regression that motivated this guard: a small ASCII-armored PDF with
+  // ZERO NUL bytes anywhere. It passed the CV10 NUL scan, was UTF-8-decoded to
+  // U+FFFD mojibake, and got stored as a page body titled '%PDF-1.4' — with the
+  // document's real text (inside FlateDecode streams) silently lost, while
+  // `capture` reported success.
+  test('rejects a NUL-free PDF that the NUL scan cannot catch', () => {
+    const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\n');
+    expect(pdf.includes(0)).toBe(false);        // the exact hole: no NUL to find
+    expect(detectBinaryNullByte(pdf)).toBe(-1); // ...so the old guard passes it
+    expect(detectBinarySignature(pdf)).toBe('PDF'); // ...and the new one stops it
+  });
+
+  test('detects common container formats', () => {
+    const cases: Array<[Buffer, string]> = [
+      [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), 'PNG'],
+      [Buffer.from([0xff, 0xd8, 0xff, 0xe0]), 'JPEG'],
+      [Buffer.from('GIF89a'), 'GIF'],
+      [Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'ZIP / OOXML (docx, xlsx, pptx)'],
+      [Buffer.from([0x1f, 0x8b, 0x08]), 'gzip'],
+      [Buffer.from([0x7f, 0x45, 0x4c, 0x46]), 'ELF executable'],
+      [Buffer.from('SQLite format 3\0'), 'SQLite database'],
+      [Buffer.from('OggS'), 'Ogg'],
+      [Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), 'Matroska / WebM'],
+    ];
+    for (const [buf, label] of cases) {
+      expect(detectBinarySignature(buf)).toBe(label);
+    }
+  });
+
+  test('matches signatures at non-zero offsets', () => {
+    // MP4: 4-byte box size, then 'ftyp' at offset 4.
+    const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypisom')]);
+    expect(detectBinarySignature(mp4)).toBe('MP4 / MOV / HEIC');
+    // RIFF containers are disambiguated by the tag at offset 8.
+    const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBP')]);
+    expect(detectBinarySignature(webp)).toBe('WebP');
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WAVE')]);
+    expect(detectBinarySignature(wav)).toBe('WAV');
+  });
+
+  test('passes real text through, including the shapes that look risky', () => {
+    const texts = [
+      'hello world',
+      '# A markdown heading\n\nBody text.',
+      '測試 brain content',                        // multi-byte CJK
+      'thinking 🧠🔥 hot',                         // emoji
+      '﻿# BOM-prefixed markdown',            // UTF-8 BOM
+      '---\ntitle: T\ntype: note\n---\n\n# Body', // frontmatter
+      'MZ is a two-letter prefix in a sentence.', // deliberately-omitted weak magic
+      'BM is another one.',                       // deliberately-omitted weak magic
+      'ID3 tags are metadata containers.',        // deliberately-omitted weak magic
+      '%!PS-Adobe-3.0 is PostScript, which is text.',
+    ];
+    for (const t of texts) {
+      expect(detectBinarySignature(Buffer.from(t))).toBeNull();
+    }
+  });
+
+  test('handles buffers shorter than a signature without throwing', () => {
+    expect(detectBinarySignature(Buffer.alloc(0))).toBeNull();
+    expect(detectBinarySignature(Buffer.from('%PD'))).toBeNull(); // truncated PDF magic
+    expect(detectBinarySignature(Buffer.from([0x89]))).toBeNull();
   });
 });
 

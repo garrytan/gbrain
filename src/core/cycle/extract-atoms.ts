@@ -63,9 +63,9 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
+import { resolveTierDefault } from '../model-config.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
-const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
 // #4529 + #4540: per-item extractor caps, overridable via
 // cycle.extract_atoms.* config keys (max_input_chars — with the #4529
 // legacy alias max_source_chars — plus max_output_tokens / pacing_ms).
@@ -616,7 +616,9 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   let budgetExhausted = false;
-  let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
+  // #3813: key-aware tier default, not a hardcoded Anthropic model — an
+  // OPENAI_API_KEY-only install must not route to an unservable provider.
+  let extractModel = resolveTierDefault('utility');
   let budgetCap = DEFAULT_BUDGET_USD;
   // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
   // maxTokens: 4096). Operators on small-context or thinking models need to
@@ -666,8 +668,8 @@ export async function runPhaseExtractAtoms(
       if (Number.isFinite(n) && n > 0) pacingMs = Math.min(60_000, Math.floor(n));
     }
   } catch {
-    // Keep safe defaults on any config-read failure: Haiku model, $0.30 cap,
-    // default max_source_chars.
+    // Keep safe defaults on any config-read failure: key-aware utility-tier
+    // model, $0.30 cap, default max_source_chars.
   }
   // A cost cap is only meaningful for a model the tracker can price.
   // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')

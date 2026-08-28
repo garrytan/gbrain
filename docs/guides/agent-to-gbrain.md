@@ -228,6 +228,8 @@ Switch to (recommended):
 ```
 
 Make sure the worker host has `database_url` configured (either via
-`gbrain config set database_url <value>` or via `GBRAIN_DATABASE_URL` /
-`DATABASE_URL` env on the worker process). If the worker can't resolve the
-key, the validator rejects the job at submit time with a paste-ready hint.
+`gbrain config set database_url <value>` — file-plane routed, so it lands in
+the `~/.gbrain/config.json` the worker's `loadConfig()` reads and works even
+when the DB is unreachable — or via `GBRAIN_DATABASE_URL` / `DATABASE_URL` env
+on the worker process). If the worker can't resolve the key, the validator
+rejects the job at submit time with a paste-ready hint.

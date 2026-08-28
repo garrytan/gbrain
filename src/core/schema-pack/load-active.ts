@@ -153,6 +153,18 @@ export async function loadActivePack(input: LoadActivePackInput): Promise<Resolv
   const cached = tryCachedPack(resolution.pack_name);
   if (cached) return cached;
   const manifest = await loadPackManifestByName(resolution.pack_name);
+  return await resolveLoadedPack(manifest);
+}
+
+/**
+ * Resolve an already-loaded manifest's extends/borrow chain through the
+ * same locator `loadActivePack` uses (bundled assets + ~/.gbrain/schema-packs
+ * + the test seam). Named-pack consumers that already hold a loaded manifest
+ * (the MCP schema_lint op's own file lookup) call this so they lint the
+ * MERGED manifest, matching validate/use/active (#4373; CLI `schema lint
+ * <name>` resolves by name via loadResolvedPackByName, #4501).
+ */
+export async function resolveLoadedPack(manifest: SchemaPackManifest): Promise<ResolvedPack> {
   // Thread the locator so resolvePack can snapshot file paths + mtimes
   // for the stat-TTL gate on subsequent calls (codex C6 + D11 + D13).
   return await resolvePack(manifest, loadPackManifestByName, {

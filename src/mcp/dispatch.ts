@@ -10,6 +10,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { classifyPgAccessError, formatDbAccessMarker, type PgAccessDiagnosis } from '../core/pg-access-classify.ts';
+import { resolveBrainId } from '../core/brain-resolver.ts';
+import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
+import { redactUrlsInText } from '../core/url-redact.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
 import { logVerbUsage } from '../core/verbs/usage-log.ts';
 import { sourceGuardBlocksWrite } from '../core/source-resolver.ts';
@@ -21,12 +25,87 @@ import {
   buildUnknownParamWarnBlock,
   resolveStrictParamsMode,
 } from './validate-params.ts';
+import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
+import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
 export { normalizeOptionalParams, validateParams } from './validate-params.ts';
 
+// db-availability loop: the classifier only needs the CONFIGURED url as
+// context (supabase enrichment; fix derivation) plus the resolved brain id
+// (a MOUNT's failure must never read as a host failure — the id rides into
+// the marker). Read once per process — the uncaught-error path must not add
+// disk reads per failure, and serve's routing is fixed for its lifetime.
+let cachedClassifyUrl: string | null | undefined;
+function configuredDbUrlForClassify(): string | null {
+  if (cachedClassifyUrl === undefined) {
+    try {
+      cachedClassifyUrl = loadConfig()?.database_url ?? null;
+    } catch {
+      cachedClassifyUrl = null;
+    }
+  }
+  return cachedClassifyUrl;
+}
+let cachedClassifyBrainId: string | null | undefined;
+function brainIdForClassify(): string | undefined {
+  if (cachedClassifyBrainId === undefined) {
+    try {
+      cachedClassifyBrainId = resolveBrainId(null);
+    } catch {
+      cachedClassifyBrainId = null;
+    }
+  }
+  return cachedClassifyBrainId ?? undefined;
+}
+
 const VERB_NAME_SET: ReadonlySet<string> = new Set(VERB_NAMES);
+
+// ── monthly backup-coverage notice (once per process, agent-facing only) ────
+
+let backupNoticeShown = false;
+let backupNoticeCheckedMs = 0;
+
+/** Test seam: re-arm the once-per-process backup notice. */
+export function __resetBackupNoticeForTests(): void {
+  backupNoticeShown = false;
+  backupNoticeCheckedMs = 0;
+}
+
+/**
+ * Attach the aggregate backup warning as an extra content block. Fail-open:
+ * a notice bug must never break a tool call.
+ *
+ * STDIO transport only: the notice targets local-harness installs (Claude
+ * Code/Codex/OpenClaw/plugin serves are all stdio). HTTP callers are remote
+ * thin clients — the host's backup posture is operational metadata their
+ * token scope doesn't grant (the mcp.publish_advisor discipline), and a
+ * remote-triggered record() must not spend the LOCAL notice budget. Local CLI
+ * callers (`gbrain call`, opts.remote === false) are excluded too — the
+ * cli.ts startup rail owns that surface. The hourly recheck latch keeps the
+ * healthy steady state at zero file reads per tool call.
+ */
+function maybeAttachBackupNotice(out: ToolResult, opts: DispatchOpts): void {
+  try {
+    if (backupNoticeShown || opts.remote === false || opts.transport !== 'stdio') return;
+    const now = Date.now();
+    if (now - backupNoticeCheckedMs < 60 * 60 * 1000) return;
+    backupNoticeCheckedMs = now;
+    if (backupCheckDisabled()) return;
+    const s = loadBackupStatus();
+    if (!s || s.overall !== 'warn') return;
+    const gate = backupNagGate('mcp', s);
+    if (!gate.show) return;
+    const text = backupNoticeText(s, 'aggregate');
+    if (!text) return;
+    out.content.push({ type: 'text', text });
+    backupNoticeShown = true;
+    gate.record();
+  } catch {
+    /* never break dispatch over a notice */
+  }
+}
 
 export interface ToolResult {
   content: { type: 'text'; text: string }[];
@@ -610,6 +689,15 @@ export async function dispatchToolCall(
     if (unknownParamWarnings.length > 0) {
       out.content.push({ type: 'text', text: buildUnknownParamWarnBlock(unknownParamWarnings) });
     }
+    // Monthly backup-coverage: one AGGREGATE model-visible block per process
+    // (counts only — never a local path or source id), riding the same
+    // extra-block mechanism (content[0] untouched, D3/D8 skew rule). The
+    // refresher runs on the stdio transport ONLY — the WP1/D7 locality axis
+    // localOnly ops use; 'http' or an UNSET marker never probes (fail-closed).
+    maybeAttachBackupNotice(out, opts);
+    if (opts.transport === 'stdio') {
+      maybeRefreshBackupStatusInProcess(engine);
+    }
     // _meta assembly (WP2 amendment 9): one producer per top-level key,
     // each isolated — handler-emitted keys (retrieval, warnings) attach
     // BEFORE and independently of the metaHook, so a hot-memory hook
@@ -642,15 +730,51 @@ export async function dispatchToolCall(
     // plain `Error: ${msg}` strings here, which broke any caller that
     // tried JSON.parse(content).
     const msg = e instanceof Error ? e.message : String(e);
+    // db-availability loop: raw pg errors used to land here VERBATIM —
+    // unredacted DSNs/hosts/IPs into agent transcripts, no remediation.
+    // Redact ALL branches; classify DB-access failures into an envelope the
+    // bundled skills/db-repair skill literal-matches (GBRAIN_DB_ACCESS).
+    // Both steps are wrapped: a classifier/redactor bug must degrade to the
+    // prior generic shape, never a worse error.
+    let redactedMsg = msg;
+    let dbDiag: PgAccessDiagnosis | null = null;
+    try {
+      redactedMsg = redactUrlsInText(redactConnectionInfo(msg));
+      const d = classifyPgAccessError(e, { url: configuredDbUrlForClassify(), brainId: brainIdForClassify() });
+      if (d.reason !== 'unknown') dbDiag = d;
+    } catch { /* fall through to the generic envelope */ }
+
+    if (dbDiag && dbDiag.reason === 'schema_missing') {
+      // Mid-operation relation/column errors are usually CODE SKEW, not an
+      // access failure (and connectEngine already runs pending migrations on
+      // every connect) — the withRelationGuard treatment, generalized. No
+      // db-repair marker from this layer; connect-time surfaces own that.
+      const suggestion = 'Run gbrain apply-migrations on the brain host, then retry.';
+      const envelope = isVerb
+        ? { error: 'unavailable', message: dbDiag.message, suggestion, detail: 'schema_missing', protocol_version: MEMORY_VERBS_VERSION }
+        : { error: 'unavailable', message: dbDiag.message, suggestion };
+      return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }], isError: true };
+    }
+
+    if (dbDiag) {
+      const suggestion = `${formatDbAccessMarker(dbDiag)}. ${dbDiag.remediation} Run: gbrain db-repair`;
+      // Verbs keep the FROZEN v1 code set ('unavailable' + reason in detail);
+      // non-verb ops get the first real use of the declared 'database_error'.
+      const envelope = isVerb
+        ? { error: 'unavailable', message: dbDiag.message, suggestion, detail: dbDiag.reason, protocol_version: MEMORY_VERBS_VERSION }
+        : { error: 'database_error', message: dbDiag.message, suggestion };
+      return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }], isError: true };
+    }
+
     // [c7] verbs speak the protocol envelope even for uncaught throws.
     const envelope = isVerb
       ? {
           error: 'internal',
-          message: msg,
+          message: redactedMsg,
           suggestion: 'This is a server-side failure, not a caller mistake. Retry once; if it persists, run `gbrain doctor`.',
           protocol_version: MEMORY_VERBS_VERSION,
         }
-      : { error: 'internal_error', message: msg };
+      : { error: 'internal_error', message: redactedMsg };
     return {
       content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }],
       isError: true,

@@ -10,6 +10,8 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { resolveTierDefault } from '../src/core/model-config.ts';
 import {
   PreFlightBudgetError,
   runContradictionProbe,
@@ -111,6 +113,25 @@ describe('runContradictionProbe', () => {
     });
     expect(out.report.queries_evaluated).toBe(0);
     expect(out.report.total_contradictions_flagged).toBe(0);
+  });
+
+  test('default judge model follows the key-aware utility tier (#3813)', async () => {
+    // With only OPENAI_API_KEY present, the judge default must not be a
+    // hardcoded Anthropic model the install cannot serve.
+    await withEnv({ ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: 'sk-test-openai' }, async () => {
+      const expected = resolveTierDefault('utility');
+      // Guard against a tautological pass: the key-aware default for an
+      // OpenAI-only env must actually be an OpenAI model.
+      expect(expected.startsWith('openai:')).toBe(true);
+      const out = await runContradictionProbe({
+        engine,
+        queries: [],
+        judgeFn: stubJudge({}),
+        searchFn: async () => [],
+        budgetUsd: 5,
+      });
+      expect(out.report.judge_model).toBe(expected);
+    });
   });
 
   test('cross-slug pair detection with stubbed search + judge', async () => {

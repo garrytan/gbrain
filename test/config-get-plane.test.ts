@@ -31,10 +31,13 @@ function writeFileConfig(cfg: Record<string, unknown>): void {
 }
 
 /** Run `config get <key>` with GBRAIN_HOME pinned to the tmp brain and the
- *  chat-model env overlay cleared, capturing output + exit code. */
+ *  chat-model + anthropic-key env overlays cleared (loadConfig folds
+ *  ANTHROPIC_API_KEY into anthropic_api_key, which the #3943 pins read),
+ *  capturing output + exit code. `extraArgs` lands flags around the key. */
 async function runGet(
   dbValues: Record<string, string>,
   key: string,
+  extraArgs: { before?: string[]; after?: string[] } = {},
 ): Promise<{ logs: string[]; errs: string[]; exit: number | null }> {
   const logs: string[] = [];
   const errs: string[] = [];
@@ -47,8 +50,8 @@ async function runGet(
   }) as never);
   try {
     await withEnv(
-      { GBRAIN_HOME: home, GBRAIN_CHAT_MODEL: undefined },
-      () => runConfig(stubEngine(dbValues), ['get', key]),
+      { GBRAIN_HOME: home, GBRAIN_CHAT_MODEL: undefined, ANTHROPIC_API_KEY: undefined },
+      () => runConfig(stubEngine(dbValues), ['get', ...(extraArgs.before ?? []), key, ...(extraArgs.after ?? [])]),
     );
   } catch (e) {
     if (!(e as Error).message.startsWith('EXIT:')) throw e;
@@ -89,5 +92,55 @@ describe('#2120 — config get resolves file plane with DB fallback', () => {
     const { errs, exit } = await runGet({}, 'chat_model');
     expect(exit).toBe(1);
     expect(errs.join('\n')).toContain('Config key not found: chat_model');
+  });
+});
+
+describe('#3943 — config get redacts sensitive values by default (--raw opts out)', () => {
+  test('file-plane sensitive key prints *** and the secret appears nowhere', async () => {
+    writeFileConfig({ engine: 'pglite', anthropic_api_key: 'sk-ant-test3943-file-secret' });
+    const { logs, errs, exit } = await runGet({}, 'anthropic_api_key');
+    expect(exit).toBeNull();
+    expect(logs).toContain('***');
+    expect(logs.join('\n')).not.toContain('sk-ant-test3943-file-secret');
+    expect(errs.join('\n')).not.toContain('sk-ant-test3943-file-secret');
+  });
+
+  test('DB-plane sensitive key prints ***', async () => {
+    writeFileConfig({ engine: 'pglite' });
+    const { logs, exit } = await runGet({ github_token: 'ghp-test3943-db-secret' }, 'github_token');
+    expect(exit).toBeNull();
+    expect(logs).toContain('***');
+    expect(logs.join('\n')).not.toContain('ghp-test3943-db-secret');
+  });
+
+  // Pin: redactConfigValue routes DSNs through redactPgUrl, which drops the
+  // whole userinfo (both scheme spellings) — host/db stay legible for scripts.
+  test('database_url prints the userinfo-redacted URL', async () => {
+    writeFileConfig({ engine: 'pglite', database_url: 'postgresql://user:pw3943@host/db' });
+    const { logs, exit } = await runGet({}, 'database_url');
+    expect(exit).toBeNull();
+    expect(logs).toContain('postgresql://***@host/db');
+    expect(logs.join('\n')).not.toContain('pw3943');
+  });
+
+  test('--raw before the key still resolves the key and prints the verbatim secret', async () => {
+    writeFileConfig({ engine: 'pglite', anthropic_api_key: 'sk-ant-test3943-raw-optout' });
+    const { logs, exit } = await runGet({}, 'anthropic_api_key', { before: ['--raw'] });
+    expect(exit).toBeNull();
+    expect(logs).toContain('sk-ant-test3943-raw-optout');
+  });
+
+  test('--raw after the key prints the verbatim secret', async () => {
+    writeFileConfig({ engine: 'pglite', anthropic_api_key: 'sk-ant-test3943-raw-optout' });
+    const { logs, exit } = await runGet({}, 'anthropic_api_key', { after: ['--raw'] });
+    expect(exit).toBeNull();
+    expect(logs).toContain('sk-ant-test3943-raw-optout');
+  });
+
+  test('non-sensitive key still prints its raw value (scripting regression guard)', async () => {
+    writeFileConfig({ engine: 'pglite', chat_model: 'anthropic:claude-sonnet-4-6' });
+    const { logs, exit } = await runGet({}, 'chat_model');
+    expect(exit).toBeNull();
+    expect(logs).toContain('anthropic:claude-sonnet-4-6');
   });
 });

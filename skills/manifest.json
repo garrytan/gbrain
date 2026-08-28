@@ -2,7 +2,7 @@
   "name": "gbrain",
   "version": "0.32.3.0",
   "conformance_version": "1.0.0",
-  "description": "Personal knowledge brain with hybrid RAG search — GStack mod for agent platforms",
+  "description": "Personal knowledge brain with hybrid RAG search \u2014 GStack mod for agent platforms",
   "skills": [
     {
       "name": "ingest",
@@ -58,6 +58,11 @@
       "name": "signal-detector",
       "path": "signal-detector/SKILL.md",
       "description": "Always-on ambient signal capture. Fires on every message to detect original thinking and entity mentions."
+    },
+    {
+      "name": "google-loops",
+      "path": "google-loops/SKILL.md",
+      "description": "Set up and operate the Gmail/Calendar/Contacts connector and the open-loop engine: who is waiting on the user, what they promised, and the context to respond."
     },
     {
       "name": "brain-ops",
@@ -232,7 +237,7 @@
     {
       "name": "cold-start",
       "path": "cold-start/SKILL.md",
-      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling — agents never hold raw API keys."
+      "description": "Day-one brain bootstrapping: sequence the highest-leverage data sources (contacts, calendar, email, conversations, social, archives) to go from empty brain to useful brain. Uses ClawVisor for safe credential handling \u2014 agents never hold raw API keys."
     },
     {
       "name": "ask-user",
@@ -257,72 +262,72 @@
     {
       "name": "eiirp",
       "path": "eiirp/SKILL.md",
-      "description": "Everything In Its Right Place — post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
+      "description": "Everything In Its Right Place \u2014 post-work organizer. 7-phase audit: inventory, taxonomy, schema check (via cathedral CLI), file, skill graph audit, verify, report."
     },
     {
       "name": "schema-unify",
       "path": "schema-unify/SKILL.md",
-      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain → assess → propose → apply → sync → verify → commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
+      "description": "Migrate a brain off a noisy 24+-type pack onto gbrain-base-v2 (15 canonical types). 7-phase workflow: brain \u2192 assess \u2192 propose \u2192 apply \u2192 sync \u2192 verify \u2192 commit. Wraps the v0.41.22 unify-types PROTECTED Minion handler."
     },
     {
       "name": "skill-optimizer",
       "path": "skill-optimizer/SKILL.md",
-      "description": "Self-evolving skill optimization via gbrain skillopt — SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
+      "description": "Self-evolving skill optimization via gbrain skillopt \u2014 SkillOpt-paper-grounded text-space optimizer with validation gating (median-of-3 + epsilon=0.05), bundled-skill safety, bootstrap review sentinel, per-skill DB lock, and atomic versioned writes."
     },
     {
       "name": "measure-before-you-fix",
       "path": "measure-before-you-fix/SKILL.md",
-      "description": "Before fixing a slow/stale/timeout alert, measure the step yourself. Kill the theory with a stopwatch, not a code change. Measure-first ops triage for temporal alerts (stale, timeout, freshness, wedged, N hours behind)…"
+      "description": "Before fixing a slow/stale/timeout alert, measure the step yourself. Kill the theory with a stopwatch, not a code change. Measure-first ops triage for temporal alerts (stale, timeout, freshness, wedged, N hours behind)\u2026"
     },
     {
       "name": "data-loss-gate",
       "path": "data-loss-gate/SKILL.md",
-      "description": "Confirmation gate before any bulk delete, cleanup, or destructive operation that could result in data loss — shell-level (rm -rf, git rm, bulk sed) or brain-level (bulk forget, delete sweeps, purge-deleted, source…"
+      "description": "Confirmation gate before any bulk delete, cleanup, or destructive operation that could result in data loss \u2014 shell-level (rm -rf, git rm, bulk sed) or brain-level (bulk forget, delete sweeps, purge-deleted, source\u2026"
     },
     {
       "name": "fact-check",
       "path": "fact-check/SKILL.md",
-      "description": "Systematic claim-by-claim verification for any content before it ships. Modeled on professional fact-checking desks (The New Yorker, ProPublica, IFCN standards): extract every verifiable claim, check each against live…"
+      "description": "Systematic claim-by-claim verification for any content before it ships. Modeled on professional fact-checking desks (The New Yorker, ProPublica, IFCN standards): extract every verifiable claim, check each against live\u2026"
     },
     {
       "name": "resolve-before-asking",
       "path": "resolve-before-asking/SKILL.md",
-      "description": "Gate on identity questions to the user. Before any \"who is X?\" (or role / relationship question) reaches the user, exhaust the brain's lookup chain: think → search + page read → mounted sources → timeline/graph → web."
+      "description": "Gate on identity questions to the user. Before any \"who is X?\" (or role / relationship question) reaches the user, exhaust the brain's lookup chain: think \u2192 search + page read \u2192 mounted sources \u2192 timeline/graph \u2192 web."
     },
     {
       "name": "brain-ingest-gate",
       "path": "brain-ingest-gate/SKILL.md",
-      "description": "Pre-write quality gate for content entering the brain. No raw copies: a bare cp/mv into the brain repo is a bug. Before any new page lands, resolve named entities registry-first (a vector score is a floor for prose…"
+      "description": "Pre-write quality gate for content entering the brain. No raw copies: a bare cp/mv into the brain repo is a bug. Before any new page lands, resolve named entities registry-first (a vector score is a floor for prose\u2026"
     },
     {
       "name": "correction-pipeline",
       "path": "correction-pipeline/SKILL.md",
-      "description": "When the user corrects a factual error, root-cause it immediately. Don't just note the correction — trace the error to its source, fix the source, and prevent recurrence."
+      "description": "When the user corrects a factual error, root-cause it immediately. Don't just note the correction \u2014 trace the error to its source, fix the source, and prevent recurrence."
     },
     {
       "name": "company-brainify",
       "path": "company-brainify/SKILL.md",
-      "description": "Extract a sanitized shared team/company brain from a personal brain. Strips internal ratings, compensation, performance assessments, retention and political dynamics from pages, takes, and facts across the full scan…"
+      "description": "Extract a sanitized shared team/company brain from a personal brain. Strips internal ratings, compensation, performance assessments, retention and political dynamics from pages, takes, and facts across the full scan\u2026"
     },
     {
       "name": "citation-graph-ingest",
       "path": "citation-graph-ingest/SKILL.md",
-      "description": "Build a TYPED citation/reference graph over an ingested corpus — not just embeddings. Flat similarity retrieval cannot tell you that document A *overrules* B, *distinguishes* C, or *relies_on* D."
+      "description": "Build a TYPED citation/reference graph over an ingested corpus \u2014 not just embeddings. Flat similarity retrieval cannot tell you that document A *overrules* B, *distinguishes* C, or *relies_on* D."
     },
     {
       "name": "two-tier-extraction",
       "path": "two-tier-extraction/SKILL.md",
-      "description": "Tiered LLM extraction pattern for large corpus processing (email archives, document dumps, transcript libraries). A utility-tier model triages and classifies at speed; the reasoning tier does the default deep read; the…"
+      "description": "Tiered LLM extraction pattern for large corpus processing (email archives, document dumps, transcript libraries). A utility-tier model triages and classifies at speed; the reasoning tier does the default deep read; the\u2026"
     },
     {
       "name": "brain-link-discipline",
       "path": "brain-link-discipline/SKILL.md",
-      "description": "When you report a brain page to the user — created, edited, committed, or relayed from a subagent — a working link is part of the deliverable, in the SAME message."
+      "description": "When you report a brain page to the user \u2014 created, edited, committed, or relayed from a subagent \u2014 a working link is part of the deliverable, in the SAME message."
     },
     {
       "name": "draft-in-voice",
       "path": "draft-in-voice/SKILL.md",
-      "description": "Ghostwrite content in a specific person's voice from a VALIDATED voice profile — tweets, replies, short posts, launch copy, recruiting blurbs, emails."
+      "description": "Ghostwrite content in a specific person's voice from a VALIDATED voice profile \u2014 tweets, replies, short posts, launch copy, recruiting blurbs, emails."
     },
     {
       "name": "bulk-ingestion",
@@ -332,27 +337,37 @@
     {
       "name": "research-compendium",
       "path": "research-compendium/SKILL.md",
-      "description": "Deep-research a topic end to end and produce a permanent, reusable knowledge asset: archive every primary source verbatim (gated by the user's privacy/retention posture), write one 1:1 summary per source, then…"
+      "description": "Deep-research a topic end to end and produce a permanent, reusable knowledge asset: archive every primary source verbatim (gated by the user's privacy/retention posture), write one 1:1 summary per source, then\u2026"
     },
     {
       "name": "context-audit",
       "path": "context-audit/SKILL.md",
-      "description": "Token-hygiene audit of the always-loaded context stack — CLAUDE.md, AGENTS.md, auto-memory MEMORY.md, and the bootstrap-rendered identity files (SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md) or their harness…"
+      "description": "Token-hygiene audit of the always-loaded context stack \u2014 CLAUDE.md, AGENTS.md, auto-memory MEMORY.md, and the bootstrap-rendered identity files (SOUL.md, USER.md, ACCESS_POLICY.md, HEARTBEAT.md) or their harness\u2026"
     },
     {
       "name": "blog-ingest",
       "path": "blog-ingest/SKILL.md",
-      "description": "Feed and whole-publication ingestion: turn an entire blog, newsletter, or RSS/Atom archive into brain source pages. Covers feed discovery, pagination walking, normalization to a common article shape, canonical-URL…"
+      "description": "Feed and whole-publication ingestion: turn an entire blog, newsletter, or RSS/Atom archive into brain source pages. Covers feed discovery, pagination walking, normalization to a common article shape, canonical-URL\u2026"
     },
     {
       "name": "conversation-archive",
       "path": "conversation-archive/SKILL.md",
-      "description": "Import AI-assistant chat exports (ChatGPT, Claude, Perplexity) and agent session transcripts into the brain as one dated page per conversation under conversations/, validate each page against the native conversation…"
+      "description": "Import AI-assistant chat exports (ChatGPT, Claude, Perplexity) and agent session transcripts into the brain as one dated page per conversation under conversations/, validate each page against the native conversation\u2026"
     },
     {
       "name": "skill-autobench",
       "path": "skill-autobench/SKILL.md",
-      "description": "Author an eval for an existing skill from its REAL usage history, not its spec. Mine invocations from the brain's conversation archive (conversations/) and per-harness session transcripts — a user correction after an…"
+      "description": "Author an eval for an existing skill from its REAL usage history, not its spec. Mine invocations from the brain's conversation archive (conversations/) and per-harness session transcripts \u2014 a user correction after an\u2026"
+    },
+    {
+      "name": "db-repair",
+      "path": "db-repair/SKILL.md",
+      "description": "Auto-fix gbrain Postgres access: GBRAIN_DB_ACCESS marker -> diagnose -> tiered gbrain db-repair ladder -> verify"
+    },
+    {
+      "name": "postgres-adopt",
+      "path": "postgres-adopt/SKILL.md",
+      "description": "Detect the active engine (PGLite vs Postgres), prefer/install Postgres for harness installs, wrap the guarded engine migration"
     }
   ],
   "dependencies": {

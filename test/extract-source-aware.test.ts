@@ -122,4 +122,34 @@ describe('extract --source-id flag (#1204)', () => {
     );
     expect(Number(linkRows[0]?.n ?? 0)).toBe(0);
   });
+
+  test('#3478: isolated source never falls back to a default-source target', async () => {
+    // $N::text::jsonb (never bare ::jsonb on a stringified param) per the
+    // JSONB invariant in CLAUDE.md.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)`,
+      ['isolated', JSON.stringify({ federated: false })],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES
+         ('people/shared-target', 'default', 'person', 'Shared', 'Lives in default.', ''),
+         ('notes/isolated-note', 'isolated', 'note', 'Note', 'See [[people/shared-target]].', '')`,
+    );
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await runExtract(engine, ['links', '--source', 'db', '--source-id', 'isolated', '--json']);
+    } finally {
+      console.log = origLog;
+    }
+    // The target exists only in 'default'; the non-federated source must not
+    // gain a cross-source edge from the fallback.
+    const linkRows = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM links l
+         JOIN pages p ON l.from_page_id = p.id
+        WHERE p.source_id = 'isolated'`,
+    );
+    expect(Number(linkRows[0]?.n ?? 0)).toBe(0);
+  });
 });

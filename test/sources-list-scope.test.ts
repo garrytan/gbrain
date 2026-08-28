@@ -8,18 +8,22 @@
  * get_page/search/list_pages/resolve_slugs, with existence-of-a-source as
  * the leak instead of pages.
  *
- * The filter mirrors EXACTLY the boundary resolveRequestedScope enforces on
- * explicit per-call `source_id` reads — a non-empty ctx.auth.allowedSources
- * array — so the listing shows precisely the sources the caller could read.
- * Pins (row-filter, not field redaction):
+ * Wave-L (maintainer posture decision, supersedes the wave-g rationale that
+ * scalar callers keep the full listing "because they can read any source by
+ * naming it"): EVERY untrusted caller — anything not strictly
+ * `ctx.remote === false` — is confined through the canonical sourceScopeOpts
+ * ladder, matching the rest of the read-op surface. Pins (row-filter, not
+ * field redaction):
  *
  *   1. trusted local CLI stays UNSCOPED (sources management surface);
  *   2. a remote federated grant sees only its granted rows;
- *   3. a remote scalar default-source floor (no allowedSources) keeps the
- *      full listing — that caller may read any source by naming it, so
- *      hiding rows would break discovery without adding any boundary;
- *   4. an empty allowedSources array behaves like no grant (same as
- *      resolveRequestedScope's `allowed.length > 0` gate).
+ *   3. a remote scalar default-source floor (no allowedSources) sees only
+ *      its resolved source — enumeration now requires naming a source;
+ *   4. an empty allowedSources array falls to the scalar floor (same as
+ *      sourceScopeOpts' `allowed.length > 0` gate), never to "all".
+ *
+ * The deeper scalar/no-grant/`__all__` matrix lives in
+ * test/sources-list-scalar-confinement.test.ts.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -101,21 +105,27 @@ describe('sources_list — caller source grant (#4433)', () => {
     expect(ids).not.toContain('restricted');
   });
 
-  test('remote scalar default-source floor (no grant) keeps the full listing', async () => {
-    // This caller may read any source by explicit source_id — the listing
-    // must match its actual read reach, not invent a boundary reads lack.
+  test('remote scalar default-source floor (no grant) is confined to its source', async () => {
+    // Wave-L maintainer posture decision (supersedes the wave-g rationale
+    // that this caller keeps the full listing because it can read any source
+    // by naming it): scalar/no-grant remote callers are confined to their
+    // resolved scope like every other read op — bulk enumeration of the
+    // registry is gone; reading another source stays an explicit, named act.
     const ids = await listedIds(ctxOf({ remote: true, sourceId: 'default', auth: authOf() }));
-    expect(ids).toContain('default');
-    expect(ids).toContain('wiki');
-    expect(ids).toContain('restricted');
+    expect(ids).toEqual(['default']);
+    expect(ids).not.toContain('wiki');
+    expect(ids).not.toContain('restricted');
   });
 
-  test('empty allowedSources behaves like no grant (resolveRequestedScope parity)', async () => {
+  test('empty allowedSources falls to the scalar floor (sourceScopeOpts parity)', async () => {
+    // Wave-L: `[]` must not widen to "no filter" — it defers to ctx.sourceId,
+    // so the listing is the caller's single resolved source, never the table.
     const ids = await listedIds(ctxOf({
       remote: true,
       sourceId: 'default',
       auth: authOf([]),
     }));
-    expect(ids).toContain('restricted');
+    expect(ids).toEqual(['default']);
+    expect(ids).not.toContain('restricted');
   });
 });

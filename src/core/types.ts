@@ -491,10 +491,10 @@ export interface SalienceResult {
  *
  * Why a dedicated engine method instead of composing `listPages` +
  * `getBacklinkCounts` in memory:
- *   - `getBacklinkCounts` groups by bare `slug`, so the same slug in two
- *     sources collapses/contaminates the count. This query counts inbound
- *     links per page row (`to_page_id = p.id`), which is source-correct by
- *     construction.
+ *   - `getBacklinkCounts` is page-id-keyed (source-correct since #4380),
+ *     but composing it with `listPages` in memory still costs a second
+ *     round-trip. This query counts inbound links per page row
+ *     (`to_page_id = p.id`) inside the one source-scoped query.
  *   - `listPages` returns full `Page` rows (bodies). 500 stub bodies per
  *     type per source is not a memory guarantee. This projection carries
  *     only `body_len`, never the body.

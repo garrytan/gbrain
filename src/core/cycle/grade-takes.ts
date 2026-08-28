@@ -410,12 +410,15 @@ export async function defaultEvidenceRetriever(
 
 /**
  * Production judge — calls gateway.chat with the GRADE_TAKE_PROMPT.
+ * chatFn is injectable so tests can drive the parse path without the gateway
+ * (mock.module is banned outside *.serial.test.ts); only cycle.ts and tests
+ * import this module, and both use the default.
  */
 export async function defaultJudge(input: {
   take: Take;
   evidence: string;
   modelHint?: string;
-}): Promise<JudgeVerdict> {
+}, chatFn: typeof gatewayChat = gatewayChat): Promise<JudgeVerdict> {
   const prompt = GRADE_TAKE_PROMPT
     .replace('{CLAIM}', input.take.claim)
     .replace('{KIND}', input.take.kind)
@@ -424,21 +427,19 @@ export async function defaultJudge(input: {
     .replace('{WEIGHT}', String(input.take.weight))
     .replace('{EVIDENCE_BLOCK}', input.evidence);
 
-  const result = await gatewayChat({
+  const result = await chatFn({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 600,
   });
   const parsed = parseJudgeOutput(result.text);
   if (!parsed) {
-    // Failed parse — treat as unresolvable at low confidence so the row
-    // still lands in the cache (operator sees the LLM's parse failure
-    // surfaced via warnings) rather than disappearing silently.
-    return {
-      verdict: 'unresolvable',
-      confidence: 0.0,
-      reasoning: 'judge_output_parse_failed',
-    };
+    // Throw, don't mint a verdict: a synthetic 'unresolvable' row would be
+    // cached under the deterministic evidence signature and skipped forever,
+    // indistinguishable from a genuine evidence-based verdict (#3910). The
+    // per-take catch turns this into a warning and retries next cycle — the
+    // same policy the loop already applies to thrown judge errors.
+    throw new Error(`judge output parse failed: unparseable judge response (${result.text.length} chars)`);
   }
   return parsed;
 }

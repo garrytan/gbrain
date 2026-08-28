@@ -34,7 +34,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { runRecall } from '../src/commands/recall.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
-import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE } from '../src/core/facts/audit-sources.ts';
+import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE, AUDIT_ROW_SOURCES } from '../src/core/facts/audit-sources.ts';
 
 let engine: PGLiteEngine;
 
@@ -266,5 +266,45 @@ describe('post-review fix: legacy (pre-v2) terminal audit rows are also excluded
     const facts: Array<{ fact: string; source: string }> = payload.facts;
     expect(facts.some(f => f.source === LEGACY_TERMINAL_AUDIT_SOURCE)).toBe(false);
     expect(facts.some(f => f.fact === 'the user prefers oat milk in their coffee')).toBe(true);
+  });
+});
+
+// #4394: countUnconsolidatedFacts feeds `gbrain recall --pending` and the
+// recall op's pending_consolidation_count. Audit checkpoint rows are written
+// without consolidated_at (extract-conversation-facts never consolidates its
+// own progress markers), so a bare `consolidated_at IS NULL AND expired_at
+// IS NULL` predicate counts every checkpoint ever written as forever-pending
+// backlog — one per ingested page, inflating the figure on any brain that has
+// run extract-conversation-facts. The count must key its exclusion on
+// `source` (the writer), like the recall fetch predicates above.
+describe('countUnconsolidatedFacts excludes audit checkpoint rows', () => {
+  let engine3: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine3 = new PGLiteEngine();
+    await engine3.connect({});
+    await engine3.initSchema();
+
+    await engine3.insertFact(
+      { fact: 'the user prefers oat milk in their coffee', kind: 'preference', entity_slug: 'coffee-prefs', source: 'test' },
+      { source_id: 'default' },
+    );
+    // One checkpoint row per audit source (current terminal, non-extractable,
+    // legacy terminal) — all with consolidated_at NULL, as production writes
+    // them.
+    for (const auditSource of AUDIT_ROW_SOURCES) {
+      await engine3.insertFact(
+        { fact: 'EXTRACTION_COMPLETE', kind: 'fact', entity_slug: null, source: auditSource, source_session: `audit-${auditSource}`, notability: 'low' },
+        { source_id: 'default' },
+      );
+    }
+  });
+
+  afterAll(async () => {
+    await engine3.disconnect();
+  });
+
+  test('pending count is the one real fact, not real + audit checkpoints', async () => {
+    expect(await engine3.countUnconsolidatedFacts('default')).toBe(1);
   });
 });

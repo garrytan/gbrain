@@ -16,6 +16,16 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import { tryParseEmbedding } from '../utils.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
+import { escapeLikePattern } from '../cjk.ts';
+
+/**
+ * SQL-side substring filter (before limit) — a client-side post-limit grep
+ * silently misses matches outside the newest-N window on high-cardinality
+ * entities. Parity with the pglite engine's `_listFacts`.
+ */
+function grepPattern(opts: FactListOpts | undefined): string | null {
+  return (opts?.grep && opts.grep.trim()) ? '%' + escapeLikePattern(opts.grep.trim()) + '%' : null;
+}
 
 /** Narrow slice of PostgresEngine the facts operations use. */
 export interface PgFactsDeps {
@@ -314,6 +324,7 @@ export async function listFactsByEntity(
     const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
     const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
     const excludeAuditRows = opts?.excludeAuditRows === true;
+    const grepPat = grepPattern(opts);
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
@@ -323,6 +334,7 @@ export async function listFactsByEntity(
         ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
         ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
         ${excludeAuditRows ? sql`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sql``}
+        ${grepPat ? sql`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sql``}
       ORDER BY valid_from DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
@@ -345,6 +357,7 @@ export async function listFactsSince(
     const entitySlug = opts?.entitySlug ?? null;
     const eventTime = opts?.eventTime === true;
     const excludeAuditRows = opts?.excludeAuditRows === true;
+    const grepPat = grepPattern(opts);
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
@@ -355,6 +368,7 @@ export async function listFactsSince(
         ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
         ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
         ${excludeAuditRows ? sql`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sql``}
+        ${grepPat ? sql`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sql``}
       ORDER BY ${eventTime ? sql`COALESCE(valid_from, created_at)` : sql`created_at`} DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
@@ -375,6 +389,7 @@ export async function listFactsBySession(
     const kinds = (opts?.kinds && opts.kinds.length > 0) ? opts.kinds : null;
     const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
     const excludeAuditRows = opts?.excludeAuditRows === true;
+    const grepPat = grepPattern(opts);
     const rows = await sql<FactRowSqlShape[]>`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
@@ -384,6 +399,7 @@ export async function listFactsBySession(
         ${kinds ? sql`AND kind = ANY(${kinds}::text[])` : sql``}
         ${visibility ? sql`AND visibility = ANY(${visibility}::text[])` : sql``}
         ${excludeAuditRows ? sql`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sql``}
+        ${grepPat ? sql`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sql``}
       ORDER BY created_at DESC, id DESC
       LIMIT ${limit} OFFSET ${offset}
     `;
@@ -419,11 +435,14 @@ export async function listSupersessions(
 
 export async function countUnconsolidatedFacts(deps: PgFactsDeps, source_id: string): Promise<number> {
     const sql = deps.sql;
+    // Audit checkpoint rows never set consolidated_at, so without the source
+    // exclusion each one counts as forever-pending consolidation backlog.
     const rows = await sql<{ count: number }[]>`
       SELECT COUNT(*)::int AS count FROM facts
       WHERE source_id = ${source_id}
         AND consolidated_at IS NULL
         AND expired_at IS NULL
+        AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
     `;
     return Number(rows[0]?.count ?? 0);
   }

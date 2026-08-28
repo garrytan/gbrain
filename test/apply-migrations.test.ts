@@ -206,12 +206,15 @@ describe('force-retry escape hatch', () => {
 // date" paths must exit 0 so shell scripts gating on the exit code work.
 // Pre-fix, these `return` statements left the CLI dispatcher's implicit
 // non-zero exit code in place when callers checked $?.
+// #4364 amendment: list/dry-run exit via listExit, which is 0 EXCEPT under
+// the opt-in --require-db flag when the DB probe failed (then 1).
 describe('runApplyMigrations exit codes (v0.36.1.x #1062)', () => {
-  test('source contains process.exit(0) on list/dry-run/up-to-date branches', async () => {
+  test('source contains process.exit(listExit) on list/dry-run and exit(0) up-to-date', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/commands/apply-migrations.ts', 'utf8');
-    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed\);\s*process\.exit\(0\);/);
-    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed\);\s*process\.exit\(0\);/);
+    expect(src).toMatch(/const listExit = cli\.requireDb && dbProbe\.status === 'unreachable' \? 1 : 0;/);
+    expect(src).toMatch(/cli\.list\s*\)\s*\{\s*printList\(plan,\s*installed,\s*dbProbe\);\s*process\.exit\(listExit\);/);
+    expect(src).toMatch(/cli\.dryRun\s*\)\s*\{\s*printDryRun\(plan,\s*installed,\s*dbProbe\);\s*process\.exit\(listExit\);/);
     expect(src).toMatch(/All migrations up to date[\s\S]{0,80}process\.exit\(0\)/);
   });
 });

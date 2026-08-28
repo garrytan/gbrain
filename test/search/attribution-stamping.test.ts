@@ -47,7 +47,7 @@ function r(slug: string, score: number, page_id = 1): SearchResult {
 describe('applyBacklinkBoost — attribution', () => {
   test('count > 0 → backlink_boost stamped with the actual factor', () => {
     const results = [r('a/b', 1.0, 1)];
-    const counts = new Map([['a/b', 10]]);
+    const counts = new Map([[1, 10]]);
     applyBacklinkBoost(results, counts);
     expect(results[0].backlink_boost).toBeGreaterThan(1.0);
     expect(results[0].backlink_boost).toBeLessThan(2.0);
@@ -57,14 +57,14 @@ describe('applyBacklinkBoost — attribution', () => {
 
   test('count = 0 → no stamp', () => {
     const results = [r('a/b', 1.0, 1)];
-    applyBacklinkBoost(results, new Map([['a/b', 0]]));
+    applyBacklinkBoost(results, new Map([[1, 0]]));
     expect(results[0].backlink_boost).toBeUndefined();
     expect(results[0].score).toBe(1.0);
   });
 
   test('below floor → no stamp', () => {
     const results = [r('weak', 0.1, 1)];
-    applyBacklinkBoost(results, new Map([['weak', 10]]), 0.5);
+    applyBacklinkBoost(results, new Map([[1, 10]]), 0.5);
     expect(results[0].backlink_boost).toBeUndefined();
     expect(results[0].score).toBe(0.1);
   });
@@ -157,7 +157,7 @@ describe('runPostFusionStages — base_score stamp', () => {
   test('base_score captures pre-boost score even when boosts run', async () => {
     const results = [r('a/b', 10.0, 1)];
     const fakeEngine = {
-      getBacklinkCounts: async () => new Map([['a/b', 5]]),
+      getBacklinkCounts: async () => new Map([[1, 5]]),
     } as any;
     await runPostFusionStages(fakeEngine, results, {
       applyBacklinks: true,

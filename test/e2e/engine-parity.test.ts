@@ -1627,3 +1627,100 @@ describeBoth('Engine parity — CJK keyword fallback (#3986)', () => {
     expect(pglite).toEqual([]);
   });
 });
+
+describeBoth('Engine parity — open_loops loops-store round-trip', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  // loops-store shares one SQL text across engines (parity by construction);
+  // this pins the round-trip on a REAL postgres.js connection, where the
+  // sanctioned `$N::text::jsonb` evidence binding is the load-bearing detail —
+  // PGLite structurally can't surface the double-encode class (#2339).
+  async function roundTrip(eng: BrainEngine) {
+    const { upsertOpenLoop, closeOpenLoop, listOpenLoops } = await import(
+      '../../src/core/loops/loops-store.ts'
+    );
+    await eng.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('lpsrc', 'lpsrc') ON CONFLICT (id) DO NOTHING`,
+      [],
+    );
+    const base = {
+      sourceId: 'lpsrc',
+      loopType: 'unanswered_inbound' as const,
+      counterpartyEmail: 'bob@example.com',
+      evidence: [{ message_id: '18c2f4a9b3d21e07', quote: 'Can you review the plan?' }],
+      threadId: '18c2f4a9b3d21e07',
+      detector: 'deterministic_thread' as const,
+    };
+    const first = await upsertOpenLoop(eng, {
+      ...base,
+      dedupKey: 'thread:18c2f4a9b3d21e07:unanswered_inbound',
+      summary: 'Reply owed to bob@example.com',
+      dueAt: '2026-09-01T23:59:59Z',
+    });
+    // Same dedup key: an upsert, not a new row; summary refreshes.
+    const again = await upsertOpenLoop(eng, {
+      ...base,
+      dedupKey: 'thread:18c2f4a9b3d21e07:unanswered_inbound',
+      summary: 'Reply owed to bob@example.com (updated)',
+    });
+    const open = await listOpenLoops(eng, { sourceIds: ['lpsrc'], status: 'open' });
+    const closed = await closeOpenLoop(eng, 'lpsrc', first.id, 'done', 'parity-test');
+    const openAfter = await listOpenLoops(eng, { sourceIds: ['lpsrc'], status: 'open' });
+    const doneAfter = await listOpenLoops(eng, { sourceIds: ['lpsrc'], status: 'done' });
+    return {
+      firstCreated: first.created,
+      againCreated: again.created,
+      sameRow: again.id === first.id,
+      openCount: open.length,
+      summary: open[0]?.summary,
+      // JSONB discipline: evidence must round-trip as a REAL array (a
+      // double-encoded jsonb string scalar would surface here on Postgres).
+      evidenceIsArray: Array.isArray(open[0]?.evidence),
+      quote: open[0]?.evidence?.[0]?.quote,
+      messageId: open[0]?.evidence?.[0]?.message_id,
+      // normalizeRow contract: timestamptz comes back as an ISO string.
+      dueAt: open[0]?.due_at,
+      openedAtIsString: typeof open[0]?.opened_at === 'string',
+      closedOk: closed !== null && closed.id === first.id,
+      closedStatus: closed?.status,
+      closedBy: closed?.closed_by,
+      openAfterCount: openAfter.length,
+      doneAfterCount: doneAfter.length,
+    };
+  }
+
+  test('upsert / dedup / list / close round-trip is identical on both engines', async () => {
+    const pg = await roundTrip(pgEngine);
+    const pglite = await roundTrip(pgliteEngine);
+    expect(pg).toEqual(pglite);
+    // Absolute expectations (not just cross-engine equality):
+    expect(pg.firstCreated).toBe(true);
+    expect(pg.againCreated).toBe(false);
+    expect(pg.sameRow).toBe(true);
+    expect(pg.openCount).toBe(1);
+    expect(pg.summary).toBe('Reply owed to bob@example.com (updated)');
+    expect(pg.evidenceIsArray).toBe(true);
+    expect(pg.quote).toBe('Can you review the plan?');
+    expect(pg.messageId).toBe('18c2f4a9b3d21e07');
+    expect(pg.dueAt).toBe('2026-09-01T23:59:59.000Z');
+    expect(pg.openedAtIsString).toBe(true);
+    expect(pg.closedOk).toBe(true);
+    expect(pg.closedStatus).toBe('done');
+    expect(pg.closedBy).toBe('parity-test');
+    expect(pg.openAfterCount).toBe(0);
+    expect(pg.doneAfterCount).toBe(1);
+  });
+});

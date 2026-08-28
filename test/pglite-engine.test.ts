@@ -1323,19 +1323,22 @@ describe('PGLiteEngine: Timeline dedup constraint (v6 migration)', () => {
 });
 
 describe('PGLiteEngine: getBacklinkCounts', () => {
+  let aliceId: number;
+  let acmeId: number;
+
   beforeEach(async () => {
     await truncateAll();
-    await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' });
+    aliceId = (await engine.putPage('people/alice', { ...testPage, type: 'person', title: 'Alice' })).id;
     await engine.putPage('people/bob', { ...testPage, type: 'person', title: 'Bob' });
-    await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' });
+    acmeId = (await engine.putPage('companies/acme', { ...testPage, type: 'company', title: 'Acme' })).id;
   });
 
-  test('returns Map<slug, count> for given slugs', async () => {
+  test('returns Map<page_id, count> for given page ids', async () => {
     await engine.addLink('people/alice', 'companies/acme', '', 'works_at');
     await engine.addLink('people/bob', 'companies/acme', '', 'invested_in');
-    const counts = await engine.getBacklinkCounts(['companies/acme', 'people/alice']);
-    expect(counts.get('companies/acme')).toBe(2);
-    expect(counts.get('people/alice')).toBe(0);
+    const counts = await engine.getBacklinkCounts([acmeId, aliceId]);
+    expect(counts.get(acmeId)).toBe(2);
+    expect(counts.get(aliceId)).toBe(0);
   });
 
   test('empty input -> empty Map', async () => {
@@ -1343,9 +1346,9 @@ describe('PGLiteEngine: getBacklinkCounts', () => {
     expect(counts.size).toBe(0);
   });
 
-  test('slugs with zero links: present in Map with 0', async () => {
-    const counts = await engine.getBacklinkCounts(['people/alice']);
-    expect(counts.get('people/alice')).toBe(0);
+  test('page ids with zero links: present in Map with 0', async () => {
+    const counts = await engine.getBacklinkCounts([aliceId]);
+    expect(counts.get(aliceId)).toBe(0);
   });
 });
 

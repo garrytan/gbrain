@@ -127,6 +127,10 @@ services:
     # #4479: pinned to the host bun version by default (see header comment).
     image: oven/bun:${GBRAIN_CI_BUN_TAG:-1.3.14}
     working_dir: /app
+    # #3893 (reimplemented from @y2688): give a TERM'd runner up to 600s to
+    # drain in-flight bun test shards and flush their results before docker
+    # SIGKILLs the container mid-write (compose default grace is 10s).
+    stop_grace_period: 600s
     depends_on:
       postgres-1:
         condition: service_healthy

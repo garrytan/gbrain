@@ -45,6 +45,16 @@ export interface EntityOpenThread {
   kind: 'commitment' | 'recent_event';
   text: string;
   date: string | null;
+  /**
+   * v0.47 open-loop engine — ADDITIVE OPTIONAL fields (legal under the
+   * MEMORY_VERBS v1 freeze; absent on threads not backed by an open_loops
+   * row). direction is from the account owner's perspective.
+   */
+  direction?: 'owed_by_me' | 'owed_to_me' | 'their_turn' | 'my_turn';
+  due?: string | null;
+  counterparty?: string | null;
+  status?: string;
+  loop_id?: number;
 }
 
 export interface EntityCard {
@@ -237,7 +247,7 @@ async function assembleCard(
   // [ship P1.2] Incoming edges + backlink_count are SOURCE-SAFE on BOTH sides.
   // engine.getBacklinks(slug,{sourceId}) only scopes the TARGET page's source,
   // so a foreign-source page linking to a same-named entity would leak its
-  // slug; engine.getBacklinkCounts has no source param at all. We instead run
+  // slug; engine.getBacklinkCounts counts inbound from ALL sources. We run
   // a both-sides-scoped query here (f.source_id = t.source_id = this source),
   // mentions excluded (matching the backlink-count convention). Outgoing edges
   // (getLinks) are the entity's OWN declared links — from-side scoped — so they
@@ -297,13 +307,58 @@ async function assembleCard(
     }
   }
 
-  // Open threads (best-effort v1): active commitments first, then recent
-  // timeline entries inside the window, capped together.
+  // Open threads (best-effort v1): open-loop rows first (v0.47 — richest:
+  // direction, due, loop_id), then active commitment facts NOT already
+  // represented by a loop, then recent timeline entries; capped together.
   const openThreads: EntityOpenThread[] = [];
+  const loopFactIds = new Set<number>();
+  try {
+    // Zero-LLM, indexed lookup — stays inside the p99<100ms budget.
+    const loopRows = await engine.executeRaw<{
+      id: number;
+      loop_type: string;
+      summary: string;
+      due_at: string | null;
+      last_activity_at: string;
+      fact_id: number | null;
+    }>(
+      `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = $1 AND source_id = $2
+       ORDER BY last_activity_at DESC
+       LIMIT ${OPEN_THREADS_CAP}`,
+      [pageSlug, sourceId],
+    );
+    for (const l of loopRows) {
+      if (l.fact_id !== null) loopFactIds.add(Number(l.fact_id));
+      const direction: EntityOpenThread['direction'] =
+        l.loop_type === 'commitment_owed_by_me'
+          ? 'owed_by_me'
+          : l.loop_type === 'commitment_owed_to_me'
+            ? 'owed_to_me'
+            : l.loop_type === 'unanswered_inbound'
+              ? 'my_turn'
+              : 'their_turn';
+      openThreads.push({
+        kind: 'commitment',
+        text: l.summary,
+        date: typeof l.last_activity_at === 'string' ? l.last_activity_at : new Date(l.last_activity_at).toISOString(),
+        direction,
+        due: l.due_at ? (typeof l.due_at === 'string' ? l.due_at : new Date(l.due_at).toISOString()) : null,
+        counterparty: pageSlug,
+        status: 'open',
+        loop_id: Number(l.id),
+      });
+      if (openThreads.length >= OPEN_THREADS_CAP) break;
+    }
+  } catch {
+    /* pre-v144 brains have no open_loops table — facts path below covers it */
+  }
   for (const f of facts) {
-    if (f.kind !== 'commitment') continue;
-    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
     if (openThreads.length >= OPEN_THREADS_CAP) break;
+    if (f.kind !== 'commitment') continue;
+    if (f.id !== undefined && loopFactIds.has(f.id)) continue; // already surfaced via its loop
+    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
   }
   if (openThreads.length < OPEN_THREADS_CAP) {
     const cutoff = Date.now() - OPEN_THREAD_TIMELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;

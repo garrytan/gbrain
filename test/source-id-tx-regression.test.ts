@@ -218,21 +218,38 @@ describe('addLink rewrites the cross-product into a source-qualified JOIN', () =
     expect(rows[0].to_src).toBe('default');
   });
 
-  test('addLink fails fast when the source-qualified endpoint doesn\'t exist', async () => {
+  test('addLink identifies the missing source-qualified endpoint', async () => {
     // Pre-fix: cross-product would silently fall back to the wrong source
-    // pair and succeed. Post-fix: missing-source-row → no JOIN match → no row
-    // inserted → INTERSECT pre-check throws.
-    let err: Error | null = null;
+    // pair and succeed. Post-fix: missing-source-row → endpoint unresolved →
+    // typed per-endpoint miss (#4109) so operation dispatch can classify
+    // mutation-time races without parsing the old ambiguous "A or B" message.
+    let fromErr: Error | null = null;
     try {
       await engine.addLink(
-        FROM_SLUG, TO_SLUG, 'phantom edge', 'documents', 'markdown', undefined, undefined,
-        { fromSourceId: 'nonexistent-src', toSourceId: 'nonexistent-src' },
+        FROM_SLUG, TO_SLUG, 'phantom from edge', 'documents', 'markdown', undefined, undefined,
+        { fromSourceId: 'nonexistent-src', toSourceId: 'default' },
       );
     } catch (e) {
-      err = e as Error;
+      fromErr = e as Error;
     }
-    expect(err).not.toBeNull();
-    expect(err!.message).toMatch(/not found/);
+    expect(fromErr).not.toBeNull();
+    expect(fromErr!.message).toBe(
+      `addLink failed: from page "${FROM_SLUG}" (source=nonexistent-src) not found`,
+    );
+
+    let toErr: Error | null = null;
+    try {
+      await engine.addLink(
+        FROM_SLUG, TO_SLUG, 'phantom to edge', 'documents', 'markdown', undefined, undefined,
+        { fromSourceId: 'default', toSourceId: 'nonexistent-src' },
+      );
+    } catch (e) {
+      toErr = e as Error;
+    }
+    expect(toErr).not.toBeNull();
+    expect(toErr!.message).toBe(
+      `addLink failed: to page "${TO_SLUG}" (source=nonexistent-src) not found`,
+    );
   });
 });
 

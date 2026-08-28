@@ -90,6 +90,11 @@ beforeAll(async () => {
   expect(confirm(ws, h.hash).ok).toBe(true);
 
   const floors = byteFloors(required.length);
+  writeFileSync(
+    join(ws, 'AGENTS.md'),
+    '⛔ **WRITE IT DOWN — SAME TURN, THROUGH THE BRAIN.**\n\n' +
+      '**Gate 7 — Write-back.** Before ending the turn, persist durable learning.\n',
+  );
   writeFileSync(join(ws, 'SOUL.md'), pad('# Soul\n\nIdentity rendered from answers.\n', floors['SOUL.md'] + 200));
   writeFileSync(join(ws, 'USER.md'), pad('# User\n\nTheir literal words are ground truth.\n', floors['USER.md'] + 100));
   mkdirSync(join(ws, 'brain'), { recursive: true });
@@ -140,6 +145,7 @@ describe('verifyWorkspace — keyless pass', () => {
     expect(check(res.checks, 'doctor_green')[0].ok).toBe(true);
     expect(check(res.checks, 'token_sweep')[0].ok).toBe(true);
     expect(check(res.checks, 'byte_floors')[0].ok).toBe(true);
+    expect(check(res.checks, 'writeback_contract')[0].ok).toBe(true);
     expect(check(res.checks, 'secret_scan')[0].ok).toBe(true);
     expect(check(res.checks, 'deny_globs')[0].ok).toBe(true);
     expect(check(res.checks, 'repo_privacy')[0].ok).toBe(true); // local-only
@@ -470,6 +476,13 @@ describe('verifyWorkspace — workspace source registration (#4328)', () => {
       const floors0 = byteFloors(0);
       writeFileSync(join(ws2, 'SOUL.md'), pad('# Soul\n\nMinimal identity.\n', floors0['SOUL.md'] + 200));
       writeFileSync(join(ws2, 'USER.md'), pad('# User\n\nMinimal user notes.\n', floors0['USER.md'] + 100));
+      // The writeback_contract check requires the integrated gate; this test
+      // exercises source resolution, not the contract audit.
+      writeFileSync(
+        join(ws2, 'AGENTS.md'),
+        '⛔ **WRITE IT DOWN — SAME TURN, THROUGH THE BRAIN.**\n\n' +
+          '**Gate 7 — Write-back.** Before ending the turn, persist durable learning.\n',
+      );
       // No manifest at all — the pre-fix hardcoded 'workspace' fallback made
       // put_page fail its sources FK on any brain that never registered it.
       const resolved = await resolveVerifySourceId(e2, ws2);

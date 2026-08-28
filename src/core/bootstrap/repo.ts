@@ -34,6 +34,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../config.ts';
+import { invalidateBackupStatus } from '../backup/status-file.ts';
 import { realpathOrResolve } from '../path-confine.ts';
 import { defaultRunner, isProxyBlocked403, parseGithubOwnerRepo, type ExecRunner } from '../repo-visibility.ts';
 import { detectExecutionEnvironment } from '../execution-env.ts';
@@ -364,6 +365,10 @@ function recordRepoInReceipt(gbrainHomeDir: string, workspaceDir: string, manife
   receipt.repo_url = url;
   delete receipt.pending_repo_url;
   writeReceipt(gbrainHomeDir, receipt);
+  // Fix-path invalidation: the workspace just gained a verified remote — the
+  // backup-coverage cache must stop warning NOW, not at the next 30-day
+  // recompute (backup/status-file.ts). Best-effort by construction.
+  invalidateBackupStatus();
 }
 
 // ---------------------------------------------------------------------------

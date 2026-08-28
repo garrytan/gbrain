@@ -9,7 +9,9 @@
     "frontmatter-guard": "brain-page frontmatter hygiene applies to any brain owner; synthetic-name fix applied in sweep",
     "schema-author": "schema-pack authoring is a brain-owner activity; repo-relative links converted for plugin consumers",
     "schema-unify": "type unification is a brain-owner migration; PGLite --follow guidance + doc links fixed in sweep",
-    "skill-optimizer": "skillopt ships in the gbrain CLI; sweep added the read-only-snapshot note (optimize copies in your own skills dir)"
+    "skill-optimizer": "skillopt ships in the gbrain CLI; sweep added the read-only-snapshot note (optimize copies in your own skills dir)",
+    "db-repair": "plugin users ARE the brain host — the GBRAIN_DB_ACCESS marker loop needs its repair skill installed by default or the availability feature defeats itself",
+    "postgres-adopt": "plugin users ARE the brain host — engine detection + Postgres-first install/migration is a host-owner activity the harness lane ships by default"
   },
   "base_exclusions": {
     "testing": "gbrain-repo development skill — instructs running this repository's own test suite; meaningless-to-harmful in a plugin snapshot",
@@ -40,7 +42,9 @@
         "correction-pipeline": "user corrections become durable brain updates instead of session-local fixes",
         "measure-before-you-fix": "measurement discipline before performance/bug fixes — engineering hygiene",
         "brain-ingest-gate": "gates what session content deserves brain ingestion — noise control",
-        "data-loss-gate": "guards destructive operations touching brain data during coding work"
+        "data-loss-gate": "guards destructive operations touching brain data during coding work",
+        "db-repair": "availability is the point: a coding session hitting GBRAIN_DB_ACCESS without the repair skill loses its brain mid-task",
+        "postgres-adopt": "engine detection by default is requirement one; the concurrency-heavy coding persona is exactly who outgrows PGLite"
       }
     },
     "daily-driver": {
@@ -63,7 +67,9 @@
         "conversation-archive": "conversation capture for cross-session memory",
         "blog-ingest": "blog and article ingestion into the reading graph",
         "research-compendium": "multi-source research compiled into a living compendium",
-        "bulk-ingestion": "batch imports (folders, exports) with manifest discipline"
+        "bulk-ingestion": "batch imports (folders, exports) with manifest discipline",
+        "db-repair": "availability is the point: a daily-driver hitting GBRAIN_DB_ACCESS without the repair skill loses its brain mid-task",
+        "postgres-adopt": "engine detection by default is requirement one; 1000+ page daily brains are the pglite_scale upgrade audience"
       }
     }
   },
@@ -95,6 +101,11 @@
     ],
     "gbrain-advisor": [
       "advisor"
+    ],
+    "google-loops": [
+      "loops_close",
+      "loops_mute",
+      "open_loops"
     ],
     "idea-ingest": [
       "add_link",

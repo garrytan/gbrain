@@ -92,7 +92,7 @@ answers. Ask before anything destructive. You are not done until
 
 Codex will ask for command approvals during the install — approving them is the sandbox working as intended. What you get, in about 15 minutes: a short interview (6 required questions) → your agent's identity (SOUL.md, USER.md, MEMORY.md) rendered from your own answers, never invented → a local PGLite brain (2 seconds, no server, no Docker) → MCP wired so every session can search and write memory → a **private** GitHub repo, created and privacy-verified, as your agent's durable body. Works with **zero API keys** — keyword search plus memory your agent writes itself; one optional key upgrades capabilities (OpenAI: semantic search + automatic fact extraction; Voyage: semantic search; Anthropic: fact extraction). Codex reads brain context through its tools each turn (pull-based). The click moment: tell it one small thing to remember, restart Codex, then ask for it back — the answer comes from the brain, not from this chat's context (which the restart cleared). That cross-session round-trip is the whole product; "what's my name / my top jobs?" is answered from your identity files, which is nice but not the same trick.
 
-Two things worth understanding once it's running: **you own the brain** — every memory is a markdown file in that private repo (read it, clone it to a second machine, delete it and the brain is gone) — and **the first skill to run is `cold-start`**: say "fill my brain" and your agent imports your Gmail, calendar, and contacts (via [ClawVisor](https://clawvisor.com), an OAuth vault so the agent never holds raw tokens) or offline archives like Google Takeout, one consented step at a time. An empty brain is a database; a filled one is a memory.
+Two things worth understanding once it's running: **you own the brain** — every memory is a markdown file in that private repo (read it, clone it to a second machine, delete it and the brain is gone) — and **the first skill to run is `cold-start`**: say "fill my brain" and your agent imports your Gmail, calendar, and contacts — via the native connector (`gbrain google setup`, tokens in gbrain's local credential vault, never held by the agent), via [ClawVisor](https://clawvisor.com) (a hosted OAuth gateway), or from offline archives like Google Takeout — one consented step at a time. An empty brain is a database; a filled one is a memory.
 
 > **Prefer to make the repo yourself?** Create a new **empty** private repo **under your own GitHub account** (no README/.gitignore/license), clone it, open the clone in Codex, and paste the same block — bootstrap detects your empty repo and adopts it instead of creating one. The repo must be empty and personal-account-owned; org-owned repos are refused (create one under your account, or let bootstrap make it).
 
@@ -242,6 +242,20 @@ curl -X POST https://your-brain/ingest \
 For mobile capture, the inbox folder source picks up anything dropped into
 `~/.gbrain/inbox/` from iOS Shortcuts / AirDrop / Drafts / Finder.
 
+Your Gmail, calendar, and contacts sync natively. `gbrain google setup` walks
+bring-your-own OAuth end to end (your own free Google Cloud client — you own
+the app and the tokens, which live only in a local credential vault), registers
+a `--kind google` source, runs a bounded first sync, and ends with the
+open-loop engine's killer output:
+
+```bash
+gbrain google setup    # connect Gmail/Calendar/Contacts → first sync → first digest
+gbrain waiting         # who is waiting on you, what you promised, with receipts
+```
+
+Setup + troubleshooting: [`docs/guides/google-connect.md`](docs/guides/google-connect.md).
+How the open-loop engine decides who's waiting: [`docs/guides/open-loops.md`](docs/guides/open-loops.md).
+
 Your other agents' histories import in one command. `gbrain transcripts ingest`
 parses agent session logs (Claude Code, Codex, OpenClaw, Hermes) and extracted
 consumer chat exports (ChatGPT / Claude.ai `conversations.json`) into readable
@@ -382,10 +396,11 @@ The command is idempotent (re-running with the same language is a no-op for vect
 Data flowing into the brain. Each integration is a recipe — markdown + setup hints — that ships in `recipes/` and is discoverable via `gbrain integrations list`. **Say to your agent:** *"Set up voice calls into my brain"* — *"Wire my email and calendar into the brain"* — your agent reads the recipe and walks the setup with you.
 
 - **Voice**: Phone calls create brain pages via Twilio + OpenAI Realtime (or DIY STT+LLM+TTS). Setup recipe: [`recipes/twilio-voice-brain.md`](recipes/twilio-voice-brain.md).
-- **Email + calendar**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
+- **Gmail + Calendar + Contacts (native)**: the google source kind syncs threads, events, and contacts through your own OAuth client and runs the open-loop engine on top (`gbrain waiting`). Setup: [`docs/guides/google-connect.md`](docs/guides/google-connect.md); recipes: [`recipes/email-to-brain.md`](recipes/email-to-brain.md), [`recipes/calendar-to-brain.md`](recipes/calendar-to-brain.md).
+- **Email + calendar (webhooks)**: webhook handlers that route to brain signals. [`docs/integrations/meeting-webhooks.md`](docs/integrations/meeting-webhooks.md).
 - **Embedding providers**: a dozen providers covered — Voyage (default: `voyage-4` @ 1024d), OpenAI, OpenRouter, Google Gemini, Azure OpenAI, MiniMax, Alibaba DashScope, Zhipu, Ollama (local), llama.cpp llama-server (local), LiteLLM proxy, plus ZeroEntropy (deprecated — hosted API ends 2026-09-04). Pricing matrix + decision tree in [`docs/integrations/embedding-providers.md`](docs/integrations/embedding-providers.md).
 - **Rerankers**: Voyage `rerank-2.5` hosted (the new-install default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; still the fallback for brains that never set `search.reranker.model`), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
-- **Credential gateway**: vault-aware secret distribution. [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
+- **Credential vault + gateway**: `gbrain creds` manages OAuth and API credentials in a local vault ([`recipes/credential-gateway.md`](recipes/credential-gateway.md)); agent-side vault-aware secret distribution: [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
 
 ## Architecture
@@ -529,7 +544,7 @@ the page PK, soft-delete-filtered, source-safe) and completes in seconds.
 - [`docs/what-schemas-unlock.md`](docs/what-schemas-unlock.md) — why schemas matter: 7 killer use cases, the structural argument for typed page kinds, the agent-co-curates pattern (v0.40.7.0)
 - [`docs/schema-author-tutorial.md`](docs/schema-author-tutorial.md) — 5-minute walkthrough: fork the bundled pack, add a custom type, backfill existing pages, prove the wiring via `gbrain whoknows`
 - [`docs/architecture/`](docs/architecture/) — system design, topologies, retrieval theory
-- [`docs/guides/`](docs/guides/) — how-to runbooks (sub-agent routing, minion deployment, skill development, brain-first lookup, idea capture, diligence ingestion)
+- [`docs/guides/`](docs/guides/) — how-to runbooks (google connect, open loops, sub-agent routing, minion deployment, skill development, brain-first lookup, idea capture, diligence ingestion)
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [`docs/mcp/`](docs/mcp/) — per-client MCP setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [`docs/eval/`](docs/eval/) — eval framework, metric glossary, methodology

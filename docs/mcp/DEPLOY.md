@@ -167,6 +167,12 @@ await oauthProvider.registerClientManual(
 For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
 
+Native MCP clients register cleanly: `redirect_uris` may use an app custom
+scheme (RFC 8252, e.g. `myapp://callback`) or `http://` loopback alongside
+`https://`; scopes the server doesn't know are filtered rather than fatal;
+and malformed registration metadata is rejected with HTTP 400
+`invalid_client_metadata` (never a 500), so a client can correct and retry.
+
 DCR requests may include an optional `token_ttl_seconds` field (integer,
 seconds) to request a per-client access-token lifetime. The server clamps the
 request into an admin-configured window — never rejects over it — persists the

@@ -37,6 +37,8 @@ This skill guarantees:
 - On demand when the user asks "how do I get more out of this brain?"
 - On a **weekly** cadence via the cron recipe below (even idle brains get a
   "here's how to run this better" ping).
+- Monthly, the advisor also surfaces the backup-coverage verdict (`gbrain
+  backup status` — which knowledge repos have no git remote); relay any warn.
 
 ## How to run it
 

@@ -19,6 +19,7 @@ import {
 } from '../core/brain-repo-durability.ts';
 import { divergenceSafePull, detectDefaultBranch, isInsideGitRepo } from '../core/git-remote.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { invalidateBackupStatus } from '../core/backup/status-file.ts';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
@@ -107,6 +108,10 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   if (json) console.log(JSON.stringify({ reports }, null, 2));
+
+  // Fix-path invalidation: hardening changes the backup-coverage answer for
+  // every touched repo — drop the cached verdict so the next check re-probes.
+  if (reports.length > 0) invalidateBackupStatus();
 
   // Non-zero exit if any source needs attention, so cron/automation notices.
   // Route through setCliExitVerdict — a raw process.exitCode write is zeroed by
