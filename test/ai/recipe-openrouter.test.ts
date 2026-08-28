@@ -74,8 +74,10 @@ describe('recipe: openrouter', () => {
     if (typeof loop === 'function') {
       expect(loop('anthropic/claude-haiku-4.5')).toBe(true);
       expect(loop('anthropic/claude-sonnet-4.6')).toBe(true);
+      expect(loop('deepseek/deepseek-v4-flash')).toBe(true);
+      expect(loop('deepseek/deepseek-chat')).toBe(true);
       expect(loop('openai/gpt-5.2')).toBe(false);
-      expect(loop('deepseek/deepseek-chat')).toBe(false);
+      expect(loop('google/gemini-3-flash-preview')).toBe(false);
     }
     expect(() =>
       assertTouchpoint(r, 'chat', 'some/provider-model'),

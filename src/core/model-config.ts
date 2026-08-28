@@ -21,6 +21,7 @@
  */
 
 import type { ConfigReader } from './config-snapshot.ts';
+import { openrouterModelSupportsSubagentLoop } from './ai/openrouter-families.ts';
 import { splitProviderModelId } from './model-id.ts';
 import type { GBrainConfig } from './config.ts';
 import { loadConfig } from './config.ts';
@@ -322,6 +323,19 @@ export function isOpenRouterAnthropic(modelString: string): boolean {
   const { provider, model } = splitProviderModelId(modelString);
   return provider?.trim().toLowerCase() === 'openrouter'
     && model.toLowerCase().startsWith('anthropic/');
+}
+
+/**
+ * `openrouter:<family>/…` where the family has a live abort/retry pin for the
+ * subagent loop (anthropic/, deepseek/ — see src/core/ai/openrouter-families.ts).
+ * The subagent handler auto-enables the gateway loop for these, because the
+ * legacy Anthropic-direct pin would otherwise refuse them when
+ * `agent.use_gateway_loop` is off.
+ */
+export function isOpenRouterSubagentFamily(modelString: string): boolean {
+  if (!modelString) return false;
+  const { provider, model } = splitProviderModelId(modelString);
+  return provider?.trim().toLowerCase() === 'openrouter' && openrouterModelSupportsSubagentLoop(model);
 }
 
 const _subagentTierWarningsEmitted = new Set<string>();
