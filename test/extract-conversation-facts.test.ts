@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
@@ -29,11 +29,23 @@ import {
   splitIntoSegments,
   renderSegmentForExtraction,
   runExtractConversationFactsCore,
+  runExtractConversationFacts,
   extractConversationFactsFingerprint,
   encodeCheckpointEntry,
   decodeCheckpointEntry,
   DEFAULT_SEGMENT_GAP_MINUTES,
   DEFAULT_SEGMENT_MAX_MESSAGES,
+  DEFAULT_SEGMENT_MAX_CHARS,
+  EMAIL_SEGMENT_GAP_MINUTES,
+  normalizeEmailMessages,
+  parseEmailSender,
+  renderMessageLine,
+  splitOversizedMessage,
+  slugBasename,
+  EntitySlugCanonicalizer,
+  isAutomatedEmailSender,
+  isSingleInboundEmail,
+  isOutOfScopeEmail,
   SEGMENT_TEXT_CHAR_LIMIT,
   MAX_PAGE_BODY_BYTES,
   TERMINAL_AUDIT_SOURCE,
@@ -44,6 +56,14 @@ import {
   ALLOWED_TYPE_ALIASES,
 } from '../src/commands/extract-conversation-facts.ts';
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
+import {
+  validateModelFlag,
+  compileEmailSenderDenylist,
+  EMAIL_AUTOMATED_SENDERS,
+  MAX_CANDIDATE_BATCH,
+  PAGE_LIST_BATCH,
+  MIN_SEGMENT_MESSAGES,
+} from '../src/commands/extract-conversation-facts.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 
 // ---------------------------------------------------------------------------
@@ -1635,5 +1655,1314 @@ describe('#4136 folded speaker headings — decline gate is non-terminal', () =>
     expect(result.pages_skipped_unrecognized_speaker).toBe(0);
     expect(result.pages_processed).toBe(1);
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email thread pages (email-thread-heading path).
+// ---------------------------------------------------------------------------
+
+describe('email thread normalization', () => {
+  const email = (
+    speaker: string,
+    timestamp: string,
+    text: string,
+    direction?: 'sent' | 'received',
+  ) => ({ speaker, timestamp, text, ...(direction ? { direction } : {}) });
+
+  test('parseEmailSender decodes entities and splits name/address', () => {
+    expect(parseEmailSender('Juan Andrade &lt;juan@example.com&gt;')).toEqual({
+      name: 'Juan Andrade',
+      address: 'juan@example.com',
+    });
+    expect(
+      parseEmailSender('"Frank Silva (Google Docs)" &lt;comments-noreply@docs.google.com&gt;'),
+    ).toEqual({ name: 'Frank Silva (Google Docs)', address: 'comments-noreply@docs.google.com' });
+    expect(parseEmailSender('ops@example.com')).toEqual({
+      name: 'ops@example.com',
+      address: 'ops@example.com',
+    });
+    expect(parseEmailSender('unknown')).toEqual({ name: 'unknown', address: null });
+  });
+
+  test('isAutomatedEmailSender matches relays, no-reply and form senders only', () => {
+    const auto = [
+      '"A (Google Docs)" &lt;comments-noreply@docs.google.com&gt;',
+      'Linear &lt;notifications@linear.app&gt;',
+      'Drive &lt;drive-shares-dm-noreply@google.com&gt;',
+      'Webflow &lt;no-reply@webflow.com&gt;',
+      'Zapier &lt;digest@mail.zapier.com&gt;',
+      'Google Calendar &lt;calendar-notification@google.com&gt;',
+    ];
+    for (const s of auto) expect(isAutomatedEmailSender(parseEmailSender(s))).toBe(true);
+    const human = [
+      'Edmund Farrar &lt;ed@example.com&gt;',
+      'Support &lt;support@example.com&gt;',
+      'Brianna (Superhuman Team) &lt;brianna@superhuman.com&gt;',
+      'unknown',
+    ];
+    for (const s of human) expect(isAutomatedEmailSender(parseEmailSender(s))).toBe(false);
+  });
+
+  test('normalizeEmailMessages renames speakers, drops automated senders, strips Gmail links', () => {
+    const r = normalizeEmailMessages([
+      email(
+        'Juan Andrade &lt;juan@example.com&gt;',
+        '2026-06-18T07:46:32.000Z',
+        '[Open in Gmail](https://mail.google.com/mail/u/?authuser=x#inbox/1)\n\nHey Ed,\n\n\n\nRenewal is due.',
+        'sent',
+      ),
+      email(
+        '"Frank Silva (Google Docs)" &lt;comments-noreply@docs.google.com&gt;',
+        '2026-06-19T07:46:32.000Z',
+        'Frank commented on the doc.',
+        'received',
+      ),
+      email('Edmund Farrar &lt;ed@example.com&gt;', '2026-08-19T07:03:59.000Z', 'Thanks.', 'received'),
+    ]);
+    expect(r.dropped).toBe(1);
+    expect(r.messages.map((m) => m.speaker)).toEqual(['Juan Andrade', 'Edmund Farrar']);
+    expect(r.messages[0].text).toBe('Hey Ed,\n\nRenewal is due.');
+    expect(r.messages[0].direction).toBe('sent');
+    expect(r.distinctSenders).toBe(2);
+  });
+
+  test('normalizeEmailMessages counts distinct senders by address, before the address is dropped', () => {
+    const r = normalizeEmailMessages([
+      email('Juan Andrade &lt;juan@example.com&gt;', '2026-06-18T07:46:32.000Z', 'Following up.', 'sent'),
+      email('Bot &lt;notifications@example.com&gt;', '2026-06-18T08:00:00.000Z', 'auto', 'received'),
+    ]);
+    expect(r.messages).toHaveLength(1);
+    expect(r.messages[0].direction).toBe('sent');
+    expect(r.distinctSenders).toBe(1);
+    // One newsletter, two display names: still one sender.
+    const news = normalizeEmailMessages([
+      email('Indie Weekly &lt;hi@indie.example&gt;', '2026-06-01T09:00:00.000Z', 'Issue 41.', 'received'),
+      email('Indie Weekly Team &lt;hi@indie.example&gt;', '2026-06-08T09:00:00.000Z', 'Issue 42.', 'received'),
+    ]);
+    expect(news.distinctSenders).toBe(1);
+    // Two people who share a display name are two senders.
+    const twins = normalizeEmailMessages([
+      email('Alex &lt;alex@a.example&gt;', '2026-06-01T09:00:00.000Z', 'Hi.', 'received'),
+      email('Alex &lt;alex@b.example&gt;', '2026-06-01T10:00:00.000Z', 'Hello.', 'received'),
+    ]);
+    expect(twins.distinctSenders).toBe(2);
+  });
+
+  test('isOutOfScopeEmail also drops digest pages (subtype other than thread)', () => {
+    const digest = {
+      type: 'email' as const,
+      frontmatter: { subtype: 'digest', message_count: 28 } as Record<string, unknown>,
+      compiled_truth: '# Email digest — 2026-08-09\n\n## Signatures pending (0)\n\n## Triage (3)',
+    };
+    expect(isOutOfScopeEmail(digest)).toBe(true);
+    expect(isOutOfScopeEmail({ ...digest, frontmatter: { subtype: 'thread', message_count: 3 } })).toBe(false);
+    // No subtype at all: fall back to the single-inbound rule only.
+    expect(isOutOfScopeEmail({ ...digest, frontmatter: { message_count: 3 } })).toBe(false);
+    expect(isOutOfScopeEmail({ ...digest, frontmatter: { message_count: 1 } })).toBe(true);
+  });
+
+  test('isSingleInboundEmail keys on frontmatter.message_count and the (sent) marker', () => {
+    const base = {
+      type: 'email' as const,
+      frontmatter: { message_count: 1 } as Record<string, unknown>,
+      compiled_truth:
+        '# Email thread: x\n## A &lt;a@b.c&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (received)\n\nhi',
+    };
+    expect(isSingleInboundEmail(base)).toBe(true);
+    expect(
+      isSingleInboundEmail({ ...base, compiled_truth: base.compiled_truth.replace('(received)', '(sent)') }),
+    ).toBe(false);
+    expect(isSingleInboundEmail({ ...base, frontmatter: { message_count: '3' } })).toBe(false);
+    expect(isSingleInboundEmail({ ...base, frontmatter: {} })).toBe(false);
+    expect(isSingleInboundEmail({ ...base, type: 'slack' as const })).toBe(false);
+  });
+});
+
+describe('splitIntoSegments — email options', () => {
+  const msg = (i: number, timestamp: string, text = `m${i}`) => ({
+    speaker: i % 2 ? 'Bob' : 'Alice',
+    timestamp,
+    text,
+  });
+
+  test('email gap groups replies into week-scale episodes and keeps lone episodes', () => {
+    const msgs = [
+      msg(0, '2026-06-18T07:46:32.000Z'),
+      msg(1, '2026-06-20T09:00:00.000Z'),
+      msg(2, '2026-08-19T07:03:59.000Z'),
+      msg(3, '2026-08-24T15:56:24.000Z'),
+    ];
+    // Default 30-minute gap: four lone messages, all below the minimum.
+    expect(splitIntoSegments(msgs)).toHaveLength(0);
+    // Email gap alone: two episodes, the lone August pair survives on its own.
+    const segs = splitIntoSegments(msgs, { gapMinutes: EMAIL_SEGMENT_GAP_MINUTES, minMessages: 1 });
+    expect(segs).toHaveLength(2);
+    expect(segs[0].messages).toHaveLength(2);
+    expect(segs[0].startIso).toBe('2026-06-18T07:46:32.000Z');
+    expect(segs[1].messages).toHaveLength(2);
+    // The August episode is dated when it happened, not at the thread start.
+    expect(segs[1].startIso).toBe('2026-08-19T07:03:59.000Z');
+    // A reply more than a week later forms its own one-message episode.
+    const late = [...msgs, msg(4, '2026-10-01T10:00:00.000Z')];
+    const segs2 = splitIntoSegments(late, { gapMinutes: EMAIL_SEGMENT_GAP_MINUTES, minMessages: 1 });
+    expect(segs2).toHaveLength(3);
+    expect(segs2[2].messages).toHaveLength(1);
+  });
+
+  test('maxChars splits a long thread instead of leaving it to truncation', () => {
+    const long = 'x'.repeat(2000);
+    const msgs = Array.from({ length: 6 }, (_, i) => msg(i, `2026-06-18T0${i}:00:00.000Z`, long));
+    const segs = splitIntoSegments(msgs, {
+      gapMinutes: EMAIL_SEGMENT_GAP_MINUTES,
+      maxChars: DEFAULT_SEGMENT_MAX_CHARS,
+    });
+    expect(segs.length).toBeGreaterThan(1);
+    for (const s of segs) {
+      expect(renderSegmentForExtraction('t', s).endsWith('…(truncated)')).toBe(false);
+    }
+    expect(segs.reduce((n, s) => n + s.messages.length, 0)).toBe(6);
+  });
+
+  test('a lone message after a char cut is kept (it continues the conversation)', () => {
+    const long = 'x'.repeat(3000);
+    const msgs = Array.from({ length: 3 }, (_, i) => msg(i, `2026-06-18T0${i}:00:00.000Z`, long));
+    const segs = splitIntoSegments(msgs, {
+      gapMinutes: EMAIL_SEGMENT_GAP_MINUTES,
+      maxChars: DEFAULT_SEGMENT_MAX_CHARS,
+    });
+    expect(segs.reduce((n, s) => n + s.messages.length, 0)).toBe(3);
+  });
+
+  test('minMessages 1 keeps a lone message', () => {
+    const one = [msg(0, '2026-06-18T07:46:32.000Z')];
+    expect(splitIntoSegments(one)).toHaveLength(0);
+    expect(splitIntoSegments(one, { minMessages: 1 })).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-08-28 eng review: render DRY, oversize chunking, unescape, canonicalizer.
+// ---------------------------------------------------------------------------
+
+describe('renderMessageLine is the single source of the segment body format', () => {
+  test('renderSegmentForExtraction body lines are renderMessageLine(m)', () => {
+    const msgs = [
+      { speaker: 'Alice', timestamp: '2026-06-18T07:46:32.000Z', text: 'hello' },
+      { speaker: 'Bob', timestamp: '2026-06-18T07:47:00.000Z', text: 'hi\nsecond line' },
+    ];
+    const seg = { messages: msgs, startIso: msgs[0].timestamp, endIso: msgs[1].timestamp, participants: ['Alice', 'Bob'] };
+    const rendered = renderSegmentForExtraction('Page title', seg);
+    for (const m of msgs) expect(rendered).toContain(renderMessageLine(m));
+  });
+});
+
+describe('splitOversizedMessage', () => {
+  const base = { speaker: 'Alice Example', timestamp: '2026-06-18T07:46:32.000Z' };
+  test('a short message is returned as-is', () => {
+    const m = { ...base, text: 'short' };
+    expect(splitOversizedMessage(m, DEFAULT_SEGMENT_MAX_CHARS)).toEqual([m]);
+  });
+  test('a 12 KB message becomes several same-speaker parts, nothing lost, each under budget', () => {
+    const para = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(20).trim();
+    const text = Array.from({ length: 12 }, (_, i) => `Paragraph ${i}: ${para}`).join('\n\n');
+    expect(text.length).toBeGreaterThan(12_000);
+    const parts = splitOversizedMessage({ ...base, text, direction: 'sent' as const }, DEFAULT_SEGMENT_MAX_CHARS);
+    expect(parts.length).toBeGreaterThanOrEqual(3);
+    for (const p of parts) {
+      expect(p.speaker).toBe(base.speaker);
+      expect(p.timestamp).toBe(base.timestamp);
+      expect(p.direction).toBe('sent');
+      expect(renderMessageLine(p).length + 1).toBeLessThanOrEqual(DEFAULT_SEGMENT_MAX_CHARS);
+    }
+    const joined = parts.map((p) => p.text).join(' ').replace(/\s+/g, ' ');
+    expect(joined).toBe(text.replace(/\s+/g, ' '));
+  });
+  test('splitIntoSegments chunks an oversize message instead of leaving it to truncation', () => {
+    const text = 'x'.repeat(4000) + '\n\n' + 'y'.repeat(4000) + '\n\n' + 'z'.repeat(4000);
+    const msgs = [
+      { speaker: 'Alice', timestamp: '2026-06-18T07:46:32.000Z', text },
+      { speaker: 'Bob', timestamp: '2026-06-18T08:00:00.000Z', text: 'ack' },
+    ];
+    const segs = splitIntoSegments(msgs, { gapMinutes: EMAIL_SEGMENT_GAP_MINUTES, maxChars: DEFAULT_SEGMENT_MAX_CHARS, minMessages: 1 });
+    const total = segs.reduce((n, s) => n + s.messages.length, 0);
+    expect(total).toBeGreaterThanOrEqual(4);
+    for (const s of segs) expect(renderSegmentForExtraction('t', s).endsWith('…(truncated)')).toBe(false);
+    expect(segs.flatMap((s) => s.messages).map((m) => m.text).join('').replace(/\s/g, '')).toBe(text.replace(/\s/g, '') + 'ack');
+  });
+});
+
+describe('parseEmailSender undoes the collector escapes', () => {
+  test('backslash-escaped brackets and HTML entities', () => {
+    expect(parseEmailSender('\\[EXT\\] Dana Reyes &lt;dana@example.com&gt;')).toEqual({
+      name: '[EXT] Dana Reyes',
+      address: 'dana@example.com',
+    });
+  });
+});
+
+describe('EntitySlugCanonicalizer', () => {
+  test('folds raw and display-name forms onto the one known prefixed sibling', () => {
+    const c = new EntitySlugCanonicalizer();
+    c.register('people/edmund-farrar');
+    c.register('companies/oto');
+    expect(c.canonicalize('edmund-farrar')).toBe('people/edmund-farrar');
+    expect(c.canonicalize('Edmund Farrar')).toBe('people/edmund-farrar');
+    expect(c.canonicalize('oto')).toBe('companies/oto');
+    expect(c.canonicalize('someone-unknown')).toBe('someone-unknown');
+    expect(c.canonicalize(null)).toBeNull();
+    expect(c.canonicalize(undefined)).toBeUndefined();
+  });
+  test('a prefixed slug seen at save time registers its basename for later raw forms', () => {
+    const c = new EntitySlugCanonicalizer();
+    expect(c.canonicalize('companies/ten-dev')).toBe('companies/ten-dev');
+    expect(c.canonicalize('ten-dev')).toBe('companies/ten-dev');
+    expect(c.canonicalize('Ten Dev')).toBe('companies/ten-dev');
+  });
+  test('an ambiguous basename (both prefixes) stays raw', () => {
+    const c = new EntitySlugCanonicalizer();
+    c.register('people/mercury');
+    c.register('companies/mercury');
+    expect(c.canonicalize('mercury')).toBe('mercury');
+  });
+  test('slugBasename matches the resolver fallback form', () => {
+    // Same function the resolver mints raw slugs with (src/core/entities/resolve.ts slugify):
+    // apostrophes become a separator, accents fold, runs collapse.
+    expect(slugBasename("Juan's Company, Ltd.")).toBe('juan-s-company-ltd');
+    expect(slugBasename('  Edmund   Farrar ')).toBe('edmund-farrar');
+    expect(slugBasename('José Núñez')).toBe('jose-nunez');
+    expect(slugBasename('Juan\u2019s Co')).toBe('juan-s-co');
+  });
+});
+
+describe('CLI + job wiring pins (2026-08-28 review)', () => {
+  const cmdSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'extract-conversation-facts.ts'), 'utf8');
+  const jobsSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'), 'utf8');
+  test('--model is parsed, validated up front, and handed to the core', () => {
+    expect(cmdSrc).toContain("if (a === '--model') { out.model = args[++i]; continue; }");
+    // One gate for the CLI (before the job is enqueued), the job handler and the core.
+    expect(cmdSrc).toContain('export function validateModelFlag(model: string): string | null');
+    expect(cmdSrc).toContain("!isAvailable('chat', model)");
+    expect(cmdSrc).toContain('!canonicalLookup(model)');
+    expect(cmdSrc).toContain('validateModelFlag(pre.model)');
+    expect(cmdSrc.indexOf('validateModelFlag(pre.model)')).toBeLessThan(cmdSrc.indexOf('const backgrounded = await maybeBackground('));
+    expect(cmdSrc).toContain('validateModelFlag(opts.model)');
+    expect(cmdSrc).toMatch(/dryRun: parsed\.dryRun,\n\s+model: parsed\.model,/);
+  });
+  test('the background job handler forwards job.data.model (round trip with buildJobParams)', () => {
+    const start = jobsSrc.indexOf("registerBuiltinJob(worker, engine, 'extract-conversation-facts'");
+    expect(start).toBeGreaterThan(0);
+    const end = jobsSrc.indexOf('return result;', start);
+    const handler = jobsSrc.slice(start, end);
+    expect(handler).toContain("const model = typeof job.data.model === 'string' ? job.data.model : undefined;");
+    expect(handler).toContain('validateModelFlag(model)');
+    expect(handler).toMatch(/\n\s+model,\n/);
+    expect(handler).toContain("workers: typeof job.data.workers === 'number' ? job.data.workers : undefined");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email thread pages end to end through the core (PGLite, injected extractor).
+// ---------------------------------------------------------------------------
+
+const EMAIL_HDR = (name: string, addr: string, date: string, dir: 'sent' | 'received') =>
+  `## ${name} &lt;${addr}&gt; — ${date} (${dir})`;
+
+describe('email pages through runExtractConversationFactsCore', () => {
+  let engine: PGLiteEngine;
+  const turns: string[] = [];
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(
+      (async ({ values }: { values: string[] }) => ({
+        embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)),
+      })) as never,
+    );
+    await engine.putPage('people/edmund-farrar', {
+      type: 'person',
+      title: 'Edmund Farrar',
+      compiled_truth: 'Profile.',
+      frontmatter: {},
+    });
+    // (1) A real thread: owner sent, one automated relay, one human reply.
+    await engine.putPage('email-thread-aaa1', {
+      type: 'email' as never,
+      title: 'Email thread: Oto - Caribou Renewal',
+      compiled_truth: [
+        '# Email thread: Oto - Caribou Renewal',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Thu, 18 Jun 2026 07:46:32 +0000', 'sent'),
+        '',
+        '[Open in Gmail](https://mail.google.com/mail/u/?authuser=juan%40example.com#inbox/aaa1)',
+        '',
+        'Hey Ed, your renewal is due on 28 August 2026.',
+        '',
+        EMAIL_HDR('"Frank Silva (Google Docs)"', 'comments-noreply@docs.google.com', 'Thu, 18 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Frank commented on the doc.',
+        '',
+        EMAIL_HDR('Edmund Farrar', 'ed@example.com', 'Fri, 19 Jun 2026 08:03:59 +0100', 'received'),
+        '',
+        "I'd like to descope the agreement.",
+      ].join('\n'),
+      frontmatter: { subject: 'Oto - Caribou Renewal', message_count: 3 },
+    });
+    // (2) A single message the owner sent.
+    await engine.putPage('email-thread-bbb2', {
+      type: 'email' as never,
+      title: 'Email thread: Following up',
+      compiled_truth: [
+        '# Email thread: Following up',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 22 Jun 2026 10:00:00 +0000', 'sent'),
+        '',
+        'Following up on the proposal I sent last week.',
+      ].join('\n'),
+      frontmatter: { subject: 'Following up', message_count: 1 },
+    });
+    // (3) A single inbound message: out of scope, pre-filtered, never audited.
+    await engine.putPage('email-thread-ccc3', {
+      type: 'email' as never,
+      title: 'Email thread: Weekly digest',
+      compiled_truth: [
+        '# Email thread: Weekly digest',
+        EMAIL_HDR('Newsletter', 'news@example.com', 'Tue, 23 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'Read this.',
+      ].join('\n'),
+      frontmatter: { subject: 'Weekly digest', message_count: 1 },
+    });
+    // (5) A daily digest page: same `email` type, digest format, out of scope.
+    await engine.putPage('email-2026-08-09', {
+      type: 'email' as never,
+      title: 'Email digest — 2026-08-09',
+      compiled_truth: '# Email digest — 2026-08-09\n\n## Signatures pending (0)\n\n## Triage (3)\n\n- something',
+      frontmatter: { subtype: 'digest', message_count: 28 },
+    });
+    // (4) Two messages, both automated: parses, normalizes to nothing, audited.
+    await engine.putPage('email-thread-ddd4', {
+      type: 'email' as never,
+      title: 'Email thread: Doc comments',
+      compiled_truth: [
+        '# Email thread: Doc comments',
+        EMAIL_HDR('"A (Google Docs)"', 'comments-noreply@docs.google.com', 'Wed, 24 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'A commented.',
+        '',
+        EMAIL_HDR('"B (Google Docs)"', 'comments-noreply@docs.google.com', 'Wed, 24 Jun 2026 11:00:00 +0000', 'received'),
+        '',
+        'B commented.',
+      ].join('\n'),
+      frontmatter: { subject: 'Doc comments', message_count: 2 },
+    });
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  test('extracts the thread and the owner-sent single, skips the inbound single, audits the automated pair', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      overrideDisabled: true,
+      extractor: async (input) => {
+        turns.push(input.turnText);
+        return [
+          // A person page exists: the shipped resolver already maps this one.
+          { fact: 'Edmund Farrar wants to descope the agreement.', kind: 'commitment', entity_slug: 'edmund-farrar', confidence: 0.9, notability: 'medium' } as never,
+          // No page for Oto: the resolver slugifies; the prefixed form seen
+          // first in this turn registers, and the raw form folds onto it.
+          { fact: 'Oto renews on 28 August.', kind: 'event', entity_slug: 'companies/oto', confidence: 0.9, notability: 'medium' } as never,
+          { fact: 'Oto wants a smaller scope.', kind: 'commitment', entity_slug: 'oto', confidence: 0.9, notability: 'medium' } as never,
+        ];
+      },
+    });
+    expect(result.pages_processed).toBe(2);
+    // The inbound single and the digest page: skipped before any durable write.
+    expect(result.pages_skipped_out_of_scope_email).toBe(2);
+    expect(result.pages_marked_non_extractable).toBe(1);
+    expect(result.email_messages_dropped_automated).toBe(3);
+    expect(result.facts_inserted).toBe(6);
+    expect(result.entity_slugs_canonicalized).toBe(2);
+    // The thread's segment text: display names, no relay, no Gmail link.
+    const thread = turns.find((t) => t.includes('Oto - Caribou Renewal'));
+    expect(thread).toBeDefined();
+    expect(thread).toContain('Juan Andrade [sent] (2026-06-18T07:46:32.000Z): Hey Ed');
+    expect(thread).toContain('Edmund Farrar [received] (2026-06-19T07:03:59.000Z):');
+    expect(thread).not.toContain('Open in Gmail');
+    expect(thread).not.toContain('Google Docs');
+    expect(thread).not.toContain('&lt;');
+    const rows = await engine.executeRaw<{ source_markdown_slug: string; entity_slug: string; valid_from: string; source: string }>(
+      `SELECT source_markdown_slug, entity_slug, valid_from::text AS valid_from, source
+         FROM facts WHERE source_id = 'default' ORDER BY source_markdown_slug, source`,
+    );
+    const real = rows.filter((r) => r.source === 'cli:extract-conversation-facts');
+    expect([...new Set(real.map((r) => r.source_markdown_slug))].sort()).toEqual(['email-thread-aaa1', 'email-thread-bbb2']);
+    expect(new Set(real.map((r) => r.entity_slug))).toEqual(new Set(['people/edmund-farrar', 'companies/oto']));
+    expect(real.find((r) => r.source_markdown_slug === 'email-thread-aaa1')?.valid_from.startsWith('2026-06-18')).toBe(true);
+    const terminal = rows.filter((r) => r.source === 'cli:extract-conversation-facts:terminal:v2').map((r) => r.source_markdown_slug).sort();
+    expect(terminal).toEqual(['email-thread-aaa1', 'email-thread-bbb2']);
+    const audited = rows.filter((r) => r.source === 'cli:extract-conversation-facts:non-extractable:v2').map((r) => r.source_markdown_slug);
+    expect(audited).toEqual(['email-thread-ddd4']);
+    // Never audited: the inbound single and the digest are skipped before any durable write.
+    expect(rows.some((r) => r.source_markdown_slug === 'email-thread-ccc3')).toBe(false);
+    expect(rows.some((r) => r.source_markdown_slug === 'email-2026-08-09')).toBe(false);
+  });
+
+  test('a second run skips both completed pages via durable outcomes and re-skips the inbound single', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      overrideDisabled: true,
+      extractor: async () => [],
+    });
+    expect(result.pages_processed).toBe(0);
+    expect(result.pages_skipped_completed).toBe(2);
+    expect(result.pages_skipped_non_extractable).toBe(1);
+    expect(result.pages_skipped_out_of_scope_email).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REGRESSION: enumeration across batches (generator + keyset walk).
+// ---------------------------------------------------------------------------
+
+describe('enumeration walks every batch and honors --limit across batches', () => {
+  let engine: PGLiteEngine;
+  const PAGES = 25; // > 2 x PAGE_LIST_BATCH so the walk crosses batch boundaries
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(
+      (async ({ values }: { values: string[] }) => ({
+        embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)),
+      })) as never,
+    );
+    for (let i = 0; i < PAGES; i++) {
+      await engine.putPage(`conversations/walk-${String(i).padStart(2, '0')}`, {
+        type: 'conversation',
+        title: `Walk ${i}`,
+        compiled_truth: [
+          fmt('Alice Example', '2024-03-15', '9:00 AM', `Message ${i} one.`),
+          fmt('Bob Demo', '2024-03-15', '9:01 AM', `Message ${i} two.`),
+        ].join('\n'),
+        frontmatter: { date: '2024-03-15' },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  const run = (limit?: number) =>
+    runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['conversation'],
+      overrideDisabled: true,
+      ...(limit ? { limit } : {}),
+      extractor: async () => [
+        { fact: 'A fact.', kind: 'fact', entity_slug: 'alice-example', confidence: 0.9, notability: 'low' } as never,
+      ],
+    });
+
+  test('--limit 7 processes exactly 7 pages even though a batch holds 10', async () => {
+    const r = await run(7);
+    expect(r.pages_processed).toBe(7);
+  });
+
+  test('the next unbounded run processes the remaining 18 and skips the 7 durable ones', async () => {
+    const r = await run();
+    expect(r.pages_processed).toBe(PAGES - 7);
+    expect(r.pages_skipped_completed).toBe(7);
+  });
+
+  test('a third run touches nothing', async () => {
+    const r = await run();
+    expect(r.pages_processed).toBe(0);
+    expect(r.pages_skipped_completed).toBe(PAGES);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ship audit: email-path edge and error cases through the core, --model
+// plumbing, streaming-enumeration abort + candidate accumulation, and the
+// canonicalizer's engine-backed load.
+// ---------------------------------------------------------------------------
+
+const EMBED_STUB = (async ({ values }: { values: string[] }) => ({
+  embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)),
+})) as never;
+
+describe('EntitySlugCanonicalizer.load', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(EMBED_STUB);
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  test('registers prefixed slugs from the source\'s existing facts, not only from pages', async () => {
+    await engine.insertFacts(
+      [{ fact: 'Acme Example raised a round.', kind: 'event', entity_slug: 'companies/acme-example', source: 'test:seed', confidence: 0.9, notability: 'medium' } as never],
+      { source_id: 'default' },
+    );
+    const c = await EntitySlugCanonicalizer.load(engine, 'default');
+    expect(c.canonicalize('acme-example')).toBe('companies/acme-example');
+    expect(c.canonicalize('Acme Example')).toBe('companies/acme-example');
+    // Facts of another source do not register.
+    const other = await EntitySlugCanonicalizer.load(engine, 'other-source');
+    expect(other.canonicalize('acme-example')).toBe('acme-example');
+  });
+
+  test('a failing engine leaves every raw slug raw and warns instead of throwing', async () => {
+    const broken = {
+      executeRaw: async () => {
+        throw new Error('db down');
+      },
+    } as unknown as PGLiteEngine;
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (s: string) => {
+      errs.push(String(s));
+      return true;
+    };
+    let c: EntitySlugCanonicalizer;
+    try {
+      c = await EntitySlugCanonicalizer.load(broken, 'default');
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+    expect(c!.canonicalize('edmund-farrar')).toBe('edmund-farrar');
+    expect(c!.canonicalize('companies/oto')).toBe('companies/oto');
+    expect(errs.join('')).toContain('slug canonicalizer load failed (db down)');
+  });
+});
+
+describe('--model override reaches the extraction provider', () => {
+  let engine: PGLiteEngine;
+  const modelsSeen: string[] = [];
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.setConfig('facts.extraction_enabled', 'true');
+    __setChatTransportForTests(async (opts): Promise<ChatResult> => {
+      modelsSeen.push(String(opts.model));
+      return {
+        text: JSON.stringify({
+          facts: [{ fact: 'Alice Example joined Acme.', kind: 'event', entity: 'people/alice-example', confidence: 1.0, notability: 'high' }],
+        }),
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: String(opts.model),
+        providerId: 'stub',
+      };
+    });
+    __setEmbedTransportForTests(EMBED_STUB);
+    await engine.putPage('email-thread-model-1', {
+      type: 'email' as never,
+      title: 'Email thread: Model override',
+      compiled_truth: [
+        '# Email thread: Model override',
+        EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        '',
+        'I joined Acme this week.',
+        '',
+        EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'Congratulations.',
+      ].join('\n'),
+      frontmatter: { subject: 'Model override', message_count: 2 },
+    });
+  });
+
+  afterAll(async () => {
+    __setChatTransportForTests(null);
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  test('the core passes opts.model to the extraction chat call', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      sleepMs: 0,
+      model: 'openai:gpt-5.2',
+    });
+    expect(result.pages_processed).toBe(1);
+    expect(result.facts_inserted).toBeGreaterThan(0);
+    expect(modelsSeen.length).toBeGreaterThan(0);
+    expect(new Set(modelsSeen)).toEqual(new Set(['openai:gpt-5.2']));
+  });
+});
+
+describe('runExtractConversationFacts --model gate (CLI wrapper)', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.setConfig('facts.extraction_enabled', 'true');
+    // Present as "chat available" so the generic gateway gate passes and the
+    // --model gates are the ones under test. Any real call is a failure.
+    __setChatTransportForTests(async () => {
+      throw new Error('provider must not be called');
+    });
+    __setEmbedTransportForTests(EMBED_STUB);
+  });
+
+  afterAll(async () => {
+    __setChatTransportForTests(null);
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  async function runCli(args: string[]): Promise<{ exitCode: number | undefined; errs: string[] }> {
+    const errs: string[] = [];
+    const origErr = console.error;
+    const origLog = console.log;
+    const origExit = process.exit;
+    let exitCode: number | undefined;
+    console.error = (...a: unknown[]) => { errs.push(a.join(' ')); };
+    console.log = () => {};
+    (process as { exit: unknown }).exit = (code?: number) => {
+      exitCode = code;
+      throw new Error('__exit__');
+    };
+    try {
+      await runExtractConversationFacts(engine, args).catch((e) => {
+        if (!/__exit__/.test(String((e as Error)?.message))) throw e;
+      });
+    } finally {
+      console.error = origErr;
+      console.log = origLog;
+      process.exit = origExit;
+    }
+    return { exitCode, errs };
+  }
+
+  test('an unpriced --model exits 1 before any page is claimed; --dry-run skips the gate', async () => {
+    const gated = await runCli(['--types', 'email', '--model', 'openai:no-such-model-id']);
+    expect(gated.exitCode).toBe(1);
+    expect(gated.errs.join('\n')).toContain('has no pricing entry');
+
+    const preview = await runCli(['--types', 'email', '--model', 'openai:no-such-model-id', '--dry-run']);
+    expect(preview.exitCode).toBeUndefined();
+    expect(preview.errs.join('\n')).not.toContain('has no pricing entry');
+    expect(preview.errs.join('\n')).not.toContain('provider must not be called');
+  });
+
+  test('--background does not dodge the gate: an unpriced --model exits 1 before the job is enqueued', async () => {
+    const gated = await runCli(['--background', '--types', 'email', '--model', 'openai:no-such-model-id']);
+    expect(gated.exitCode).toBe(1);
+    expect(gated.errs.join('\n')).toContain('has no pricing entry');
+    expect(gated.errs.join('\n')).not.toContain('Unknown flag');
+  });
+});
+
+describe('email threads through the core: char cap, drops, folds, date fallback, dry run, abort', () => {
+  let engine: PGLiteEngine;
+  const turns: string[] = [];
+  const LONG = Array.from(
+    { length: 40 },
+    (_, i) => `Sentence ${i} of a long email body that keeps going on about the renewal terms.`,
+  ).join(' ');
+
+  const extractor = async (input: { turnText: string }) => {
+    turns.push(input.turnText);
+    return [
+      { fact: 'A fact.', kind: 'fact', entity_slug: 'people/alice-example', confidence: 0.9, notability: 'low' } as never,
+    ];
+  };
+  const run = (opts: Record<string, unknown> = {}) =>
+    runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      overrideDisabled: true,
+      extractor,
+      sleepMs: 0,
+      ...opts,
+    });
+  const thread = (slug: string, title: string, body: string[], frontmatter: Record<string, unknown>) =>
+    engine.putPage(slug, { type: 'email' as never, title, compiled_truth: [`# ${title}`, ...body].join('\n'), frontmatter });
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(EMBED_STUB);
+  });
+
+  beforeEach(async () => {
+    turns.length = 0;
+    await engine.executeRaw(`DELETE FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`);
+    await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
+    await engine.executeRaw(`DELETE FROM pages WHERE type IN ('email', 'conversation')`);
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  test('a thread over the segment char cap splits into several untruncated segments on one page', async () => {
+    await thread('email-thread-long', 'Email thread: Long', [
+      EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', LONG, '',
+      EMAIL_HDR('Bob Example', 'bob@example.com', 'Tue, 02 Jun 2026 09:00:00 +0000', 'received'), '', LONG, '',
+      EMAIL_HDR('Alice Example', 'alice@example.com', 'Wed, 03 Jun 2026 09:00:00 +0000', 'sent'), '', LONG, '',
+      EMAIL_HDR('Bob Example', 'bob@example.com', 'Thu, 04 Jun 2026 09:00:00 +0000', 'received'), '', LONG,
+    ], { subject: 'Long', message_count: 4 });
+    const r = await run();
+    expect(r.pages_processed).toBe(1);
+    expect(r.segments_processed).toBeGreaterThanOrEqual(2);
+    expect(turns).toHaveLength(r.segments_processed);
+    for (const t of turns) {
+      expect(t.length).toBeLessThanOrEqual(SEGMENT_TEXT_CHAR_LIMIT);
+      expect(t.endsWith('…(truncated)')).toBe(false);
+    }
+    // Every message's tail survived the cut.
+    expect(turns.join('\n').split('Sentence 39 of').length - 1).toBe(4);
+  });
+
+  test('after automated drops, a lone inbound human message is audited as fewer than two eligible messages', async () => {
+    await thread('email-thread-relay', 'Email thread: Relay', [
+      EMAIL_HDR('"A (Google Docs)"', 'comments-noreply@docs.google.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'), '', 'A commented.', '',
+      EMAIL_HDR('"B (Google Docs)"', 'comments-noreply@docs.google.com', 'Mon, 01 Jun 2026 09:30:00 +0000', 'received'), '', 'B commented.', '',
+      EMAIL_HDR('Carol Example', 'carol@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'), '', 'Looks good to me.',
+    ], { subject: 'Relay', message_count: 3 });
+    const r = await run();
+    expect(r.pages_processed).toBe(0);
+    expect(r.email_messages_dropped_automated).toBe(2);
+    expect(r.pages_marked_non_extractable).toBe(1);
+    expect(turns).toHaveLength(0);
+    const rows = await engine.executeRaw<{ context: string }>(
+      `SELECT context FROM facts WHERE source = $1 AND source_markdown_slug = 'email-thread-relay'`,
+      [NON_EXTRACTABLE_AUDIT_SOURCE],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].context).toContain('fewer than two eligible messages');
+  });
+
+  test('a forwarded speaker-shaped heading inside an email body never declines the page', async () => {
+    const body = [
+      EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', 'Forwarding the note below.', '',
+      '## Alice Smith', 'Alice wrote this section in the forwarded newsletter.', '',
+      EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 11:00:00 +0000', 'sent'), '', 'Following up on it.',
+    ];
+    await thread('email-thread-fwd', 'Email thread: Forward', body, { subject: 'Forward', message_count: 2 });
+    const r = await run();
+    expect(r.pages_processed).toBe(1);
+    expect(r.pages_skipped_unrecognized_speaker).toBe(0);
+    expect(turns.join('\n')).toContain('## Alice Smith');
+    // Contrast: the same body on a non-email page keeps the #4136 decline
+    // (one speaker + a speaker-shaped fold), so the email guard is load-bearing.
+    turns.length = 0;
+    await engine.putPage('conversations/fwd-as-chat', {
+      type: 'conversation',
+      title: 'Forward as chat',
+      compiled_truth: body.join('\n'),
+      frontmatter: { date: '2026-06-01' },
+    });
+    const chat = await run({ types: ['conversation'] });
+    expect(chat.pages_skipped_unrecognized_speaker).toBe(1);
+    expect(chat.pages_processed).toBe(0);
+  });
+
+  test('an anchor with an unparseable date is kept as its own turn, anchored on the page date', async () => {
+    await thread('email-thread-baddate', 'Email thread: Bad date', [
+      EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', 'alice body', '',
+      EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Xxx 2026 10:00:00 +0000', 'received'), '', 'bob body',
+    ], { subject: 'Bad date', message_count: 2, date: '2026-06-18' });
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (s: string) => {
+      errs.push(String(s));
+      return true;
+    };
+    let r: Awaited<ReturnType<typeof run>>;
+    try {
+      r = await run();
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+    expect(r!.pages_processed).toBe(1);
+    const all = turns.join('\n');
+    expect(all).toContain('Alice Example [sent] (2026-06-01T09:00:00.000Z): alice body');
+    expect(all).toContain('Bob Example [received] (2026-06-18T00:00:00Z): bob body');
+    expect(errs.join('')).toContain('email-thread-baddate: 1 anchor line(s) had an unparseable date');
+  });
+
+  test('dry run on email pages writes nothing durable but still reports the email counters', async () => {
+    await thread('email-thread-dry-inbound', 'Email thread: Inbound only', [
+      EMAIL_HDR('Newsletter', 'news@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'), '', 'Read this.',
+    ], { subject: 'Inbound only', message_count: 1 });
+    await thread('email-thread-dry-real', 'Email thread: Real', [
+      EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', 'Can we meet?', '',
+      EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'), '', 'Yes, Friday.',
+    ], { subject: 'Real', message_count: 2 });
+    const r = await run({ dryRun: true });
+    expect(r.pages_skipped_out_of_scope_email).toBe(1);
+    expect(r.pages_processed).toBe(1);
+    expect(r.facts_inserted).toBe(0);
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE source LIKE 'cli:extract-conversation-facts%'`,
+    );
+    expect(Number(rows[0].n)).toBe(0);
+    const cps = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM op_checkpoints WHERE op = 'extract-conversation-facts'`,
+    );
+    expect(Number(cps[0].n)).toBe(0);
+  });
+
+  test('an abort raised while the stream still holds pages stops the run; the next run finishes the rest', async () => {
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      await thread(`email-thread-abort-${i}`, `Email thread: Abort ${i}`, [
+        EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', `Question ${i}.`, '',
+        EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'), '', `Answer ${i}.`,
+      ], { subject: `Abort ${i}`, message_count: 2 });
+    }
+    const controller = new AbortController();
+    let calls = 0;
+    const abortingExtractor = async () => {
+      calls++;
+      if (calls === 2) {
+        const err = Object.assign(new Error('caller cancelled'), { name: 'AbortError' });
+        controller.abort(err);
+        throw err;
+      }
+      return [{ fact: 'A fact.', kind: 'fact', entity_slug: 'people/alice-example', confidence: 0.9, notability: 'low' } as never];
+    };
+    await expect(
+      runExtractConversationFactsCore(
+        engine,
+        { sourceId: 'default', types: ['email'], overrideDisabled: true, extractor: abortingExtractor, sleepMs: 0 },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    const done = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM facts WHERE source = $1`,
+      [TERMINAL_AUDIT_SOURCE],
+    );
+    const first = Number(done[0].n);
+    expect(first).toBeGreaterThanOrEqual(1);
+    expect(first).toBeLessThan(N);
+    const second = await run();
+    expect(second.pages_processed).toBe(N - first);
+    expect(second.pages_skipped_completed).toBe(first);
+  });
+});
+
+describe('streaming enumeration accumulates candidates across list reads', () => {
+  let engine: PGLiteEngine;
+  const N = 25; // > 2 batches; every other page is out of scope, so a batch yields ~5 candidates
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(EMBED_STUB);
+    for (let i = 0; i < N; i++) {
+      const slug = `email-thread-mix-${String(i).padStart(2, '0')}`;
+      const inbound = i % 2 === 0;
+      await engine.putPage(slug, {
+        type: 'email' as never,
+        title: `Email thread: Mix ${i}`,
+        compiled_truth: inbound
+          ? [`# Email thread: Mix ${i}`, EMAIL_HDR('Newsletter', 'news@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'), '', `Issue ${i}.`].join('\n')
+          : [
+              `# Email thread: Mix ${i}`,
+              EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', `Question ${i}.`, '',
+              EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'), '', `Answer ${i}.`,
+            ].join('\n'),
+        frontmatter: { subject: `Mix ${i}`, message_count: inbound ? 1 : 2 },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  const run = () =>
+    runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      types: ['email'],
+      overrideDisabled: true,
+      sleepMs: 0,
+      extractor: async () => [
+        { fact: 'A fact.', kind: 'fact', entity_slug: 'people/alice-example', confidence: 0.9, notability: 'low' } as never,
+      ],
+    });
+
+  test('every in-scope thread is processed exactly once and every out-of-scope page is counted', async () => {
+    const inbound = Math.ceil(N / 2);
+    const r = await run();
+    expect(r.pages_skipped_out_of_scope_email).toBe(inbound);
+    expect(r.pages_processed).toBe(N - inbound);
+    const terminal = await engine.executeRaw<{ source_markdown_slug: string }>(
+      `SELECT source_markdown_slug FROM facts WHERE source = $1`,
+      [TERMINAL_AUDIT_SOURCE],
+    );
+    expect(terminal).toHaveLength(N - inbound);
+    expect(new Set(terminal.map((t) => t.source_markdown_slug)).size).toBe(N - inbound);
+    const again = await run();
+    expect(again.pages_processed).toBe(0);
+    expect(again.pages_skipped_completed).toBe(N - inbound);
+    expect(again.pages_skipped_out_of_scope_email).toBe(inbound);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-08-28 ship review fixes.
+// ---------------------------------------------------------------------------
+
+describe('review fixes (2026-08-28 ship)', () => {
+  test('a lone oversized message never manufactures the segment minimum through the char-cut exemption', () => {
+    const lone = [{ speaker: 'Newsletter', timestamp: '2026-06-18T07:46:32.000Z', text: 'word '.repeat(2400) }];
+    const segs = splitIntoSegments(lone, {
+      gapMinutes: EMAIL_SEGMENT_GAP_MINUTES,
+      maxChars: DEFAULT_SEGMENT_MAX_CHARS,
+      minMessages: 2,
+    });
+    expect(segs).toHaveLength(0);
+    // A conversation that meets the minimum keeps the exemption: both sides of a cut survive.
+    const pair = [
+      ...lone,
+      { speaker: 'Juan Andrade', timestamp: '2026-06-18T08:00:00.000Z', text: 'Short reply.' },
+    ];
+    const kept = splitIntoSegments(pair, {
+      gapMinutes: EMAIL_SEGMENT_GAP_MINUTES,
+      maxChars: DEFAULT_SEGMENT_MAX_CHARS,
+      minMessages: 2,
+    });
+    expect(kept.length).toBeGreaterThanOrEqual(2);
+    expect(kept.flatMap((s) => s.messages).length).toBeGreaterThanOrEqual(pair.length);
+  });
+
+  test('email-digest typed pages are out of scope before parsing', () => {
+    expect(isOutOfScopeEmail({ type: 'email-digest' as never, frontmatter: {}, compiled_truth: '## Triage' })).toBe(true);
+    expect(isOutOfScopeEmail({ type: 'email' as never, frontmatter: { subtype: 'digest' }, compiled_truth: '' })).toBe(true);
+    expect(isOutOfScopeEmail({ type: 'conversation' as never, frontmatter: {}, compiled_truth: '' })).toBe(false);
+  });
+
+  test('compileEmailSenderDenylist merges operator patterns and skips invalid ones', () => {
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (s: string) => {
+      errs.push(String(s));
+      return true;
+    };
+    let list: readonly RegExp[];
+    try {
+      list = compileEmailSenderDenylist(['@relay\\.example$', '(unclosed', 42 as never, '']);
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+    expect(list.length).toBe(EMAIL_AUTOMATED_SENDERS.length + 1);
+    expect(errs.join('')).toContain('invalid pattern');
+    const msgs = [
+      { speaker: 'Bot &lt;bot@relay.example&gt;', timestamp: '2026-06-18T07:46:32.000Z', text: 'ping' },
+      { speaker: 'Edmund Farrar &lt;ed@example.com&gt;', timestamp: '2026-06-18T08:00:00.000Z', text: 'pong' },
+    ];
+    expect(normalizeEmailMessages(msgs).dropped).toBe(0);
+    const n = normalizeEmailMessages(msgs, list);
+    expect(n.dropped).toBe(1);
+    expect(n.messages.map((m) => m.speaker)).toEqual(['Edmund Farrar']);
+    expect(compileEmailSenderDenylist(undefined)).toEqual(EMAIL_AUTOMATED_SENDERS);
+  });
+
+  test('the canonicalizer registers only people/ and companies/ slugs', () => {
+    const c = new EntitySlugCanonicalizer();
+    expect(c.canonicalize('projects/apollo')).toBe('projects/apollo');
+    expect(c.canonicalize('apollo')).toBe('apollo');
+    expect(c.canonicalize('companies/a/b')).toBe('companies/a/b');
+    expect(c.canonicalize('a/b')).toBe('a/b');
+    expect(c.canonicalize('people/edmund-farrar')).toBe('people/edmund-farrar');
+    expect(c.canonicalize('edmund-farrar')).toBe('people/edmund-farrar');
+    expect(c.canonicalize('Edmund Farrar')).toBe('people/edmund-farrar');
+  });
+
+  test('the canonicalizer loads sibling pages from the run source only', async () => {
+    const calls: Array<{ sql: string; params?: unknown[] }> = [];
+    const fake = {
+      executeRaw: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        return sql.includes('FROM pages') ? [{ slug: 'people/alice-example' }] : [];
+      },
+    } as unknown as PGLiteEngine;
+    const c = await EntitySlugCanonicalizer.load(fake, 'src-a');
+    const pagesQuery = calls.find((x) => x.sql.includes('FROM pages'))!;
+    expect(pagesQuery.sql).toMatch(/WHERE source_id = \$1/);
+    expect(pagesQuery.params).toEqual(['src-a']);
+    const factsQuery = calls.find((x) => x.sql.includes('FROM facts'))!;
+    expect(factsQuery.params).toEqual(['src-a']);
+    expect(c.canonicalize('alice-example')).toBe('people/alice-example');
+  });
+
+  test('the candidate set is bounded by MAX_CANDIDATE_BATCH', () => {
+    expect(MAX_CANDIDATE_BATCH).toBeGreaterThanOrEqual(PAGE_LIST_BATCH);
+    for (const workers of [1, 16, 64, 500]) {
+      const candidateBatch = Math.min(MAX_CANDIDATE_BATCH, Math.max(PAGE_LIST_BATCH, workers * 2));
+      expect(candidateBatch).toBeLessThanOrEqual(MAX_CANDIDATE_BATCH);
+      expect(candidateBatch).toBeGreaterThanOrEqual(PAGE_LIST_BATCH);
+    }
+  });
+});
+
+describe('review fixes through the core (2026-08-28 ship)', () => {
+  let engine: PGLiteEngine;
+  const extractor = async () =>
+    [{ fact: 'x', kind: 'fact', confidence: 0.9, notability: 'low' }] as never;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    __setEmbedTransportForTests(EMBED_STUB);
+    // Two issues of one newsletter: message_count 2, both received, one sender.
+    await engine.putPage('email-thread-news2', {
+      type: 'email' as never,
+      title: 'Email thread: Weekly digest',
+      frontmatter: { subject: 'Weekly digest', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Weekly digest',
+        EMAIL_HDR('Indie Weekly', 'hi@indieweekly.example', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Issue 41: growth tactics.',
+        '',
+        EMAIL_HDR('Indie Weekly', 'hi@indieweekly.example', 'Mon, 08 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Issue 42: pricing.',
+      ].join('\n'),
+    });
+    // Two distinct humans, neither the owner: a real exchange the owner was copied on.
+    await engine.putPage('email-thread-cc2', {
+      type: 'email' as never,
+      title: 'Email thread: Contract draft',
+      frontmatter: { subject: 'Contract draft', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Contract draft',
+        EMAIL_HDR('Alice Example', 'alice@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Draft attached, please review.',
+        '',
+        EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'Reviewed, two comments.',
+      ].join('\n'),
+    });
+    // Operator denylist drops a sender the built-in list does not know.
+    await engine.putPage('email-thread-relay2', {
+      type: 'email' as never,
+      title: 'Email thread: Ticket 77',
+      frontmatter: { subject: 'Ticket 77', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Ticket 77',
+        EMAIL_HDR('Support Bot', 'bot@relay.example', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Ticket opened.',
+        '',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'sent'),
+        '',
+        'Closing this, resolved.',
+      ].join('\n'),
+    });
+  });
+
+  afterAll(async () => {
+    __setEmbedTransportForTests(null);
+    __setChatTransportForTests(null);
+    await engine.disconnect();
+  });
+
+  test('two issues of one newsletter stay below the minimum and are audited; two distinct humans qualify', async () => {
+    const news = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-news2', types: ['email'], overrideDisabled: true, extractor,
+    });
+    expect(news.pages_marked_non_extractable).toBe(1);
+    expect(news.facts_inserted).toBe(0);
+    const cc = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-cc2', types: ['email'], overrideDisabled: true, extractor,
+    });
+    expect(cc.pages_processed).toBe(1);
+    expect(cc.facts_inserted).toBeGreaterThan(0);
+  });
+
+  test('opts.emailAutomatedSenders extends the built-in denylist for the run', async () => {
+    const r = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-relay2', types: ['email'], overrideDisabled: true, extractor,
+      emailAutomatedSenders: ['@relay\\.example$'],
+    });
+    expect(r.email_messages_dropped_automated).toBe(1);
+    // The owner's lone sent message still qualifies the thread.
+    expect(r.pages_processed).toBe(1);
+  });
+
+  test('the core rejects an unpriced --model before any page is claimed', async () => {
+    __setChatTransportForTests(async () => {
+      throw new Error('provider must not be called');
+    });
+    expect(validateModelFlag('openai:no-such-model-id')).toContain('has no pricing entry');
+    await expect(
+      runExtractConversationFactsCore(engine, {
+        sourceId: 'default', slug: 'email-thread-cc2', types: ['email'], overrideDisabled: true,
+        model: 'openai:no-such-model-id',
+      }),
+    ).rejects.toThrow('has no pricing entry');
+    // dryRun skips the gate (no provider call is made either way).
+    const preview = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-cc2', types: ['email'], overrideDisabled: true, dryRun: true,
+      model: 'openai:no-such-model-id', extractor,
+    });
+    expect(preview.pages_considered).toBe(1);
+  });
+
+  test('a heading the pattern rejects declines the page instead of folding into the previous sender', async () => {
+    await engine.putPage('email-thread-badhdr', {
+      type: 'email' as never,
+      title: 'Email thread: Odd date',
+      frontmatter: { subject: 'Odd date', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Odd date',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        '',
+        'Can you confirm the fee?',
+        '',
+        // Two-digit year: outside the pattern, passes quick_reject.
+        EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 26 10:00:00 +0000', 'received'),
+        '',
+        'Confirmed, 5k.',
+      ].join('\n'),
+    });
+    const errs: string[] = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as { write: unknown }).write = (s: string) => {
+      errs.push(String(s));
+      return true;
+    };
+    let r;
+    try {
+      r = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default', slug: 'email-thread-badhdr', types: ['email'], overrideDisabled: true, extractor,
+      });
+    } finally {
+      (process.stderr as { write: unknown }).write = orig;
+    }
+    expect(r.pages_skipped_unrecognized_speaker).toBe(1);
+    expect(r.facts_inserted).toBe(0);
+    expect(errs.join('')).toContain('2 heading line(s) but 1 parsed message(s)');
+    // Non-terminal: no audit row, the page is retried once the format is handled.
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_markdown_slug = 'email-thread-badhdr'`,
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  test('a quoted section heading shaped like `## Notes — Q3 plan (sent)` is body text, not a missing anchor', async () => {
+    await engine.putPage('email-thread-quoted', {
+      type: 'email' as never,
+      title: 'Email thread: Quoted',
+      frontmatter: { subject: 'Quoted', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Quoted',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        '',
+        'See the notes below.',
+        '## Notes — Q3 plan (sent)',
+        'Pasted section.',
+        '',
+        EMAIL_HDR('Bob Example', 'bob@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'Got it.',
+      ].join('\n'),
+    });
+    const r = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-quoted', types: ['email'], overrideDisabled: true, extractor,
+    });
+    expect(r.pages_skipped_unrecognized_speaker).toBe(0);
+    expect(r.pages_processed).toBe(1);
+  });
+
+  test('--slug applies the out-of-scope rule: a single inbound message is skipped without a lock or audit row', async () => {
+    await engine.putPage('email-thread-solo-in', {
+      type: 'email' as never,
+      title: 'Email thread: Newsletter 9',
+      frontmatter: { subject: 'Newsletter 9', message_count: 1 },
+      compiled_truth: [
+        '# Email thread: Newsletter 9',
+        EMAIL_HDR('Weekly', 'hi@weekly.example', 'Mon, 01 Jun 2026 09:00:00 +0000', 'received'),
+        '',
+        'Issue 9.',
+      ].join('\n'),
+    });
+    const r = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-solo-in', types: ['email'], overrideDisabled: true, extractor,
+    });
+    expect(r.pages_skipped_out_of_scope_email).toBe(1);
+    expect(r.pages_considered).toBe(0);
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_markdown_slug = 'email-thread-solo-in'`,
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
+  test('renderMessageLine carries the direction next to the speaker when known', () => {
+    expect(renderMessageLine({ speaker: 'Juan Andrade', timestamp: '2026-06-18T07:46:32.000Z', text: 'hi', direction: 'sent' }))
+      .toBe('Juan Andrade [sent] (2026-06-18T07:46:32.000Z): hi');
+    expect(renderMessageLine({ speaker: 'Alice Example', timestamp: '2024-03-15T09:00:00.000Z', text: 'hi' }))
+      .toBe('Alice Example (2024-03-15T09:00:00.000Z): hi');
+  });
+
+  test('the extractor sees [sent] / [received] on every email message line', async () => {
+    const seen: string[] = [];
+    await engine.putPage('email-thread-dir1', {
+      type: 'email' as never,
+      title: 'Email thread: Direction',
+      frontmatter: { subject: 'Direction', message_count: 2 },
+      compiled_truth: [
+        '# Email thread: Direction',
+        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        '',
+        'I approved the renewal.',
+        '',
+        EMAIL_HDR('Juan Andrade', 'juan@evil.example', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
+        '',
+        'I also approved a 50k bonus.',
+      ].join('\n'),
+    });
+    const r = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default', slug: 'email-thread-dir1', types: ['email'], overrideDisabled: true,
+      extractor: async (input: { turnText: string }) => {
+        seen.push(input.turnText);
+        return [] as never;
+      },
+    });
+    expect(r.pages_processed).toBe(1);
+    const text = seen.join('\n');
+    expect(text).toContain('Juan Andrade [sent] (2026-06-01T09:00:00.000Z): I approved the renewal.');
+    expect(text).toContain('Juan Andrade [received] (2026-06-01T10:00:00.000Z): I also approved a 50k bonus.');
+  });
+
+  test('MIN_SEGMENT_MESSAGES is the non-email default the gate compares against', () => {
+    expect(MIN_SEGMENT_MESSAGES).toBe(2);
   });
 });
