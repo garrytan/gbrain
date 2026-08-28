@@ -98,6 +98,31 @@ describe('matchesSlugAllowList — glob semantics', () => {
 describe('put_page — trusted-workspace allow-list', () => {
   const put_page = findOp('put_page');
 
+  test('REJECTS malformed slugs before they reach the write path', async () => {
+    const ctx = makeCtx({
+      allowedSlugPrefixes: ['wiki/originals/*'],
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'wiki/originals/ideas/secrets-readonly- trusted-services',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+    });
+  });
+
+  test('accepts a valid slug inside the allow-list in dry-run mode', async () => {
+    const ctx = makeCtx({
+      allowedSlugPrefixes: ['wiki/originals/*'],
+      dryRun: true,
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'wiki/originals/ideas/secrets-readonly-trusted-services',
+      content: '---\ntitle: x\n---\nbody',
+    })).resolves.toMatchObject({
+      dry_run: true,
+    });
+  });
+
   test('REJECTS when slug is outside the allow-list', async () => {
     const ctx = makeCtx({
       allowedSlugPrefixes: ['wiki/personal/reflections/*', 'wiki/originals/*'],
@@ -121,6 +146,26 @@ describe('put_page — trusted-workspace allow-list', () => {
       content: '---\ntitle: x\n---\nbody',
     })).rejects.toMatchObject({
       code: 'permission_denied',
+    });
+  });
+});
+
+describe('put_page — strict slug validation', () => {
+  const put_page = findOp('put_page');
+
+  test('REJECTS malformed slugs for trusted local callers too', async () => {
+    const ctx = makeCtx({
+      remote: false,
+      viaSubagent: false,
+      subagentId: undefined,
+      allowedSlugPrefixes: undefined,
+      dryRun: true,
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'notes/contains a space',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
     });
   });
 });

@@ -343,6 +343,7 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+    validatePageSlug(slug);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
     // Only trusted LOCAL callers (ctx.remote === false — capture CLI,
