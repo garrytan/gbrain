@@ -374,6 +374,13 @@ export interface SyncOpts {
    * the full-sync and incremental paths. Excluded files are never imported;
    * exclusion does NOT delete previously-imported pages (conservative,
    * matching the #1433 metafile posture).
+   *
+   * Unioned with the persisted `sync.exclude` config key (comma- or
+   * newline-separated; a trailing `/` is normalized to a `/**` subtree glob),
+   * so callers that never touch the CLI — autopilot, minion sync jobs, the
+   * dream cycle — inherit the same indexing scope. Union, not override: an
+   * ad-hoc flag narrows further but never silently re-opens a scope the
+   * operator persisted. Best-effort read, as with `sync.include_working_tree`.
    */
   exclude?: string[];
   /**
@@ -1796,6 +1803,41 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     } catch { workingTreeResolved = false; }
   }
   const importWorkingTree = detachedHead || workingTreeResolved === true;
+
+  // Same reasoning as `sync.include_working_tree` directly above, applied to
+  // the indexing scope: `--exclude` is a per-invocation flag, so only callers
+  // that go through the CLI can narrow what gets indexed. autopilot, minion
+  // sync jobs and the dream cycle call sync internally with no place to put
+  // exclusions — a repo whose indexing scope is narrower than its git tree is
+  // honored on one path and silently ignored on the others.
+  //
+  // Silently is the operative word: not excluding something is not an error
+  // for an indexer, so the gap surfaces as content quietly reappearing in the
+  // index, never as a failure. Resolving the config HERE gives every caller
+  // the same scope. The read is best-effort, exactly like the one above.
+  //
+  // UNION rather than flag-wins, which is where this departs from the boolean
+  // above: a persisted scope is a property of the repo ("this is not indexable
+  // material"), and an ad-hoc `--exclude tmp/` must not silently re-open it —
+  // that would reintroduce the very failure this closes. A boolean has no
+  // union; a pattern list does. Narrowing further always works; widening is
+  // deliberate, by editing the config.
+  //
+  // Directory prefixes are normalized to subtree globs (`raw/` → `raw/**`):
+  // without the `**` the pattern matches the directory entry and none of the
+  // files inside it, which is the same gap wearing a different shape.
+  try {
+    const stored = await engine.getConfig('sync.exclude');
+    const storedPatterns = (stored ?? '')
+      .split(/[\n,]/)
+      .map(p => p.trim())
+      .filter(Boolean)
+      .map(p => (p.endsWith('/') ? `${p}**` : p));
+    if (storedPatterns.length > 0) {
+      opts = { ...opts, exclude: [...new Set([...(opts.exclude ?? []), ...storedPatterns])] };
+    }
+  } catch { /* config unreadable — never break a sync over the scope read */ }
+
   // Fail-open guard: the manifest builder shells out under a 30s/100MiB git
   // budget and THROWS on breach; a monster untracked dir must not convert
   // every previously-working up-to-date sync into a hard error. Drift
