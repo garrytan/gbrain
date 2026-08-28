@@ -1,7 +1,7 @@
 /**
  * v0.41.16.0 — Built-in conversation parser pattern registry.
  *
- * Eighteen hand-vetted patterns covering the chat-export formats this
+ * Twenty hand-vetted patterns covering the chat-export formats this
  * codebase is most likely to encounter. Each pattern's regex was
  * derived from a public format reference (source_doc field) so future
  * maintainers can verify against the wild shape.
@@ -50,7 +50,7 @@ export function cleanSpeaker(raw: string, override?: RegExp): string {
   return stripped || raw.trim();
 }
 
-/** The 18 hand-vetted built-in patterns. */
+/** The 20 hand-vetted built-in patterns. */
 export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
   // -------------------------------------------------------------------
   // INLINE-DATE patterns (date in every line; less ambiguous; tried first).
@@ -833,6 +833,64 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     source_doc:
       'gbrain nightly transcript ingest: compiled_truth bodies use markdown headings per turn',
   },
+
+  {
+    id: 'email-thread-heading',
+    origin: 'builtin',
+    // gbrain email-collector thread pages: one heading per message,
+    //   `## Name &lt;addr&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)`
+    // with the message body on the continuation lines (D5). The sender is
+    // kept verbatim (`Name &lt;addr&gt;`, HTML-escaped by the collector) so
+    // the caller can split name/address and apply sender policy; the
+    // trailing `(sent|received)` marker surfaces as MatchedMessage.direction.
+    // The RFC-2822 date carries its own offset, so no timezone assumption.
+    // Uses U+2014 EM DASH (decoded for source clarity).
+    //
+    // Separators are the collector's literal single spaces, not `\s+`: a
+    // lazy `.+?` between two whitespace runs backtracks polynomially on a
+    // body line such as `##` + thousands of spaces + `(sent)` (1.5 s at
+    // 2,000 spaces), and an inbound email body is attacker-controlled. With
+    // literal separators the anchor test is linear in the line length.
+    regex:
+      /^## (.+?) — ((?:[A-Za-z]{3}, )?\d{1,2} [A-Za-z]{3} \d{4} \d{1,2}:\d{2}(?::\d{2})? (?:[+-]\d{4}|[A-Z]{2,5})(?: \([^)]*\))?) \((sent|received)\)\s*()$/u,
+    captures: {
+      speaker_group: 1,
+      date_group: 2,
+      direction_group: 3,
+      text_group: 4, // empty; body on continuation lines (multi_line)
+    },
+    date_source: 'inline',
+    time_format: 'rfc2822',
+    timezone_policy: 'inline_utc',
+    multi_line: true,
+    score_continuations_as_body: true,
+    // No speaker cleanup: the default strips leading non-letters, which
+    // would turn an address-only sender `&lt;a@b&gt;` into `lt;a@b&gt;` and
+    // a quoted display name into `Juan"`. The extractor's parseEmailSender
+    // owns the sender format (entities, quotes, name/address split).
+    speaker_clean: /^(?!)/,
+    // Only lines ending in the direction marker are anchor candidates, so
+    // `## Section` headings inside a forwarded newsletter body never inflate
+    // the D18 scorer's denominator. The length bound keeps a pathological
+    // body line (kilobytes of padding before the marker) out of the full
+    // regex entirely; a real heading is well under 512 chars.
+    quick_reject: /^.{0,512}\((?:sent|received)\)\s*$/,
+    test_positive: [
+      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+      '## Edmund Farrar &lt;ed@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
+      '## Indie Hackers &lt;hi@example.com&gt; — Tue, 25 Oct 2022 12:04:54 +0000 (UTC) (received)',
+      '## Ops &lt;ops@example.com&gt; — Mon, 03 Aug 2026 09:15:00 +0000 (GMT+00:00) (received)',
+      '## unknown — 3 Jan 2024 09:00:00 GMT (received)',
+    ],
+    test_negative: [
+      '## Summary',
+      '## Product updates (sent)',
+      '**Alice Example** (2024-03-15 9:00 AM): hello',
+      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
+    ],
+    source_doc:
+      'gbrain email collector (email-collector.mjs) thread pages: per-message `## From — Date (direction)` headings',
+  },
 ];
 
 /**
@@ -882,6 +940,7 @@ export function validatePatternEntry(entry: PatternEntry): void {
       ['hour_group', entry.captures.hour_group, 1],
       ['minute_group', entry.captures.minute_group, 1],
       ['ampm_group', entry.captures.ampm_group, 1],
+      ['direction_group', entry.captures.direction_group, 1],
     ];
     for (const [name, group, minimum] of captureGroups) {
       if (group === undefined) continue;

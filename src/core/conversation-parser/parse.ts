@@ -175,6 +175,29 @@ function buildIso(
 ): string | null {
   const { captures } = entry;
 
+  // Generic rfc2822 path: the pattern captures the whole date string and
+  // Date.parse handles day names, numeric offsets and a trailing zone comment
+  // (`Thu, 18 Jun 2026 07:46:32 +0100`, `... +0000 (UTC)`). The offset is
+  // honored, so the ISO output is true UTC — no timezone assumption.
+  if (entry.time_format === 'rfc2822' && captures.date_group !== undefined) {
+    // A trailing parenthetical is an RFC-2822 comment (`(UTC)`, `(GMT+00:00)`,
+    // `(Coordinated Universal Time)`); engines disagree on which of them
+    // parse, so drop it before Date.parse. The offset before it is authoritative.
+    const raw = typeof match[captures.date_group] === 'string'
+      ? match[captures.date_group].trim().replace(/\s*\([^)]*\)\s*$/, '')
+      : '';
+    let ms = raw ? Date.parse(raw) : Number.NaN;
+    if (!Number.isFinite(ms) && raw) {
+      // Zone WORDS (`CET`, `BST`, `IST`) are implementation-defined in
+      // Date.parse; retry with the word replaced by a numeric zero offset so
+      // the wall-clock time survives (off by the zone's offset, never off by
+      // months). Numeric offsets and `GMT`/`UTC` already parsed above.
+      const retried = raw.replace(/(\d{1,2}:\d{2}(?::\d{2})?)\s+[A-Z]{2,5}(?=\s*(?:\(|$))/, '$1 +0000');
+      if (retried !== raw) ms = Date.parse(retried);
+    }
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  }
+
   // Pattern-specific date reconstruction.
   switch (entry.id) {
     case 'telegram-text-export': {
@@ -325,7 +348,7 @@ export function applyPattern(
   body: string,
   entry: PatternEntry,
   dateCtx: DateContext,
-  diag?: { unrecognized_headings: string[] },
+  diag?: { unrecognized_headings: string[]; date_fallback_count?: number },
 ): MatchedMessage[] {
   if (!body) return [];
   const out: MatchedMessage[] = [];
@@ -400,8 +423,14 @@ export function applyPattern(
 
     const m = entry.regex.exec(line);
     if (m) {
-      const iso = buildIso(m, entry, runningCtx);
-      if (iso === null) continue; // reconstruction failed; skip line
+      let iso = buildIso(m, entry, runningCtx);
+      if (iso === null) {
+        // Reconstruction failed. Dropping the anchor would fold this
+        // message's body into the PREVIOUS speaker (silent misattribution),
+        // so open the message on the page's fallback date and count it.
+        iso = `${runningCtx.fallbackDate}T00:00:00Z`;
+        if (diag) diag.date_fallback_count = (diag.date_fallback_count ?? 0) + 1;
+      }
       const rawSpeaker = m[entry.captures.speaker_group] ?? '';
       const speaker = cleanSpeaker(rawSpeaker, entry.speaker_clean);
       let text = '';
@@ -411,7 +440,17 @@ export function applyPattern(
       // Multi-line patterns: text on next line(s) until next anchor.
       // (Even when text_group is set, multi_line=true means SUBSEQUENT
       // non-anchor lines also absorb into this message's body.)
-      out.push({ speaker, timestamp: iso, text });
+      const dirRaw =
+        entry.captures.direction_group !== undefined
+          ? m[entry.captures.direction_group]
+          : undefined;
+      const direction =
+        dirRaw === 'sent' || dirRaw === 'received' ? dirRaw : undefined;
+      out.push(
+        direction !== undefined
+          ? { speaker, timestamp: iso, text, direction }
+          : { speaker, timestamp: iso, text },
+      );
     } else {
       // Passed quick_reject but failed the full regex (e.g. '## Assistant
       // Bot' against the closed-set heading pattern) — the OTHER fold site.
@@ -570,6 +609,10 @@ export function parseConversation(
   // the Slack collector's `- **Name** (Mon 11:18)\n  body…`) into the canonical
   // single-line shape the built-in patterns recognize. Strict no-op when no
   // block header is present, so already-canonical content is untouched.
+  // A forced pattern sees the raw body instead: the normalizer is shaped
+  // for Slack exports, and one forwarded block header inside an email body
+  // would otherwise fold every later line (anchors included) into one turn.
+  const rawBody = body;
   body = normalizeBlockConversation(body);
 
   const dateCtx = deriveDateContext(opts);
@@ -582,6 +625,21 @@ export function parseConversation(
 
   if (candidates.length === 0) {
     return { messages: [], phase: 'no_match' };
+  }
+
+  // Caller-known format: apply the named pattern directly. The density
+  // scorer would reject a long single-message page (one anchor among many
+  // lines), which is exactly the owner-sent email case. Fall through to
+  // scoring if the pattern is unknown or finds nothing.
+  if (opts.forcePatternId) {
+    const forced = candidates.find((p) => p.id === opts.forcePatternId);
+    if (forced) {
+      const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
+      const messages = applyPattern(rawBody, forced, dateCtx, diag);
+      if (messages.length > 0) {
+        return finishRegexMatch(forced, messages, diag, dateCtx, 0, rawBody, opts.diagnostic);
+      }
+    }
   }
 
   // D18: score every candidate; pick the highest. Tie-break on
@@ -660,30 +718,47 @@ export function parseConversation(
     };
   }
 
-  const diag = { unrecognized_headings: [] as string[] };
+  const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
   const messages = applyPattern(body, top.entry, dateCtx, diag);
+  return finishRegexMatch(top.entry, messages, diag, dateCtx, patternsScored, body, opts.diagnostic);
+}
 
+/**
+ * The `regex_match` ParseResult, shared by the scored path and the forced
+ * path so the D19 timezone warning and the result shape cannot drift
+ * between them.
+ */
+function finishRegexMatch(
+  entry: PatternEntry,
+  messages: MatchedMessage[],
+  diag: { unrecognized_headings: string[]; date_fallback_count: number },
+  dateCtx: DateContext,
+  patternsScored: number,
+  body: string,
+  diagnostic: boolean | undefined,
+): ParseResult {
   // Timezone warning surface (D19).
   let timezone_warning: string | undefined;
   if (
-    top.entry.timezone_policy === 'utc_assumed_with_warn' &&
+    entry.timezone_policy === 'utc_assumed_with_warn' &&
     !dateCtx.timezone &&
     messages.length > 0
   ) {
-    timezone_warning = `[conversation-parser] pattern=${top.entry.id} assumed UTC for time-only timestamps; add 'timezone: <IANA>' to page frontmatter for accurate facts`;
+    timezone_warning = `[conversation-parser] pattern=${entry.id} assumed UTC for time-only timestamps; add 'timezone: <IANA>' to page frontmatter for accurate facts`;
   }
 
   return {
     messages,
     phase: 'regex_match',
-    matched_pattern_id: top.entry.id,
+    matched_pattern_id: entry.id,
     patterns_scored: patternsScored,
     timezone_warning,
+    date_fallback_count: diag.date_fallback_count || undefined,
     // #4136 — populated unconditionally (NOT behind opts.diagnostic): the
     // extractor's decline gate depends on it. Undefined when empty.
     unrecognized_headings:
       diag.unrecognized_headings.length > 0 ? diag.unrecognized_headings : undefined,
-    unmatched_line_count: opts.diagnostic
+    unmatched_line_count: diagnostic
       ? body
           .split(/\r?\n/)
           .filter((l) => l.trim().length > 0).length - messages.length

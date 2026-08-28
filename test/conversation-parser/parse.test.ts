@@ -1338,3 +1338,262 @@ describe('unrecognized_headings — folded speaker headings surface (#4136)', ()
     expect(messages.length).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// email-thread-heading (gbrain email collector thread pages)
+// ---------------------------------------------------------------------------
+
+describe('parseConversation — email-thread-heading (gbrain email collector)', () => {
+  const thread = [
+    '# Email thread: Oto - Caribou Renewal',
+    '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+    '',
+    '[Open in Gmail](https://mail.google.com/mail/u/?authuser=juan%40example.com#inbox/19ed9b2261e547a0)',
+    '',
+    'Hey Ed,',
+    '',
+    'Your renewal is due on 28 August 2026.',
+    '',
+    '## Edmund Farrar &lt;ed@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
+    '',
+    'Hi Juan,',
+    '',
+    "I'd like to descope the agreement.",
+    '',
+    '## Product updates',
+    'Not a message heading.',
+    '',
+    '## Juan Andrade &lt;juan@example.com&gt; — Thu, 27 Aug 2026 15:56:24 +0000 (UTC) (sent)',
+    '',
+    'Aiming to send you something by tomorrow.',
+  ].join('\n');
+
+  test('parses per-message headings with RFC-2822 dates, offsets and direction', () => {
+    const r = parseConversation(thread, { fallbackDate: '2026-01-01' });
+    expect(r.matched_pattern_id).toBe('email-thread-heading');
+    expect(r.messages).toHaveLength(3);
+    expect(r.messages[0].speaker).toBe('Juan Andrade &lt;juan@example.com&gt;');
+    expect(r.messages[0].timestamp).toBe('2026-06-18T07:46:32.000Z');
+    expect(r.messages[0].direction).toBe('sent');
+    expect(r.messages[0].text).toContain('Your renewal is due on 28 August 2026.');
+    expect(r.messages[0].text).not.toContain('## Juan');
+    // +0100 converts to UTC.
+    expect(r.messages[1].timestamp).toBe('2026-08-19T07:03:59.000Z');
+    expect(r.messages[1].direction).toBe('received');
+    // A `## ` heading inside a body folds into the message text.
+    expect(r.messages[1].text).toContain('## Product updates');
+    // Trailing zone comment tolerated.
+    expect(r.messages[2].timestamp).toBe('2026-08-27T15:56:24.000Z');
+    expect(r.timezone_warning).toBeUndefined();
+  });
+
+  test('forcePatternId parses a single-message page the density scorer rejects', () => {
+    const single = [
+      '# Email thread: Quick note',
+      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+      '',
+      ...Array.from({ length: 40 }, (_, i) => `Line ${i} of a long single message body.`),
+    ].join('\n');
+    const scored = parseConversation(single, { fallbackDate: '2026-01-01' });
+    expect(scored.matched_pattern_id).not.toBe('email-thread-heading');
+    const forced = parseConversation(single, {
+      fallbackDate: '2026-01-01',
+      forcePatternId: 'email-thread-heading',
+    });
+    expect(forced.matched_pattern_id).toBe('email-thread-heading');
+    expect(forced.phase).toBe('regex_match');
+    expect(forced.messages).toHaveLength(1);
+    expect(forced.messages[0].direction).toBe('sent');
+    expect(forced.messages[0].text).toContain('Line 39 of a long single message body.');
+  });
+
+  test('forcePatternId falls through to scoring when the forced pattern finds nothing', () => {
+    const chat = [
+      '**Alice Example** (2024-03-15 9:00 AM): morning',
+      '**Bob Example** (2024-03-15 9:01 AM): hey there',
+    ].join('\n');
+    const r = parseConversation(chat, { forcePatternId: 'email-thread-heading' });
+    expect(r.matched_pattern_id).toBe('imessage-slack');
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].direction).toBeUndefined();
+  });
+
+  test('does not anchor headings that lack the direction marker', () => {
+    const body = [
+      '## Summary',
+      'Plain section.',
+      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
+      'no marker on the heading above',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-01-01' });
+    expect(r.matched_pattern_id).not.toBe('email-thread-heading');
+  });
+});
+
+describe('email-thread-heading — date edge cases (2026-08-28 review)', () => {
+  test('weekday-less GMT date parses', () => {
+    const r = parseConversation(
+      ['## unknown — 3 Jan 2024 09:00:00 GMT (received)', 'hello', '## Bob &lt;b@x.com&gt; — 3 Jan 2024 09:05:00 GMT (sent)', 'hi'].join('\n'),
+      { fallbackDate: '2026-01-01' },
+    );
+    expect(r.matched_pattern_id).toBe('email-thread-heading');
+    expect(r.messages[0].timestamp).toBe('2024-01-03T09:00:00.000Z');
+    expect(r.date_fallback_count).toBeUndefined();
+  });
+
+  test('a zone word the engine rejects is retried as a zero offset, never folded', () => {
+    const r = parseConversation(
+      ['## Alice &lt;a@x.com&gt; — Mon, 01 Jun 2026 09:00:00 CET (received)', 'alice body', '## Bob &lt;b@x.com&gt; — Mon, 01 Jun 2026 10:00:00 +0000 (sent)', 'bob body'].join('\n'),
+      { fallbackDate: '2026-01-01' },
+    );
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].timestamp.startsWith('2026-06-01T')).toBe(true);
+    expect(r.messages[0].text).toBe('alice body');
+    expect(r.messages[1].text).toBe('bob body');
+  });
+
+  test('an unparseable date opens a fallback-dated message instead of folding into the previous speaker', () => {
+    const r = parseConversation(
+      [
+        '## Alice &lt;a@x.com&gt; — Mon, 01 Jun 2026 09:00:00 +0000 (received)',
+        'alice body',
+        '## Bob &lt;b@x.com&gt; — Mon, 01 Xxx 2026 10:00:00 +0000 (sent)',
+        'bob body',
+      ].join('\n'),
+      { fallbackDate: '2026-05-30', forcePatternId: 'email-thread-heading' },
+    );
+    expect(r.messages).toHaveLength(2);
+    expect(r.messages[0].text).toBe('alice body');
+    expect(r.messages[1].speaker).toContain('Bob');
+    expect(r.messages[1].text).toBe('bob body');
+    expect(r.messages[1].timestamp).toBe('2026-05-30T00:00:00Z');
+    expect(r.date_fallback_count).toBe(1);
+  });
+
+  test('an unknown forcePatternId falls through to scoring', () => {
+    const chat = ['**Alice Example** (2024-03-15 9:00 AM): morning', '**Bob Example** (2024-03-15 9:01 AM): hey there'].join('\n');
+    const r = parseConversation(chat, { forcePatternId: 'no-such-pattern' });
+    expect(r.matched_pattern_id).toBe('imessage-slack');
+    expect(r.messages).toHaveLength(2);
+  });
+});
+
+describe('date-fallback anchoring applies to every pattern, not only email', () => {
+  test('a telegram anchor with an unknown month opens a fallback-dated message instead of folding', () => {
+    // Before the fallback, buildIso() returning null dropped the anchor and
+    // the body folded into the previous speaker. Pin the new behavior on a
+    // non-email pattern that reaches the scoring path.
+    const body = [
+      'Alice Doe, [Mar 15, 2024 at 6:37:00 PM]',
+      'hello',
+      'Bob Roe, [Xyz 15, 2024 at 6:38:00 PM]',
+      'bad month',
+      'Alice Doe, [Mar 15, 2024 at 6:39:00 PM]',
+      'bye',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2024-03-15' });
+    expect(r.matched_pattern_id).toBe('telegram-text-export');
+    expect(r.messages).toHaveLength(3);
+    expect(r.messages[0].text).toBe('hello');
+    expect(r.messages[1].speaker).toContain('Bob');
+    expect(r.messages[1].text).toBe('bad month');
+    expect(r.messages[1].timestamp).toBe('2024-03-15T00:00:00Z');
+    expect(r.messages[1].direction).toBeUndefined();
+    expect(r.messages[2].text).toBe('bye');
+    expect(r.date_fallback_count).toBe(1);
+  });
+});
+
+describe('email-thread-heading — declared test vectors', () => {
+  const entry = BUILTIN_PATTERNS.find((p) => p.id === 'email-thread-heading')!;
+
+  test('every test_positive anchors with its direction captured; every test_negative fails the regex', () => {
+    expect(entry.test_positive.length).toBeGreaterThan(0);
+    for (const line of entry.test_positive) {
+      expect(entry.quick_reject!.test(line)).toBe(true);
+      const m = entry.regex.exec(line);
+      expect(m).not.toBeNull();
+      expect(['sent', 'received']).toContain(m![entry.captures.direction_group!]);
+    }
+    const negatives = entry.test_negative ?? [];
+    expect(negatives.length).toBeGreaterThan(0);
+    for (const line of negatives) expect(entry.regex.test(line)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-08-28 review fixes: linear email anchor, raw-body forced parse,
+// sender kept verbatim, direction_group validation, forced-path warning.
+// ---------------------------------------------------------------------------
+
+describe('email-thread-heading hardening (2026-08-28 review)', () => {
+  const HDR = '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)';
+
+  test('a body line of kilobytes of padding before (sent) parses in linear time', () => {
+    const body = ['# Email thread: x', HDR, '', 'hello', '##' + ' '.repeat(20_000) + '(sent)', 'tail'].join('\n');
+    const t0 = performance.now();
+    const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(r.messages).toHaveLength(1);
+    // The padded line is body text, not an anchor.
+    expect(r.messages[0].text).toContain('tail');
+    // (The scoring path, which runs every builtin, is not bounded by this
+    // pattern; the email extractor always forces the pattern.)
+  });
+
+  test('a forced pattern sees the raw body: a forwarded Slack block header does not swallow later anchors', () => {
+    const body = [
+      '# Email thread: fwd',
+      HDR,
+      '',
+      'FYI, from Slack:',
+      '- **Alice Example** (Mon 11:18)',
+      '  the block body line',
+      '',
+      '## Edmund Farrar &lt;ed@example.com&gt; — Fri, 19 Jun 2026 08:03:59 +0100 (received)',
+      '',
+      'Thanks, seen.',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
+    expect(r.matched_pattern_id).toBe('email-thread-heading');
+    expect(r.messages.map((m) => m.direction)).toEqual(['sent', 'received']);
+    expect(r.messages[1].text).toBe('Thanks, seen.');
+  });
+
+  test('an address-only or quoted sender is kept verbatim (no default speaker cleanup)', () => {
+    const body = [
+      '## &lt;a@b.example&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (received)',
+      'one',
+      '## "Juan Andrade" &lt;juan@example.com&gt; — Thu, 18 Jun 2026 08:00:00 +0000 (sent)',
+      'two',
+    ].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
+    expect(r.messages.map((m) => m.speaker)).toEqual(['&lt;a@b.example&gt;', '"Juan Andrade" &lt;juan@example.com&gt;']);
+  });
+
+  test('a parenthetical comment after the offset is dropped before Date.parse', () => {
+    const body = ['## Ops &lt;ops@example.com&gt; — Mon, 03 Aug 2026 09:15:00 +0200 (GMT+02:00) (received)', 'body'].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
+    expect(r.messages).toHaveLength(1);
+    expect(r.messages[0].timestamp).toBe('2026-08-03T07:15:00.000Z');
+    expect(r.date_fallback_count).toBeUndefined();
+  });
+
+  test('validatePatternEntry rejects an out-of-range direction_group', () => {
+    const email = BUILTIN_PATTERNS.find((p) => p.id === 'email-thread-heading')!;
+    expect(() => validatePatternEntry({ ...email, captures: { ...email.captures, direction_group: 9 } })).toThrow();
+    expect(() => validatePatternEntry(email)).not.toThrow();
+  });
+
+  test('the forced path emits the D19 timezone warning like the scored path', () => {
+    const warned = BUILTIN_PATTERNS.find((p) => p.timezone_policy === 'utc_assumed_with_warn')!;
+    const body = warned.multi_line && warned.captures.text_group === 0
+      ? `${warned.test_positive[0]}\nsome body text`
+      : warned.test_positive[0];
+    const scored = parseConversation(body, { fallbackDate: '2024-03-15' });
+    const forced = parseConversation(body, { fallbackDate: '2024-03-15', forcePatternId: warned.id });
+    expect(forced.matched_pattern_id).toBe(warned.id);
+    expect(forced.timezone_warning).toBe(scored.timezone_warning);
+    expect(forced.timezone_warning).toContain('assumed UTC');
+  });
+});
