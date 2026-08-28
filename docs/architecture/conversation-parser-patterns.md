@@ -10,8 +10,9 @@ adding or changing a format.
 `parseConversation` uses this sequence:
 
 1. Resolve the page date and timezone context.
-2. Score every enabled built-in and user pattern against the first ten
-   non-blank lines.
+2. When the caller passes `forcePatternId`, apply that pattern to the raw body
+   and return its messages without scoring (see below). Otherwise score every
+   enabled built-in and user pattern against the first ten non-blank lines.
 3. Re-score the full body when the head score is inconclusive, or when a broad
    pattern explicitly requires full-body scoring.
 4. Reject the winner when its acceptance score is below the false-positive
@@ -87,12 +88,15 @@ page has one anchor among many lines and fails the density scorer otherwise.
 The forced path skips LLM polish and the LLM fallback, and falls through to
 normal scoring when the pattern is unknown or finds nothing.
 
-`email-thread-heading` uses all three. The gbrain email collector writes one
-`## Name &lt;addr&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)` heading per
-message with the body on the following lines; the sender stays verbatim so
-`extract-conversation-facts` can split name and address, and only lines that
-end in the direction marker are anchor candidates, so `## Section` headings
-inside a forwarded newsletter never inflate the score.
+`email-thread-heading` uses all three. It matches email thread pages that
+write one `## Name &lt;addr&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)`
+heading per message with the body on the following lines; the sender stays
+verbatim so `extract-conversation-facts` can split name and address, and only
+lines that end in the direction marker are anchor candidates, so `## Section`
+headings inside a forwarded newsletter never inflate the score. The native
+google source kind (`src/core/google/google-render.ts`) renders each message as
+`## From · YYYY-MM-DD HH:MM` (a leading `→ ` marks sent mail) with no
+`(sent|received)` marker, so this pattern does not match its thread pages.
 
 ### Scoring and false positives
 
