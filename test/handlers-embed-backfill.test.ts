@@ -20,6 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeEmbedBackfillHandler } from '../src/core/minions/handlers/embed-backfill.ts';
 import { tryAcquireDbLock } from '../src/core/db-lock.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
+import { configureGateway, getCurrentBudgetTracker, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -31,12 +32,17 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  resetGateway();
 });
 
 beforeEach(async () => {
   // Clean minion_jobs + lock rows. Preserve config (schema version + flags).
   await engine.executeRaw('DELETE FROM minion_jobs');
   await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id LIKE 'gbrain-embed-backfill:%'`);
+  await engine.unsetConfig('pricing.overrides');
+  await engine.unsetConfig('embed.backfill_max_usd');
+  await engine.unsetConfig('spend.posture');
+  resetGateway();
 });
 
 /** Build a minimal MinionJobContext for testing. */
@@ -199,5 +205,80 @@ describe('embed-backfill handler — #4283 honesty gates', () => {
       invalidated: 3,
       invalidationSkipped: 'embedder_probe_failed',
     });
+  });
+});
+
+describe('embed-backfill handler — #4571 unpriced embedding models', () => {
+  const drainBase = { pagesProcessed: 1, lastCursor: null, done: true, aborted: false, invalidated: 0 };
+
+  function configureUnpricedEmbeddingModel(): void {
+    configureGateway({ embedding_model: 'openai:bge-m3', embedding_dimensions: 1024, env: {} });
+  }
+
+  test('default per-job cap is dropped when the configured embedding model cannot be priced', async () => {
+    configureUnpricedEmbeddingModel();
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => {
+        const tracker = getCurrentBudgetTracker();
+        if (!tracker) throw new Error('missing BudgetTracker scope');
+        tracker.reserve({
+          modelId: 'openai:bge-m3',
+          estimatedInputTokens: 1_000_000,
+          maxOutputTokens: 0,
+          kind: 'embed',
+        });
+        tracker.record({ modelId: 'openai:bge-m3', inputTokens: 1_000_000, kind: 'embed' });
+        return { ...drainBase, embedded: 1, chunksProcessed: 1 };
+      },
+    });
+
+    const result = await handler(fakeJob({ sourceId: 'default' }));
+    expect(result.status).toBe('success');
+    expect(result.embedded).toBe(1);
+    expect(result.spentUsd).toBe(0);
+  });
+
+  test('pricing.overrides keeps the default cap enforceable for proxy embedding models', async () => {
+    configureUnpricedEmbeddingModel();
+    await engine.setConfig('pricing.overrides', '{"openai:bge-m3":0.5}');
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => {
+        const tracker = getCurrentBudgetTracker();
+        if (!tracker) throw new Error('missing BudgetTracker scope');
+        tracker.reserve({
+          modelId: 'openai:bge-m3',
+          estimatedInputTokens: 1_000_000,
+          maxOutputTokens: 0,
+          kind: 'embed',
+        });
+        tracker.record({ modelId: 'openai:bge-m3', inputTokens: 1_000_000, kind: 'embed' });
+        return { ...drainBase, embedded: 1, chunksProcessed: 1 };
+      },
+    });
+
+    const result = await handler(fakeJob({ sourceId: 'default' }));
+    expect(result.status).toBe('success');
+    expect(result.spentUsd).toBeCloseTo(0.5);
+  });
+
+  test('off switch still maps to an uncapped tracker for unpriced models', async () => {
+    configureUnpricedEmbeddingModel();
+    await engine.setConfig('embed.backfill_max_usd', 'off');
+    const handler = makeEmbedBackfillHandler(engine, {
+      runStale: async () => {
+        const tracker = getCurrentBudgetTracker();
+        if (!tracker) throw new Error('missing BudgetTracker scope');
+        tracker.reserve({
+          modelId: 'openai:bge-m3',
+          estimatedInputTokens: 1_000_000,
+          maxOutputTokens: 0,
+          kind: 'embed',
+        });
+        return { ...drainBase, embedded: 1, chunksProcessed: 1 };
+      },
+    });
+
+    const result = await handler(fakeJob({ sourceId: 'default' }));
+    expect(result.status).toBe('success');
   });
 });

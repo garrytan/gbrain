@@ -18,10 +18,13 @@
  *     If a second job claims while the first is mid-loop, it returns
  *     `already_in_progress` cleanly and the lock is the source of truth.
  *
- *   - D6: BudgetTracker enforces per-job spend cap (default $10/job). Goes
- *     through `withBudgetTracker` so `gateway.embed()` auto-composes via
- *     AsyncLocalStorage. On `BudgetExhausted` throw, partial progress is
- *     preserved (chunks already embedded stay embedded; remaining stays NULL).
+ *   - D6: BudgetTracker enforces per-job spend cap (default $10/job). The
+ *     default cap is skipped when the configured embedding model has no
+ *     built-in or operator-declared price; an explicit numeric cap stays
+ *     fail-closed. Goes through `withBudgetTracker` so `gateway.embed()`
+ *     auto-composes via AsyncLocalStorage. On `BudgetExhausted` throw, partial
+ *     progress is preserved (chunks already embedded stay embedded; remaining
+ *     stays NULL).
  *
  *   - D15.1: parent-job linkage is INTENTIONALLY OMITTED. The submit-side
  *     helper does not pass `parent_job_id` — the queue's parent-child
@@ -32,8 +35,14 @@
  *     the next call free to claim.
  */
 import { tryAcquireDbLock } from '../../db-lock.ts';
-import { BudgetTracker, BudgetExhausted } from '../../budget/budget-tracker.ts';
-import { withBudgetTracker } from '../../ai/gateway.ts';
+import {
+  BudgetTracker,
+  BudgetExhausted,
+  isModelPriceable,
+  loadPricingOverrides,
+  type PricingOverrides,
+} from '../../budget/budget-tracker.ts';
+import { getEmbeddingModel, withBudgetTracker } from '../../ai/gateway.ts';
 import { embedStaleForSource } from '../../embed-stale.ts';
 import { currentEmbeddingSignature } from '../../embedding.ts';
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
@@ -115,11 +124,52 @@ async function resolveBackfillPacer(
  * ledgered by the tracker either way — posture removes the ceiling, not the
  * accounting. `0`/garbage fall back to the $10 default.
  */
-async function readMaxUsd(engine: BrainEngine): Promise<number | undefined> {
+interface BackfillBudgetCap {
+  maxCostUsd: number | undefined;
+  defaulted: boolean;
+}
+
+function isExplicitFiniteUsdLimit(raw: unknown): boolean {
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === 'string' && raw.trim() === '') return false;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0;
+}
+
+async function readMaxUsd(engine: BrainEngine): Promise<BackfillBudgetCap> {
   const posture = await resolveSpendPosture(engine);
-  if (posture === 'tokenmax') return undefined;
+  if (posture === 'tokenmax') return { maxCostUsd: undefined, defaulted: false };
   const raw = await engine.getConfig('embed.backfill_max_usd');
-  return usdLimitToCap(parseUsdLimit(raw, DEFAULT_MAX_USD_PER_JOB));
+  const parsed = parseUsdLimit(raw, DEFAULT_MAX_USD_PER_JOB);
+  return {
+    maxCostUsd: usdLimitToCap(parsed),
+    defaulted: parsed === DEFAULT_MAX_USD_PER_JOB && !isExplicitFiniteUsdLimit(raw),
+  };
+}
+
+function currentBackfillEmbeddingModel(): string | null {
+  try {
+    return getEmbeddingModel();
+  } catch {
+    return null;
+  }
+}
+
+function capForModel(
+  cap: BackfillBudgetCap,
+  modelId: string | null,
+  pricingOverrides: PricingOverrides | undefined,
+): number | undefined {
+  if (cap.maxCostUsd === undefined) return undefined;
+  if (cap.defaulted && modelId && !isModelPriceable(modelId, 'embed', pricingOverrides)) {
+    console.error(
+      `[embed-backfill] model "${modelId}" is not in the pricing maps; ` +
+        `running without the default per-job cost gate. Add pricing.overrides ` +
+        `or set embed.backfill_max_usd to an explicit numeric cap to fail closed.`,
+    );
+    return undefined;
+  }
+  return cap.maxCostUsd;
 }
 
 /** Validate + extract typed job params. Throws on malformed input. */
@@ -168,10 +218,13 @@ export function makeEmbedBackfillHandler(
     // D6: budget-tracked execution. Gateway calls inside withBudgetTracker
     // auto-compose via AsyncLocalStorage; if pricing pushes cumulative spend
     // past the cap, gateway throws BudgetExhausted BEFORE the next API call.
-    const capUsd = await readMaxUsd(engine);
+    const pricingOverrides = await loadPricingOverrides(engine);
+    const cap = await readMaxUsd(engine);
+    const capUsd = capForModel(cap, currentBackfillEmbeddingModel(), pricingOverrides);
     const tracker = new BudgetTracker({
       maxCostUsd: capUsd,
       label: `embed-backfill:${sourceId}`,
+      pricingOverrides,
     });
 
     // paced-backfill: resolve env > config > bundle (env = incident escape
