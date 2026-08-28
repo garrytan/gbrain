@@ -49,6 +49,7 @@ import { basename, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
+import { contentHash } from './utils.ts';
 import {
   isWriteThroughDisabled,
   resolvePageWriteTarget,
@@ -404,10 +405,17 @@ export async function writeTimelineEntryThrough(
         const newTimeline = sanitizeForJsonb(
           spliceTimelineBlock(page.timeline ?? '', entry.date, rendered.block),
         );
+        // Invariant (#3694/#4654 — content_hash must always equal
+        // contentHash(current semantic columns)): timeline is in the hash
+        // shape, so mutating it MUST recompute the hash in the same write.
+        // Compute over the already-fetched page with the new timeline spliced
+        // in; page.tags is undefined on the DB row so contentHash falls back
+        // to frontmatter.tags, matching the importer's spelling.
+        const newHash = contentHash({ ...page, timeline: newTimeline });
         await engine.executeRaw(
-          `UPDATE pages SET timeline = $1, updated_at = now()
-            WHERE slug = $2 AND source_id = $3 AND deleted_at IS NULL`,
-          [newTimeline, slug, sourceId],
+          `UPDATE pages SET timeline = $1, content_hash = $2, updated_at = now()
+            WHERE slug = $3 AND source_id = $4 AND deleted_at IS NULL`,
+          [newTimeline, newHash, slug, sourceId],
         );
 
         // Store the tuple the FS extractor recovers from the bullet just

@@ -22,6 +22,7 @@ import { resetGateway } from '../src/core/ai/gateway.ts';
 import { operations } from '../src/core/operations.ts';
 import type { Operation, OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { contentHash } from '../src/core/utils.ts';
 import { writePageThrough, _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import {
   renderTimelineEntry,
@@ -126,6 +127,32 @@ describe('add_timeline_entry on an FS-canonical brain (#1856)', () => {
     // The page row's timeline text gained the bullet (`gbrain get` shows it).
     const page = await engine.getPage(slug, { sourceId: 'default' });
     expect(page?.timeline ?? '').toContain('Manual milestone added via timeline-add');
+  });
+
+  test('#4654 invariant: writing a timeline entry recomputes content_hash', async () => {
+    // timeline is part of the contentHash shape. Pre-fix, the write-through's
+    // `UPDATE pages SET timeline = ...` left content_hash stale, drifting the
+    // identity domain (the 43.6% validate:false class). The stored hash must
+    // ALWAYS equal contentHash(current semantic columns) after the write.
+    await engine.setConfig('sync.repo_path', brainDir);
+    const slug = 'notes/hash-invariant-example';
+    await seedPage(slug);
+
+    // Baseline: a fresh import hashes to its own content.
+    const before = await engine.getPage(slug, { sourceId: 'default' });
+    expect(before?.content_hash).toBe(contentHash({ ...before!, timeline: before!.timeline ?? '' }));
+
+    await addTimelineEntryOp.handler(makeCtx(), {
+      slug,
+      date: '2026-07-15',
+      summary: 'Must not drift the content hash',
+      source: 'meetings/2026-07-15',
+    });
+
+    const after = await engine.getPage(slug, { sourceId: 'default' });
+    expect(after?.timeline ?? '').toContain('Must not drift the content hash');
+    // THE invariant: the stored hash recomputes over the MUTATED page.
+    expect(after?.content_hash).toBe(contentHash({ ...after!, timeline: after!.timeline ?? '' }));
   });
 
   test('FS→DB rebuild recovers the entry from the file (the P0 loss mode)', async () => {
