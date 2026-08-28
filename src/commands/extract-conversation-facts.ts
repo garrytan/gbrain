@@ -688,7 +688,7 @@ export function renderSegmentForExtraction(
 /**
  * One message as it appears in the extractor's segment body. Single source of
  * truth for the char budget. Direction, when known, sits next to the speaker
- * (`Juan Andrade [sent] (2026-06-18T07:46:32.000Z): ...`): an inbound email
+ * (`Sam Example [sent] (2026-06-18T07:46:32.000Z): ...`): an inbound email
  * with a spoofed display name then reads as a received claim, not as the
  * owner's own statement.
  */
@@ -879,8 +879,8 @@ export function isOutOfScopeEmail(
 // ---------------------------------------------------------------------------
 
 /**
- * Basename form the resolver's fallback_slugify produces (`Edmund Farrar`
- * -> `edmund-farrar`). Delegates to the resolver's own slugify so accented
+ * Basename form the resolver's fallback_slugify produces (`Eve Demo`
+ * -> `eve-demo`). Delegates to the resolver's own slugify so accented
  * and curly-apostrophe names fold onto the same basename the resolver mints.
  */
 export function slugBasename(name: string): string {
@@ -888,8 +888,8 @@ export function slugBasename(name: string): string {
 }
 
 /**
- * The shipped resolver cascade mints BOTH `people/edmund-farrar` and
- * `edmund-farrar` for the same person, sometimes on the same page across two
+ * The shipped resolver cascade mints BOTH `people/eve-demo` and
+ * `eve-demo` for the same person, sometimes on the same page across two
  * runs, so `find_trajectory` (keyed on the exact slug) splits one timeline.
  * This folds a raw slug onto an existing prefixed sibling (`people/` or
  * `companies/`, from person/company pages and from facts already written)
@@ -1476,8 +1476,12 @@ async function processPage(
   // The fallback runs only for a true built-in miss. It never replaces or
   // polishes a deterministic parse, and it remains unreachable unless the
   // operator explicitly enables conversation_parser.llm_fallback_enabled.
+  // Email pages never take the fallback: only the forced collector pattern
+  // carries direction and sender shape, so fallback messages would be
+  // discarded below and the model call wasted.
   if (
     !state.dryRun &&
+    !isEmail &&
     messages.length === 0 &&
     parseResult.phase === 'no_match' &&
     state.llmFallbackModel

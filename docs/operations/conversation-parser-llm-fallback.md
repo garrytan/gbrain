@@ -75,10 +75,10 @@ For each eligible conversation page, extraction:
 4. Calls the LLM fallback only when the parse phase is exactly `no_match`, the
    message list is empty, the opt-in key is `true`, and this is not a dry run.
 5. Splits accepted fallback messages into the normal extraction segments.
-   Pages of type `email` are the exception: only an `email-thread-heading`
-   parse carries sender and direction, so fallback messages for an email page
-   are discarded, the page keeps no segment, and it stays unfinished.
-   `pages_llm_fallback` still counts the page.
+   Pages of type `email` never call the fallback: only an `email-thread-heading`
+   parse carries sender and direction, so an email page with no such anchors
+   keeps no segment and stays unfinished, and `pages_llm_fallback` does not
+   count it.
 
 The fallback never replaces, edits, or polishes a successful deterministic
 parse. Adding a built-in pattern therefore removes model use for that format

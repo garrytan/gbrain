@@ -669,6 +669,26 @@ describe('runExtractConversationFactsCore', () => {
     expect(fallbackCalls).toBe(0);
   });
 
+  test('email pages never call the LLM fallback, even when it is enabled', async () => {
+    await engine.setConfig('conversation_parser.llm_fallback_enabled', 'true');
+    await engine.putPage('email-thread-noanchor', {
+      type: 'email' as never,
+      title: 'Email thread: No headings',
+      frontmatter: { subject: 'No headings', message_count: 2 },
+      compiled_truth: ['# Email thread: No headings', '', 'Plain text with no message headings.', 'Second line.'].join('\n'),
+    });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        slug: 'email-thread-noanchor',
+        sleepMs: 0,
+      });
+      expect(result.pages_llm_fallback).toBe(0);
+      expect(result.pages_processed).toBe(0);
+      expect(fallbackCalls).toBe(0);
+    });
+  });
+
   test('opt-in fallback receives page date and advances the page checkpoint', async () => {
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'true');
     await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
@@ -1671,13 +1691,13 @@ describe('email thread normalization', () => {
   ) => ({ speaker, timestamp, text, ...(direction ? { direction } : {}) });
 
   test('parseEmailSender decodes entities and splits name/address', () => {
-    expect(parseEmailSender('Juan Andrade &lt;juan@example.com&gt;')).toEqual({
-      name: 'Juan Andrade',
-      address: 'juan@example.com',
+    expect(parseEmailSender('Sam Example &lt;sam@example.com&gt;')).toEqual({
+      name: 'Sam Example',
+      address: 'sam@example.com',
     });
     expect(
-      parseEmailSender('"Frank Silva (Google Docs)" &lt;comments-noreply@docs.google.com&gt;'),
-    ).toEqual({ name: 'Frank Silva (Google Docs)', address: 'comments-noreply@docs.google.com' });
+      parseEmailSender('"Frank Sample (Google Docs)" &lt;comments-noreply@docs.google.com&gt;'),
+    ).toEqual({ name: 'Frank Sample (Google Docs)', address: 'comments-noreply@docs.google.com' });
     expect(parseEmailSender('ops@example.com')).toEqual({
       name: 'ops@example.com',
       address: 'ops@example.com',
@@ -1696,7 +1716,7 @@ describe('email thread normalization', () => {
     ];
     for (const s of auto) expect(isAutomatedEmailSender(parseEmailSender(s))).toBe(true);
     const human = [
-      'Edmund Farrar &lt;ed@example.com&gt;',
+      'Eve Demo &lt;eve@example.com&gt;',
       'Support &lt;support@example.com&gt;',
       'Brianna (Superhuman Team) &lt;brianna@superhuman.com&gt;',
       'unknown',
@@ -1707,21 +1727,21 @@ describe('email thread normalization', () => {
   test('normalizeEmailMessages renames speakers, drops automated senders, strips Gmail links', () => {
     const r = normalizeEmailMessages([
       email(
-        'Juan Andrade &lt;juan@example.com&gt;',
+        'Sam Example &lt;sam@example.com&gt;',
         '2026-06-18T07:46:32.000Z',
         '[Open in Gmail](https://mail.google.com/mail/u/?authuser=x#inbox/1)\n\nHey Ed,\n\n\n\nRenewal is due.',
         'sent',
       ),
       email(
-        '"Frank Silva (Google Docs)" &lt;comments-noreply@docs.google.com&gt;',
+        '"Frank Sample (Google Docs)" &lt;comments-noreply@docs.google.com&gt;',
         '2026-06-19T07:46:32.000Z',
         'Frank commented on the doc.',
         'received',
       ),
-      email('Edmund Farrar &lt;ed@example.com&gt;', '2026-08-19T07:03:59.000Z', 'Thanks.', 'received'),
+      email('Eve Demo &lt;eve@example.com&gt;', '2026-08-19T07:03:59.000Z', 'Thanks.', 'received'),
     ]);
     expect(r.dropped).toBe(1);
-    expect(r.messages.map((m) => m.speaker)).toEqual(['Juan Andrade', 'Edmund Farrar']);
+    expect(r.messages.map((m) => m.speaker)).toEqual(['Sam Example', 'Eve Demo']);
     expect(r.messages[0].text).toBe('Hey Ed,\n\nRenewal is due.');
     expect(r.messages[0].direction).toBe('sent');
     expect(r.distinctSenders).toBe(2);
@@ -1729,7 +1749,7 @@ describe('email thread normalization', () => {
 
   test('normalizeEmailMessages counts distinct senders by address, before the address is dropped', () => {
     const r = normalizeEmailMessages([
-      email('Juan Andrade &lt;juan@example.com&gt;', '2026-06-18T07:46:32.000Z', 'Following up.', 'sent'),
+      email('Sam Example &lt;sam@example.com&gt;', '2026-06-18T07:46:32.000Z', 'Following up.', 'sent'),
       email('Bot &lt;notifications@example.com&gt;', '2026-06-18T08:00:00.000Z', 'auto', 'received'),
     ]);
     expect(r.messages).toHaveLength(1);
@@ -1904,11 +1924,11 @@ describe('parseEmailSender undoes the collector escapes', () => {
 describe('EntitySlugCanonicalizer', () => {
   test('folds raw and display-name forms onto the one known prefixed sibling', () => {
     const c = new EntitySlugCanonicalizer();
-    c.register('people/edmund-farrar');
-    c.register('companies/oto');
-    expect(c.canonicalize('edmund-farrar')).toBe('people/edmund-farrar');
-    expect(c.canonicalize('Edmund Farrar')).toBe('people/edmund-farrar');
-    expect(c.canonicalize('oto')).toBe('companies/oto');
+    c.register('people/eve-demo');
+    c.register('companies/acme');
+    expect(c.canonicalize('eve-demo')).toBe('people/eve-demo');
+    expect(c.canonicalize('Eve Demo')).toBe('people/eve-demo');
+    expect(c.canonicalize('acme')).toBe('companies/acme');
     expect(c.canonicalize('someone-unknown')).toBe('someone-unknown');
     expect(c.canonicalize(null)).toBeNull();
     expect(c.canonicalize(undefined)).toBeUndefined();
@@ -1928,10 +1948,10 @@ describe('EntitySlugCanonicalizer', () => {
   test('slugBasename matches the resolver fallback form', () => {
     // Same function the resolver mints raw slugs with (src/core/entities/resolve.ts slugify):
     // apostrophes become a separator, accents fold, runs collapse.
-    expect(slugBasename("Juan's Company, Ltd.")).toBe('juan-s-company-ltd');
-    expect(slugBasename('  Edmund   Farrar ')).toBe('edmund-farrar');
+    expect(slugBasename("Sam's Company, Ltd.")).toBe('sam-s-company-ltd');
+    expect(slugBasename('  Eve   Demo ')).toBe('eve-demo');
     expect(slugBasename('José Núñez')).toBe('jose-nunez');
-    expect(slugBasename('Juan\u2019s Co')).toBe('juan-s-co');
+    expect(slugBasename('Sam\u2019s Co')).toBe('sam-s-co');
   });
 });
 
@@ -1981,33 +2001,33 @@ describe('email pages through runExtractConversationFactsCore', () => {
         embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)),
       })) as never,
     );
-    await engine.putPage('people/edmund-farrar', {
+    await engine.putPage('people/eve-demo', {
       type: 'person',
-      title: 'Edmund Farrar',
+      title: 'Eve Demo',
       compiled_truth: 'Profile.',
       frontmatter: {},
     });
     // (1) A real thread: owner sent, one automated relay, one human reply.
     await engine.putPage('email-thread-aaa1', {
       type: 'email' as never,
-      title: 'Email thread: Oto - Caribou Renewal',
+      title: 'Email thread: Acme - Renewal',
       compiled_truth: [
-        '# Email thread: Oto - Caribou Renewal',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Thu, 18 Jun 2026 07:46:32 +0000', 'sent'),
+        '# Email thread: Acme - Renewal',
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Thu, 18 Jun 2026 07:46:32 +0000', 'sent'),
         '',
         '[Open in Gmail](https://mail.google.com/mail/u/?authuser=juan%40example.com#inbox/aaa1)',
         '',
         'Hey Ed, your renewal is due on 28 August 2026.',
         '',
-        EMAIL_HDR('"Frank Silva (Google Docs)"', 'comments-noreply@docs.google.com', 'Thu, 18 Jun 2026 09:00:00 +0000', 'received'),
+        EMAIL_HDR('"Frank Sample (Google Docs)"', 'comments-noreply@docs.google.com', 'Thu, 18 Jun 2026 09:00:00 +0000', 'received'),
         '',
         'Frank commented on the doc.',
         '',
-        EMAIL_HDR('Edmund Farrar', 'ed@example.com', 'Fri, 19 Jun 2026 08:03:59 +0100', 'received'),
+        EMAIL_HDR('Eve Demo', 'eve@example.com', 'Fri, 19 Jun 2026 08:03:59 +0100', 'received'),
         '',
         "I'd like to descope the agreement.",
       ].join('\n'),
-      frontmatter: { subject: 'Oto - Caribou Renewal', message_count: 3 },
+      frontmatter: { subject: 'Acme - Renewal', message_count: 3 },
     });
     // (2) A single message the owner sent.
     await engine.putPage('email-thread-bbb2', {
@@ -2015,7 +2035,7 @@ describe('email pages through runExtractConversationFactsCore', () => {
       title: 'Email thread: Following up',
       compiled_truth: [
         '# Email thread: Following up',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 22 Jun 2026 10:00:00 +0000', 'sent'),
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 22 Jun 2026 10:00:00 +0000', 'sent'),
         '',
         'Following up on the proposal I sent last week.',
       ].join('\n'),
@@ -2072,11 +2092,11 @@ describe('email pages through runExtractConversationFactsCore', () => {
         turns.push(input.turnText);
         return [
           // A person page exists: the shipped resolver already maps this one.
-          { fact: 'Edmund Farrar wants to descope the agreement.', kind: 'commitment', entity_slug: 'edmund-farrar', confidence: 0.9, notability: 'medium' } as never,
+          { fact: 'Eve Demo wants to descope the agreement.', kind: 'commitment', entity_slug: 'eve-demo', confidence: 0.9, notability: 'medium' } as never,
           // No page for Oto: the resolver slugifies; the prefixed form seen
           // first in this turn registers, and the raw form folds onto it.
-          { fact: 'Oto renews on 28 August.', kind: 'event', entity_slug: 'companies/oto', confidence: 0.9, notability: 'medium' } as never,
-          { fact: 'Oto wants a smaller scope.', kind: 'commitment', entity_slug: 'oto', confidence: 0.9, notability: 'medium' } as never,
+          { fact: 'Oto renews on 28 August.', kind: 'event', entity_slug: 'companies/acme', confidence: 0.9, notability: 'medium' } as never,
+          { fact: 'Oto wants a smaller scope.', kind: 'commitment', entity_slug: 'acme', confidence: 0.9, notability: 'medium' } as never,
         ];
       },
     });
@@ -2088,10 +2108,10 @@ describe('email pages through runExtractConversationFactsCore', () => {
     expect(result.facts_inserted).toBe(6);
     expect(result.entity_slugs_canonicalized).toBe(2);
     // The thread's segment text: display names, no relay, no Gmail link.
-    const thread = turns.find((t) => t.includes('Oto - Caribou Renewal'));
+    const thread = turns.find((t) => t.includes('Acme - Renewal'));
     expect(thread).toBeDefined();
-    expect(thread).toContain('Juan Andrade [sent] (2026-06-18T07:46:32.000Z): Hey Ed');
-    expect(thread).toContain('Edmund Farrar [received] (2026-06-19T07:03:59.000Z):');
+    expect(thread).toContain('Sam Example [sent] (2026-06-18T07:46:32.000Z): Hey Ed');
+    expect(thread).toContain('Eve Demo [received] (2026-06-19T07:03:59.000Z):');
     expect(thread).not.toContain('Open in Gmail');
     expect(thread).not.toContain('Google Docs');
     expect(thread).not.toContain('&lt;');
@@ -2101,7 +2121,7 @@ describe('email pages through runExtractConversationFactsCore', () => {
     );
     const real = rows.filter((r) => r.source === 'cli:extract-conversation-facts');
     expect([...new Set(real.map((r) => r.source_markdown_slug))].sort()).toEqual(['email-thread-aaa1', 'email-thread-bbb2']);
-    expect(new Set(real.map((r) => r.entity_slug))).toEqual(new Set(['people/edmund-farrar', 'companies/oto']));
+    expect(new Set(real.map((r) => r.entity_slug))).toEqual(new Set(['people/eve-demo', 'companies/acme']));
     expect(real.find((r) => r.source_markdown_slug === 'email-thread-aaa1')?.valid_from.startsWith('2026-06-18')).toBe(true);
     const terminal = rows.filter((r) => r.source === 'cli:extract-conversation-facts:terminal:v2').map((r) => r.source_markdown_slug).sort();
     expect(terminal).toEqual(['email-thread-aaa1', 'email-thread-bbb2']);
@@ -2246,8 +2266,8 @@ describe('EntitySlugCanonicalizer.load', () => {
     } finally {
       (process.stderr as { write: unknown }).write = orig;
     }
-    expect(c!.canonicalize('edmund-farrar')).toBe('edmund-farrar');
-    expect(c!.canonicalize('companies/oto')).toBe('companies/oto');
+    expect(c!.canonicalize('eve-demo')).toBe('eve-demo');
+    expect(c!.canonicalize('companies/acme')).toBe('companies/acme');
     expect(errs.join('')).toContain('slug canonicalizer load failed (db down)');
   });
 });
@@ -2462,9 +2482,9 @@ describe('email threads through the core: char cap, drops, folds, date fallback,
 
   test('a forwarded speaker-shaped heading inside an email body never declines the page', async () => {
     const body = [
-      EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', 'Forwarding the note below.', '',
+      EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'), '', 'Forwarding the note below.', '',
       '## Alice Smith', 'Alice wrote this section in the forwarded newsletter.', '',
-      EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 11:00:00 +0000', 'sent'), '', 'Following up on it.',
+      EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 11:00:00 +0000', 'sent'), '', 'Following up on it.',
     ];
     await thread('email-thread-fwd', 'Email thread: Forward', body, { subject: 'Forward', message_count: 2 });
     const r = await run();
@@ -2647,7 +2667,7 @@ describe('review fixes (2026-08-28 ship)', () => {
     // A conversation that meets the minimum keeps the exemption: both sides of a cut survive.
     const pair = [
       ...lone,
-      { speaker: 'Juan Andrade', timestamp: '2026-06-18T08:00:00.000Z', text: 'Short reply.' },
+      { speaker: 'Sam Example', timestamp: '2026-06-18T08:00:00.000Z', text: 'Short reply.' },
     ];
     const kept = splitIntoSegments(pair, {
       gapMinutes: EMAIL_SEGMENT_GAP_MINUTES,
@@ -2681,12 +2701,12 @@ describe('review fixes (2026-08-28 ship)', () => {
     expect(errs.join('')).toContain('invalid pattern');
     const msgs = [
       { speaker: 'Bot &lt;bot@relay.example&gt;', timestamp: '2026-06-18T07:46:32.000Z', text: 'ping' },
-      { speaker: 'Edmund Farrar &lt;ed@example.com&gt;', timestamp: '2026-06-18T08:00:00.000Z', text: 'pong' },
+      { speaker: 'Eve Demo &lt;eve@example.com&gt;', timestamp: '2026-06-18T08:00:00.000Z', text: 'pong' },
     ];
     expect(normalizeEmailMessages(msgs).dropped).toBe(0);
     const n = normalizeEmailMessages(msgs, list);
     expect(n.dropped).toBe(1);
-    expect(n.messages.map((m) => m.speaker)).toEqual(['Edmund Farrar']);
+    expect(n.messages.map((m) => m.speaker)).toEqual(['Eve Demo']);
     expect(compileEmailSenderDenylist(undefined)).toEqual(EMAIL_AUTOMATED_SENDERS);
   });
 
@@ -2696,9 +2716,9 @@ describe('review fixes (2026-08-28 ship)', () => {
     expect(c.canonicalize('apollo')).toBe('apollo');
     expect(c.canonicalize('companies/a/b')).toBe('companies/a/b');
     expect(c.canonicalize('a/b')).toBe('a/b');
-    expect(c.canonicalize('people/edmund-farrar')).toBe('people/edmund-farrar');
-    expect(c.canonicalize('edmund-farrar')).toBe('people/edmund-farrar');
-    expect(c.canonicalize('Edmund Farrar')).toBe('people/edmund-farrar');
+    expect(c.canonicalize('people/eve-demo')).toBe('people/eve-demo');
+    expect(c.canonicalize('eve-demo')).toBe('people/eve-demo');
+    expect(c.canonicalize('Eve Demo')).toBe('people/eve-demo');
   });
 
   test('the canonicalizer loads sibling pages from the run source only', async () => {
@@ -2781,7 +2801,7 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
         '',
         'Ticket opened.',
         '',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'sent'),
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 10:00:00 +0000', 'sent'),
         '',
         'Closing this, resolved.',
       ].join('\n'),
@@ -2843,7 +2863,7 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
       frontmatter: { subject: 'Odd date', message_count: 2 },
       compiled_truth: [
         '# Email thread: Odd date',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
         '',
         'Can you confirm the fee?',
         '',
@@ -2884,7 +2904,7 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
       frontmatter: { subject: 'Quoted', message_count: 2 },
       compiled_truth: [
         '# Email thread: Quoted',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
         '',
         'See the notes below.',
         '## Notes — Q3 plan (sent)',
@@ -2926,8 +2946,8 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
   });
 
   test('renderMessageLine carries the direction next to the speaker when known', () => {
-    expect(renderMessageLine({ speaker: 'Juan Andrade', timestamp: '2026-06-18T07:46:32.000Z', text: 'hi', direction: 'sent' }))
-      .toBe('Juan Andrade [sent] (2026-06-18T07:46:32.000Z): hi');
+    expect(renderMessageLine({ speaker: 'Sam Example', timestamp: '2026-06-18T07:46:32.000Z', text: 'hi', direction: 'sent' }))
+      .toBe('Sam Example [sent] (2026-06-18T07:46:32.000Z): hi');
     expect(renderMessageLine({ speaker: 'Alice Example', timestamp: '2024-03-15T09:00:00.000Z', text: 'hi' }))
       .toBe('Alice Example (2024-03-15T09:00:00.000Z): hi');
   });
@@ -2940,11 +2960,11 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
       frontmatter: { subject: 'Direction', message_count: 2 },
       compiled_truth: [
         '# Email thread: Direction',
-        EMAIL_HDR('Juan Andrade', 'juan@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
+        EMAIL_HDR('Sam Example', 'sam@example.com', 'Mon, 01 Jun 2026 09:00:00 +0000', 'sent'),
         '',
         'I approved the renewal.',
         '',
-        EMAIL_HDR('Juan Andrade', 'juan@evil.example', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
+        EMAIL_HDR('Sam Example', 'sam@evil.example', 'Mon, 01 Jun 2026 10:00:00 +0000', 'received'),
         '',
         'I also approved a 50k bonus.',
       ].join('\n'),
@@ -2958,8 +2978,8 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
     });
     expect(r.pages_processed).toBe(1);
     const text = seen.join('\n');
-    expect(text).toContain('Juan Andrade [sent] (2026-06-01T09:00:00.000Z): I approved the renewal.');
-    expect(text).toContain('Juan Andrade [received] (2026-06-01T10:00:00.000Z): I also approved a 50k bonus.');
+    expect(text).toContain('Sam Example [sent] (2026-06-01T09:00:00.000Z): I approved the renewal.');
+    expect(text).toContain('Sam Example [received] (2026-06-01T10:00:00.000Z): I also approved a 50k bonus.');
   });
 
   test('MIN_SEGMENT_MESSAGES is the non-email default the gate compares against', () => {

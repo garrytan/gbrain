@@ -866,7 +866,7 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     score_continuations_as_body: true,
     // No speaker cleanup: the default strips leading non-letters, which
     // would turn an address-only sender `&lt;a@b&gt;` into `lt;a@b&gt;` and
-    // a quoted display name into `Juan"`. The extractor's parseEmailSender
+    // a quoted display name into `Sam"`. The extractor's parseEmailSender
     // owns the sender format (entities, quotes, name/address split).
     speaker_clean: /^(?!)/,
     // Only lines ending in the direction marker are anchor candidates, so
@@ -876,9 +876,9 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     // regex entirely; a real heading is well under 512 chars.
     quick_reject: /^.{0,512}\((?:sent|received)\)\s*$/,
     test_positive: [
-      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
-      '## Edmund Farrar &lt;ed@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
-      '## Indie Hackers &lt;hi@example.com&gt; — Tue, 25 Oct 2022 12:04:54 +0000 (UTC) (received)',
+      '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+      '## Eve Demo &lt;eve@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
+      '## Weekly Digest &lt;hi@example.com&gt; — Tue, 25 Oct 2022 12:04:54 +0000 (UTC) (received)',
       '## Ops &lt;ops@example.com&gt; — Mon, 03 Aug 2026 09:15:00 +0000 (GMT+00:00) (received)',
       '## unknown — 3 Jan 2024 09:00:00 GMT (received)',
     ],
@@ -886,10 +886,10 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
       '## Summary',
       '## Product updates (sent)',
       '**Alice Example** (2024-03-15 9:00 AM): hello',
-      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
+      '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
     ],
     source_doc:
-      'gbrain email collector (email-collector.mjs) thread pages: per-message `## From — Date (direction)` headings',
+      'email thread pages from the email-collector recipe (docs/guides/deterministic-collectors.md), thread variant: per-message `## From — Date (direction)` headings',
   },
 ];
 

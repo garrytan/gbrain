@@ -1345,8 +1345,8 @@ describe('unrecognized_headings — folded speaker headings surface (#4136)', ()
 
 describe('parseConversation — email-thread-heading (gbrain email collector)', () => {
   const thread = [
-    '# Email thread: Oto - Caribou Renewal',
-    '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+    '# Email thread: Acme - Renewal',
+    '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
     '',
     '[Open in Gmail](https://mail.google.com/mail/u/?authuser=juan%40example.com#inbox/19ed9b2261e547a0)',
     '',
@@ -1354,16 +1354,16 @@ describe('parseConversation — email-thread-heading (gbrain email collector)', 
     '',
     'Your renewal is due on 28 August 2026.',
     '',
-    '## Edmund Farrar &lt;ed@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
+    '## Eve Demo &lt;eve@example.com&gt; — Wed, 19 Aug 2026 08:03:59 +0100 (received)',
     '',
-    'Hi Juan,',
+    'Hi Sam,',
     '',
     "I'd like to descope the agreement.",
     '',
     '## Product updates',
     'Not a message heading.',
     '',
-    '## Juan Andrade &lt;juan@example.com&gt; — Thu, 27 Aug 2026 15:56:24 +0000 (UTC) (sent)',
+    '## Sam Example &lt;sam@example.com&gt; — Thu, 27 Aug 2026 15:56:24 +0000 (UTC) (sent)',
     '',
     'Aiming to send you something by tomorrow.',
   ].join('\n');
@@ -1372,11 +1372,11 @@ describe('parseConversation — email-thread-heading (gbrain email collector)', 
     const r = parseConversation(thread, { fallbackDate: '2026-01-01' });
     expect(r.matched_pattern_id).toBe('email-thread-heading');
     expect(r.messages).toHaveLength(3);
-    expect(r.messages[0].speaker).toBe('Juan Andrade &lt;juan@example.com&gt;');
+    expect(r.messages[0].speaker).toBe('Sam Example &lt;sam@example.com&gt;');
     expect(r.messages[0].timestamp).toBe('2026-06-18T07:46:32.000Z');
     expect(r.messages[0].direction).toBe('sent');
     expect(r.messages[0].text).toContain('Your renewal is due on 28 August 2026.');
-    expect(r.messages[0].text).not.toContain('## Juan');
+    expect(r.messages[0].text).not.toContain('## Sam');
     // +0100 converts to UTC.
     expect(r.messages[1].timestamp).toBe('2026-08-19T07:03:59.000Z');
     expect(r.messages[1].direction).toBe('received');
@@ -1390,7 +1390,7 @@ describe('parseConversation — email-thread-heading (gbrain email collector)', 
   test('forcePatternId parses a single-message page the density scorer rejects', () => {
     const single = [
       '# Email thread: Quick note',
-      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
+      '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)',
       '',
       ...Array.from({ length: 40 }, (_, i) => `Line ${i} of a long single message body.`),
     ].join('\n');
@@ -1422,7 +1422,7 @@ describe('parseConversation — email-thread-heading (gbrain email collector)', 
     const body = [
       '## Summary',
       'Plain section.',
-      '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
+      '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000',
       'no marker on the heading above',
     ].join('\n');
     const r = parseConversation(body, { fallbackDate: '2026-01-01' });
@@ -1527,7 +1527,7 @@ describe('email-thread-heading — declared test vectors', () => {
 // ---------------------------------------------------------------------------
 
 describe('email-thread-heading hardening (2026-08-28 review)', () => {
-  const HDR = '## Juan Andrade &lt;juan@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)';
+  const HDR = '## Sam Example &lt;sam@example.com&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)';
 
   test('a body line of kilobytes of padding before (sent) parses in linear time', () => {
     const body = ['# Email thread: x', HDR, '', 'hello', '##' + ' '.repeat(20_000) + '(sent)', 'tail'].join('\n');
@@ -1550,7 +1550,7 @@ describe('email-thread-heading hardening (2026-08-28 review)', () => {
       '- **Alice Example** (Mon 11:18)',
       '  the block body line',
       '',
-      '## Edmund Farrar &lt;ed@example.com&gt; — Fri, 19 Jun 2026 08:03:59 +0100 (received)',
+      '## Eve Demo &lt;eve@example.com&gt; — Fri, 19 Jun 2026 08:03:59 +0100 (received)',
       '',
       'Thanks, seen.',
     ].join('\n');
@@ -1564,11 +1564,11 @@ describe('email-thread-heading hardening (2026-08-28 review)', () => {
     const body = [
       '## &lt;a@b.example&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (received)',
       'one',
-      '## "Juan Andrade" &lt;juan@example.com&gt; — Thu, 18 Jun 2026 08:00:00 +0000 (sent)',
+      '## "Sam Example" &lt;sam@example.com&gt; — Thu, 18 Jun 2026 08:00:00 +0000 (sent)',
       'two',
     ].join('\n');
     const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
-    expect(r.messages.map((m) => m.speaker)).toEqual(['&lt;a@b.example&gt;', '"Juan Andrade" &lt;juan@example.com&gt;']);
+    expect(r.messages.map((m) => m.speaker)).toEqual(['&lt;a@b.example&gt;', '"Sam Example" &lt;sam@example.com&gt;']);
   });
 
   test('a parenthetical comment after the offset is dropped before Date.parse', () => {
