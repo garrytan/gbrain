@@ -130,6 +130,53 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(idx).toHaveLength(2);
   }, 60_000);
 
+  test('pre-v143 dream_verdicts shape (#4657 wedge class) converges on REAL Postgres', async () => {
+    // #4657: blob CREATE INDEX dream_verdicts_expires_idx references
+    // expires_at, added only by migration v143 — every Postgres brain at
+    // schema v30-v142 wedged on connect. Rewind schema AND version to the
+    // wedged cohort's state, seed a row so v143's judged_at-derived backfill
+    // is exercised, then assert full initSchema convergence.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS dream_verdicts_expires_idx;
+      ALTER TABLE dream_verdicts DROP COLUMN IF EXISTS expires_at;
+      DELETE FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl';
+      INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, judged_at)
+        VALUES ('/tmp/i4657.jsonl', 'i4657hash', true, now() - interval '10 days');
+    `);
+    await engine.setConfig('version', '142');
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    // Column converged: NOT NULL with the 30-day default restored by v143.
+    const col = await conn`
+      SELECT is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'dream_verdicts' AND column_name = 'expires_at'
+    `;
+    expect(col).toHaveLength(1);
+    expect(col[0].is_nullable).toBe('NO');
+    expect(String(col[0].column_default)).toContain('30 days');
+    // Pre-TTL row backfilled from judged_at, not stamped with a fresh 30 days.
+    const row = await conn`
+      SELECT (expires_at = judged_at + interval '30 days') AS backfilled
+      FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl'
+    `;
+    expect(row).toHaveLength(1);
+    expect(row[0].backfilled).toBe(true);
+    // Index restored.
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'dream_verdicts' AND indexname = 'dream_verdicts_expires_idx'
+    `;
+    expect(idx).toHaveLength(1);
+    // Clean up the seeded row so it doesn't leak into other suites sharing
+    // the DATABASE_URL database (its expires_at sits ~20 days in the future).
+    await conn.unsafe(`DELETE FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl'`);
+  }, 60_000);
+
   test('pre-v7 minion_jobs shape (scanner-sweep wedge class) converges on REAL Postgres', async () => {
     await engine.initSchema();
     const conn = (engine as any).sql;

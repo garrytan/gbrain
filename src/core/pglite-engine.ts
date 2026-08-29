@@ -1334,7 +1334,7 @@ export class PGLiteEngine implements BrainEngine {
         && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
         && !needsMinionJobsPrivateQueue) return;
 
-    process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
+    process.stderr.write('  Schema forward-reference gap detected, applying bootstrap\n');
 
     if (needsPagesBootstrap) {
       // Mirror schema-embedded.ts shape for `sources` so the subsequent
@@ -5188,7 +5188,8 @@ export class PGLiteEngine implements BrainEngine {
               score, content_type, segments, entities, model, triage_version
        FROM dream_verdicts
        WHERE file_path = $1 AND content_hash = $2
-         AND expires_at > now()`,
+         -- NULL = pre-TTL row in the #4657 bootstrap window; a miss here re-judges the corpus
+         AND (expires_at IS NULL OR expires_at > now())`,
       [filePath, contentHash]
     );
     if (result.rows.length === 0) return null;

@@ -4420,7 +4420,8 @@ export class PostgresEngine implements BrainEngine {
              score, content_type, segments, entities, model, triage_version
       FROM dream_verdicts
       WHERE file_path = ${filePath} AND content_hash = ${contentHash}
-        AND expires_at > now()
+        -- NULL = pre-TTL row in the #4657 bootstrap window; a miss here re-judges the corpus
+        AND (expires_at IS NULL OR expires_at > now())
     `;
     if (rows.length === 0) return null;
     const r = rows[0];

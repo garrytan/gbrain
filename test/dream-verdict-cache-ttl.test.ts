@@ -114,6 +114,29 @@ describe('dream_verdicts TTL', () => {
     expect((await engine.getDreamVerdict('/tmp/rejudged.md', 'rejudged-hash'))?.score).toBe(0.9);
   });
 
+  test('a NULL-expiry row (bootstrap window, pre-v143 backfill) reads as a hit and survives the sweep (#4657)', async () => {
+    // Simulate the Postgres upgrade window: the forward-reference bootstrap
+    // added expires_at nullable, but v143's backfill/NOT NULL haven't run
+    // yet (e.g. a pooler-swallowed migration). A NULL row is a pre-TTL row:
+    // a read miss here would silently re-judge the whole corpus with paid
+    // LLM calls, and a sweep delete would drop a valid verdict. v143 stamps
+    // NULL rows from judged_at when it eventually succeeds.
+    await engine.executeRaw(`ALTER TABLE dream_verdicts ALTER COLUMN expires_at DROP NOT NULL`);
+    try {
+      await engine.putDreamVerdict('/tmp/window.md', 'window-hash', verdictInput({ score: 0.7 }));
+      await engine.executeRaw(
+        `UPDATE dream_verdicts SET expires_at = NULL WHERE content_hash = 'window-hash'`,
+      );
+      expect((await engine.getDreamVerdict('/tmp/window.md', 'window-hash'))?.score).toBe(0.7);
+      expect(await engine.sweepDreamVerdicts()).toBe(0);
+    } finally {
+      await engine.executeRaw(
+        `UPDATE dream_verdicts SET expires_at = now() + interval '30 days' WHERE expires_at IS NULL`,
+      );
+      await engine.executeRaw(`ALTER TABLE dream_verdicts ALTER COLUMN expires_at SET NOT NULL`);
+    }
+  });
+
   test('expired rows miss on read and sweep deletes only expired rows', async () => {
     await engine.putDreamVerdict('/tmp/expired.md', 'expired-hash', verdictInput({
       worth_processing: false,

@@ -11,9 +11,13 @@
 //
 // Bootstrap state that SCHEMA_SQL forward-references but that older brains
 // don't have yet. Mirror of `PGLiteEngine#applyForwardReferenceBootstrap`
-// in shape and intent. Keep in sync with the PGLite version; covered by
-// `test/schema-bootstrap-coverage.test.ts` (PGLite side) and
-// `test/e2e/postgres-bootstrap.test.ts` (Postgres side).
+// in shape and intent — keep in sync, except where a forward reference is
+// blob-specific (e.g. dream_verdicts.expires_at exists only in the Postgres
+// blob; the PGLite blob carries no dream_verdicts). Covered by
+// `test/schema-bootstrap-coverage.test.ts` (the PGLite A2 static check AND
+// the Postgres-blob CREATE-INDEX class-closure gate, which parses THIS
+// file's source) and `test/e2e/postgres-bootstrap.test.ts` (live Postgres
+// convergence cases).
 
 import type postgres from 'postgres';
 
@@ -64,6 +68,8 @@ const probeRows = await conn<{
   sources_archived_exists: boolean;
   sources_archived_at_exists: boolean;
   sources_archive_expires_at_exists: boolean;
+  dream_verdicts_exists: boolean;
+  dream_verdicts_expires_at_exists: boolean;
 }[]>`
   SELECT
     EXISTS (SELECT 1 FROM information_schema.tables
@@ -165,7 +171,11 @@ const probeRows = await conn<{
     EXISTS (SELECT 1 FROM information_schema.columns
             WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_owner_token') AS minion_jobs_pq_token_exists,
     EXISTS (SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_lease_until') AS minion_jobs_pq_lease_exists
+            WHERE table_schema = current_schema() AND table_name = 'minion_jobs' AND column_name = 'private_queue_lease_until') AS minion_jobs_pq_lease_exists,
+    EXISTS (SELECT 1 FROM information_schema.tables
+            WHERE table_schema = current_schema() AND table_name = 'dream_verdicts') AS dream_verdicts_exists,
+    EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'dream_verdicts' AND column_name = 'expires_at') AS dream_verdicts_expires_at_exists
 `;
 const probe = probeRows[0]!;
 
@@ -296,6 +306,13 @@ const needsMinionJobsIdempotencyKey = probeCr.minion_jobs_exists === true
 const needsMinionJobsPrivateQueue = probeCr.minion_jobs_exists === true
   && (!probeCr.minion_jobs_pq_owner_exists || !probeCr.minion_jobs_pq_token_exists
       || !probeCr.minion_jobs_pq_lease_exists);
+// v143 (dream_verdicts_ttl, #4657): blob index dream_verdicts_expires_idx
+// references expires_at, but the column only lands via migration v143 — a
+// Postgres brain at schema v30-v142 (dream_verdicts exists since v30)
+// wedges on the blob's CREATE INDEX before any migration runs. Same class
+// as v121/v7; PGLite is unaffected (its blob carries no dream_verdicts).
+const needsDreamVerdictsExpiresAt = probe.dream_verdicts_exists
+  && !probe.dream_verdicts_expires_at_exists;
 
 if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsPagesDeletedAt && !needsMcpLogBootstrap && !needsSubagentProviderId
@@ -310,9 +327,10 @@ if (!needsPagesBootstrap && !needsLinksBootstrap && !needsChunksBootstrap
     && !needsPagesLinksExtractedAt
     && !needsTimelineEventPageId
     && !needsMinionJobsTimeoutAt && !needsMinionJobsIdempotencyKey
-    && !needsMinionJobsPrivateQueue) return;
+    && !needsMinionJobsPrivateQueue
+    && !needsDreamVerdictsExpiresAt) return;
 
-process.stderr.write('  Pre-v0.21 brain detected, applying forward-reference bootstrap\n');
+process.stderr.write('  Schema forward-reference gap detected, applying bootstrap\n');
 
 if (needsPagesBootstrap) {
   // Mirror schema-embedded.ts's `sources` shape so the subsequent
@@ -589,6 +607,24 @@ if (needsMinionJobsIdempotencyKey) {
   // v7: blob index uniq_minion_jobs_idempotency references idempotency_key.
   await conn.unsafe(`
     ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  `);
+}
+if (needsDreamVerdictsExpiresAt) {
+  // Nullable column + DEFAULT as TWO statements, deliberately:
+  //  - a single `ADD COLUMN ... DEFAULT` would stamp EXISTING rows via
+  //    PG11 fast-defaults, destroying v143's judged_at-derived backfill
+  //    (pre-TTL rows must keep their original age);
+  //  - SET DEFAULT after ADD affects only NEW rows, so a legacy writer
+  //    racing the upgrade window can't insert NULLs (and getDreamVerdict's
+  //    read predicate is NULL-tolerant for rows older than the default).
+  // Migration v143 stays the source of truth for the backfill, SET NOT
+  // NULL, and the index. On the engine path it runs right after bootstrap
+  // under the same advisory lock; on the standalone db.ts:initSchema path
+  // migrations do NOT run — the column stays nullable there until the next
+  // full engine init, which the NULL-tolerant read predicate makes safe.
+  await conn.unsafe(`
+    ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    ALTER TABLE dream_verdicts ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');
   `);
 }
 if (needsMinionJobsPrivateQueue) {

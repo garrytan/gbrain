@@ -2,6 +2,51 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.5.0] - 2026-08-29
+
+**Postgres brains created before v0.46.35.0 upgrade cleanly again — the
+upgrade path self-repairs on the next connect, and a new build-time gate
+keeps this whole class of upgrade wedge from shipping again.**
+
+### Fixed
+
+- **Self-repairing upgrade path for older Postgres brains.** A brain created
+  before v0.46.35.0 could fail to complete its schema upgrade on newer
+  releases; every database-touching command then stopped at connect. The
+  schema bootstrap now detects and repairs the gap automatically — upgrade
+  the binary, run any command, and the brain converges to the latest schema
+  with no manual steps. Brains that already applied a manual workaround are
+  unaffected (the repair is a no-op there). Pinned by a live-Postgres
+  end-to-end test that rewinds a brain to the affected shape and proves
+  convergence, including that pre-existing rows keep their original
+  time-to-live instead of gaining a fresh one. (#4657)
+- The bootstrap's diagnostic line no longer mislabels newer brains as
+  "pre-v0.21" — it now names what it actually found (a schema
+  forward-reference gap), on both engines.
+
+### Added
+
+- **Build-time closure of the upgrade-wedge class (4th recurrence).** The
+  schema-coverage suite now parses the embedded Postgres schema for every
+  index-to-column forward reference and fails any pull request that adds one
+  without a matching bootstrap repair — the same guard the PGLite schema
+  already had. The gap this release fixes was only catchable on a
+  live-Postgres test lane before; now it fails locally at PR time.
+
+## To take advantage of v0.47.5.0
+
+`gbrain upgrade` is all you need. If your brain was affected, the repair runs
+automatically on the next command that touches the database.
+
+**Say to your agent:** *"upgrade gbrain and run the doctor"* — your agent runs
+`gbrain upgrade` and `gbrain doctor` to confirm the brain is healthy.
+
+1. **Verify the upgrade:**
+   ```bash
+   gbrain --version
+   gbrain doctor
+   ```
+
 ## [0.47.4.0] - 2026-08-28
 
 **Your brain's remote surface now behaves the same everywhere: reads stay

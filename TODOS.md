@@ -1,5 +1,19 @@
 # TODOS
 
+## Schema-bootstrap coverage follow-ups (filed 2026-08-29, follow-up from the #4657 P0 fix)
+
+- [ ] **P3 — Extend the blob forward-reference gates beyond CREATE INDEX.**
+  **What:** `test/schema-bootstrap-coverage.test.ts` now gates CREATE INDEX
+  column references on BOTH schema blobs (PGLite A2 check + the #4657
+  Postgres-blob class-closure gate), but forward references through
+  constraints, views, trigger bodies, and partial-index WHERE clauses are
+  not parsed. **Why:** the #4657 class (4th recurrence) proved blob-only
+  forward references break zero locally-runnable tests; the remaining DDL
+  forms are the same shape through a different syntax. **Where to start:**
+  extend `parseIndexColumnReferences` siblings for `CHECK`/`REFERENCES`/
+  `CREATE TRIGGER` bodies against `SCHEMA_SQL` + `PGLITE_SCHEMA_SQL`, reuse
+  `buildIndexRefCoveragePredicate`, keep the exemption-with-rationale bar.
+
 ## Gmail open-loop engine follow-ups (filed 2026-08-25, follow-up from the gmail-open-loop-engine wave)
 
 - [ ] **P1 — gbrain.io hosted OAuth relay: server build + CASA clock.**
