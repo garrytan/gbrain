@@ -337,16 +337,15 @@ describe('sibling read ops (#4352 remediation — no bypass around get_page)', (
     expect(local.map((l) => l.from_slug)).toContain('notes/private-page');
   });
 
-  test('traverse_graph (node shape): private nodes + edges to them are stripped remotely', async () => {
+  test('traverse_graph (remote default path shape): private nodes + edges to them are stripped remotely', async () => {
     __resetPrivateVisibilityCacheForTests();
     const op = operationsByName['traverse_graph'];
     const remote = (await op.handler(mkCtx(true), { slug: 'notes/world-page' })) as Array<{
-      slug: string; links: Array<{ to_slug: string }>;
+      from_slug: string; to_slug: string;
     }>;
-    expect(remote.map((n) => n.slug)).not.toContain('notes/private-page');
-    for (const node of remote) {
-      expect(node.links.map((l) => l.to_slug)).not.toContain('notes/private-page');
-    }
+    const touched = remote.flatMap((e) => [e.from_slug, e.to_slug]);
+    expect(touched).not.toContain('notes/private-page');
+    expect(touched).toContain('notes/unmarked-page');
     const local = (await op.handler(mkCtx(false), { slug: 'notes/world-page' })) as Array<{ slug: string }>;
     expect(local.map((n) => n.slug)).toContain('notes/private-page');
   });
