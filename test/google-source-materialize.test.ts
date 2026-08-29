@@ -27,6 +27,7 @@ import type {
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
 import {
+  CALENDAR_FORWARD_DAYS,
   googleStateFile,
   myAddressSet,
   parseGoogleSourceConfig,
@@ -1139,6 +1140,95 @@ describe('google-source materialize', () => {
         );
         expect(jobs2.length).toBe(1);
         expect(jobs2[0].id).toBe(jobs1[0].id);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Calendar horizon ─────────────────────────────────────────────────────────
+
+describe('google-source calendar horizon', () => {
+  const daysFromNowMs = (n: number): number => NOW_MS + n * 86_400_000;
+
+  // An open-ended weekly recurrence, expanded by Google (singleEvents=true)
+  // into one instance per week for `weeks`.
+  function weeklyInstances(weeks: number): unknown[] {
+    return Array.from({ length: weeks }, (_, i) => ({
+      id: `evtchurch${String(i).padStart(6, '0')}`,
+      status: 'confirmed',
+      summary: 'Church',
+      start: { dateTime: new Date(daysFromNowMs(i * 7)).toISOString() },
+      end: { dateTime: new Date(daysFromNowMs(i * 7) + 5_400_000).toISOString() },
+      organizer: { email: 'a@example.com' },
+    }));
+  }
+
+  test('an incremental sweep does not materialize past the forward horizon', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-horizon-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        // Sweep 1 (windowed) banks a syncToken.
+        calendarFixture(fx);
+        await sweep(dir, fx, vault, {}, 'calendar');
+
+        // Sweep 2 arrives through the syncToken path — which CANNOT carry
+        // timeMin/timeMax — carrying 5 years of expanded weekly instances.
+        // Only those inside the forward horizon may land.
+        fx.calendarEvents = [];
+        fx.calendarDelta = weeklyInstances(260);
+        await sweep(dir, fx, vault, {}, 'calendar');
+
+        const church = (await slugsWhere(`slug LIKE 'calendar/%church%'`)).length;
+        // 60-day horizon / 7-day cadence ≈ 9 instances. Assert the bound, not
+        // an exact count, so the test survives a horizon retune.
+        expect(church).toBeGreaterThan(0);
+        expect(church).toBeLessThanOrEqual(Math.ceil(CALENDAR_FORWARD_DAYS / 7) + 1);
+        expect(church).toBeLessThan(260);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('an event rescheduled beyond the horizon drops its existing page', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-horizon-move-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        fx.calendarEvents = [
+          {
+            id: 'evt00000000000009',
+            status: 'confirmed',
+            summary: 'Movable feast',
+            start: { dateTime: new Date(daysFromNowMs(3)).toISOString() },
+            end: { dateTime: new Date(daysFromNowMs(3) + 3_600_000).toISOString() },
+            organizer: { email: 'a@example.com' },
+          },
+        ];
+        await sweep(dir, fx, vault, {}, 'calendar');
+        expect((await slugsWhere(`slug LIKE 'calendar/%movable-feast%'`)).length).toBe(1);
+
+        // Same event id, now pushed years out: the page must not be stranded.
+        fx.calendarEvents = [];
+        fx.calendarDelta = [
+          {
+            id: 'evt00000000000009',
+            status: 'confirmed',
+            summary: 'Movable feast',
+            start: { dateTime: new Date(daysFromNowMs(900)).toISOString() },
+            end: { dateTime: new Date(daysFromNowMs(900) + 3_600_000).toISOString() },
+            organizer: { email: 'a@example.com' },
+          },
+        ];
+        await sweep(dir, fx, vault, {}, 'calendar');
+        expect((await slugsWhere(`slug LIKE 'calendar/%movable-feast%'`)).length).toBe(0);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

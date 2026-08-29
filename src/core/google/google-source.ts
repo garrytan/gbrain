@@ -66,6 +66,14 @@ export type { GoogleSourceConfig } from './types.ts';
 
 const G_KIND = 'google';
 
+/**
+ * How far FORWARD a calendar sweep looks. Backward is per-source
+ * (`historyDays`); forward is fixed, because the far future is projection,
+ * not record — and an open-ended weekly recurrence expands to ~52 pages a
+ * year for as long as you let it.
+ */
+export const CALENDAR_FORWARD_DAYS = 60;
+
 export function isGoogleSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === G_KIND;
 }
@@ -392,9 +400,11 @@ async function sweepCalendar(
   countedSlugs: Set<string>,
 ): Promise<void> {
   const now = Date.now();
+  const floorMs = now - deps.cfg.historyDays * 86_400_000;
+  const horizonMs = now + CALENDAR_FORWARD_DAYS * 86_400_000;
   const windowOpts = {
-    timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
-    timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
+    timeMinIso: new Date(floorMs).toISOString(),
+    timeMaxIso: new Date(horizonMs).toISOString(),
   };
   let result;
   try {
@@ -423,6 +433,19 @@ async function sweepCalendar(
     // cancelled skeletons (id + status only, per the Calendar API) still
     // find their page instead of computing a 1970 ghost path.
     const existingPath = await calendarPageRelPathByEventId(deps, ev.id);
+    // Horizon guard. An INCREMENTAL sweep cannot carry timeMin/timeMax —
+    // Google rejects those alongside a syncToken — so a newly created
+    // open-ended recurrence comes back fully expanded, every instance, with
+    // no bound at all. Observed in the wild: one weekly event materialized
+    // 730 pages stretching 14 years out. Bounding here (not only in the
+    // query) keeps BOTH paths agreeing on the same window.
+    const startMs = ev.startIso ? Date.parse(ev.startIso) : Number.NaN;
+    if (Number.isFinite(startMs) && (startMs > horizonMs || startMs < floorMs)) {
+      // Rescheduled OUT of the window: drop the page we already have rather
+      // than stranding it. Never materialize a fresh one.
+      if (existingPath) await deletePageByRelPath(deps, existingPath, summary);
+      continue;
+    }
     const rendered = renderCalendarEventPage(ev);
     if (!rendered) {
       await deletePageByRelPath(deps, existingPath ?? calendarRelPath(ev), summary);
