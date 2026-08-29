@@ -1571,6 +1571,16 @@ describe('email-thread-heading hardening (2026-08-28 review)', () => {
     expect(r.messages.map((m) => m.speaker)).toEqual(['&lt;a@b.example&gt;', '"Sam Example" &lt;sam@example.com&gt;']);
   });
 
+  test('a level-1 title above the anchors is not reported as a folded heading', () => {
+    const body = ['# Email thread: Renewal', HDR, '', 'hello', '## Eve Demo &lt;eve@example.com&gt; — Fri, 19 Jun 2026 08:03:59 +0100 (received)', 'reply'].join('\n');
+    const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });
+    expect(r.messages).toHaveLength(2);
+    expect(r.unrecognized_headings).toBeUndefined();
+    // A same-level heading that is not an anchor is still reported (the #4136 fold signal).
+    const folded = parseConversation(['## User', 'question', '## Someone Else', 'answer'].join('\n'), { fallbackDate: '2026-01-01' });
+    expect(folded.unrecognized_headings ?? []).toContain('Someone Else');
+  });
+
   test('a parenthetical comment after the offset is dropped before Date.parse', () => {
     const body = ['## Ops &lt;ops@example.com&gt; — Mon, 03 Aug 2026 09:15:00 +0200 (GMT+02:00) (received)', 'body'].join('\n');
     const r = parseConversation(body, { fallbackDate: '2026-01-01', forcePatternId: 'email-thread-heading' });

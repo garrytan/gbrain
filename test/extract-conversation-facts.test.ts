@@ -59,6 +59,7 @@ import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base
 import {
   validateModelFlag,
   compileEmailSenderDenylist,
+  type EmailSenderRule,
   EMAIL_AUTOMATED_SENDERS,
   MAX_CANDIDATE_BATCH,
   PAGE_LIST_BATCH,
@@ -1958,12 +1959,13 @@ describe('EntitySlugCanonicalizer', () => {
 describe('CLI + job wiring pins (2026-08-28 review)', () => {
   const cmdSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'extract-conversation-facts.ts'), 'utf8');
   const jobsSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'jobs.ts'), 'utf8');
+  const modelFlagSrc = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'extract-conversation-facts', 'model-flag.ts'), 'utf8');
   test('--model is parsed, validated up front, and handed to the core', () => {
     expect(cmdSrc).toContain("if (a === '--model') { out.model = args[++i]; continue; }");
-    // One gate for the CLI (before the job is enqueued), the job handler and the core.
-    expect(cmdSrc).toContain('export function validateModelFlag(model: string): string | null');
-    expect(cmdSrc).toContain("!isAvailable('chat', model)");
-    expect(cmdSrc).toContain('!canonicalLookup(model)');
+    // One gate (model-flag.ts) for the CLI (before the job is enqueued), the job handler and the core.
+    expect(modelFlagSrc).toContain('export function validateModelFlag(model: string): string | null');
+    expect(modelFlagSrc).toContain("!isAvailable('chat', model)");
+    expect(modelFlagSrc).toContain('!canonicalLookup(model)');
     expect(cmdSrc).toContain('validateModelFlag(pre.model)');
     expect(cmdSrc.indexOf('validateModelFlag(pre.model)')).toBeLessThan(cmdSrc.indexOf('const backgrounded = await maybeBackground('));
     expect(cmdSrc).toContain('validateModelFlag(opts.model)');
@@ -2684,21 +2686,23 @@ describe('review fixes (2026-08-28 ship)', () => {
     expect(isOutOfScopeEmail({ type: 'conversation' as never, frontmatter: {}, compiled_truth: '' })).toBe(false);
   });
 
-  test('compileEmailSenderDenylist merges operator patterns and skips invalid ones', () => {
+  test('compileEmailSenderDenylist merges operator rules as plain strings and skips invalid entries', () => {
     const errs: string[] = [];
     const orig = process.stderr.write.bind(process.stderr);
     (process.stderr as { write: unknown }).write = (s: string) => {
       errs.push(String(s));
       return true;
     };
-    let list: readonly RegExp[];
+    let list: readonly EmailSenderRule[];
     try {
-      list = compileEmailSenderDenylist(['@relay\\.example$', '(unclosed', 42 as never, '']);
+      list = compileEmailSenderDenylist(['@relay.example', 'Noreply ', 42 as never, '']);
     } finally {
       (process.stderr as { write: unknown }).write = orig;
     }
-    expect(list.length).toBe(EMAIL_AUTOMATED_SENDERS.length + 1);
-    expect(errs.join('')).toContain('invalid pattern');
+    // Two rules kept (suffix + substring, lowercased); the number and the empty string are reported.
+    expect(list.length).toBe(EMAIL_AUTOMATED_SENDERS.length + 2);
+    expect(list.slice(-2)).toEqual(['@relay.example', 'noreply']);
+    expect(errs.join('')).toContain('ignored (expected a non-empty string)');
     const msgs = [
       { speaker: 'Bot &lt;bot@relay.example&gt;', timestamp: '2026-06-18T07:46:32.000Z', text: 'ping' },
       { speaker: 'Eve Demo &lt;eve@example.com&gt;', timestamp: '2026-06-18T08:00:00.000Z', text: 'pong' },
@@ -2830,7 +2834,7 @@ describe('review fixes through the core (2026-08-28 ship)', () => {
   test('opts.emailAutomatedSenders extends the built-in denylist for the run', async () => {
     const r = await runExtractConversationFactsCore(engine, {
       sourceId: 'default', slug: 'email-thread-relay2', types: ['email'], overrideDisabled: true, extractor,
-      emailAutomatedSenders: ['@relay\\.example$'],
+      emailAutomatedSenders: ['@relay.example'],
     });
     expect(r.email_messages_dropped_automated).toBe(1);
     // The owner's lone sent message still qualifies the thread.

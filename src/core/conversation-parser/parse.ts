@@ -373,11 +373,16 @@ export function applyPattern(
     entry.score_continuations_as_body === true &&
     (entry.test_positive ?? []).some((s) => /^#{2,3}\s/.test(s));
   let fenceMarker: '```' | '~~~' | null = null;
+  // Heading level of this pattern's anchors (from its first positive sample):
+  // a heading ABOVE that level is a document title (`# Email thread: Renewal`
+  // over `## From — Date` anchors), never a lost speaker.
+  const anchorLevel = /^(#{1,6})\s/.exec(entry.test_positive[0] ?? '')?.[1].length ?? null;
   const collectFoldedHeading = (line: string): void => {
     if (!headingAnchored || fenceMarker !== null || !diag) return;
     if (diag.unrecognized_headings.length >= MAX_UNRECOGNIZED_HEADINGS) return;
     const h = UNRECOGNIZED_HEADING_RE.exec(line);
     if (!h) return;
+    if (anchorLevel !== null && h[1].length < anchorLevel) return;
     const label = h[2].trim();
     // Speaker-shaped-ish cap: ≤3 whitespace tokens, no sentence punctuation
     // tail — long prose headings are section titles, not lost speakers.

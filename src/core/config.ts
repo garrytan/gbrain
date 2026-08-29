@@ -1272,9 +1272,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
-  // Extra automated-sender patterns for email conversation facts (a JSON
-  // array of regex sources, merged with the built-in denylist in
-  // src/commands/extract-conversation-facts.ts).
+  // Extra automated-sender rules for email conversation facts (a JSON array
+  // of address suffixes or substrings, merged with the built-in denylist in
+  // src/commands/extract-conversation-facts/email.ts).
   'facts.email_automated_senders',
   // Conversation parser LLM fallback. Deliberately register the exact key,
   // not a conversation_parser.* prefix: fallback is the only live opt-in

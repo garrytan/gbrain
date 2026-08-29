@@ -108,8 +108,39 @@ import {
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
-import { canonicalLookup } from '../core/model-pricing.ts';
-import { slugify } from '../core/entities/resolve.ts';
+import {
+  EMAIL_SEGMENT_GAP_MINUTES,
+  DEFAULT_SEGMENT_MAX_CHARS,
+  EMAIL_THREAD_PATTERN_ID,
+  EMAIL_AUTOMATED_SENDERS,
+  compileEmailSenderDenylist,
+  loadEmailSenderDenylist,
+  countEmailAnchorLines,
+  normalizeEmailMessages,
+  isOutOfScopeEmail,
+  type EmailSenderRule,
+} from './extract-conversation-facts/email.ts';
+import { EntitySlugCanonicalizer } from './extract-conversation-facts/entity-slug-canonicalizer.ts';
+import { validateModelFlag } from './extract-conversation-facts/model-flag.ts';
+export {
+  EMAIL_SEGMENT_GAP_MINUTES,
+  DEFAULT_SEGMENT_MAX_CHARS,
+  EMAIL_THREAD_PATTERN_ID,
+  EMAIL_AUTOMATED_SENDERS,
+  EMAIL_AUTOMATED_SENDERS_CONFIG_KEY,
+  compileEmailSenderDenylist,
+  countEmailAnchorLines,
+  parseEmailSender,
+  isAutomatedEmailSender,
+  normalizeEmailMessages,
+  isSingleInboundEmail,
+  isOutOfScopeEmail,
+  type EmailSender,
+  type EmailSenderRule,
+  type NormalizedEmailMessages,
+} from './extract-conversation-facts/email.ts';
+export { slugBasename, EntitySlugCanonicalizer } from './extract-conversation-facts/entity-slug-canonicalizer.ts';
+export { validateModelFlag } from './extract-conversation-facts/model-flag.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
@@ -171,83 +202,6 @@ export const DEFAULT_SEGMENT_MAX_MESSAGES = 30;
 
 /** Minimum messages required for a segment to be worth extracting. */
 export const MIN_SEGMENT_MESSAGES = 2;
-
-/**
- * Email threads: replies arrive over days, not minutes, so the episode gap is
- * a week. Facts are dated at their segment's start (claim-time dating), so a
- * wider gap would date a reply months early; a narrower one would fragment
- * a normal back-and-forth. Episodes of a real thread are all kept, even a
- * one-message episode (see the email branch in processPage).
- */
-export const EMAIL_SEGMENT_GAP_MINUTES = 60 * 24 * 7;
-
-/**
- * Rendered-body char budget per segment. Keeps every segment under
- * SEGMENT_TEXT_CHAR_LIMIT with headroom for the header, so a long thread
- * splits into more segments instead of losing its tail to truncation.
- * Opt-in via SplitSegmentsOpts.maxChars (the email path); other types keep
- * the historical message-count-only cut.
- */
-export const DEFAULT_SEGMENT_MAX_CHARS = 5800;
-
-/** Pattern id the email path forces (see ParseConversationOpts.forcePatternId). */
-export const EMAIL_THREAD_PATTERN_ID = 'email-thread-heading';
-
-/**
- * Default senders whose messages carry no conversational facts:
- * comment/notification relays, bounce and no-reply addresses, form
- * submissions, job boards. Tested against the lowercased address (or the
- * name when no address parsed) and dropped before segmenting, so a thread
- * with one human reply keeps the human messages only. Operators extend the
- * list with `facts.email_automated_senders` (a JSON array of regex sources,
- * compiled case-insensitively); see compileEmailSenderDenylist.
- */
-export const EMAIL_AUTOMATED_SENDERS: readonly RegExp[] = [
-  /(?:^|[._+-])(?:no-?reply|do-?not-?reply)@/,
-  /^(?:notifications?|notify|mailer-daemon|bounces?|postmaster|alerts?|calendar-notification)[@._+-]/,
-  /@docs\.google\.com$/,
-  /@calendar-server\.bounces\.google\.com$/,
-  /@mail\.zapier\.com$/,
-  /@webflow\.com$/,
-  /@jobsinnetwork\.com$/,
-];
-
-/** Config key: extra automated-sender regex sources, merged with EMAIL_AUTOMATED_SENDERS. */
-export const EMAIL_AUTOMATED_SENDERS_CONFIG_KEY = 'facts.email_automated_senders';
-
-/**
- * The run's sender denylist: the built-in defaults plus operator patterns.
- * An invalid pattern is reported and skipped, never fatal, so one typo in
- * config cannot stop a backfill.
- */
-export function compileEmailSenderDenylist(extra: readonly unknown[] | undefined): readonly RegExp[] {
-  const out = [...EMAIL_AUTOMATED_SENDERS];
-  for (const src of extra ?? []) {
-    if (typeof src !== 'string' || src.trim() === '') continue;
-    try {
-      out.push(new RegExp(src, 'i'));
-    } catch (err) {
-      process.stderr.write(
-        `[extract-conversation-facts] ${EMAIL_AUTOMATED_SENDERS_CONFIG_KEY}: invalid pattern ${JSON.stringify(src)} ignored (${err instanceof Error ? err.message : String(err)})\n`,
-      );
-    }
-  }
-  return out;
-}
-
-async function loadEmailSenderDenylist(engine: BrainEngine): Promise<readonly RegExp[]> {
-  const raw = await engine.getConfig(EMAIL_AUTOMATED_SENDERS_CONFIG_KEY);
-  if (!raw) return EMAIL_AUTOMATED_SENDERS;
-  try {
-    const parsed = JSON.parse(raw);
-    return compileEmailSenderDenylist(Array.isArray(parsed) ? parsed : []);
-  } catch {
-    process.stderr.write(
-      `[extract-conversation-facts] ${EMAIL_AUTOMATED_SENDERS_CONFIG_KEY} is not a JSON array; using the built-in denylist\n`,
-    );
-    return EMAIL_AUTOMATED_SENDERS;
-  }
-}
 
 // #4136 — labels that are common DOCUMENT section headings, never lost
 // speakers. Gate the DECLINE only (a miss here is warn-noise on healthy
@@ -450,9 +404,10 @@ export interface ExtractConversationFactsCoreOpts {
   /** Extractor chat model override (e.g. openai:gpt-5.6-sol). Default: facts.extraction_model, else the reasoning tier. */
   model?: string;
   /**
-   * Extra automated-sender regex sources for email pages, merged with
-   * EMAIL_AUTOMATED_SENDERS. Default: the `facts.email_automated_senders`
-   * config key (a JSON array), else the built-in list only.
+   * Extra automated-sender rules for email pages (address suffixes such as
+   * `@relay.example`, or substrings), merged with EMAIL_AUTOMATED_SENDERS.
+   * Default: the `facts.email_automated_senders` config key (a JSON array),
+   * else the built-in list only.
    */
   emailAutomatedSenders?: readonly string[];
   /**
@@ -729,235 +684,6 @@ export function splitOversizedMessage<M extends ConversationMessage>(m: M, maxCh
 }
 
 // ---------------------------------------------------------------------------
-// Email thread pages (collector format, see EMAIL_THREAD_PATTERN_ID).
-// ---------------------------------------------------------------------------
-
-const HTML_ENTITY_RE = /&(lt|gt|amp|quot|#39);/g;
-const HTML_ENTITY_MAP: Record<string, string> = {
-  lt: '<',
-  gt: '>',
-  amp: '&',
-  quot: '"',
-  '#39': "'",
-};
-function decodeEntities(s: string): string {
-  return s.replace(HTML_ENTITY_RE, (_, k: string) => HTML_ENTITY_MAP[k] ?? '');
-}
-const OPEN_IN_GMAIL_RE = /^\[Open in Gmail\]\([^)]*\)\s*$/;
-const EMAIL_SENT_HEADING_RE = /^##\s.*\(sent\)\s*$/m;
-/**
- * A collector message heading in full shape: `## From — Date (direction)`,
- * where Date starts like an RFC-2822 date (`Thu, 18 Jun 2026` or
- * `18 Jun 26`). A quoted section heading such as `## Notes — Q3 plan (sent)`
- * has no date and is body text.
- */
-const EMAIL_ANCHOR_LINE_RE = /^## .+ — (?:[A-Za-z]{3}, )?\d{1,2} [A-Za-z]{3} \d{2,4} .*\((?:sent|received)\)\s*$/;
-
-/**
- * Number of body lines shaped like a collector message heading. Compared with
- * the parsed message count so a heading the pattern rejects (an unexpected
- * date shape) can never fold silently into the previous sender's body.
- */
-export function countEmailAnchorLines(body: string): number {
-  let n = 0;
-  for (const line of body.split(/\r?\n/)) if (EMAIL_ANCHOR_LINE_RE.test(line.trim())) n++;
-  return n;
-}
-
-export interface EmailSender {
-  name: string;
-  address: string | null;
-}
-
-/** Split the collector's HTML-escaped `Name <addr>` into display name + address. */
-export function parseEmailSender(raw: string): EmailSender {
-  // The collector's escapeMd emits `&lt;`/`&gt;` and backslash-escaped `[`/`]`.
-  const decoded = decodeEntities(raw).replace(/\\([\[\]])/g, '$1').trim();
-  const m = /^(.*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$/.exec(decoded);
-  if (m) {
-    const name = m[1].trim().replace(/^"(.*)"$/, '$1').trim();
-    return { name: name || m[2], address: m[2].toLowerCase() };
-  }
-  if (/^[^\s<>]+@[^\s<>]+$/.test(decoded)) {
-    return { name: decoded, address: decoded.toLowerCase() };
-  }
-  const name = decoded.replace(/^"(.*)"$/, '$1').trim();
-  return { name: name || 'unknown', address: null };
-}
-
-export function isAutomatedEmailSender(
-  sender: EmailSender,
-  denylist: readonly RegExp[] = EMAIL_AUTOMATED_SENDERS,
-): boolean {
-  const probe = sender.address ?? sender.name.toLowerCase();
-  return denylist.some((re) => re.test(probe));
-}
-
-export interface NormalizedEmailMessages {
-  messages: MatchedMessage[];
-  /** Messages dropped because their sender is automated. */
-  dropped: number;
-  /**
-   * Distinct senders among the kept messages, keyed by address when one
-   * parsed (else by lowercased display name), counted before the address is
-   * dropped from the speaker: a newsletter whose display name varies per
-   * issue is still one sender.
-   */
-  distinctSenders: number;
-}
-
-/**
- * Email-page post-parse normalization:
- *   - speaker `Name &lt;addr&gt;` -> display name (the address only drives policy)
- *   - automated senders dropped before segmenting
- *   - `[Open in Gmail](...)` link lines stripped from bodies
- */
-export function normalizeEmailMessages(
-  messages: readonly MatchedMessage[],
-  denylist: readonly RegExp[] = EMAIL_AUTOMATED_SENDERS,
-): NormalizedEmailMessages {
-  const out: MatchedMessage[] = [];
-  const senders = new Set<string>();
-  let dropped = 0;
-  for (const m of messages) {
-    const sender = parseEmailSender(m.speaker);
-    if (isAutomatedEmailSender(sender, denylist)) {
-      dropped++;
-      continue;
-    }
-    senders.add(sender.address ?? sender.name.toLowerCase());
-    const text = m.text
-      .split(/\r?\n/)
-      .filter((line) => !OPEN_IN_GMAIL_RE.test(line.trim()))
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    out.push(
-      m.direction !== undefined
-        ? { speaker: sender.name, timestamp: m.timestamp, text, direction: m.direction }
-        : { speaker: sender.name, timestamp: m.timestamp, text },
-    );
-  }
-  return { messages: out, dropped, distinctSenders: senders.size };
-}
-
-/**
- * Email pages with a single inbound message (newsletters, notifications,
- * one-off sends to the owner) are out of scope for conversation facts. Cheap
- * pre-parse check on frontmatter + the heading marker, so enumeration skips
- * them for the cost of one list read and writes no durable audit row.
- */
-export function isSingleInboundEmail(
-  page: Pick<Page, 'type' | 'frontmatter' | 'compiled_truth'>,
-): boolean {
-  if (page.type !== 'email') return false;
-  const raw = page.frontmatter?.message_count;
-  const count = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
-  if (!Number.isFinite(count) || count >= 2) return false;
-  return !EMAIL_SENT_HEADING_RE.test(page.compiled_truth ?? '');
-}
-
-/**
- * Email pages the facts pipeline never extracts: the collector's daily digest
- * pages (type `email-digest`, or `frontmatter.subtype` other than `thread`,
- * e.g. `digest`, whose body is `## Signatures pending` / `## Triage`
- * sections, not messages) and single inbound messages. Enumeration skips
- * both before parsing and writes no audit row.
- */
-export function isOutOfScopeEmail(
-  page: Pick<Page, 'type' | 'frontmatter' | 'compiled_truth'>,
-): boolean {
-  if (page.type === 'email-digest') return true;
-  if (page.type !== 'email') return false;
-  const subtype = page.frontmatter?.subtype;
-  if (typeof subtype === 'string' && subtype !== 'thread') return true;
-  return isSingleInboundEmail(page);
-}
-
-// ---------------------------------------------------------------------------
-// Save-time entity-slug canonicalization.
-// ---------------------------------------------------------------------------
-
-/**
- * Basename form the resolver's fallback_slugify produces (`Eve Demo`
- * -> `eve-demo`). Delegates to the resolver's own slugify so accented
- * and curly-apostrophe names fold onto the same basename the resolver mints.
- */
-export function slugBasename(name: string): string {
-  return slugify(name);
-}
-
-/**
- * The shipped resolver cascade mints BOTH `people/eve-demo` and
- * `eve-demo` for the same person, sometimes on the same page across two
- * runs, so `find_trajectory` (keyed on the exact slug) splits one timeline.
- * This folds a raw slug onto an existing prefixed sibling (`people/` or
- * `companies/`, from person/company pages and from facts already written)
- * when exactly one sibling exists. Raw slugs with no sibling stay raw;
- * ambiguous ones (both prefixes) stay raw. Prefixed slugs register their
- * basename so later raw forms in the same run fold onto them. Only the two
- * entity prefixes register: an extractor-minted `projects/x` or `a/../b`
- * never becomes a fold target. Both lookups are scoped to the run's source,
- * like the resolver cascade that runs before this fold (source isolation:
- * a fact in source A never points at a page that exists only in source B).
- */
-export class EntitySlugCanonicalizer {
-  private readonly byBase = new Map<string, string>();
-  private readonly ambiguous = new Set<string>();
-
-  static async load(engine: BrainEngine, sourceId: string): Promise<EntitySlugCanonicalizer> {
-    const c = new EntitySlugCanonicalizer();
-    try {
-      const pages = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages
-          WHERE source_id = $1
-            AND deleted_at IS NULL
-            AND (slug LIKE 'people/%' OR slug LIKE 'companies/%')`,
-        [sourceId],
-      );
-      for (const r of pages) c.register(r.slug);
-      const facts = await engine.executeRaw<{ entity_slug: string }>(
-        `SELECT DISTINCT entity_slug FROM facts
-          WHERE source_id = $1
-            AND (entity_slug LIKE 'people/%' OR entity_slug LIKE 'companies/%')`,
-        [sourceId],
-      );
-      for (const r of facts) c.register(r.entity_slug);
-    } catch (err) {
-      process.stderr.write(
-        `[extract-conversation-facts] slug canonicalizer load failed (${err instanceof Error ? err.message : String(err)}); raw slugs stay raw this run\n`,
-      );
-    }
-    return c;
-  }
-
-  /** Remember a people/ or companies/ slug. Two prefixes for one basename mark it ambiguous. */
-  register(prefixed: string): void {
-    const i = prefixed.indexOf('/');
-    if (i <= 0) return;
-    const prefix = prefixed.slice(0, i);
-    if (prefix !== 'people' && prefix !== 'companies') return;
-    const base = prefixed.slice(i + 1);
-    if (!base || base.includes('/')) return;
-    const known = this.byBase.get(base);
-    if (known === undefined) this.byBase.set(base, prefixed);
-    else if (known !== prefixed) this.ambiguous.add(base);
-  }
-
-  /** Canonical slug for an extractor/resolver output; null/undefined pass through. */
-  canonicalize(slug: string | null | undefined): string | null | undefined {
-    if (!slug) return slug;
-    if (slug.includes('/')) {
-      this.register(slug);
-      return slug;
-    }
-    const base = slugBasename(slug);
-    if (!base || this.ambiguous.has(base)) return slug;
-    return this.byBase.get(base) ?? slug;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Fingerprint — sourceId-only (Eng-v2 A3). Widening types config does NOT
 // invalidate prior completion state.
 // ---------------------------------------------------------------------------
@@ -1034,32 +760,6 @@ function pageBodyBytes(page: Page): number {
   const compiled = page.compiled_truth ?? '';
   const timeline = page.timeline ?? '';
   return Buffer.byteLength(compiled, 'utf8') + Buffer.byteLength(timeline, 'utf8');
-}
-
-// ---------------------------------------------------------------------------
-// --model gate, shared by the CLI, the job handler and the core.
-// ---------------------------------------------------------------------------
-
-/**
- * Why a `--model` id cannot run, or null when it can. isAvailable only proves
- * the provider key; the id itself is checked against the pricing table,
- * because a run always carries a cost cap and BudgetTracker hard-fails
- * reserve() with no_pricing for an unpriced id.
- */
-export function validateModelFlag(model: string): string | null {
-  if (!isAvailable('chat', model)) {
-    return (
-      `--model ${model} is not servable by the chat gateway (unknown provider, or its key is missing). ` +
-      'Use the provider:model form, e.g. openai:gpt-5.6-sol.'
-    );
-  }
-  if (!canonicalLookup(model)) {
-    return (
-      `--model ${model} has no pricing entry (src/core/model-pricing.ts), so the --max-cost-usd cap cannot gate it ` +
-      'and every segment would fail with no_pricing. Use a priced id (e.g. openai:gpt-5.6-sol) or add the entry first.'
-    );
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1218,7 +918,7 @@ interface ExtractCoreState {
   /** Save-time raw-slug folding onto existing prefixed siblings. */
   canonicalizer: EntitySlugCanonicalizer;
   /** Email sender denylist for this run (defaults + config). */
-  emailDenylist: readonly RegExp[];
+  emailDenylist: readonly EmailSenderRule[];
 }
 
 function cpMapKey(sourceId: string, slug: string): string {

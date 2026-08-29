@@ -218,9 +218,11 @@ Add `--model <provider:model>` to pin the extractor model for one run. The id
 must be servable by the chat gateway and present in the pricing table, or the
 command exits before it claims a page (dry runs skip this check). Email pages drop messages from automated
 senders before segmenting; extend the built-in denylist by setting
-`facts.email_automated_senders` to a JSON array of regex sources (matched
-case-insensitively against the sender address, or against the lowercased
-display name when no address parses).
+`facts.email_automated_senders` to a JSON array of lowercase strings. An
+entry with `@` (`@relay.example`) matches the sender address exactly or as a
+suffix; any other entry (`noreply`) matches as a substring of the address, or
+of the lowercased display name when no address parses. Entries are never
+compiled into regular expressions.
 
 On the second run, unchanged pages should move through durable skip counters.
 Edit one page or raw transcript sidecar and rerun; that page should process
