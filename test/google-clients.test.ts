@@ -553,6 +553,66 @@ describe('CalendarClient', () => {
     expect(thrown).toBeInstanceOf(GoogleCursorExpiredError);
     expect((thrown as GoogleCursorExpiredError).status).toBe(410);
   });
+
+  test('defaults to the primary calendar when no calendarId is given', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' });
+    expect(h.calls[0].url).toContain('/calendars/primary/events');
+  });
+
+  test('a secondary calendar id is URL-encoded into the path, not the query', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', {
+      calendarId: 'family0123456789@group.calendar.google.com',
+      timeMinIso: '2026-05-01T00:00:00.000Z',
+    });
+    // '@' must be percent-encoded so the id cannot be read as URL userinfo.
+    expect(h.calls[0].url).toContain(
+      '/calendars/family0123456789%40group.calendar.google.com/events',
+    );
+    expect(h.calls[0].url).not.toContain('/calendars/primary/');
+    // calendarId must not disturb the window params.
+    expect(new URL(h.calls[0].url).searchParams.get('timeMin')).toBe('2026-05-01T00:00:00.000Z');
+  });
+
+  test('an empty/whitespace calendarId falls back to primary', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', { calendarId: '   ', syncToken: 'cal-1' });
+    expect(h.calls[0].url).toContain('/calendars/primary/events');
+  });
+
+  test('listCalendars normalizes calendarList and flags the primary', async () => {
+    const h = makeHarness((u) => {
+      expect(u.pathname).toContain('/users/me/calendarList');
+      return json({
+        items: [
+          { id: 'a@example.com', summary: 'A Example', primary: true, accessRole: 'owner' },
+          {
+            id: 'family0123456789@group.calendar.google.com',
+            summary: 'Family',
+            accessRole: 'owner',
+          },
+          { summary: 'dropped — no id', accessRole: 'reader' },
+          { id: 'sub@import.calendar.google.com', accessRole: 'reader' },
+        ],
+      });
+    });
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const cals = await cal.listCalendars();
+    // The id-less row is dropped — it cannot be passed to --calendar-id.
+    expect(cals.length).toBe(3);
+    expect(cals[0]).toEqual({
+      id: 'a@example.com',
+      summary: 'A Example',
+      primary: true,
+      accessRole: 'owner',
+    });
+    expect(cals[1].primary).toBe(false);
+    expect(cals[2].summary).toBe('(no name)');
+  });
 });
 
 // ── PeopleClient ─────────────────────────────────────────────────────────────
