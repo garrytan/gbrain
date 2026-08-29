@@ -158,16 +158,32 @@ export function threadRelPath(thread: GmailThreadData): string {
 export interface RenderedPage {
   relPath: string;
   markdown: string;
+  /**
+   * Gmail threads only: every message came from a noise sender (no-reply,
+   * notifications@, …). The page still materializes — it is a RECORD — but
+   * the caller must not open loops on it or spend LLM tokens extracting it.
+   * Absent for calendar/person pages, where the notion does not apply.
+   */
+  automated?: boolean;
 }
 
 /**
- * Render one Gmail thread as a page. Returns null for pure noise (every
- * message from a noise sender) — those threads never materialize.
+ * Render one Gmail thread as a page. Returns null only for an EMPTY thread.
+ *
+ * Automated senders used to render null, which silently discarded the thread.
+ * That conflated two different questions: "should I chase a reply here?"
+ * (no — see loop-detect) and "should I keep this record?" (usually yes).
+ * The cost of conflating them is not hypothetical: school portals, youth
+ * sports platforms, and order confirmations all send from no-reply
+ * addresses, and on a real mailbox this rule was discarding 25% of
+ * non-spam mail — including every schedule change a parent depends on.
+ * Automated threads now materialize tagged `noise: automated-sender`, so
+ * retrieval can de-weight them while the content stays reachable.
  */
 export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
   if (thread.messages.length === 0) return null;
   const nonNoise = thread.messages.filter((m) => !isNoiseSender(m.fromAddress));
-  if (nonNoise.length === 0) return null;
+  const automated = nonNoise.length === 0;
 
   const first = thread.messages[0];
   const last = thread.messages[thread.messages.length - 1];
@@ -195,7 +211,11 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     `message_count: ${thread.messages.length}`,
     `participants: ${yamlList([...participants].sort())}`,
     `labels: ${yamlList([...new Set(thread.messages.flatMap((m) => m.labelIds))].sort())}`,
-    ...(signature ? [`noise: signature-request`] : []),
+    ...(signature
+      ? [`noise: signature-request`]
+      : automated
+        ? [`noise: automated-sender`]
+        : []),
     '---',
   ];
 
@@ -218,7 +238,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     body.push(m.bodyText || '_empty message_', '');
   }
 
-  return { relPath: threadRelPath(thread), markdown: fm.join('\n') + body.join('\n') + '\n' };
+  return { relPath: threadRelPath(thread), markdown: fm.join('\n') + body.join('\n') + '\n', automated };
 }
 
 // ── Calendar event page ──────────────────────────────────────────────────────

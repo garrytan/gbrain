@@ -276,7 +276,11 @@ describe('renderThreadPage', () => {
     expect(md).not.toContain('## → Charlie Example');
   });
 
-  test('pure-noise thread renders null', () => {
+  test('pure-noise thread still renders, tagged automated', () => {
+    // Automated senders are a RECORD, not garbage: school portals, youth
+    // sports platforms, and order confirmations all send from no-reply
+    // addresses. The tag lets retrieval de-weight them; dropping the page
+    // loses the content outright.
     const noise = thread([
       msg({ from: 'Notifier <noreply@example.com>', fromAddress: 'noreply@example.com' }),
       msg({
@@ -285,7 +289,19 @@ describe('renderThreadPage', () => {
         fromAddress: 'notifications@example.com',
       }),
     ]);
-    expect(renderThreadPage(noise)).toBeNull();
+    const rendered = renderThreadPage(noise);
+    expect(rendered).not.toBeNull();
+    expect(rendered!.automated).toBe(true);
+    expect(rendered!.markdown).toContain('noise: automated-sender');
+  });
+
+  test('a thread with any human message is not automated', () => {
+    const rendered = renderThreadPage(twoMessageThread());
+    expect(rendered!.automated).toBe(false);
+    expect(rendered!.markdown).not.toContain('noise: automated-sender');
+  });
+
+  test('an empty thread is the only thing that renders null', () => {
     expect(renderThreadPage(thread([]))).toBeNull();
   });
 

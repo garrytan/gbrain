@@ -476,10 +476,14 @@ async function processThread(
   });
   summary.threadsSeen++;
   const rendered = renderThreadPage(thread);
-  // Pure noise renders no page AND skips detection — an all-noise thread
-  // produces an empty verdict anyway, so nothing opens and nothing closes.
+  // Only an EMPTY thread renders nothing.
   if (!rendered) return thread;
   const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
+  // An all-automated thread is kept as a RECORD but stops here: nobody is
+  // waiting on a no-reply address, so detection would produce an empty
+  // verdict anyway, and extracting it would spend LLM tokens on mail that
+  // can never carry a commitment.
+  if (rendered.automated) return thread;
   await applyLoopDetection(deps, thread, slug);
   // LLM extraction candidates: trickle + the bounded recent window only —
   // the deep historical backfill is never extracted (spend honesty, F9).

@@ -471,8 +471,9 @@ describe('google-source materialize', () => {
       await withHome(async () => {
         const res = await sweep(dir, fx, vault);
         expect(res.status).toBe('first_sync');
-        // 2 person pages + 1 meeting + 2 threads (noise thread excluded).
-        expect(res.added).toBe(5);
+        // 2 person pages + 1 meeting + 3 threads (the automated thread now
+        // materializes as a record, tagged noise: automated-sender).
+        expect(res.added).toBe(6);
         expect(res.deleted).toBe(0);
         expect(res.chunksCreated).toBeGreaterThan(0);
         expect(fx.tokenPosts).toBe(0); // fresh vault token — no refresh HTTP
@@ -494,10 +495,13 @@ describe('google-source materialize', () => {
         expect(meetingMd).toContain('type: meeting');
         expect(meetingMd).toContain('- "charlie@example.com"');
 
-        // Gmail → thread pages with correct frontmatter; noise thread → no page.
+        // Gmail → thread pages with correct frontmatter. The automated thread
+        // materializes too, tagged so retrieval can de-weight it.
         const emails = await slugsWhere(`slug LIKE 'emails/%'`);
-        expect(emails.length).toBe(2);
-        expect(emails.some((s) => s.includes('automated-notification'))).toBe(false);
+        expect(emails.length).toBe(3);
+        const autoSlug = emails.find((s) => s.includes('automated-notification'))!;
+        expect(autoSlug).toBeDefined();
+        expect(readFileSync(join(dir, `${autoSlug}.md`), 'utf-8')).toContain('noise: automated-sender');
         const aSlug = emails.find((s) => s.includes('quarterly-zephyr-roadmap'))!;
         expect(aSlug).toBeDefined();
         const aMd = readFileSync(join(dir, `${aSlug}.md`), 'utf-8');
@@ -990,9 +994,9 @@ describe('google-source materialize', () => {
         expect(authHeaders.length).toBeGreaterThan(0);
         for (const a of authHeaders) expect(a).toBe('Bearer fixture-token');
 
-        // Threads imported (noise excluded), same as vault mode.
+        // Threads imported (automated ones included as records), same as vault mode.
         const emails = await slugsWhere(`slug LIKE 'emails/%'`);
-        expect(emails.length).toBe(2);
+        expect(emails.length).toBe(3);
 
         // Loop detection ran with myAddresses = account-only (the fake API
         // serves no sendAs endpoint; fetchSendAsAliases degrades to []):
@@ -1094,7 +1098,7 @@ describe('google-source materialize', () => {
           );
           expect(res.status).toBe('first_sync');
           expect(fx.tokenPosts).toBe(0);
-          expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(2);
+          expect((await slugsWhere(`slug LIKE 'emails/%'`)).length).toBe(3);
           const row = await engine.executeRaw<{ last_sync_at: unknown }>(
             `SELECT last_sync_at FROM sources WHERE id = 'gsrc'`,
           );
@@ -1229,6 +1233,50 @@ describe('google-source calendar horizon', () => {
         ];
         await sweep(dir, fx, vault, {}, 'calendar');
         expect((await slugsWhere(`slug LIKE 'calendar/%movable-feast%'`)).length).toBe(0);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Automated senders: kept as records, never as loops ───────────────────────
+
+describe('google-source automated threads', () => {
+  test('an all-automated thread materializes but opens no loop and is not extracted', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-automated-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    // Old enough that an inbound from a HUMAN would open an unanswered_inbound
+    // loop — so if a loop appears here, it is the sender rule failing, not the
+    // age gate.
+    fx.messages.push(
+      gmsg('18c2f4a9b3d21e21', T_N, daysAgoMs(5), {
+        headers: {
+          From: 'BashBall <postmaster@example.com>',
+          To: 'a@example.com',
+          Subject: 'Your team roster is ready',
+        },
+        body: 'Your child has been assigned to a team. Roster attached.',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+
+        // The record survives — this is the whole point of the change.
+        const emails = await slugsWhere(`slug LIKE 'emails/%'`);
+        expect(emails.length).toBe(1);
+        const md = readFileSync(join(dir, `${emails[0]}.md`), 'utf-8');
+        expect(md).toContain('noise: automated-sender');
+        expect(md).toContain('Roster attached.');
+
+        // ...but nobody is waiting on a no-reply address.
+        const open = await engine.executeRaw<{ id: string }>(
+          `SELECT id FROM open_loops WHERE source_id = 'gsrc'`,
+        );
+        expect(open.length).toBe(0);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
