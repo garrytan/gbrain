@@ -89,6 +89,10 @@ export function parseGoogleSourceConfig(
     config.g_history_days > 0
       ? Math.min(3650, Math.floor(config.g_history_days))
       : 90;
+  const calendarId =
+    typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
+      ? config.g_calendar_id.trim()
+      : 'primary';
   const dir =
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =
@@ -97,6 +101,7 @@ export function parseGoogleSourceConfig(
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
+    calendarId,
     dir,
     access,
     ...(typeof config.g_token_command === 'string' && config.g_token_command.trim()
@@ -394,6 +399,7 @@ async function sweepCalendar(
   let result;
   try {
     result = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
       ...(deps.opts.full || !state.calendar_sync_token ? windowOpts : { syncToken: state.calendar_sync_token }),
       ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
     });

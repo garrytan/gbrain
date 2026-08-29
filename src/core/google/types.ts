@@ -17,6 +17,10 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
+  /** Calendar swept by this source (default 'primary'). One calendar per
+   *  source so each keeps its own sync token — point a second source at a
+   *  secondary calendar id to ingest it too. */
+  calendarId: string;
   /** Managed dir where pages are materialized. */
   dir: string;
   /**

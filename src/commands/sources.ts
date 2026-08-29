@@ -168,6 +168,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gTokenEnv: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
+  let gCalendarId = 'primary';
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -218,6 +219,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         process.exit(2);
       }
       gHistoryDays = v;
+      continue;
+    }
+    if (a === '--calendar-id') {
+      const v = (args[++i] ?? '').trim();
+      if (!v) {
+        console.error('--calendar-id needs a value (see: gbrain google calendars).');
+        process.exit(2);
+      }
+      gCalendarId = v;
       continue;
     }
     if (a === '--scope') {
@@ -400,6 +410,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             account: gAccount!,
             services: gServices,
             historyDays: gHistoryDays,
+            calendarId: gCalendarId,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
             access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
             tokenCommand: gTokenCommand,

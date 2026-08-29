@@ -335,10 +335,15 @@ export class CalendarClient extends GoogleApiClient {
       timeMinIso?: string;
       timeMaxIso?: string;
       signal?: AbortSignal;
+      /** Calendar to sweep. Defaults to 'primary'. A secondary calendar id is
+       *  an address like `...@group.calendar.google.com`; each calendar gets
+       *  its OWN gbrain source so their sync tokens never collide. */
+      calendarId?: string;
     },
   ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null }> {
     let nextSyncToken: string | null = null;
-    const base = `${CALENDAR_BASE}/calendars/primary/events?maxResults=250&singleEvents=true`;
+    const calId = encodeURIComponent(opts.calendarId?.trim() || 'primary');
+    const base = `${CALENDAR_BASE}/calendars/${calId}/events?maxResults=250&singleEvents=true`;
     const raw = await this.drainPages<RawCalendarEvent>(
       (t) => {
         const params = new URLSearchParams();
@@ -382,6 +387,39 @@ export class CalendarClient extends GoogleApiClient {
       account,
     }));
     return { events, nextSyncToken };
+  }
+
+  /**
+   * Enumerate every calendar the account can read (calendarList). Discovery
+   * only — the sweep still reads ONE calendar per source, so this exists to
+   * find the id you pass to `sources add --calendar-id`.
+   */
+  async listCalendars(opts: { signal?: AbortSignal } = {}): Promise<
+    Array<{ id: string; summary: string; primary: boolean; accessRole: string }>
+  > {
+    const base = `${CALENDAR_BASE}/users/me/calendarList?maxResults=250`;
+    const raw = await this.drainPages<{
+      id?: string;
+      summary?: string;
+      primary?: boolean;
+      accessRole?: string;
+    }>(
+      (t) => (t ? `${base}&pageToken=${encodeURIComponent(t)}` : base),
+      (body) => ({
+        items: (body.items as Array<Record<string, unknown>> | undefined) ?? [],
+        nextPageToken: (body.nextPageToken as string | undefined) ?? null,
+      }),
+      'calendar-json',
+      opts,
+    );
+    return raw
+      .filter((c) => typeof c.id === 'string' && c.id.length > 0)
+      .map((c) => ({
+        id: c.id as string,
+        summary: c.summary ?? '(no name)',
+        primary: Boolean(c.primary),
+        accessRole: c.accessRole ?? 'unknown',
+      }));
   }
 }
 
