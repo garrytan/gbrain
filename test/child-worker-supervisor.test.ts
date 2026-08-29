@@ -31,6 +31,7 @@ import {
   ChildWorkerSupervisor,
   type ChildSupervisorEvent,
 } from '../src/core/minions/child-worker-supervisor.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 /**
  * Per-test bun timeout for the spawn-driving tests. Generous because each test
@@ -140,6 +141,7 @@ async function runUntilTerminal(
     watchdogLoopBudget: number;
     watchdogLoopWindowMs: number;
     watchdogBackoffMs: number;
+    beforeSpawn: () => Promise<void>;
     _now: () => number;
     stopAfterEvents: number; // safety net so a buggy test can't hang
     deadlineMs: number; // wall-clock safety net (see below)
@@ -165,6 +167,7 @@ async function runUntilTerminal(
     watchdogLoopWindowMs: overrides.watchdogLoopWindowMs,
     watchdogBackoffMs: overrides.watchdogBackoffMs,
     _now: overrides._now,
+    beforeSpawn: overrides.beforeSpawn,
     isStopping: () => stopping,
     onMaxCrashesExceeded: (count, max) => {
       maxCrashesFired = { count, max };
@@ -231,6 +234,23 @@ afterEach(() => {
 });
 
 describe('ChildWorkerSupervisor', () => {
+  it('runs the maintenance hook before every crash respawn', async () => {
+    const h = makeConstantExitHarness(1);
+    let beforeSpawnCalls = 0;
+    try {
+      const res = await runUntilTerminal(h, {
+        maxCrashes: 2,
+        hardStopMaxCrashes: 3,
+        beforeSpawn: async () => { beforeSpawnCalls++; },
+      });
+      const spawns = res.events.filter((e) => e.kind === 'worker_spawned').length;
+      expect(spawns).toBeGreaterThanOrEqual(2);
+      expect(beforeSpawnCalls).toBe(spawns);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   describe('D1 — code=0 exit classifier', () => {
     it('code=0 worker exit does not count as crash; restarts immediately', async () => {
       const h = makeConstantExitHarness(0);
@@ -868,6 +888,118 @@ describe('ChildWorkerSupervisor', () => {
       // have thrown), and did not run away past the event budget.
       expect(events.length).toBeGreaterThanOrEqual(6);
       expect(events.length).toBeLessThan(60);
+    }, TEST_TIMEOUT_MS);
+  });
+
+  // autopilot.ts builds its spawn env as {...process.env, GBRAIN_SUPERVISED:
+  // undefined} because worker-startup recovery (jobs.ts 'work') is gated on
+  // GBRAIN_SUPERVISED !== '1' and is autopilot's ONLY private-queue recovery
+  // lane — an inherited =1 would silently disable it. This proves the strip
+  // actually reaches the child at spawn (an undefined value must be OMITTED
+  // from the child env, never stringified to "undefined").
+  describe('GBRAIN_SUPERVISED env strip (autopilot spawn-env shape)', () => {
+    it('a spawn env of {...process.env, GBRAIN_SUPERVISED: undefined} leaves the child without the variable', async () => {
+      // withEnv (not raw assignment) keeps this file in the parallel lane.
+      await withEnv({ GBRAIN_SUPERVISED: '1' }, async () => {
+        expect(process.env.GBRAIN_SUPERVISED).toBe('1'); // parent really has it
+        // Child exits 0 iff GBRAIN_SUPERVISED is unset/empty in ITS env.
+        const h: Harness = process.platform === 'win32'
+          ? {
+              cliPath: process.env.COMSPEC ?? 'cmd.exe',
+              args: ['/c', 'if defined GBRAIN_SUPERVISED (exit 1) else (exit 0)'],
+              cleanup: () => {},
+            }
+          : { cliPath: '/bin/sh', args: ['-c', 'test -z "$GBRAIN_SUPERVISED"'], cleanup: () => {} };
+
+        const runOnce = async (env: NodeJS.ProcessEnv): Promise<number | null> => {
+          const events: ChildSupervisorEvent[] = [];
+          let stopping = false;
+          const sup = new ChildWorkerSupervisor({
+            cliPath: h.cliPath,
+            args: h.args,
+            env,
+            maxCrashes: 1,
+            hardStopMaxCrashes: 1,
+            _backoffFloorMs: 1,
+            isStopping: () => stopping,
+            onMaxCrashesExceeded: () => { stopping = true; },
+            onEvent: (e) => {
+              events.push(e);
+              if (e.kind === 'worker_exited') stopping = true;
+            },
+          });
+          await sup.run();
+          const exit = events.find(
+            (e): e is Extract<ChildSupervisorEvent, { kind: 'worker_exited' }> =>
+              e.kind === 'worker_exited',
+          );
+          expect(exit).toBeDefined();
+          return exit!.code;
+        };
+
+        // The exact env expression autopilot.ts constructs: stripped → unset.
+        const strippedExit = await runOnce(
+          { ...process.env, GBRAIN_SUPERVISED: undefined } as Record<string, string | undefined>,
+        );
+        expect(strippedExit).toBe(0);
+
+        // Control: a plain inherit leaks =1 into the child → child sees it set.
+        const inheritedExit = await runOnce({ ...process.env });
+        expect(inheritedExit).toBe(1);
+      });
+    }, TEST_TIMEOUT_MS);
+  });
+
+  // The composer seam the private-queue recovery hook rides (documented
+  // contract at child-worker-supervisor.ts's beforeSpawn opt): the composer
+  // owns error handling AND bounding.
+  describe('beforeSpawn contract', () => {
+    it('a REJECTING beforeSpawn propagates out of run() with no spawn and no crash accounting', async () => {
+      const h = makeConstantExitHarness(0);
+      const events: ChildSupervisorEvent[] = [];
+      const sup = new ChildWorkerSupervisor({
+        cliPath: h.cliPath,
+        args: h.args,
+        maxCrashes: 3,
+        _backoffFloorMs: 1,
+        isStopping: () => false,
+        onMaxCrashesExceeded: () => {},
+        onEvent: (e) => events.push(e),
+        beforeSpawn: async () => {
+          throw new Error('spawn-blocking precondition failed');
+        },
+      });
+      await expect(sup.run()).rejects.toThrow('spawn-blocking precondition failed');
+      // No respawn loop, no spawn at all, no crash/backoff bookkeeping.
+      expect(events).toEqual([]);
+      expect(sup.crashCount).toBe(0);
+      expect(sup.childAlive).toBe(false);
+    }, TEST_TIMEOUT_MS);
+
+    it('isStopping flipping true INSIDE beforeSpawn prevents any spawn afterward', async () => {
+      const h = makeConstantExitHarness(0);
+      const events: ChildSupervisorEvent[] = [];
+      let stopping = false;
+      let hookCalls = 0;
+      const sup = new ChildWorkerSupervisor({
+        cliPath: h.cliPath,
+        args: h.args,
+        maxCrashes: 3,
+        _backoffFloorMs: 1,
+        isStopping: () => stopping,
+        onMaxCrashesExceeded: () => {},
+        onEvent: (e) => events.push(e),
+        beforeSpawn: async () => {
+          hookCalls++;
+          stopping = true; // shutdown raced the hook — the re-check must win
+        },
+      });
+      await sup.run();
+      expect(hookCalls).toBe(1);
+      // The post-hook isStopping re-check returned before spawnOnce: zero
+      // worker_spawned (or any other) events.
+      expect(events).toEqual([]);
+      expect(sup.childAlive).toBe(false);
     }, TEST_TIMEOUT_MS);
   });
 });

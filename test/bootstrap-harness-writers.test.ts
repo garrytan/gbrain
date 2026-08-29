@@ -24,6 +24,7 @@ import {
   GBRAIN_HARNESS_MARKER_VALUE,
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
+  claudeProjectsDir,
   codexConfigPath,
   mcpPermissionEntry,
 } from '../src/core/bootstrap/host-specs.ts';
@@ -349,6 +350,15 @@ describe('codexConfigPath honors CODEX_HOME', () => {
     });
     await withEnv({ CODEX_HOME: '   ' }, async () => {
       expect(codexConfigPath()).toContain(join('.codex', 'config.toml')); // blank trims to falsy
+    });
+  });
+});
+
+describe('claudeProjectsDir honors CLAUDE_CONFIG_DIR', () => {
+  test('transcript confinement root follows the configured Claude Code base', async () => {
+    const configDir = tmp();
+    await withEnv({ CLAUDE_CONFIG_DIR: configDir, HOME: tmp() }, async () => {
+      expect(claudeProjectsDir()).toBe(join(configDir, 'projects'));
     });
   });
 });

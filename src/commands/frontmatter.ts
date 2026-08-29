@@ -25,13 +25,14 @@ import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
   autoFixFrontmatter,
   createFrontmatterBackup,
+  isFrontmatterScannablePath,
   makeFrontmatterBackupRunId,
   scanBrainSources,
   type AuditReport,
   type AuditFix,
 } from '../core/brain-writer.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
-import { isSyncable, pruneDir, slugifyPath } from '../core/sync.ts';
+import { isMarkdownFilePath, pruneDir, slugifyPath } from '../core/sync.ts';
 
 export async function runFrontmatter(args: string[]): Promise<void> {
   const sub = args[0];
@@ -197,6 +198,11 @@ async function runValidate(rest: string[]): Promise<void> {
     setCliExitVerdict(1);
     return;
   }
+  if (lstatSync(resolved).isFile() && !isMarkdownFilePath(resolved)) {
+    console.error(`error: frontmatter validation supports only .md and .mdx files: ${target}`);
+    setCliExitVerdict(1);
+    return;
+  }
 
   const brainRoot = findBrainRoot(resolved);
   const files = collectFiles(resolved);
@@ -296,10 +302,12 @@ export function collectFiles(
 ): string[] {
   const st = lstatSync(target);
   if (st.isFile()) {
-    return [target];
+    // An explicit Markdown target is operator intent, even for structural
+    // basenames that bulk scans intentionally skip.
+    return isMarkdownFilePath(basename(target)) ? [target] : [];
   }
 
-  const gitFiles = collectGitVisibleFiles(target, (rel) => isSyncable(rel, { strategy: 'markdown' }));
+  const gitFiles = collectGitVisibleFiles(target, isFrontmatterScannablePath);
   if (gitFiles) {
     if (visitDir) visitDir(target);
     return gitFiles;
@@ -333,7 +341,7 @@ export function collectFiles(
         stack.push(full);
       } else if (entryStat.isFile()) {
         const rel = relative(target, full);
-        if (isSyncable(rel, { strategy: 'markdown' })) {
+        if (isFrontmatterScannablePath(rel)) {
           out.push(full);
         }
       }
@@ -422,6 +430,11 @@ async function runGenerate(args: string[]): Promise<void> {
 
   const rootPath = resolve(targetPath);
   const isDir = statSync(rootPath).isDirectory();
+  if (!isDir && !isMarkdownFilePath(rootPath)) {
+    console.error(`error: frontmatter generation supports only .md and .mdx files: ${targetPath}`);
+    setCliExitVerdict(1);
+    return;
+  }
 
   // Find the brain root — walk up from targetPath looking for .git or known brain markers.
   // Inference rules match against brain-root-relative paths (e.g., "people/alice.md").
@@ -459,7 +472,7 @@ async function runGenerate(args: string[]): Promise<void> {
 
   function processFile(absPath: string, relPath: string) {
     scanned++;
-    if (!isSyncable(relPath, { strategy: 'markdown' })) return;
+    if (!isFrontmatterScannablePath(relPath)) return;
 
     // Skip symlinks
     try { if (lstatSync(absPath).isSymbolicLink()) return; } catch { return; }

@@ -74,6 +74,8 @@ describe('runConversationParserNightlyProbe', () => {
       baseDeps({ hasLlmKey: () => false }),
     );
     expect(r.outcome).toBe('no_embedding_key');
+    expect(r.reason).toContain('no chat model available');
+    expect(r.reason).not.toContain('Anthropic');
   });
 
   test('happy path: all pass', async () => {

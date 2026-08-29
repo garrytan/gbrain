@@ -1,297 +1,218 @@
 ---
 id: email-to-brain
 name: Email-to-Brain
-version: 0.7.0
-description: Gmail messages flow into brain pages. Deterministic collector pulls emails, agent analyzes and enriches entities.
+version: 1.0.0
+description: Gmail threads flow into brain pages via the native google source kind. The open-loop engine turns them into "who is waiting on you".
 category: sense
 requires: [credential-gateway]
 secrets:
+  - name: GOOGLE_CLIENT_ID
+    description: Google OAuth2 client ID (Option A — native connector; env intake works, `--client-json` is preferred)
+    where: https://console.cloud.google.com/auth/clients — create a Desktop app OAuth client
+  - name: GOOGLE_CLIENT_SECRET
+    description: Google OAuth2 client secret (Option A)
+    where: https://console.cloud.google.com/auth/clients — same client, click Download JSON
   - name: CLAWVISOR_URL
-    description: ClawVisor gateway URL (Option A — recommended, handles OAuth for you)
+    description: ClawVisor gateway URL (Option B — alternative hosted gateway)
     where: https://clawvisor.com — create an agent, activate Gmail service
   - name: CLAWVISOR_AGENT_TOKEN
-    description: ClawVisor agent token (Option A)
+    description: ClawVisor agent token (Option B)
     where: https://clawvisor.com — agent settings, copy the agent token
-  - name: GOOGLE_CLIENT_ID
-    description: Google OAuth2 client ID (Option B — direct Gmail API access)
-    where: https://console.cloud.google.com/apis/credentials — create OAuth 2.0 Client ID
-  - name: GOOGLE_CLIENT_SECRET
-    description: Google OAuth2 client secret (Option B)
-    where: https://console.cloud.google.com/apis/credentials — same page as client ID
 health_checks:
+  - type: command
+    argv: ["gbrain", "google", "status", "--json"]
+    label: "Google connector"
+  # No heartbeat_max_age check: heartbeat checks read the recipe's OWN id
+  # (~/.gbrain/integrations/email-to-brain/), but the connector's funnel
+  # events land under ~/.gbrain/integrations/google/heartbeat.jsonl.
+  # Freshness is enforced natively instead: `gbrain waiting` refuses on
+  # stale google sources (no successful sync in 24h) and names the fix.
   - type: any_of
     label: "Auth provider"
     checks:
-      - type: http
-        url: "$CLAWVISOR_URL/health"
-        label: "ClawVisor"
       - type: env_exists
         name: GOOGLE_CLIENT_ID
         label: "Google OAuth"
+      - type: http
+        url: "$CLAWVISOR_URL/health"
+        label: "ClawVisor"
 setup_time: 20 min
-cost_estimate: "$0 (both options are free)"
+cost_estimate: "$0 for APIs (LLM commitment extraction has a kill switch: loops.extraction_enabled)"
 ---
 
 # Email-to-Brain: Gmail Messages That Update Your Brain
 
-Emails arrive. Brain pages get smarter. The agent reads your inbox, detects
-entities, updates person and company pages, extracts action items, and files
-everything with source attribution.
+Emails arrive. Brain pages get smarter. The native google connector ingests
+your Gmail threads into the brain, resolves senders against your contacts,
+and runs the open-loop engine on top: who is waiting on you, what you
+promised, and the context needed to respond.
 
 ## IMPORTANT: Instructions for the Agent
 
-**You are the installer.** Follow these steps precisely.
+**You are the installer — but you no longer write a collector script.**
+Earlier versions of this recipe had you build a deterministic Node.js
+collector (pagination, deduplication, Gmail link generation, noise filtering).
+All of that is now IMPLEMENTED in gbrain's google source kind — see
+`docs/guides/google-connect.md` (setup + every error and its fix) and
+`docs/guides/open-loops.md` (how detection works). Do NOT re-implement it, and
+do not pull emails via raw API calls: the connector handles pagination, dedup,
+deep links, and noise filtering correctly, resumably, and under test.
 
-**The core pattern: code for data, LLMs for judgment.**
-Email collection is split into two layers:
-1. DETERMINISTIC: code pulls emails, generates Gmail links, detects noise/signatures.
-   This never fails. Links are always correct. Timestamps are always accurate.
-2. LATENT: you (the agent) read the collected emails and make judgment calls.
-   Who is important? What entities are mentioned? What action items exist?
+**The core pattern still holds: code for data, LLMs for judgment.** The code
+half now ships in gbrain. Your job shifts to:
 
-**Do not try to pull emails yourself.** Use the collector script. It handles
-pagination, deduplication, Gmail link generation, and noise filtering. If you
-try to do this via raw API calls, you WILL forget links, miss emails, or break
-pagination. The collector exists because LLMs kept failing at this.
-
-**Why sequential execution matters:**
-- Step 1 validates the credential gateway. Without it, nothing connects to Gmail.
-- Step 2 sets up the collector. Without it, you have no emails to analyze.
-- Step 3 does the first collection. Without data, Step 4 can't enrich.
-- Step 4 is YOUR job: read the digest, update brain pages.
+1. Run the setup (`gbrain google setup`) and **relay every fenced
+   `[SHOW USER] ... [/SHOW USER]` block to the user verbatim** — paraphrasing
+   loses load-bearing detail like "Desktop app, NOT Web application".
+2. Operate the daily triage with `gbrain waiting` per
+   `skills/google-loops/SKILL.md` (loop closing, muting, context pulls).
+3. Make the judgment calls the connector deliberately leaves to you: which
+   entities deserve enrichment, what the digest means for today.
 
 ## Architecture
 
 ```
 Gmail Account(s)
-  ↓ (ClawVisor E2E encrypted gateway)
-Email Collector (deterministic Node.js script)
-  ↓ Outputs:
-  ├── messages/{YYYY-MM-DD}.json     (structured email data)
-  ├── digests/{YYYY-MM-DD}.md        (markdown digest for agent)
-  └── state.json                     (pagination state, known IDs)
+  ↓ (BYO OAuth via gbrain google connect; tokens in ~/.gbrain/credentials.json)
+gbrain google source kind (deterministic, resumable, newest-first backfill)
+  ↓ Materializes markdown in the source's MANAGED DIR (not the brain repo):
+  ├── emails/{YYYY}/{MM}/...md    (type: email — one page per thread, deep links baked in)
+  └── people/...md                (type: person — from Contacts, aliases for sender resolution)
+  ↓ standard import pipeline (chunks, embeds, aliases, links)
+Open-loop engine (per sync)
+  ├── deterministic thread detector (unanswered_inbound / unanswered_outbound, free)
+  └── LLM commitment extractor (last 30 days, capped; kill switch loops.extraction_enabled)
   ↓
-Agent reads digest
-  ↓ Judgment calls:
-  ├── Entity detection (people, companies mentioned)
-  ├── Brain page updates (timeline entries, compiled truth)
-  ├── Action item extraction
-  └── Priority classification (urgent / normal / noise)
+gbrain waiting  →  the daily digest: ranked people waiting on you
+Agent judgment calls: enrichment, prioritization, drafting with brain context
 ```
 
-## Opinionated Defaults
+## Opinionated Defaults (now implemented in the connector)
 
-**Noise filtering (deterministic, in collector):**
-- Skip: noreply@, notifications@, calendar-notification@
-- Flag: DocuSign, Dropbox Sign, HelloSign, PandaDoc (signatures needing action)
-- Keep: everything else
+These rules used to be specified here for agent-authored collectors. They are
+now code (`src/core/google/google-render.ts` + `loop-detect.ts`) — listed so
+you know what the connector does, not so you re-build it:
 
-**Email accounts:** Configure multiple accounts. Common setup:
-- Work email (company domain)
-- Personal email (gmail.com)
-
-**Digest format:** Daily markdown with sections:
-- Signatures pending (DocuSign etc. needing action)
-- Messages to triage (real emails from real people)
-- Noise (filtered, available if needed)
-
-Every email gets a baked-in Gmail link: `[Open in Gmail](https://mail.google.com/mail/u/?authuser=ACCOUNT#inbox/MESSAGE_ID)` — these are generated by code, never by the LLM, so they are always correct.
+- **Noise filtering (deterministic):** noreply/no-reply/notifications@/
+  calendar-notification/mailer-daemon/postmaster/donotreply senders never open
+  loops. List mail (`List-Unsubscribe`) is excluded too.
+- **Gmail deep links are generated by CODE, never by the LLM** — every thread
+  page carries an account-correct `authuser` deep link, so links are always
+  right.
+- **Sent mail is ingested as the negative filter.** Without it, "awaiting
+  response" lies about threads you already replied to. Your own replies close
+  loops automatically (`closed_by: reply_detected`).
+- **Precision rules are pinned by a labeled fixture corpus**
+  (`test/google-loop-detect.test.ts`): CC-only delivery, FYI/forwards without
+  a question, self-threads, and muted senders/threads never open loops.
 
 ## Prerequisites
 
 1. **GBrain installed and configured** (`gbrain doctor` passes)
-2. **Node.js 18+** (for the collector script)
-3. **Gmail access** via one of:
-   - ClawVisor (recommended: E2E encrypted credential gateway)
-   - Google OAuth credentials (direct API access)
-   - Your harness's own Gmail connector, if it ships one (e.g. Hermes Gateway) —
-     this recipe carries no setup steps for that path; follow your harness's docs,
-     then continue at Step 2
+2. **Google access** via one of:
+   - Native connector (recommended): run the
+     **[credential-gateway](credential-gateway.md)** recipe, Option A
+   - ClawVisor (alternative hosted gateway): credential-gateway Option B
+   - Your harness's own Gmail connector, if it ships one — follow your
+     harness's docs; this recipe covers the native path
 
 ## Setup Flow
 
-### Step 1: Configure Gmail Access (via credential-gateway)
-
-Credential setup (ClawVisor vs direct Google OAuth, consent screen, validation
-commands) lives in ONE place: run the **[credential-gateway](credential-gateway.md)**
-recipe first — this recipe declares `requires: [credential-gateway]` for exactly
-that reason. Then apply the two Gmail-specific details:
-
-- **Option A (ClawVisor):** activate the **Gmail** service and use a task purpose
-  like: "Full executive assistant email management including inbox triage,
-  searching by any criteria, reading emails, tracking threads."
-  (Be EXPANSIVE — narrow purposes like "email triage" cause legitimate requests
-  to fail verification; see credential-gateway's Tricky Spots.)
-- **Option B (direct OAuth):** the scope is
-  `https://www.googleapis.com/auth/gmail.readonly`, and the collector script's
-  OAuth flow stores tokens in `~/.gbrain/google-tokens.json` (auto-refreshes on
-  expiry). Also enable the Gmail API at
-  https://console.cloud.google.com/apis/library/gmail.googleapis.com
-
-**STOP until credential-gateway's validation passes** (ClawVisor `/health` OK,
-or OAuth tokens stored).
-
-### Step 2: Set Up the Email Collector
-
-Create the collector directory and script:
+### Step 1: Run the One-Command Setup
 
 ```bash
-mkdir -p email-collector/data/{messages,digests}
-cd email-collector
-npm init -y
+gbrain google setup --json
 ```
 
-The collector script needs these capabilities:
-1. **collect** — pull emails from Gmail via credential gateway, deduplicate by message ID, store as JSON with Gmail links baked in
-2. **digest** — generate a markdown digest from collected emails, grouped by: signatures pending, messages to triage, noise
-3. **state tracking** — remember last collection timestamp and known message IDs to avoid re-processing
+This walks the whole chain idempotently: credential intake (prints the GCP
+checklist when nothing is on file) → consent → source registration → a first
+budgeted sync (newest mail first — the deep backfill resumes automatically on
+later syncs) → the first `gbrain waiting` digest. Re-running is always safe.
 
-Key design rules for the collector:
-- Gmail links are generated by CODE, not by the LLM. Format: `[Open in Gmail](https://mail.google.com/mail/u/?authuser=ACCOUNT#inbox/MESSAGE_ID)`
-- Noise filtering is deterministic: noreply, notifications, calendar invites
-- Signature detection uses known patterns: DocuSign envelope, Dropbox Sign, HelloSign, PandaDoc
-- All state persisted to `data/state.json` (last collect timestamp, known message IDs)
-- Output is structured JSON (machine-readable) AND markdown digest (agent-readable)
-
-### Step 3: Run First Collection
+The pieces, if you want them separately:
 
 ```bash
-node email-collector.mjs collect
-node email-collector.mjs digest
+gbrain google connect
+gbrain sources add gmail-you --kind google --account you@example.com \
+  [--services gmail,calendar,contacts] [--history-days N]
+gbrain sync --source gmail-you
+gbrain waiting
 ```
 
-Verify: `ls data/digests/` should show today's digest file.
-Read the digest. Confirm it contains real emails with working Gmail links.
+Multiple accounts: repeat with `--account work@example.com`; each account is
+its own source with independent cursors.
 
-### Step 4: Enrich Brain Pages
+**Relay `[SHOW USER]` blocks verbatim. The whole setup is exactly two user
+interactions:** (1) the GCP checklist + the client JSON hand-back, (2) one
+consent click. If you're asking a third question, re-read the block you
+skipped. Every command supports `--json` and emits
+`{ ok, status, next_action, error }` — errors carry `{ code, problem, cause,
+fix, doc_url }`; show the user `problem` + `fix`.
 
-This is YOUR job (the agent). Read the digest. For each email:
-
-1. **Detect entities**: who sent it? Who is mentioned? What companies?
-2. **Check the brain**: `gbrain search "sender name"` — do we have a page?
-3. **Update brain pages**: if sender has a brain page, append a timeline entry:
-   `- YYYY-MM-DD | Email from {sender}: {subject} [Source: Gmail, {date}]`
-4. **Create new pages**: if sender is notable and has no page, create one
-5. **Extract action items**: if the email requires a response or action, log it
-6. **Sync**: run `gbrain sync --no-pull --no-embed` to index changes
-
-### Step 5: Set Up Cron
-
-The collector should run every 30 minutes:
+### Step 2: Verify
 
 ```bash
-*/30 * * * * cd /path/to/email-collector && node email-collector.mjs collect && node email-collector.mjs digest
+gbrain google status --json     # per-account refresh probe
+gbrain waiting                  # the first digest (refuses on stale data)
 ```
 
-The agent should read the digest on a schedule (e.g., 3x/day: 9 AM, 12 PM, 3 PM)
-and run the enrichment flow from Step 4.
+### Step 3: Continuous Sync
 
-### Step 6: Log Setup Completion
+Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,
+`gbrain sync --all`, and autopilot all pick them up. **A bare un-targeted
+`gbrain sync` (repo mode) does not** — target it or use `--all`. No cron
+script of its own; the connector logs funnel events to
+`~/.gbrain/integrations/google/heartbeat.jsonl` automatically.
+
+### Step 4: Daily Triage (YOUR job — see skills/google-loops/SKILL.md)
 
 ```bash
-mkdir -p ~/.gbrain/integrations/email-to-brain
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","event":"setup_complete","source_version":"0.7.0","status":"ok"}' >> ~/.gbrain/integrations/email-to-brain/heartbeat.jsonl
+gbrain waiting --json        # ranked people waiting on you
+gbrain loops done <id>       # user handled it
+gbrain loops mute sender <email>   # never track this sender again
 ```
 
-## Implementation Guide
+- `waiting` REFUSES on stale data (no successful sync in 24h) and names the
+  exact fix. Run the sync, then retry — only use `--stale-ok` when the user
+  explicitly accepts stale results.
+- Present each loop with: counterparty, what's owed, the evidence quote, the
+  Gmail deep link, and the due date. The counterparty's entity card carries
+  the context to respond.
+- Enrichment stays your judgment call: notable senders get brain pages,
+  timeline entries, and back-links per `skills/enrich/SKILL.md`.
 
-These are production-tested patterns. Follow them exactly.
+## What the Agent Should Test After Setup
 
-### Noise Filtering (Deterministic)
-
-```
-NOISE_SENDERS = ['noreply', 'no-reply', 'notifications@', 'calendar-notification',
-                 'mailer-daemon', 'postmaster', 'donotreply']
-
-is_noise(email):
-  from = email.from.toLowerCase()
-  return NOISE_SENDERS.some(p => from.includes(p))  // substring match
-```
-
-Simple substring matching, not regex. `notifications@slack.com` matches because
-`notifications@` is in the pattern list. Order doesn't matter.
-
-### Signature Detection
-
-```
-SIGNATURE_PATTERNS = [
-  /docusign/i, /dropbox sign/i, /hellosign/i, /pandadoc/i,
-  /please sign/i, /signature needed/i, /ready for your signature/i,
-  /everyone has signed/i, /you just signed/i
-]
-
-is_signature(email):
-  subject = email.subject || ''
-  from = email.from || ''
-  return SIGNATURE_PATTERNS.some(p => p.test(subject) || p.test(from))
-```
-
-Test BOTH subject AND from. Signature requests come from services that have
-"docusign" in the sender address, not just the subject.
-
-### Gmail Link Generation (CRITICAL)
-
-```
-gmail_link(messageId, authuser):
-  return `https://mail.google.com/mail/u/?authuser=${authuser}#inbox/${messageId}`
-```
-
-The `authuser` parameter is CRITICAL. Without it, the link opens in the default
-Gmail account, not the right one. Each email record stores its account separately.
-Generate these in CODE, never by the LLM. Links must be 100% reliable.
-
-### Deduplication
-
-```
-collect():
-  state = load_state()
-  since = state.lastCollect ? `newer_than:${hours_since}h` : 'newer_than:1d'
-
-  for account in accounts:
-    inbox = gmail.list(query=since, max=50)
-    for msg in inbox:
-      if msg.id in state.knownMessageIds: continue  // already seen
-      record = build_record(msg)
-      state.knownMessageIds[msg.id] = record
-
-    // ALSO pull sent mail to detect replies
-    sent = gmail.list(query=`from:${account.email} ${since}`, max=30)
-    for msg in sent:
-      state.knownMessageIds[msg.id] = {is_sent: true}
-```
-
-**Why sent mail matters:** Without it, the digest shows "awaiting response" on
-threads you already replied to. Sent mail acts as a negative filter.
-
-### What the Agent Should Test After Setup
-
-1. **Noise filtering:** Send a test email from `noreply@test.com`. Run collect.
-   Verify it appears in noise section, not triage section.
-2. **Gmail links:** Click a link from the digest. Verify it opens the correct
-   account (not the default one).
-3. **Deduplication:** Run collect twice in 1 minute. Verify no duplicate messages.
-4. **Sent mail:** Reply to an email manually. Run collect. Verify the thread is
-   marked as replied-to in the digest.
+1. **Connectivity:** `gbrain google status --json` shows `refresh_probe: "ok"`.
+2. **Ingestion:** `gbrain search "<a recent real subject>"` returns the thread
+   page with a working Gmail deep link (opens the correct account).
+3. **Loop detection:** `gbrain waiting` groups real unanswered threads and
+   excludes noise senders and list mail.
+4. **Self-close:** reply to a waiting thread, `gbrain sync --source <id>`,
+   verify the loop closed itself (`closed_by: reply_detected`).
 
 ## Cost Estimate
 
 | Component | Monthly Cost |
 |-----------|-------------|
-| ClawVisor (free tier) | $0 |
-| Gmail API | $0 (within free quota) |
-| **Total** | **$0** |
+| Gmail API (your own OAuth client) | $0 (within free quota) |
+| Deterministic thread detector | $0 (zero LLM, always on) |
+| LLM commitment extraction | small — last 30 days only, ≤50 threads/sweep; off switch: `gbrain config set loops.extraction_enabled false` |
+
+Tell the user once during setup that commitment extraction sends recent email
+text to the configured chat provider, and name the off switch.
 
 ## Troubleshooting
 
-**No emails collected:**
-- Check ClawVisor health: `curl $CLAWVISOR_URL/health`
-- Check standing task is active and has Gmail service enabled
-- Check task purpose is expansive enough (narrow purposes block requests)
+Every failure the connector can hit maps to a typed error code with the fix
+attached — `docs/guides/google-connect.md#troubleshooting` is the canonical
+table. The three users actually hit:
 
-**Gmail links don't work:**
-- Verify the `authuser` parameter matches the account email
-- Gmail links require being logged into the correct Google account
-
-**Digest is empty but collection ran:**
-- Check `data/messages/` for JSON files
-- All emails might be filtered as noise — check noise filtering rules
+- **"Google hasn't verified this app"** during consent → expected; it's the
+  user's own app: Advanced → Continue.
+- **`access_denied_test_user`** → add yourself under Audience → Test users.
+- **`invalid_grant_testing_expiry`** (everything silently stopped ~day 7) →
+  publish the consent screen to Production, then
+  `gbrain google connect --reauth <email>`. `gbrain doctor`'s `google_oauth`
+  check warns once an account goes 5+ days without a successful refresh
+  (an actively-syncing account gets no pre-warning — publish to Production).

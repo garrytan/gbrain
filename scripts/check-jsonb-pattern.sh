@@ -50,7 +50,7 @@ MAX_STALLED_PATTERN='max_stalled\s+INTEGER\s+NOT\s+NULL\s+DEFAULT\s+1\b'
 # Schema files are fixed paths; under a fixture root (self-test) they don't
 # exist — skip rather than fail on the missing-file grep.
 SCHEMA_FILES=()
-for f in src/schema.sql src/core/migrate.ts src/core/pglite-schema.ts src/core/schema-embedded.ts; do
+for f in src/schema.sql src/core/migrate.ts src/core/pglite-schema.ts src/core/schema-embedded.generated.ts; do
   [ -f "$f" ] && SCHEMA_FILES+=("$f")
 done
 if [ "${#SCHEMA_FILES[@]}" -gt 0 ] && grep -rEn "$MAX_STALLED_PATTERN" "${SCHEMA_FILES[@]}" 2>/dev/null; then

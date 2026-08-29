@@ -8,3 +8,5 @@
 {"family":"short-vs-rich","query":"indoor greek amphitheater for adversarial debate in the city","relevant":["projects/example-amphitheater"]}
 {"family":"graph-relationship","query":"who works on the civic platform","relevant":["people/alice-example"]}
 {"family":"hard-negative","query":"quarterly tax filing checklist","forbidden":["projects/example-amphitheater","projects/example-civic-platform"],"notes":"must NOT return the named projects"}
+{"family":"concept-paraphrase","query":"what is the idea of debating in public forums","relevant":["projects/example-amphitheater"],"notes":"v0.46.8 Cat 13: definitional paraphrase, no title tokens — the vector-lean concept intent should recover it"}
+{"family":"concept-paraphrase","query":"what do i know about civic engagement tooling","relevant":["projects/example-civic-platform"],"notes":"v0.46.8 Cat 13: know-about paraphrase, lowercase subject"}

@@ -110,7 +110,7 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
     });
     expect(isAvailable('chat')).toBe(false);
     const facts = await extractFactsFromTurn({
-      turnText: 'Garry founded Initialized in 2010 with Alexis.',
+      turnText: 'alice-example founded acme-example in 2010 with charlie-example.',
       source: 'test:no-op-regression',
     });
     expect(facts).toEqual([]);
@@ -141,9 +141,43 @@ describe('facts extract — silent-no-op regression (v0.31.6 bug class)', () => 
       };
     });
     await extractFactsFromTurn({
-      turnText: 'Garry founded Initialized in 2010 with Alexis.',
+      turnText: 'alice-example founded acme-example in 2010 with charlie-example.',
       source: 'test:smoking-gun',
     });
     expect(chatCalled).toBe(true);  // ← THE bug-class assertion
+  });
+});
+
+describe('gate-vs-model split (the wrong-model gate bug class)', () => {
+  test('global chat unservable but extraction override servable → override gate passes', () => {
+    // Global chat_model is Anthropic with no Anthropic key; the only live key
+    // is OpenAI. The bare probe must say NO while the model-override probe
+    // says YES — extraction gates on the model it will actually call.
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { OPENAI_API_KEY: 'sk-test' },
+    });
+    expect(isAvailable('chat')).toBe(false);
+    expect(isAvailable('chat', 'openai:gpt-4o-mini')).toBe(true);
+  });
+
+  test('reverse split: global servable but extraction model unservable → chat_unavailable carries the model', async () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'sk-ant-test' },
+    });
+    expect(isAvailable('chat')).toBe(true);
+    expect(isAvailable('chat', 'openai:gpt-4o-mini')).toBe(false);
+    const { extractFactsFromTurnWithOutcome } = await import('../src/core/facts/extract.ts');
+    const outcome = await extractFactsFromTurnWithOutcome({
+      turnText: 'Some turn text worth extracting.',
+      source: 'test:gate-split',
+      model: 'openai:gpt-4o-mini',
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('chat_unavailable');
+      expect(outcome.model).toBe('openai:gpt-4o-mini'); // outcome names the ACTUAL model
+    }
   });
 });

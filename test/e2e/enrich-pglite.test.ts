@@ -256,6 +256,26 @@ describe('runEnrichCore', () => {
     expect(page!.compiled_truth.trim()).toBe(STUB);
   }, 30000);
 
+  test('#2504: a failing page surfaces first_failure (pool.failures no longer write-only)', async () => {
+    await seedStub('people/fiona-example', 'Fiona Example', 'person');
+    await seedLinkInto('people/fiona-example', 'meetings/kickoff', RICH_CONTEXT);
+    const failingSynth: SynthesizeFn = async () => {
+      throw new Error('no pricing entry for model "example:example-chat" (kind=chat)');
+    };
+
+    const r = await runEnrichCore(engine, {
+      sourceId: 'default',
+      types: ['person'],
+      model: 'test:model',
+      synthesizeFn: failingSynth,
+    });
+    // Pre-fix: pages_failed:1 with zero reason anywhere. Post-fix the result
+    // carries slug + message so the operator sees WHY instead of guessing.
+    expect(r.pages_failed).toBe(1);
+    expect(r.first_failure).toContain('people/fiona-example');
+    expect(r.first_failure).toContain('no pricing entry');
+  }, 30000);
+
   test('resume: pre-seeded checkpoint skips an already-completed page', async () => {
     await seedStub('people/alice-example', 'Alice Example', 'person');
     await seedStub('people/bob-example', 'Bob Example', 'person');
@@ -315,6 +335,37 @@ describe('runEnrichCore', () => {
     });
     expect(r.budget_exhausted).toBe(true);
     expect(r.pages_enriched).toBe(1); // only the first synthesized before the cap
+    // cost abort → reason surfaces so the CLI prints the raise-the-cap advice.
+    expect(r.budget_exhausted_reason).toBe('cost');
+  }, 30000);
+
+  test('no_pricing abort surfaces reason + model (#4032)', async () => {
+    await seedStub('people/p1', 'P1 Example', 'person');
+    await seedLinkInto('people/p1', 'meetings/m1', RICH_CONTEXT);
+
+    // TX2 shape: an unpriced model hard-fails reserve() on the FIRST call of a
+    // capped run. Pre-fix the CLI collapsed this into "Budget cap reached" —
+    // the reason/model never reached the result.
+    const noPricingSynth: SynthesizeFn = async () => {
+      throw new BudgetExhausted('no pricing for model', {
+        reason: 'no_pricing',
+        spent: 0,
+        cap: 5,
+        modelId: 'azure-openai:text-embedding-3-large',
+      });
+    };
+    const r = await runEnrichCore(engine, {
+      sourceId: 'default',
+      types: ['person'],
+      order: 'inbound-links',
+      thinThreshold: 400,
+      model: 'test:model',
+      workers: 1,
+      synthesizeFn: noPricingSynth,
+    });
+    expect(r.budget_exhausted).toBe(true);
+    expect(r.budget_exhausted_reason).toBe('no_pricing');
+    expect(r.budget_exhausted_model).toBe('azure-openai:text-embedding-3-large');
   }, 30000);
 
   test('budget abort flushes checkpoint so resume skips completed (P2#1)', async () => {
@@ -408,4 +459,167 @@ describe('runEnrichCore', () => {
     expect(r.candidates_considered).toBe(0);
     expect(r.pages_enriched).toBe(0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #3629 — checkpoint persistence: SKIP pages must not re-bill every run.
+// ---------------------------------------------------------------------------
+
+describe('checkpoint persistence (#3629)', () => {
+  test('SKIP page is billed once: repeat runs make zero further synth calls', async () => {
+    await seedStub('people/skip-example', 'Skip Example', 'person');
+    await seedLinkInto('people/skip-example', 'meetings/skip-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const skipSynth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const opts = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: skipSynth,
+    };
+
+    const r1 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1);
+    expect(r1.pages_model_skip).toBe(1);
+    // The page stays thin (SKIP writes nothing) — it re-enters the candidate
+    // list, and pre-fix the clean-run checkpoint clear re-billed it forever.
+    const r2 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1); // no re-bill on tick 2
+    const r3 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1); // no re-bill on tick 3
+    expect(r2.pages_enriched).toBe(0);
+    expect(r3.pages_enriched).toBe(0);
+    // Checkpoint row persists across clean runs (decays via the 7d purge TTL).
+    const fp = enrichFingerprint({
+      sourceId: 'default', types: ['person'], order: 'inbound-links',
+      thinThreshold: 400, model: 'test:model',
+    });
+    const done = await loadOpCheckpoint(engine, { op: CHECKPOINT_OP, fingerprint: fp });
+    expect(done).toContain('default|people/skip-example');
+  }, 60000);
+
+  test('wedge: limit=1 with the top candidate checkpointed reaches the 2nd candidate on tick 2', async () => {
+    // alice outranks bob on inbound links (2 vs 1).
+    await seedStub('people/alice-example', 'Alice Example', 'person');
+    await seedStub('people/bob-example', 'Bob Example', 'person');
+    await seedLinkInto('people/alice-example', 'meetings/w1', RICH_CONTEXT);
+    await seedLinkInto('people/alice-example', 'meetings/w2', RICH_CONTEXT);
+    await seedLinkInto('people/bob-example', 'meetings/w3', RICH_CONTEXT);
+
+    // Tick 1: alice (rank 1) consumes the single slot and SKIPs → checkpointed.
+    const r1 = await runEnrichCore(engine, {
+      sourceId: 'default', types: ['person'], limit: 1, model: 'test:model',
+      synthesizeFn: async () => 'SKIP',
+    });
+    expect(r1.pages_model_skip).toBe(1);
+
+    // Tick 2 (same limit): pre-fix the fetch window held only checkpointed
+    // alice → pending=[] forever and bob never got a turn. Post-fix the
+    // over-fetch reaches bob.
+    const r2 = await runEnrichCore(engine, {
+      sourceId: 'default', types: ['person'], limit: 1, model: 'test:model',
+      synthesizeFn: goodSynth,
+    });
+    expect(r2.pages_enriched).toBe(1);
+    const bob = await engine.getPage('people/bob-example', { sourceId: 'default' });
+    expect(bob!.compiled_truth).toContain('## Overview');
+    const alice = await engine.getPage('people/alice-example', { sourceId: 'default' });
+    expect(alice!.compiled_truth.trim()).toBe(STUB); // untouched (checkpointed)
+  }, 60000);
+
+  test('--force clears the checkpoint and retries a SKIP page', async () => {
+    await seedStub('people/force-example', 'Force Example', 'person');
+    await seedLinkInto('people/force-example', 'meetings/force-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const skipSynth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const base = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: skipSynth,
+    };
+    await runEnrichCore(engine, base);
+    expect(synthCalls).toBe(1);
+    await runEnrichCore(engine, base);
+    expect(synthCalls).toBe(1); // checkpoint holds
+    await runEnrichCore(engine, { ...base, force: true });
+    expect(synthCalls).toBe(2); // --force re-bills deliberately
+  }, 60000);
+});
+
+describe('checkpoint residuals (#3629 follow-up)', () => {
+  test('blank model output stays retryable: NOT banked in the checkpoint', async () => {
+    await seedStub('people/blank-example', 'Blank Example', 'person');
+    await seedLinkInto('people/blank-example', 'meetings/blank-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const blankSynth: SynthesizeFn = async () => { synthCalls++; return ''; };
+    const opts = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: blankSynth,
+    };
+
+    const r1 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1);
+    expect(r1.pages_empty_output).toBe(1);
+
+    // A blank response is a synthesis-failure shape (#2085), not a grounding
+    // verdict — the next run must re-attempt it instead of suppressing the
+    // page for the checkpoint TTL.
+    const r2 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(2);
+    expect(r2.pages_empty_output).toBe(1);
+  }, 60000);
+
+  test('relaxing --min-context re-evaluates a page banked under the stricter gate', async () => {
+    await seedStub('people/thin-ctx', 'Thin Ctx', 'person');
+    await seedLinkInto('people/thin-ctx', 'meetings/thin-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const synth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const base = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: synth,
+    };
+
+    // Strict gate: pre-LLM rejection banks the page under THIS fingerprint.
+    const strict = await runEnrichCore(engine, { ...base, minContextChars: 100000 });
+    expect(synthCalls).toBe(0);
+    expect(strict.pages_skipped_pre_llm ?? 0).toBe(1);
+
+    // Relaxed gate is a different run: the banked pre-LLM skip must not
+    // suppress the page under the new knob value.
+    await runEnrichCore(engine, { ...base, minContextChars: 10 });
+    expect(synthCalls).toBe(1);
+  }, 60000);
+
+  test('--dry-run --force does not destroy the real checkpoint', async () => {
+    await seedStub('people/dryforce', 'Dry Force', 'person');
+    await seedLinkInto('people/dryforce', 'meetings/df-m', RICH_CONTEXT);
+
+    let synthCalls = 0;
+    const skipSynth: SynthesizeFn = async () => { synthCalls++; return 'SKIP'; };
+    const opts = {
+      sourceId: 'default',
+      types: ['person' as const],
+      model: 'test:model',
+      synthesizeFn: skipSynth,
+    };
+
+    await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1);
+
+    // A dry-run preview with --force must stay read-only.
+    await runEnrichCore(engine, { ...opts, dryRun: true, force: true });
+
+    const r3 = await runEnrichCore(engine, opts);
+    expect(synthCalls).toBe(1); // still banked — the dry-run didn't clear it
+    expect(r3.pages_enriched).toBe(0);
+  }, 60000);
 });

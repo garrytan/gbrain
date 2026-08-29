@@ -119,6 +119,9 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     const { logger } = captureLogger();
     const handler = makeIngestCaptureHandler(engine);
     const dispatchedEvents: IngestionEvent[] = [];
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('inbox-folder', 'inbox-folder')`,
+    );
 
     const daemon = new IngestionDaemon({
       engine,
@@ -169,6 +172,10 @@ describe('ingestion roundtrip — inbox-folder → daemon → ingest_capture →
     const fetched = await engine.getPage(expectedSlug);
     expect(fetched).not.toBeNull();
     expect(fetched?.compiled_truth).toContain('full e2e flow');
+    expect(fetched?.source_id).toBe('inbox-folder');
+    expect(fetched?.source_kind).toBe('inbox-folder');
+    expect(fetched?.source_uri).toBe(captured);
+    expect(fetched?.ingested_via).toBe('ingest_capture');
 
     // File was archived after ingestion (the inbox-folder source's
     // post-emit archive step). The archive (mkdir+rename) runs ASYNC

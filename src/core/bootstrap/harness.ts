@@ -95,6 +95,7 @@ import {
   opencodeConfigDir,
   opencodeGlobalConfigPath,
   type ClaudeHookEvent,
+  claudeConfigDir,
 } from './host-specs.ts';
 import {
   opencodeEntryKind,
@@ -282,7 +283,12 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
     mint: deps.mint ?? defaultMint,
     revokeById: deps.revokeById ?? defaultRevokeById,
     pgliteLiveServe: deps.pgliteLiveServe ?? defaultPgliteLiveServe,
-    detectClaude: deps.detectClaude ?? (() => whichSafe('claude') !== null),
+    // #4325: config-dir fallback mirrors detectCodex/detectOpencode below —
+    // CI runners and alias-only shells don't expose a `claude` binary on the
+    // probing process's PATH even when Claude Code is configured.
+    detectClaude:
+      deps.detectClaude ??
+      (() => whichSafe('claude') !== null || existsSync(claudeConfigDir())),
     detectCodex:
       deps.detectCodex ??
       (() => whichSafe('codex') !== null || existsSync(deps.codexConfig ?? codexConfigPath())),
@@ -297,10 +303,40 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
 
 function whichSafe(bin: string): string | null {
   try {
-    return Bun.which(bin);
+    // #4325: pass PATH explicitly — Bun.which's default lookup snapshots the
+    // process-start PATH and ignores runtime process.env.PATH mutations, so
+    // env-remapped test lanes (withEnv) could never sandbox detection.
+    return process.env.PATH ? Bun.which(bin, { PATH: process.env.PATH }) : Bun.which(bin);
   } catch {
     return null;
   }
+}
+
+/** Optional overrides for the three harness-detection probes.
+ *
+ * Production leaves every field unset, so `resolveDeps` keeps its `Bun.which`
+ * defaults. E2E tests MUST pin them: `Bun.which` resolves against the live
+ * PATH and reads the real password-database HOME, so it ignores a test's
+ * remapped HOME/PATH entirely. Without a pin, an otherwise hermetic test
+ * silently asserts something different depending on which agent CLIs the host
+ * happens to have installed — `claude` is on a developer laptop's PATH but
+ * absent from a GitHub runner, so the claude lane never ran in CI, no
+ * `claude mcp add` was exec'd, and no user-scope settings file was written.
+ */
+export interface HarnessDetectOverrides {
+  claude?: () => boolean;
+  codex?: () => boolean;
+  opencode?: () => boolean;
+}
+
+/** Narrow the overrides to the HarnessDeps keys, omitting absent probes so
+ * resolveDeps' production defaults stay in charge of anything not pinned. */
+export function harnessDetectDeps(o?: HarnessDetectOverrides): Partial<HarnessDeps> {
+  return {
+    ...(o?.claude ? { detectClaude: o.claude } : {}),
+    ...(o?.codex ? { detectCodex: o.codex } : {}),
+    ...(o?.opencode ? { detectOpencode: o.opencode } : {}),
+  };
 }
 
 /** Production mint: open the configured engine just long enough to insert. */
@@ -1331,9 +1367,10 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // 11. Degradation + skew honesty.
   if (health.engine === 'postgres') {
     d.log(
-      '\nNote: this brain runs on Postgres — per-turn hook injection is degraded (no_pglite_path: the hook IPC ' +
-        'socket is PGLite-only today). MCP tools are the active seam: sessions search/read/write the brain on ' +
-        'demand; the hooks are pre-wired and light up when the engine-uniform listener lands (tracked in TODOS.md).',
+      '\nNote: this brain runs on Postgres — per-turn hook injection needs a running `gbrain serve` for this ' +
+        'brain (hooks heartbeat no_pglite_path/no_serve until one is up; the engine-uniform IPC listener keys its ' +
+        'socket off the connection URL under ~/.gbrain/run). MCP tools are the active seam: sessions ' +
+        'search/read/write the brain on demand; the pre-wired hooks light up whenever a serve runs.',
     );
   }
   if (health.version && flags.token === undefined && isServeOlderThanScopes(health.version)) {
@@ -1594,7 +1631,11 @@ export function parseClaudeMcpGetBearer(out: string): string | null {
 /** Parse the bearer token out of OUR managed codex block. When
  * `expectedUrl` is given, the block's `url` must match it ([C8] parity with
  * the claude-lane recovery): a hand-edited block pointing at another brain's
- * serve carries a credential that must never be transmitted to receipt.url. */
+ * serve carries a credential that must never be transmitted to receipt.url.
+ * Reads the current `http_headers = { Authorization = "Bearer <t>" }` shape
+ * (#4574 — codex-cli >=0.149 rejects inline `bearer_token`), with a legacy
+ * `bearer_token = "<t>"` fallback so machines wired by older gbrain still
+ * have their token recovered for status/rotation. */
 export function parseCodexBlockBearer(configText: string, expectedUrl?: string): string | null {
   const norm = configText.replace(/\r\n/g, '\n');
   // The shared writer constants — inline copies here would silently stop
@@ -1606,6 +1647,12 @@ export function parseCodexBlockBearer(configText: string, expectedUrl?: string):
   if (expectedUrl !== undefined) {
     const u = block.match(/^url\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/m);
     if (!u || u[1].replace(/\\(.)/g, '$1') !== expectedUrl) return null;
+  }
+  const h = block.match(/^http_headers\s*=\s*\{\s*Authorization\s*=\s*"((?:[^"\\]|\\.)*)"\s*\}\s*$/m);
+  if (h) {
+    const value = h[1].replace(/\\(.)/g, '$1');
+    // A non-Bearer Authorization header is a hand-edit — not ours to recover.
+    return value.startsWith('Bearer ') ? value.slice('Bearer '.length) : null;
   }
   const m = block.match(/^bearer_token\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/m);
   if (!m) return null;
@@ -1739,7 +1786,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
       d.log(`  pending: ${receipt.token.previous_ids.length} previous token(s) await revocation (re-run to converge): ${receipt.token.previous_ids.join(', ')}`);
     }
     if (degraded) {
-      d.log('per-turn injection: degraded on Postgres (MCP tools are the active seam).');
+      d.log('per-turn injection: needs a running gbrain serve on Postgres (MCP tools are the active seam).');
     }
     if (skew) d.log(`note: ${skew}`);
   }

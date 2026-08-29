@@ -387,3 +387,56 @@ describe('FTS language cache isolation', () => {
     expect((await cache.lookup(emb, { knobsHash: portugueseHash })).hit).toBe(true);
   });
 });
+
+describe('excludePrivate cache isolation (#4352 follow-up)', () => {
+  // Hashes computed the way hybridSearchCached does: same resolved mode, ctx
+  // carrying the private-visibility posture. Folding the posture (xp=, v=23)
+  // replaces #4352's wholesale cache skip — excludePrivate=true is the
+  // default for every remote MCP caller, so the skip disabled the semantic
+  // cache for exactly the highest-volume beneficiaries. A trusted
+  // (private-included) write must never serve a remote-default
+  // (private-excluding) lookup, and vice versa.
+  const trustedHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), { excludePrivate: false });
+  const excludingHash = knobsHash(resolveSearchMode({ mode: 'balanced' }), { excludePrivate: true });
+
+  test('postures produce different hashes; undefined keys like the trusted (included) default', () => {
+    expect(trustedHash).not.toBe(excludingHash);
+    // Mirrors enforcement's strict `=== true` predicate: legacy callers that
+    // don't thread the posture share the trusted rows.
+    expect(knobsHash(resolveSearchMode({ mode: 'balanced' }))).toBe(trustedHash);
+  });
+
+  test('private-included (trusted) write is NOT served to a private-excluding lookup', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(10);
+
+    // Simulate a trusted local run whose stored rows contain a private page
+    // the remote caller must never see.
+    await cache.store('who is alice', emb, makeResults('with-private', 5), {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: trustedHash });
+
+    // Remote-default (excludePrivate=true) lookup → MISS (falls through to a
+    // fresh, visibility-filtered query).
+    expect((await cache.lookup(emb, { knobsHash: excludingHash })).hit).toBe(false);
+
+    // The trusted caller still hits its own row.
+    const original = await cache.lookup(emb, { knobsHash: trustedHash });
+    expect(original.hit).toBe(true);
+    expect(original.results?.length).toBe(5);
+  });
+
+  test('private-excluding write is NOT served back to a trusted lookup', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(11);
+
+    // A remote write is a FILTERED result set — serving it to a trusted
+    // lookup would hide private pages the trusted caller is entitled to.
+    await cache.store('who is alice', emb, makeResults('filtered', 3), {
+      vector_enabled: true, detail_resolved: null, expansion_applied: false,
+    }, { knobsHash: excludingHash });
+
+    expect((await cache.lookup(emb, { knobsHash: trustedHash })).hit).toBe(false);
+    expect((await cache.lookup(emb, { knobsHash: excludingHash })).hit).toBe(true);
+  });
+});

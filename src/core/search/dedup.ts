@@ -93,18 +93,28 @@ function dedupBySource(results: SearchResult[]): SearchResult[] {
 }
 
 /**
- * Layer 2: Remove chunks that are too similar to already-kept results.
- * Uses Jaccard similarity on word sets as a proxy for cosine similarity.
+ * Layer 2: Remove chunks that are too similar to already-kept results
+ * FROM THE SAME PAGE. Uses Jaccard similarity on word sets as a proxy for
+ * cosine similarity.
+ *
+ * v0.46.15 (#3983): the comparison is scoped to the same pageKey. The
+ * unscoped version dropped a chunk because a DIFFERENT page's chunk was
+ * textually similar — on near-duplicate-record corpora (many similar deal
+ * memos, weekly reports, boilerplate-heavy notes) that silently deleted
+ * whole PAGES from the result set. Distinct pages are distinct answers;
+ * only intra-page near-dups are redundant.
  */
 function dedupByTextSimilarity(results: SearchResult[], threshold: number): SearchResult[] {
   const kept: SearchResult[] = [];
+  const keptWordsByPage = new Map<string, Set<string>[]>();
 
   for (const r of results) {
     const rWords = new Set(r.chunk_text.toLowerCase().split(/\s+/));
+    const k = pageKey(r);
+    const samePageKept = keptWordsByPage.get(k) ?? [];
     let tooSimilar = false;
 
-    for (const k of kept) {
-      const kWords = new Set(k.chunk_text.toLowerCase().split(/\s+/));
+    for (const kWords of samePageKept) {
       const intersection = new Set([...rWords].filter(w => kWords.has(w)));
       const union = new Set([...rWords, ...kWords]);
       const jaccard = intersection.size / union.size;
@@ -117,6 +127,8 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
 
     if (!tooSimilar) {
       kept.push(r);
+      samePageKept.push(rWords);
+      keptWordsByPage.set(k, samePageKept);
     }
   }
 
@@ -127,6 +139,11 @@ function dedupByTextSimilarity(results: SearchResult[], threshold: number): Sear
  * Layer 3: No page type exceeds maxRatio of total results.
  */
 function enforceTypeDiversity(results: SearchResult[], maxRatio: number): SearchResult[] {
+  // A diversity cap cannot improve a homogeneous candidate set. Applying
+  // the ratio anyway only drops relevant results (for 3 notes, the default
+  // 60% cap returns 2) without adding another type in their place.
+  if (new Set(results.map(r => r.type)).size <= 1) return results;
+
   const maxPerType = Math.max(1, Math.ceil(results.length * maxRatio));
   const typeCounts = new Map<string, number>();
   const kept: SearchResult[] = [];

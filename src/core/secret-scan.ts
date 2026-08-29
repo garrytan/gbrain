@@ -236,8 +236,14 @@ function isFingerprintEntry(entry: string): boolean {
  */
 export const ALLOWLIST_FINGERPRINT_MIN_HEX = 16;
 
-/** True when the full sha256 hex of a matched value is allowlisted (≥16-hex prefix). */
-function valueAllowlisted(fullHex: string, allowlist: string[]): boolean {
+/**
+ * True when the full sha256 hex of a matched value is allowlisted (≥16-hex
+ * prefix). Exported so the sensitivity scan (context/sensitivity-scan.ts)
+ * honors the SAME `.gbrain-scan-allow` fingerprint mechanics for its
+ * non-secret families (PII, blocklist, pattern-file) — one escape hatch,
+ * one dialect.
+ */
+export function valueAllowlisted(fullHex: string, allowlist: string[]): boolean {
   for (const entry of allowlist) {
     if (!isFingerprintEntry(entry)) continue;
     const prefix = entry.slice('sha256:'.length).toLowerCase();

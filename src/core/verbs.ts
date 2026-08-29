@@ -216,6 +216,7 @@ const entity: Operation = {
 // messages) ride `detail` only; the message carries the code.
 const SYNTHESIS_FAILURE_CODES: Record<string, string> = {
   not_json: 'LLM_OUTPUT_NOT_JSON',
+  output_truncated: 'LLM_OUTPUT_TRUNCATED',
   empty_answer: 'SYNTHESIS_EMPTY_ANSWER',
   llm_error: 'LLM_CALL_FAILED',
   model_unusable: 'MODEL_NOT_USABLE',
@@ -261,7 +262,8 @@ const synthesize: Operation = {
       takesHoldersAllowList: ctx.takesHoldersAllowList,
       ...(scope.sourceId !== undefined ? { sourceId: scope.sourceId } : {}),
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
-      remote: ctx.remote === true,
+      // Fail-closed: only a context that explicitly says local gets local.
+      remote: ctx.remote !== false,
     });
 
     // [c10] runThink degrades gracefully to a no-LLM stub RESULT; the protocol
@@ -431,7 +433,7 @@ const STATUS_ENUM = ['inserted', 'duplicate', 'superseded'];
 // fallback or a typed `unavailable` error) and stay enum-listed so any
 // v1 server emitting them validates.
 const SYNTHESIS_STATUS_ENUM = [
-  'ok', 'empty_answer', 'not_json', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
+  'ok', 'empty_answer', 'not_json', 'output_truncated', 'no_llm', 'model_unusable', 'llm_error', 'extractive_fallback',
 ];
 
 export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
@@ -529,6 +531,13 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
                 kind: { type: 'string', enum: ['commitment', 'recent_event'] },
                 text: { type: 'string' },
                 date: { type: ['string', 'null'] },
+                // v0.47 open-loop engine — ADDITIVE OPTIONAL (frozen-v1
+                // legal); present only on threads backed by an open_loops row.
+                direction: { type: 'string', enum: ['owed_by_me', 'owed_to_me', 'their_turn', 'my_turn'] },
+                due: { type: ['string', 'null'] },
+                counterparty: { type: ['string', 'null'] },
+                status: { type: 'string' },
+                loop_id: { type: 'number' },
               },
             },
           },
@@ -632,6 +641,12 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
                   kind: { type: 'string', enum: ['commitment', 'recent_event'] },
                   text: { type: 'string' },
                   date: { type: ['string', 'null'] },
+                  // v0.47 open-loop engine — additive optional.
+                  direction: { type: 'string', enum: ['owed_by_me', 'owed_to_me', 'their_turn', 'my_turn'] },
+                  due: { type: ['string', 'null'] },
+                  counterparty: { type: ['string', 'null'] },
+                  status: { type: 'string' },
+                  loop_id: { type: 'number' },
                 },
               },
             },
@@ -661,6 +676,12 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
             kind: { type: 'string', enum: ['commitment', 'recent_event'] },
             text: { type: 'string' },
             date: { type: ['string', 'null'] },
+            // v0.47 open-loop engine — additive optional.
+            direction: { type: 'string', enum: ['owed_by_me', 'owed_to_me', 'their_turn', 'my_turn'] },
+            due: { type: ['string', 'null'] },
+            counterparty: { type: ['string', 'null'] },
+            status: { type: 'string' },
+            loop_id: { type: 'number' },
           },
         },
       },

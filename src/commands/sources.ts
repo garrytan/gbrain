@@ -47,9 +47,11 @@ import {
 import {
   addSource as opsAddSource,
   recloneIfMissing,
+  defaultCloneDir,
   SourceOpError,
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
+import { isValidRepoName } from '../core/github-source.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -129,8 +131,14 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url>] ' +
-        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]',
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google] ' +
+        '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force]\n' +
+        '       github kind: [--token-env <env>] [--scope auto|repos] ' +
+        '[--repos owner/name,...] [--dir <path>] ' +
+        '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
+        '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
+        '[--history-days <n>] [--dir <path>]   (connect first: gbrain google connect)\n' +
+        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
     );
     process.exit(2);
   }
@@ -143,6 +151,23 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let patFile: string | undefined;
   let noHarden = false;
   let force = false;
+  // v0.46 github-kind flags.
+  let ghKind = false;
+  let ghTokenEnv: string | undefined;
+  let ghScope: 'auto' | 'repos' = 'auto';
+  let ghRepos: string[] = [];
+  let ghDir: string | undefined;
+  let ghAppId: number | undefined;
+  let ghAppPem: string | undefined;
+  let ghAppInstall: number | undefined;
+  // v0.47 google-kind flags.
+  let gKind = false;
+  let gAccount: string | undefined;
+  let gAccess: string | undefined;
+  let gTokenCommand: string | undefined;
+  let gTokenEnv: string | undefined;
+  let gServices: string[] = ['gmail', 'calendar', 'contacts'];
+  let gHistoryDays = 90;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -155,6 +180,82 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     if (a === '--pat-file') { patFile = args[++i]; continue; }
     if (a === '--no-harden') { noHarden = true; continue; }
     if (a === '--force') { force = true; continue; }
+    if (a === '--kind') {
+      const kind = args[++i];
+      if (kind === 'github') {
+        ghKind = true;
+      } else if (kind === 'google') {
+        gKind = true;
+      } else {
+        console.error(`Unknown source kind: ${kind}. Supported: "github", "google".`);
+        process.exit(2);
+      }
+      continue;
+    }
+    if (a === '--account') { gAccount = args[++i]?.trim().toLowerCase(); continue; }
+    if (a === '--access') { gAccess = args[++i]?.trim().toLowerCase(); continue; }
+    if (a === '--token-command') { gTokenCommand = args[++i]; continue; }
+    if (a === '--token-env') {
+      // Shared by BOTH kinds: github reads its API token from this env var;
+      // google's env access mode reads an access token from it. Parsed once
+      // and routed by kind so neither parse shadows the other.
+      const v = args[++i]?.trim();
+      gTokenEnv = v;
+      ghTokenEnv = v;
+      continue;
+    }
+    if (a === '--services') {
+      gServices = (args[++i] ?? '')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      continue;
+    }
+    if (a === '--history-days') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v <= 0) {
+        console.error('--history-days must be a positive integer.');
+        process.exit(2);
+      }
+      gHistoryDays = v;
+      continue;
+    }
+    if (a === '--scope') {
+      const scope = args[++i];
+      if (scope !== 'auto' && scope !== 'repos') {
+        console.error(`--scope must be "auto" or "repos".`);
+        process.exit(2);
+      }
+      ghScope = scope;
+      continue;
+    }
+    if (a === '--repos') {
+      ghRepos = (args[++i] ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      continue;
+    }
+    if (a === '--dir') { ghDir = args[++i]; continue; }
+    if (a === '--app-id') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v <= 0) {
+        console.error('--app-id must be a positive integer.');
+        process.exit(2);
+      }
+      ghAppId = v;
+      continue;
+    }
+    if (a === '--app-pem') { ghAppPem = args[++i]; continue; }
+    if (a === '--app-install') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v <= 0) {
+        console.error('--app-install must be a positive integer.');
+        process.exit(2);
+      }
+      ghAppInstall = v;
+      continue;
+    }
     console.error(`Unknown flag: ${a}`);
     process.exit(2);
   }
@@ -162,6 +263,107 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   if (remoteUrl && localPath) {
     console.error('Error: --url and --path are mutually exclusive (--url manages its own clone path).');
     process.exit(2);
+  }
+  if (ghKind && (remoteUrl || localPath)) {
+    console.error('Error: --kind github is mutually exclusive with --url and --path.');
+    process.exit(2);
+  }
+  if (gKind && (remoteUrl || localPath || ghKind)) {
+    console.error('Error: --kind google is mutually exclusive with --url, --path, and --kind github.');
+    process.exit(2);
+  }
+  if (gKind && !gAccount) {
+    console.error(
+      'Error: --kind google requires --account <email> (a connected Google account).\n' +
+        'Connect one first: gbrain google connect',
+    );
+    process.exit(2);
+  }
+  if (gKind) {
+    const { ALL_GOOGLE_SERVICES } = await import('../core/google/types.ts');
+    const bad = gServices.filter((s) => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(s));
+    if (bad.length > 0) {
+      console.error(`Error: unknown --services entries: ${bad.join(', ')}. Valid: gmail, calendar, contacts`);
+      process.exit(2);
+    }
+    // Duplicate-account guard: a second source for the same account would
+    // duplicate every page/loop in federated reads and coalesce the two
+    // sources' loops_extract jobs. Warn loudly (not refuse — split-window
+    // setups are conceivable) so the duplication is a choice, not a surprise.
+    try {
+      const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
+        `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
+        [],
+      );
+      const dup = dupRows.find((r) => {
+        const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
+        return c.kind === 'google' && c.g_account === gAccount;
+      });
+      if (dup) {
+        console.error(
+          `Warning: source "${dup.id}" already syncs ${gAccount} — a second source for the same account duplicates its pages and loops in federated reads.`,
+        );
+      }
+    } catch { /* preflight is best-effort */ }
+    // Access-mode validation (default vault). command/env let a stack that
+    // already holds Google access (gog, gcloud, a credential gateway) drive
+    // this source without gbrain's OAuth flow; --account stays required as
+    // the IDENTITY (From/To matching, deep-link authuser).
+    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
+      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
+      process.exit(2);
+    }
+    if (gAccess === 'command' && !gTokenCommand?.trim()) {
+      console.error('Error: --access command requires --token-command "<cmd that prints an access token>".');
+      process.exit(2);
+    }
+    if (gAccess === 'env' && !gTokenEnv?.trim()) {
+      console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
+      process.exit(2);
+    }
+    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
+      console.error('Error: --token-command/--token-env require --access command or --access env.');
+      process.exit(2);
+    }
+    if (gAccess === undefined || gAccess === 'vault') {
+      // Fail fast at registration when the account has no vault entry — the
+      // alternative is a source that errors on every sync.
+      const { openVault, credentialId } = await import('../core/creds/vault.ts');
+      const entry = await openVault().get(credentialId('google', gAccount!));
+      if (!entry) {
+        console.error(
+          `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
+            `Connect it first: gbrain google connect --account ${gAccount}\n` +
+            `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
+        );
+        process.exit(2);
+      }
+    } else if (gAccess === 'command') {
+      // Probe the command once at registration so a typo fails HERE, not on
+      // every future sync. Best-effort: a transient failure only warns.
+      try {
+        const { CommandAccessProvider } = await import('../core/google/access.ts');
+        await new CommandAccessProvider(gTokenCommand!).getAccessToken();
+      } catch (e) {
+        console.error(`Warning: token command probe failed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the source is registered, but sync will fail until the command works.`);
+      }
+    } else if (gAccess === 'env' && !(process.env[gTokenEnv!] ?? '').trim()) {
+      console.error(`Warning: $${gTokenEnv} is not set in this shell — sync will fail until it carries a live access token.`);
+    }
+  }
+  if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
+    console.error('Error: --scope repos requires --repos owner/name,owner/name.');
+    process.exit(2);
+  }
+  if (ghKind && ((ghAppId === undefined) !== (ghAppPem === undefined))) {
+    console.error('Error: --app-id and --app-pem must be provided together.');
+    process.exit(2);
+  }
+  for (const r of ghRepos) {
+    if (!isValidRepoName(r)) {
+      console.error(`Invalid --repos entry: "${r}". Expected owner/name with no dot segments.`);
+      process.exit(2);
+    }
   }
 
   // Throw on SourceOpError; cli.ts wraps every command in a try/catch that
@@ -175,6 +377,36 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     federated,
     cloneDir,
     force,
+    ...(ghKind
+      ? {
+          github: {
+            tokenEnv: ghTokenEnv ?? 'GH_TOKEN',
+            // gh_handle / gh_involvement are reserved config keys (written
+            // as inert defaults, ignored by the sync).
+            handle: '',
+            scope: ghScope,
+            repos: ghRepos,
+            dir: ghDir ?? defaultCloneDir(`${id}-github`),
+            involvement: true,
+            appId: ghAppId,
+            appPemPath: ghAppPem,
+            appInstallId: ghAppInstall,
+          },
+        }
+      : {}),
+    ...(gKind
+      ? {
+          google: {
+            account: gAccount!,
+            services: gServices,
+            historyDays: gHistoryDays,
+            dir: ghDir ?? defaultCloneDir(`${id}-google`),
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            tokenCommand: gTokenCommand,
+            tokenEnv: gTokenEnv,
+          },
+        }
+      : {}),
   });
 
   // Topology A discovery: if the just-added source carries a brain-resident
@@ -786,11 +1018,16 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   // No id: purge all expired archives
-  const purged = await purgeExpiredSources(engine);
-  if (purged.length === 0) {
+  const { purged, blocked } = await purgeExpiredSources(engine);
+  if (purged.length === 0 && blocked.length === 0) {
     console.log('No expired archives to purge.');
   } else {
-    console.log(`Purged ${purged.length} expired archive(s): ${purged.join(', ')}`);
+    if (purged.length > 0) {
+      console.log(`Purged ${purged.length} expired archive(s): ${purged.join(', ')}`);
+    }
+    for (const b of blocked) {
+      console.log(`Blocked: ${b.id} — ${b.reason}`);
+    }
   }
 }
 
@@ -909,7 +1146,6 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   try {
     const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
     if (!(await isFederatedV2Enabled(engine))) return;
-
     const { loadAllSources } = await import('../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../core/source-health.ts');
     const sources = await loadAllSources(engine, { includeArchived: false });
@@ -926,7 +1162,9 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       console.log(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       console.log(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
-    }
+    } else if (sub.status === 'no_worker_surface') {
+      console.log(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
+    } else { sub satisfies never; }
   } catch (err) {
     // Federation flip already succeeded; embed-backfill is a follow-up nicety.
     console.error(`  → embed-backfill submission failed (flip succeeded): ${err instanceof Error ? err.message : String(err)}`);
@@ -1030,6 +1268,17 @@ function formatLag(seconds: number): string {
 }
 
 // ── v0.40 sources webhook (D8) ──────────────────────────────
+// Hoisted so both runWebhook's `case '--help'` and the top-level nested-help
+// guard in runSources (`sources webhook --help`, `sources webhook <sub>
+// --help`) print the identical text without dispatching into runWebhook.
+const SOURCES_WEBHOOK_HELP = `Usage: gbrain sources webhook <subcommand> <source-id> [options]
+
+Subcommands:
+  set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
+  show <id>                                                Metadata only
+  rotate <id>                                              New secret, reveal
+  clear <id>                                               Remove webhook config`;
+
 async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const rest = args.slice(1);
@@ -1041,13 +1290,7 @@ async function runWebhook(engine: BrainEngine, args: string[]): Promise<void> {
     case undefined:
     case '--help':
     case '-h':
-      console.log(`Usage: gbrain sources webhook <subcommand> <source-id> [options]
-
-Subcommands:
-  set <id>    [--secret VAL] [--github-repo owner/name]   One-time reveal
-  show <id>                                                Metadata only
-  rotate <id>                                              New secret, reveal
-  clear <id>                                               Remove webhook config`);
+      console.log(SOURCES_WEBHOOK_HELP);
       return;
     default:
       console.error(`Unknown webhook subcommand: ${sub}`);
@@ -1068,11 +1311,15 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   }
   const explicitSecret = args.find((a, i) => args[i - 1] === '--secret');
   const githubRepo = args.find((a, i) => args[i - 1] === '--github-repo');
-  if (!githubRepo) {
+  const srcCfg = parseConfig(src.config);
+  const isGitHubKind = srcCfg.kind === 'github';
+  // v0.46: github-kind sources span many repos, so --github-repo is optional
+  // for them (the webhook secret alone gates item-refresh events).
+  if (!githubRepo && !isGitHubKind) {
     console.error('--github-repo owner/name is required (e.g. "Garry-s-List/zion-brain")');
     process.exit(2);
   }
-  if (!/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
+  if (githubRepo && !/^[\w.-]+\/[\w.-]+$/.test(githubRepo)) {
     console.error(`Invalid --github-repo format: "${githubRepo}". Expected "owner/name".`);
     process.exit(2);
   }
@@ -1081,21 +1328,27 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   const secret = explicitSecret ?? randomBytes(32).toString('hex');
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
-  cfg.github_repo = githubRepo;
+  if (githubRepo) cfg.github_repo = githubRepo;
   await engine.executeRaw(
     `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
     [JSON.stringify(normalizeSourceConfig(cfg)), id],
   );
 
   console.log(`Webhook configured for source "${id}":`);
-  console.log(`  github_repo:    ${githubRepo}`);
+  if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
   console.log(`  webhook_secret: ${secret}`);
   console.log('');
   console.log('--- Paste this into GitHub repo settings → Webhooks → Add webhook ---');
   console.log('  Payload URL:  <your gbrain serve --http URL>/webhooks/github');
   console.log('  Content type: application/json');
   console.log(`  Secret:       ${secret}`);
-  console.log('  Events:       Just the push event');
+  console.log(
+    isGitHubKind
+      ? '  Events:       Issues, pull requests, issue comments, PR reviews,\n' +
+        '                 PR review comments, labels, milestones, assignees,\n' +
+        '                 check runs, check suites, workflow runs'
+      : '  Events:       Just the push event',
+  );
   console.log('  Active:       checked');
   console.log('');
   console.log('⚠ This secret is shown ONCE. Save it now; subsequent `gbrain sources webhook show` will NOT display it.');
@@ -1369,14 +1622,8 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
   // frontmatter.type and estimates per-page segment count from body
   // bytes. Estimated per-segment Sonnet cost is a rough heuristic
   // (~2000 in + 500 out tokens at $3/MTok in + $15/MTok out ≈ $0.013).
-  const FACTS_BACKFILL_ALLOWED = [
-    'conversation',
-    'meeting',
-    'slack',
-    'email',
-    'imessage',
-    'imessage-daily',
-  ];
+  // Single source of truth for the conversation-facts type allowlist.
+  const { ALLOWED_TYPES: FACTS_BACKFILL_ALLOWED } = await import('../core/facts/conversation-types.ts');
   const FACTS_BACKFILL_CHARS_PER_SEGMENT = 6500; // matches SEGMENT_TEXT_CHAR_LIMIT
   const FACTS_BACKFILL_USD_PER_SEGMENT = 0.013;
   let factsBackfillPages = 0;
@@ -1420,7 +1667,7 @@ async function runAudit(engine: BrainEngine, args: string[]): Promise<void> {
     }
     // Facts-backfill estimator: counts pages matching allowed types.
     const fmType = (parsed.frontmatter?.type as string | undefined) ?? null;
-    if (fmType && FACTS_BACKFILL_ALLOWED.includes(fmType)) {
+    if (fmType && (FACTS_BACKFILL_ALLOWED as readonly string[]).includes(fmType)) {
       factsBackfillPages++;
       const totalBytes = sanity.bytes;
       const segmentsEstimate = Math.max(
@@ -1519,6 +1766,36 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
   const sub = args[0];
   const rest = args.slice(1);
 
+  // Help guards run BEFORE the subcommand switch below (mirrors jobs.ts
+  // src/commands/jobs.ts:462-471 — help checked first-position, then any
+  // position, before any subcommand body runs). cli.ts routes bare `sources
+  // --help` here with a placeholder engine (SELF_HELP_WITHOUT_ENGINE): the
+  // second check is why that's safe — without it, `sources <sub> --help`
+  // would fall through to <sub>'s own handler instead of printing help,
+  // which crashes for engine-touching subcommands (the placeholder engine
+  // is not a real one) and, for engine-free subcommands like `detach`
+  // (unlinks .gbrain-source with no engine involved at all), would silently
+  // perform the destructive action instead of showing usage.
+  if (!sub || sub === '--help' || sub === '-h') {
+    printHelp();
+    return;
+  }
+  if (rest.includes('--help') || rest.includes('-h')) {
+    // webhook is the one sources subcommand that ships its own detailed
+    // --help (set/show/rotate/clear, in SOURCES_WEBHOOK_HELP) — print that
+    // instead of the general list so `sources webhook --help` and `sources
+    // webhook <sub> --help` reach it. Do NOT dispatch into runWebhook: that
+    // would let e.g. `sources webhook set x --help` fall through to
+    // runWebhookSet, the same destructive-dispatch class this guard exists
+    // to prevent for the rest of sources' subcommands.
+    if (sub === 'webhook') {
+      console.log(SOURCES_WEBHOOK_HELP);
+      return;
+    }
+    printHelp();
+    return;
+  }
+
   switch (sub) {
     case 'add':        return runAdd(engine, rest);
     case 'list':       return runList(engine, rest);
@@ -1546,17 +1823,16 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'audit':      return runAudit(engine, rest);
+    // v0.46 github-source demo (offline, privacy-clean fixtures)
+    case 'demo':       { const { runSourcesDemo } = await import('./sources-demo.ts'); return runSourcesDemo(engine, rest); }
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
     // agent-bootstrap: scan-gated workspace push
     case 'push':       return runPush(engine, rest);
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
-    case undefined:
-    case '--help':
-    case '-h':
-      printHelp();
-      return;
+    // undefined / --help / -h are handled by the guards above, before this
+    // switch is ever reached — no case needed here.
     default:
       console.error(`Unknown sources subcommand: ${sub}`);
       printHelp();
@@ -1597,6 +1873,11 @@ Subcommands:
                                     brain_default/seed_default). Run this
                                     before destructive ops to verify you're
                                     targeting the brain you think you are.
+  demo github [--dir <path>] [--limit <n>]
+                                    Offline demo of the github source kind:
+                                    render privacy-clean fixture pages via the
+                                    real render functions. No token/network/
+                                    brain needed. See docs/guides/github-source.md.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
   set-cr-mode <id> <none|title|per_chunk_synopsis>
@@ -1604,6 +1885,9 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
+  webhook <set|show|rotate|clear> <id> [options]
+                                    v0.40 — per-source webhook secret management.
+                                    Run 'sources webhook --help' for subcommand detail.
   harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]
                                     v0.42.44 — make a brain repo durable: local
                                     auto-push hook, committed commit-push helper,

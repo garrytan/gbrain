@@ -841,3 +841,434 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     }
   });
 });
+
+// ── #4217 structural write accounting ───────────────────────
+
+describe('write accounting (#4217)', () => {
+  function makePutPageTool(behavior: 'ok' | 'fail' | ((input: unknown) => 'ok' | 'fail')): ToolDef {
+    return {
+      name: 'brain_put_page',
+      description: 'write a page',
+      input_schema: { type: 'object', properties: { slug: { type: 'string' } }, required: [] },
+      idempotent: true,
+      async execute(input) {
+        const mode = typeof behavior === 'function' ? behavior(input) : behavior;
+        if (mode === 'fail') throw new Error('expected 1024 dimensions, not 1280');
+        return { slug: (input as { slug?: string }).slug ?? 'wiki/x', status: 'created' };
+      },
+    };
+  }
+
+  const putPageTurn = (slug: string, id: string) => ({
+    content: [{ type: 'tool_use', id, name: 'brain_put_page', input: { slug } }] as any,
+    stop_reason: 'tool_use' as const,
+  });
+  const endTurn = { content: [{ type: 'text', text: 'done' }] as any, stop_reason: 'end_turn' as const };
+
+  test('require_writes + ALL writes failed → UnrecoverableError with first error', async () => {
+    const client = new FakeMessagesClient([putPageTurn('wiki/a', 'tu_1'), endTurn]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makePutPageTool('fail')] });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    await expect(handler(ctx)).rejects.toThrow(/all 1 put_page write\(s\) failed.*1024 dimensions/);
+  });
+
+  test('all writes failed WITHOUT require_writes → completed, truthful counts', async () => {
+    // CDX-12: open-ended agent runs keep the generic contract — a failed write
+    // plus a useful text answer is still a completion, but the counts tell the truth.
+    const client = new FakeMessagesClient([putPageTurn('wiki/a', 'tu_1'), endTurn]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makePutPageTool('fail')] });
+    const ctx = await makeCtx({ prompt: 'write pages' });
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.pages_attempted).toBe(1);
+    expect(result.pages_written).toBe(0);
+    expect(result.pages_failed).toBe(1);
+  });
+
+  test('partial failure with require_writes → completed with counts', async () => {
+    const client = new FakeMessagesClient([
+      {
+        content: [
+          { type: 'tool_use', id: 'tu_ok', name: 'brain_put_page', input: { slug: 'wiki/ok' } },
+          { type: 'tool_use', id: 'tu_bad', name: 'brain_put_page', input: { slug: 'FAIL' } },
+        ] as any,
+        stop_reason: 'tool_use',
+      },
+      endTurn,
+    ]);
+    const tool = makePutPageTool((input) => ((input as { slug?: string }).slug === 'FAIL' ? 'fail' : 'ok'));
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(2);
+    expect(result.pages_written).toBe(1);
+    expect(result.pages_failed).toBe(1);
+  });
+
+  test('zero attempts (Task-D skip) stays completed even with require_writes', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'nothing met the bar' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makePutPageTool('ok')] });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    const result = await handler(ctx);
+    expect(result.result).toBe('nothing met the bar');
+    expect(result.pages_attempted).toBe(0);
+    expect(result.pages_written).toBe(0);
+    expect(result.pages_failed).toBe(0);
+  });
+
+  test('non-put_page tool failures do not count toward write accounting', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'tool_use', id: 'tu_b', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },
+      endTurn,
+    ]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [makeThrowingTool('broken')] });
+    const ctx = await makeCtx({ prompt: 'do stuff', require_writes: true });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+  });
+});
+
+// ── #4087/CDX-6 model-aware output-cap default ──────────────
+
+describe('resolveMaxOutputTokens model-aware default', () => {
+  const { resolveMaxOutputTokens } = require('../src/core/minions/handlers/subagent.ts');
+  test('thinking-by-default Claude 5 model gets 32000 when nothing is configured', () => {
+    expect(resolveMaxOutputTokens(undefined, null, 'openrouter:anthropic/claude-sonnet-5')).toBe(32000);
+    expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-fable-5')).toBe(32000);
+  });
+  test('non-thinking models keep 8192', () => {
+    expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-sonnet-4-6')).toBe(8192);
+    expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-3-5-sonnet-20241022')).toBe(8192);
+    expect(resolveMaxOutputTokens(undefined, null, undefined)).toBe(8192);
+  });
+  test('per-job and config overrides still win over the thinking default', () => {
+    expect(resolveMaxOutputTokens(12000, null, 'anthropic:claude-fable-5')).toBe(12000);
+    expect(resolveMaxOutputTokens(undefined, '9000', 'anthropic:claude-fable-5')).toBe(9000);
+  });
+});
+
+// ── #4216 oneshot mode dispatch ─────────────────────────────
+
+describe('oneshot mode dispatch (#4216)', () => {
+  const PREFIXES = ['wiki/personal/reflections/*', 'wiki/originals/*'];
+  const SUFFIX = 'abc123';
+  const SLUG_A = `wiki/personal/reflections/2026-08-16-topic-${SUFFIX}`;
+  const SLUG_B = `wiki/originals/ideas/2026-08-16-idea-${SUFFIX}`;
+  const VALID = JSON.stringify({
+    pages: [
+      { slug: SLUG_A, body: `A. [[${SLUG_B}]]` },
+      { slug: SLUG_B, body: `B. [[${SLUG_A}]]` },
+    ],
+    skipped: false,
+  });
+  const chatStub = (text: string) => (async () => ({
+    text,
+    blocks: [{ type: 'text' as const, text }],
+    stopReason: 'end' as const,
+    usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: 'anthropic:claude-sonnet-4-6',
+    providerId: 'anthropic',
+  })) as any;
+
+  test('valid oneshot output: single call, pages written, synth_mode_used=oneshot, accounting scoped', async () => {
+    const client = new FakeMessagesClient([]); // legacy loop must never run
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(VALID) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('oneshot');
+    expect(result.turns_count).toBe(1);
+    expect(result.pages_written).toBe(2);
+    expect(result.pages_failed).toBe(0);
+    expect(client.calls.length).toBe(0);
+    expect(await engine.getPage(SLUG_A)).not.toBeNull();
+  });
+
+  test('invalid oneshot output falls back to the agentic loop IN THE SAME JOB', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'agentic loop answered' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub('not json at all') });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot',
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const result = await handler(ctx);
+    expect(result.result).toBe('agentic loop answered');
+    expect(result.synth_mode_used).toBe('agentic_fallback');
+    expect(result.fallback_reason).toBe('unparseable');
+    expect(client.calls.length).toBe(1); // the loop really ran
+  });
+
+  test('REGRESSION pin: payload without mode keeps the legacy result shape (no synth fields)', async () => {
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'plain job' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(VALID) });
+    const ctx = await makeCtx({ prompt: 'plain' });
+    const result = await handler(ctx);
+    expect(result.result).toBe('plain job');
+    expect('synth_mode_used' in result).toBe(false);
+    expect('fallback_reason' in result).toBe(false);
+  });
+
+  test('mode=agentic stamps synth_mode_used=agentic and never calls the oneshot chat', async () => {
+    let oneshotCalls = 0;
+    const spy = (async (...args: any[]) => { oneshotCalls++; return chatStub(VALID)(...args); }) as any;
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'agentic by request' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({ engine, client, _chat: spy });
+    const ctx = await makeCtx({ prompt: 'synthesize', mode: 'agentic' });
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('agentic');
+    expect(oneshotCalls).toBe(0);
+  });
+
+  test('read-only allowed_tools + mode oneshot → no write escalation (falls back tool-less)', async () => {
+    // A submitter that scoped its job to read-only tools must not gain
+    // brain_put_page by flipping mode: oneshot — the oneshot registry runs
+    // through the SAME filterAllowedTools as the loop registry.
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'read-only answer' }] as any, stop_reason: 'end_turn' },
+    ]);
+    const handler = makeSubagentHandler({
+      engine, client,
+      toolRegistry: [makeEchoTool(), makeEchoTool('brain_put_page')],
+      _chat: chatStub(VALID),
+    });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot',
+      allowed_tools: ['echo'],
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('agentic_fallback');
+    expect(result.fallback_reason).toBe('no_put_page_tool');
+    // No page write happened anywhere.
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM subagent_tool_executions WHERE job_id = $1 AND tool_name = 'brain_put_page'`,
+      [ctx.id],
+    );
+    expect(rows[0]!.n).toBe(0);
+  });
+
+  test('crash-replayed TRUNCATED terminal turn recovers max_tokens, not end_turn (F1)', async () => {
+    // A length-stopped zero-write run persisted its terminal turn, crashed
+    // before completeJob, and replays. Pre-fix the early-return hardcoded
+    // end_turn, laundering the truncation past the zero-attempt honesty
+    // gate — the job completed with zero pages and consumed the transcript.
+    const client = new FakeMessagesClient([]); // replay path must not call the model
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'synthesize', require_writes: true });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, tokens_out)
+       VALUES ($1, 0, 'user', '[{"type":"text","text":"synthesize"}]'::jsonb, NULL),
+              ($1, 1, 'assistant', '[{"type":"text","text":"truncated partial outp"}]'::jsonb, 8192)`,
+      [ctx.id],
+    );
+    await expect(handler(ctx)).rejects.toThrow(/did not finish cleanly.*max_tokens/);
+  });
+
+  test('crash-replayed CLEAN terminal turn still returns end_turn', async () => {
+    const client = new FakeMessagesClient([]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'hello' });
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks, tokens_out)
+       VALUES ($1, 0, 'user', '[{"type":"text","text":"hello"}]'::jsonb, NULL),
+              ($1, 1, 'assistant', '[{"type":"text","text":"a normal answer"}]'::jsonb, 42)`,
+      [ctx.id],
+    );
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.result).toBe('a normal answer');
+  });
+
+  test('half-persisted transcript + oneshot ledger rows → recovery, NEVER an agentic re-call (RT-2)', async () => {
+    // Crash shape: all writes settled, then only the seed user message
+    // landed (the two transcript INSERTs are not atomic). Pre-fix, the
+    // messages>0 gate skipped oneshot entirely and the loop replay re-called
+    // a nondeterministic model with the pages already written.
+    const client = new FakeMessagesClient([
+      { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
+    ]);
+    let oneshotChatCalls = 0;
+    const spy = (async (...args: any[]) => { oneshotChatCalls++; return chatStub(VALID)(...args); }) as any;
+    const handler = makeSubagentHandler({ engine, client, _chat: spy });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    // Seed: one message (no terminal assistant row) + a completed oneshot ledger row.
+    await engine.executeRaw(
+      `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+       VALUES ($1, 0, 'user', '[{"type":"text","text":"synthesize"}]'::jsonb)`,
+      [ctx.id],
+    );
+    await engine.executeRaw(
+      `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
+       VALUES ($1, 1, 'oneshot-cafef00d-p0', 'brain_put_page', $2::text::jsonb, 'complete')`,
+      [ctx.id, JSON.stringify({ slug: SLUG_A, content: 'already written' })],
+    );
+    const result = await handler(ctx);
+    expect(result.synth_mode_used).toBe('oneshot');
+    expect((result as { recovered?: boolean }).recovered).toBe(true);
+    expect(oneshotChatCalls).toBe(0); // ledger-first: model never re-called
+    expect(client.calls.length).toBe(0); // agentic loop never ran
+  });
+
+  test('replayed completed oneshot job is NOT stamped agentic_fallback (honesty rule)', async () => {
+    // First invocation completes via oneshot (persists the 2-message terminal
+    // transcript). A second invocation of the SAME job (outcome write lost,
+    // stall requeue) replays from the transcript — no fallback happened, so
+    // stamping 'agentic_fallback' would poison the phase fallback histogram.
+    const client = new FakeMessagesClient([]);
+    const handler = makeSubagentHandler({ engine, client, _chat: chatStub(VALID) });
+    const ctx = await makeCtx({
+      prompt: 'synthesize', mode: 'oneshot', require_writes: true,
+      allowed_slug_prefixes: PREFIXES, oneshot_slug_suffix: SUFFIX,
+    });
+    const first = await handler(ctx);
+    expect(first.synth_mode_used).toBe('oneshot');
+
+    let chatCalls = 0;
+    const spy = (async (...args: any[]) => { chatCalls++; return chatStub(VALID)(...args); }) as any;
+    const handler2 = makeSubagentHandler({ engine, client, _chat: spy });
+    const replayCtx: typeof ctx = { ...ctx, attempts_made: 1 };
+    const replay = await handler2(replayCtx);
+    expect(replay.synth_mode_used).not.toBe('agentic_fallback');
+    expect('fallback_reason' in replay).toBe(false);
+    // The ledger-first recovery path may finalize from rows (oneshot) or the
+    // transcript replay may return unset — either is honest; a fabricated
+    // fallback is not. Either way the model is not re-called by the loop.
+    expect(chatCalls).toBe(0);
+  });
+});
+
+// ── #4217 accounting fail-open (transient read error never kills a finished job) ──
+
+describe('finalizeWriteAccounting read-error posture (CX-A3)', () => {
+  const { finalizeWriteAccounting } = require('../src/core/minions/handlers/subagent-persistence.ts');
+  const explodingEngine = {
+    executeRaw: async () => { throw new Error('pool reaped mid-read'); },
+  } as unknown as import('../src/core/engine.ts').BrainEngine;
+  const result = { result: 'done', turns_count: 3, stop_reason: 'end_turn', tokens: { in: 1, out: 1, cache_read: 0, cache_create: 0 } };
+
+  test('open-ended jobs fail OPEN: result returned unchanged on a read error', async () => {
+    const out = await finalizeWriteAccounting(explodingEngine, 999, result, { requireWrites: false });
+    expect(out).toBe(result);
+  });
+
+  test('require_writes jobs fail CLOSED: the read error rethrows (retry re-reads on a healthy pool)', async () => {
+    // Fail-open here would complete an all-writes-failed job on the exact
+    // pool failure the accounting exists to survive.
+    await expect(finalizeWriteAccounting(explodingEngine, 999, result, { requireWrites: true }))
+      .rejects.toThrow('pool reaped mid-read');
+  });
+
+  test('zero attempts + dirty stop_reason + require_writes → UnrecoverableError (CX-A4)', async () => {
+    const okEngine = {
+      executeRaw: async () => [],
+    } as unknown as import('../src/core/engine.ts').BrainEngine;
+    const truncated = { ...result, stop_reason: 'max_tokens' };
+    await expect(finalizeWriteAccounting(okEngine, 999, truncated, { requireWrites: true }))
+      .rejects.toThrow(/did not finish cleanly.*max_tokens/);
+    // Clean-finish zero-attempt (Task-D skip) still completes.
+    const out = await finalizeWriteAccounting(okEngine, 999, result, { requireWrites: true });
+    expect(out.pages_attempted).toBe(0);
+  });
+});
+
+describe('handler-entry capability gate on the resolved model', () => {
+  test('config-resolved models.subagent with supports_subagent_loop: false is refused at dispatch', async () => {
+    // The queue submit gate only sees explicit data.model. A job that omits
+    // data.model resolves `models.subagent` inside the handler — pre-fix that
+    // path bypassed the capability check entirely and a loop-incapable model
+    // (declared supports_subagent_loop: false) ran the loop anyway.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    try {
+      const client = new FakeMessagesClient([
+        { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
+      ]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' }); // no data.model → queue gate passes
+      await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop/);
+      expect(client.calls.length).toBe(0); // refused before any provider call
+    } finally {
+      await engine.unsetConfig('models.subagent');
+    }
+  });
+
+  test('already-terminal replay is NOT refused when config points at a loop-incapable model', async () => {
+    // #1151 precedent: a job whose last persisted message is a terminal
+    // assistant turn needs no provider call — the replay short-circuit
+    // returns the committed result. A capability refusal here (config
+    // repointed between submit and replay) would dead-letter completed work.
+    // Gateway loop ON: that's the only routing where the capability gate is
+    // the deciding check (the legacy path's Anthropic pin refuses
+    // non-Anthropic models regardless). The gateway path's terminal
+    // early-return runs before any provider client is constructed, so no
+    // API key is needed.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      // Persist a completed transcript: seed user + terminal assistant.
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'text', text: 'committed answer' }]),
+        ],
+      );
+      const result = await handler(ctx);
+      expect(result.result).toBe('committed answer');
+      // Replay short-circuit: no new turns persisted beyond the 2 seeded rows
+      // (a provider call would have appended an assistant row — and would have
+      // failed anyway, since no gateway credentials are configured here).
+      const rows = await engine.executeRaw<{ count: string }>(
+        `SELECT count(*)::text AS count FROM subagent_messages WHERE job_id = $1`,
+        [ctx.id],
+      );
+      expect(parseInt(rows[0]!.count, 10)).toBe(2);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+
+  test('non-terminal gateway replay (pending tool-call) IS still refused on a loop-incapable model', async () => {
+    // A gateway transcript persists pending dispatch as `tool-call` blocks.
+    // A replay that still needs the loop to resume on the provider must NOT
+    // slip past the capability gate via the terminal exception.
+    await engine.setConfig('models.subagent', 'moonshot:kimi-k2.5');
+    await engine.setConfig('agent.use_gateway_loop', 'true');
+    try {
+      const client = new FakeMessagesClient([]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: 'hi' });
+      await engine.executeRaw(
+        `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks)
+         VALUES ($1, 0, 'user', $2::text::jsonb), ($1, 1, 'assistant', $3::text::jsonb)`,
+        [
+          ctx.id,
+          JSON.stringify([{ type: 'text', text: 'hi' }]),
+          JSON.stringify([{ type: 'tool-call', toolCallId: 'tc_1', toolName: 'echo', input: {} }]),
+        ],
+      );
+      await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop/);
+    } finally {
+      await engine.unsetConfig('models.subagent');
+      await engine.unsetConfig('agent.use_gateway_loop');
+    }
+  });
+});

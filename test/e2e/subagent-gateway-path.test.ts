@@ -24,9 +24,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test'
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { makeSubagentHandler } from '../../src/core/minions/handlers/subagent.ts';
+import { UnrecoverableError } from '../../src/core/minions/types.ts';
 import type { MinionJobContext, ToolDef, ToolCtx } from '../../src/core/minions/types.ts';
 import {
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
   configureGateway,
   resetGateway,
   type ChatBlock,
@@ -70,6 +72,7 @@ interface FakeJobOpts {
   prompt: string;
   model?: string;
   allowed_tools?: string[];
+  mode?: string;
 }
 
 async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: MinionJobContext; tokenSink: any[] }> {
@@ -78,7 +81,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
     `INSERT INTO minion_jobs (name, status, data, queue, priority, created_at)
      VALUES ('subagent', 'active', $1::jsonb, 'default', 0, now())
      RETURNING id`,
-    [JSON.stringify({ prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools })],
+    [JSON.stringify({ prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools, mode: opts.mode })],
   );
   const jobId = rows[0].id;
 
@@ -89,7 +92,7 @@ async function makeFakeJob(opts: FakeJobOpts): Promise<{ jobId: number; ctx: Min
   const ctx: MinionJobContext = {
     id: jobId,
     name: 'subagent',
-    data: { prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools },
+    data: { prompt: opts.prompt, model: opts.model, allowed_tools: opts.allowed_tools, mode: opts.mode },
     attempts_made: 0,
     signal: abortCtrl.signal,
     deadlineAtMs: null,
@@ -136,6 +139,28 @@ function makeStubTools(executions: Array<{ name: string; input: unknown; ts: num
       idempotent: true,
       async execute(_input: unknown, _ctx: ToolCtx) {
         throw new Error('intentional tool failure');
+      },
+    },
+  ];
+}
+
+/**
+ * `brain_put_page` stub — the oneshot dispatch path (`data.mode ===
+ * 'oneshot'`) requires this exact tool name to be present in the registry
+ * (`args.putPageTool = registry.find(t => t.name === 'brain_put_page')`) or
+ * it never calls chat() at all (falls back with `no_put_page_tool` before
+ * reaching the model). Only present for oneshot-path tests; never invoked
+ * by the error-path test below (the chat() call itself throws first).
+ */
+function makeOneshotStubTools(): ToolDef[] {
+  return [
+    {
+      name: 'brain_put_page',
+      description: 'stub brain_put_page',
+      input_schema: { type: 'object' },
+      idempotent: false,
+      async execute() {
+        throw new Error('brain_put_page stub should not execute in this test');
       },
     },
   ];
@@ -195,6 +220,27 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(messages[1].message_idx).toBe(1);
   });
 
+  it('openrouter:anthropic/… auto-routes through the gateway when the flag is off', async () => {
+    await engine.unsetConfig('agent.use_gateway_loop');
+    __setChatTransportForTests(async () => ({
+      text: 'or-anthropic done',
+      blocks: [{ type: 'text', text: 'or-anthropic done' }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 8, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'openrouter:anthropic/claude-haiku-4.5',
+      providerId: 'openrouter',
+    } satisfies ChatResult));
+
+    const handler = buildHandler(makeStubTools([]));
+    const { ctx } = await makeFakeJob({
+      prompt: 'hello',
+      model: 'openrouter:anthropic/claude-haiku-4.5',
+    });
+    const result = await handler(ctx);
+    expect(result.result).toBe('or-anthropic done');
+    expect(result.stop_reason).toBe('end_turn');
+  });
+
   it('happy path 2-turn with tool: dispatches, persists v2 stable ID, returns final text', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {
@@ -252,11 +298,89 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(toolRows[0].ordinal).toBe(0);
     expect(toolRows[0].schema_version).toBe(2); // v0.38 write
     expect(String(toolRows[0].gbrain_tool_use_id)).toMatch(/^[0-9a-f-]{36}$/); // UUID v7
-    expect(toolRows[0].tool_use_id).toBe('provider-tc-1'); // provider id preserved
+    expect(toolRows[0].tool_use_id).toBe('provider-tc-1'); // raw provider id preserved (#4155)
 
     // Token accumulation across both turns.
     expect(result.tokens.in).toBe(45); // 20 + 25
     expect(result.tokens.out).toBe(12); // 8 + 4
+  });
+
+  it('#4155 regression: two different tool calls sharing the SAME provider id persist as two rows with the raw id intact', async () => {
+    // Real-world shape: claude-cli replays a fresh subprocess per turn from
+    // an id-stripped transcript, so the model invents the SAME short id
+    // ("toolu_01") for the first tool call of every turn. Pre-fix, the second
+    // turn's INSERT collided on the former job-wide `uniq_subagent_tools_use_id
+    // UNIQUE (job_id, tool_use_id)` constraint (a DIFFERENT constraint than
+    // this INSERT's own conflict target `(job_id, message_idx, ordinal)`) and
+    // threw, dead-lettering the job after 3 attempts. Migration v131 dropped
+    // that constraint; the raw provider id is stored as-is and row identity
+    // is (job_id, message_idx, ordinal).
+    let turn = 0;
+    __setChatTransportForTests(async () => {
+      turn++;
+      if (turn === 1) {
+        return {
+          text: '',
+          blocks: [{ type: 'tool-call', toolCallId: 'toolu_01', toolName: 'search', input: { q: 'first' } }] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      }
+      if (turn === 2) {
+        return {
+          text: '',
+          blocks: [{ type: 'tool-call', toolCallId: 'toolu_01', toolName: 'put_page', input: { slug: 'x' } }] as ChatBlock[],
+          stopReason: 'tool_calls',
+          usage: { input_tokens: 10, output_tokens: 5, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        } satisfies ChatResult;
+      }
+      return {
+        text: 'both done',
+        blocks: [{ type: 'text', text: 'both done' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 5, output_tokens: 3, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      } satisfies ChatResult;
+    });
+
+    const executions: Array<{ name: string; input: unknown; ts: number }> = [];
+    const tools = makeStubTools(executions);
+    const handler = buildHandler(tools);
+    const { jobId, ctx } = await makeFakeJob({
+      prompt: 'do two things',
+      model: 'anthropic:claude-sonnet-4-6',
+      allowed_tools: ['search', 'put_page'],
+    });
+
+    const result = await handler(ctx);
+
+    expect(result.result).toBe('both done');
+    expect(result.stop_reason).toBe('end_turn');
+    expect(executions.map(e => e.name)).toEqual(['search', 'put_page']);
+
+    const toolRows = await engine.executeRaw<Record<string, unknown>>(
+      `SELECT message_idx, tool_use_id, tool_name, status
+         FROM subagent_tool_executions
+        WHERE job_id = $1
+        ORDER BY message_idx`,
+      [jobId],
+    );
+    // Both rows persisted — the collision never threw.
+    expect(toolRows.length).toBe(2);
+    expect(toolRows[0].tool_name).toBe('search');
+    expect(toolRows[1].tool_name).toBe('put_page');
+    expect(toolRows[0].status).toBe('complete');
+    expect(toolRows[1].status).toBe('complete');
+    // The RAW provider id is stored on both rows — readers disambiguate by
+    // message_idx, which must differ across the two turns.
+    expect(toolRows[0].tool_use_id).toBe('toolu_01');
+    expect(toolRows[1].tool_use_id).toBe('toolu_01');
+    expect(toolRows[0].message_idx).not.toBe(toolRows[1].message_idx);
   });
 
   it('tool error path: handler persists status=failed, loop continues with error feedback', async () => {
@@ -299,6 +423,104 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     );
     expect(toolRows[0].status).toBe('failed');
     expect(String(toolRows[0].error)).toContain('intentional tool failure');
+  });
+
+  it('terminal classification: a "prompt is too long" error is converted to UnrecoverableError (gap parity with the legacy path)', async () => {
+    // The legacy raw-Anthropic-SDK path (subagent.ts's non-gateway branch)
+    // converts this exact condition to UnrecoverableError so the worker
+    // routes straight to `dead`, bypassing max_stalled retries. Pins that
+    // the gateway-native path does the same.
+    //
+    // Deliberately exercises the REAL production error boundary rather than
+    // __setChatTransportForTests (which bypasses gateway.chat()'s own
+    // try/catch): __setGenerateTextTransportForTests stubs the transport ONE
+    // layer deeper, so the thrown error passes through chat()'s real catch
+    // and gets normalizeAIError()-wrapped exactly like a live provider call.
+    // The thrown shape puts the phrase ONLY on the SDK's actual inner
+    // `.error.message` field (not the outer `.message`, which normalizeAIError
+    // copies onto the wrapped error) — the shape isPromptTooLongError's
+    // cause-chain walk exists to still catch post-wrap.
+    __setChatTransportForTests(null);
+    __setGenerateTextTransportForTests(async () => {
+      throw {
+        status: 400,
+        message: 'BadRequestError',
+        error: {
+          type: 'invalid_request_error',
+          message: 'prompt is too long: 1707509 tokens > 1000000 maximum',
+        },
+      };
+    });
+
+    try {
+      const tools = makeStubTools([]);
+      const handler = buildHandler(tools);
+      const { ctx } = await makeFakeJob({ prompt: 'huge input', model: 'anthropic:claude-sonnet-4-6' });
+
+      let caught: unknown;
+      try {
+        await handler(ctx);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(UnrecoverableError);
+      const message = String((caught as Error).message);
+      expect(message).toContain('prompt_too_long');
+      // The actually-useful detail (the inner .error.message, not the outer
+      // normalizeAIError()-wrapped "BadRequestError" text) must survive into
+      // the dead-lettered job's error — this is what an operator reads to
+      // diagnose a `dead` job, not just a generic label.
+      expect(message).toContain('1707509 tokens > 1000000 maximum');
+      expect(message).not.toContain('BadRequestError');
+    } finally {
+      __setGenerateTextTransportForTests(null);
+    }
+  });
+
+  it('terminal classification: the oneshot dispatch path (data.mode=oneshot) also converts "prompt is too long" to UnrecoverableError (sibling gap to the gateway-loop fix above, #4674)', async () => {
+    // Same production error boundary as the gateway-loop test above: the
+    // oneshot dispatch runner (subagent-oneshot.ts) calls the SAME
+    // gateway.chat() entrypoint, so a prompt-too-long error arrives
+    // normalizeAIError()-wrapped here too. Before this fix, the oneshot
+    // catch rethrew every non-abort error verbatim — no isPromptTooLongError
+    // check — so this exact condition retried up to max_stalled on the
+    // oneshot path even though the gateway-loop and legacy paths already
+    // fast-failed on it.
+    __setChatTransportForTests(null);
+    __setGenerateTextTransportForTests(async () => {
+      throw {
+        status: 400,
+        message: 'BadRequestError',
+        error: {
+          type: 'invalid_request_error',
+          message: 'prompt is too long: 1707509 tokens > 1000000 maximum',
+        },
+      };
+    });
+
+    try {
+      const tools = makeOneshotStubTools();
+      const handler = buildHandler(tools);
+      const { ctx } = await makeFakeJob({
+        prompt: 'huge input',
+        model: 'anthropic:claude-sonnet-4-6',
+        mode: 'oneshot',
+      });
+
+      let caught: unknown;
+      try {
+        await handler(ctx);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(UnrecoverableError);
+      const message = String((caught as Error).message);
+      expect(message).toContain('prompt_too_long');
+      expect(message).toContain('1707509 tokens > 1000000 maximum');
+      expect(message).not.toContain('BadRequestError');
+    } finally {
+      __setGenerateTextTransportForTests(null);
+    }
   });
 
   it('max_turns: loop terminates when budget exhausted', async () => {
@@ -348,6 +570,28 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     const result = await handler(ctx);
     expect(result.stop_reason).toBe('refusal');
     expect(result.result).toBe('I cannot help with that');
+  });
+
+  it("length stop reason: output-cap truncation maps to max_tokens, not end_turn (#4088)", async () => {
+    // Pre-fix, the gateway loop folded 'length' into 'end' and the handler's
+    // else-arm reported 'end_turn' — a capped, truncated run looked like a
+    // clean-but-empty completion (undoing #2778's honesty fix on this path).
+    __setChatTransportForTests(async () => ({
+      text: 'partial truncated outp',
+      blocks: [{ type: 'text', text: 'partial truncated outp' }] as ChatBlock[],
+      stopReason: 'length',
+      usage: { input_tokens: 22000, output_tokens: 8192, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    } satisfies ChatResult));
+
+    const tools = makeStubTools([]);
+    const handler = buildHandler(tools);
+    const { ctx } = await makeFakeJob({ prompt: 'huge prompt', model: 'anthropic:claude-sonnet-4-6' });
+
+    const result = await handler(ctx);
+    expect(result.stop_reason).toBe('max_tokens');
+    expect(result.result).toBe('partial truncated outp');
   });
 
   it('non-Anthropic model routes through gateway path (the load-bearing v0.38 unlock)', async () => {

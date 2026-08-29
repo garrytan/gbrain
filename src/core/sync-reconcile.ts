@@ -5,6 +5,7 @@
  */
 import { execFileSync } from 'child_process';
 import { parseDurationSeconds } from './sync-concurrency.ts';
+import { resolveStallAbortSecondsFromEnv } from './stall-env.ts';
 
 /**
  * #2828 full-sync reconcile safety-valve thresholds. A reconcile that would
@@ -136,11 +137,9 @@ export const DEFAULT_SYNC_STALL_ABORT_SEC = 900;
 export function resolveStallAbortSeconds(
   env: Record<string, string | undefined> = process.env,
 ): number {
-  const raw = env.GBRAIN_SYNC_STALL_ABORT_SECONDS;
-  if (raw === undefined || raw === '') return DEFAULT_SYNC_STALL_ABORT_SEC;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return DEFAULT_SYNC_STALL_ABORT_SEC;
-  return n; // n <= 0 disables the watchdog
+  return resolveStallAbortSecondsFromEnv(
+    'GBRAIN_SYNC_STALL_ABORT_SECONDS', DEFAULT_SYNC_STALL_ABORT_SEC, env,
+  );
 }
 
 /**

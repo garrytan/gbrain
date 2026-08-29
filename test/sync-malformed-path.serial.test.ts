@@ -27,7 +27,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { gitExec } from './helpers/git-exec.ts';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -39,9 +39,9 @@ let repoPath: string;
 const JUNK_NAME = '[foo.md](https-example).md';
 
 function gitInit(repo: string): void {
-  execSync('git init', { cwd: repo, stdio: 'pipe' });
-  execSync('git config user.email "test@test.com"', { cwd: repo, stdio: 'pipe' });
-  execSync('git config user.name "Test"', { cwd: repo, stdio: 'pipe' });
+  gitExec('git init', repo);
+  gitExec('git config user.email "test@test.com"', repo);
+  gitExec('git config user.name "Test"', repo);
 }
 
 /** Seed a page row as if a pre-fix gbrain had ingested the junk file. */
@@ -83,7 +83,7 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
       '',
       'Baseline content.',
     ].join('\n'));
-    execSync('git add -A && git commit -m "initial"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "initial"', repoPath);
   });
 
   afterEach(() => {
@@ -94,7 +94,7 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
     const { performSync } = await import('../src/commands/sync.ts');
 
     writeFileSync(join(repoPath, JUNK_NAME), '# junk\n');
-    execSync('git add -A && git commit -m "junk lands"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "junk lands"', repoPath);
 
     const result = await performSync(engine, { repoPath, full: true, noPull: true, noEmbed: true });
     // The junk file must not block the sync or land in the index.
@@ -109,15 +109,15 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
     const { performSync } = await import('../src/commands/sync.ts');
 
     writeFileSync(join(repoPath, JUNK_NAME), '# junk\n');
-    execSync('git add -A && git commit -m "junk lands"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "junk lands"', repoPath);
     const first = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
     expect(first.status).not.toBe('blocked_by_failures');
 
     // Simulate the pre-fix world: the junk row is already in the DB.
     await seedPoisonedRow('atoms/foo-md-https-example', JUNK_NAME);
 
-    execSync(`git rm '${JUNK_NAME}'`, { cwd: repoPath, stdio: 'pipe' });
-    execSync('git commit -m "remove junk"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec(`git rm '${JUNK_NAME}'`, repoPath);
+    gitExec('git commit -m "remove junk"', repoPath);
 
     const second = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
     expect(second.status).not.toBe('blocked_by_failures');
@@ -133,13 +133,13 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
     const { performSync } = await import('../src/commands/sync.ts');
 
     writeFileSync(join(repoPath, JUNK_NAME), '# junk\n');
-    execSync('git add -A && git commit -m "junk lands"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "junk lands"', repoPath);
     await performSync(engine, { repoPath, noPull: true, noEmbed: true });
 
     await seedPoisonedRow('atoms/foo-md-https-example', JUNK_NAME);
 
     writeFileSync(join(repoPath, JUNK_NAME), '# junk edited\n');
-    execSync('git add -A && git commit -m "edit junk"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "edit junk"', repoPath);
     await performSync(engine, { repoPath, noPull: true, noEmbed: true });
 
     const survivor = await engine.executeRaw<{ slug: string }>(
@@ -153,7 +153,7 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
 
     // Junk file committed AND still present in the working tree.
     writeFileSync(join(repoPath, JUNK_NAME), '# junk\n');
-    execSync('git add -A && git commit -m "junk lands"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "junk lands"', repoPath);
 
     // Poisoned row exists in the default source (pre-fix ingestion).
     await seedPoisonedRow('atoms/foo-md-https-example', JUNK_NAME);
@@ -183,7 +183,7 @@ describe('malformed-path sync semantics (poisoned-filename incident)', () => {
     const BARE = 'notes [draft].md';
 
     writeFileSync(join(repoPath, BARE), '# legit draft\n');
-    execSync('git add -A && git commit -m "bare-bracket note"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m "bare-bracket note"', repoPath);
     await seedPoisonedRow('notes-draft', BARE);
 
     const result = await performSync(engine, {

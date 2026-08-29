@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
+import { __testing } from '../src/commands/skillpack-check.ts';
 
 const CLI = join(__dirname, '..', 'src', 'cli.ts');
 
@@ -133,5 +134,58 @@ describe('gbrain skillpack-check', () => {
     const report = JSON.parse(result.stdout);
     expect(report.summary).toMatch(/\d+ action\(s\)/);
     expect(report.summary).toContain(report.actions[0]);
+  });
+});
+
+describe('gbrainSpawn — argv[1] vs execPath resolution (#4094)', () => {
+  const originalArgv1 = process.argv[1];
+  const originalExecPath = process.execPath;
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+    process.execPath = originalExecPath;
+  });
+
+  test('compiled-binary bunfs argv[1]: execPath (the real on-disk binary) wins, not the unusable virtual path', () => {
+    // Bun single-file compiled binary: argv[1] is a virtual bunfs path that
+    // ends in '/gbrain' but is not spawnable (ENOENT). execPath correctly
+    // points at the real on-disk binary in this exact scenario.
+    process.argv[1] = '/$bunfs/root/gbrain';
+    process.execPath = '/usr/local/bin/gbrain';
+    const { cmd, prefix } = __testing.gbrainSpawn();
+    expect(cmd).toBe('/usr/local/bin/gbrain');
+    expect(prefix).toEqual([]);
+  });
+
+  test('gbrain shim script on PATH: argv[1] is used when execPath is the bun runtime, not gbrain', () => {
+    process.argv[1] = '/usr/local/bin/gbrain';
+    process.execPath = '/opt/homebrew/Cellar/bun/1.2.15/bin/bun';
+    const { cmd, prefix } = __testing.gbrainSpawn();
+    expect(cmd).toBe('/usr/local/bin/gbrain');
+    expect(prefix).toEqual([]);
+  });
+
+  test('dev mode: `bun run src/cli.ts` prefixes with `bun run`', () => {
+    process.argv[1] = '/repo/src/cli.ts';
+    process.execPath = '/opt/homebrew/Cellar/bun/1.2.15/bin/bun';
+    const { cmd, prefix } = __testing.gbrainSpawn();
+    expect(cmd).toBe('bun');
+    expect(prefix).toEqual(['run', '/repo/src/cli.ts']);
+  });
+
+  test('neither argv[1] nor execPath resolves to gbrain: falls back to $PATH', () => {
+    process.argv[1] = '/some/unrelated/entrypoint';
+    process.execPath = '/opt/homebrew/Cellar/bun/1.2.15/bin/bun';
+    const { cmd, prefix } = __testing.gbrainSpawn();
+    expect(cmd).toBe('gbrain');
+    expect(prefix).toEqual([]);
+  });
+
+  test('Windows compiled binary: execPath ending in gbrain.exe wins over bunfs argv[1]', () => {
+    process.argv[1] = 'B:\\~BUN\\root\\gbrain.exe';
+    process.execPath = 'C:\\Program Files\\gbrain\\gbrain.exe';
+    const { cmd, prefix } = __testing.gbrainSpawn();
+    expect(cmd).toBe('C:\\Program Files\\gbrain\\gbrain.exe');
+    expect(prefix).toEqual([]);
   });
 });

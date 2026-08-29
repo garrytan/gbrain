@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from 'fs';
 import type { BrainEngine } from '../../../core/engine.ts';
 import { gbrainPath } from '../../../core/config.ts';
+import { embedBackfillWorkerSurface } from '../../../core/minions/embed-backfill-admission.ts';
 import { isUndefinedTableError, isUndefinedColumnError } from '../../../core/utils.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -98,13 +99,16 @@ export async function checkFederationHealth(engine: BrainEngine): Promise<Check>
     const warns: string[] = [];
     const fails: string[] = [];
     for (const m of metrics) {
+      const embedRemedy = embedBackfillWorkerSurface(engine).status === 'no_worker_surface'
+        ? `gbrain embed --stale --source ${m.source_id}`
+        : `gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'`;
       // Fail thresholds first (most severe)
       if (m.lag_seconds !== null && m.lag_seconds > 24 * 3600) {
         fails.push(`${m.source_id}: stale ${Math.floor(m.lag_seconds / 3600)}h — run \`gbrain sync trigger --source ${m.source_id}\``);
         continue;
       }
       if (m.embed_coverage_pct < 50 && m.total_chunks > 1000) {
-        fails.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage (${m.total_chunks.toLocaleString()} chunks) — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+        fails.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage (${m.total_chunks.toLocaleString()} chunks) — run \`${embedRemedy}\``);
         continue;
       }
       // Warns
@@ -112,7 +116,7 @@ export async function checkFederationHealth(engine: BrainEngine): Promise<Check>
         warns.push(`${m.source_id}: federated source ${Math.floor(m.lag_seconds / 3600)}h+ stale — run \`gbrain sync trigger --source ${m.source_id}\``);
       }
       if (m.embed_coverage_pct < 95 && m.total_chunks > 100) {
-        warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`gbrain jobs submit embed-backfill --params '{"sourceId":"${m.source_id}"}'\``);
+        warns.push(`${m.source_id}: ${m.embed_coverage_pct.toFixed(1)}% embed coverage — run \`${embedRemedy}\``);
       }
       if (m.failed_jobs_24h >= 3) {
         warns.push(`${m.source_id}: ${m.failed_jobs_24h} failures in 24h — check \`gbrain jobs list --status failed\``);
@@ -408,13 +412,20 @@ export async function checkStaleLocks(
     }
     const lines = stale.slice(0, 10).map(s => {
       const ageH = Math.floor(s.age_ms / 3600_000);
-      let breakHint = 'gbrain doctor';
+      // Every hint here must be a REAL command: `gbrain dream --break-lock`
+      // was advertised for years but dream never implemented the flag —
+      // pasting the hint ran a full (paid) dream cycle instead of breaking a
+      // lock. Cycle locks: dead-holder rows on THIS host are reaped by
+      // `gbrain doctor --fix` (checkStaleLocks above) and swept automatically
+      // at the next dream-cycle start; cross-host or live-holder locks have
+      // no safe break command by design. The old fallback 'gbrain doctor' was
+      // circular (this line IS doctor output) and plain doctor reaps nothing.
+      let breakHint =
+        'expired lock is swept at the next acquire; if it persists, inspect the gbrain_cycle_locks row';
       if (s.id.startsWith('gbrain-sync:')) {
         breakHint = `gbrain sync --break-lock --source ${s.id.slice('gbrain-sync:'.length)}`;
-      } else if (s.id.startsWith('gbrain-cycle:')) {
-        breakHint = `gbrain dream --break-lock --source ${s.id.slice('gbrain-cycle:'.length)}`;
-      } else if (s.id === 'gbrain-cycle') {
-        breakHint = 'gbrain dream --break-lock';
+      } else if (s.id.startsWith('gbrain-cycle:') || s.id === 'gbrain-cycle') {
+        breakHint = 'gbrain doctor --fix (reaps dead holders on this host; also swept at next dream start)';
       }
       return `  ${s.id} (pid ${s.holder_pid} on ${s.holder_host}, age ${ageH}h) → ${breakHint}`;
     });
@@ -488,4 +499,3 @@ export function checkCyclePhaseScope(): Check {
     return { name: 'cycle_phase_scope', status: 'warn', message: `Check failed: ${msg}` };
   }
 }
-

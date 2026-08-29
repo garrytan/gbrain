@@ -14,8 +14,8 @@ import { lstatSync, realpathSync } from 'fs';
 import { resolve, relative, sep } from 'path';
 import { OperationError } from './contract.ts';
 import type { AuthInfo, Operation, OperationContext } from './contract.ts';
-import { CJK_SLUG_CHARS, PAGE_SLUG_SEG } from '../cjk.ts';
-import { ALL_SOURCES } from '../source-id.ts';
+import { CJK_SLUG_CHARS, SLUG_WORD_CHARS } from '../cjk.ts';
+import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
@@ -77,9 +77,29 @@ export function validateUploadPath(filePath: string, root: string, strict = true
 }
 
 /**
+ * Op-boundary page-slug segment (#4665): cjk.ts's PAGE_SLUG_SEG shape widened
+ * LOCALLY so `.` and `_` are allowed as segment-CONTINUATION characters. The
+ * sync slugifier deliberately preserves both (`notes/v1.0.0`,
+ * `people/my_file_name` — see slugifySegment in src/core/sync.ts), so the
+ * put_page boundary must round-trip every slug sync can produce. The lead
+ * char stays a word char, so dot-LED segments remain impossible — `..`
+ * traversal and every H5 rejection (backslash, %2e/%2f encodings, control
+ * chars, RTL overrides, spaces) still fail. Deliberately NOT widened in
+ * cjk.ts: cite-render, SlugRegistry's SLUG_RE, and the dream-cycle
+ * SUMMARY_SLUG_RE consume the shared grammar with different semantics.
+ * Compose with the `u` flag — see SLUG_WORD_CHARS.
+ */
+// Underscore may also LEAD a segment: the sync slugifier preserves leading
+// underscores (`_index.md` → `_index`, the Hugo convention), so rejecting
+// them recreates the un-updatable-synced-page class this widen closes.
+// Dot stays continuation-only — `..` traversal remains impossible.
+const OP_PAGE_SLUG_SEG = `[${SLUG_WORD_CHARS}_][${SLUG_WORD_CHARS}._\\-]*`;
+
+/**
  * Allowlist validator for page slugs. Rejects URL-encoded traversal, backslashes,
  * control chars, RTL overrides, Unicode lookalikes — anything outside the allowlist.
- * Format: lowercase alphanumeric + hyphen segments separated by single forward slashes.
+ * Format: lowercase alphanumeric segments (dot/underscore/hyphen continuation
+ * allowed) separated by single forward slashes.
  */
 export function validatePageSlug(slug: string): void {
   if (typeof slug !== 'string' || slug.length === 0) {
@@ -89,10 +109,10 @@ export function validatePageSlug(slug: string): void {
     throw new OperationError('invalid_params', 'page_slug exceeds 255 characters');
   }
   // #3417: letters/numbers from any script allowed in segments (u flag required
-  // for the \p{...} classes in PAGE_SLUG_SEG). Shape rules (lead char, hyphen
-  // continuation) preserved.
-  if (!new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'iu').test(slug)) {
-    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, hyphens, forward-slash separated segments)`);
+  // for the \p{...} classes in OP_PAGE_SLUG_SEG). Shape rules (word-char lead,
+  // dot/underscore/hyphen continuation) preserved.
+  if (!new RegExp(`^${OP_PAGE_SLUG_SEG}(\\/${OP_PAGE_SLUG_SEG})*$`, 'iu').test(slug)) {
+    throw new OperationError('invalid_params', `Invalid page_slug: ${slug} (allowed: letters/numbers in any script, with '.', '_', '-' after the first character of a segment, forward-slash separated segments)`);
   }
 }
 
@@ -522,6 +542,40 @@ export function resolveRequestedScope(
 }
 
 /**
+ * #4329: parse a per-call `source_id` param. Pre-fix, get_page / delete_page /
+ * restore_page had NO source_id in their contracts, so an agent-passed
+ * source_id was SILENTLY dropped and the op acted on ctx.sourceId —
+ * soft-deleting the WRONG row on a multi-source brain while returning a
+ * success that named the requested slug. A caller-supplied value is either
+ * honored or rejected loudly — never ignored. `allowAll` admits the
+ * `__all__` sentinel for read ops (resolveRequestedScope collapses it per
+ * trust); destructive ops target exactly one source and reject it.
+ */
+export function parseSourceIdParam(
+  raw: unknown,
+  opName: string,
+  opts?: { allowAll?: boolean },
+): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') {
+    if (raw === ALL_SOURCES) {
+      if (opts?.allowAll === true) return raw;
+      throw new OperationError(
+        'invalid_params',
+        `${opName}: source_id '${ALL_SOURCES}' is not a valid target — this op acts on exactly one source.`,
+        'Pass the single source_id of the row to target, or omit source_id to use the ambient source scope.',
+      );
+    }
+    if (isValidSourceId(raw)) return raw;
+  }
+  throw new OperationError(
+    'invalid_params',
+    `${opName}: invalid source_id ${JSON.stringify(raw)} — must be 1-32 lowercase alnum chars with optional interior hyphens.`,
+    'Pass a registered source id (see list_sources), or omit source_id to use the ambient source scope.',
+  );
+}
+
+/**
  * #2561 / #3242 — source scope for the page-visibility read ops (`search`,
  * `query`, `get_page`, `list_pages`, `resolve_slugs`).
  *
@@ -533,11 +587,15 @@ export function resolveRequestedScope(
  * were invisible to get_page/search/list_pages while resolve_slugs leaked them).
  *
  * The expansion NEVER applies when:
- *   - a per-call `source_id` was passed (explicit wins, including `__all__`);
+ *   - a concrete per-call `source_id` was passed (explicit wins);
  *   - the resolver already produced a federated array (OAuth grant governs);
  *   - the transport didn't populate `localFederatedSourceIds` (see that
- *     field's doc: it is only set for callers with NO explicit source scope,
- *     and never from caller-controlled params — so trust stays fail-closed).
+ *     field's doc: it is transport-computed and never derived from
+ *     caller-controlled params — so trust stays fail-closed).
+ *
+ * The read-only `__all__` sentinel is equivalent to an unqualified read when
+ * it resolves to the caller's scalar floor. It may therefore use the same
+ * transport-computed federated set, but never widens an OAuth grant.
  *
  * Deliberately NOT inside `sourceScopeOpts`: code-intel ops collapse a
  * multi-element scope to an error (`resolveCodeIntelScope`), and the remaining
@@ -549,7 +607,8 @@ export function federatedSearchScope(
 ): { sourceId?: string; sourceIds?: string[] } {
   const scope = resolveRequestedScope(ctx, sourceIdParam);
   if (
-    sourceIdParam === undefined &&
+    (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) &&
+    ctx.auth?.allowedSources === undefined &&
     scope.sourceId !== undefined &&
     scope.sourceIds === undefined &&
     ctx.localFederatedSourceIds !== undefined &&
@@ -558,6 +617,81 @@ export function federatedSearchScope(
     return { sourceIds: ctx.localFederatedSourceIds };
   }
   return scope;
+}
+
+/**
+ * #4109 — preflight a page endpoint for a same-source graph mutation
+ * (add_link / add_timeline_entry).
+ *
+ * These ops intentionally write only to `ctx.sourceId`, while page reads may
+ * span the caller's federated visibility scope. When the requested slug
+ * exists only in another READABLE source, report that source boundary
+ * explicitly (`permission_denied`) instead of the misleading "not found" the
+ * engine's exact-source resolution emits — which surfaced over MCP as
+ * `internal_error` and made intentional source isolation look like data
+ * loss. Sources outside the caller's read grant remain indistinguishable
+ * from absence: the diagnostic lookup uses `federatedSearchScope`, the SAME
+ * visibility ladder as `get_page`, so this preflight can never become a
+ * cross-source existence oracle.
+ */
+export async function requireWritablePage(
+  ctx: OperationContext,
+  slug: string,
+  operation: string,
+  endpoint: 'from' | 'to' | 'page',
+): Promise<void> {
+  const writeSource = ctx.sourceId || 'default';
+  // Graph rows may reference soft-deleted pages — includeDeleted preserves
+  // that engine mutation contract for the exact write source. The federated
+  // diagnostic lookup below intentionally stays active-page-only so a
+  // soft-deleted foreign page is never disclosed.
+  const writable = await ctx.engine.getPage(slug, {
+    sourceId: writeSource,
+    includeDeleted: true,
+  });
+  if (writable) return;
+
+  const visibleScope = federatedSearchScope(ctx);
+  const spansAnotherSource =
+    (visibleScope.sourceIds?.some((sourceId) => sourceId !== writeSource) ?? false) ||
+    (visibleScope.sourceId !== undefined && visibleScope.sourceId !== writeSource);
+  if (spansAnotherSource) {
+    const visible = await ctx.engine.getPage(slug, visibleScope);
+    if (visible && visible.source_id !== writeSource) {
+      throw new OperationError(
+        'permission_denied',
+        `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" is readable from source "${visible.source_id}" but this client writes to source "${writeSource}".`,
+        'Graph mutations are same-source by design. Use a client whose write source owns the page, or import the page into your write source first.',
+      );
+    }
+  }
+
+  throw new OperationError(
+    'page_not_found',
+    `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" was not found in writable source "${writeSource}".`,
+  );
+}
+
+/**
+ * #4109 — reclassify a typed engine miss (PageMissingError) raised by the
+ * mutation itself, after `requireWritablePage` already passed: the page was
+ * hard-deleted between preflight and mutation. Re-running the preflight
+ * regenerates the same permission_denied / page_not_found envelope; if the
+ * page reappeared between those reads (restore race), fall through to a
+ * deterministic miss instead of leaking the raw engine error as
+ * internal_error.
+ */
+export async function reclassifyMutationTimePageMiss(
+  ctx: OperationContext,
+  slug: string,
+  operation: string,
+  endpoint: 'from' | 'to' | 'page',
+): Promise<never> {
+  await requireWritablePage(ctx, slug, operation, endpoint);
+  throw new OperationError(
+    'page_not_found',
+    `${operation}${endpoint === 'page' ? '' : ` ${endpoint}`} page "${slug}" was unavailable in writable source "${ctx.sourceId || 'default'}" during the mutation.`,
+  );
 }
 
 /**
@@ -601,6 +735,53 @@ export function resolveCodeIntelScope(
 }
 
 /**
+ * Federated re-route for the graph four (code_callers / code_callees /
+ * code_blast / code_flow) — the #3242 sibling. An UNQUALIFIED graph query from
+ * a no-grant caller collapses to the scalar seed source (usually 'default'),
+ * which on vault+code brains holds no code — so the graph ops report
+ * `not_built` while code_def / code_refs (which widen across
+ * `ctx.localFederatedSourceIds`) answer fine. Graph traversal must stay
+ * single-source (engine API + cache key take ONE sourceId), so instead of
+ * widening we RE-ROUTE: when the collapsed source has no code chunks and
+ * exactly one source in the caller's federated read set does, traverse that
+ * one — the multi-source cousin of the CLI's `sole_non_default` tier (#1434).
+ *
+ * Fail-closed, in order: never fires when the caller passed `source_id` or
+ * `all_sources` (explicit wins), when the scope is already brain-wide, when a
+ * grant is present (`ctx.auth.allowedSources` governs — same guard as
+ * `federatedSearchScope`), when there is no federated read set (a granted
+ * token never widens), when the collapsed source itself has code, or when
+ * zero or 2+ federated sources have code (ambiguous → original scope stands
+ * and readiness reports honestly). Probe errors also keep the original scope.
+ */
+export async function routeCodeIntelScope(
+  ctx: OperationContext,
+  sourceIdParam: string | undefined,
+  allSourcesParam = false,
+): Promise<{ allSources: boolean; sourceId?: string }> {
+  const scope = resolveCodeIntelScope(ctx, sourceIdParam, allSourcesParam);
+  if (
+    sourceIdParam !== undefined || allSourcesParam ||
+    scope.allSources || scope.sourceId === undefined ||
+    ctx.auth?.allowedSources !== undefined ||
+    !ctx.localFederatedSourceIds || ctx.localFederatedSourceIds.length < 2
+  ) {
+    return scope;
+  }
+  try {
+    const { codeChunksExist } = await import('../code-graph-readiness.ts');
+    if (await codeChunksExist(ctx.engine, scope.sourceId)) return scope;
+    const withCode: string[] = [];
+    for (const id of ctx.localFederatedSourceIds) {
+      if (id === scope.sourceId) continue;
+      if (await codeChunksExist(ctx.engine, id)) withCode.push(id);
+    }
+    if (withCode.length === 1) return { allSources: false, sourceId: withCode[0] };
+  } catch { /* probe failure → original scope stands */ }
+  return scope;
+}
+
+/**
  * T4/D5 — resolve a per-call search-mode override. Honored ONLY for trusted/
  * local callers (ctx.remote === false) so a remote OAuth client can't escalate
  * to the costly tokenmax bundle. Local + unknown mode → loud reject; remote +
@@ -623,6 +804,16 @@ export function resolvePerCallMode(ctx: OperationContext, raw: unknown): string 
 /** T4 — stamp evidence/create_safety on a result set, fail-soft. */
 export function stampEvidenceSafe(results: SearchResult[]): void {
   try { stampEvidence(results); } catch { /* non-fatal */ }
+}
+
+/**
+ * #4039 — OpenAI deep-research contract: search results must carry an `id`
+ * that the paired `fetch` tool round-trips. id = slug (what `fetch` — the
+ * thin get_page adapter in ops/pages.ts — resolves). Additive stamp; every
+ * other consumer of SearchResult ignores it.
+ */
+export function stampDeepResearchIds(results: SearchResult[]): void {
+  for (const r of results) (r as SearchResult & { id?: string }).id = r.slug;
 }
 
 /** T4 — shared eval-capture for the `search` op (keyword-only + cheap-hybrid paths). */

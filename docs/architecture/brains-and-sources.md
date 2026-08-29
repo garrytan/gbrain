@@ -241,6 +241,65 @@ is the whole story for them.
   source. The flags are for when you want to query across the boundary
   deliberately.
 
+## Entity identity across sources (#4224, v1)
+
+**The identity key for a page is `(source_id, slug)`.** Slugs are only
+unique per source, so `people/alice` in your `wiki` source and
+`people/alice-chen` in a mounted team source are, by default, two unrelated
+pages — even when they describe the same person. Nothing merges them
+automatically.
+
+When they ARE the same entity, say so explicitly with the manual-only
+identity ops (v1 — no auto-matching, no name-similarity heuristics):
+
+```
+gbrain entity-identity-link   --entity-id alice-chen --slug people/alice --source-id wiki
+gbrain entity-identity-link   --entity-id alice-chen --slug people/alice-chen --source-id team-brain --canonical
+gbrain entity-identity-list   --entity-id alice-chen
+gbrain entity-identity-unlink --entity-id alice-chen --slug people/alice --source-id wiki
+```
+
+Members live in the `entity_identities` table (one identity per page;
+re-linking moves the page; at most one canonical member per group). The
+write ops are local-only in v1. Retrieval-side union — `get_links` /
+`get_backlinks` merging edges from a page's identity co-members — is gated
+by the `entity_identity.union` config key (default off) and never widens a
+federated caller's source grant.
+
+## What confines remote callers (and what does not)
+
+When a brain is served to remote agents (HTTP MCP, stdio MCP treated as
+remote), these are the enforcement surfaces — everything on this list is
+fail-closed and tested:
+
+- **Source isolation** — every read resolves through the source-scope ladder
+  (federated grant array > scalar source floor > nothing). A caller without a
+  grant for a source cannot read its pages, chunks, or edges.
+- **Facts visibility** — facts carry `private`/`world` visibility; remote
+  callers see `world` only.
+- **Takes holders** — per-token allow-lists (`gbrain auth permissions <token>
+  set-takes-holders ...`) scope which held takes a remote caller sees.
+- **Write-side slug fences** — a client bound to slug prefixes can only write
+  under them, and only a small fenced allow-list of write operations
+  (`put_page`, `add_link`, `add_timeline_entry`, …) is available to
+  slug-bound clients; every other non-read operation is refused (fail-closed:
+  a write op added later is denied until it is fenced and allow-listed).
+
+One known soft edge: the backlink-count ranking boost counts referrers
+without source filtering, so the *existence* of out-of-grant referrers can
+nudge result ordering (a count-only signal — no slug or content crosses the
+boundary; direct edge reads are fully scoped). Scoping that counter is a
+filed follow-up.
+
+**Not an enforcement surface: page-level `visibility:` frontmatter.** A
+`visibility: local` (or any other value) key in a page's frontmatter is inert
+metadata — no schema column stores it, no query filters on it, and a remote
+caller with a source grant retrieves the page like any other. If a page must
+not be readable by remote callers, put it in a source those callers have no
+grant for; that is the supported boundary. (A read-side per-page/per-prefix
+ACL was proposed and declined — it is a new authorization surface that
+belongs to the mounts/brains access-policy design, not a bolt-on filter.)
+
 ## Further reading
 
 - [`topologies.md`](./topologies.md) — where the DB lives (operator recipes

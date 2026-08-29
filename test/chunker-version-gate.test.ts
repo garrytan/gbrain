@@ -15,19 +15,24 @@ import { describe, test, expect } from 'bun:test';
 import { CHUNKER_VERSION } from '../src/core/chunkers/code.ts';
 
 describe('Layer 12 — CHUNKER_VERSION constant', () => {
-  test('bumped to 4 for Cathedral II', () => {
+  test('bumped to 6 for the definition-preserving merge guard (#4511)', () => {
     // v3: v0.19.0 Chonkie parity (tokenizer + small-sibling merge).
     // v4: v0.20.0 Cathedral II (qualified names + parent scope + doc_comment
     //     + fence extraction + chunk-grain FTS). Folded into content_hash
     //     so any bump forces clean re-chunks on next sync.
-    expect(CHUNKER_VERSION).toBe(4);
+    // v5: #3821 python decorated_definition — decorated fns/classes emitted
+    //     ZERO chunks pre-fix; the bump forces recovery re-chunks.
+    // v6: #4511 mergeSmallSiblings stopped erasing symbol_name on short
+    //     definitions; the bump re-chunks previously-merged files so the
+    //     lost symbols come back.
+    expect(CHUNKER_VERSION).toBe(6);
   });
 
   test('is stable across imports (not recomputed at call time)', async () => {
     const a = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     const b = (await import('../src/core/chunkers/code.ts')).CHUNKER_VERSION;
     expect(a).toBe(b);
-    expect(a).toBe(4);
+    expect(a).toBe(6);
   });
 });
 

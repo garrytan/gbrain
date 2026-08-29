@@ -21,6 +21,22 @@ brain-first skill set:
 /plugin install gbrain@gbrain
 ```
 
+Two **persona variants** ship from the same marketplace — curated subsets
+for sessions that don't want all 67 skills in the native manifest:
+
+```
+/plugin install gbrain-coding@gbrain    # brain-first coding persona
+/plugin install gbrain-daily@gbrain     # daily personal-brain persona
+```
+
+Install exactly ONE gbrain plugin per machine — every variant serves the same
+`gbrain` MCP server name, so two installed variants would double-serve.
+Curation lives in `skills/plugin-lanes.json#personas` (one recorded reason
+per skill). Alternative without a marketplace round-trip:
+`gbrain skillpack scaffold --harness claude-code` copies the same persona set
+into your user-scope skills dir with a local-edit-respecting update lens
+(see docs/guides/skillpacks-as-scaffolding.md).
+
 (CLI form: `claude plugin marketplace add garrytan/gbrain` +
 `claude plugin install gbrain@gbrain`.) Prerequisites and behavior match the
 [Codex plugin](CODEX.md#install-as-a-codex-plugin-recommended): the gbrain CLI
@@ -41,6 +57,18 @@ claude mcp add gbrain -- gbrain serve --surface verbs
 
 That's it. Claude Code spawns `gbrain serve` as a stdio subprocess. No server, no
 tunnel, no token needed. Works with both PGLite and Supabase engines.
+
+> **PGLite brains are single-process.** PGLite is a single-writer embedded
+> Postgres: the first running `gbrain serve` owns the brain's data directory
+> via the data-dir lock, for its whole lifetime. A second `serve` (e.g. a
+> second harness or session registering the same stdio command) — or any CLI
+> command that opens the DB — fails on the lock while that serve is live
+> (`gbrain sync` is the one exception: it delegates to the live serve). If
+> more than one process needs the brain at once, run ONE shared
+> `gbrain serve --http` and point every client at it (Options 2/3 below), or
+> migrate to the Postgres/Supabase engine, which tolerates concurrent
+> connections. Details:
+> [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
 
 `--surface verbs` exposes the seven-verb memory protocol (`recall`, `remember`,
 `entity`, `synthesize`, `forget`, `context_pack`, `delta` —

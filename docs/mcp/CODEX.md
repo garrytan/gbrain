@@ -26,6 +26,13 @@ only for from-source installs. Refresh a snapshot with
 `codex plugin marketplace upgrade`; remove with `codex plugin remove
 gbrain@gbrain` + `codex plugin marketplace remove gbrain`.
 
+**Persona variants (Claude-lane only, for now).** The `gbrain-coding` /
+`gbrain-daily` curated variants ship in the Claude Code marketplace; the
+codex marketplace deliberately stays at the single full plugin until codex's
+handling of multi-entry marketplaces gets its observation run (the dist
+branch carries the variant trees already, so enabling is a two-line
+marketplace edit once verified — TODOS.md follow-up).
+
 **Prerequisites.** The plugin cannot ship the gbrain binary; install it once
 (`bun install -g github:garrytan/gbrain#latest-stable` — the npm package
 named `gbrain` is unrelated, never `npm install -g gbrain`) and create a
@@ -149,6 +156,17 @@ codex mcp remove gbrain
   `codex mcp add gbrain -- gbrain serve --surface verbs` — the memory-verb
   protocol ([MEMORY_VERBS v1](../protocol/MEMORY_VERBS_v1.md)); drop the flag
   for the full operation catalog.
+- **PGLite brains are single-process.** PGLite is a single-writer embedded
+  Postgres: the first running `gbrain serve` (the plugin's, or a stdio
+  registration) owns the brain's data directory via the data-dir lock. A
+  second `serve` — say, gbrain registered in a second harness on the same
+  machine — or any CLI command that opens the DB fails on the lock while
+  that serve is live (`gbrain sync` is the one exception: it delegates to
+  the live serve). If multiple processes need the brain at once, run ONE
+  shared `gbrain serve --http` and point every client at it (the remote
+  paths above), or migrate to the Postgres/Supabase engine, which tolerates
+  concurrent connections. Details:
+  [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
 - **Ambient recall (Codex has no lifecycle hooks — use the pull path).** At the
   start of a topical thread and after a compaction, call
   `context_pack(entities, budget_tokens)` to warm the standing entities; on a

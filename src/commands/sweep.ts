@@ -109,6 +109,7 @@ export async function runSweep(engine: BrainEngine, args: string[]): Promise<voi
     console.log(`Sweep complete (${report.durationMs}ms, source=${sourceId}):`);
     console.log(`  facts reconciled:   ${report.factsReconciled}`);
     console.log(`  links extracted:    ${report.linksExtracted}`);
+    console.log(`  links removed:      ${report.linksRemoved}`);
     console.log(`  timeline extracted: ${report.timelineExtracted}`);
     console.log(`  corpus ingested:    ${report.corpusIngested}`);
     if (report.skipped.length > 0) {

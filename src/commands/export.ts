@@ -5,6 +5,7 @@ import { serializeMarkdown } from '../core/markdown.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
+import { slugifyPath } from '../core/sync.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 import type { PageType } from '../core/types.ts';
 
@@ -113,8 +114,21 @@ export async function runExport(engine: BrainEngine, args: string[]) {
     // `source_id = 'default'` and stamps the default source's tags onto a
     // same-slug page from another source (dropping its real ones).
     const tags = await engine.getTags(page.slug, { sourceId: page.source_id });
+    // #3772: the file is written at <slug>.md and import re-derives the slug
+    // from that path. When the stored slug is NOT a slugifyPath fixed point
+    // (legacy/hand-keyed slugs with case, apostrophes, accents…), a re-import
+    // would silently re-key the page — stamp the true identity into the
+    // frontmatter so import can restore it (import accepts a frontmatter slug
+    // whose slugified spelling equals the path-derived one). Fixed-point
+    // slugs stay unstamped: no diff noise on the common path. A stale
+    // frontmatter slug that contradicts the DB identity is corrected either way.
+    const fmSlug = (page.frontmatter as Record<string, unknown> | null | undefined)?.['slug'];
+    const needsSlugStamp = slugifyPath(page.slug + '.md') !== page.slug;
+    const frontmatter = (needsSlugStamp || fmSlug !== undefined) && fmSlug !== page.slug
+      ? { ...(page.frontmatter ?? {}), slug: page.slug }
+      : page.frontmatter;
     const md = serializeMarkdown(
-      page.frontmatter,
+      frontmatter,
       page.compiled_truth,
       page.timeline,
       { type: page.type, title: page.title, tags },

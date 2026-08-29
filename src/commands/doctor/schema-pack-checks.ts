@@ -18,8 +18,18 @@ import type { Check } from '../doctor.ts';
 export async function checkSchemaPackActive(engine: BrainEngine): Promise<Check> {
   try {
     const { loadActivePack } = await import('../../core/schema-pack/load-active.ts');
-    const { loadConfig } = await import('../../core/config.ts');
-    const pack = await loadActivePack({ cfg: loadConfig(), remote: false });
+    const { loadConfigFileOnly } = await import('../../core/config.ts');
+    // #3792: thread the DB-plane schema_pack (tier 4) so doctor resolves the
+    // SAME pack as the engine/onboard checks on brains whose active pack was
+    // flipped via `gbrain config set schema_pack` / unify-types — without it,
+    // doctor reported the home-config pack while every query ran the DB one.
+    // File-only config preserves tier-6 without merging transient env/db
+    // state (matches onboard/checks.ts's checkPackUpgradeAvailable).
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    const pack = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig });
     return {
       name: 'schema_pack_active',
       status: 'ok',
@@ -127,13 +137,21 @@ export async function checkSchemaPackSourceDrift(engine: BrainEngine): Promise<C
  * brain deletes the correctly-routed row).
  */
 export function multiSourceDriftAdvice(count: number, sampleStr: string): string {
+  // #4490: cause (3) + the --include-gitignored pointer must precede the
+  // delete step — an operator whose file is simply not git-tracked would
+  // otherwise re-sync (which imports nothing for that file) and then delete
+  // a row nothing will recreate.
   return (
     `${count} page slug(s) appear at 'default' but NOT at the intended source ` +
-    `(e.g., ${sampleStr}). Two possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
-    `(2) the intended source never completed initial sync and the default page is unrelated. ` +
+    `(e.g., ${sampleStr}). Three possible causes: (1) pre-v0.30.3 putPage misroutes; ` +
+    `(2) the intended source never completed initial sync and the default page is unrelated; ` +
+    `(3) the file behind the slug is not git-tracked in the source repo — the sync walker ` +
+    `reads through git objects, so a re-sync imports nothing for it. ` +
     `Verify with 'gbrain sources status', then re-sync with ` +
-    `'gbrain sync --source <id> --full' (reconciles drift without deleting data). ` +
-    `If a misrouted default-source row remains after re-sync, remove it with ` +
+    `'gbrain sync --source <id> --full' (reconciles drift without deleting data); ` +
+    `for cause (3), commit the file or use 'gbrain sync --source <id> --include-gitignored' ` +
+    `(full filesystem walk that also picks up ignored/untracked syncable files). ` +
+    `Only if a misrouted default-source row remains after that, remove it with ` +
     `'GBRAIN_SOURCE=default gbrain delete <slug>' — delete targets the active source, ` +
     `so pin it to 'default' explicitly.`
   );

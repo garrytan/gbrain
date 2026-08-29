@@ -94,6 +94,75 @@ function embeddingToPgVector(embedding: Float32Array): string {
   return `[${parts.join(',')}]`;
 }
 
+/** Bigram-Dice acceptance threshold for the lookup text guard (#1469). */
+export const CACHE_TEXT_GUARD_DICE_THRESHOLD = 0.5;
+
+/**
+ * Normalize a query string for the text guard: Unicode NFKC (folds
+ * full/half-width variants), lowercase, collapse whitespace runs, trim.
+ */
+function normalizeGuardText(s: string): string {
+  return s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Character-bigram multiset over a normalized string, code-point safe
+ * (Array.from splits surrogate pairs correctly). Bigrams spanning a
+ * space are skipped so word boundaries don't manufacture overlap;
+ * within CJK text there are no spaces, so every adjacent char pair
+ * counts — the property that makes this guard CJK-safe without any
+ * tokenizer.
+ */
+function charBigrams(s: string): Map<string, number> {
+  const grams = new Map<string, number>();
+  const chars = Array.from(s);
+  for (let i = 0; i < chars.length - 1; i++) {
+    if (chars[i] === ' ' || chars[i + 1] === ' ') continue;
+    const g = chars[i] + chars[i + 1];
+    grams.set(g, (grams.get(g) ?? 0) + 1);
+  }
+  return grams;
+}
+
+/** Sørensen–Dice coefficient over char-bigram multisets (0..1). */
+function bigramDice(a: string, b: string): number {
+  const ga = charBigrams(a);
+  const gb = charBigrams(b);
+  let sizeA = 0;
+  for (const n of ga.values()) sizeA += n;
+  let sizeB = 0;
+  for (const n of gb.values()) sizeB += n;
+  if (sizeA === 0 || sizeB === 0) return 0;
+  let inter = 0;
+  for (const [g, n] of ga) {
+    const m = gb.get(g);
+    if (m) inter += Math.min(n, m);
+  }
+  return (2 * inter) / (sizeA + sizeB);
+}
+
+/**
+ * #1469 — text guard for cache-lookup candidates. Embedding cosine >= 0.92
+ * is NOT proof two queries are the same question: distinct queries (notably
+ * CJK, where some embedding providers collapse whole scripts into a narrow
+ * cone of the space) can land within the threshold and serve each other's
+ * cached rows. Accept a candidate only when its stored query text is
+ * plausibly the same query as the incoming one:
+ *
+ *   - NFKC/lowercase/whitespace-normalized equality, OR
+ *   - char-bigram Dice >= 0.5 (CJK-safe: bigrams need no word boundaries).
+ *
+ * Deliberately permissive (semantic paraphrases still hit via Dice); the
+ * embedding threshold remains the primary gate — this only rejects rows
+ * whose text is clearly a different question.
+ */
+export function cacheTextGuard(a: string, b: string): boolean {
+  const na = normalizeGuardText(a);
+  const nb = normalizeGuardText(b);
+  if (na === nb) return true;
+  return bigramDice(na, nb) >= CACHE_TEXT_GUARD_DICE_THRESHOLD;
+}
+
 export class SemanticQueryCache {
   private similarityThreshold: number;
   private ttlSeconds: number;
@@ -123,10 +192,18 @@ export class SemanticQueryCache {
    *
    * All errors are swallowed and converted to a miss \u2014 the cache must
    * never break the search hot path.
+   *
+   * #1469: when `opts.queryText` is provided, the top candidates (by
+   * embedding distance) are additionally screened by `cacheTextGuard`
+   * against the stored `query_text`, and the first passing candidate
+   * wins. Cosine >= 0.92 alone is not identity \u2014 embedding collapse
+   * (observed on CJK queries) can put DIFFERENT questions inside the
+   * threshold. Omitting `queryText` preserves the legacy
+   * closest-row-wins behavior.
    */
   async lookup(
     queryEmbedding: Float32Array | null,
-    opts: { sourceId?: string; knobsHash?: string } = {},
+    opts: { sourceId?: string; knobsHash?: string; queryText?: string } = {},
   ): Promise<CacheLookupResult> {
     if (!this.enabled || !queryEmbedding || queryEmbedding.length === 0) {
       return { hit: false };
@@ -148,14 +225,21 @@ export class SemanticQueryCache {
       // v0.40.3.0: query_cache row aliased `qc` so the two-layer gate
       // fragment in CACHE_GATE_WHERE_CLAUSE can reference qc.max_generation_at_store
       // + qc.page_generations against the live pages table.
+      // #1469: fetch the top 5 candidates (not just the closest) so the
+      // text guard below can skip a closer-but-different query and still
+      // serve a farther row whose text actually matches.
+      //
+      // D2 remediation: the candidate select is LIGHT (id/query_text/
+      // distance/age only). Shipping five full results+meta JSONB payloads
+      // per lookup just to keep one was pure transfer overhead; the winner's
+      // payload is fetched by id in the second query below.
       const rows = await this.engine.executeRaw<{
         id: string;
-        results: unknown;
-        meta: unknown;
+        query_text: string;
         distance: number;
         age_seconds: number;
       }>(
-        `SELECT qc.id, qc.results, qc.meta,
+        `SELECT qc.id, qc.query_text,
                 qc.embedding <=> $1::vector AS distance,
                 EXTRACT(EPOCH FROM (now() - qc.created_at))::int AS age_seconds
          FROM query_cache qc
@@ -166,17 +250,35 @@ export class SemanticQueryCache {
            AND qc.created_at + (qc.ttl_seconds || ' seconds')::interval > now()
            AND ${CACHE_GATE_WHERE_CLAUSE}
          ORDER BY qc.embedding <=> $1::vector
-         LIMIT 1`,
+         LIMIT 5`,
         [vec, sourceId, distanceThreshold, knobsHash],
       );
 
       if (rows.length === 0) return { hit: false };
 
-      const row = rows[0];
-      const results = Array.isArray(row.results)
-        ? (row.results as SearchResult[])
-        : safeJsonParse<SearchResult[]>(row.results, []);
-      const meta = safeJsonParse<HybridSearchMeta | undefined>(row.meta, undefined);
+      // #1469: with a queryText, accept the FIRST (closest) candidate whose
+      // stored text passes the guard; none passing → miss. Without one
+      // (legacy callers), closest row wins as before.
+      const queryText = opts.queryText;
+      const row =
+        queryText == null
+          ? rows[0]
+          : rows.find((r) => cacheTextGuard(queryText, r.query_text ?? ''));
+      if (!row) return { hit: false };
+
+      // Second query: fetch ONLY the winner's heavy payload. A row deleted
+      // between the two statements (concurrent prune/clear) is a miss — the
+      // caller runs the real search, same posture as every other edge here.
+      const payloadRows = await this.engine.executeRaw<{
+        results: unknown;
+        meta: unknown;
+      }>(`SELECT results, meta FROM query_cache WHERE id = $1`, [row.id]);
+      if (payloadRows.length === 0) return { hit: false };
+      const payload = payloadRows[0];
+      const results = Array.isArray(payload.results)
+        ? (payload.results as SearchResult[])
+        : safeJsonParse<SearchResult[]>(payload.results, []);
+      const meta = safeJsonParse<HybridSearchMeta | undefined>(payload.meta, undefined);
       const similarity = 1 - row.distance;
 
       // Bump hit_count / last_hit_at \u2014 best-effort.

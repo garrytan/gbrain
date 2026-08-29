@@ -7,7 +7,8 @@ import { existsSync, readFileSync, realpathSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { isAbsolute, join, relative, sep } from 'path';
 import type { BrainEngine } from './engine.ts';
-import { resolveSlugForPath } from './sync.ts';
+import { resolveSlugForPath, DEFAULT_SOURCE_ID } from './sync.ts';
+import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { loadStorageConfig } from './storage-config.ts';
 
 /**
@@ -32,18 +33,27 @@ export async function resolveSlugByPathOrSourcePath(
   // resolveSlugsByPaths so single-call and batched paths share one SQL
   // owner + one fallback semantic. One Map allocation per single-call;
   // negligible cost. When sourceId is undefined (legacy unscoped callers),
-  // fall back to the original executeRaw shape — the batch method
-  // requires sourceId to prevent the multi-source-bug-class on its new
-  // surface (D5). The unscoped fallback preserves back-compat.
+  // a direct executeRaw runs instead — the batch method requires sourceId
+  // to prevent the multi-source-bug-class on its new surface (D5). That
+  // branch is NOT the historical unscoped query any more; see below.
   try {
     if (sourceId) {
       const m = await engine.resolveSlugsByPaths([path], { sourceId });
       const slug = m.get(path);
       if (slug) return slug;
     } else {
+      // #3583 gate14: scoped to 'default', matching every WRITE the bare
+      // no-sourceId path performs (updateSlug, deletePage, the rename
+      // bookkeeping repair — all default-scoped). The historical unscoped
+      // form could hand back a row from ANOTHER source that happened to
+      // share the source_path; the rename loop takes this return value
+      // directly as its cheap-move target, so that foreign slug went to
+      // updateSlug, the default-scoped move silently no-opped, and the
+      // fallback import landed under a cross-source dedup. Resolve and
+      // mutate must agree on the scope.
       const rows = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE source_path = $1 LIMIT 1`,
-        [path],
+        `SELECT slug FROM pages WHERE source_path = $1 AND source_id = $2 LIMIT 1`,
+        [path, DEFAULT_SOURCE_ID],
       );
       if (rows.length > 0 && rows[0].slug) return rows[0].slug;
     }
@@ -52,6 +62,184 @@ export async function resolveSlugByPathOrSourcePath(
     // shouldn't break delete/rename for path-derived pages.
   }
   return resolveSlugForPath(path);
+}
+
+/** #3942: a fallback resolution refused because the derived slug belongs to a different file. */
+export interface RefusedSlugResolution {
+  /** The removed file path the caller asked about. */
+  path: string;
+  /** The re-slugified slug that path derived to. */
+  slug: string;
+  /** The DIFFERENT file the page at that slug records as its origin. */
+  originPath: string;
+}
+
+export interface RemovedPathSlugResolution {
+  /** path → slug that is safe to act on (delete / rename-from). */
+  slugs: Map<string, string>;
+  /** Foreign-origin fallbacks the caller must skip (and should log). */
+  refused: RefusedSlugResolution[];
+}
+
+/** Separator-normalize for source_path comparisons (mirrors sync-reconcile.ts). */
+function normalizeOriginPath(p: string): string {
+  return p.replace(/\\/g, '/');
+}
+
+/** One-line operator warning for a refused resolution (#3942). */
+export function refusedRemovedPathMessage(r: RefusedSlugResolution): string {
+  return (
+    `  [sync] refusing to touch '${r.slug}' for removed path '${r.path}': ` +
+    `that page originates from '${r.originPath}' (#3942 — re-slugified paths ` +
+    `can collide; remove the page directly if you really meant it).`
+  );
+}
+
+/**
+ * #3942 — THE delete-side slug resolver. Every sync lane that turns a
+ * REMOVED file path into a slug to delete (or rename away from) routes
+ * through here, so the delete side can never act on a re-slugified
+ * approximation that names a different file's page.
+ *
+ * Two phases:
+ *
+ *  1. Exact `source_path` match — the import side's own record (the same
+ *     derivation that wrote the row). Scoped via `resolveSlugsByPaths` when
+ *     `sourceId` is set; the legacy unscoped shape otherwise.
+ *  2. Path-derived fallback (`resolveSlugForPath`, identical to the import
+ *     side's `slugifyPath` dispatch) — but VERIFIED before use:
+ *     `slugifySegment` strips trailing hyphens (among other lossy rewrites),
+ *     so `extracts/propose-/x.md` and `extracts/propose/x.md` derive the SAME
+ *     slug. Verification inspects ALL live rows at the derived slug (the
+ *     unscoped lane can see one per source): if every one records a DIFFERENT
+ *     origin file, the resolution is REFUSED (returned in `refused`, absent
+ *     from `slugs`) instead of silently deleting a page whose own file is
+ *     untouched; any row whose origin IS the removed path allows it. Pages
+ *     with a NULL `source_path` (legacy pre-source_path imports) and slugs
+ *     with no live row at all (no-op deletes) keep today's fallback behavior;
+ *     soft-deleted rows are ignored on both phases.
+ *
+ * Fail-open on lookup errors (pre-migration schemas): a failed verification
+ * query preserves the legacy fallback rather than wedging deletes — matching
+ * the long-standing best-effort posture of `resolveSlugByPathOrSourcePath`.
+ */
+export async function resolveSlugsForRemovedPaths(
+  engine: BrainEngine,
+  paths: string[],
+  sourceId: string | undefined,
+): Promise<RemovedPathSlugResolution> {
+  const slugs = new Map<string, string>();
+  const refused: RefusedSlugResolution[] = [];
+  if (paths.length === 0) return { slugs, refused };
+
+  // Phase 1: exact source_path → slug (chunked to the engine batch cap).
+  const exact = new Map<string, string>();
+  if (sourceId !== undefined) {
+    for (let i = 0; i < paths.length; i += DELETE_BATCH_SIZE) {
+      try {
+        const m = await engine.resolveSlugsByPaths(paths.slice(i, i + DELETE_BATCH_SIZE), { sourceId });
+        for (const [p, s] of m) exact.set(p, s);
+      } catch {
+        // Best-effort — fall through to the verified phase-2 fallback.
+      }
+    }
+  } else {
+    for (const p of paths) {
+      try {
+        // Unscoped lane: only LIVE rows may drive resolution (a soft-deleted
+        // row's record must not name a slug for the delete side to act on),
+        // and the pick is ORDER BY-deterministic when a multi-source brain
+        // holds several rows for the same source_path.
+        const rows = await engine.executeRaw<{ slug: string }>(
+          `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
+            ORDER BY source_id, slug LIMIT 1`,
+          [p],
+        );
+        if (rows.length > 0 && rows[0].slug) exact.set(p, rows[0].slug);
+      } catch {
+        // Best-effort.
+      }
+    }
+  }
+
+  const fallbacks: Array<{ path: string; slug: string }> = [];
+  for (const p of paths) {
+    const hit = exact.get(p);
+    if (hit !== undefined) slugs.set(p, hit);
+    else fallbacks.push({ path: p, slug: resolveSlugForPath(p) });
+  }
+  if (fallbacks.length === 0) return { slugs, refused };
+
+  // Phase 2: verify each derived slug's recorded origin before trusting it.
+  // Per-item placeholders (not ANY(array)) so the same executeRaw shape binds
+  // identically on both engines — a query error here fails OPEN, which would
+  // silently disable the guard, so the boring portable form wins.
+  //
+  // Collect ALL live rows per slug: the unscoped lane can see one row per
+  // source at the same slug, and a single-value (last-row-wins) map made
+  // refuse-vs-allow depend on engine row order. `deleted_at IS NULL` keeps
+  // soft-deleted rows from vetoing (or licensing) a delete, and the ORDER BY
+  // makes the reported refusal origin deterministic. The scoped lane has at
+  // most one live row per slug, so its behavior is unchanged.
+  const originsBySlug = new Map<string, Array<string | null>>();
+  for (let i = 0; i < fallbacks.length; i += DELETE_BATCH_SIZE) {
+    const chunk = fallbacks.slice(i, i + DELETE_BATCH_SIZE).map(f => f.slug);
+    try {
+      const params: unknown[] = [...chunk];
+      const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
+      let where = `slug IN (${placeholders}) AND deleted_at IS NULL`;
+      if (sourceId !== undefined) {
+        params.push(sourceId);
+        where += ` AND source_id = $${params.length}`;
+      }
+      const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
+        `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id, slug`,
+        params,
+      );
+      for (const r of rows) {
+        const list = originsBySlug.get(r.slug);
+        if (list) list.push(r.source_path);
+        else originsBySlug.set(r.slug, [r.source_path]);
+      }
+    } catch {
+      // Fail-open: without origin evidence, keep the legacy fallback.
+    }
+  }
+  for (const f of fallbacks) {
+    const origins = originsBySlug.get(f.slug) ?? [];
+    // Allow when: no live row at the slug (harmless no-op delete), any legacy
+    // NULL-origin row (pre-source_path brains keep today's fallback), or ANY
+    // live row that records the removed path itself as its origin. Refuse
+    // only when every live row positively names a DIFFERENT origin file.
+    const anyNullOrigin = origins.some(o => o == null);
+    const anyMatch = origins.some(
+      o => o != null && normalizeOriginPath(o) === normalizeOriginPath(f.path),
+    );
+    if (origins.length > 0 && !anyNullOrigin && !anyMatch) {
+      // All origins are non-null mismatches; origins[0] is source_id-ordered,
+      // so the reported path is deterministic.
+      refused.push({ path: f.path, slug: f.slug, originPath: origins[0] as string });
+    } else {
+      slugs.set(f.path, f.slug);
+    }
+  }
+  return { slugs, refused };
+}
+
+/**
+ * Single-path convenience over `resolveSlugsForRemovedPaths` for the per-path
+ * sync lanes. Logs any refusal through `warn` and returns undefined so the
+ * caller skips the destructive action (#3942).
+ */
+export async function resolveRemovedPathSlug(
+  engine: BrainEngine,
+  path: string,
+  sourceId: string | undefined,
+  warn: (msg: string) => void,
+): Promise<string | undefined> {
+  const res = await resolveSlugsForRemovedPaths(engine, [path], sourceId);
+  for (const r of res.refused) warn(refusedRemovedPathMessage(r));
+  return res.slugs.get(path);
 }
 
 /**
@@ -125,6 +313,21 @@ export function git(
     maxBuffer: 100 * 1024 * 1024,
     ...(silenceStderr ? { stdio: ['ignore', 'pipe', 'pipe'] as const } : {}),
   }).trim();
+}
+
+/**
+ * git() minus the trim — REQUIRED for NUL-delimited listings (`ls-files -z`,
+ * `ls-tree -z`): a filename that begins with a space is the FIRST entry of
+ * the listing, and trim() silently rewrites it into a different path (#3583
+ * review — the misread let a decoy blob stand in for the real file and a
+ * live page was deleted on the corrupted evidence).
+ */
+export function gitRawOutput(repoPath: string, args: string[]): string {
+  return execFileSync('git', buildGitInvocation(repoPath, args, []), {
+    encoding: 'utf-8',
+    timeout: 30000,
+    maxBuffer: 100 * 1024 * 1024,
+  });
 }
 
 /**
@@ -388,11 +591,28 @@ export function createSyncBaselineCommit(repoPath: string): void {
  * returns backslash paths there, and a literal `rootReal + '/'` prefix can
  * never match one. A sibling (`root-evil`) is rejected because `relative`
  * yields `../root-evil`, and a cross-drive path because it yields an absolute.
+ * On Windows this intentionally follows the platform path semantics exposed by
+ * `win32.relative`, including case-insensitive segment matching; detecting rare
+ * per-directory case-sensitive NTFS siblings would require filesystem identity
+ * checks rather than a pure path check. (#4044/#4144)
  */
-export function isWithinRoot(childReal: string, rootReal: string): boolean {
+interface PathContainmentOps {
+  relative(from: string, to: string): string;
+  isAbsolute(path: string): boolean;
+  sep: string;
+}
+
+const nativePathContainmentOps: PathContainmentOps = { relative, isAbsolute, sep };
+
+export function isWithinRoot(
+  childReal: string,
+  rootReal: string,
+  pathOps: PathContainmentOps = nativePathContainmentOps,
+): boolean {
   if (childReal === rootReal) return true;
-  const rel = relative(rootReal, childReal);
-  return rel !== '' && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+  const rel = pathOps.relative(rootReal, childReal);
+  if (rel === '') return true;
+  return rel !== '..' && !rel.startsWith('..' + pathOps.sep) && !pathOps.isAbsolute(rel);
 }
 
 /**

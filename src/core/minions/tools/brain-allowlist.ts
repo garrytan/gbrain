@@ -177,6 +177,11 @@ export interface BuildBrainToolsOpts {
   subagentId: number;
   engine: BrainEngine;
   config: GBrainConfig;
+  /**
+   * #4216 — defer chunk embeddings on put_page writes (oneshot programmatic
+   * writes only; the standing embed machinery backfills). Server-side flag.
+   */
+  deferEmbeds?: boolean;
   /** Optional filter: only include names in this set. */
   allowedNames?: ReadonlySet<string>;
   /**
@@ -220,6 +225,7 @@ interface OpContextDeps {
   brainId?: string;
   allowedSlugPrefixes?: readonly string[];
   sourceId?: string;
+  deferEmbeds?: boolean;
 }
 
 function buildOpContext(deps: OpContextDeps): OperationContext {
@@ -242,6 +248,9 @@ function buildOpContext(deps: OpContextDeps): OperationContext {
     allowedSlugPrefixes: deps.allowedSlugPrefixes
       ? [...deps.allowedSlugPrefixes]
       : undefined,
+    // #4216: server-side-only — the oneshot runner defers chunk embeddings on
+    // its programmatic writes; never hydrated from any wire payload.
+    ...(deps.deferEmbeds ? { deferEmbeds: true } : {}),
   };
 }
 
@@ -293,6 +302,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           brainId: opts.brainId,
           allowedSlugPrefixes: opts.allowedSlugPrefixes,
           sourceId: opts.sourceId,
+          deferEmbeds: opts.deferEmbeds,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         return op.handler(opCtx, params);

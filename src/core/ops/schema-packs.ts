@@ -36,8 +36,14 @@ const get_active_schema_pack: Operation = {
     const cfg = loadConfig();
     const sourceOpts: Record<string, unknown> = {};
     if (ctx.sourceId) sourceOpts.sourceId = ctx.sourceId;
-    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, ...sourceOpts });
-    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, ...sourceOpts });
+    // #3792: thread the DB-plane schema_pack (tier 4) so this identity
+    // packet reports the SAME pack the engine actually queries with.
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await ctx.engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    const resolution = resolveActivePackNameOnly({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
+    const pack = await loadActivePack({ cfg, remote: ctx.remote ?? true, dbConfig, ...sourceOpts });
     const primitiveSummary: Record<string, number> = {};
     for (const t of pack.manifest.page_types) {
       primitiveSummary[t.primitive] = (primitiveSummary[t.primitive] ?? 0) + 1;
@@ -104,7 +110,7 @@ const schema_lint: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { runAllLintRules } = await import('../schema-pack/lint-rules.ts');
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const { loadActivePack, resolveLoadedPack } = await import('../schema-pack/load-active.ts');
     const { loadConfig, gbrainPath } = await import('../config.ts');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
@@ -114,6 +120,15 @@ const schema_lint: Operation = {
       // Locate by name without trust-gating per-call schema_pack opt
       // (that's a separate axis — this is just file lookup).
       const packName = p.pack as string;
+      // SECURITY: `pack` is caller-supplied on a remote-reachable read op and
+      // is joined into a filesystem path below — an unguarded '../'-shaped
+      // name escapes $GBRAIN_HOME/schema-packs/ (existence oracle + arbitrary
+      // pack.yaml parse). Reuse the SAME name guard the mutate path uses
+      // (isValidPackName in schema-pack/mutate.ts) BEFORE any join.
+      // Anti-enumeration: invalid names answer EXACTLY like missing packs
+      // (pack_not_found, no path echo), never a distinct "bad name" shape.
+      const { isValidPackName } = await import('../schema-pack/mutate.ts');
+      if (!isValidPackName(packName)) return { error: 'pack_not_found', pack: packName };
       const candidates = ['pack.yaml', 'pack.yml', 'pack.json'];
       let path: string | null = null;
       for (const c of candidates) {
@@ -122,7 +137,9 @@ const schema_lint: Operation = {
       }
       if (!path) return { error: 'pack_not_found', pack: packName };
       const { loadPackFromFile: loader } = await import('../schema-pack/loader.ts');
-      manifest = loader(path);
+      // #4373: lint the MERGED manifest so extends-inherited page types
+      // count as declared — parity with the active-pack branch below.
+      manifest = (await resolveLoadedPack(loader(path))).manifest;
     } else {
       const resolved = await loadActivePack({ cfg, remote: ctx.remote ?? true, sourceId: ctx.sourceId });
       manifest = resolved.manifest;

@@ -83,22 +83,41 @@ const file_upload: Operation = {
     };
     const mimeType = MIME_TYPES[extname(filePath).toLowerCase()] || null;
 
+    // #4302 (fail-closed honesty): a files row must never claim bytes that
+    // were stored nowhere. With no storage backend configured, the old path
+    // inserted the row and returned status:'uploaded' anyway — every later
+    // read (file_url, files verify, restore) would trust a phantom object.
+    // Typed error BEFORE any insert; git-tracked small files have their own
+    // lane (`gbrain files upload-raw --page <slug>`).
+    if (!ctx.config.storage) {
+      throw new OperationError(
+        'storage_error',
+        'No storage backend configured — file_upload would record a files row with no stored bytes.',
+        'Configure `storage` in your gbrain config (supabase | s3 | local), or use `gbrain files upload-raw --page <slug>` for git-tracked small files.',
+      );
+    }
+    const { createStorage } = await import('../storage.ts');
+    const storage = await createStorage(ctx.config.storage as any);
+
     const { sqlQueryForEngine } = await import('../sql-query.ts');
     const sql = sqlQueryForEngine(ctx.engine);
     const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
     if (existing.length > 0) {
-      return { status: 'already_exists', storage_path: storagePath };
+      // #4302: only claim already_exists when the BACKEND really holds the
+      // object — a DB row whose bytes vanished must re-upload, not lie.
+      let inBackend = false;
+      try {
+        inBackend = await storage.exists(storagePath);
+      } catch { /* probe failure → treat as absent, re-upload below */ }
+      if (inBackend) {
+        return { status: 'already_exists', storage_path: storagePath };
+      }
     }
 
-    // Upload to storage backend if configured
-    if (ctx.config.storage) {
-      const { createStorage } = await import('../storage.ts');
-      const storage = await createStorage(ctx.config.storage as any);
-      try {
-        await storage.upload(storagePath, content, mimeType || undefined);
-      } catch (uploadErr) {
-        throw new OperationError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
-      }
+    try {
+      await storage.upload(storagePath, content, mimeType || undefined);
+    } catch (uploadErr) {
+      throw new OperationError('storage_error', `Upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`);
     }
 
     try {
@@ -112,13 +131,9 @@ const file_upload: Operation = {
       `;
     } catch (dbErr) {
       // Rollback: clean up storage if DB write failed
-      if (ctx.config.storage) {
-        try {
-          const { createStorage } = await import('../storage.ts');
-          const storage = await createStorage(ctx.config.storage as any);
-          await storage.delete(storagePath);
-        } catch { /* best effort cleanup */ }
-      }
+      try {
+        await storage.delete(storagePath);
+      } catch { /* best effort cleanup */ }
       throw dbErr;
     }
 
@@ -141,8 +156,26 @@ const file_url: Operation = {
     if (rows.length === 0) {
       throw new OperationError('storage_error', `File not found: ${p.storage_path}`);
     }
-    // TODO: generate signed URL from Supabase Storage
-    return { storage_path: rows[0].storage_path, url: `gbrain:files/${rows[0].storage_path}` };
+    // #4302: resolve a REAL URL from the backend, after confirming the object
+    // is actually there — the old `gbrain:files/<path>` placeholder pointed
+    // at nothing and hid rows whose bytes had vanished.
+    if (!ctx.config.storage) {
+      throw new OperationError(
+        'storage_error',
+        `No storage backend configured — cannot produce a URL for ${p.storage_path}.`,
+        'Configure `storage` in your gbrain config (supabase | s3 | local).',
+      );
+    }
+    const { createStorage } = await import('../storage.ts');
+    const storage = await createStorage(ctx.config.storage as any);
+    const present = await storage.exists(rows[0].storage_path as string).catch(() => false);
+    if (!present) {
+      throw new OperationError(
+        'storage_error',
+        `File row exists but the storage backend has no object at ${rows[0].storage_path} — re-upload it.`,
+      );
+    }
+    return { storage_path: rows[0].storage_path, url: await storage.getUrl(rows[0].storage_path as string) };
   },
 };
 

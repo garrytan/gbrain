@@ -108,7 +108,7 @@ describe('findTrajectory — chronological ordering (R3)', () => {
     const idJan = await insertTyped({ entity_slug: 'traj-order', metric: 'mrr', value: 50000,  valid_from: new Date('2026-01-15') });
     const idApr = await insertTyped({ entity_slug: 'traj-order', metric: 'mrr', value: 200000, valid_from: new Date('2026-04-12') });
 
-    const points = await engine.findTrajectory({ entitySlug: 'traj-order' });
+    const points = await engine.findTrajectory({ entitySlug: 'traj-order', remote: false });
     expect(points.map(p => p.fact_id)).toEqual([idJan, idApr, idJul]);
     expect(points[0].valid_from.toISOString().slice(0, 10)).toBe('2026-01-15');
     expect(points[2].valid_from.toISOString().slice(0, 10)).toBe('2026-07-08');
@@ -120,11 +120,11 @@ describe('findTrajectory — source scoping (D-CDX-6)', () => {
     await insertTyped({ source_id: 'traj-src-A', entity_slug: 'traj-srcscope', metric: 'mrr', value: 50000, valid_from: new Date('2026-01-15') });
     await insertTyped({ source_id: 'traj-src-B', entity_slug: 'traj-srcscope', metric: 'mrr', value: 99999, valid_from: new Date('2026-01-15') });
 
-    const pointsA = await engine.findTrajectory({ entitySlug: 'traj-srcscope', sourceId: 'traj-src-A' });
+    const pointsA = await engine.findTrajectory({ entitySlug: 'traj-srcscope', sourceId: 'traj-src-A', remote: false });
     expect(pointsA.length).toBe(1);
     expect(pointsA[0].value).toBe(50000);
 
-    const pointsB = await engine.findTrajectory({ entitySlug: 'traj-srcscope', sourceId: 'traj-src-B' });
+    const pointsB = await engine.findTrajectory({ entitySlug: 'traj-srcscope', sourceId: 'traj-src-B', remote: false });
     expect(pointsB.length).toBe(1);
     expect(pointsB[0].value).toBe(99999);
   });
@@ -137,6 +137,7 @@ describe('findTrajectory — source scoping (D-CDX-6)', () => {
     const points = await engine.findTrajectory({
       entitySlug: 'traj-fed',
       sourceIds: ['traj-src-A', 'traj-src-B'],
+      remote: false,
     });
     // Two of three sources visible, in chronological order.
     expect(points.length).toBe(2);
@@ -157,13 +158,16 @@ describe('findTrajectory — visibility filter (D-CDX-1 / R6)', () => {
     expect(remote[0].value).toBe(99999);
   });
 
-  test('remote default (undefined) is treated as trusted — sees both', async () => {
+  test('FAIL-CLOSED: remote default (undefined) is world-only — private rows hidden', async () => {
     await insertTyped({ entity_slug: 'traj-vis-default', metric: 'mrr', value: 50000, visibility: 'private', valid_from: new Date('2026-01-15') });
     await insertTyped({ entity_slug: 'traj-vis-default', metric: 'mrr', value: 99999, visibility: 'world',   valid_from: new Date('2026-04-12') });
 
-    // No `remote` field — engine default must be trusted.
-    const all = await engine.findTrajectory({ entitySlug: 'traj-vis-default' });
-    expect(all.length).toBe(2);
+    // No `remote` field — fail-closed: an omitted flag (cast-bypassed
+    // context, forgotten threading) must degrade to world-only, never leak
+    // private rows.
+    const worldOnly = await engine.findTrajectory({ entitySlug: 'traj-vis-default' });
+    expect(worldOnly.length).toBe(1);
+    expect(worldOnly[0].value).toBe(99999);
   });
 });
 
@@ -172,7 +176,7 @@ describe('findTrajectory — metric + since + until filters', () => {
     await insertTyped({ entity_slug: 'traj-m', metric: 'mrr', value: 50000, valid_from: new Date('2026-01-15') });
     await insertTyped({ entity_slug: 'traj-m', metric: 'arr', value: 600000, valid_from: new Date('2026-01-15') });
 
-    const mrrOnly = await engine.findTrajectory({ entitySlug: 'traj-m', metric: 'mrr' });
+    const mrrOnly = await engine.findTrajectory({ entitySlug: 'traj-m', metric: 'mrr', remote: false });
     expect(mrrOnly.length).toBe(1);
     expect(mrrOnly[0].metric).toBe('mrr');
   });
@@ -186,6 +190,7 @@ describe('findTrajectory — metric + since + until filters', () => {
       entitySlug: 'traj-w',
       since: '2026-02-01',
       until: '2026-05-01',
+      remote: false,
     });
     expect(inWindow.length).toBe(1);
     expect(inWindow[0].value).toBe(99999);

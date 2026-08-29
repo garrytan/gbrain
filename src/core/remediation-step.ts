@@ -40,8 +40,10 @@ export type RemediationStatus = 'remediable' | 'human_only' | 'blocked';
  *   job             — Minion handler name. Must match a registered handler.
  *   params          — passed verbatim to the handler.
  *   idempotency_key — content-hash dedup key. Same (job, params) →
- *                     same key. Across retries (--remediate re-runs)
- *                     pre-existing failed jobs append `:r<N>` suffix.
+ *                     same key. When a prior run's completed/failed row
+ *                     still holds the key, the --remediate loop re-submits
+ *                     under a `:r:<doctor_run_id>` rotated key (#3626,
+ *                     remediation/run.ts); waiting/active rows coalesce.
  *   severity        — drives ordering.
  *   est_seconds     — upper-bound runtime estimate for budgeting.
  *   est_usd_cost    — USD cost estimate when applicable.

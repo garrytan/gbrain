@@ -41,19 +41,34 @@ import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts
 import {
   acquireLease,
   releaseLease,
+  RateLeaseUnavailableError,
   renewLeaseWithBackoff,
 } from '../rate-leases.ts';
 import {
   logSubagentSubmission,
   logSubagentHeartbeat,
 } from './subagent-audit.ts';
-import { resolveModel, isAnthropicProvider, TIER_DEFAULTS } from '../../model-config.ts';
+import { resolveModel, isAnthropicProvider, isOpenRouterAnthropic, TIER_DEFAULTS } from '../../model-config.ts';
 import { splitProviderModelId, normalizeModelId } from '../../model-id.ts';
 import { resolveAnthropicKey } from '../../ai/anthropic-key.ts';
 import { buildSystemPrompt, DEFAULT_SUBAGENT_SYSTEM } from '../system-prompt.ts';
-import { toolLoop as gatewayToolLoop } from '../../ai/gateway.ts';
+import { toolLoop as gatewayToolLoop, isThinkingByDefaultModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../ai/gateway.ts';
 import type { ChatToolDef, ChatMessage, ChatBlock, ChatResult, ToolHandler } from '../../ai/gateway.ts';
 import { classifyCapabilities } from '../../ai/capabilities.ts';
+import { runSubagentOneshot, ONESHOT_TOOL_USE_ID_PREFIX } from './subagent-oneshot.ts';
+import type { OneshotFallbackReason } from '../types.ts';
+import {
+  loadPriorMessages,
+  loadPriorTools,
+  loadPriorToolsV2,
+  persistMessage,
+  persistToolExecPending,
+  persistToolExecComplete,
+  persistToolExecFailed,
+  finalizeWriteAccounting,
+  type PersistedMessage,
+  type PersistedToolExec,
+} from './subagent-persistence.ts';
 import { randomUUIDv7 } from 'bun';
 
 // ── Defaults ────────────────────────────────────────────────
@@ -65,13 +80,17 @@ const DEFAULT_RATE_KEY = 'anthropic:messages';
 
 /**
  * Resolve the per-turn output-token cap (#2778). Per-job data wins, then the
- * `agent.max_output_tokens` config row, then the 8192 default (was a
- * hardcoded 4096 that made pages >~12KB unwritable via put_page). Invalid
- * values (NaN / zero / negative) fall through to the next tier.
+ * `agent.max_output_tokens` config row, then a model-aware default: 32000 for
+ * thinking-by-default Claude 5 models (#4087 — they burn most of the budget on
+ * internal reasoning; the flat 8192 default produced zero-tool-call truncated
+ * runs even after the gateway learned to detect them), 8192 for everything
+ * else (was a hardcoded 4096 that made pages >~12KB unwritable via put_page).
+ * Invalid values (NaN / zero / negative) fall through to the next tier.
  */
 export function resolveMaxOutputTokens(
   perJob: number | undefined,
   configRaw: string | null | undefined,
+  model?: string,
 ): number {
   if (typeof perJob === 'number' && Number.isFinite(perJob) && perJob > 0) {
     return Math.floor(perJob);
@@ -80,7 +99,7 @@ export function resolveMaxOutputTokens(
     const n = Number(configRaw);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
-  return DEFAULT_MAX_OUTPUT_TOKENS;
+  return isThinkingByDefaultModel(model) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 /**
@@ -148,29 +167,11 @@ export interface SubagentDeps {
    * the caller's subagentId at dispatch time.
    */
   toolRegistry?: ToolDef[];
-}
-
-// ── Types for internal state ────────────────────────────────
-
-interface PersistedMessage {
-  message_idx: number;
-  role: 'user' | 'assistant';
-  content_blocks: ContentBlock[];
-  tokens_in: number | null;
-  tokens_out: number | null;
-  tokens_cache_read: number | null;
-  tokens_cache_create: number | null;
-  model: string | null;
-}
-
-interface PersistedToolExec {
-  message_idx: number;
-  tool_use_id: string;
-  tool_name: string;
-  input: unknown;
-  status: 'pending' | 'complete' | 'failed';
-  output: unknown;
-  error: string | null;
+  /**
+   * #4216 test seam — chat transport for the oneshot runner (extract-atoms
+   * `_chat` pattern). Defaults to the gateway chat.
+   */
+  _chat?: typeof import('../../ai/gateway.ts').chat;
 }
 
 // ── Public handler factory ──────────────────────────────────
@@ -181,6 +182,69 @@ interface PersistedToolExec {
  * worker startup. Always registered — `ANTHROPIC_API_KEY` is the natural
  * cost gate and `PROTECTED_JOB_NAMES` gates submission.
  */
+
+/**
+ * F1 (adversarial review): a replayed terminal assistant turn that hit the
+ * output cap must NOT launder into 'end_turn'. The zero-attempt honesty gate
+ * (finalizeWriteAccounting) keys on stop_reason, and a truncated zero-write
+ * run replaying as a clean finish would consume the transcript's idempotency
+ * key with zero pages written — the exact silent-loss class #4217 kills. The
+ * live stop reason is not persisted; `tokens_out >= cap` recovers it (a
+ * length stop reports the capped count). A clean turn producing EXACTLY cap
+ * tokens is a theoretical false positive; its consequence is dead-letter +
+ * key release + nightly retry — self-healing, never silent loss.
+ */
+/**
+ * Convert a lease-lost abort into the lease-full requeue vocabulary. When
+ * the per-turn permit heartbeat discovers its lease row vanished, it aborts
+ * the in-flight provider call; the surfacing AbortError is a SCHEDULING
+ * condition (slot re-admitted elsewhere), not a job failure — rethrow as
+ * RateLeaseUnavailableError so the worker / inline drain requeue WITHOUT
+ * burning an attempt.
+ */
+async function runLoopConvertingLeaseLoss<T>(
+  run: () => Promise<T>,
+  wasLeaseLost: () => boolean,
+  leaseKey: string,
+  maxConcurrent: number,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    if (wasLeaseLost()) {
+      throw new RateLeaseUnavailableError(leaseKey, maxConcurrent, maxConcurrent);
+    }
+    // Same terminal classification the legacy raw-SDK path applies below
+    // (see isPromptTooLongError's call site): a 400 "prompt is too long" is
+    // unrecoverable — retrying with the same prompt will always fail the
+    // same way. `e` here is already normalizeAIError()-wrapped (thrown by
+    // gateway.chat()'s catch boundary), which copies only the OUTER message
+    // onto the new error and stores the raw provider error on `.cause` —
+    // isPromptTooLongError() walks that cause chain so the SDK's inner
+    // `.error.message` shape (Anthropic's actual wire shape) still matches
+    // post-wrap. Without this, a gateway-native subagent job (required for
+    // any non-Anthropic model) retries a prompt-too-long condition like any
+    // other transient failure up to max_stalled instead of fast-failing —
+    // the exact dream-cycle queue-clog class the legacy-path fix was built
+    // to prevent, just on the newer path.
+    // Single walk: extractPromptTooLongDetail is non-null exactly when
+    // isPromptTooLongError matches (both wrap the same matcher). The detail is
+    // the matched provider text ("prompt is too long: N tokens > max"), not
+    // `e.message` — post-normalizeAIError that is only the generic outer
+    // wrapper; the useful token counts live on `.cause`, same as the match.
+    const detail = extractPromptTooLongDetail(e);
+    if (detail !== null) throw new UnrecoverableError(`prompt_too_long: ${detail}`);
+    throw e;
+  }
+}
+
+function replayTerminalStopReason(
+  tokensOut: number | null | undefined,
+  maxOutputTokens: number,
+): SubagentStopReason {
+  return tokensOut != null && tokensOut >= maxOutputTokens ? 'max_tokens' : 'end_turn';
+}
+
 export function makeSubagentHandler(deps: SubagentDeps) {
   const engine = deps.engine;
   // sdk.messages IS the MessagesClient-shaped object. The v0.16.0 bug was
@@ -199,6 +263,63 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
 
   return async function subagentHandler(ctx: MinionJobContext): Promise<SubagentResult> {
+    const dataForAccounting = (ctx.data ?? {}) as unknown as SubagentHandlerData;
+    // #4217: every subagent job gets structural write accounting merged into
+    // its result; jobs submitted with require_writes (dream synthesize /
+    // patterns fan-out) FAIL when every attempted put_page write failed —
+    // "the turn finished" must never masquerade as "the work succeeded".
+    const modeState: {
+      fallbackReason?: OneshotFallbackReason;
+      oneshotTokens?: { in: number; out: number; cache_read: number; cache_create: number };
+    } = {};
+    const inner = await subagentHandlerInner(ctx, modeState);
+    // #4216: stamp which execution path produced the result. Jobs with no
+    // `mode` field keep the legacy result shape (REGRESSION pin).
+    // Honesty rule: 'agentic_fallback' is stamped ONLY when the oneshot
+    // attempt actually ran and returned a fallback reason this invocation. A
+    // replayed already-successful oneshot job (messages persisted, outcome
+    // write lost) re-enters via the loop replay path with no marker — leaving
+    // synth_mode_used unset there is honest 'unknown/replay', never a fake
+    // fallback in phase telemetry.
+    const stamped: SubagentResult = dataForAccounting.mode === 'oneshot' && inner.synth_mode_used !== 'oneshot' && modeState.fallbackReason
+      ? {
+          ...inner,
+          synth_mode_used: 'agentic_fallback',
+          fallback_reason: modeState.fallbackReason,
+          // The PAID oneshot attempt is part of this job's real cost/turn
+          // count — fold it into the rollup instead of silently dropping a
+          // full model call from details.synthesis math.
+          ...(modeState.oneshotTokens
+            ? {
+                turns_count: inner.turns_count + 1,
+                tokens: {
+                  in: inner.tokens.in + modeState.oneshotTokens.in,
+                  out: inner.tokens.out + modeState.oneshotTokens.out,
+                  cache_read: inner.tokens.cache_read + modeState.oneshotTokens.cache_read,
+                  cache_create: inner.tokens.cache_create + modeState.oneshotTokens.cache_create,
+                },
+              }
+            : {}),
+        }
+      : dataForAccounting.mode === 'agentic' && !inner.synth_mode_used
+        ? { ...inner, synth_mode_used: 'agentic' }
+        : inner;
+    return finalizeWriteAccounting(engine, ctx.id, stamped, {
+      requireWrites: dataForAccounting.require_writes === true,
+      // OV-4: a successful oneshot job's verdict is scoped to its own
+      // invocation family; a fallback wrote through the loop (no oneshot
+      // rows exist — validation precedes all writes), so job-wide is exact.
+      ...(stamped.synth_mode_used === 'oneshot' ? { scopeToolUseIdPrefix: ONESHOT_TOOL_USE_ID_PREFIX } : {}),
+    });
+  };
+
+  async function subagentHandlerInner(
+    ctx: MinionJobContext,
+    modeState: {
+    fallbackReason?: OneshotFallbackReason;
+    oneshotTokens?: { in: number; out: number; cache_read: number; cache_create: number };
+  } = {},
+  ): Promise<SubagentResult> {
     const data = (ctx.data ?? {}) as unknown as SubagentHandlerData;
     if (!data.prompt || typeof data.prompt !== 'string') {
       throw new Error('subagent job data.prompt is required (string)');
@@ -224,8 +345,8 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // resolveModel's explicit-key branch, which does NOT run
     // enforceSubagentCapable's silent fallback (only the inherited
     // models.default / tier / env branches do). An explicitly chosen
-    // tool-incapable model must be refused loudly here rather than silently
-    // run a loop that has no way to dispatch tools.
+    // loop-incapable model must be refused loudly here rather than silently
+    // run a loop that can't dispatch tools or can't reconcile on replay.
     // The queue.ts gate already catches explicit data.model at submit; this
     // check additionally covers config-resolved models, direct `gbrain agent
     // run` invocations, and any path that bypasses the queue's check.
@@ -234,7 +355,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // message is a terminal assistant turn (no tool_use blocks) needs NO
     // further provider call — the path-specific replay logic below returns
     // the already-committed result. Don't let a capability refusal (e.g.
-    // config repointed to a tool-incapable model between submit and replay)
+    // config repointed to a loop-incapable model between submit and replay)
     // dead-letter completed work.
     {
       const lastRows = await engine.executeRaw<{ role: string; content_blocks: unknown }>(
@@ -278,6 +399,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
         );
       }
+      if (verdict === 'unusable:no_subagent_loop') {
+        throw new Error(
+          `subagent job rejected: ${modelSource} "${model}" comes from a provider whose recipe declares ` +
+          `supports_subagent_loop: false — its tool_call_ids are not stable enough across crashes/replays ` +
+          `to drive the subagent loop.`,
+        );
+      }
       if (verdict === 'unknown') {
         throw new Error(
           `subagent job rejected: ${modelSource} "${model}" references an unknown provider. ` +
@@ -286,10 +414,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       }
     }
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
-    // #2778: per-turn output cap — data.max_tokens → config → 8192 default.
+    // #2778: per-turn output cap — data.max_tokens → config → model-aware
+    // default (#4087/CDX-6: thinking-by-default Claude 5 models get 32k so the
+    // 8192 handler default stops masking the gateway's own headroom; explicit
+    // per-job/config values always win).
     const maxOutputTokens = resolveMaxOutputTokens(
       data.max_tokens,
       await engine.getConfig('agent.max_output_tokens').catch(() => null),
+      model,
     );
     // v0.41 Approach C: systemPrompt is now built AFTER toolDefs (a few
     // lines below) so the renderer can splice a tool-usage preamble
@@ -305,7 +437,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // #2753: share the doctor's truthiness set. Before this, the doctor accepted
     // yes/on but the worker did not, so `config set ... yes` reported healthy
     // here and still refused the job below.
-    const useGatewayLoop = isConfigTruthy(useGatewayLoopRaw);
+    // OpenRouter Anthropic is not `isAnthropicProvider` (the Messages SDK
+    // cannot speak OR). Auto-enable the gateway loop so the legacy pin
+    // does not refuse `openrouter:anthropic/…` when the flag is off.
+    const useGatewayLoop = isConfigTruthy(useGatewayLoopRaw) || isOpenRouterAnthropic(model);
     if (!useGatewayLoop && !isAnthropicProvider(model)) {
       throw new Error(
         `subagent job: resolved model "${model}" is non-Anthropic but agent.use_gateway_loop is not enabled. ` +
@@ -350,6 +485,78 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       allowed_tools: toolDefs.map(t => t.name),
     });
 
+    // OV-10: provider-derived lease key. Anthropic-family models keep the
+    // legacy 'anthropic:messages' bucket (one shared ceiling per API, not
+    // one per code path); everything else gets its own recipe bucket.
+    const recipeId = recipeIdFromModel(model);
+    const gatewayLeaseKey = deps.rateLeaseKey
+      ?? (recipeId === 'anthropic' ? DEFAULT_RATE_KEY : `${recipeId}:chat`);
+
+    // ── #4216 oneshot dispatch ──────────────────────────────
+    // Runs ONLY on a fresh job (CDX-2: zero persisted messages — any prior
+    // rows mean a crash-replay that the path-specific replay logic below must
+    // own; the ledger-first recovery inside the runner covers post-write
+    // crashes because a successful attempt persists its transcript LAST).
+    if (data.mode === 'oneshot') {
+      const freshRows = await engine.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM subagent_messages WHERE job_id = $1`,
+        [ctx.id],
+      );
+      let dispatchOneshot = (freshRows[0]?.n ?? 0) === 0;
+      if (!dispatchOneshot) {
+        // Transcript persistence is two INSERTs; a crash between them leaves
+        // messages WITHOUT a terminal assistant row, and the loop replay
+        // below would re-call a nondeterministic model with the oneshot
+        // pages ALREADY WRITTEN (near-duplicate pages under the same hash
+        // suffix). Oneshot ledger rows exist only after full validation on
+        // the oneshot path, so their presence routes to the runner's
+        // idempotent ledger-first recovery instead of the loop.
+        const ledger = await engine.executeRaw<{ n: number }>(
+          `SELECT count(*)::int AS n FROM (
+             SELECT 1 FROM subagent_tool_executions
+              WHERE job_id = $1 AND tool_use_id LIKE $2 LIMIT 1) t`,
+          [ctx.id, `${ONESHOT_TOOL_USE_ID_PREFIX}%`],
+        );
+        dispatchOneshot = (ledger[0]?.n ?? 0) > 0;
+      }
+      if (dispatchOneshot) {
+        // Rebuild put_page with deferEmbeds so the embed network call leaves
+        // the model path (the standing embed machinery backfills).
+        const oneshotRegistry = deps.toolRegistry ?? buildBrainTools({
+          subagentId: ctx.id,
+          engine,
+          config,
+          brainId: data.brain_id,
+          allowedSlugPrefixes: data.allowed_slug_prefixes,
+          sourceId: data.source_id,
+          deferEmbeds: true,
+        });
+        // Honor allowed_tools EXACTLY like the loop registry — a submitter
+        // that scoped its job read-only must not gain write capability by
+        // setting mode: oneshot (put_page filtered out → no_put_page_tool
+        // fallback → the equally-filtered loop).
+        const oneshotTools = data.allowed_tools && data.allowed_tools.length > 0
+          ? filterAllowedTools(oneshotRegistry, data.allowed_tools)
+          : oneshotRegistry;
+        const outcome = await runSubagentOneshot({
+          engine,
+          ctx,
+          data,
+          model,
+          maxOutputTokens,
+          putPageTool: oneshotTools.find(t => t.name === 'brain_put_page'),
+          leaseKey: gatewayLeaseKey,
+          maxConcurrent,
+          leaseTtlMs,
+          _chat: deps._chat,
+        });
+        if (outcome.kind === 'done') return outcome.result;
+        modeState.fallbackReason = outcome.reason;
+        if (outcome.tokens) modeState.oneshotTokens = outcome.tokens;
+        logSubagentHeartbeat({ job_id: ctx.id, event: 'oneshot_fallback', turn_idx: 0, reason: outcome.reason, mode: 'oneshot' });
+      }
+    }
+
     // v0.38 S1.5 — gateway path. Route here when the feature flag is on.
     if (useGatewayLoop) {
       return await runSubagentViaGateway({
@@ -361,13 +568,23 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         toolDefs,
         maxTurns,
         maxOutputTokens,
+        leaseKey: gatewayLeaseKey,
+        maxConcurrent,
+        leaseTtlMs,
       });
     }
 
     // ── Load prior state (replay) ───────────────────────────
     const priorMessages = await loadPriorMessages(engine, ctx.id);
     const priorTools = await loadPriorTools(engine, ctx.id);
-    const priorToolByUseId = new Map(priorTools.map(t => [t.tool_use_id, t]));
+    // Keyed by (message_idx, tool_use_id) — raw provider tool_use_ids may
+    // repeat across turns (#4155), so tool_use_id alone could resolve a
+    // sibling turn's execution row. WITHIN a turn this legacy path relies on
+    // the Anthropic-direct invariant that ids are unique per message (the
+    // whole loop is Anthropic-pinned for exactly that stability — see
+    // src/core/ai/capabilities.ts); the gateway path carries D11 ordinals
+    // for providers without that guarantee.
+    const priorToolByUseId = new Map(priorTools.map(t => [`${t.message_idx}:${t.tool_use_id}`, t]));
 
     // Rebuild the Anthropic messages array from persisted rows.
     const anthroMessages: Anthropic.MessageParam[] = priorMessages.length > 0
@@ -431,14 +648,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         return {
           result: finalText,
           turns_count: assistantTurns,
-          stop_reason: 'end_turn',
+          stop_reason: replayTerminalStopReason(last.tokens_out, maxOutputTokens),
           tokens: tokenTotals,
         };
       }
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
-        for (const use of pendingToolUses) {
-          const prior = priorToolByUseId.get(use.id);
+        for (const [useOrdinal, use] of pendingToolUses.entries()) {
+          const prior = priorToolByUseId.get(`${last.message_idx}:${use.id}`);
           if (prior?.status === 'complete') {
             synthesizedResults.push({
               type: 'tool_result',
@@ -460,7 +677,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           const toolDef = toolDefs.find(t => t.name === use.name);
           if (!toolDef) {
             await persistToolExecFailed(
-              engine, ctx.id, last.message_idx, use.id, use.name, use.input,
+              engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input,
               `tool "${use.name}" is not in the registry for this subagent`,
             );
             synthesizedResults.push({
@@ -472,19 +689,19 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           if (prior?.status === 'pending' && !toolDef.idempotent) {
             throw new Error(`non-idempotent tool "${use.name}" pending on resume; cannot safely re-run`);
           }
-          await persistToolExecPending(engine, ctx.id, last.message_idx, use.id, use.name, use.input);
+          await persistToolExecPending(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input);
           try {
             const output = await toolDef.execute(use.input, {
               engine, jobId: ctx.id, remote: true, signal: ctx.signal,
             });
-            await persistToolExecComplete(engine, ctx.id, use.id, output);
+            await persistToolExecComplete(engine, ctx.id, last.message_idx, useOrdinal, use.id, output);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
               content: asStringIfNotObject(output),
             } as ContentBlock);
           } catch (e) {
             const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
-            await persistToolExecFailed(engine, ctx.id, last.message_idx, use.id, use.name, use.input, errText);
+            await persistToolExecFailed(engine, ctx.id, last.message_idx, useOrdinal, use.id, use.name, use.input, errText);
             synthesizedResults.push({
               type: 'tool_result', tool_use_id: use.id,
               content: errText, is_error: true,
@@ -555,9 +772,34 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       const t0 = Date.now();
       logSubagentHeartbeat({ job_id: ctx.id, event: 'llm_call_started', turn_idx: turnIdx });
 
-      // Renewal is short-lived; for single-call turns the initial TTL
-      // covers the whole request. A mid-call renewal loop would add
-      // complexity; for v0.15 we lean on the 120s TTL + abort-on-signal.
+      // Heartbeat the lease at ttl/3: pre-wave the initial TTL covered every
+      // request, but CDX-6 raised thinking-model turns to 32k output tokens
+      // and a single call can now outlive 120s — a pruned live lease gets
+      // back-filled past maxConcurrent.
+      const leaseLost = new AbortController();
+      let leaseLostMidCall = false;
+      let renewInFlight = false;
+      const leaseRenewTimer = setInterval(() => {
+        // Single-flight (R3-2): a stalled renewal during a pooler outage must
+        // not stack — N children x overlapping renewals would exhaust the
+        // pool that lock renewal and job recording also need.
+        if (renewInFlight) return;
+        renewInFlight = true;
+        void renewLeaseWithBackoff(engine, lease.leaseId!, leaseTtlMs)
+          .then((ok) => {
+            if (!ok) {
+              // Row pruned/stolen — the slot is already re-admitted. Abort
+              // the in-flight call (renewLeaseWithBackoff contract) instead
+              // of running above maxConcurrent; converted below to a
+              // lease-full requeue (no attempt burn).
+              leaseLostMidCall = true;
+              leaseLost.abort();
+            }
+          })
+          .catch(() => { /* next tick retries */ })
+          .finally(() => { renewInFlight = false; });
+      }, Math.max(5_000, Math.floor(leaseTtlMs / 3)));
+      (leaseRenewTimer as unknown as { unref?: () => void }).unref?.();
       try {
         // --- Patch B (borrow-ahead, hand-authored): rolling conversation prompt-cache ---
         // Direct path marks cache_control only on static system(485)+last-tool(498) ~5.2K;
@@ -641,11 +883,15 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             : {}),
         };
 
-        const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
+        const combinedSignal = mergeSignals(mergeSignals(ctx.signal, ctx.shutdownSignal), leaseLost.signal);
         assistantMsg = await client.create(params, { signal: combinedSignal });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
+        clearInterval(leaseRenewTimer);
         await releaseLease(engine, lease.leaseId!).catch(() => {});
+        if (leaseLostMidCall) {
+          throw new RateLeaseUnavailableError(rateLeaseKey, maxConcurrent, maxConcurrent);
+        }
         // Terminal classification: a 400 "prompt is too long" from Anthropic
         // is unrecoverable — retrying with the same prompt will always fail.
         // Convert to UnrecoverableError so the worker routes the job
@@ -660,6 +906,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
 
       // 2. Release lease as soon as the call returns. Tool execution runs
       //    outside the lease — tool calls use their own capacity.
+      clearInterval(leaseRenewTimer);
       await releaseLease(engine, lease.leaseId!).catch(() => {});
 
       const ms = Date.now() - t0;
@@ -726,7 +973,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
 
       // 5. Dispatch each tool_use. Two-phase persist (pending → complete/failed).
       const toolResults: ContentBlock[] = [];
-      for (const use of toolUses) {
+      for (const [useOrdinal, use] of toolUses.entries()) {
         if (ctx.signal.aborted || ctx.shutdownSignal.aborted) {
           throw new Error('subagent aborted during tool dispatch');
         }
@@ -737,7 +984,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           // Model called a tool we didn't expose. Mark execution failed
           // with a clear error and feed the error back in the next turn.
           await persistToolExecFailed(
-            engine, ctx.id, assistantIdx, use.id, toolName, use.input,
+            engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input,
             `tool "${toolName}" is not in the registry for this subagent`,
           );
           toolResults.push({
@@ -756,9 +1003,10 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           continue;
         }
 
-        // Replay: if we already have a row for this tool_use_id, trust it
-        // unless status='pending' and the tool is idempotent (re-run).
-        const prior = priorToolByUseId.get(use.id);
+        // Replay: if we already have a row for this turn's tool_use_id,
+        // trust it unless status='pending' and the tool is idempotent
+        // (re-run). Keyed by (message_idx, tool_use_id) — see #4155.
+        const prior = priorToolByUseId.get(`${assistantIdx}:${use.id}`);
         if (prior && prior.status === 'complete') {
           toolResults.push({
             type: 'tool_result',
@@ -782,7 +1030,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         }
 
         // Fresh or idempotent-replay dispatch.
-        await persistToolExecPending(engine, ctx.id, assistantIdx, use.id, toolName, use.input);
+        await persistToolExecPending(engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input);
         logSubagentHeartbeat({ job_id: ctx.id, event: 'tool_called', turn_idx: turnIdx, tool_name: toolName });
 
         const toolStart = Date.now();
@@ -793,7 +1041,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
             remote: true,
             signal: ctx.signal,
           });
-          await persistToolExecComplete(engine, ctx.id, use.id, output);
+          await persistToolExecComplete(engine, ctx.id, assistantIdx, useOrdinal, use.id, output);
           logSubagentHeartbeat({
             job_id: ctx.id,
             event: 'tool_result',
@@ -810,7 +1058,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           const errText = e instanceof Error
             ? (e.stack ?? e.message)
             : String(e);
-          await persistToolExecFailed(engine, ctx.id, assistantIdx, use.id, toolName, use.input, errText);
+          await persistToolExecFailed(engine, ctx.id, assistantIdx, useOrdinal, use.id, toolName, use.input, errText);
           logSubagentHeartbeat({
             job_id: ctx.id,
             event: 'tool_failed',
@@ -883,6 +1131,17 @@ interface GatewayRunArgs {
   maxTurns: number;
   /** #2778: per-turn output-token cap (resolved by resolveMaxOutputTokens). */
   maxOutputTokens: number;
+  /**
+   * #4194/CDX-7 — per-turn rate-lease parameters. Pre-fix the gateway path
+   * made provider calls with no lease at all (the legacy loop's acquisition
+   * lives inside its own turn loop), so inline_concurrency > 1 could exceed
+   * the provider ceiling. Key is provider-derived (OV-10): Anthropic models
+   * share the legacy 'anthropic:messages' bucket; other providers get their
+   * own '<recipeId>:chat' bucket instead of contending for Anthropic slots.
+   */
+  leaseKey: string;
+  maxConcurrent: number;
+  leaseTtlMs: number;
 }
 
 /**
@@ -900,7 +1159,7 @@ interface GatewayRunArgs {
  * reconciler sees both shapes uniformly.
  */
 async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResult> {
-  const { engine, ctx, data, model, systemPrompt, toolDefs, maxTurns, maxOutputTokens } = args;
+  const { engine, ctx, data, model, systemPrompt, toolDefs, maxTurns, maxOutputTokens, leaseKey, maxConcurrent, leaseTtlMs } = args;
 
   // Map ToolDef → ChatToolDef (gateway shape). The gateway's chat() bridges
   // this to provider-specific tool definitions via the Vercel AI SDK.
@@ -972,10 +1231,11 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   // end_turn. Non-Anthropic providers reject a trailing assistant "prefill",
   // so surface the persisted text and skip the loop entirely.
   if (terminalText !== null) {
+    const lastAssistant = [...priorMessages].reverse().find(m => m.role === 'assistant');
     return {
       result: terminalText,
       turns_count: priorChatMessages.filter(m => m.role === 'assistant').length,
-      stop_reason: 'end_turn',
+      stop_reason: replayTerminalStopReason(lastAssistant?.tokens_out, maxOutputTokens),
       tokens: priorTokens,
     };
   }
@@ -1016,8 +1276,16 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     } as any);
   };
 
+  // Set by the per-turn permit heartbeat when its lease row vanished
+  // mid-call (renewal returned false → in-flight request aborted). The
+  // wrapper below converts the resulting abort into a lease-full requeue so
+  // the job retries WITHOUT burning an attempt instead of dying on a
+  // generic AbortError.
+  let leaseLostDuringTurn = false;
+
   // Run the loop.
-  const result = await gatewayToolLoop({
+  const result = await runLoopConvertingLeaseLoss(
+    () => gatewayToolLoop({
     model,
     system: systemPrompt,
     initialMessages,
@@ -1027,6 +1295,48 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     maxTokens: maxOutputTokens,
     abortSignal: ctx.signal,
     cacheSystem,
+    // #4194/CDX-7: every provider round-trip holds a rate-lease slot (worker
+    // parity with the legacy loop's per-turn acquisition). Lease-full throws
+    // RateLeaseUnavailableError out of the loop → worker/inline-drain requeue
+    // WITHOUT burning an attempt.
+    acquireTurnPermit: async () => {
+      const lease = await acquireLease(engine, leaseKey, ctx.id, maxConcurrent, { ttlMs: leaseTtlMs });
+      if (!lease.acquired) {
+        throw new RateLeaseUnavailableError(leaseKey, lease.activeCount, lease.maxConcurrent);
+      }
+      // Thinking-model turns (32k output cap, CDX-6) can outlive the base
+      // TTL; heartbeat at ttl/3 so a still-live call's lease is never pruned
+      // and back-filled past maxConcurrent. unref: a heartbeat must never
+      // hold the process open. A FALSE renewal means the row is gone (pruned
+      // /stolen — the slot is already re-admitted): per the
+      // renewLeaseWithBackoff contract the call must ABORT, not keep running
+      // above the ceiling; the loop converts the abort to a lease-full
+      // requeue via leaseLostDuringTurn.
+      const leaseLost = new AbortController();
+      let renewInFlight = false;
+      const renewTimer = setInterval(() => {
+        // Single-flight (R3-2): never stack renewals behind a stalled pool.
+        if (renewInFlight) return;
+        renewInFlight = true;
+        void renewLeaseWithBackoff(engine, lease.leaseId!, leaseTtlMs)
+          .then((ok) => {
+            if (!ok) {
+              leaseLostDuringTurn = true;
+              leaseLost.abort();
+            }
+          })
+          .catch(() => { /* next tick retries */ })
+          .finally(() => { renewInFlight = false; });
+      }, Math.max(5_000, Math.floor(leaseTtlMs / 3)));
+      (renewTimer as unknown as { unref?: () => void }).unref?.();
+      return {
+        release: () => {
+          clearInterval(renewTimer);
+          return releaseLease(engine, lease.leaseId!).catch(() => { /* best-effort */ });
+        },
+        signal: leaseLost.signal,
+      };
+    },
     // ALWAYS pass replayState (even on fresh runs) so the gateway loop's
     // messageIdx counter starts at `nextMessageIdx` (1 on fresh, after the
     // seed user write above). Without this, the loop defaults to messageIdx=0
@@ -1073,6 +1383,20 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       // circuit silently breaks and the tool re-executes. Pinned by
       // test/e2e/subagent-crash-replay-multi-provider.test.ts.
       const candidateId = randomUUIDv7();
+      // #4155 — tool_use_id stores the RAW provider id, which is NOT unique
+      // per job: some providers (claude-cli) hand back short, repeating ids
+      // (e.g. "toolu_01" on every turn, since each `claude -p` (print mode)
+      // call is a fresh subprocess replayed from an id-stripped transcript).
+      // NOTE: spell it `-p`, not the long form — scripts/generate-flag-registry.ts
+      // harvests flag-shaped literals out of comments too, and the long form
+      // lands in the generated registry as a flag `jobs` does not accept.
+      // The former job-wide `uniq_subagent_tools_use_id UNIQUE (job_id,
+      // tool_use_id)` constraint encoded the false assumption that provider
+      // ids are job-unique; a reuse collided (it was never this INSERT's
+      // conflict target) and dead-lettered the job. Migration v131 dropped
+      // it — row identity is (job_id, message_idx, ordinal), and every
+      // reader resolves an execution by (message_idx, tool_use_id) or by
+      // gbrain_tool_use_id, never by tool_use_id alone.
       const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
         `INSERT INTO subagent_tool_executions
            (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
@@ -1119,21 +1443,29 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       });
     },
     onHeartbeat: heartbeat,
-  });
+    }),
+    () => leaseLostDuringTurn,
+    leaseKey,
+    maxConcurrent,
+  );
 
-  // Map gateway stop reason to SubagentStopReason. SubagentStopReason has
-  // {end_turn, max_turns, refusal, error}; aborted maps to error.
+  // Map gateway stop reason to SubagentStopReason. 'length' (output-cap hit)
+  // maps to 'max_tokens' — the #2778 honesty vocabulary the direct Anthropic
+  // path already uses — NOT 'end_turn' (#4088: truncation is not a clean
+  // finish). aborted maps to error.
   const stopReason: SubagentStopReason = result.stopReason === 'end'
     ? 'end_turn'
-    : result.stopReason === 'max_turns'
-      ? 'max_turns'
-      : result.stopReason === 'refusal'
-        ? 'refusal'
-        : result.stopReason === 'content_filter'
+    : result.stopReason === 'length'
+      ? 'max_tokens'
+      : result.stopReason === 'max_turns'
+        ? 'max_turns'
+        : result.stopReason === 'refusal'
           ? 'refusal'
-          : result.stopReason === 'aborted'
-            ? 'error'
-            : 'end_turn';
+          : result.stopReason === 'content_filter'
+            ? 'refusal'
+            : result.stopReason === 'aborted'
+              ? 'error'
+              : 'end_turn';
 
   return {
     result: result.finalText,
@@ -1199,15 +1531,29 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
     };
   });
 
-  // Settled executions, looked up by (assistant message_idx, provider
-  // tool_use_id) with an ordinal-position fallback for legacy rows.
+  // Settled executions, three lookup structures:
+  //   - execByOrdinal: rows keyed by their PERSISTED (message_idx, ordinal) —
+  //     the true D11 row identity. The block position callIdx equals the
+  //     ordinal stamped at first observation, so this survives both same-id
+  //     repeats within a turn and slot shift when an earlier call never got
+  //     a ledger row.
+  //   - execByKey: (message_idx, tool_use_id) — exact whenever the turn's raw
+  //     ids are unique (single-value: last-write-wins only for the same-id-
+  //     twice shape, which execByOrdinal already resolves first).
+  //   - legacyByMsg: ordinal=NULL rows (pre-stamping writes) in block order,
+  //     for the positional fallback.
+  const execByOrdinal = new Map<string, PersistedToolExec>();
   const execByKey = new Map<string, PersistedToolExec>();
-  const execByMsg = new Map<number, PersistedToolExec[]>();
+  const legacyByMsg = new Map<number, PersistedToolExec[]>();
   for (const t of priorTools) {
     execByKey.set(`${t.message_idx}:${t.tool_use_id}`, t);
-    const arr = execByMsg.get(t.message_idx) ?? [];
-    arr.push(t);
-    execByMsg.set(t.message_idx, arr);
+    if (t.ordinal != null) {
+      execByOrdinal.set(`${t.message_idx}:${t.ordinal}`, t);
+    } else {
+      const arr = legacyByMsg.get(t.message_idx) ?? [];
+      arr.push(t);
+      legacyByMsg.set(t.message_idx, arr);
+    }
   }
 
   let maxIdx = work.reduce((mx, w) => Math.max(mx, w.message_idx), -1);
@@ -1229,15 +1575,34 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
     const next = work[i + 1];
     if (next && next.role === 'user' && next.blocks.some(b => b.type === 'tool-result')) continue;
 
+    // Ids that repeat WITHIN this turn are ambiguous as a lookup key — the
+    // single-value execByKey map is last-write-wins for them, so the exact-id
+    // fallback below is disabled for those ids (ordinal identity only).
+    const idCounts = new Map<string, number>();
+    for (const c of toolCalls) idCounts.set(c.toolCallId, (idCounts.get(c.toolCallId) ?? 0) + 1);
+
     const results: ChatBlock[] = [];
     for (let callIdx = 0; callIdx < toolCalls.length; callIdx++) {
       const call = toolCalls[callIdx];
-      // Prefer an exact (message_idx, provider tool_use_id) match. The
-      // positional fallback is used only when the row at that ordinal is for
-      // the SAME tool, so a missing row can't mis-attribute a sibling's output.
-      const fallback = execByMsg.get(msg.message_idx)?.[callIdx];
-      const exec = execByKey.get(`${msg.message_idx}:${call.toolCallId}`)
-        ?? (fallback && fallback.tool_name === call.toolName ? fallback : undefined);
+      // Row resolution order:
+      //   1. The persisted-ordinal row at this block position when its raw id
+      //      matches the call — exact D11 identity (#4155: raw ids may repeat
+      //      within a turn, and an earlier call without a ledger row must not
+      //      shift a later row into its slot).
+      //   2. The exact (message_idx, tool_use_id) key — only when this turn
+      //      uses the id ONCE (a repeated id makes the key ambiguous and the
+      //      call must resolve by ordinal or not at all, else one row's
+      //      outcome would be served to every call sharing the id).
+      //   3. The legacy (ordinal=NULL) positional row, only when it is for
+      //      the SAME tool, so a missing row can't mis-attribute a sibling's
+      //      output.
+      const stamped = execByOrdinal.get(`${msg.message_idx}:${callIdx}`);
+      const idIsUniqueInTurn = (idCounts.get(call.toolCallId) ?? 0) <= 1;
+      const legacyPositional = legacyByMsg.get(msg.message_idx)?.[callIdx];
+      const exec = (stamped && stamped.tool_use_id === call.toolCallId)
+        ? stamped
+        : (idIsUniqueInTurn ? execByKey.get(`${msg.message_idx}:${call.toolCallId}`) : undefined)
+          ?? (legacyPositional && legacyPositional.tool_name === call.toolName ? legacyPositional : undefined);
       if (exec?.status === 'complete') {
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: exec.output ?? null });
         continue;
@@ -1248,21 +1613,21 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
       }
       const toolDef = toolDefs.find(t => t.name === call.toolName);
       if (!toolDef) {
-        await persistToolExecFailed(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input, `tool "${call.toolName}" is not in the registry for this subagent`);
+        await persistToolExecFailed(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input, `tool "${call.toolName}" is not in the registry for this subagent`);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: `tool "${call.toolName}" is not available`, isError: true });
         continue;
       }
       if (exec?.status === 'pending' && !toolDef.idempotent) {
         throw new Error(`non-idempotent tool "${call.toolName}" pending on resume; cannot safely re-run`);
       }
-      await persistToolExecPending(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input);
+      await persistToolExecPending(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input);
       try {
         const output = await toolDef.execute(call.input, { engine, jobId, remote: true, signal });
-        await persistToolExecComplete(engine, jobId, call.toolCallId, output);
+        await persistToolExecComplete(engine, jobId, msg.message_idx, callIdx, call.toolCallId, output);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output });
       } catch (e) {
         const errText = e instanceof Error ? (e.stack ?? e.message) : String(e);
-        await persistToolExecFailed(engine, jobId, msg.message_idx, call.toolCallId, call.toolName, call.input, errText);
+        await persistToolExecFailed(engine, jobId, msg.message_idx, callIdx, call.toolCallId, call.toolName, call.input, errText);
         results.push({ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: errText, isError: true });
       }
     }
@@ -1340,8 +1705,20 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
     if (!b || typeof b !== 'object') continue;
     const block = b as Record<string, unknown>;
     const t = block.type;
+    // #4201: per-part provider state (Gemini thoughtSignature) must survive
+    // crash-replay — this shim rebuilds blocks field-by-field, so an omitted
+    // field here is erased on resume even though the DB row kept it.
+    const meta = block.providerMetadata && typeof block.providerMetadata === 'object'
+      ? { providerMetadata: block.providerMetadata as Record<string, unknown> }
+      : {};
     if (t === 'text' && typeof block.text === 'string') {
-      out.push({ type: 'text', text: block.text });
+      out.push({ type: 'text', text: block.text, ...meta });
+    } else if (t === 'reasoning' && typeof block.text === 'string') {
+      // OpenAI Responses API reasoning-item id (providerMetadata.openai.itemId)
+      // — see the ChatBlock doc comment. Must survive crash-replay the same
+      // way tool-call providerMetadata does, or a resumed reasoning-model
+      // tool loop dead-letters on its next turn.
+      out.push({ type: 'reasoning', text: block.text, ...meta });
     } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       // v1 Anthropic shape
       out.push({
@@ -1357,6 +1734,7 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
         toolCallId: block.toolCallId,
         toolName: block.toolName,
         input: block.input ?? {},
+        ...meta,
       });
     } else if (t === 'tool_result' && typeof block.tool_use_id === 'string') {
       // v1 Anthropic shape — tool result block (no toolName in v1; synthesize)
@@ -1374,176 +1752,11 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
         toolName: typeof block.toolName === 'string' ? block.toolName : '__legacy__',
         output: block.output ?? null,
         isError: block.isError === true,
+        ...meta,
       });
     }
   }
   return out;
-}
-
-interface PriorToolV2Row {
-  stableKey: string;
-  status: 'pending' | 'complete' | 'failed';
-  output: unknown;
-  error: string | null;
-}
-
-/**
- * Load prior tool executions keyed by a stable key.
- *
- *   - v2 rows: gbrain_tool_use_id is the stable key (set at first observation
- *     by onToolCallStart).
- *   - v1 legacy rows: D5 shim synthesizes a stable key from
- *     (job_id, message_idx, ordinal-position-by-array-index, tool_name).
- *
- * Both forms resolve to the same Map<stableKey, outcome> the gateway loop
- * consults during replay.
- */
-async function loadPriorToolsV2(engine: BrainEngine, jobId: number): Promise<PriorToolV2Row[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, tool_use_id, tool_name, ordinal, gbrain_tool_use_id::text AS gbrain_tool_use_id,
-            status, output, error
-       FROM subagent_tool_executions
-      WHERE job_id = $1
-      ORDER BY message_idx, COALESCE(ordinal, 0), id`,
-    [jobId],
-  );
-  return rows.map(r => {
-    const gbrainId = r.gbrain_tool_use_id as string | null;
-    const stableKey = gbrainId
-      ? gbrainId
-      // D5 legacy shim: derive a stable key from (job, msg_idx, tool_name, tool_use_id).
-      // Pre-v81 rows don't have ordinal; the provider tool_use_id is stable
-      // within a single Anthropic turn so it's safe as a fallback hash input.
-      : `legacy:${jobId}:${r.message_idx}:${r.tool_use_id}:${r.tool_name}`;
-    return {
-      stableKey,
-      status: r.status as 'pending' | 'complete' | 'failed',
-      output: r.output,
-      error: (r.error as string | null) ?? null,
-    };
-  });
-}
-
-// ── Internal: persistence ───────────────────────────────────
-
-async function loadPriorMessages(engine: BrainEngine, jobId: number): Promise<PersistedMessage[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, role, content_blocks, tokens_in, tokens_out,
-            tokens_cache_read, tokens_cache_create, model
-       FROM subagent_messages
-      WHERE job_id = $1
-      ORDER BY message_idx ASC`,
-    [jobId],
-  );
-  return rows.map(r => ({
-    message_idx: r.message_idx as number,
-    role: r.role as 'user' | 'assistant',
-    content_blocks: (typeof r.content_blocks === 'string'
-      ? JSON.parse(r.content_blocks as string)
-      : r.content_blocks) as ContentBlock[],
-    tokens_in: (r.tokens_in as number) ?? null,
-    tokens_out: (r.tokens_out as number) ?? null,
-    tokens_cache_read: (r.tokens_cache_read as number) ?? null,
-    tokens_cache_create: (r.tokens_cache_create as number) ?? null,
-    model: (r.model as string) ?? null,
-  }));
-}
-
-async function loadPriorTools(engine: BrainEngine, jobId: number): Promise<PersistedToolExec[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT message_idx, tool_use_id, tool_name, input, status, output, error
-       FROM subagent_tool_executions
-      WHERE job_id = $1
-      ORDER BY message_idx, COALESCE(ordinal, 0), id`,
-    [jobId],
-  );
-  return rows.map(r => ({
-    message_idx: r.message_idx as number,
-    tool_use_id: r.tool_use_id as string,
-    tool_name: r.tool_name as string,
-    input: typeof r.input === 'string' ? JSON.parse(r.input) : r.input,
-    status: r.status as 'pending' | 'complete' | 'failed',
-    output: r.output == null
-      ? null
-      : (typeof r.output === 'string' ? JSON.parse(r.output) : r.output),
-    error: (r.error as string) ?? null,
-  }));
-}
-
-async function persistMessage(engine: BrainEngine, jobId: number, msg: PersistedMessage): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO subagent_messages (job_id, message_idx, role, content_blocks,
-        tokens_in, tokens_out, tokens_cache_read, tokens_cache_create, model)
-     VALUES ($1, $2, $3, $4::text::jsonb, $5, $6, $7, $8, $9)
-     ON CONFLICT (job_id, message_idx) DO NOTHING`,
-    [
-      jobId,
-      msg.message_idx,
-      msg.role,
-      JSON.stringify(msg.content_blocks),
-      msg.tokens_in,
-      msg.tokens_out,
-      msg.tokens_cache_read,
-      msg.tokens_cache_create,
-      msg.model,
-    ],
-  );
-}
-
-async function persistToolExecPending(
-  engine: BrainEngine,
-  jobId: number,
-  messageIdx: number,
-  toolUseId: string,
-  toolName: string,
-  input: unknown,
-): Promise<void> {
-  // Serialize to a JSON string, then bind through $5::text::jsonb. The value is
-  // ALWAYS a string here (pre-serialized input, or JSON.stringify) — binding a
-  // string to a bare $5::jsonb double-encodes it into a jsonb scalar string under
-  // postgres.js .unsafe() (#2339 class; PGLite hides it). The ::text cast makes
-  // the text→jsonb parse produce a real jsonb object.
-  const jsonStr = typeof input === 'string' ? input : JSON.stringify(input);
-  await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status)
-     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'pending')
-     ON CONFLICT (job_id, tool_use_id) DO NOTHING`,
-    [jobId, messageIdx, toolUseId, toolName, jsonStr],
-  );
-}
-
-async function persistToolExecComplete(
-  engine: BrainEngine,
-  jobId: number,
-  toolUseId: string,
-  output: unknown,
-): Promise<void> {
-  await engine.executeRaw(
-    `UPDATE subagent_tool_executions
-        SET status = 'complete', output = $3::text::jsonb, ended_at = now()
-      WHERE job_id = $1 AND tool_use_id = $2`,
-    [jobId, toolUseId, typeof output === 'string' ? output : JSON.stringify(output)],
-  );
-}
-
-async function persistToolExecFailed(
-  engine: BrainEngine,
-  jobId: number,
-  messageIdx: number,
-  toolUseId: string,
-  toolName: string,
-  input: unknown,
-  error: string,
-): Promise<void> {
-  // INSERT-or-UPDATE to failed — covers both "no pending row yet" (tool
-  // rejected upfront) and "pending row exists" (tool threw mid-execute).
-  await engine.executeRaw(
-    `INSERT INTO subagent_tool_executions (job_id, message_idx, tool_use_id, tool_name, input, status, error, ended_at)
-     VALUES ($1, $2, $3, $4, $5::text::jsonb, 'failed', $6, now())
-     ON CONFLICT (job_id, tool_use_id) DO UPDATE
-       SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
-    [jobId, messageIdx, toolUseId, toolName, typeof input === 'string' ? input : JSON.stringify(input), error],
-  );
 }
 
 // ── Internal: helpers ───────────────────────────────────────
@@ -1580,12 +1793,10 @@ function mergeSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
  * treats this as a renewable error — job goes back to waiting with
  * backoff, no terminal fail.
  */
-export class RateLeaseUnavailableError extends Error {
-  constructor(public key: string, public active: number, public max: number) {
-    super(`rate lease "${key}" full (${active}/${max})`);
-    this.name = 'RateLeaseUnavailableError';
-  }
-}
+// Moved to rate-leases.ts (its natural layer); re-exported here because
+// worker.ts, inline-drain.ts, job-isolation and tests import it from this
+// module historically.
+export { RateLeaseUnavailableError } from '../rate-leases.ts';
 
 /**
  * Detect Anthropic SDK errors that indicate the input prompt exceeded the
@@ -1599,16 +1810,53 @@ export class RateLeaseUnavailableError extends Error {
  * Case-insensitive on the phrase. Also matches `request_too_large` and
  * `invalid_request_error` types when accompanied by the same message.
  *
+ * Walks up to 3 levels of `.cause` (bounded, same depth as
+ * classifyGlobalLlmError in errors.ts): gateway.chat()'s catch boundary
+ * wraps every error via normalizeAIError(), which copies only the OUTER
+ * `.message` onto the new AIConfigError/AITransientError and stores the
+ * original raw error on `.cause` — the SDK's `.error.message` inner shape
+ * (the one Anthropic actually uses, per the existing "matches when message
+ * is on the inner .error.message field" unit test below) is otherwise lost
+ * post-normalization, silently defeating detection on the gateway-native
+ * path where callers only ever see the already-normalized error.
+ *
  * Exported for unit testing.
  */
 export function isPromptTooLongError(err: unknown): boolean {
-  if (!err) return false;
+  return findPromptTooLongMatch(err) !== null;
+}
+
+/**
+ * Same bounded `.cause` walk as isPromptTooLongError, but returns the
+ * matched phrase-bearing text (e.g. "prompt is too long: 1707509 tokens >
+ * 1000000 maximum") instead of a boolean — used at the terminal-classification
+ * call site so a normalizeAIError()-wrapped error's dead-letter message
+ * carries the actually useful provider detail instead of the generic outer
+ * wrapper text (e.g. "BadRequestError"). Returns null when no match (mirrors
+ * isPromptTooLongError returning false for the same input).
+ */
+export function extractPromptTooLongDetail(err: unknown): string | null {
+  return findPromptTooLongMatch(err);
+}
+
+function findPromptTooLongMatch(err: unknown): string | null {
+  let cur: unknown = err;
+  for (let depth = 0; depth < 3 && cur != null; depth++) {
+    const matched = matchesPromptTooLong(cur);
+    if (matched !== null) return matched;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+function matchesPromptTooLong(err: unknown): string | null {
+  if (!err) return null;
   // Walk both `.message` and `.error?.message` shapes.
   const msg = (err as { message?: unknown })?.message;
   const inner = (err as { error?: { message?: unknown } })?.error?.message;
   const candidates = [msg, inner].filter((s): s is string => typeof s === 'string');
   for (const c of candidates) {
-    if (/prompt is too long/i.test(c)) return true;
+    if (/prompt is too long/i.test(c)) return c;
   }
   // Anthropic SDK wraps with .status; 400 + 'invalid_request_error' /
   // 'request_too_large' types both indicate the same class. Only treat
@@ -1618,10 +1866,10 @@ export function isPromptTooLongError(err: unknown): boolean {
   const errType = (err as { error?: { type?: unknown } })?.error?.type;
   if (status === 400 && (errType === 'invalid_request_error' || errType === 'request_too_large')) {
     for (const c of candidates) {
-      if (/too long|exceed|maximum/i.test(c)) return true;
+      if (/too long|exceed|maximum/i.test(c)) return c;
     }
   }
-  return false;
+  return null;
 }
 
 // ── Testing surface ─────────────────────────────────────────

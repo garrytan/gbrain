@@ -18,13 +18,19 @@
 import { describe, test, expect, afterEach } from 'bun:test';
 import {
   __setChatTransportForTests,
+  __setEmbedTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
-import { extractFactsFromTurn } from '../src/core/facts/extract.ts';
+import {
+  extractFactsFromTurn,
+  extractFactsFromTurnWithOutcome,
+} from '../src/core/facts/extract.ts';
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  __setEmbedTransportForTests(null);
   resetGateway();
 });
 
@@ -141,5 +147,79 @@ describe('extractFactsFromTurn — B1 end-to-end smoke', () => {
 
     expect(facts).toHaveLength(3);
     expect(facts.map(f => f.notability)).toEqual(['high', 'medium', 'low']);
+  });
+
+  test('high-only admission embeds only high-tier candidates', async () => {
+    const embeddedTexts: string[] = [];
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 1280,
+      env: { ZEROENTROPY_API_KEY: 'test' },
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({
+        facts: [
+          { fact: 'H', kind: 'event', notability: 'high' },
+          { fact: 'M', kind: 'fact', notability: 'medium' },
+          { fact: 'L', kind: 'fact', notability: 'low' },
+          { fact: 'missing', kind: 'fact' },
+          { fact: 'unknown', kind: 'fact', notability: 'critical' },
+        ],
+      }),
+      blocks: [],
+      stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub',
+      providerId: 'test',
+    }));
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array.from({ length: 1280 }, () => 0.1)) };
+    }) as never);
+
+    const outcome = await extractFactsFromTurnWithOutcome({
+      turnText: 'content',
+      source: 'test',
+      notabilityAdmission: { allowed: ['high'], invalid: 'drop' },
+    });
+
+    expect(outcome).toEqual(expect.objectContaining({ ok: true }));
+    expect(embeddedTexts).toEqual(['H']);
+  });
+
+  test('without admission, high, medium, low, and absent tiers embed', async () => {
+    const embeddedTexts: string[] = [];
+    configureGateway({
+      embedding_model: 'zeroentropyai:zembed-1',
+      embedding_dimensions: 1280,
+      env: { ZEROENTROPY_API_KEY: 'test' },
+    });
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: JSON.stringify({
+        facts: [
+          { fact: 'H', kind: 'event', notability: 'high' },
+          { fact: 'M', kind: 'fact', notability: 'medium' },
+          { fact: 'L', kind: 'fact', notability: 'low' },
+          { fact: 'missing', kind: 'fact' },
+        ],
+      }),
+      blocks: [],
+      stopReason: 'end',
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'test:stub',
+      providerId: 'test',
+    }));
+    __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+      embeddedTexts.push(...values);
+      return { embeddings: values.map(() => Array.from({ length: 1280 }, () => 0.1)) };
+    }) as never);
+
+    const outcome = await extractFactsFromTurnWithOutcome({
+      turnText: 'content',
+      source: 'test',
+    });
+
+    expect(outcome).toEqual(expect.objectContaining({ ok: true }));
+    expect(embeddedTexts).toEqual(['H', 'M', 'L', 'missing']);
   });
 });

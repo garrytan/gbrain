@@ -10,6 +10,11 @@
  *   - `gbrain doctor` reports `mode: thin-client` with all checks green
  *   - `gbrain sync` is refused with the canonical thin-client error
  *   - re-running `gbrain init` refuses without --force
+ *   - daily-driver verbs: `search` / `query` / `recall --json` from the
+ *     thin-client HOME return host-seeded rows with the same top-level JSON
+ *     shape as a local-engine run (key sets pinned)
+ *   - invalid/revoked credentials and a stopped host both surface the
+ *     canonical RemoteMcpError rendering with a non-zero exit, fail-fast
  *
  * Tier B flows (`gbrain remote ping` / `remote doctor`) are stubbed for now
  * and will be exercised when the Tier B commands ship.
@@ -292,5 +297,173 @@ describeWhen('thin-client end-to-end (requires DATABASE_URL)', () => {
     } finally {
       rmSync(lowScopeHome, { recursive: true, force: true });
     }
+  });
+
+  // ─── G3: the daily-driver verbs over the live host serve ───
+  //
+  // ORDERING NOTE: bun runs tests in declaration order within a file. The
+  // 'stopped host' test below KILLS the shared serve process, so it must stay
+  // the LAST test in this file — add new live-serve tests ABOVE it.
+
+  const G3_MARKER = 'peridot-gyroscope-mangrove-e2e';
+  const G3_SLUG = 'thin-client-daily-driver-marker';
+
+  /**
+   * Seed the HOST brain through its own local-engine CLI: one page (found by
+   * the search/query keyword arm — the host was inited --no-embedding, so the
+   * vector arm degrades and keyword carries the match) and one
+   * world-visibility fact (the recall arm; remote callers see world-only).
+   * Idempotent: `put` overwrites the slug, `remember` dedups to
+   * status=duplicate on re-runs against a shared e2e database.
+   */
+  async function seedHostMarker(): Promise<void> {
+    const content = [
+      '---',
+      'title: Daily Driver Marker Page',
+      'type: note',
+      '---',
+      '',
+      `The secret phrase is ${G3_MARKER} and it lives only in the host brain.`,
+      '',
+    ].join('\n');
+    // Shared-DB hygiene: a prior suite in the full-glob run can leave
+    // `sync.repo_path` in the shared config table pointing at a deleted temp
+    // repo, which makes put_page's reverse-write refuse (repo_not_found).
+    // Clear it — suites that need it set it themselves.
+    await spawn(['config', 'unset', 'sync.repo_path'], hostHome);
+    const put = await spawn(['put', G3_SLUG, '--content', content], hostHome);
+    if (put.exitCode !== 0) throw new Error(`seed put failed: ${put.stderr || put.stdout}`);
+    const rem = await spawn(
+      ['remember', `The rendezvous codeword is ${G3_MARKER}`, '--provenance', 'thin-client e2e seed'],
+      hostHome,
+    );
+    if (rem.exitCode !== 0) throw new Error(`seed remember failed: ${rem.stderr || rem.stdout}`);
+  }
+
+  interface VerbRuns {
+    hostSearch: RunResult;
+    clientSearch: RunResult;
+    hostQuery: RunResult;
+    clientQuery: RunResult;
+    hostRecall: RunResult;
+    clientRecall: RunResult;
+  }
+
+  test('daily-driver verbs (search/query/recall) return host-brain rows with local-parity --json envelopes', async () => {
+    // The e2e database is shared with other suites that truncate pages/facts
+    // in their own setup. Bounded seed+read retry keeps this test honest
+    // under a concurrent wipe without loosening any assertion: every attempt
+    // seeds first, then requires ALL six runs to be complete before pinning.
+    let runs: VerbRuns | null = null;
+    for (let attempt = 0; attempt < 3 && !runs; attempt++) {
+      await seedHostMarker();
+      // Local-engine runs (host HOME) and routed runs (thin-client HOME) of
+      // the same three verbs. All reads — safe to run in parallel.
+      const [hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall] = await Promise.all([
+        spawn(['search', G3_MARKER, '--json'], hostHome),
+        spawn(['search', G3_MARKER, '--json'], clientHome),
+        spawn(['query', G3_MARKER, '--json'], hostHome),
+        spawn(['query', G3_MARKER, '--json'], clientHome),
+        spawn(['recall', '--grep', G3_MARKER, '--json'], hostHome),
+        spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome),
+      ]);
+      const candidate: VerbRuns = { hostSearch, clientSearch, hostQuery, clientQuery, hostRecall, clientRecall };
+      const complete =
+        Object.values(candidate).every(r => r.exitCode === 0) &&
+        [hostSearch, clientSearch, hostQuery, clientQuery].every(r => r.stdout.includes(G3_SLUG)) &&
+        [hostRecall, clientRecall].every(r => r.stdout.includes(G3_MARKER));
+      if (complete) runs = candidate;
+    }
+    if (!runs) {
+      throw new Error('marker rows never materialized across 3 seed+read attempts (concurrent shared-DB truncation?)');
+    }
+
+    // search + query --json: top-level shape is an ARRAY of result rows
+    // (formatResult's search/query case prints JSON.stringify(results)).
+    // The routed envelope must carry the SAME per-row key set as the
+    // local-engine run — cli.ts normalizes the local path via
+    // normalizeLocalResult (ENG-2: renderer parity by data shape) exactly so
+    // these two match.
+    const pinRowParity = (local: RunResult, routed: RunResult, verb: string) => {
+      const localRows = JSON.parse(local.stdout.trim()) as Array<Record<string, unknown>>;
+      const routedRows = JSON.parse(routed.stdout.trim()) as Array<Record<string, unknown>>;
+      expect(Array.isArray(localRows)).toBe(true);
+      expect(Array.isArray(routedRows)).toBe(true);
+      const localRow = localRows.find(r => r.slug === G3_SLUG);
+      const routedRow = routedRows.find(r => r.slug === G3_SLUG);
+      if (!localRow || !routedRow) throw new Error(`${verb}: marker row missing after complete-run gate`);
+      // Rows come from the HOST brain: the host-seeded marker string rides
+      // the routed row's chunk text.
+      expect(String(routedRow.chunk_text)).toContain(G3_MARKER);
+      // Daily-driver core keys, pinned by name — agents branch on these.
+      for (const key of ['slug', 'page_id', 'title', 'type', 'chunk_text', 'chunk_source', 'score', 'evidence', 'source_id', 'stale']) {
+        expect(Object.keys(routedRow)).toContain(key);
+      }
+      // Full key-set parity local ↔ routed.
+      expect(Object.keys(routedRow).sort()).toEqual(Object.keys(localRow).sort());
+    };
+    pinRowParity(runs.hostSearch, runs.clientSearch, 'search');
+    pinRowParity(runs.hostQuery, runs.clientQuery, 'query');
+
+    // recall --json: top-level shape is the {facts, total} envelope on BOTH
+    // paths (runRecallOnce renders factRowToJson locally and re-renders the
+    // remote op's rows through the same serializer on the routed path).
+    const localEnv = JSON.parse(runs.hostRecall.stdout.trim()) as { facts: Array<Record<string, unknown>>; total: number };
+    const routedEnv = JSON.parse(runs.clientRecall.stdout.trim()) as { facts: Array<Record<string, unknown>>; total: number };
+    expect(Object.keys(localEnv).sort()).toEqual(['facts', 'total']);
+    expect(Object.keys(routedEnv).sort()).toEqual(['facts', 'total']);
+    const localFact = localEnv.facts.find(f => String(f.fact).includes(G3_MARKER));
+    const routedFact = routedEnv.facts.find(f => String(f.fact).includes(G3_MARKER));
+    if (!localFact || !routedFact) throw new Error('recall: marker fact missing after complete-run gate');
+    for (const key of ['id', 'fact', 'kind', 'entity_slug', 'visibility', 'confidence', 'effective_confidence', 'created_at']) {
+      expect(Object.keys(routedFact)).toContain(key);
+    }
+    expect(Object.keys(routedFact).sort()).toEqual(Object.keys(localFact).sort());
+    // Same host row over the wire, not a lookalike.
+    expect(routedFact.id).toBe(localFact.id);
+  });
+
+  test('invalid/revoked client credentials fail with the canonical remote error and non-zero exit', async () => {
+    // GBRAIN_REMOTE_CLIENT_SECRET overrides the config-file secret
+    // (mcp-client resolveSecret), so this exercises the exact wire path a
+    // revoked/rotated credential takes: the host's /token endpoint answers
+    // 400 invalid_grant (RFC 6749 §5.2) for bad AND revoked clients alike.
+    const r = await spawn(['search', G3_MARKER, '--json'], clientHome, {
+      GBRAIN_REMOTE_CLIENT_SECRET: 'gbrain_cs_definitely_not_the_real_secret',
+    });
+    expect(r.exitCode).toBe(1);
+    // No fabricated results — stdout stays empty on the error path.
+    expect(r.stdout.trim()).toBe('');
+    // Canonical RemoteMcpError surface. mcp-client maps the non-401 /token
+    // HTTP failure to reason 'discovery' today ("OAuth discovery failed at
+    // <issuer>."); allow the 'auth' spelling too so a future 401
+    // reclassification on the host doesn't false-fail the guard.
+    expect(r.stderr).toMatch(/OAuth (discovery|auth) failed/);
+  });
+
+  test('stopped host: routed verbs fail fast with the canonical unreachable error, not a hang', async () => {
+    // Kill the live serve. This test is LAST in the file by design (see the
+    // ordering note above); afterAll's kill is a no-op afterwards.
+    if (serverProc) {
+      serverProc.kill();
+      await serverProc.exited;
+    }
+    const t0 = Date.now();
+    // Routed-op lane (runThinClientRouted): connection refused surfaces the
+    // RemoteMcpError network/unreachable rendering with the mcp_url named.
+    const search = await spawn(['search', G3_MARKER, '--json'], clientHome);
+    // CLI_ONLY lane (runRecall's thin-client branch): the same RemoteMcpError
+    // class propagates with its raw discovery-failure message.
+    const recall = await spawn(['recall', '--grep', G3_MARKER, '--json'], clientHome);
+    // Fail-fast bound: connection-refused returns in milliseconds; even the
+    // routed default timeout is 30s. Anything near the 120s test timeout is
+    // the hang this test exists to forbid.
+    expect(Date.now() - t0).toBeLessThan(60_000);
+    expect(search.exitCode).toBe(1);
+    expect(search.stdout.trim()).toBe('');
+    expect(search.stderr).toContain(`Cannot reach http://127.0.0.1:${serverPort}/mcp`);
+    expect(recall.exitCode).toBe(1);
+    expect(recall.stdout.trim()).toBe('');
+    expect(recall.stderr).toMatch(/OAuth discovery failed/);
   });
 });

@@ -21,6 +21,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_similarity_threshold: 'Cosine-similarity floor for cache hits (0..1)',
   cache_ttl_seconds: 'Per-row cache TTL',
   intentWeighting: 'Zero-LLM intent classifier weight adjustments',
+  keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
   expansion: 'LLM multi-query expansion (Haiku call per search)',
   searchLimit: 'Default `limit` for the operation layer',
@@ -31,6 +32,9 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   reranker_timeout_ms: 'HTTP timeout for the reranker call',
   floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
   title_boost: 'Title-phrase boost multiplier (query is a title token-run; 1.0 = off)',
+  // v0.46.15 retrieval wave knobs
+  evidence_cosine_floor: 'Cosine floor for evidence high_vector_match (label-only; 0..1)',
+  autocut_min_top: 'Weak-top floor — autocut no-ops when the top score is below this (0 disables)',
   // v0.36 cross-modal knobs (D3 registry)
   cross_modal_both_text_weight: "D6 'both'-mode RRF weight for text branch (0.6 default)",
   cross_modal_both_image_weight: "D6 'both'-mode RRF weight for image branch (0.4 default)",
@@ -47,6 +51,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.42.3.0 autocut
   autocut: 'Score-discontinuity result-sizing (cuts at the rerank-score cliff; no-op without a reranker)',
   autocut_jump: 'Autocut sensitivity: min normalized score gap that counts as a cliff (0..1, 0.20 default)',
+  autocut_min_keep: 'Autocut floor: never trim the returned set below this many results (integer >= 1, 1 default)',
   // v0.43 relational recall
   relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
   relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
@@ -73,6 +78,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     'cache_similarity_threshold',
     'cache_ttl_seconds',
     'intentWeighting',
+    'keywordOrFallback',
     'tokenBudget',
     'expansion',
     'searchLimit',
@@ -80,6 +86,12 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     // so config drift is legible. Default undefined renders as 'undefined'
     // in the bundle column, 'mode' source when unset by config/per-call.
     'floor_ratio',
+    // v0.46.15 retrieval wave — evidence floor (label-only) + autocut weak-top
+    // floor surfaced so config drift on the new knobs is legible.
+    'evidence_cosine_floor',
+    'autocut_min_top',
+    // #3621 — the documented autocut floor, surfaced alongside the weak-top floor.
+    'autocut_min_keep',
   ];
 
   const attributions = {} as SearchModesReport['resolved'];

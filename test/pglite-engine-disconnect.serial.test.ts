@@ -36,6 +36,25 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { __registerDrainerForTest } from '../src/core/background-work.ts';
+import { _resetWarnOnceForTests } from '../src/core/utils.ts';
+import { withEnv } from './helpers/with-env.ts';
+
+/**
+ * Capture console.warn lines for the duration of `fn` (warnOncePerProcess
+ * routes through console.warn). Restores in finally.
+ */
+async function captureWarns<T>(fn: () => Promise<T>): Promise<{ result: T; warns: string[] }> {
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => { warns.push(args.map(String).join(' ')); };
+  try {
+    const result = await fn();
+    return { result, warns };
+  } finally {
+    console.warn = orig;
+  }
+}
 
 function newTempDataDir(): string {
   return mkdtempSync(join(tmpdir(), 'gbrain-disconnect-test-'));
@@ -218,6 +237,247 @@ describe('PGLiteEngine.disconnect() — v0.41.8.0 lifecycle invariants', () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  test('#6 DRAIN (#4143): disconnect() drains in-flight background statements after early-null, before close', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' }); // in-memory
+    await engine.initSchema();
+
+    // Simulate the telemetry-flush shape: a fire-and-forget CHAIN of two
+    // sequential statements (statement 2 only issues after statement 1
+    // settles) — the exact primitive that deadlocked PGLite's close()
+    // pre-fix. The sink registers a drainer, like every production sink.
+    let secondStatementError: unknown = null;
+    const chain = engine
+      .executeRaw('SELECT 1')
+      .then(() => engine.executeRaw('SELECT 1'))
+      .catch((e) => { secondStatementError = e; });
+    const unregister = __registerDrainerForTest({
+      name: 'test-4143-inflight',
+      order: 99,
+      drain: async () => { await chain; return { unfinished: 0 }; },
+    });
+
+    try {
+      // Pre-fix this raced close() against the in-flight INSERT and hung
+      // forever (600s CI kill). Post-fix the drain settles the chain first.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const winner = await Promise.race([
+        engine.disconnect().then(() => 'disconnected' as const),
+        new Promise<'hung'>((r) => { timer = setTimeout(() => r('hung'), 10_000); }),
+      ]);
+      if (timer) clearTimeout(timer);
+      expect(winner).toBe('disconnected');
+      // The chain's SECOND statement raced the early-null: either it slipped
+      // in before the null (fine) or it failed fast with 'not connected'
+      // (fine, and intended) — what it must NEVER do is wedge disconnect.
+      if (secondStatementError !== null) {
+        expect(String(secondStatementError)).toContain('not connected');
+      }
+    } finally {
+      unregister();
+    }
+  }, 20_000);
+
+  test('#7 BOUNDED CLOSE (#4143): a close() that never settles cannot wedge disconnect, and the lock still releases', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      // env floor is 1000ms — shaving ~4s off the default 5s bound per run.
+      await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '1000' }, async () => {
+        const engine = new PGLiteEngine();
+        await engine.connect({ database_path: dataDir });
+        await engine.initSchema();
+
+        // Force the deadlock shape directly: close() never settles.
+        const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+        eng._db!.close = () => new Promise<void>(() => { /* never settles */ });
+
+        const started = Date.now();
+        await engine.disconnect(); // must resolve via the bounded race (~1s), not hang
+        const elapsed = Date.now() - started;
+        expect(elapsed).toBeLessThan(4_000); // 1s bound + generous slack
+
+        // Lock released despite the abandoned close: a fresh engine can
+        // connect to the SAME dataDir without lock contention.
+        const engine2 = new PGLiteEngine();
+        await engine2.connect({ database_path: dataDir });
+        const result = await engine2.executeRaw<{ ok: number }>('SELECT 1 AS ok');
+        expect(result[0].ok).toBe(1);
+        await engine2.disconnect();
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  // ───────────────────────────────────────────────────────────────
+  // #4284 — the in-loop close bound, made honest. These pin the arm-
+  // before-close rework, the env floor/ceiling, the warn text, and the
+  // abandoned-close rejection swallow. The wedged-loop case (where NO
+  // in-loop timer can fire) lives in the spawned-fixture suite:
+  // test/pglite-disconnect-watchdog.serial.test.ts.
+  // ───────────────────────────────────────────────────────────────
+
+  test('#8 TIMEOUT WARN (#4284): a timed-out close warns once, names both env knobs, and teardown proceeds', async () => {
+    const dataDir = newTempDataDir();
+    try {
+      await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '1000' }, async () => {
+        _resetWarnOnceForTests(); // 'pglite-close-timeout' is burned by test #7 in this process
+        const engine = new PGLiteEngine();
+        await engine.connect({ database_path: dataDir });
+        const eng = engine as unknown as {
+          _db: { close: () => Promise<void> } | null;
+          _lock: { lockDir: string; acquired: boolean } | null;
+        };
+        const { existsSync } = await import('fs');
+        const lockDir = eng._lock!.lockDir;
+        expect(existsSync(lockDir)).toBe(true);
+        eng._db!.close = () => new Promise<void>(() => { /* never settles */ });
+
+        const started = Date.now();
+        const { warns } = await captureWarns(() => engine.disconnect());
+        const elapsed = Date.now() - started;
+        expect(elapsed).toBeLessThan(2_500); // resolved via the 1000ms bound
+
+        const timeoutWarns = warns.filter((w) => w.includes('did not settle within 1000ms'));
+        expect(timeoutWarns.length).toBe(1);
+        // The warn is the operator runbook: it must name the override AND the
+        // out-of-band watchdog (an in-loop bound cannot catch a wedged close).
+        expect(timeoutWarns[0]).toContain('GBRAIN_PGLITE_CLOSE_TIMEOUT_MS');
+        expect(timeoutWarns[0]).toContain('GBRAIN_PGLITE_CLOSE_WATCHDOG_MS');
+
+        // Lock released despite the abandoned close.
+        expect(existsSync(lockDir)).toBe(false);
+      });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test('#9 ABANDONED-CLOSE REJECTION (#4284): a close that rejects after the timeout never becomes an unhandledRejection', async () => {
+    await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '1000' }, async () => {
+      _resetWarnOnceForTests();
+      const engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' }); // in-memory
+      const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+      // Rejects 200ms AFTER the 1000ms bound fires — the abandoned-promise path.
+      eng._db!.close = () =>
+        new Promise<void>((_resolve, reject) =>
+          setTimeout(() => reject(new Error('late synthetic close failure')), 1_200));
+
+      const unhandled: unknown[] = [];
+      const onUnhandled = (err: unknown) => { unhandled.push(err); };
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        await captureWarns(() => engine.disconnect()); // resolves ~1s via the bound
+        // Let the late rejection actually fire, then a settle tick.
+        await new Promise((r) => setTimeout(r, 600));
+        await new Promise((r) => setTimeout(r, 50));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+  }, 30_000);
+
+  test('#10 OVERFLOW CLAMP (#4284): a huge env value means a longer bound, never a ~1ms spurious fire — with a positive control', async () => {
+    // Phase 1: absurd env. Pre-clamp, setTimeout(9.9e13) overflow-fires at
+    // ~1ms and the bound would spuriously abandon a healthy 50ms close.
+    await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '99999999999999' }, async () => {
+      _resetWarnOnceForTests(); // burned by earlier tests — without this the assert is vacuous
+      const engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' });
+      const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+      const realClose = eng._db!.close.bind(eng._db!);
+      eng._db!.close = () => new Promise<void>((resolve) => setTimeout(() => resolve(realClose()), 50));
+
+      const { warns } = await captureWarns(() => engine.disconnect());
+      expect(warns.filter((w) => w.includes('did not settle')).length).toBe(0);
+    });
+
+    // Phase 2 (positive control): prove this rig CAN see the warn — same spy,
+    // same reset, a bound that genuinely fires.
+    await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '1000' }, async () => {
+      _resetWarnOnceForTests();
+      const engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' });
+      const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+      eng._db!.close = () => new Promise<void>(() => { /* never settles */ });
+
+      const { warns } = await captureWarns(() => engine.disconnect());
+      expect(warns.filter((w) => w.includes('did not settle within 1000ms')).length).toBe(1);
+    });
+  }, 30_000);
+
+  test('#12 WATCHDOG ENV MATRIX (#4284): off-variants stay off, garbage warns, grace 0 is honored', async () => {
+    const { backgroundWorkSinkCount } = await import('../src/core/background-work.ts');
+    // The engine-only import graph registers no sinks, so with close-timeout
+    // 1000 the lethal-knob floor is max(5000, sinks*2000 + 1000 + 2000).
+    const floor = Math.max(5000, backgroundWorkSinkCount() * 2000 + 1000 + 2000);
+    const DEADLINE = String(floor + 1000); // above the floor: no clamp warn expected
+
+    async function healthyDisconnect(env: Record<string, string | undefined>): Promise<string[]> {
+      return withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '1000', ...env }, async () => {
+        _resetWarnOnceForTests();
+        const engine = new PGLiteEngine();
+        await engine.connect({ engine: 'pglite' });
+        const { warns } = await captureWarns(() => engine.disconnect());
+        return warns;
+      });
+    }
+
+    // Deliberate OFF spellings: no arm, no complaint.
+    for (const off of ['0', '-5']) {
+      const warns = await healthyDisconnect({ GBRAIN_PGLITE_CLOSE_WATCHDOG_MS: off });
+      expect(warns.filter((w) => w.includes('watchdog')).length).toBe(0);
+    }
+
+    // Garbage ("30s" units typo) must NOT silently disarm: loud warn, still off.
+    {
+      const warns = await healthyDisconnect({ GBRAIN_PGLITE_CLOSE_WATCHDOG_MS: '30s' });
+      expect(warns.filter((w) => w.includes('is not a number')).length).toBe(1);
+      expect(warns.filter((w) => w.includes('watchdog armed')).length).toBe(0);
+    }
+
+    // Explicit grace 0 is honored: SIGKILL lands AT the deadline.
+    {
+      const warns = await healthyDisconnect({
+        GBRAIN_PGLITE_CLOSE_WATCHDOG_MS: DEADLINE,
+        GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS: '0',
+      });
+      const armed = warns.filter((w) => w.includes('watchdog armed'));
+      expect(armed.length).toBe(1);
+      expect(armed[0]).toContain(`SIGTERM at ${DEADLINE}ms, SIGKILL at ${DEADLINE}ms`);
+    }
+
+    // Garbage grace warns and falls back to the 30000 default.
+    {
+      const warns = await healthyDisconnect({
+        GBRAIN_PGLITE_CLOSE_WATCHDOG_MS: DEADLINE,
+        GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS: 'oops',
+      });
+      expect(warns.filter((w) => w.includes('Ignoring invalid GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS')).length).toBe(1);
+      const armed = warns.filter((w) => w.includes('watchdog armed'));
+      expect(armed.length).toBe(1);
+      expect(armed[0]).toContain(`SIGKILL at ${Number(DEADLINE) + 30_000}ms`);
+    }
+  }, 60_000);
+
+  test('#11 FLOOR BRANCH (#4284): env below the 1000ms floor is floored, not applied literally', async () => {
+    await withEnv({ GBRAIN_PGLITE_CLOSE_TIMEOUT_MS: '10' }, async () => {
+      _resetWarnOnceForTests(); // burned by earlier tests — without this the assert is vacuous
+      const engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' });
+      const eng = engine as unknown as { _db: { close: () => Promise<void> } | null };
+      const realClose = eng._db!.close.bind(eng._db!);
+      // Settles at ~300ms: under a literal 10ms bound the timer wins and warns;
+      // under the floored 1000ms bound the close wins and nothing warns.
+      eng._db!.close = () => new Promise<void>((resolve) => setTimeout(() => resolve(realClose()), 300));
+
+      const { warns } = await captureWarns(() => engine.disconnect());
+      expect(warns.filter((w) => w.includes('did not settle')).length).toBe(0);
+    });
+  }, 30_000);
 });
 
 // ─────────────────────────────────────────────────────────────────

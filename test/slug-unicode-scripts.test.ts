@@ -113,3 +113,35 @@ describe('#3417: regressions — existing behavior unchanged', () => {
     expect(() => validatePageSlug('notes/a\u0007b')).toThrow();
   });
 });
+
+// #3700 — Hebrew niqqud (vowel points) + cantillation marks are optional
+// diacritics: the same word appears pointed in one filename and bare in
+// another, and both MUST land on the same slug (the Hebrew analog of the
+// Latin café → cafe strip). The strip is scoped to U+0591–U+05C7 ONLY —
+// \p{M} stays in SLUG_WORD_CHARS so Devanagari matras, Arabic harakat-free
+// text, Thai vowels etc. keep working exactly as #3417 shipped them.
+describe('#3700: Hebrew niqqud + cantillation strip', () => {
+  test('pointed and bare spellings land on the same slug', () => {
+    // בְּרֵאשִׁית (pointed) vs בראשית (bare) — Genesis 1:1 word.
+    expect(slugifySegment('בְּרֵאשִׁית')).toBe(slugifySegment('בראשית'));
+    expect(slugifySegment('בְּרֵאשִׁית')).toBe('בראשית');
+  });
+
+  test('cantillation marks strip too', () => {
+    // Same word with an etnachta (U+0591) and munach (U+05A3) added.
+    expect(slugifySegment('בראש֑ית֣')).toBe('בראשית');
+  });
+
+  test('pointed path and bare path derive the same page identity', () => {
+    expect(slugifyPath('notes/שִׁעוּר תּוֹרָה.md')).toBe(slugifyPath('notes/שעור תורה.md'));
+  });
+
+  test('Devanagari matras (also \\p{M}) are untouched', () => {
+    // हिन्दी carries vowel signs + virama — all \p{M}, none Hebrew.
+    expect(slugifySegment('हिन्दी')).toBe('हिन्दी');
+  });
+
+  test('Thai vowels/tone marks are untouched', () => {
+    expect(slugifySegment('ภาษาไทย')).toBe('ภาษาไทย');
+  });
+});

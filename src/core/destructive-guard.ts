@@ -15,6 +15,11 @@
 
 import type { BrainEngine } from './engine.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
+import { rmSync, lstatSync, realpathSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { isPathContained } from './path-confine.ts';
+import { defaultCloneDir } from './sources-ops.ts';
+import { gbrainPath } from './config.ts';
 import { isUndefinedColumnError, isUndefinedTableError } from './utils.ts';
 
 // ── Types ───────────────────────────────────────────────────
@@ -416,60 +421,110 @@ export async function listArchivedSources(
   }));
 }
 
+/** Result of a purge sweep: what deleted, and what an FK deliberately held. */
+export interface PurgeExpiredResult {
+  /** Source ids permanently deleted this sweep. */
+  purged: string[];
+  /**
+   * Sources past TTL that could NOT be deleted because a RESTRICT FK still
+   * references them — today that is migration v64's oauth_clients.source_id
+   * ON DELETE RESTRICT, which intentionally refuses source deletion until
+   * every client is revoked-and-purged or re-scoped. Blocked is a policy
+   * outcome, not an error: the sweep reports it and moves on.
+   */
+  blocked: Array<{ id: string; reason: string }>;
+}
+
 /**
  * Permanently purge sources whose 72h TTL has expired. Cascades to pages
- * (and content_chunks via existing FKs). Returns the ids of purged sources.
+ * (and content_chunks via existing FKs).
  *
- * v0.26.5: moved from JSONB-driven iteration to a single set-based DELETE
- * with `archived = true AND archive_expires_at <= now()`. Server-side
- * filter; one round-trip; cascade-friendly.
- *
- * PR6 D5b: sources still referenced by ANY oauth_clients row (including
- * soft-deleted ones — the FK is physical, ON DELETE RESTRICT ignores
- * deleted_at) are SKIPPED via NOT EXISTS instead of aborting the whole
- * set-based DELETE with an FK violation. Skips surface as ONE stderr warn
- * naming the skipped ids; the return contract stays string[] (purged ids
- * only) for the cycle.ts + jobs.ts callers.
+ * v0.26.5 used a single set-based DELETE; gbrain#4115 showed one FK-blocked
+ * source (a revoked-but-retained oauth_client under v64's ON DELETE RESTRICT)
+ * aborted the whole statement, wedging the nightly purge forever. The sweep is
+ * now per-source: each DELETE re-checks the expiry predicate (no
+ * select-then-delete race with a concurrent restore), ONLY the FK-restriction
+ * error class (SQLSTATE 23503) is treated as blocked-and-reported, and every
+ * other error re-raises. (Supersedes #4238's set-based NOT-EXISTS variant at
+ * merge: the 23503 catch covers ANY current or future RESTRICT FK — including
+ * soft-deleted oauth_clients, since the FK is physical — not just the one
+ * table an EXISTS prefilter names, and the structured {purged, blocked}
+ * return is what every caller + test in this tree consumes.)
  */
 export async function purgeExpiredSources(
   engine: BrainEngine,
-): Promise<string[]> {
-  const expiredCond = `archived = true
+): Promise<PurgeExpiredResult> {
+  const candidates = await engine.executeRaw<{ id: string; config: unknown; local_path: string | null }>(
+    `SELECT id, config, local_path FROM sources
+     WHERE archived = true
        AND archive_expires_at IS NOT NULL
-       AND archive_expires_at <= now()`;
-  const referencedCond = `EXISTS (SELECT 1 FROM oauth_clients c WHERE c.source_id = sources.id)`;
-
-  // Query the skip set FIRST so the warn can name ids even though the DELETE
-  // never touches them. Pre-oauth brains (no oauth_clients table) — and
-  // pre-migration brains without the source_id column (no column ⇒ no FK) —
-  // purge unconditionally. The EXISTS is deliberately PHYSICAL (no deleted_at
-  // filter): the FK ignores soft-deletion.
-  let skipped: Array<{ id: string }> = [];
-  let hasOauthTable = true;
-  try {
-    skipped = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources WHERE ${expiredCond} AND ${referencedCond} ORDER BY id`,
-    );
-  } catch (e) {
-    if (!isUndefinedTableError(e) && !isUndefinedColumnError(e, 'source_id')) throw e;
-    hasOauthTable = false;
-  }
-
-  const rows = await engine.executeRaw<{ id: string }>(
-    hasOauthTable
-      ? `DELETE FROM sources WHERE ${expiredCond} AND NOT ${referencedCond} RETURNING id`
-      : `DELETE FROM sources WHERE ${expiredCond} RETURNING id`,
+       AND archive_expires_at <= now()
+     ORDER BY id`,
   );
-
-  if (skipped.length > 0) {
-    const ids = skipped.map((s) => s.id).join(', ');
-    console.error(
-      `[gbrain] purge skipped ${skipped.length} expired source(s) still referenced by OAuth clients: ${ids}. ` +
-      `Revoke the referencing client(s) (gbrain auth revoke-client "<client-id>") and re-run the purge.`,
-    );
+  const purged: string[] = [];
+  const blocked: PurgeExpiredResult['blocked'] = [];
+  const cloneRoot = gbrainPath('clones');
+  for (const candidate of candidates) {
+    const { id } = candidate;
+    try {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `DELETE FROM sources
+         WHERE id = $1
+           AND archived = true
+           AND archive_expires_at IS NOT NULL
+           AND archive_expires_at <= now()
+         RETURNING id`,
+        [id],
+      );
+      if (rows.length > 0) {
+        purged.push(id);
+        // github-kind mirrors are gbrain-owned only when created at the
+        // default clone location. Never recursively delete an altered or
+        // symlinked path outside the managed clone root.
+        try {
+          const cfg = (typeof candidate.config === 'string'
+            ? JSON.parse(candidate.config)
+            : (candidate.config ?? {})) as Record<string, unknown>;
+          if (cfg.kind === 'github' && cfg.gh_managed === true && candidate.local_path) {
+            // STRICT containment: isPathContained accepts child === parent, so
+            // a corrupt row whose local_path IS the clone root would rm -rf
+            // every mirror. Require a real subtree AND pin the gh_managed
+            // creation shape — addSource only sets the marker when the dir is
+            // exactly defaultCloneDir('<id>-github').
+            const strictSubtree =
+              isPathContained(candidate.local_path, cloneRoot) &&
+              realpathSync(candidate.local_path) !== realpathSync(cloneRoot);
+            const expectedShape =
+              resolvePath(candidate.local_path) === resolvePath(defaultCloneDir(`${id}-github`));
+            if (strictSubtree && expectedShape) {
+              const lst = lstatSync(candidate.local_path);
+              if (!lst.isSymbolicLink()) {
+                rmSync(candidate.local_path, { recursive: true, force: true });
+              }
+            }
+          }
+        } catch {
+          // Best-effort cleanup; source deletion already completed.
+        }
+      }
+      // 0 rows = restored/already gone between SELECT and DELETE; neither
+      // purged nor blocked.
+    } catch (err) {
+      // SQLSTATE 23503 foreign_key_violation — same detection idiom as
+      // oauth-provider.ts's delete path for this exact FK.
+      if ((err as { code?: string })?.code === '23503') {
+        blocked.push({
+          id,
+          reason:
+            'still referenced by a RESTRICT foreign key (revoked oauth_client not yet purged? the FK is physical, so soft-deleted clients also block) — ' +
+            'review with `gbrain auth clients`, revoke with `gbrain auth revoke-client "<client-id>"`, then retry',
+        });
+        continue;
+      }
+      throw err;
+    }
   }
-
-  return rows.map((r) => r.id);
+  return { purged, blocked };
 }
 
 // ── Display Helpers ─────────────────────────────────────────

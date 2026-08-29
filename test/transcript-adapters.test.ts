@@ -7,7 +7,7 @@
  * parseClaudeSessionFile must never change it.
  */
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -31,7 +31,12 @@ import {
 } from '../src/core/transcripts/types.ts';
 
 import { codexAdapter } from '../src/core/transcripts/codex.ts';
-import { isOpenclawCheckpointFile, openclawAdapter } from '../src/core/transcripts/openclaw.ts';
+import {
+  isOpenclawCheckpointFile,
+  mapOpenclawLine,
+  openclawAdapter,
+  type OpenclawLineResult,
+} from '../src/core/transcripts/openclaw.ts';
 import { hermesAdapter } from '../src/core/transcripts/hermes.ts';
 import { chatgptExportAdapter } from '../src/core/transcripts/chatgpt-export.ts';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
@@ -80,6 +85,10 @@ describe('parseTranscript regression pin [T12 — hook lane must not move]', () 
     expect(r.parsedLines).toBe(8);
     expect(r.skippedLines).toBe(1);
     expect(r.compactBoundaries).toBe(1);
+    // Cathedral 5: boundary POSITION in turns-index space (additive; the
+    // fixture's compact_boundary line follows all 5 turns). Always same
+    // length as compactBoundaries.
+    expect(r.boundaryTurnIndexes).toEqual([5]);
     expect(r.injectedContextBlocks).toEqual([]);
     expect(r.turns).toEqual([
       { role: 'user', text: "What do we know about widget-co's seed round?" },
@@ -248,11 +257,88 @@ describe('claudeCodeAdapter', () => {
   test('detect sniffs the first line shape', () => {
     expect(claudeCodeAdapter.detect(FIXTURE, readSample(FIXTURE))).toBe(true);
   });
+
+  // Regression: Claude Code leads its transcripts with non-turn control
+  // records (`queue-operation`, `last-prompt`, `mode`, `ai-title`). Measured
+  // 2026-08-16 over 400 live files: 273/115/10/2 led with those and ZERO led
+  // with a turn, so a line-1-only probe rejected 100% of real sessions.
+  test('detect accepts a transcript led by control records', () => {
+    const p = join(tdir(), 'led-by-control.jsonl');
+    writeFileSync(
+      p,
+      [
+        JSON.stringify({ type: 'queue-operation', operation: 'add', sessionId: 's1', timestamp: '2026-08-16T00:00:00Z', content: 'x' }),
+        JSON.stringify({ type: 'mode', mode: 'default', sessionId: 's1' }),
+        JSON.stringify({ type: 'user', sessionId: 's1', message: { role: 'user', content: 'hi' } }),
+      ].join('\n') + '\n',
+    );
+    expect(claudeCodeAdapter.detect(p, readSample(p))).toBe(true);
+  });
+
+  // A control-record head must not turn every .jsonl into a Claude transcript:
+  // hook-telemetry files under ~/.claude/projects have no sessionId and must
+  // still be rejected.
+  test('detect still rejects non-transcript jsonl', () => {
+    const p = join(tdir(), 'hook-telemetry.jsonl');
+    writeFileSync(
+      p,
+      JSON.stringify({ event: 'skill-injection', hookEvent: 'UserPromptSubmit', matchedSkills: [], contextChunks: 0 }) + '\n',
+    );
+    expect(claudeCodeAdapter.detect(p, readSample(p))).toBe(false);
+  });
 });
 
 // ── Codex adapter [structural turn selection, never preamble heuristics] ────
 
 describe('codexAdapter', () => {
+  // Regression: an oversized rollout used to throw and contribute NOTHING.
+  // It now degrades to a bounded head+tail read like the claude-code adapter.
+  // HEAD is load-bearing: `session_meta` — session_id, cwd, provenance — is the
+  // FIRST record of a rollout, so a tail-only read imports turns that cannot be
+  // attributed to a session.
+  test('oversized rollout degrades to head+tail instead of throwing, keeping session_meta', async () => {
+    const p = join(tdir(), 'huge-rollout.jsonl');
+    const meta = JSON.stringify({
+      type: 'session_meta',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { session_id: 'sess-head-1', cwd: '/w', cli_version: '1.2.3' },
+    });
+    const filler = JSON.stringify({
+      type: 'response_item',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      payload: { type: 'reasoning', content: 'x'.repeat(4000) },
+    });
+    const newest = JSON.stringify({
+      type: 'event_msg',
+      timestamp: '2026-01-01T00:09:00.000Z',
+      payload: { type: 'user_message', message: 'the newest turn' },
+    });
+    writeFileSync(p, [meta, ...Array(400).fill(filler), newest].join('\n') + '\n');
+
+    const { sessions, diag } = await drain(codexAdapter.parse(p, { maxBytes: 64 * 1024 }));
+    expect(sessions).toHaveLength(1);
+    // Identity came from the HEAD window...
+    expect(sessions[0].meta.sessionId).toBe('sess-head-1');
+    expect(sessions[0].meta.cwd).toBe('/w');
+    // ...and the newest turn from the TAIL window.
+    expect(sessions[0].messages.at(-1)?.text).toBe('the newest turn');
+    // Honest accounting: a partial read must say so, and must read less than
+    // the file. A `truncated: false` here would be the false-green this
+    // replaces.
+    expect(diag.truncated).toBe(true);
+    expect(diag.bytesRead).toBeLessThan(statSync(p).size);
+    // The head/tail seam leaves a partial line on each side; both must be
+    // counted, not silently swallowed. Untested, this is where a "clean"
+    // truncated read could quietly appear.
+    expect(diag.skippedLines).toBeGreaterThanOrEqual(2);
+  });
+
+  test('a rollout within budget is read whole and not marked truncated', async () => {
+    const { diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
+    expect(diag.truncated).toBe(false);
+    expect(diag.bytesRead).toBe(statSync(CODEX_FIXTURE).size);
+  });
+
   test('user turns from event_msg, assistant from output_text; injected preambles never leak', async () => {
     const { sessions, diag } = await drain(codexAdapter.parse(CODEX_FIXTURE));
     expect(sessions).toHaveLength(1);
@@ -303,6 +389,47 @@ describe('openclawAdapter', () => {
     expect(isOpenclawCheckpointFile(AGENT_FIXTURE)).toBe(false);
     expect(openclawAdapter.detect(CHECKPOINT_FIXTURE, readSample(CHECKPOINT_FIXTURE))).toBe(false);
     expect(openclawAdapter.detect(AGENT_FIXTURE, readSample(AGENT_FIXTURE))).toBe(true);
+  });
+
+  // Cathedral 5: the exported line mapper is the SAME mapping the adapter
+  // uses (single source of truth for the dated SPEC_TARGET); boundary lines
+  // classify as 'boundary' with positions derivable in message-index space.
+  test('mapOpenclawLine classifies session/boundary/message/skip; boundary sits after 2 fixture messages', () => {
+    const lines = readFileSync(AGENT_FIXTURE, 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => {
+        try {
+          return JSON.parse(l) as unknown;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((e) => e !== undefined);
+    const kinds = lines.map((e) => mapOpenclawLine(e).kind);
+    expect(kinds[0]).toBe('session');
+    expect(kinds.filter((k) => k === 'boundary')).toHaveLength(1);
+    expect(kinds.filter((k) => k === 'message')).toHaveLength(4);
+    // Boundary position in message-index space: count messages before it.
+    const boundaryAt = (() => {
+      let msgs = 0;
+      for (const e of lines) {
+        const m = mapOpenclawLine(e);
+        if (m.kind === 'boundary') return msgs;
+        if (m.kind === 'message') msgs++;
+      }
+      return -1;
+    })();
+    expect(boundaryAt).toBe(2);
+    // Mapper output matches the adapter's messages 1:1 (behavior identity).
+    const mapped = lines
+      .map((e) => mapOpenclawLine(e))
+      .filter((m): m is Extract<OpenclawLineResult, { kind: 'message' }> => m.kind === 'message')
+      .map((m) => m.message);
+    return drain(openclawAdapter.parse(AGENT_FIXTURE)).then(({ sessions }) => {
+      expect(mapped).toEqual(sessions[0].messages);
+    });
   });
 });
 

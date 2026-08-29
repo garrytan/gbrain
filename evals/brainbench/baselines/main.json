@@ -16,23 +16,23 @@
       "write-back"
     ]
   },
-  "justification": "ms-002-nondefault-active added (hand-authored): exercises the cross-source leak detector's non-default active_source arm — active_source=teambrain with a twin slug seeded into default+teambrain, a teambrain-only page, and a default-only leak canary. +3 know-to-ask gold turns and +2 push gold turns per harness, all passing on all three harnesses; every gated metric moved favorably or held, source_isolation_violations stays 0.",
+  "justification": "Identity-resolution wave (lowercase-alias + surname lexical arms) + claude-code production seam, re-banked after merging master's expanded fixture corpus (v0.46.12.3–v0.46.14.0 waves): kta 0.1452→0 on all three harnesses, push_recall 0.8125/0.6667/0.4583→0.9063/1.0/0.5521 on the 96-gold corpus.",
   "cells": {
     "claude-code/continuity": {
-      "avg_injected_tokens": 75.3333,
+      "avg_injected_tokens": 59.9167,
       "continuity_rate": 1,
       "source_isolation_violations": 0
     },
     "claude-code/know-to-ask": {
-      "avg_injected_tokens": 31.2416,
-      "false_fire_rate": 0.023,
-      "know_to_ask_failure_rate": 0.1452,
+      "avg_injected_tokens": 37.8389,
+      "false_fire_rate": 0,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "claude-code/push": {
-      "avg_injected_tokens": 39.028,
+      "avg_injected_tokens": 50.1963,
       "push_precision": 1,
-      "push_recall": 0.6667,
+      "push_recall": 1,
       "source_isolation_violations": 0
     },
     "claude-code/write-back": {
@@ -45,15 +45,15 @@
       "source_isolation_violations": 0
     },
     "codex/know-to-ask": {
-      "avg_injected_tokens": 41,
+      "avg_injected_tokens": 45.2215,
       "false_fire_rate": 0,
-      "know_to_ask_failure_rate": 0.1452,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "codex/push": {
-      "avg_injected_tokens": 48.7664,
+      "avg_injected_tokens": 54.6449,
       "push_precision": 1,
-      "push_recall": 0.4583,
+      "push_recall": 0.5521,
       "source_isolation_violations": 0
     },
     "codex/write-back": {
@@ -66,15 +66,15 @@
       "source_isolation_violations": 0
     },
     "openclaw/know-to-ask": {
-      "avg_injected_tokens": 34.0537,
+      "avg_injected_tokens": 38.2752,
       "false_fire_rate": 0,
-      "know_to_ask_failure_rate": 0.1452,
+      "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "openclaw/push": {
-      "avg_injected_tokens": 44.2056,
+      "avg_injected_tokens": 50.0841,
       "push_precision": 1,
-      "push_recall": 0.8125,
+      "push_recall": 0.9063,
       "source_isolation_violations": 0
     },
     "openclaw/write-back": {
@@ -89,11 +89,11 @@
     },
     "claude-code/know-to-ask": {
       "gold_total": 149,
-      "gold_failed": 11
+      "gold_failed": 0
     },
     "claude-code/push": {
       "gold_total": 96,
-      "gold_failed": 32
+      "gold_failed": 0
     },
     "claude-code/write-back": {
       "gold_total": 58,
@@ -105,11 +105,11 @@
     },
     "codex/know-to-ask": {
       "gold_total": 149,
-      "gold_failed": 9
+      "gold_failed": 0
     },
     "codex/push": {
       "gold_total": 96,
-      "gold_failed": 52
+      "gold_failed": 43
     },
     "codex/write-back": {
       "gold_total": 58,
@@ -121,11 +121,11 @@
     },
     "openclaw/know-to-ask": {
       "gold_total": 149,
-      "gold_failed": 9
+      "gold_failed": 0
     },
     "openclaw/push": {
       "gold_total": 96,
-      "gold_failed": 18
+      "gold_failed": 9
     },
     "openclaw/write-back": {
       "gold_total": 58,

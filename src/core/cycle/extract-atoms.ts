@@ -5,7 +5,8 @@
 //      via a single raw SQL query (NOT EXISTS subquery filters out
 //      pages already extracted by content hash — see "Idempotency" below).
 //   2. Dedup by content_hash; transcripts win on collision.
-//   3. Per work-item, ask Haiku for 1-3 atoms.
+//   3. Per work-item, ask the configured extract_atoms model (key-aware
+//      utility-tier default, see resolveExtractAtomsModel below) for 1-3 atoms.
 //   4. Write each atom via importFromContent(slug, markdown, {sourceId})
 //      with sourceId threaded so federated brains route correctly. The
 //      canonical import path (not engine.putPage) is what chunks and embeds
@@ -42,28 +43,52 @@
 // Budget: $0.30/source/run, key `cycle.extract_atoms.budget_usd`.
 // Exceeded budget halts with PhaseStatus='warn' + partial result.
 //
-// Source-scoped: opts.sourceId routes the per-source corpus dir lookup,
+// Source-scoped: opts.sourceId gates brain-global transcript discovery,
 // the discovery SQL (source_id = $1), the NOT EXISTS idempotency
 // subquery (atom.source_id = $1), AND every putPage write
 // ({sourceId} third arg). Pre-fix the putPage call was missing the
 // sourceId arg — atoms always wrote to 'default' regardless of source,
 // which made the NOT EXISTS guard ineffective on federated brains.
 
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import { stripReasoningBlocks } from '../llm-json.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker, isAvailable } from '../ai/gateway.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
+import { truncateUtf8 } from '../text-safe.ts';
 import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
+import { resolveTierDefault } from '../model-config.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
-const DEFAULT_EXTRACT_ATOMS_MODEL = 'anthropic:claude-haiku-4-5';
+// #4529 + #4540: per-item extractor caps, overridable via
+// cycle.extract_atoms.* config keys (max_input_chars — with the #4529
+// legacy alias max_source_chars — plus max_output_tokens / pacing_ms).
+// Exported so tests pin the defaults instead of re-hardcoding the literals.
+export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
+export const DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS = 4096;
+
+/**
+ * gbrain#4148: consecutive same-content failures of a content-deterministic
+ * class (malformed model output) before the page is tombstoned so the
+ * backlog floor can clear. A content edit resets the streak.
+ */
+export const MAX_DETERMINISTIC_FAILURES = 3;
+
+/**
+ * Transient provider/infra failure shapes — retryable, never counted.
+ * Numeric codes are word-bounded so a 3-digit run inside prose or a larger
+ * number ("chunk 1500", "$1.512") doesn't read as an HTTP 5xx/429.
+ */
+const TRANSIENT_EXTRACT_ERROR_RE =
+  /timeout|timed out|\b429\b|rate.?limit|\b5\d\d\b|ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|fetch failed|\bnetwork\b|socket|overloaded/i;
 
 // v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
 const ATOM_TYPES = [
@@ -245,6 +270,7 @@ export async function discoverExtractablePages(
   engine: BrainEngine,
   sourceId: string,
   affectedSlugs?: string[],
+  limit: number = PAGE_DISCOVERY_BUDGET,
 ): Promise<DiscoveredPage[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const sql = `
@@ -277,7 +303,7 @@ export async function discoverExtractablePages(
     sourceId,
     await resolveExtractableTypes(),
     MIN_PAGE_CHARS_FOR_EXTRACTION,
-    PAGE_DISCOVERY_BUDGET,
+    limit,
   ];
   if (hasFilter) params.push(affectedSlugs);
 
@@ -369,6 +395,19 @@ export async function countExtractAtomsBacklog(
   }
 }
 
+async function resolvePageDiscoveryLimit(engine: BrainEngine): Promise<number> {
+  try {
+    const configured = await engine.getConfig('cycle.extract_atoms.page_discovery_budget');
+    if (configured) {
+      const n = Number(configured);
+      // Ceiling: discovery selects full compiled_truth bodies per row, so an
+      // oversized budget materializes that many pages in one result set.
+      if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), 10_000);
+    }
+  } catch { /* keep default */ }
+  return PAGE_DISCOVERY_BUDGET;
+}
+
 /**
  * Batch source-hash idempotency check. Returns the set of contentHash16
  * values that already have an atom row for this source. One SQL
@@ -410,6 +449,40 @@ export async function atomsExistingForHashes(
 }
 
 /**
+ * The exact two-step model resolution `runPhaseExtractAtoms` uses:
+ * `models.dream.extract_atoms` DB config wins if set (same plain-`||`
+ * truthiness as always — a whitespace-only value IS "configured"), else the
+ * key-aware `resolveTierDefault('utility')`. Deliberately NOT
+ * `resolveModel()`'s fuller chain (which also honors `models.tier.utility`,
+ * `models.default`, and an env var) — extract_atoms has never read those, and
+ * unifying the two behaviors is a separate, larger change. Exported so
+ * `gbrain models` can report the actual routing instead of a generic chain
+ * that can diverge from it in partially-configured installs; `source` comes
+ * from the SAME call as `model` so the report's attribution can never
+ * disagree with the resolved value. Fail-soft: a throwing config read routes
+ * to the tier default (the same end state runPhaseExtractAtoms's config-read
+ * try/catch has always produced).
+ */
+export async function resolveExtractAtomsModelWithSource(
+  engine: BrainEngine,
+): Promise<{ model: string; source: 'config' | 'tier_default' }> {
+  let configuredModel: string | null = null;
+  try {
+    configuredModel = await engine.getConfig('models.dream.extract_atoms');
+  } catch {
+    // Fail-soft — fall through to the tier default.
+  }
+  return configuredModel
+    ? { model: configuredModel, source: 'config' }
+    : { model: resolveTierDefault('utility'), source: 'tier_default' };
+}
+
+/** String-returning wrapper for runtime callers (`runPhaseExtractAtoms`). */
+export async function resolveExtractAtomsModel(engine: BrainEngine): Promise<string> {
+  return (await resolveExtractAtomsModelWithSource(engine)).model;
+}
+
+/**
  * v0.41 minimal extract_atoms body, rebuilt for v0.41.2.1.
  *
  * Test-driven minimum: takes _transcripts AND _pages directly when set,
@@ -428,7 +501,13 @@ export async function runPhaseExtractAtoms(
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
   //     dream.* DB-plane merge from Phase 1 reaches this phase.
   let transcripts: Array<{ filePath: string; content: string; contentHash: string }> = opts._transcripts ?? [];
-  if (transcripts.length === 0 && opts.brainDir !== undefined && opts._transcripts === undefined) {
+  // Configured transcript corpus paths are brain-global, so only default discovers them.
+  if (
+    sourceId === 'default'
+    && transcripts.length === 0
+    && opts.brainDir !== undefined
+    && opts._transcripts === undefined
+  ) {
     try {
       const { discoverTranscripts } = await import('./transcript-discovery.ts');
       const { loadConfigWithEngine } = await import('../config.ts');
@@ -464,7 +543,12 @@ export async function runPhaseExtractAtoms(
   if (opts._pages !== undefined) {
     pages = opts._pages;
   } else {
-    pages = await discoverExtractablePages(engine, sourceId, opts.affectedSlugs);
+    pages = await discoverExtractablePages(
+      engine,
+      sourceId,
+      opts.affectedSlugs,
+      await resolvePageDiscoveryLimit(engine),
+    );
   }
 
   // 2. Apply transcript-side source-hash idempotency in ONE batch query
@@ -559,7 +643,7 @@ export async function runPhaseExtractAtoms(
     };
   }
 
-  // 4. Per work-item: extract atoms via Haiku
+  // 4. Per work-item: extract atoms via the configured extract_atoms model
   let totalAtomsExtracted = 0;
   let transcriptsProcessed = 0;
   let pagesProcessed = 0;
@@ -568,18 +652,58 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   let budgetExhausted = false;
-  let extractModel = DEFAULT_EXTRACT_ATOMS_MODEL;
+  // #3813: key-aware tier default, not a hardcoded Anthropic model — an
+  // OPENAI_API_KEY-only install must not route to an unservable provider.
+  // Pre-computed so a config-read failure inside the try below (caught, see
+  // "Keep safe defaults" comment) still leaves extractModel on this default,
+  // matching the pre-refactor fail-soft behavior exactly.
+  let extractModel = resolveTierDefault('utility');
   let budgetCap = DEFAULT_BUDGET_USD;
+  // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
+  // maxTokens: 4096). Operators on small-context or thinking models need to
+  // shrink/grow both without a code change; defaults are unchanged.
+  let maxInputChars = DEFAULT_EXTRACT_MAX_INPUT_CHARS;
+  let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
+  let pacingMs = 0;
   try {
-    const configuredModel = await engine.getConfig('models.dream.extract_atoms');
-    if (configuredModel) extractModel = configuredModel;
+    extractModel = await resolveExtractAtomsModel(engine);
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
       if (Number.isFinite(n) && n > 0) budgetCap = n;
     }
+    // #4529: legacy input-cap key (its own floor of 500 chars, as landed).
+    // Read FIRST so the newer #4540 max_input_chars key below wins when
+    // both are set — they name the same knob.
+    const configuredMaxSourceChars = await engine.getConfig('cycle.extract_atoms.max_source_chars');
+    if (configuredMaxSourceChars) {
+      const n = Number(configuredMaxSourceChars);
+      if (Number.isFinite(n) && n >= 500) maxInputChars = Math.floor(n);
+    }
+    const configuredMaxInput = await engine.getConfig('cycle.extract_atoms.max_input_chars');
+    if (configuredMaxInput) {
+      const n = Number(configuredMaxInput);
+      // Floor of 1000 chars: below that the extractor sees a fragment too
+      // small to yield atoms and every page burns budget for nothing.
+      if (Number.isFinite(n) && n >= 1_000) maxInputChars = Math.floor(n);
+    }
+    const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
+    if (configuredMaxOutput) {
+      const n = Number(configuredMaxOutput);
+      // Floor of 256 tokens mirrors dream.triage.max_tokens: a smaller cap
+      // truncates every response into the malformed-output failure path.
+      if (Number.isFinite(n) && n >= 256) maxOutputTokens = Math.floor(n);
+    }
+    // Optional per-item pacing sleep (ms) so a large backlog doesn't hammer
+    // a local/self-hosted provider back-to-back. 0 (default) = no pacing.
+    const configuredPacing = await engine.getConfig('cycle.extract_atoms.pacing_ms');
+    if (configuredPacing) {
+      const n = Number(configuredPacing);
+      if (Number.isFinite(n) && n > 0) pacingMs = Math.min(60_000, Math.floor(n));
+    }
   } catch {
-    // Keep safe defaults: Haiku + $0.30.
+    // Keep safe defaults on any config-read failure: key-aware utility-tier
+    // model, $0.30 cap, default input cap (max_input_chars).
   }
   // A cost cap is only meaningful for a model the tracker can price.
   // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
@@ -622,6 +746,59 @@ export async function runPhaseExtractAtoms(
     }
   }
 
+  // ── gbrain#4148 helpers ────────────────────────────────────────────
+  let malformedOutputs = 0;
+  const tombstonedForFailures: string[] = [];
+  // #3044 adoption: shared halt policy — auth/billing halt on the first hit,
+  // a rate_limit streak halts after 3 consecutive failures, a successful
+  // chat call resets the streak.
+  const llmHalt = createGlobalLlmHaltTracker();
+  let abortedGlobalError: GlobalLlmErrorClass | null = null;
+  // Rollup/doctor-health signal only. `failures` (below) stays inclusive of
+  // transient entries for CLI/receipt reporting; this counts everything
+  // EXCEPT the ones TRANSIENT_EXTRACT_ERROR_RE + the rate_limit abort class
+  // say are "retryable, never counted" — see that regex's doc comment.
+  let hardFailureCount = 0;
+
+  /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
+  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
+    try {
+      await engine.executeRaw(
+        `UPDATE pages
+            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
+        [item.contentHash.slice(0, 16), sourceId, item.slug],
+      );
+    } catch { /* fail-soft: page stays rediscoverable */ }
+  }
+
+  /**
+   * Durable per-item failure count, keyed to the CURRENT content hash so a
+   * content edit resets the streak. Returns the new consecutive count, or
+   * null for transcripts / on write failure (never blocks the phase).
+   */
+  async function recordPageFailureCount(item: { kind: string; slug?: string; contentHash: string }): Promise<number | null> {
+    if (item.kind !== 'page' || !item.slug || opts.dryRun) return null;
+    try {
+      const rows = await engine.executeRaw<{ cnt: number | string }>(
+        `UPDATE pages
+            SET frontmatter = frontmatter
+              || jsonb_build_object('atoms_fail_hash', $1::text)
+              || jsonb_build_object('atoms_fail_count',
+                   CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
+                        THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
+                        ELSE 1 END)
+          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
+          RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
+        [item.contentHash.slice(0, 16), sourceId, item.slug],
+      );
+      const cnt = rows[0]?.cnt;
+      return cnt == null ? null : Number(cnt);
+    } catch {
+      return null;
+    }
+  }
+
   await withBudgetTracker(budgetTracker, async () => {
   for (const item of work) {
     await maybeYield();
@@ -639,19 +816,48 @@ export async function runPhaseExtractAtoms(
         messages: [
           {
             role: 'user',
-            content: `Source: ${originLabel}\n\n---\n\n${item.content.slice(0, 50_000)}`,
+            // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare
+            // .slice() can split a surrogate pair at the boundary).
+            content: `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
           },
         ],
-        maxTokens: 4096,
+        maxTokens: maxOutputTokens,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
       // codex flagged. The 30s throttle inside maybeYield bounds the
       // actual refresh rate so this is cheap when calls are fast.
       await maybeYield();
+      llmHalt.reset();
+      // #4540: optional per-item pacing between successful LLM calls.
+      // setTimeout (not setImmediate) so the lock-refresh interval fires.
+      if (pacingMs > 0) await new Promise<void>((r) => setTimeout(r, pacingMs));
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
-      const atoms = parseAtomsResponse(result.text);
+      // gbrain#4148: typed outcome — malformed output is a FAILURE (counted
+      // toward the bounded tombstone below), never a zero-yield success.
+      const parseOutcome = parseAtomsOutcome(result.text);
+      if (!parseOutcome.ok) {
+        malformedOutputs++;
+        hardFailureCount++;
+        const failCount = await recordPageFailureCount(item);
+        failures.push({
+          source: originLabel,
+          error: `malformed model output: ${parseOutcome.reason}` +
+            (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
+        });
+        // Content-deterministic class: the same prose reliably produces
+        // unparseable output. After N consecutive failures on the SAME
+        // content hash, tombstone so the backlog floor clears; a content
+        // edit re-eligibilizes (stamp is hash-keyed). Transient provider
+        // errors never reach here — they throw and take the catch path.
+        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
+          await stampAtomsScanHash(item);
+          tombstonedForFailures.push(item.slug);
+        }
+        continue;
+      }
+      const atoms = parseOutcome.atoms;
       if (atoms.length === 0) {
         // #2144: tombstone zero-yield pages so they stop being rediscovered.
         // Idempotency is keyed on atom rows — a page that yields no atoms
@@ -661,16 +867,10 @@ export async function runPhaseExtractAtoms(
         // scanned; discovery skips the page only while its content is
         // unchanged (edits re-eligibilize, mirroring atom-row staleness).
         // Only stamped after a SUCCESSFUL chat call — LLM failures take the
-        // catch path below and stay retryable.
+        // catch path below and stay retryable, and malformed output is
+        // counted above (gbrain#4148), never stamped as success.
         if (!opts.dryRun && item.kind === 'page') {
-          try {
-            await engine.executeRaw(
-              `UPDATE pages
-                  SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
-                WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
-              [item.contentHash.slice(0, 16), sourceId, item.slug],
-            );
-          } catch { /* fail-soft: page stays rediscoverable */ }
+          await stampAtomsScanHash(item);
         }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
@@ -678,6 +878,23 @@ export async function runPhaseExtractAtoms(
       }
 
       if (!opts.dryRun) {
+        // gbrain#4148 completion receipt: atoms import with a PROVISIONAL
+        // source_hash (`pending:<hash>`) that discovery's NOT-EXISTS check
+        // can never match, then ONE flip UPDATE marks the whole item done
+        // after every atom persisted. Pre-fix, atom writes were per-atom
+        // while discovery treated any matching source_hash as complete — if
+        // atom 1 persisted and atom 2 failed, the next run skipped the item
+        // and atom 2 was permanently lost. On partial failure the pending
+        // rows stay invisible to doneness, the item re-runs, and the
+        // deterministic slugs upsert instead of duplicating.
+        const hash16 = item.contentHash.slice(0, 16);
+        const importedSlugs: string[] = [];
+        // #3961: provenance edges source-page → atom, accumulated during the
+        // atom loop and flushed AFTER the completion-receipt flip so a
+        // partially-failed item never banks edges for atoms whose receipt
+        // never flipped. Page-kind items only — transcripts are files, not
+        // pages, so there is no from-endpoint to link.
+        const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
           const slug = atomSlug(atom.title, srcRef);
@@ -700,7 +917,8 @@ export async function runPhaseExtractAtoms(
             {
               atom_type: atom.atom_type,
               ...originFrontmatter,
-              source_hash: item.contentHash.slice(0, 16),
+              // Provisional until the whole item's atoms persist (see above).
+              source_hash: `pending:${hash16}`,
               ...(atom.source_quote && { source_quote: atom.source_quote }),
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
@@ -717,7 +935,44 @@ export async function runPhaseExtractAtoms(
             sourceId,
             noEmbed: !isAvailable('embedding'),
           });
+          importedSlugs.push(slug);
+          if (item.kind === 'page') {
+            provenanceLinks.push({
+              from_slug: item.slug,
+              to_slug: slug,
+              link_source: 'atom-provenance',
+              from_source_id: sourceId,
+              to_source_id: sourceId,
+            });
+          }
           totalAtomsExtracted++;
+        }
+        // Completion receipt: flip provisional → real in one statement, then
+        // stamp the source page. A crash between flip and stamp degrades to
+        // the legacy atom-rows-mean-done semantics — safe, not lossy.
+        await engine.executeRaw(
+          `UPDATE pages
+              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+            WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
+          [hash16, sourceId, importedSlugs],
+        );
+        // #3961: bank the provenance edges so `gbrain backlinks <source-page>`
+        // and the graph surface atom lineage. ON CONFLICT-deduped by the
+        // batch write, so the deterministic-slug re-run path upserts instead
+        // of duplicating. Best-effort: a link failure must not fail the item
+        // (the receipt already flipped — atoms are safe) but it logs loudly.
+        if (provenanceLinks.length > 0) {
+          try {
+            await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
+          } catch (linkErr) {
+            console.error(
+              `[extract_atoms] atom-provenance link batch failed for ${item.kind === 'page' ? item.slug : 'item'}: ` +
+              `${(linkErr as Error).message}`,
+            );
+          }
+        }
+        if (item.kind === 'page') {
+          await stampAtomsScanHash(item);
         }
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
@@ -734,9 +989,35 @@ export async function runPhaseExtractAtoms(
         else pagesSkipped++;
         continue;
       }
+      // gbrain#4148: classify. Transient provider/infra errors (timeouts,
+      // rate limits, 5xx, network) stay retryable and are NOT counted toward
+      // any tombstone. Everything else gets a durable count for
+      // observability, but only the malformed-output class (handled above)
+      // ever tombstones — an unknown error class must never permanently
+      // suppress a page's atoms.
+      const message = err instanceof Error ? err.message : String(err);
+      // #3044: a whole-run LLM outage halts the phase. No
+      // recordPageFailureCount here — a global outage says nothing about the
+      // content, so it must not pre-charge the per-page tombstone counter.
+      const decision = llmHalt.observe(err);
+      if (decision !== 'continue') {
+        abortedGlobalError = haltedClassOf(decision);
+        if (abortedGlobalError !== 'rate_limit') hardFailureCount++;
+        failures.push({
+          source: originLabel,
+          error: `aborting phase: ${llmHalt.note()} (${message})`,
+        });
+        break;
+      }
+      const transient =
+        llmHalt.lastClass() === 'rate_limit' || TRANSIENT_EXTRACT_ERROR_RE.test(message);
+      if (!transient) {
+        await recordPageFailureCount(item);
+        hardFailureCount++;
+      }
       failures.push({
         source: originLabel,
-        error: err instanceof Error ? err.message : String(err),
+        error: transient ? `${message} [transient — retried next run]` : message,
       });
     }
   }
@@ -766,12 +1047,18 @@ export async function runPhaseExtractAtoms(
     }
   }
   if (!opts.dryRun) {
+    // gbrain#4148 / TRANSIENT_EXTRACT_ERROR_RE: transient provider/infra
+    // failures (rate limits, timeouts, 5xx, network) are "retryable, never
+    // counted" by design — count only hardFailureCount here, not
+    // failures.length (which stays inclusive, for CLI/receipt reporting),
+    // so a heavy run that only ever hit transient errors doesn't trip the
+    // doctor extract_health halt-rate warning.
     await upsertExtractRollup(engine, {
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      round_completed_delta: failures.length === 0 ? 1 : 0,
-      halt_delta: failures.length > 0 ? 1 : 0,
+      round_completed_delta: hardFailureCount === 0 ? 1 : 0,
+      halt_delta: hardFailureCount > 0 ? 1 : 0,
     });
   }
 
@@ -806,6 +1093,9 @@ export async function runPhaseExtractAtoms(
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
       failures,
+      ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
+      malformed_outputs: malformedOutputs,
+      tombstoned_for_failures: tombstonedForFailures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
       model: extractModel,
@@ -817,11 +1107,36 @@ export async function runPhaseExtractAtoms(
 }
 
 /**
- * Parse the Haiku JSON response into ExtractedAtom[]. Tolerant of
- * common LLM mistakes: extra prose around the JSON, missing fields,
- * invalid atom_type values. Rejects (returns empty) on hard parse fail.
+ * gbrain#4148 — typed parse outcome. Malformed model output and a legitimate
+ * zero-yield extraction both used to collapse into `[]`, so malformed output
+ * was tombstoned as success (the page never retried, its atoms silently
+ * lost). `ok: false` means the response was not parseable as an atoms array
+ * AT ALL — a content-deterministic failure class the caller counts toward a
+ * bounded tombstone; `ok: true, atoms: []` means the model genuinely
+ * extracted nothing.
  */
-export function parseAtomsResponse(raw: string): ExtractedAtom[] {
+export type AtomsParseOutcome =
+  | { ok: true; atoms: ExtractedAtom[] }
+  | { ok: false; reason: string };
+
+export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
+  const direct = parseAtomsOutcomeInner(raw);
+  if (direct.ok) return direct;
+  // Same reasoning-block hazard as the facts extractor: `indexOf('[')` below
+  // finds a bracket inside <think> when the model drafts its array while
+  // reasoning, so the parse fails and the page is halted. Ladder, not a
+  // pre-filter: raw first, stripped only on failure — and the ORIGINAL
+  // outcome is returned when the retry also fails, so error reasons are
+  // unchanged for non-reasoning models.
+  const stripped = stripReasoningBlocks(raw);
+  if (stripped && stripped !== raw.trim()) {
+    const retry = parseAtomsOutcomeInner(stripped);
+    if (retry.ok) return retry;
+  }
+  return direct;
+}
+
+function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -829,7 +1144,7 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
 
   // Find the first JSON array bracket.
   const arrayStart = cleaned.indexOf('[');
-  if (arrayStart === -1) return [];
+  if (arrayStart === -1) return { ok: false, reason: 'no JSON array in response' };
   cleaned = cleaned.slice(arrayStart);
 
   let parsed: unknown;
@@ -838,15 +1153,29 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
   } catch {
     // Try trimming back from the end to recover from trailing prose.
     const arrayEnd = cleaned.lastIndexOf(']');
-    if (arrayEnd === -1) return [];
+    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
     try {
       parsed = JSON.parse(cleaned.slice(0, arrayEnd + 1));
     } catch {
-      return [];
+      return { ok: false, reason: 'unparseable JSON array' };
     }
   }
 
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
+  return { ok: true, atoms: atomsFromParsedArray(parsed) };
+}
+
+/**
+ * Back-compat wrapper: parse the response into ExtractedAtom[], returning []
+ * for BOTH malformed output and a legitimate zero-yield (legacy callers/tests
+ * that don't need the typed distinction — new code uses parseAtomsOutcome).
+ */
+export function parseAtomsResponse(raw: string): ExtractedAtom[] {
+  const outcome = parseAtomsOutcome(raw);
+  return outcome.ok ? outcome.atoms : [];
+}
+
+function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
 
   const atoms: ExtractedAtom[] = [];
   for (const item of parsed) {

@@ -15,6 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runEvalConversationParser } from '../src/commands/eval-conversation-parser.ts';
+import { scoreFixture } from '../src/core/conversation-parser/eval.ts';
 
 function tmpFixture(content: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'eval-cli-'));
@@ -159,6 +160,57 @@ describe('runEvalConversationParser — --json envelope', () => {
     }
     const json = JSON.parse(captured.join('').trim());
     expect(json.failed_fixture_ids).toContain('f1');
+  });
+});
+
+describe('scoreFixture — unrecognized_headings on a positive fixture (TODOS #4136 follow-up)', () => {
+  // Body matches markdown-heading-turn on '## User' / '## Assistant', but the
+  // '## Trickster Voice' heading is outside the pattern's closed speaker set:
+  // the parser folds it (heading + its words) into User's turn and reports it
+  // in ParseResult.unrecognized_headings. Recall + participants_recall are
+  // both perfect (2/2 messages, both speakers present) — so recall-based
+  // scoring alone would pass a fixture whose speaker attribution is wrong.
+  const FOLDED_BODY =
+    '## User\n\nWhat is the deploy command?\n\n## Trickster Voice\n\nI claim these words.\n\n## Assistant\n\nRun the deploy script.';
+  const foldedFixture = {
+    fixture_id: 'heading-fold',
+    pattern: 'markdown-heading-turn',
+    frontmatter: { date: '2026-08-01' },
+    body: FOLDED_BODY,
+    expected_messages: 2,
+    expected_participants: ['User', 'Assistant'],
+  };
+
+  test('positive fixture whose parse reports unrecognized_headings → fail', () => {
+    const score = scoreFixture(foldedFixture, { noLlm: true });
+    expect(score.passed).toBe(false);
+    expect(score.reasons.some((r) => r.includes('unrecognized_headings'))).toBe(
+      true,
+    );
+    // The folded label is named so CI triage sees WHICH heading was lost.
+    expect(score.reasons.join('\n')).toContain('Trickster Voice');
+  });
+
+  test('CLI exits 1 on a folded-heading positive fixture', async () => {
+    const path = tmpFixture(`${JSON.stringify(foldedFixture)}\n`);
+    const code = await runEvalConversationParser([path, '--no-llm']);
+    expect(code).toBe(1);
+  });
+
+  test('clean markdown-heading-turn positive fixture still passes', () => {
+    const score = scoreFixture(
+      {
+        fixture_id: 'heading-clean',
+        pattern: 'markdown-heading-turn',
+        frontmatter: { date: '2026-08-01' },
+        body: '## User\n\nWhat is the deploy command?\n\n## Assistant\n\nRun the deploy script.',
+        expected_messages: 2,
+        expected_participants: ['User', 'Assistant'],
+      },
+      { noLlm: true },
+    );
+    expect(score.passed).toBe(true);
+    expect(score.reasons).toEqual([]);
   });
 });
 

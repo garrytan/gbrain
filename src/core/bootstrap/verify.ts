@@ -48,6 +48,8 @@ import { BOOTSTRAP_TEMPLATES, loadQuestionBank } from './assets.ts';
 import { readManifest, writeManifest } from './format.ts';
 import { status as interviewStatus } from './interview.ts';
 import { gitOriginUrl, hooksInstalled } from './status.ts';
+import { resolveSourceId } from '../source-resolver.ts';
+import { auditWritebackContract } from './contract.ts';
 import {
   ensureIpcSecret,
   resolveSocketPath,
@@ -270,6 +272,21 @@ function checkByteFloors(ws: string): VerifyCheck {
   }
 }
 
+/** A healthy retrieval surface without a same-turn write-back contract is a
+ * one-way memory: useful now, stale later. Fresh bootstrap renders this gate;
+ * the check catches pre-bootstrap/custom workspaces and points at the
+ * additive repair command rather than overwriting their AGENTS.md. */
+export function checkWritebackContract(ws: string): VerifyCheck {
+  const audit = auditWritebackContract(ws);
+  return audit.ok
+    ? { id: 'writeback_contract', ok: true, detail: audit.detail }
+    : {
+        id: 'writeback_contract',
+        ok: false,
+        detail: `${audit.detail}. Fix: run \`gbrain bootstrap contract --repair\` from the workspace (or pass --workspace explicitly).`,
+      };
+}
+
 /** Tracked files via git; falls back to the rendered file set + state/ when
  * the workspace is not (yet) a git repo. */
 function trackedWorkspaceFiles(ws: string): { files: string[]; via: 'git' | 'fallback' } {
@@ -459,6 +476,99 @@ async function ensureDefaultVisibilityPosture(engine: BrainEngine): Promise<Veri
   }
 }
 
+/**
+ * #4287 — ACTIVE embedding-plane probe. A verify that passes its roundtrip
+ * keyless-style while the configured embedder and the schema column disagree
+ * certifies a brain on which every keyed write fails ("expected N dimensions,
+ * not M"). Config numbers can lie about what the runtime emits (the observed
+ * split emitted the compiled-in default, a width no config plane named), so
+ * in keyed mode this embeds ONE short probe string through the same
+ * document-side path put_page uses and compares the RETURNED width to the
+ * actual `content_chunks.embedding` column width. Keyless installs pass (no
+ * active plane exists — writes store no vectors by design); a transient probe
+ * failure WARNs (the roundtrip owns hard put failures); a confirmed width
+ * mismatch is a named FAIL with the recovery command.
+ */
+export async function checkEmbeddingPlane(
+  engine: BrainEngine,
+  caps: CapabilityReport,
+): Promise<VerifyCheck> {
+  const id = 'embedding_plane';
+  // S2: resolve the registry-ACTIVE write column FIRST — comparing the
+  // embedder to the literal legacy `embedding` column false-FAILs a healthy
+  // brain whose registry routes writes elsewhere (e.g. a 1024d Voyage
+  // column). An unresolvable registry row is itself a genuine FAIL: every
+  // chunk write throws the resolver error until the config row is fixed.
+  let activeColName: string;
+  try {
+    const { resolveActiveEmbeddingColumnFromEngine } = await import('../search/embedding-column.ts');
+    activeColName = (await resolveActiveEmbeddingColumnFromEngine(engine)).name;
+  } catch (e) {
+    return {
+      id,
+      ok: false,
+      detail:
+        `the configured embedding column cannot be resolved (${(e as Error).message}) — every chunk ` +
+        `write fails until the registry row is fixed. Inspect \`gbrain config get search_embedding_column\` ` +
+        `and \`gbrain config get embedding_columns\`.`,
+    };
+  }
+  const colLabel = `content_chunks.${activeColName}`;
+  let colDims: number | null = null;
+  let colExists = false;
+  try {
+    const { readContentChunksColumnDim } = await import('../embedding-dim-check.ts');
+    const col = await readContentChunksColumnDim(engine, activeColName);
+    colDims = col.dims;
+    colExists = col.exists;
+  } catch (e) {
+    return { id, ok: true, warn: true, detail: `embedding column width probe failed (${colLabel}): ${(e as Error).message}` };
+  }
+  if (!caps.embeddings.available) {
+    return {
+      id,
+      ok: true,
+      detail: `keyless — no embedding provider configured; writes store no vectors (active column ${colLabel}: ${colExists ? `${colDims ?? '?'}d` : 'absent'})`,
+    };
+  }
+  if (!colExists) {
+    return {
+      id,
+      ok: false,
+      detail: `embeddings are configured but the active ${colLabel} column is ABSENT — every embedding write fails. Run \`gbrain migrate embeddings --status\` to diagnose, then \`gbrain migrate embeddings --to <provider:model>\` to (re)build it.`,
+    };
+  }
+  try {
+    // Same document-side embed path put_page uses (import-file.ts embedBatch),
+    // lazy so keyless verifies never load the gateway.
+    const { embedBatch, getEmbeddingModelName } = await import('../embedding.ts');
+    const vecs = await embedBatch(['gbrain bootstrap verify embedding-plane probe']);
+    const got = vecs[0]?.length ?? 0;
+    let model = 'unknown';
+    try { model = getEmbeddingModelName(); } catch { /* label only */ }
+    if (colDims !== null && got !== colDims) {
+      return {
+        id,
+        ok: false,
+        detail:
+          `EMBEDDING PLANE SPLIT: the runtime embedder (${model}) returns ${got}d vectors but ` +
+          `${colLabel} is ${colDims}d — every embedding write fails ("expected ${colDims} ` +
+          `dimensions, not ${got}") and nothing is stored. Fix: gbrain migrate embeddings --to <provider:model> ` +
+          `--dim ${got} (or correct embedding_model/embedding_dimensions to match the column).`,
+      };
+    }
+    return {
+      id,
+      ok: true,
+      detail: `active plane verified end-to-end: ${model} emits ${got}d = ${colLabel} ${colDims ?? got}d`,
+    };
+  } catch (e) {
+    // A dead/misconfigured provider surfaces in the roundtrip put; this check
+    // only certifies plane AGREEMENT, so degrade to a warning here.
+    return { id, ok: true, warn: true, detail: `live embed probe failed (${(e as Error).message}) — cannot verify the active embedding plane end-to-end` };
+  }
+}
+
 /** Effective MCP-surface posture: bootstrap registrations pin `--surface
  * full`, but a REGISTRATION THAT PREDATES that pin resolves the config key —
  * `mcp_surface: 'verbs'` would silently narrow the bootstrap contract
@@ -498,6 +608,27 @@ function checkMcpSurface(): VerifyCheck {
 export function deriveWorkspaceSourceId(ws: string): string {
   const hash = createHash('sha256').update(realpathOrResolve(ws)).digest('hex').slice(0, 8);
   return `workspace-${hash}`;
+}
+
+/**
+ * Resolve the source id a verify run should exercise (#4328). An initialized
+ * manifest is authoritative (that's the id hooks/attach/status all follow).
+ * An UNINITIALIZED workspace has no manifest to consult — the old hardcoded
+ * 'workspace' fallback pointed the probe writes at a source no one ever
+ * registered, so put_page died on its sources FK. Instead, run the standard
+ * source-resolution chain rooted at the workspace (registered local_path →
+ * brain default → seeded 'default'), which always lands on a real source.
+ * Any resolver surprise degrades to 'default' (seeded by migration) rather
+ * than failing verify before it can print a report.
+ */
+export async function resolveVerifySourceId(engine: BrainEngine, ws: string): Promise<string> {
+  const state = readManifest(ws);
+  if (state.state === 'initialized') return state.manifest.source_id;
+  try {
+    return await resolveSourceId(engine, null, ws);
+  } catch {
+    return 'default';
+  }
 }
 
 /**
@@ -587,6 +718,19 @@ async function runRoundtrip(
       checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
     } else if (existsSync(expectedFile)) {
       checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
+    } else if (wt?.skipped === 'disabled_by_config') {
+      // DB-only by operator choice (`sync.write_through=false`), not a broken
+      // install: the DB write landed, so WARN and keep the remaining
+      // roundtrip-family checks — sweep/graph/search/magic-moment all run off
+      // the DB row and still prove the memory loop.
+      checks.push({
+        id: 'roundtrip',
+        ok: true,
+        warn: true,
+        detail:
+          `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
+          `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
+      });
     } else {
       // [G1] A green verify with an empty repo is impossible: name the
       // write-through problem explicitly.
@@ -736,26 +880,41 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
   let server: { close: () => void } | null = null;
   const prevSource = process.env.GBRAIN_SOURCE;
+  const socketPath = resolveSocketPath(dataDir);
+  // #4474: prefer the REAL socket. Pre-fix the smoke ALWAYS started its own
+  // in-process IPC server, so it manufactured the exact condition it was
+  // testing — a serve posture that never binds IPC (the old `serve --http`)
+  // still passed verify while every production hook degraded to no_serve.
+  // A present socket now means "a live serve is the provider; exercise IT";
+  // only when NO socket exists do we self-provide (plumbing-only smoke) and
+  // say so honestly in the result.
+  const liveSocket = existsSync(socketPath);
   try {
-    const secret = ensureIpcSecret(dataDir);
-    server = await startResolveIpcServer(
-      resolveSocketPath(dataDir),
-      {
-        resolve: async () => null,
-        turn_context: (req) =>
-          assembleTurnContext(engine, {
-            sourceId,
-            window: req.window,
-            ...(req.priorContextText !== undefined ? { priorContextText: req.priorContextText } : {}),
-            ...(req.sessionId !== undefined ? { sessionId: req.sessionId } : {}),
-            ...(req.maxBytes !== undefined ? { maxBytes: req.maxBytes } : {}),
-          }),
-      },
-      { secret, boundSourceId: sourceId },
-    );
-    if (!server) {
-      return { id, ok: true, warn: true, detail: 'could not bind the IPC socket (a live serve owns it?) — smoke skipped; the live serve itself is the IPC provider' };
+    if (!liveSocket) {
+      const secret = ensureIpcSecret(dataDir);
+      server = await startResolveIpcServer(
+        socketPath,
+        {
+          resolve: async () => null,
+          turn_context: (req) =>
+            assembleTurnContext(engine, {
+              sourceId,
+              window: req.window,
+              ...(req.priorContextText !== undefined ? { priorContextText: req.priorContextText } : {}),
+              ...(req.sessionId !== undefined ? { sessionId: req.sessionId } : {}),
+              ...(req.maxBytes !== undefined ? { maxBytes: req.maxBytes } : {}),
+            }),
+        },
+        { secret, boundSourceId: sourceId },
+      );
+      if (!server) {
+        return { id, ok: true, warn: true, detail: 'could not bind the IPC socket (a live serve owns it?) — smoke skipped; the live serve itself is the IPC provider' };
+      }
     }
+    // Provenance suffix for every outcome below: which listener answered.
+    const via = liveSocket
+      ? 'via the live serve’s IPC socket'
+      : `via a verify-owned IPC server (no live serve socket at ${socketPath} — hooks stay degraded (no_serve) until a running \`gbrain serve\` binds it)`;
     process.env.GBRAIN_SOURCE = sourceId;
     // USER_PROMPT_DEADLINE_MS is the hook's own budget — the smoke compares
     // against the same constant it enforces (no drifting hardcoded copy).
@@ -775,22 +934,26 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
       if (elapsed >= USER_PROMPT_DEADLINE_MS) {
         // [A7] Real latency is a non-gating benchmark — the hard deadline
         // assertion lives in the hook tests against an injected slow-IPC stub.
-        return { id, ok: true, warn: true, detail: `context block delivered but in ${elapsed}ms (over the ${USER_PROMPT_DEADLINE_MS}ms budget on this box) — watch hook latency` };
+        return { id, ok: true, warn: true, detail: `context block delivered but in ${elapsed}ms (over the ${USER_PROMPT_DEADLINE_MS}ms budget on this box) ${via} — watch hook latency` };
       }
-      return { id, ok: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars)` };
+      // #4474: a self-provided listener is a plumbing-only pass — production
+      // hooks still need a live serve to bind the socket, so it WARNS.
+      return liveSocket
+        ? { id, ok: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars) ${via}` }
+        : { id, ok: true, warn: true, detail: `context block delivered in ${elapsed}ms (${out.trim().length} chars) ${via}` };
     }
     // Empty stdout must be a DOCUMENTED degradation — read the heartbeat it wrote.
     const tail = await readHeartbeatTail(1);
     const reason = tail[tail.length - 1]?.reason ?? 'empty_block';
     if (reason === 'empty_block' || reason === 'empty_window') {
-      return { id, ok: true, warn: true, detail: `empty context block in ${elapsed}ms (documented degradation: ${reason}) — plumbing works, brain has nothing to volunteer yet` };
+      return { id, ok: true, warn: true, detail: `empty context block in ${elapsed}ms (documented degradation: ${reason}) ${via} — plumbing works, brain has nothing to volunteer yet` };
     }
     if (reason === 'deadline' || reason === 'ipc_unavailable' || reason === 'server_budget') {
       // [A7] Latency-shaped degradations don't gate verify (slow CI box ≠
       // broken install); the reason is named so a human can judge.
-      return { id, ok: true, warn: true, detail: `hook degraded on latency (${reason}) in ${elapsed}ms — non-gating; re-run on an idle machine if it persists` };
+      return { id, ok: true, warn: true, detail: `hook degraded on latency (${reason}) in ${elapsed}ms ${via} — non-gating; re-run on an idle machine if it persists` };
     }
-    return { id, ok: false, detail: `hook degraded (${reason}) in ${elapsed}ms — stdin→IPC→stdout plumbing is not healthy` };
+    return { id, ok: false, detail: `hook degraded (${reason}) in ${elapsed}ms ${via} — stdin→IPC→stdout plumbing is not healthy` };
   } catch (e) {
     return { id, ok: false, detail: `hooks smoke failed: ${(e as Error).message}` };
   } finally {
@@ -922,6 +1085,7 @@ export async function verifyWorkspace(
   checks.push(await checkDoctorGreen(engine));
   const engineHealthy = checks.find((c) => c.id === 'doctor_green')?.ok === true;
 
+  let sourceRegistered = true;
   if (engineHealthy) {
     // Transient-engine work while we hold the engine (before/independent of
     // host registration): the CX-P1.1 visibility posture and the source-id
@@ -930,10 +1094,22 @@ export async function verifyWorkspace(
     const collision = await resolveSourceIdCollision(engine, ws);
     if (collision.sourceId !== null) sourceId = collision.sourceId;
     if (collision.check !== null) checks.push(collision.check);
+    // #4328 — registration probe. Probe writes against an UNREGISTERED source
+    // die on their sources FK with a raw constraint error that names nothing a
+    // user can act on. Detect the gap up front so the roundtrip/hooks-smoke
+    // report the one command that fixes it instead. Probe failure fails OPEN
+    // (the roundtrip owns surfacing real engine errors).
+    try {
+      const rows = await engine.executeRaw<{ one: number }>(`SELECT 1 AS one FROM sources WHERE id = $1`, [sourceId]);
+      sourceRegistered = rows.length > 0;
+    } catch {
+      sourceRegistered = true;
+    }
   }
 
   checks.push(checkTokenSweep(ws));
   checks.push(checkByteFloors(ws));
+  checks.push(checkWritebackContract(ws));
   checks.push(checkSecretScan(ws));
   checks.push(checkDenyGlobs(ws));
   checks.push(await checkRepoPrivacy(ws));
@@ -941,8 +1117,24 @@ export async function verifyWorkspace(
   checks.push(checkMcpJsonHygiene(ws));
   checks.push(checkHookCarrierOverlap(ws));
 
-  // Round-trip family only makes sense on a reachable engine.
-  if (engineHealthy) {
+  // Round-trip family only makes sense on a reachable engine. The
+  // embedding-plane check (#4287) runs FIRST so a plane split gets its named
+  // diagnosis before the roundtrip's put surfaces the raw dimension error —
+  // and so a keyless-passing roundtrip can never certify a brain whose keyed
+  // writes all fail.
+  if (engineHealthy && !sourceRegistered) {
+    checks.push(await checkEmbeddingPlane(engine, caps));
+    // #4328 — a put against the unregistered source would only surface the
+    // raw FK constraint text. Name the actual gap + the one-command fix.
+    checks.push({
+      id: 'roundtrip',
+      ok: false,
+      detail:
+        `skipped — source '${sourceId}' is not registered in this brain, so probe writes cannot land. ` +
+        `Register it (gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) and re-run \`gbrain bootstrap verify\`.`,
+    });
+  } else if (engineHealthy) {
+    checks.push(await checkEmbeddingPlane(engine, caps));
     const rt = await runRoundtrip(engine, ws, sourceId, { ...opts, capabilities: caps });
     checks.push(...rt.checks);
   } else {
@@ -954,6 +1146,10 @@ export async function verifyWorkspace(
 
   if (opts.skipHooksSmoke) {
     checks.push({ id: 'hooks_smoke', ok: true, detail: 'skipped by caller' });
+  } else if (!sourceRegistered) {
+    // #4328 — the smoke binds GBRAIN_SOURCE to the workspace source; against
+    // an unregistered id it can only rediscover the roundtrip's finding.
+    checks.push({ id: 'hooks_smoke', ok: true, detail: `skipped — source '${sourceId}' is not registered (see roundtrip)` });
   } else {
     checks.push(await checkHooksSmoke(engine, ws, sourceId));
   }

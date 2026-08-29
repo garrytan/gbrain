@@ -890,6 +890,8 @@ export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityRepor
   // Refuse on detached HEAD — pushing to a wrong ref is worse than not pushing.
   if (currentBranch(repoPath) === 'HEAD') {
     push('pull', { status: 'needs_attention', detail: 'detached HEAD — checkout a branch before hardening' });
+  } else if (dryRun) {
+    push('pull', { status: 'skipped', detail: `dry-run — would fetch + pull --rebase origin/${branch}` });
   } else {
     // 1. pull current state
     try { push('pull', pullDetail(divergenceSafePull(repoPath, branch))); }
@@ -947,7 +949,15 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
       stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
     }).toString().trim();
     if (!staged) return { status: 'ok', detail: 'scaffolding already committed' };
-    execFileSync('git', ['-C', repoPath, 'commit', '-m', 'chore(gbrain): install brain durability scaffolding'], {
+    // #3925: suppress hooks on THIS commit. Step 3 already installed the
+    // local post-commit hook, so a plain `git commit` here detaches a
+    // background brain_push that races the explicit fail-loud push below on
+    // the same ref (cannot-lock-ref on origin; the loser's `pull --rebase`
+    // retry then takes .git/index.lock — flock is absent on macOS, so the
+    // hook can't serialize against us). core.hooksPath=/dev/null makes the
+    // push below the ONLY push for the scaffolding commit; every later
+    // operator/agent commit still fires the hook normally.
+    execFileSync('git', ['-C', repoPath, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'chore(gbrain): install brain durability scaffolding'], {
       stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
     });
     execFileSync('git', ['-C', repoPath, ...['-c', 'http.followRedirects=false'], 'push', 'origin', `HEAD:${branch}`], {

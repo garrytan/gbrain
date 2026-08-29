@@ -167,6 +167,12 @@ await oauthProvider.registerClientManual(
 For self-service client registration (Dynamic Client Registration, RFC 7591),
 start the server with `--enable-dcr`. DCR is off by default.
 
+Native MCP clients register cleanly: `redirect_uris` may use an app custom
+scheme (RFC 8252, e.g. `myapp://callback`) or `http://` loopback alongside
+`https://`; scopes the server doesn't know are filtered rather than fatal;
+and malformed registration metadata is rejected with HTTP 400
+`invalid_client_metadata` (never a 500), so a client can correct and retry.
+
 DCR requests may include an optional `token_ttl_seconds` field (integer,
 seconds) to request a per-client access-token lifetime. The server clamps the
 request into an admin-configured window — never rejects over it — persists the
@@ -333,6 +339,29 @@ Operator checklist:
 
 Optional defense-in-depth: a dedicated Postgres role (or RLS) limited to the
 allowed `source_id`s, so even a leaked connection string can't read everything.
+
+### Run gbrain under a real init (tini / `--init`)
+
+If `gbrain serve` is your container's entrypoint, it runs as PID 1 and
+inherits every orphaned process in the container. Prefer a real init so
+orphan exits are reaped by something built for the job:
+
+```dockerfile
+# Dockerfile: wrap the entrypoint with tini
+ENTRYPOINT ["/usr/bin/tini", "--", "gbrain", "serve", "--http"]
+```
+
+or at run time:
+
+```bash
+docker run --init ... gbrain serve --http
+```
+
+Without an init, gbrain installs its own PID-1 orphan reaper (Linux only):
+a low-frequency `/proc` scan that `waitpid()`s zombies re-parented to it,
+so long-lived containers don't accumulate defunct entries in the PID table.
+It is fail-open and can be disabled with `GBRAIN_PID1_REAP=0` — but tini /
+`--init` remains the recommended setup.
 
 ## Troubleshooting
 

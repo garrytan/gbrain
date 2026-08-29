@@ -33,6 +33,9 @@ mock.module('../src/core/minions/queue.ts', () => ({
 }));
 mock.module('../src/core/minions/wait-for-completion.ts', () => ({
   waitForCompletion: async () => ({ status: 'completed' }),
+  // Module mocks must export every named import any transitively-loaded
+  // consumer reaches for (patterns/synthesize use the renewing variant).
+  waitForCompletionRenewing: async () => ({ status: 'completed' }),
 }));
 
 let engine: PGLiteEngine;

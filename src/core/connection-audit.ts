@@ -62,8 +62,11 @@ export function logConnectionEvent(event: ConnectionEvent): void {
     mkdirSync(dir, { recursive: true });
     const path = join(dir, getIsoWeekFilename());
     const line = {
-      ts: event.ts ?? new Date().toISOString(),
       ...event,
+      // The stamp must come AFTER the spread: `ts` is optional, so a caller
+      // passing an explicit `ts: undefined` would otherwise overwrite the
+      // stamp and JSON.stringify would drop the key entirely.
+      ts: event.ts ?? new Date().toISOString(),
       // Defensive: if a caller passes a full URL by mistake, redact.
       host: event.host ? redactPgUrl(event.host) : undefined,
     };

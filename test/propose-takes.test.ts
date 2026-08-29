@@ -25,11 +25,15 @@ import {
   isWellFormedEmptyExtraction,
   PROPOSE_TAKES_PROMPT_VERSION,
   EMPTY_EXTRACTION_TOMBSTONE_TEXT,
+  resolveProposeTakesDeadlineMs,
+  PROPOSE_TAKES_FALLBACK_DEADLINE_MS,
+  MIN_PROPOSE_TAKES_BUDGET_MS,
   type ProposeTakesExtractor,
   type ProposedTake,
 } from '../src/core/cycle/propose-takes.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { BudgetMeter } from '../src/core/cycle/budget-meter.ts';
+import { CYCLE_DEADLINE_RESERVE_MS } from '../src/core/cycle/base-phase.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { Page } from '../src/core/types.ts';
@@ -429,10 +433,15 @@ New prose appended here.`;
     };
     const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
 
-    expect(result.status).toBe('ok');
+    // #3044: swallowed per-page failures no longer read as a clean 'ok' —
+    // the phase continues but reports 'warn' with a warning count.
+    expect(result.status).toBe('warn');
+    expect(result.summary).toContain('(1 warning(s))');
+    expect(result.summary).not.toContain('aborted on');
     const details = result.details as Record<string, unknown>;
     expect(details.pages_scanned).toBe(2);
     expect(details.proposals_inserted).toBe(1);
+    expect(details.aborted_global_error).toBeUndefined();
     expect((details.warnings as string[]).length).toBeGreaterThan(0);
     expect((details.warnings as string[])[0]).toContain('LLM timeout');
   });
@@ -494,12 +503,15 @@ New prose appended here.`;
     expect(extractorCalls).toBe(1);
     expect((details.warnings as string[]).some(w => w.includes('phase deadline hit'))).toBe(true);
 
-    // Rollup records the deadline break as a halt, not a completed round
-    // (same posture as budget exhaustion). Params: $5 = halt, $8 = completed.
+    // #4482 three-way stop classification: a deadline cap is the extractor
+    // working as designed (partial progress banked) — recorded as an
+    // expected_limit, NOT a halt and NOT a completed round (same posture as
+    // budget exhaustion). Params: $5 = halt, $8 = completed, $9 = expected_limit.
     const rollup = captured.find((c) => c.sql.includes('extract_rollup_7d'));
     expect(rollup).toBeDefined();
-    expect(rollup!.params[4]).toBe(1); // halt_count delta
+    expect(rollup!.params[4]).toBe(0); // halt_count delta (error halts only)
     expect(rollup!.params[7]).toBe(0); // round_completed delta
+    expect(rollup!.params[8]).toBe(1); // expected_limit delta (deadline cap)
   });
 
   test('default deadline does not fire on a fast run', async () => {
@@ -508,7 +520,9 @@ New prose appended here.`;
     const extractor: ProposeTakesExtractor = async () => [];
     const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
     const details = result.details as Record<string, unknown>;
-    expect(details.deadline_hit).toBeUndefined();
+    // gbrain#4168: deadline_hit is now explicitly initialized false (was
+    // undefined-when-unhit); the behavior pinned here is unchanged.
+    expect(details.deadline_hit).toBe(false);
     expect(details.pages_scanned).toBe(1);
   });
 
@@ -705,5 +719,336 @@ describe('runPhaseProposeTakes — empty extraction memoization', () => {
 
     expect((result.details as Record<string, unknown>).tombstones_written).toBe(0);
     expect(captured.filter(c => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+});
+
+describe('resolveProposeTakesDeadlineMs — derived phase budget (#4168)', () => {
+  const NOW = 1_000_000_000_000;
+
+  test('no job deadline (gbrain dream CLI) falls back to the DERIVED constant, strictly under the anchor', () => {
+    expect(resolveProposeTakesDeadlineMs(null, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+    expect(resolveProposeTakesDeadlineMs(undefined, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+  });
+
+  test('generous job deadline is capped at the fallback (min, not raw remaining)', () => {
+    const generous = NOW + 10 * 60 * 60 * 1000;
+    expect(resolveProposeTakesDeadlineMs(generous, NOW)).toBe(PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+  });
+
+  test('tight job deadline yields the FRACTION of remaining-minus-reserve (headroom for the downstream calibration phases)', () => {
+    const tight = NOW + 10 * 60 * 1000; // 10min left
+    const remaining = 10 * 60 * 1000 - CYCLE_DEADLINE_RESERVE_MS;
+    // Red-team fix: un-fractioned, a small budget was consumed whole and
+    // grade_takes/calibration_profile started inside the reserve.
+    expect(resolveProposeTakesDeadlineMs(tight, NOW)).toBe(Math.floor(remaining * 0.8));
+  });
+
+  test('boundary: the skip line sits where the FRACTIONED budget crosses MIN (adversarial F4 — never clamp a sub-MIN fraction back up)', () => {
+    // Non-null requires floor(remaining * 0.8) >= MIN, i.e. remaining >= MIN/0.8.
+    const minRemaining = Math.ceil(MIN_PROPOSE_TAKES_BUDGET_MS / 0.8);
+    const atBoundary = NOW + CYCLE_DEADLINE_RESERVE_MS + minRemaining;
+    expect(resolveProposeTakesDeadlineMs(atBoundary, NOW)).toBe(MIN_PROPOSE_TAKES_BUDGET_MS);
+    // remaining == MIN exactly → fractioned < MIN → honest skip (was: clamped
+    // UP to MIN, handing propose_takes the whole window and starving the
+    // downstream calibration phases into the reserve).
+    const atMin = NOW + CYCLE_DEADLINE_RESERVE_MS + MIN_PROPOSE_TAKES_BUDGET_MS;
+    expect(resolveProposeTakesDeadlineMs(atMin, NOW)).toBeNull();
+    expect(resolveProposeTakesDeadlineMs(atBoundary - 2, NOW)).toBeNull();
+    expect(resolveProposeTakesDeadlineMs(NOW - 1, NOW)).toBeNull();
+  });
+});
+
+describe('deadlineAtMs threading through the phase (#4168)', () => {
+  test('a sufficient deadlineAtMs does not skip (runtime governance is pinned by the resolver unit tests above)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/gov-a', body: 'page a' }),
+      buildPage({ slug: 'wiki/gov-b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      return [];
+    };
+    // remaining = reserve + MIN + 10ms → resolved budget ≈ MIN... too large to
+    // fire on a 30ms extractor. Instead use explicit-precedence coverage below
+    // and pin GOVERNANCE structurally: resolved = min(remaining-reserve, fallback).
+    // Here: a deadlineAtMs whose remaining-minus-reserve lands at 5ms cannot be
+    // constructed above MIN, so governance-at-runtime is proven via the resolver
+    // unit tests + the skip case below (the two reachable production shapes).
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      // Above the F4 boundary: non-null needs floor(remaining*0.8) >= MIN.
+      deadlineAtMs: Date.now() + CYCLE_DEADLINE_RESERVE_MS + Math.ceil(MIN_PROPOSE_TAKES_BUDGET_MS / 0.8) + 10_000,
+    });
+    expect(result.status).not.toBe('skipped'); // enough budget → runs
+  });
+
+  test('an exhausted job budget returns status skipped with insufficient_cycle_budget and writes NO rollup row', async () => {
+    const pages = [buildPage({ slug: 'wiki/never-scanned', body: 'x' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => { extractorCalls++; return []; };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      deadlineAtMs: Date.now() + 1000, // ~1s left — far under MIN
+    });
+    expect(result.status).toBe('skipped');
+    const details = result.details as Record<string, unknown>;
+    expect(details.reason).toBe('insufficient_cycle_budget');
+    expect(details.pages_scanned).toBe(0);
+    expect(extractorCalls).toBe(0);
+    expect(result.summary).toContain('raise the autopilot interval'); // operator hint is load-bearing
+    // BEFORE any rollup write — an insufficient-budget run records neither a
+    // halt nor a completed round (no_provider-skip parity).
+    expect(captured.filter((c) => c.sql.includes('extract_rollup_7d'))).toHaveLength(0);
+    expect(captured.filter((c) => c.sql.includes('INSERT INTO take_proposals'))).toHaveLength(0);
+  });
+
+  test('explicit opts.deadlineMs still wins over deadlineAtMs (test-override precedence)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/prec-a', body: 'page a' }),
+      buildPage({ slug: 'wiki/prec-b', body: 'page b' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    const extractor: ProposeTakesExtractor = async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), {
+      extractor,
+      deadlineMs: 5, // explicit override
+      deadlineAtMs: Date.now() + 60 * 60 * 1000, // generous job budget must NOT mask it
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(details.deadline_hit).toBe(true);
+    expect(details.pages_scanned).toBe(1);
+  });
+});
+
+// ─── Global-error halt (#3044) ──────────────────────────────────────
+// A billing/auth/rate-limit failure is a whole-run condition: every
+// remaining page would fail identically. Pre-fix, each page swallowed
+// its failure into warnings[] and the phase completed with status 'ok'
+// and a green summary — an exhausted spend limit left zero trace.
+
+describe('runPhaseProposeTakes — global-error halt (#3044)', () => {
+  test('claude-cli spend-limit blob halts as billing on the FIRST hit, status fail (zero successes)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a prose' }),
+      buildPage({ slug: 'wiki/b', body: 'page b prose' }),
+    ];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      throw new Error(
+        'claude-cli exited 1: {"type":"result","subtype":"error_during_execution","api_error_status":429,"result":"you have reached your monthly spend limit"}',
+      );
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    // Billing is deterministic — the loop broke on the FIRST failure.
+    expect(extractorCalls).toBe(1);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(1);
+    expect(details.aborted_global_error).toBe('billing');
+    expect(details.llm_calls_succeeded).toBe(0);
+    expect(details.llm_calls_failed).toBe(1);
+    expect(details.halted).toBe(true);
+
+    // Zero successful extractor calls → the whole LLM lane is down → 'fail'.
+    expect(result.status).toBe('fail');
+    expect(result.summary).toContain('aborted on billing error after 1 page(s)');
+    // Single combined warning line — no double counting of the same failure.
+    expect(result.summary).toContain('(1 warning(s))');
+    expect((details.warnings as string[])).toHaveLength(1);
+    expect((details.warnings as string[])[0]).toContain('whole-run condition');
+    expect((details.warnings as string[])[0]).toContain('extractor failed on wiki/a');
+
+    // Rollup records a halt, not a completed round (same posture as budget
+    // exhaustion / deadline). Params: $5 = halt delta, $8 = completed delta.
+    const rollup = captured.find(c => c.sql.includes('extract_rollup_7d'));
+    expect(rollup).toBeDefined();
+    expect(rollup!.params[4]).toBe(1); // halt_count delta
+    expect(rollup!.params[7]).toBe(0); // round_completed delta
+  });
+
+  test('bare 429s halt only after 3 CONSECUTIVE hits (transient bursts tolerated)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a prose' }),
+      buildPage({ slug: 'wiki/b', body: 'page b prose' }),
+      buildPage({ slug: 'wiki/c', body: 'page c prose' }),
+      buildPage({ slug: 'wiki/d', body: 'page d prose' }),
+    ];
+    const { engine, captured } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    // Pages 1-2 warn and continue; the 3rd consecutive hit halts; page 4
+    // never calls the LLM.
+    expect(extractorCalls).toBe(3);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(3);
+    expect(details.aborted_global_error).toBe('rate_limit');
+    expect(details.llm_calls_succeeded).toBe(0);
+    expect(result.status).toBe('fail');
+    expect(result.summary).toContain('aborted on rate_limit error after 3 page(s)');
+    // 2 per-page warnings + 1 combined abort line.
+    expect(result.summary).toContain('(3 warning(s))');
+    expect((details.warnings as string[])[2]).toContain('3 consecutive rate_limit errors');
+
+    const rollup = captured.find(c => c.sql.includes('extract_rollup_7d'));
+    expect(rollup!.params[4]).toBe(1); // halt_count delta
+    expect(rollup!.params[7]).toBe(0); // round_completed delta
+  });
+
+  test('a success between 429s resets the streak (no halt)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a prose' }),
+      buildPage({ slug: 'wiki/b', body: 'page b prose' }),
+      buildPage({ slug: 'wiki/c', body: 'page c prose' }),
+      buildPage({ slug: 'wiki/d', body: 'page d prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      // 429, 429, success, 429 — never 3 in a row.
+      if (extractorCalls === 3) return [];
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(4);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(4);
+    expect(details.aborted_global_error).toBeUndefined();
+    expect(details.llm_calls_succeeded).toBe(1);
+    expect(result.status).toBe('warn'); // 3 per-page warnings, but no halt
+    expect(result.summary).not.toContain('aborted on');
+  });
+
+  test('a global halt AFTER a successful call reports warn, not fail (partial run)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a prose' }),
+      buildPage({ slug: 'wiki/b', body: 'page b prose' }),
+      buildPage({ slug: 'wiki/c', body: 'page c prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      if (extractorCalls === 1) {
+        return [{ claim_text: 'first page worked', kind: 'take', holder: 'brain', weight: 0.5 }];
+      }
+      throw Object.assign(new Error('invalid x-api-key'), { status: 401 });
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(2); // auth halts on the first hit
+    const details = result.details as Record<string, unknown>;
+    expect(details.aborted_global_error).toBe('auth');
+    expect(details.llm_calls_succeeded).toBe(1);
+    expect(details.proposals_inserted).toBe(1); // banked work stays
+    expect(result.status).toBe('warn'); // partial run, not a total failure
+    expect(result.summary).toContain('aborted on auth error after 2 page(s)');
+  });
+
+  test('non-global extractor error does NOT halt (remaining pages still processed)', async () => {
+    const pages = [
+      buildPage({ slug: 'wiki/a', body: 'page a prose' }),
+      buildPage({ slug: 'wiki/b', body: 'page b prose' }),
+    ];
+    const { engine } = buildMockEngine({ pages });
+    let extractorCalls = 0;
+    const extractor: ProposeTakesExtractor = async () => {
+      extractorCalls++;
+      if (extractorCalls === 1) throw new Error('fetch failed: ECONNRESET');
+      return [];
+    };
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+
+    expect(extractorCalls).toBe(2);
+    const details = result.details as Record<string, unknown>;
+    expect(details.pages_scanned).toBe(2);
+    expect(details.aborted_global_error).toBeUndefined();
+    expect(result.status).toBe('warn'); // still surfaced as a warning
+    expect(result.summary).not.toContain('aborted on');
+  });
+});
+
+// ─── #4102: cycle.propose_takes.enabled off switch ─────────────────
+
+describe('cycle.propose_takes.enabled gate (#4102)', () => {
+  function stubConfig(engine: BrainEngine, value: string | null): void {
+    (engine as unknown as { getConfig: (k: string) => Promise<string | null> }).getConfig =
+      async (k: string) => (k === 'cycle.propose_takes.enabled' ? value : null);
+  }
+
+  function countingExtractor(): { extractor: ProposeTakesExtractor; calls: () => number } {
+    let n = 0;
+    return {
+      extractor: async () => { n += 1; return []; },
+      calls: () => n,
+    };
+  }
+
+  test('explicit false skips before any extractor call or DB write', async () => {
+    const pages = [buildPage({ slug: 'wiki/gated', body: 'Some gated prose.' })];
+    const { engine, captured } = buildMockEngine({ pages });
+    stubConfig(engine, 'false');
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(result.status).toBe('skipped');
+    const details = result.details as Record<string, unknown>;
+    expect(details.reason).toBe('disabled');
+    expect(String(details.enable_hint)).toContain('cycle.propose_takes.enabled');
+    expect(calls()).toBe(0);
+    expect(captured.filter(c => c.sql.includes('take_proposals'))).toHaveLength(0);
+  });
+
+  test("'0' and 'off' also skip (isConfigTruthy semantics)", async () => {
+    for (const value of ['0', 'off', 'no']) {
+      const pages = [buildPage({ slug: 'wiki/gated2', body: 'prose' })];
+      const { engine } = buildMockEngine({ pages });
+      stubConfig(engine, value);
+      const { extractor, calls } = countingExtractor();
+      const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+      expect(result.status).toBe('skipped');
+      expect(calls()).toBe(0);
+    }
+  });
+
+  test('unset (null) = default ON: the phase runs', async () => {
+    const pages = [buildPage({ slug: 'wiki/ungated', body: 'Some prose worth scanning.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, null);
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(result.status).not.toBe('skipped');
+    expect(calls()).toBe(1);
+  });
+
+  test("explicit 'true' runs", async () => {
+    const pages = [buildPage({ slug: 'wiki/on', body: 'More prose.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, 'true');
+    const { extractor, calls } = countingExtractor();
+    await runPhaseProposeTakes(buildCtx(engine), { extractor });
+    expect(calls()).toBe(1);
+  });
+
+  test('once:true bypasses an explicit false for this run only', async () => {
+    const pages = [buildPage({ slug: 'wiki/once', body: 'Once-run prose.' })];
+    const { engine } = buildMockEngine({ pages });
+    stubConfig(engine, 'false');
+    const { extractor, calls } = countingExtractor();
+    const result = await runPhaseProposeTakes(buildCtx(engine), { extractor, once: true });
+    expect(result.status).not.toBe('skipped');
+    expect(calls()).toBe(1);
   });
 });

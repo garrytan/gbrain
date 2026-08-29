@@ -30,7 +30,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { resolveModel } from '../core/model-config.ts';
+import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 import {
   PreFlightBudgetError,
   runContradictionProbe,
@@ -43,6 +43,7 @@ import {
 import { maybePromptForCostBeforeProbe } from '../core/eval-contradictions/cost-prompt.ts';
 import type {
   ContradictionFinding,
+  ProbeReport,
   Severity,
 } from '../core/eval-contradictions/types.ts';
 
@@ -237,6 +238,68 @@ function exclusiveOneOf(...flags: Array<unknown>): boolean {
   return count === 1;
 }
 
+/**
+ * Build the human summary (stderr) for one probe run. Exported for tests.
+ *
+ * #3889 honesty rules:
+ *   - A `run_status === 'judge_failed'` run (every judge call errored, zero
+ *     verdicts) must NOT render the "0 / N contradictions" headline or the
+ *     Wilson CI — both would present an all-error run as a clean pass.
+ *     A loud banner replaces them.
+ *   - The judge-errors line prints ALL FIVE error buckets (unknown included)
+ *     so the printed buckets always sum to the printed total.
+ */
+export function buildRunSummaryLines(r: ProbeReport, capHitMidRun: boolean): string[] {
+  const pct = (n: number) => (n * 100).toFixed(0);
+  const judgeFailed = r.run_status === 'judge_failed';
+  const lines: string[] = [];
+  lines.push(``);
+  lines.push(`Results: ${r.queries_evaluated} queries, top-${r.top_k} each, judge=${r.judge_model}`);
+  if (judgeFailed) {
+    lines.push(`  *** JUDGE FAILED: every judge call errored (${r.judge_errors.total} errors, 0 verdicts). ***`);
+    lines.push(`  *** No pair was scored — do NOT read this run as "0 contradictions". ***`);
+    lines.push(`  Queries with >=1 contradiction: unknown (judge produced no verdicts)`);
+  } else {
+    lines.push(`  Queries with >=1 contradiction: ${r.queries_with_contradiction} / ${r.queries_evaluated} (${pct(r.queries_with_contradiction / Math.max(1, r.queries_evaluated))}%)`);
+    // v0.34 / Lane A2: broader finding count alongside the strict contradiction count.
+    lines.push(`  Queries with >=1 finding (any verdict): ${r.queries_with_any_finding} / ${r.queries_evaluated}`);
+    lines.push(`  Wilson CI 95%: ${pct(r.calibration.wilson_ci_95.lower)}–${pct(r.calibration.wilson_ci_95.upper)}%`);
+    if (r.calibration.small_sample_note) {
+      lines.push(`  Note: ${r.calibration.small_sample_note}`);
+    }
+  }
+  lines.push(`  Total findings flagged: ${r.total_contradictions_flagged}`);
+  // v0.34 / Lane A2: per-verdict breakdown surfaces what kinds of finding
+  // dominated the run — distinguishes temporal noise from genuine conflicts.
+  const vb = r.verdict_breakdown;
+  lines.push(`  Verdict breakdown:`);
+  lines.push(`    contradiction:         ${vb.contradiction}`);
+  lines.push(`    temporal_supersession: ${vb.temporal_supersession}`);
+  lines.push(`    temporal_regression:   ${vb.temporal_regression}`);
+  lines.push(`    temporal_evolution:    ${vb.temporal_evolution}`);
+  lines.push(`    negation_artifact:     ${vb.negation_artifact}`);
+  lines.push(`    no_contradiction:      ${vb.no_contradiction}`);
+  lines.push(`  Judge errors: ${r.judge_errors.total} (parse_fail=${r.judge_errors.parse_fail} timeout=${r.judge_errors.timeout} http_5xx=${r.judge_errors.http_5xx} refusal=${r.judge_errors.refusal} unknown=${r.judge_errors.unknown})`);
+  lines.push(`  Cache: ${r.cache.hits} hits / ${r.cache.misses} misses (${pct(r.cache.hit_rate)}% hit-rate)`);
+  lines.push(`  Source-tier breakdown:`);
+  lines.push(`    curated_vs_curated: ${r.source_tier_breakdown.curated_vs_curated}`);
+  lines.push(`    curated_vs_bulk:    ${r.source_tier_breakdown.curated_vs_bulk}`);
+  lines.push(`    bulk_vs_bulk:       ${r.source_tier_breakdown.bulk_vs_bulk}`);
+  lines.push(`    other:              ${r.source_tier_breakdown.other}`);
+  lines.push(`  Cost: $${r.cost_usd.total.toFixed(4)} (judge $${r.cost_usd.judge.toFixed(4)} + embedding $${r.cost_usd.embedding.toFixed(6)})`);
+  lines.push(`  Duration: ${r.duration_ms}ms`);
+  if (r.hot_pages.length > 0) {
+    lines.push(`  Hot pages:`);
+    for (const p of r.hot_pages.slice(0, 5)) {
+      lines.push(`    ${p.slug} (${p.appearances}, max ${p.max_severity})`);
+    }
+  }
+  if (capHitMidRun) {
+    lines.push(`  *** budget cap hit mid-run; report is partial ***`);
+  }
+  return lines;
+}
+
 async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
   if (!exclusiveOneOf(f.queriesFile, f.query, f.fromCapture)) {
     console.error(
@@ -260,15 +323,16 @@ async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
   }
 
   // v0.34 / Lane C: route the judge model through resolveModel so the user's
-  // models.eval.contradictions_judge config key + Haiku-tier default + global
-  // models.default override + env var all compose correctly. The --judge CLI
-  // flag still wins as the highest-precedence override.
+  // models.eval.contradictions_judge config key + key-aware utility-tier
+  // default + global models.default override + env var all compose correctly.
+  // The --judge CLI flag still wins as the highest-precedence override.
   const judgeModel = await resolveModel(engine, {
     cliFlag: f.judge,
     configKey: 'models.eval.contradictions_judge',
     tier: 'utility',
     envVar: 'GBRAIN_CONTRADICTIONS_JUDGE_MODEL',
-    fallback: 'anthropic:claude-haiku-4-5',
+    // #3813: last-resort fallback stays key-aware, never hardcoded Anthropic.
+    fallback: resolveTierDefault('utility'),
   });
 
   // #1784: annotate the budget when it's the silent non-TTY default ($1) so the
@@ -318,47 +382,7 @@ async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
 
     // Human summary.
     const r = out.report;
-    const pct = (n: number) => (n * 100).toFixed(0);
-    const lines: string[] = [];
-    lines.push(``);
-    lines.push(`Results: ${r.queries_evaluated} queries, top-${r.top_k} each, judge=${r.judge_model}`);
-    lines.push(`  Queries with >=1 contradiction: ${r.queries_with_contradiction} / ${r.queries_evaluated} (${pct(r.queries_with_contradiction / Math.max(1, r.queries_evaluated))}%)`);
-    // v0.34 / Lane A2: broader finding count alongside the strict contradiction count.
-    lines.push(`  Queries with >=1 finding (any verdict): ${r.queries_with_any_finding} / ${r.queries_evaluated}`);
-    lines.push(`  Wilson CI 95%: ${pct(r.calibration.wilson_ci_95.lower)}–${pct(r.calibration.wilson_ci_95.upper)}%`);
-    if (r.calibration.small_sample_note) {
-      lines.push(`  Note: ${r.calibration.small_sample_note}`);
-    }
-    lines.push(`  Total findings flagged: ${r.total_contradictions_flagged}`);
-    // v0.34 / Lane A2: per-verdict breakdown surfaces what kinds of finding
-    // dominated the run — distinguishes temporal noise from genuine conflicts.
-    const vb = r.verdict_breakdown;
-    lines.push(`  Verdict breakdown:`);
-    lines.push(`    contradiction:         ${vb.contradiction}`);
-    lines.push(`    temporal_supersession: ${vb.temporal_supersession}`);
-    lines.push(`    temporal_regression:   ${vb.temporal_regression}`);
-    lines.push(`    temporal_evolution:    ${vb.temporal_evolution}`);
-    lines.push(`    negation_artifact:     ${vb.negation_artifact}`);
-    lines.push(`    no_contradiction:      ${vb.no_contradiction}`);
-    lines.push(`  Judge errors: ${r.judge_errors.total} (parse_fail=${r.judge_errors.parse_fail} timeout=${r.judge_errors.timeout} http_5xx=${r.judge_errors.http_5xx} refusal=${r.judge_errors.refusal})`);
-    lines.push(`  Cache: ${r.cache.hits} hits / ${r.cache.misses} misses (${pct(r.cache.hit_rate)}% hit-rate)`);
-    lines.push(`  Source-tier breakdown:`);
-    lines.push(`    curated_vs_curated: ${r.source_tier_breakdown.curated_vs_curated}`);
-    lines.push(`    curated_vs_bulk:    ${r.source_tier_breakdown.curated_vs_bulk}`);
-    lines.push(`    bulk_vs_bulk:       ${r.source_tier_breakdown.bulk_vs_bulk}`);
-    lines.push(`    other:              ${r.source_tier_breakdown.other}`);
-    lines.push(`  Cost: $${r.cost_usd.total.toFixed(4)} (judge $${r.cost_usd.judge.toFixed(4)} + embedding $${r.cost_usd.embedding.toFixed(6)})`);
-    lines.push(`  Duration: ${r.duration_ms}ms`);
-    if (r.hot_pages.length > 0) {
-      lines.push(`  Hot pages:`);
-      for (const p of r.hot_pages.slice(0, 5)) {
-        lines.push(`    ${p.slug} (${p.appearances}, max ${p.max_severity})`);
-      }
-    }
-    if (out.capHitMidRun) {
-      lines.push(`  *** budget cap hit mid-run; report is partial ***`);
-    }
-    console.error(lines.join('\n'));
+    console.error(buildRunSummaryLines(r, out.capHitMidRun).join('\n'));
 
     if (f.output) {
       const { writeFileSync } = await import('node:fs');
@@ -368,6 +392,13 @@ async function runRun(engine: BrainEngine, f: ParsedFlags): Promise<void> {
 
     if (f.json) {
       console.log(JSON.stringify(r, null, 2));
+    }
+
+    // #3889: an all-errors run produced no verdicts; the row is persisted for
+    // the audit trail but the run itself failed. Exit 1 so cron/CI callers
+    // don't treat "judge never ran" as "no contradictions found".
+    if (r.run_status === 'judge_failed') {
+      process.exit(1);
     }
 
     if (out.capHitMidRun && !f.yes) {

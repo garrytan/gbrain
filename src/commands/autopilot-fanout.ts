@@ -32,7 +32,7 @@
 
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
-import { NON_GLOBAL_PHASES, GLOBAL_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
 import { sourceConfigHasRemoteUrl } from '../core/sources-load.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
@@ -476,11 +476,10 @@ export async function dispatchPerSource(
           repoPath: opts.repoPath,
           source_id: src.id,
           pull: shouldPull,
-          // #2194 fix #3 (cycle split): per-source cycles run ONLY source-scoped
-          // (+ mixed) phases. The brain-wide global phases (embed, orphans,
-          // purge, …) run once in autopilot-global-maintenance, not N times
-          // concurrently here — the fix for the 4→10GB RSS blowout.
-          phases: NON_GLOBAL_PHASES,
+          // Freshness is stamped by bounded deterministic work only. LLM-backed
+          // source enrichment (atoms, takes, thin-page development, etc.) is
+          // explicit/background work and cannot hold source freshness hostage.
+          phases: SOURCE_FRESHNESS_PHASES,
         },
         {
           queue: 'default',
@@ -581,7 +580,7 @@ export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = D
 
 /**
  * #2194 fix #3 / #2227 bug #3 — dispatch the single brain-wide maintenance job
- * that runs the `global` cycle phases (embed, orphans, purge, …) ONCE per
+ * that runs the `mixed` + `global` cycle phases ONCE per
  * window, instead of N per-source cycles each running them concurrently (the
  * RSS blowout). Single-flight is structural: one `idempotency_key` per slot +
  * `maxPending:1` (an in-flight waiting/live-lock-active run suppresses
@@ -611,7 +610,7 @@ export async function dispatchGlobalMaintenance(
 
   const job = await queue.add(
     'autopilot-global-maintenance',
-    { repoPath: opts.repoPath, phases: GLOBAL_PHASES },
+    { repoPath: opts.repoPath, phases: MAINTENANCE_PHASES },
     {
       queue: 'default',
       // Structural single-flight: one global job per slot; maxPending:1
@@ -640,4 +639,80 @@ export async function dispatchGlobalMaintenance(
     log(`[dispatch] job #${job.id} autopilot-global-maintenance (brain-wide phases)`);
   }
   return { dispatched: true, reason: 'stale' };
+}
+
+/**
+ * Opt-in scheduled connector sync (OV#4: default OFF, daily cadence). For each
+ * provider that has a credential AND `connectors.<p>.auto_sync` truthy AND no
+ * `auth_error_at` newer than the credential's `savedAt` (a dead cookie must not
+ * burn job slots), submit a `connector-sync` job when the last sync is older
+ * than `connectors.sync_floor_min` (default 1440). Idempotency-keyed +
+ * maxPending:1 so a slow sync never stacks.
+ */
+export async function maybeDispatchConnectorSyncs(
+  engine: BrainEngine,
+  queue: MinionQueue,
+  opts: { slot: string; timeoutMs: number; jsonMode: boolean; nowMs?: number; emit?: (l: string) => void; log?: (l: string) => void },
+): Promise<{ dispatched: string[] }> {
+  const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
+  const log = opts.log ?? ((line) => console.log(line));
+  const nowMs = opts.nowMs ?? Date.now();
+
+  const { connectorProviderNames } = await import('../core/connectors/registry.ts');
+  const { loadCredential } = await import('../core/connectors/credentials.ts');
+  const {
+    autoSyncKey,
+    authErrorAtKey,
+    lastSyncAtKey,
+    syncFloorMinKey,
+    sourceIdKey,
+    isTruthy,
+    isConnectorSyncStale,
+    DEFAULT_SYNC_FLOOR_MIN,
+  } = await import('../core/connectors/config-keys.ts');
+
+  let floorMin = DEFAULT_SYNC_FLOOR_MIN;
+  const floorCfg = await engine.getConfig(syncFloorMinKey());
+  if (floorCfg) {
+    const n = parseInt(floorCfg, 10);
+    if (Number.isFinite(n) && n >= 1) floorMin = n;
+  }
+  const sourceId = (await engine.getConfig(sourceIdKey())) || 'default';
+  const dispatched: string[] = [];
+
+  for (const provider of connectorProviderNames()) {
+    const cred = loadCredential(provider);
+    if (!cred) continue; // no credential → nothing to sync
+    if (!isTruthy(await engine.getConfig(autoSyncKey(provider)))) continue; // opt-in only
+    // A dead cookie stamps auth_error_at; skip until the user re-auths (a fresh
+    // credential's savedAt will be newer than the stale error).
+    const authErrorAt = await engine.getConfig(authErrorAtKey(provider));
+    if (authErrorAt && cred.savedAt && authErrorAt > cred.savedAt) continue;
+
+    const lastSyncAt = await engine.getConfig(lastSyncAtKey(provider));
+    if (!isConnectorSyncStale(lastSyncAt, nowMs, floorMin)) continue;
+
+    const job = await queue.add(
+      'connector-sync',
+      { provider, sourceId },
+      {
+        queue: 'default',
+        idempotency_key: `connector-sync:${provider}:${opts.slot}`,
+        max_attempts: 2,
+        timeout_ms: opts.timeoutMs,
+        maxPending: 1,
+      },
+    );
+    if (job.coalesced) {
+      if (!opts.jsonMode) log(`[dispatch] coalesced connector-sync ${provider} (already in flight)`);
+      continue;
+    }
+    dispatched.push(provider);
+    if (opts.jsonMode) {
+      emit(JSON.stringify({ event: 'dispatched', job_id: job.id, mode: 'connector_sync', provider, slot: opts.slot }));
+    } else {
+      log(`[dispatch] job #${job.id} connector-sync ${provider}`);
+    }
+  }
+  return { dispatched };
 }

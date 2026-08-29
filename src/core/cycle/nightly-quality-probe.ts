@@ -34,6 +34,15 @@ const DEFAULT_MAX_USD = 5.0;
 /** Committed fixture used as the probe's input dataset. */
 const NIGHTLY_FIXTURE_REL_PATH = 'test/fixtures/longmemeval-nightly.jsonl';
 
+export const NIGHTLY_PROBE_SEARCH_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
+  'search.mode',
+  'search.reranker.enabled',
+  'search.reranker.model',
+  'search.reranker.top_n_in',
+  'search.reranker.top_n_out',
+  'search.reranker.timeout_ms',
+]);
+
 /** Result reported back to the cycle dispatcher / Minion handler. */
 export interface NightlyProbeResult {
   outcome: 'pass' | 'fail' | 'inconclusive' | 'error' | 'budget_exceeded' | 'rate_limited' | 'no_embedding_key' | 'disabled';
@@ -50,8 +59,10 @@ export interface NightlyProbeDeps {
   resolveMaxUsd: () => number | Promise<number>;
   /** Resolves the repo root so we can find the committed fixture. */
   resolveRepoRoot: () => string | Promise<string>;
+  /** Resolves live search-mode/reranker overrides copied into the isolated benchmark brain. */
+  resolveSearchConfigSnapshot?: () => Record<string, string> | Promise<Record<string, string>>;
   /** Runs the longmemeval command; returns the path to the JSONL output. */
-  runLongMemEval: (args: { fixturePath: string; outputPath: string }) => Promise<void>;
+  runLongMemEval: (args: { fixturePath: string; outputPath: string; searchConfigSnapshot?: Record<string, string> }) => Promise<void>;
   /** Runs the cross-modal batch; returns exit code (0/1/2). */
   runCrossModalBatch: (args: {
     batchPath: string;
@@ -198,7 +209,10 @@ export async function runNightlyQualityProbe(deps: NightlyProbeDeps): Promise<Ni
   const summaryPath = path.join(workDir, 'summary.json');
 
   try {
-    await deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath });
+    const searchConfigSnapshot = deps.resolveSearchConfigSnapshot
+      ? await deps.resolveSearchConfigSnapshot()
+      : undefined;
+    await deps.runLongMemEval({ fixturePath, outputPath: lmeOutPath, searchConfigSnapshot });
     const { exitCode, summary } = await deps.runCrossModalBatch({
       batchPath: lmeOutPath,
       summaryPath,

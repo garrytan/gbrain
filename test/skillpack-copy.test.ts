@@ -103,6 +103,34 @@ describe('copyArtifacts — happy path', () => {
     expect(existsSync(join(dst, 'sub', 'nested.txt'))).toBe(true);
     expect(readFileSync(join(dst, 'sub', 'nested.txt'), 'utf-8')).toBe('N');
   });
+
+  it('an inline-content item writes the content, not the source bytes (harness stub path)', () => {
+    const src = scratch('copy-src-');
+    const dst = scratch('copy-dst-');
+    writeFileSync(join(src, 'a.txt'), 'SOURCE BYTES');
+
+    const result = copyArtifacts([
+      { source: join(src, 'a.txt'), target: join(dst, 'a.txt'), content: 'RENDERED CONTENT' },
+      // The source-exists gate is skipped for content items — there is no read.
+      { source: join(src, 'ghost.txt'), target: join(dst, 'b.txt'), content: 'NO SOURCE NEEDED' },
+    ]);
+
+    expect(result.summary.wroteNew).toBe(2);
+    expect(readFileSync(join(dst, 'a.txt'), 'utf-8')).toBe('RENDERED CONTENT');
+    expect(readFileSync(join(dst, 'b.txt'), 'utf-8')).toBe('NO SOURCE NEEDED');
+  });
+
+  it('content items still refuse to overwrite an existing target', () => {
+    const src = scratch('copy-src-');
+    const dst = scratch('copy-dst-');
+    writeFileSync(join(src, 'a.txt'), 'SOURCE');
+    writeFileSync(join(dst, 'a.txt'), 'MINE');
+
+    const result = copyArtifacts([{ source: join(src, 'a.txt'), target: join(dst, 'a.txt'), content: 'RENDERED' }]);
+
+    expect(result.summary.skippedExisting).toBe(1);
+    expect(readFileSync(join(dst, 'a.txt'), 'utf-8')).toBe('MINE');
+  });
 });
 
 describe('copyArtifacts — existing target = skipped (never overwrites)', () => {

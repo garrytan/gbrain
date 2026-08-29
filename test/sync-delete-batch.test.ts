@@ -3,9 +3,10 @@
  *
  * Pins the contract of the batched delete loop in src/commands/sync.ts:
  * interleaved per-batch resolve + delete via engine.resolveSlugsByPaths +
- * engine.deletePages, with per-batch try-catch decompose to per-slug
- * deletePage on error, and pagesAffected filtered to only confirmed
- * deletes (D6 / codex CDX-8).
+ * engine.softDeletePages (#4587 — sync soft-deletes into the 72h recovery
+ * window; deletePages stays the purge/teardown primitive), with per-batch
+ * try-catch decompose to one-element softDeletePages batches on error, and
+ * pagesAffected filtered to only confirmed transitions (D6 / codex CDX-8).
  *
  * Coverage:
  *   - Engine surface (deletePages, resolveSlugsByPaths) hermetic correctness
@@ -161,6 +162,112 @@ describe('engine.deletePages (single-batch primitive)', () => {
       expect(String(e)).toContain('DELETE_BATCH_SIZE');
     }
     expect(threw).toBe(true);
+  });
+});
+
+describe('engine.softDeletePages (single-batch primitive, #4587)', () => {
+  test('empty input short-circuits to empty array (no SQL) — F1', async () => {
+    const flipped = await engine.softDeletePages([], { sourceId: 'default' });
+    expect(flipped).toEqual([]);
+  });
+
+  test('returns confirmed-transitioned slugs; ghosts and already-soft-deleted rows excluded', async () => {
+    await seedPageWithPath('soft/sd1', 'wiki/sd1.md');
+    await seedPageWithPath('soft/sd2', 'wiki/sd2.md');
+    await seedPageWithPath('soft/sd3', 'wiki/sd3.md');
+    // Pre-soft-delete sd3: a re-run must NOT refresh its deleted_at (that
+    // would restart the 72h purge clock) and must NOT report it as flipped.
+    await engine.softDeletePage('soft/sd3', { sourceId: 'default' });
+    const before = await engine.executeRaw<{ deleted_at: string | Date }>(
+      `SELECT deleted_at FROM pages WHERE source_id = 'default' AND slug = 'soft/sd3'`,
+    );
+
+    const flipped = await engine.softDeletePages(
+      ['soft/sd1', 'soft/sd2', 'soft/sd3', 'soft/ghost-never-existed'],
+      { sourceId: 'default' },
+    );
+    expect(flipped.sort()).toEqual(['soft/sd1', 'soft/sd2']);
+
+    // sd3's purge clock untouched (deleted_at IS NULL predicate held).
+    const after = await engine.executeRaw<{ deleted_at: string | Date }>(
+      `SELECT deleted_at FROM pages WHERE source_id = 'default' AND slug = 'soft/sd3'`,
+    );
+    expect(String(after[0].deleted_at)).toBe(String(before[0].deleted_at));
+
+    // Rows stay in the table (recoverable), hidden from default reads.
+    const rows = await engine.executeRaw<{ slug: string; deleted_at: string | Date | null }>(
+      `SELECT slug, deleted_at FROM pages WHERE source_id = 'default' AND slug LIKE 'soft/sd%' ORDER BY slug`,
+    );
+    expect(rows).toHaveLength(3);
+    for (const r of rows) expect(r.deleted_at).not.toBeNull();
+    expect(await engine.getPage('soft/sd1', { sourceId: 'default' })).toBeNull();
+  });
+
+  test('multi-source isolation: soft-deleting source-A leaves source-B live', async () => {
+    await seedSource('salpha');
+    await seedSource('sbeta');
+    await seedPageWithPath('shared/soft-slug', 'shared-soft.md', 'salpha');
+    await seedPageWithPath('shared/soft-slug', 'shared-soft.md', 'sbeta');
+
+    const flipped = await engine.softDeletePages(['shared/soft-slug'], { sourceId: 'salpha' });
+    expect(flipped).toEqual(['shared/soft-slug']);
+
+    const live = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = 'shared/soft-slug' AND deleted_at IS NULL`,
+    );
+    expect(live).toHaveLength(1);
+    expect(live[0].source_id).toBe('sbeta');
+  });
+
+  test('nothing cascades: chunks and links survive the soft delete (purge owns teardown)', async () => {
+    const p1 = await seedPageWithPath('soft/keep-cascade', 'soft-cascade.md');
+    const p2 = await seedPageWithPath('soft/keep-cascade-peer', 'soft-cascade-peer.md');
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text) VALUES ($1, 0, 'chunk a'), ($1, 1, 'chunk b')`,
+      [p1],
+    );
+    await engine.executeRaw(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, link_source, context)
+       VALUES ($1, $2, 'mentions', 'markdown', '')`,
+      [p1, p2],
+    );
+
+    await engine.softDeletePages(['soft/keep-cascade'], { sourceId: 'default' });
+
+    const chunks = await engine.executeRaw<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM content_chunks WHERE page_id = $1`, [p1],
+    );
+    expect(Number(chunks[0].c)).toBe(2);
+    const links = await engine.executeRaw<{ c: number }>(
+      `SELECT COUNT(*)::int AS c FROM links WHERE from_page_id = $1`, [p1],
+    );
+    expect(Number(links[0].c)).toBe(1);
+  });
+
+  test('rejects oversized input (caller chunking contract, same as deletePages)', async () => {
+    const tooBig = new Array(DELETE_BATCH_SIZE + 1).fill('soft/x');
+    let threw = false;
+    try {
+      await engine.softDeletePages(tooBig, { sourceId: 'default' });
+    } catch (e) {
+      threw = true;
+      expect(String(e)).toContain('DELETE_BATCH_SIZE');
+    }
+    expect(threw).toBe(true);
+  });
+
+  test('revival: putPage upsert within the window clears deleted_at', async () => {
+    await seedPageWithPath('soft/revive-me', 'soft-revive.md');
+    await engine.softDeletePages(['soft/revive-me'], { sourceId: 'default' });
+    expect(await engine.getPage('soft/revive-me', { sourceId: 'default' })).toBeNull();
+
+    await engine.putPage('soft/revive-me', {
+      type: 'note', title: 'Revived', compiled_truth: 'back from the window', timeline: '',
+    }, { sourceId: 'default' });
+
+    const revived = await engine.getPage('soft/revive-me', { sourceId: 'default' });
+    expect(revived).not.toBeNull();
+    expect(revived!.title).toBe('Revived');
   });
 });
 

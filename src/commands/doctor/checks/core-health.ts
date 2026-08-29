@@ -152,6 +152,44 @@ export async function pgvectorCheck(engine: BrainEngine): Promise<Check> {
 }
 
 /**
+ * Doctor check: pages(source_id, slug) unique arbiter (#550).
+ *
+ * Every putPage upsert infers ON CONFLICT (source_id, slug). When the
+ * arbiter index/constraint is missing, EVERY page write fails brain-wide
+ * with "no unique or exclusion constraint matching the ON CONFLICT
+ * specification" — and the migration version counter can't see it. Keyed
+ * off the actual index shape via checkPagesUpsertArbiter.
+ */
+export async function pagesUpsertArbiterCheck(engine: BrainEngine): Promise<Check> {
+  try {
+    const { checkPagesUpsertArbiter } = await import('../../../core/pages-upsert-arbiter.ts');
+    const status = await checkPagesUpsertArbiter(engine);
+    if (!status.tablePresent || !status.needsRepair) {
+      return {
+        name: 'pages_upsert_arbiter',
+        status: 'ok',
+        message: status.tablePresent
+          ? 'pages has the UNIQUE(source_id, slug) upsert arbiter'
+          : 'no pages table yet',
+      };
+    }
+    const dupNote = status.duplicateGroups > 0
+      ? ` ${status.duplicateGroups} duplicate (source_id, slug) group(s) block the automatic repair — resolve the duplicate pages first, then`
+      : '';
+    return {
+      name: 'pages_upsert_arbiter',
+      status: 'fail',
+      message:
+        `pages is missing the UNIQUE(source_id, slug) arbiter — every page write fails with ` +
+        `"no unique or exclusion constraint" (#550).${dupNote} ` +
+        `Run \`gbrain apply-migrations --yes\` to heal it.`,
+    };
+  } catch {
+    return { name: 'pages_upsert_arbiter', status: 'warn', message: 'Could not check the pages upsert arbiter' };
+  }
+}
+
+/**
  * Doctor check: JSONB columns are not double-encoded as strings.
  *
  * This check is valid on both Postgres and PGLite. Route through

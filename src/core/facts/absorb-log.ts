@@ -18,6 +18,9 @@
  *   - 'queue_shutdown'  — queue rejected the enqueue because shutdown is in progress.
  *   - 'embed_failure'   — gateway down on embedOne; row inserts with NULL embedding.
  *   - 'pipeline_error'  — anything else absorbed inside runFactsBackstop's catch.
+ *   - 'gateway_auth'    — provider authentication/authorization failed.
+ *   - 'gateway_billing' — provider credit, quota, or billing hard limit failed.
+ *   - 'gateway_rate_limit' — provider rate limit; retry policy remains with the caller.
  *   - eligibility_skip is intentionally NOT logged (high cardinality, low signal).
  *
  * The writer is best-effort — a failure to log SHOULDN'T blow up the
@@ -26,6 +29,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { classifyGlobalLlmError } from '../ai/errors.ts';
 import { GBrainError } from '../types.ts';
 
 export const FACTS_ABSORB_REASONS = [
@@ -35,6 +39,19 @@ export const FACTS_ABSORB_REASONS = [
   'queue_shutdown',
   'embed_failure',
   'pipeline_error',
+  // Extraction-outcome codes (keyed-but-failing states; keyless-expected
+  // states deliberately write NO row — see backstop.ts
+  // surfaceExtractionFailure). Doctor's facts_extraction_health groups by
+  // split_part(summary,':',1), so new codes surface with zero schema change.
+  'chat_unavailable',
+  'refusal',
+  'content_filter',
+  'malformed_output',
+  'non_terminal_stop',
+  'truncated_output',
+  'gateway_auth',
+  'gateway_billing',
+  'gateway_rate_limit',
 ] as const;
 
 // v0.39.3.0 WARN-4 + CV13 — module-scoped flag so the first-occurrence
@@ -117,6 +134,29 @@ export async function writeFactsAbsorbLog(
 }
 
 /**
+ * Persist a provider failure without copying provider response bodies, keys,
+ * or request payloads into ingest_log. Global failures get stable typed
+ * reason codes; all other failures retain the existing classifier.
+ */
+export async function writeFactsAbsorbFailure(
+  engine: BrainEngine,
+  ref: string,
+  err: unknown,
+  sourceId: string = 'default',
+): Promise<void> {
+  const globalClass = classifyGlobalLlmError(err);
+  const reason: FactsAbsorbReason = globalClass === 'auth'
+    ? 'gateway_auth'
+    : globalClass === 'billing'
+      ? 'gateway_billing'
+      : globalClass === 'rate_limit'
+        ? 'gateway_rate_limit'
+        : classifyFactsAbsorbError(err);
+  const errorType = err instanceof Error && err.name ? err.name : 'Error';
+  await writeFactsAbsorbLog(engine, ref, reason, `provider request failed (${errorType})`, sourceId);
+}
+
+/**
  * Classify an arbitrary error into one of the stable reason codes. Heuristic
  * pattern match on error name + message; falls back to 'pipeline_error' when
  * nothing matches. Public so callers can route the same way the helper does
@@ -126,6 +166,20 @@ export function classifyFactsAbsorbError(err: unknown): FactsAbsorbReason {
   if (!err) return 'pipeline_error';
   const msg = err instanceof Error ? err.message : String(err);
   const name = err instanceof Error ? err.name : '';
+
+  // Typed extraction failures carry their reason — map precisely instead of
+  // pattern-matching the message (a 401/invalid-model provider_error would
+  // otherwise fall through to the generic 'pipeline_error'). instanceof via
+  // name check: the class lives in extract.ts and this module must stay
+  // import-light; the name is stable and set in the constructor.
+  if (name === 'FactsExtractionError') {
+    const reason = (err as { reason?: string }).reason;
+    if (reason === 'provider_error') return 'gateway_error';
+    if (reason && (FACTS_ABSORB_REASONS as readonly string[]).includes(reason)) {
+      return reason as FactsAbsorbReason;
+    }
+    return 'pipeline_error';
+  }
 
   // Anthropic / OpenAI / Voyage all surface 4xx/5xx + timeouts in similar shapes.
   if (/timeout|timed?\s?out|ETIMEDOUT/i.test(msg)) return 'gateway_error';

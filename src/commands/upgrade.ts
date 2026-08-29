@@ -1,11 +1,31 @@
 import { execSync, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
+import { parseSemver, semverGt } from '../core/semver.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { VERSION } from '../version.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
-export async function runUpgrade(args: string[]) {
+/**
+ * Compare the post-swap resolved version against the caller's target (#4366).
+ * `bun update` exits 0 without upgrading exact-tag Git installs (the pin
+ * wins), so exit status alone cannot prove a swap happened. 'unverified'
+ * (missing/unparseable observed version) keeps legacy fail-open behavior —
+ * only a confirmed still-older version is a 'mismatch'.
+ */
+export function assessUpgradeOutcome(
+  target: string | undefined,
+  observed: string,
+): 'ok' | 'mismatch' | 'unverified' {
+  if (!target) return 'ok';
+  const t = parseSemver(target);
+  const o = parseSemver(observed.trim());
+  if (!t || !o) return 'unverified';
+  return semverGt(t, o) ? 'mismatch' : 'ok';
+}
+
+export async function runUpgrade(args: string[], opts: { targetVersion?: string } = {}) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log('Usage: gbrain upgrade [--swap-only]\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.\n\n--swap-only  Perform ONLY the binary/source swap and skip post-upgrade\n             (migrations run on the next launch). Used by the autopilot\n             silent self-upgrade channel so the daemon can swap + relaunch\n             without a 30-min blocking post-upgrade inside its tick.');
     return;
@@ -128,6 +148,25 @@ export async function runUpgrade(args: string[]) {
 
   if (upgraded) {
     const newVersion = verifyUpgrade();
+    // #4366: a still-older resolved version means the swap never happened
+    // (exact-tag Git pins make `bun update` a successful no-op). Fail loudly
+    // and return BEFORE the breadcrumb/cache bookkeeping below, so the
+    // pending-upgrade marker survives and keeps nagging.
+    const target = opts.targetVersion;
+    if (target && assessUpgradeOutcome(target, newVersion) === 'mismatch') {
+      console.error(`Upgrade did not take effect: still running ${newVersion}, expected ${target}.`);
+      console.error('Exact-tag Git installs stay pinned through `bun update`. Reinstall with:');
+      console.error(`  bun add -g github:garrytan/gbrain#v${target}`);
+      recordUpgradeError({
+        phase: 'verify-target',
+        fromVersion: oldVersion,
+        toVersion: target,
+        error: `still running ${newVersion} after upgrade`,
+        hint: `bun add -g github:garrytan/gbrain#v${target}`,
+      });
+      setCliExitVerdict(1);
+      return;
+    }
     // Save old version for post-upgrade migration detection
     saveUpgradeState(oldVersion, newVersion);
 
@@ -666,14 +705,24 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
             let enabled = false;
             if (isTty) {
               const { createInterface } = await import('readline');
+              // #4318 residual: rl.close() must not run before the answer's
+              // resolveAns() — the unguarded rl.on('close', ...) below would
+              // otherwise settle the promise `false` first (the close event
+              // fires synchronously during rl.close()), so an operator
+              // pressing Enter to accept this [Y/n]-default-yes prompt would
+              // always land on "declined" regardless of what they typed.
               enabled = await new Promise<boolean>((resolveAns) => {
                 const rl = createInterface({ input: process.stdin, output: process.stdout });
+                let answered = false;
                 rl.question('[gbrain] Enable skill publishing now? (recommended) [Y/n] ', (answer) => {
-                  rl.close();
+                  answered = true;
                   const a = answer.trim().toLowerCase();
                   resolveAns(a === '' || a === 'y' || a === 'yes');
+                  rl.close();
                 });
-                rl.on('close', () => resolveAns(false));
+                rl.on('close', () => {
+                  if (!answered) resolveAns(false);
+                });
               });
             } else {
               console.log('[AGENT] Relay this to your operator. Recommended: enable it.');

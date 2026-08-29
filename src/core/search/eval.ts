@@ -13,6 +13,7 @@ import type { BrainEngine } from '../engine.ts';
 import { embed } from '../embedding.ts';
 import { hybridSearch } from './hybrid.ts';
 import type { HybridSearchOpts } from './hybrid.ts';
+import { dedupeRankedKeys } from '../eval/ranked-docs.ts';
 
 // ─────────────────────────────────────────────────────────────────
 // Ground truth types
@@ -88,21 +89,23 @@ export interface EvalReport {
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Precision@k: fraction of top-k hits that are relevant.
+ * Page-level Precision@k: relevant unique pages in the top k divided by k.
+ * The denominator remains k when fewer than k unique pages were returned.
  */
 export function precisionAtK(hits: string[], relevant: Set<string>, k: number): number {
   if (k <= 0 || hits.length === 0 || relevant.size === 0) return 0;
-  const topK = hits.slice(0, k);
+  const topK = dedupeRankedKeys(hits).slice(0, k);
   const relevantHits = topK.filter(h => relevant.has(h)).length;
   return relevantHits / k;
 }
 
 /**
- * Recall@k: fraction of all relevant docs found in top-k hits.
+ * Page-level Recall@k: fraction of all relevant pages found in the first k
+ * unique pages. Duplicate chunks neither inflate hits nor consume the cutoff.
  */
 export function recallAtK(hits: string[], relevant: Set<string>, k: number): number {
   if (k <= 0 || hits.length === 0 || relevant.size === 0) return 0;
-  const topK = hits.slice(0, k);
+  const topK = dedupeRankedKeys(hits).slice(0, k);
   const relevantHits = topK.filter(h => relevant.has(h)).length;
   return relevantHits / relevant.size;
 }
@@ -112,8 +115,9 @@ export function recallAtK(hits: string[], relevant: Set<string>, k: number): num
  */
 export function mrr(hits: string[], relevant: Set<string>): number {
   if (hits.length === 0 || relevant.size === 0) return 0;
-  for (let i = 0; i < hits.length; i++) {
-    if (relevant.has(hits[i])) return 1 / (i + 1);
+  const uniqueHits = dedupeRankedKeys(hits);
+  for (let i = 0; i < uniqueHits.length; i++) {
+    if (relevant.has(uniqueHits[i])) return 1 / (i + 1);
   }
   return 0;
 }
@@ -131,7 +135,7 @@ export function mrr(hits: string[], relevant: Set<string>): number {
 export function ndcgAtK(hits: string[], grades: Map<string, number>, k: number): number {
   if (k <= 0 || hits.length === 0 || grades.size === 0) return 0;
 
-  const topK = hits.slice(0, k);
+  const topK = dedupeRankedKeys(hits).slice(0, k);
   let dcg = 0;
   for (let i = 0; i < topK.length; i++) {
     const grade = grades.get(topK[i]) ?? 0;
@@ -150,7 +154,7 @@ export function ndcgAtK(hits: string[], grades: Map<string, number>, k: number):
   }
 
   if (idcg === 0) return 0;
-  return dcg / idcg;
+  return Math.min(1, Math.max(0, dcg / idcg));
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -183,7 +187,7 @@ export async function runEval(
 
   let done = 0;
   for (const qrel of qrels) {
-    const hits = await runQuery(engine, qrel.query, strategy, config, limit);
+    const hits = dedupeRankedKeys(await runQuery(engine, qrel.query, strategy, config, limit));
 
     const relevantSet = new Set(qrel.relevant);
     const gradesMap = buildGradesMap(qrel);

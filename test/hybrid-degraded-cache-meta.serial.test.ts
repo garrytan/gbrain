@@ -157,15 +157,27 @@ describe('cache-hit stamping', () => {
     expect(typeof hitMeta.retrieved_count).toBe('number');
   });
 
-  test('hit-with-offset stays labeled hit (never a clean-miss mislabel)', async () => {
+  test('offset>0 bypasses the cache entirely (pages are cache-hostile until the pre-slice pool is stored)', async () => {
+    // Post-#3002/#3871 hardening: the cache stores the already-sliced page,
+    // so serving ANY offset against it returns wrong/empty rows. Paged
+    // requests skip both lookup and store — status 'disabled', engine-served.
     const { results: missResults } = await cachedRun('builder', { limit: 5 });
     expect(missResults.length).toBeGreaterThan(0);
     await awaitPendingSearchCacheWrites();
 
-    const { results, meta } = await cachedRun('builder', { limit: 5, offset: 50 });
-    expect(results).toHaveLength(0); // offset past the stored set
-    expect(meta.cache?.status).toBe('hit');
-    expect(meta.retrieved_count).toBe(0); // pre-budget count for THIS page
+    const { meta } = await cachedRun('builder', { limit: 5, offset: 50 });
+    expect(meta.cache?.status).toBe('disabled');
+    expect(typeof meta.retrieved_count).toBe('number');
+  });
+
+  test('offset<0 also bypasses the cache entirely (#4358 residual — negative offsets re-slice a stored page just as badly as positive ones)', async () => {
+    const { results: missResults } = await cachedRun('builder', { limit: 5 });
+    expect(missResults.length).toBeGreaterThan(0);
+    await awaitPendingSearchCacheWrites();
+
+    const { meta } = await cachedRun('builder', { limit: 5, offset: -50 });
+    expect(meta.cache?.status).toBe('disabled');
+    expect(typeof meta.retrieved_count).toBe('number');
   });
 });
 

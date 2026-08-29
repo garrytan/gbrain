@@ -131,8 +131,10 @@ NOTES
   Accepted values: true / 1 / yes / on.
 
   The gateway loop needs a provider whose recipe supports chat WITH tool
-  calling — not every recipe under src/core/ai/recipes/ qualifies. A model
-  that cannot call tools is refused at job start with the reason named.
+  calling AND declares supports_subagent_loop: true — not every recipe under
+  src/core/ai/recipes/ qualifies. A model that cannot call tools, or whose
+  tool_call_ids are not replay-stable, is refused at job start with the
+  reason named.
 `);
 }
 

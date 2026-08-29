@@ -136,6 +136,103 @@ export function frontmatterBodyOffset(content: string): number {
  * heading (backward-compat for existing files). A bare `---` in body text
  * is treated as a markdown horizontal rule, not a timeline separator.
  */
+/**
+ * gray-matter's YAML parser treats an unquoted `: ` (colon-space) or a
+ * trailing `:` inside a plain scalar value as an ambiguous nested-mapping
+ * indicator and fails to parse the ENTIRE leading frontmatter block — not
+ * just that one field. This is silent: parseMarkdown catches the error and
+ * falls back to empty frontmatter + the whole document as body, which
+ * looks exactly like accidental double-frontmatter corruption even though
+ * only one (syntactically invalid) block was ever written. The single most
+ * common trigger is a raw email/message subject line landing unquoted in
+ * `title:` — "Re: ..." is close to universal in reply subjects.
+ * See github.com/garrytan/gbrain/issues/3708.
+ *
+ * Fix: quote any single-line `key: value` frontmatter scalar whose value
+ * isn't already quoted, a flow collection (`[...]`/`{...}`), or a block
+ * scalar (`|`/`>`), and contains an ambiguous colon, before handing the
+ * block to gray-matter. Multi-line values, list items (indented, so they
+ * never match the bare `key:` anchor below), and already-safe values are
+ * left untouched — this only rescues the exact shape that breaks, so
+ * writers (agents, scripts, humans) no longer have to remember to quote
+ * colon-bearing titles themselves.
+ */
+function quoteAmbiguousFrontmatterScalars(content: string): string {
+  const fenceMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!fenceMatch) return content;
+  const fenceBody = fenceMatch[1]!;
+  const closer = fenceMatch[2]!;
+  const rest = content.slice(fenceMatch[0].length);
+
+  const fixedBody = fenceBody
+    .split('\n')
+    .map(line => {
+      // Top-level `key: value` only — indented lines (list items, nested
+      // maps) never match this anchor, so they pass through untouched.
+      const kv = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):[ \t]+(.+)$/);
+      if (!kv) return line;
+      const key = kv[1]!;
+      const value = kv[2]!;
+      // Already quoted, a flow collection, or a block-scalar indicator —
+      // caller already handled quoting correctly; leave it alone.
+      if (/^['"[{|>]/.test(value)) return line;
+      // The ambiguous cases gray-matter/js-yaml chokes on: an embedded
+      // ": " (looks like a nested mapping key) or a trailing ":".
+      if (!value.includes(': ') && !value.endsWith(':')) return line;
+      const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `${key}: "${escaped}"`;
+    })
+    .join('\n');
+
+  return `---\n${fixedBody}\n---${closer}${rest}`;
+}
+
+/**
+ * #4526: gray-matter only recognizes a frontmatter fence at byte 0, but the
+ * rest of the pipeline (frontmatterBodyOffset above, collectValidationErrors'
+ * MISSING_OPEN check below) tolerates leading blank lines before the opener.
+ * A content blob with a single leading newline therefore silently lost its
+ * whole frontmatter block: empty data, the block left embedded in the body,
+ * and the title humanized from the slug — a raw UUID for `fact/<uuid>`
+ * pages. Strip leading blank lines when (and only when) the first non-empty
+ * line is a fence, so the parse matches what the validators already accept.
+ */
+function stripLeadingBlanksBeforeFence(content: string): string {
+  if (!/^[ \t\r]*\n/.test(content)) return content; // fast path: first line non-blank
+  const lines = content.split('\n');
+  let i = 0;
+  while (i < lines.length && lines[i].trim().length === 0) i++;
+  if (i === 0 || i >= lines.length || lines[i].trim() !== '---') return content;
+  return lines.slice(i).join('\n');
+}
+
+/**
+ * #4526 (second arm): pages already corrupted by the pre-fix parse carry
+ * their real frontmatter EMBEDDED at the top of the body (double-frontmatter
+ * after a get→put round-trip). When the normal precedence found no title
+ * (no frontmatter `title:`, no body H1) and the alternative is humanizing
+ * the slug/filename, promote a `title:` from the embedded leading fence
+ * block instead. Deliberately last-before-fallback: it never overrides a
+ * real title, it only rescues the junk-title case.
+ */
+function inferTitleFromEmbeddedFrontmatter(body: string): string {
+  const m = body.match(/^\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/);
+  if (!m) return '';
+  for (const line of m[1]!.split('\n')) {
+    const kv = line.match(/^title:[ \t]+(.+?)[ \t\r]*$/);
+    if (!kv) continue;
+    let value = kv[1]!;
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    return value.trim();
+  }
+  return '';
+}
+
 export function parseMarkdown(
   content: string,
   filePath?: string,
@@ -147,10 +244,21 @@ export function parseMarkdown(
   // pretty much any input. The validation surface below catches the cases
   // it silently swallows. Validation only runs when opts.validate is true,
   // so existing callers are unaffected.
+  //
+  // quoteAmbiguousFrontmatterScalars runs unconditionally, not just as an
+  // error-path retry: the unquoted-colon case (#3708) doesn't throw a
+  // catchable exception here — gray-matter just silently decides there's
+  // no valid frontmatter at all (empty data, the whole document as body),
+  // so there's no failure signal to react to after the fact. Pre-quoting
+  // ambiguous values keeps that input from ever reaching gray-matter in
+  // its broken shape.
+  // #4526: lift the fence to byte 0 first (leading blank lines are legal per
+  // the validators), THEN quote ambiguous scalars (whose regex anchors ^---).
+  const safeContent = quoteAmbiguousFrontmatterScalars(stripLeadingBlanksBeforeFence(content));
   let parsed: ReturnType<typeof matter> | null = null;
   let yamlParseError: Error | null = null;
   try {
-    parsed = matter(content);
+    parsed = matter(safeContent);
   } catch (e) {
     yamlParseError = e as Error;
   }
@@ -188,9 +296,13 @@ export function parseMarkdown(
   // the H1 fallback they get junk titles humanized from the slug
   // (`Contact 20170928 5 John Defalco`), which also breaks anything keyed on
   // the title (e.g. the by-mention gazetteer's first-token bucketing).
+  // #4526: an embedded leading fence block's `title:` outranks only the
+  // humanized-filename fallback — it rescues pages the pre-fix parse left
+  // with their frontmatter stuck in the body, without overriding real titles.
   const title =
     coerceFrontmatterString(frontmatter.title).trim() ||
     inferTitleFromBody(body) ||
+    inferTitleFromEmbeddedFrontmatter(body) ||
     inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
@@ -378,9 +490,12 @@ function collectValidationErrors(
   }
 
   // 7. SLUG_MISMATCH — only when expectedSlug was provided and a slug field exists.
+  //    #3772: a declared slug whose slugified spelling equals the path-derived
+  //    slug is normalization-equivalent (export stamps these to preserve
+  //    legacy page identities across a round-trip) — not a mismatch.
   if (ctx.expectedSlug && typeof ctx.parsedFrontmatter.slug === 'string') {
     const declared = ctx.parsedFrontmatter.slug as string;
-    if (declared !== ctx.expectedSlug) {
+    if (declared !== ctx.expectedSlug && slugifyPath(declared) !== ctx.expectedSlug) {
       errors.push({
         code: 'SLUG_MISMATCH',
         message: `Frontmatter slug "${declared}" does not match path-derived slug "${ctx.expectedSlug}"`,
@@ -424,6 +539,15 @@ function hasFrontmatterFieldSyntax(fmBody: string): boolean {
  *   2. `--- timeline ---` — decorated separator
  *   3. `---` ONLY when the next non-empty line is `## Timeline` or `## History`
  *      (backward-compat fallback for older gbrain-written files)
+ *   4. #2225 fallback (no sentinel anywhere): the first bare `## Timeline` /
+ *      `## History` heading, outside code fences, with a non-empty prefix,
+ *      whose section content (up to the next H2 or EOF) is timeline-shaped —
+ *      dated bullets only. Only that section moves to the timeline half (the
+ *      heading line is KEPT there — it is content, not a separator); later
+ *      unrelated H2 sections stay in compiled_truth. This rescues the naive
+ *      MCP get/put reassembly (compiled_truth + '## Timeline' + timeline)
+ *      that used to silently bury the whole timeline inside compiled_truth,
+ *      WITHOUT eating ordinary wiki pages whose '## History' is prose.
  *
  * A plain `---` line is a markdown horizontal rule, NOT a timeline separator.
  * Treating bare `---` as a separator caused 83% content truncation on wiki corpora.
@@ -432,16 +556,34 @@ export function splitBody(body: string): { compiled_truth: string; timeline: str
   const lines = body.split('\n');
   const splitIndex = findTimelineSplitIndex(lines);
 
-  if (splitIndex === -1) {
-    return { compiled_truth: body, timeline: '' };
+  if (splitIndex !== -1) {
+    const compiled_truth = lines.slice(0, splitIndex).join('\n');
+    const timeline = lines.slice(splitIndex + 1).join('\n');
+    return { compiled_truth, timeline };
   }
 
-  const compiled_truth = lines.slice(0, splitIndex).join('\n');
-  const timeline = lines.slice(splitIndex + 1).join('\n');
-  return { compiled_truth, timeline };
+  const section = findBareTimelineSection(lines);
+  if (section) {
+    return {
+      // Only the timeline-shaped section moves; anything from the next H2
+      // onward stays in compiled_truth (later unrelated sections survive).
+      compiled_truth: lines.slice(0, section.start).concat(lines.slice(section.end)).join('\n'),
+      // Heading line kept: it belongs to the timeline content.
+      timeline: lines.slice(section.start, section.end).join('\n'),
+    };
+  }
+
+  return { compiled_truth: body, timeline: '' };
 }
 
-function findTimelineSplitIndex(lines: string[]): number {
+/**
+ * Line index of the first recognized timeline sentinel, or -1. Exported for
+ * the timeline write-through's on-disk splice (timeline-write-through.ts),
+ * which must locate the sentinel in raw file text without re-serializing the
+ * page. Callers pass BODY lines (after frontmatter — splitBody's own call
+ * shape) so the frontmatter's `---` delimiters can't false-positive rule 3.
+ */
+export function findTimelineSplitIndex(lines: string[]): number {
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
@@ -460,12 +602,63 @@ function findTimelineSplitIndex(lines: string[]): number {
       for (let j = i + 1; j < lines.length; j++) {
         const next = lines[j].trim();
         if (next.length === 0) continue;
-        if (/^##\s+(timeline|history)\b/i.test(next)) return i;
+        if (/^##\s+(timeline|history)\s*$/i.test(next)) return i;
         break;
       }
     }
   }
   return -1;
+}
+
+/** A timeline entry line: a bullet whose text starts with a 4-digit year
+ *  (optionally bolded), e.g. `- 2024-05-01: Series A closed`, `- 2020: Founded`. */
+const DATED_BULLET_RE = /^\s*[-*+]\s+\**\d{4}\b/;
+
+/**
+ * #2225 fallback scan: the first bare `## Timeline` / `## History` H2 heading
+ * with no sentinel before it, GATED on the section actually looking like a
+ * timeline — otherwise an ordinary wiki page with a prose '## History'
+ * section would lose everything after that heading into the timeline half.
+ * A section qualifies only when its content (up to the next H2 or EOF) is
+ * dated bullets (`DATED_BULLET_RE`, blank lines and indented bullet
+ * continuations allowed) with at least one bullet. Lines inside fenced code
+ * blocks (```/~~~) are skipped (same fence tracking as inferTitleFromBody),
+ * and a heading with an empty prefix is skipped too — a heading-first body
+ * would split into an empty compiled_truth, which is worse than not
+ * splitting. Returns the section's [start, end) line range (heading
+ * included, next H2 excluded) or null.
+ */
+function findBareTimelineSection(lines: string[]): { start: number; end: number } | null {
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const fence = /^\s*(`{3,}|~{3,})/.exec(lines[i]);
+    if (fence) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (!/^##\s+(timeline|history)\b/i.test(lines[i].trim())) continue;
+    const beforeContent = lines.slice(0, i).join('\n').trim();
+    if (beforeContent.length === 0) continue;
+
+    // Lookahead: section extent + timeline shape. Any non-blank line that is
+    // neither a dated bullet nor a continuation of one (incl. fence openers)
+    // disqualifies THIS heading; the outer scan keeps looking for a later one.
+    let end = lines.length;
+    let datedBullets = 0;
+    let shaped = true;
+    for (let j = i + 1; j < lines.length; j++) {
+      const trimmed = lines[j].trim();
+      if (/^##\s+\S/.test(trimmed)) { end = j; break; }
+      if (trimmed.length === 0) continue;
+      if (DATED_BULLET_RE.test(lines[j])) { datedBullets++; continue; }
+      if (datedBullets > 0 && /^\s{2,}\S/.test(lines[j])) continue; // wrapped bullet
+      shaped = false;
+      break;
+    }
+    if (shaped && datedBullets > 0) return { start: i, end };
+  }
+  return null;
 }
 
 /**
@@ -740,7 +933,8 @@ function extractTags(frontmatter: Record<string, unknown>): string[] {
 // stamps. This extract is the single source of truth.
 // ---------------------------------------------------------------------------
 
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep as pathSep } from 'node:path';
 
 /** Options for serializePageToMarkdown. */
 export interface SerializePageOpts {
@@ -809,4 +1003,56 @@ export function resolvePageFilePath(
   return sourceId === 'default'
     ? join(brainDir, `${slug}.md`)
     : join(brainDir, '.sources', sourceId, `${slug}.md`);
+}
+
+/**
+ * Map a git-root-relative `pages.source_path` into a source's `local_path`.
+ *
+ * Scoped syncs keep `source_path` relative to the Git root even when
+ * `sources.local_path` points at a subdirectory. A direct join duplicates the
+ * scope (`.../public/changelog/public/changelog/...`). Find the same Git root
+ * sync uses without spawning a subprocess, then remove that exact scope.
+ * Non-Git vaults and Git-root local paths keep the direct path.
+ *
+ * Returns null for an unsafe or non-markdown source path. Callers must still
+ * enforce their normal realpath containment check before a write.
+ *
+ * Segment splitting is platform-aware (`pathSep`), not a blanket
+ * `[\\/]+` split: on POSIX, `\` is a legal filename character (real
+ * gbrain data has Apple Notes titles containing one), not a directory
+ * separator, so splitting on it there reconstructs a path that doesn't
+ * exist on disk even though the file does (issue: undeclared_db_only_pages
+ * false positive + silent restore/export failure for any such file). On
+ * Windows, `\` is the real separator, so it still needs to split there.
+ */
+function splitLocalPathSegments(value: string): string[] {
+  return (pathSep === '\\' ? value.split(/[\\/]+/) : value.split(/\/+/)).filter(Boolean);
+}
+
+export function resolveSourceLocalFilePath(
+  localPath: string,
+  rawSourcePath: string | null | undefined,
+): string | null {
+  if (!rawSourcePath) return null;
+  const value = rawSourcePath.trim();
+  if (!value || value.includes('\0') || !/\.mdx?$/i.test(value)) return null;
+  if (isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return null;
+  const sourceSegments = splitLocalPathSegments(value);
+  if (sourceSegments.length === 0 || sourceSegments.some(segment => segment === '..')) return null;
+
+  const absoluteLocalPath = resolve(localPath);
+  let cursor = absoluteLocalPath;
+  while (true) {
+    if (existsSync(join(cursor, '.git'))) {
+      const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
+      if (scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index])) {
+        return join(absoluteLocalPath, ...sourceSegments.slice(scope.length));
+      }
+      break;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  return join(absoluteLocalPath, ...sourceSegments);
 }

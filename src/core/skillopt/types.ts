@@ -13,6 +13,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import type { ToolLoopStopReason } from '../ai/gateway.ts';
 
 // ─── Benchmarks + judges ──────────────────────────────────────────────────
 
@@ -103,8 +104,8 @@ export interface Trajectory {
   };
   /** Number of agent turns the loop took. */
   turns: number;
-  /** End reason from gateway.toolLoop. */
-  stop_reason: 'end' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+  /** End reason from gateway.toolLoop ('length' = output-cap truncation, #4088). */
+  stop_reason: ToolLoopStopReason;
   /** Wall-clock duration in ms. */
   duration_ms: number;
 }
@@ -170,6 +171,9 @@ export interface SkillOptOpts {
   optimizerMode?: 'reflect' | 'one-shot-rewrite';
 
   // Safety.
+  /** USD cap for the run. #3516: 0 means UNCAPPED (--no-max-cost) — pricing
+   *  misses then warn-once instead of hard-failing, so unpriced model ids
+   *  (openrouter:*, litellm:*) can run. */
   maxCostUsd: number;
   maxRuntimeMin: number;
   force: boolean;
@@ -213,6 +217,10 @@ export interface RunReceipt {
   final_cost_usd?: number;
   total_steps?: number;
   epochs_completed?: number;
+  // #3516: present when outcome is 'aborted' | 'errored' — machine-readable
+  // reason + the underlying error message, mirrored from the audit trail.
+  abort_reason?: 'budget_exhausted' | 'runtime_exceeded' | 'sigint' | 'error';
+  abort_detail?: string;
   // Ablation provenance (cat31 replayability) — present when a non-default
   // ablation knob was set.
   reflect_mode?: 'both' | 'failure-only';

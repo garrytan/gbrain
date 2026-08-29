@@ -30,6 +30,19 @@ describe('extractMarkdownLinks', () => {
     const content = '[A](a.md) and [B](b.md)';
     expect(extractMarkdownLinks(content)).toHaveLength(2);
   });
+
+  it('percent-decodes targets from Obsidian useMarkdownLinks mode', () => {
+    const content = '[Alice](People/Alice%20Chen.md)';
+    const links = extractMarkdownLinks(content);
+    expect(links).toHaveLength(1);
+    expect(links[0].relTarget).toBe('People/Alice Chen.md');
+  });
+
+  it('keeps a malformed percent-escape raw instead of throwing', () => {
+    const content = '[Bad](People/Alice%ZZ.md)';
+    expect(() => extractMarkdownLinks(content)).not.toThrow();
+    expect(extractMarkdownLinks(content)[0].relTarget).toBe('People/Alice%ZZ.md');
+  });
 });
 
 describe('extractLinksFromFile', () => {
@@ -47,6 +60,20 @@ describe('extractLinksFromFile', () => {
     const allSlugs = new Set(['deals/test']);
     const links = await extractLinksFromFile(content, 'deals/test.md', allSlugs);
     expect(links).toHaveLength(0);
+  });
+
+  it('resolves a percent-encoded Obsidian markdown-link target to its slugified page', async () => {
+    const content = 'See [Alice](People/Alice%20Chen.md).';
+    const allSlugs = new Set(['deals/test', 'people/alice-chen']);
+    const links = await extractLinksFromFile(content, 'deals/test.md', allSlugs);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].to_slug).toBe('people/alice-chen');
+  });
+
+  it('does not throw and produces no edge for a malformed percent-escape', async () => {
+    const content = 'See [Alice](People/Alice%ZZ.md).';
+    const allSlugs = new Set(['deals/test', 'people/alice-chen']);
+    await expect(extractLinksFromFile(content, 'deals/test.md', allSlugs)).resolves.toHaveLength(0);
   });
 
   it('extracts frontmatter company links (v0.13, includeFrontmatter opt-in)', async () => {
@@ -210,6 +237,17 @@ describe('extractTimelineFromContent', () => {
     expect(entries[0].source).toBe('email from alice-example re: offer, signed');
   });
 
+  it('uses the full paragraph for a wrapped inline citation summary', () => {
+    const content = `The imported app showed product fit for commercial use
+after the prototype demo. [Source: user interview, 2026-07-30]`;
+    const entries = extractTimelineFromContent(content, 'projects/imported-app');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2026-07-30');
+    expect(entries[0].summary).toBe(
+      'The imported app showed product fit for commercial use after the prototype demo.',
+    );
+  });
+
   it('extracts one entry per citation when a line carries several', () => {
     const content = `Both sides confirmed the partnership. [Source: call with widget-co, 2025-06-01] [Source: follow-up email, 2025-06-03]`;
     const entries = extractTimelineFromContent(content, 'companies/widget-co');
@@ -224,6 +262,31 @@ describe('extractTimelineFromContent', () => {
     const entries = extractTimelineFromContent(content, 'test');
     expect(entries).toHaveLength(1); // Format 1 only
     expect(entries[0].source).toBe('Meeting');
+  });
+
+  it('keeps a prose citation directly under a timeline bullet', () => {
+    const content = `- **2025-03-18** | Meeting notes
+Follow-up decision recorded. [Source: memo, 2025-03-20]`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(2);
+    expect(entries[0].date).toBe('2025-03-18');
+    expect(entries[0].source).toBe('markdown');
+    expect(entries[0].summary).toBe('Meeting notes');
+    expect(entries[1].date).toBe('2025-03-20');
+    expect(entries[1].source).toBe('memo');
+    expect(entries[1].summary).toBe('Follow-up decision recorded.');
+  });
+
+  it('ignores dated citations inside fenced code blocks', () => {
+    const content = `\`\`\`
+Fake claim. [Source: generated fixture, 2025-01-01]
+\`\`\`
+Real claim. [Source: memo, 2025-01-02]`;
+    const entries = extractTimelineFromContent(content, 'test');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].date).toBe('2025-01-02');
+    expect(entries[0].source).toBe('memo');
+    expect(entries[0].summary).toBe('Real claim.');
   });
 
   it('skips a bare citation with no surrounding text', () => {

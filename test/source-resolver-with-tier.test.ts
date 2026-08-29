@@ -34,7 +34,7 @@ function makeStub(
           ? [{ id: target } as unknown as T]
           : []);
       }
-      if (sql.includes('SELECT id, local_path FROM sources')) {
+      if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
         return paths as unknown as T[];
       }
       return [];

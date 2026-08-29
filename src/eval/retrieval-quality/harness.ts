@@ -16,6 +16,8 @@
  * pglite + a deterministic stub.
  */
 
+import { dedupeRankedKeys } from '../../core/eval/ranked-docs.ts';
+
 export type Family =
   | 'title-substring'
   | 'generic-to-named'
@@ -23,6 +25,7 @@ export type Family =
   | 'multi-chunk-dilution'
   | 'short-vs-rich'
   | 'graph-relationship'
+  | 'concept-paraphrase'
   | 'hard-negative';
 
 export interface NamedThingQuestion {
@@ -84,20 +87,21 @@ export interface RetrievalQualityReport {
 const K = 3;
 
 export function scoreQuestion(q: NamedThingQuestion, ranked: string[]): QuestionResult {
+  const uniqueRanked = dedupeRankedKeys(ranked);
   if (q.family === 'hard-negative') {
     const forbidden = new Set(q.forbidden ?? []);
-    const topK = ranked.slice(0, K);
+    const topK = uniqueRanked.slice(0, K);
     const clean = !topK.some(s => forbidden.has(s));
     return { family: q.family, query: q.query, hit_at_1: clean, hit_at_3: clean, reciprocal_rank: clean ? 1 : 0, negative_clean: clean, recall_at_k: 0, recall_at_10: 0 };
   }
   const relevant = new Set(q.relevant ?? []);
-  const firstRelevantIdx = ranked.findIndex(s => relevant.has(s));
+  const firstRelevantIdx = uniqueRanked.findIndex(s => relevant.has(s));
   const hit1 = firstRelevantIdx === 0;
   const hit3 = firstRelevantIdx >= 0 && firstRelevantIdx < K;
   const rr = firstRelevantIdx >= 0 ? 1 / (firstRelevantIdx + 1) : 0;
   const recallAt = (k: number): number => {
     if (relevant.size === 0) return 0;
-    const top = ranked.slice(0, k);
+    const top = uniqueRanked.slice(0, k);
     const found = top.filter(s => relevant.has(s)).length;
     return found / relevant.size;
   };
@@ -160,7 +164,7 @@ export const DEFAULT_GATE: GateOpts = {
     'multi-chunk-dilution': { hit_at_3: floorEnv('GBRAIN_NTB_DILUTION_HIT3', 1.0) },
     'alias-synonym': { hit_at_1: floorEnv('GBRAIN_NTB_ALIAS_HIT1', 0.98) },
   },
-  softFamilies: ['generic-to-named', 'short-vs-rich', 'graph-relationship', 'hard-negative'],
+  softFamilies: ['generic-to-named', 'short-vs-rich', 'graph-relationship', 'concept-paraphrase', 'hard-negative'],
 };
 
 function floorEnv(name: string, dflt: number): number {

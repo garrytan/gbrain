@@ -3,7 +3,7 @@
  * discovery behind the list_brain_skillpack MCP tool and get_skill source_id.
  */
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -13,7 +13,7 @@ import {
   getResidentSkillDetail,
   deriveBrainId,
 } from '../src/core/skillpack/brain-resident-locate.ts';
-import type { OperationContext } from '../src/core/operations.ts';
+import { OperationError, type OperationContext } from '../src/core/operations.ts';
 
 let root: string;
 let packDir: string;
@@ -116,6 +116,123 @@ describe('getResidentSkillDetail', () => {
     await expect(
       getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', 'nope'),
     ).rejects.toThrow();
+  });
+});
+
+/** Await a rejection and pin its OperationError code. */
+async function expectOpError(p: Promise<unknown>, code: string): Promise<OperationError> {
+  try {
+    await p;
+  } catch (e) {
+    expect(e).toBeInstanceOf(OperationError);
+    expect((e as OperationError).code).toBe(code);
+    return e as OperationError;
+  }
+  throw new Error(`expected OperationError(${code}) but the call resolved`);
+}
+
+/** Engine that counts calls — proves a rejection fired before any engine (and
+ *  therefore any source-path/FS) access. loadAllSources only uses executeRaw. */
+function countingEngine() {
+  const calls = { executeRaw: 0, getConfig: 0 };
+  const engine = {
+    executeRaw: async () => {
+      calls.executeRaw += 1;
+      return [];
+    },
+    getConfig: async () => {
+      calls.getConfig += 1;
+      return null;
+    },
+  } as unknown as OperationContext['engine'];
+  return { engine, calls };
+}
+
+describe('getResidentSkillDetail — slug shape gate (pre-FS, pre-engine)', () => {
+  // The gate is /^[a-z0-9][a-z0-9-]{0,63}$/ at brain-resident-locate.ts — it
+  // fires before sourceScopeOpts, loadAllSources, and every fs call, so a
+  // traversal-shaped slug never even enumerates sources.
+  for (const bad of ['../x', 'a/../b', '']) {
+    test(`rejects ${JSON.stringify(bad)} with invalid_params, zero engine calls`, async () => {
+      const { engine, calls } = countingEngine();
+      await expectOpError(
+        getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', bad),
+        'invalid_params',
+      );
+      expect(calls.executeRaw).toBe(0);
+      expect(calls.getConfig).toBe(0);
+    });
+  }
+
+  test('rejects an over-long slug (65 chars > the 64-char regex cap) pre-engine', async () => {
+    const { engine, calls } = countingEngine();
+    await expectOpError(
+      getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', 'a'.repeat(65)),
+      'invalid_params',
+    );
+    expect(calls.executeRaw).toBe(0);
+  });
+
+  test('boundary: a 64-char slug passes the shape gate (fails later as not_found)', async () => {
+    // Anti-vacuity for the length pin: 64 chars is WITHIN the regex cap, so the
+    // failure is the in-pack lookup (not_found), not the shape gate.
+    const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
+    await expectOpError(
+      getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', 'a'.repeat(64)),
+      'not_found',
+    );
+  });
+});
+
+describe('getResidentSkillDetail — source scoping (anti-enumeration)', () => {
+  test('federated-array scope pointing away from the source → not_found', async () => {
+    const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
+    const ctx = ctxFor(engine, { auth: { allowedSources: ['other'] } as OperationContext['auth'] });
+    await expectOpError(getResidentSkillDetail(ctx, 'default', 'diligence'), 'not_found');
+  });
+
+  test('scalar ctx.sourceId pointing away from the source → not_found', async () => {
+    const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
+    const ctx = ctxFor(engine, { sourceId: 'other' });
+    await expectOpError(getResidentSkillDetail(ctx, 'default', 'diligence'), 'not_found');
+  });
+
+  test('anti-vacuity: the same skill IS fetchable by in-scope callers', async () => {
+    const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
+    // federated in-scope
+    const fed = await getResidentSkillDetail(
+      ctxFor(engine, { auth: { allowedSources: ['other', 'default'] } as OperationContext['auth'] }),
+      'default',
+      'diligence',
+    );
+    expect(fed.body).toContain('# diligence');
+    // scalar in-scope
+    const scalar = await getResidentSkillDetail(ctxFor(engine, { sourceId: 'default' }), 'default', 'diligence');
+    expect(scalar.pack_name).toBe('deal-brain');
+  });
+});
+
+describe('getResidentSkillDetail — symlink escape confinement', () => {
+  test('a skill directory symlinked outside the pack root → storage_error', async () => {
+    // Mirror test/skill-catalog-security.test.ts: point the manifest-listed
+    // skill dir at a directory OUTSIDE the pack root. realpath containment at
+    // brain-resident-locate.ts must refuse to serve the out-of-root SKILL.md.
+    const outside = join(root, 'outside-skill');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'SKILL.md'), '---\nname: sneaky\n---\n\nTOP SECRET OUTSIDE PACK\n');
+    const skillDir = join(packDir, 'skills', 'diligence');
+    rmSync(skillDir, { recursive: true, force: true });
+    try {
+      symlinkSync(outside, skillDir, 'dir');
+    } catch {
+      return; // symlink unsupported on this platform — skip
+    }
+    const engine = fakeEngine([{ id: 'default', local_path: packDir }]);
+    const err = await expectOpError(
+      getResidentSkillDetail(ctxFor(engine, { remote: false }), 'default', 'diligence'),
+      'storage_error',
+    );
+    expect(err.message).toContain('escaped');
   });
 });
 

@@ -4,6 +4,7 @@ import { canonicalLookup } from './model-pricing.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { getRecipe } from './ai/recipes/index.ts';
 import { parseModelId } from './ai/model-resolver.ts';
+import { getGatewayAnthropicKeySnapshot } from './ai/anthropic-key.ts';
 
 /**
  * v0.40.x: env-var name → file/DB config field, for hosted embedding providers
@@ -21,16 +22,12 @@ import { parseModelId } from './ai/model-resolver.ts';
  * buildGatewayConfig now, so a config-plane key is genuinely usable by the
  * gateway and counting it here is no longer a false positive.
  *
- * Caveat inherited from the existing OPENAI_API_KEY/ZEROENTROPY_API_KEY
- * entries (unchanged by #2662, noted here for anyone extending this map):
- * autopilot's resolveKey resolves these fields via `engine.getConfig()`
- * (DB plane), while `buildGatewayConfig` only folds the FILE-plane
- * (config.json) value. A `gbrain config set voyage_api_key X` with no
- * matching config.json entry can therefore still read "configured" here
- * while the gateway has no key — a pre-existing false-positive class, not
- * introduced or fixed by this change. Closing it requires threading
- * `*_api_key` DB values through `loadConfigWithEngine()` before
- * `buildGatewayConfig`, which is a separate, larger change.
+ * The historical DB-plane/file-plane split for these fields is closed
+ * (#2119 read-side): `loadConfigWithEngine()` sparse-merges every
+ * `DB_MERGED_PROVIDER_KEY_FIELDS` entry from the DB plane (env > file > DB)
+ * before `buildGatewayConfig` folds the merged config into the gateway env,
+ * so a key that reads "configured" via `engine.getConfig()` is genuinely
+ * usable by the gateway on any path that runs the DB merge.
  */
 export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
   OPENAI_API_KEY: 'openai_api_key',
@@ -59,6 +56,29 @@ export const HOSTED_EMBED_KEY_CONFIG: Record<string, string> = {
  * Uses the recipe registry (pure data), not the gateway runtime, so this
  * module stays free of AI-SDK coupling and works before engine.connect().
  */
+/**
+ * #3944: chat-key presence for the remediation planner, judged on the planes
+ * both planner surfaces can rely on — process env, the FILE config plane,
+ * and the gateway env snapshot (a DB-plane key that loadConfigWithEngine
+ * already merged into the RUNNING gateway, i.e. a key that is actually
+ * serving chat right now). NOT a raw `engine.getConfig()` read: a DB-only
+ * key that never reached the gateway is unusable on planner paths, and the
+ * raw read is what diverged autopilot from doctor pre-#3944 (doctor's
+ * planner judges the file plane, #2662 is the same rule for embed keys).
+ * The snapshot keeps both surfaces CONVERGENT — it flows through this one
+ * shared helper — while a genuinely-usable key no longer reads as missing.
+ * Shared by loadRecommendationContext and the autopilot dispatch loop.
+ */
+export function chatApiKeyConfigured(
+  fileCfg: { anthropic_api_key?: unknown } | null | undefined,
+): boolean {
+  return !!(
+    process.env.ANTHROPIC_API_KEY ||
+    fileCfg?.anthropic_api_key ||
+    getGatewayAnthropicKeySnapshot()
+  );
+}
+
 export function embeddingProviderConfigured(
   embeddingModel: string | undefined,
   resolveKey: (envVar: string) => boolean,
@@ -307,7 +327,10 @@ export function computeRecommendations(
   // and noExtract:true after T5 lands → extract job is the materializer).
   // ---------------------------------------------------------------------
   if (ctx.repoPath && health.stale_pages > 0) {
-    const params = { mode: 'all', dir: ctx.repoPath };
+    // #3957: carry the source id so the extract job's fs-walk rows land in
+    // (and its watermark stamp targets) the brain source that owns repoPath —
+    // not the 'default' fallback that silently no-ops on federated brains.
+    const params = { mode: 'all', dir: ctx.repoPath, ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}) };
     out.push({
       id: 'extract.all',
       job: 'extract',
@@ -439,8 +462,9 @@ function pickMax(current: number, max: number, status: RemediationStatus | undef
 
 // ---------------------------------------------------------------------
 // Idempotency key construction (D9 — content-hash, no time-slot).
-// Same params produce the same key across runs. Failed-row replay
-// appends `:r<N>` (caller responsibility — handled by --remediate loop).
+// Same params produce the same key across runs. Terminal-row replay
+// (a completed/failed row holds the key forever) rotates the key to
+// `:r:<doctor_run_id>` in the --remediate loop (#3626, remediation/run.ts).
 // ---------------------------------------------------------------------
 
 function idemKey(source: string, job: string, params: Record<string, unknown>): string {

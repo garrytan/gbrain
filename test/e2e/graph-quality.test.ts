@@ -351,17 +351,17 @@ Mention of [Alice](people/alice).
 
   test('search backlink boost: well-connected pages rank higher', async () => {
     // Create 3 pages all matching a search term, but with different inbound link counts.
-    await engine.putPage('topic/popular', {
+    const popular = await engine.putPage('topic/popular', {
       type: 'concept', title: 'Popular Topic',
       compiled_truth: 'This is the popular topic about widgets.',
       timeline: '',
     });
-    await engine.putPage('topic/medium', {
+    const medium = await engine.putPage('topic/medium', {
       type: 'concept', title: 'Medium Topic',
       compiled_truth: 'This is a medium topic about widgets.',
       timeline: '',
     });
-    await engine.putPage('topic/obscure', {
+    const obscure = await engine.putPage('topic/obscure', {
       type: 'concept', title: 'Obscure Topic',
       compiled_truth: 'This is an obscure topic about widgets.',
       timeline: '',
@@ -376,9 +376,9 @@ Mention of [Alice](people/alice).
     await engine.addLink('ref/popular-0', 'topic/medium', '', 'mentions');
 
     // Verify backlink counts.
-    const counts = await engine.getBacklinkCounts(['topic/popular', 'topic/medium', 'topic/obscure']);
-    expect(counts.get('topic/popular')).toBe(5);
-    expect(counts.get('topic/medium')).toBe(1);
-    expect(counts.get('topic/obscure')).toBe(0);
+    const counts = await engine.getBacklinkCounts([popular.id, medium.id, obscure.id]);
+    expect(counts.get(popular.id)).toBe(5);
+    expect(counts.get(medium.id)).toBe(1);
+    expect(counts.get(obscure.id)).toBe(0);
   });
 });

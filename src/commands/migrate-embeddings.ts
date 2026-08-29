@@ -213,6 +213,11 @@ function renderPlan(ctx: MigrationPlanContext): string {
     lines.push(`          '${ctx.customSearchColumn}' (see doctor's embedding_column_registry check).`);
   }
   lines.push(`  Chunks to re-embed: ${plan.chunks_to_embed}${plan.null_signature_chunks > 0 ? ` (includes ${plan.null_signature_chunks} on pages with no recorded embedding signature)` : ''}`);
+  if (plan.false_stamped_chunks > 0) {
+    lines.push(`  False stamps: ${plan.false_stamped_chunks} embedded chunk(s) carry a non-target model under pages`);
+    lines.push('          already stamped with the target signature — the run clears those stamps');
+    lines.push('          and re-embeds them (chunk model is the ground truth, not the page stamp).');
+  }
   if (plan.synopsis_tier_pages > 0) {
     lines.push(`  Context tier: ${plan.synopsis_tier_pages} page(s) currently embedded at the per_chunk_synopsis`);
     lines.push('          tier will re-embed at the TITLE tier (a retrieval-quality downgrade for');
@@ -841,6 +846,9 @@ export async function runMigrateEmbeddings(
     console.log(`  DB plane:   ${report.db_plane.model ?? '(none)'} @ ${report.db_plane.dims ?? '?'}d`);
     console.log(`  Column:     content_chunks.embedding ${report.column_dims === null ? 'absent/unreadable' : `${report.column_dims}d`}${report.pinned_widths.map((p) => `; ${p.table} ${p.dims === null ? '?' : `${p.dims}d`}`).join('')}`);
     console.log(`  Vectors:    ${report.missing_embeddings ?? '?'} chunk(s) missing; ${report.chunkless_pages ?? '?'} contentful page(s) without chunks; facts pending: ${report.facts_pending ?? 'n/a'}`);
+    if (report.embed_skip_null_chunks !== null && report.embed_skip_null_chunks > 0) {
+      console.log(`  Embed-skip: ${report.embed_skip_null_chunks} chunk(s) on embed_skip pages have NULL vectors — excluded from re-embedding by design (remove the frontmatter marker to re-embed them)`);
+    }
     if (report.signature_census.length > 0) {
       console.log(`  Signatures: ${report.signature_census.map((c) => `${c.signature ?? '(none recorded)'}: ${c.pages}`).join(', ')}`);
     }
@@ -848,7 +856,8 @@ export async function runMigrateEmbeddings(
       console.log(`  Context tier: ${report.synopsis_tier_pages} page(s) at per_chunk_synopsis (a migration re-embeds them at title tier)`);
     }
     if (report.stale_vs_target.target) {
-      console.log(`  Target:     ${report.stale_vs_target.target} — ${report.stale_vs_target.stale ?? '?'} chunk(s) not yet in that space`);
+      const fs = report.stale_vs_target.false_stamped;
+      console.log(`  Target:     ${report.stale_vs_target.target} — ${report.stale_vs_target.stale ?? '?'} chunk(s) not yet in that space${fs !== null && fs > 0 ? `; ${fs} chunk(s) falsely stamped with the target signature (chunk model disagrees — a run re-embeds them)` : ''}`);
     }
     switch (report.marker.kind) {
       case 'live': {

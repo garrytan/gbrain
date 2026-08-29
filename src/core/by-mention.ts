@@ -27,8 +27,12 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { isUndefinedTableError } from './utils.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import { stripCodeBlocks } from './link-extraction.ts';
+// #4222: shared generic-token reject list — same list gates enrichEntity
+// minting and drives the junk_entity_hubs doctor check.
+import { isGenericEntityToken } from './entity-name-quality.ts';
 
 /** D2: hardcoded entity types for v1. Pack-aware extension is TODO-1. */
 export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'entity'] as const;
@@ -40,6 +44,8 @@ export const LINKABLE_ENTITY_TYPES = ['person', 'company', 'organization', 'enti
  * pack-aware follow-up (TODO-1) can let users opt specific 3-char entity
  * types in.
  */
+let aliasGazetteerWarned = false;
+
 const MIN_NAME_LENGTH = 4;
 const MIN_CJK_NAME_LENGTH = 2;
 
@@ -369,8 +375,8 @@ export async function buildGazetteer(
   opts: BuildGazetteerOpts = {},
 ): Promise<Gazetteer> {
   const typeList = LINKABLE_ENTITY_TYPES.map(t => `'${t}'`).join(', ');
-  const rows = await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null }>(
-    `SELECT slug, source_id, title
+  const rows = await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null; type: string | null }>(
+    `SELECT slug, source_id, title, type
      FROM pages
      WHERE type IN (${typeList})
        AND deleted_at IS NULL`,
@@ -390,11 +396,26 @@ export async function buildGazetteer(
     if (!row.title) continue;
     if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
     if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
+    // NOTE (v0.46.15, deliberately preserved): for TITLES this condition is
+    // intentionally vacuous — every row here IS a real page, so an
+    // ignore-listed name the user explicitly created a page for is always
+    // allowed (documented CK12 policy). The ignore list bites only via
+    // opts.extraIgnore names that have no page, and — with real teeth — on
+    // the ALIAS entries below, which are not user-created pages.
     if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);
     if (tokens.length === 0) continue;
     if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) continue;
+    // #4222: a single-generic-token PERSON title ("Will", "Chief") is a
+    // junk-hub magnet — every prose occurrence of the word would accrete
+    // another mention edge onto a near-empty page. Dropped from the
+    // gazetteer even though the page exists (unlike the CK12 ignore-list
+    // rule above, which trusts user-created pages: these titles are
+    // overwhelmingly extractor-minted, and the page itself stays intact —
+    // only the auto-link accretion stops). Multi-token titles ("Will
+    // Smith") and non-person types are unaffected.
+    if (tokens.length === 1 && row.type === 'person' && isGenericEntityToken(tokens[0]!)) continue;
 
     const entry: GazetteerEntry = {
       slug: row.slug,
@@ -406,6 +427,78 @@ export async function buildGazetteer(
     const bucket = gazetteer.get(key);
     if (bucket) bucket.push(entry);
     else gazetteer.set(key, [entry]);
+  }
+
+  // ── Alias entries (v0.46.15 identity wave, #3801) ────────────────────────
+  // page_aliases rows joined to LIVE entity-typed pages become additional
+  // gazetteer entries, so a body mention of "saoirse" links to
+  // people/saoirse-x. Guards (stricter than titles — aliases are not
+  // user-created pages):
+  //   - ignore-list applies CASE-INSENSITIVELY with NO existing-page escape
+  //     (aliases store normalized lowercase; DEFAULT_IGNORE_LIST is cased)
+  //   - aliases mapping to >1 slug within a source are skipped (ambiguous)
+  //   - aliases colliding with any existing page TITLE in the SAME source
+  //     are skipped (the title entry wins; per-source scoping per R2-9)
+  //   - MIN_NAME_LENGTH applies to the alias string
+  try {
+    const aliasRows = await engine.executeRaw<{
+      alias_norm: string;
+      slug: string;
+      source_id: string | null;
+      title: string | null;
+    }>(
+      `SELECT pa.alias_norm, pa.slug, pa.source_id, p.title
+       FROM page_aliases pa
+       JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id
+       WHERE p.type IN (${typeList})
+         AND p.deleted_at IS NULL`,
+      [],
+    );
+    const ignoreLc = new Set(Array.from(ignoreSet, (s) => s.toLowerCase()));
+    // Per-source title index for alias-vs-title collision checks.
+    const titleBySource = new Set<string>();
+    for (const r of rows) {
+      if (r.title) titleBySource.add(`${r.source_id ?? 'default'} ${r.title.toLowerCase()}`);
+    }
+    // Ambiguity: same (source, alias) → multiple slugs.
+    const bySourceAlias = new Map<string, Set<string>>();
+    for (const a of aliasRows) {
+      const k = `${a.source_id ?? 'default'} ${a.alias_norm}`;
+      const set = bySourceAlias.get(k) ?? new Set<string>();
+      set.add(a.slug);
+      bySourceAlias.set(k, set);
+    }
+    const seenAliasEntry = new Set<string>();
+    for (const a of aliasRows) {
+      const alias = a.alias_norm?.trim();
+      if (!alias || !a.title) continue;
+      const src = a.source_id ?? 'default';
+      if (alias.length < MIN_NAME_LENGTH && !hasCJK(alias)) continue;
+      if (hasCJK(alias) && cjkCharCount(alias) < MIN_CJK_NAME_LENGTH) continue;
+      if (ignoreLc.has(alias.toLowerCase())) continue;
+      if ((bySourceAlias.get(`${src} ${alias}`)?.size ?? 0) > 1) continue;
+      if (titleBySource.has(`${src} ${alias.toLowerCase()}`)) continue;
+      const dedupeKey = `${src} ${alias} ${a.slug}`;
+      if (seenAliasEntry.has(dedupeKey)) continue;
+      seenAliasEntry.add(dedupeKey);
+      const tokens = tokenizeTitle(alias);
+      if (tokens.length === 0) continue;
+      if (tokens[0]!.length < MIN_NAME_LENGTH && tokens.length === 1) continue;
+      const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens };
+      const key = tokens[0]!;
+      const bucket = gazetteer.get(key);
+      if (bucket) bucket.push(entry);
+      else gazetteer.set(key, [entry]);
+    }
+  } catch (err) {
+    // pre-v110 brains: no page_aliases table — titles-only gazetteer.
+    // Any OTHER failure (connection blip, permission) warns once per process
+    // (adversarial F12): a silently titles-only gazetteer under-links every
+    // page processed until restart, and nobody would know why.
+    if (!isUndefinedTableError(err) && !aliasGazetteerWarned) {
+      aliasGazetteerWarned = true;
+      console.error(`[gbrain] gazetteer alias load degraded (titles-only): ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // Sort each bucket by token-count DESC so maximal-munch walks longest-first.
@@ -518,4 +611,178 @@ export function findMentionedEntities(
   }
 
   return out;
+}
+
+// ============================================================
+// Stale-mention detection (read-only)
+// ============================================================
+
+/** One `link_source='mentions'` row the current gazetteer no longer produces. */
+export interface StaleMention {
+  from: string;
+  to: string;
+  /** `link_kind` as stored; NULL rows (legacy / pre-v98) report as 'plain'. */
+  kind: string;
+}
+
+export interface StaleMentionsScan {
+  /** Live pages carrying at least one `link_source='mentions'` row. */
+  totalPagesWithMentions: number;
+  /** Pages actually re-scanned (bounded by `opts.limit`). */
+  pagesScanned: number;
+  /** `mentions` rows on the scanned pages. */
+  linksScanned: number;
+  /** Of those, rows whose target the current gazetteer no longer produces. */
+  staleLinks: number;
+  /** Stale counts split by `link_kind` — `typed_ner` rows come from extract-ner. */
+  staleByKind: Record<string, number>;
+  /** True when the brain has NO linkable entity pages at all. */
+  emptyGazetteer: boolean;
+  /** First few stale rows, for an operator-facing message. */
+  examples: StaleMention[];
+}
+
+const STALE_MENTIONS_DEFAULT_LIMIT = 500;
+const STALE_MENTIONS_MAX_EXAMPLES = 5;
+
+/**
+ * Re-derive what `extract links --by-mention` would produce today and report
+ * `link_source='mentions'` rows that no longer follow from the current
+ * gazetteer + page bodies.
+ *
+ * STRICTLY READ-ONLY. This deletes nothing and writes nothing; it exists so
+ * the drift is visible, because the scan's write path (`addLinksBatch`) is
+ * purely additive. Re-running the scan adds today's correct links ALONGSIDE
+ * rows left by an older gazetteer, an older tokenizer, or a body that has
+ * since stopped mentioning the entity — nothing ever removes those.
+ *
+ * A row is counted stale when the current scan does not produce its
+ * (source_id, slug) target from the page's body. That test is deliberately
+ * target-based rather than kind-based, so it covers `link_kind='typed_ner'`
+ * rows too: extract-ner derives those from the same mention set, so a target
+ * this scan no longer yields cannot have a live verb-typed edge either. The
+ * converse does NOT hold — a still-produced target says nothing about
+ * whether the stored verb is still right — so `typed_ner` counts are
+ * reported separately rather than folded into one number.
+ *
+ * Bounded by `limit` (default 500) in slug order for determinism. The
+ * returned `totalPagesWithMentions` is the unbounded figure so callers can
+ * say what was and was not covered instead of implying full coverage.
+ */
+export async function scanStaleMentions(
+  engine: BrainEngine,
+  opts: { limit?: number } = {},
+): Promise<StaleMentionsScan> {
+  const limit = opts.limit ?? STALE_MENTIONS_DEFAULT_LIMIT;
+
+  const totalRow = await engine.executeRaw<{ count: number }>(
+    `SELECT COUNT(DISTINCT l.from_page_id)::int AS count
+       FROM links l
+       JOIN pages p ON p.id = l.from_page_id
+      WHERE l.link_source = 'mentions'
+        AND p.deleted_at IS NULL`,
+    [],
+  );
+  const totalPagesWithMentions = totalRow[0]?.count ?? 0;
+
+  const empty: StaleMentionsScan = {
+    totalPagesWithMentions,
+    pagesScanned: 0,
+    linksScanned: 0,
+    staleLinks: 0,
+    staleByKind: {},
+    emptyGazetteer: false,
+    examples: [],
+  };
+  if (totalPagesWithMentions === 0) return empty;
+
+  const gazetteer = await buildGazetteer(engine);
+
+  // Same bounded page set for both queries so the link rows and the bodies
+  // can never describe different pages.
+  const scannedCte =
+    `WITH scanned AS (
+       SELECT p.id
+         FROM pages p
+        WHERE p.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM links l
+             WHERE l.from_page_id = p.id AND l.link_source = 'mentions'
+          )
+        ORDER BY p.slug
+        LIMIT $1
+     )`;
+
+  const bodies = await engine.executeRaw<{
+    id: number; slug: string; source_id: string | null; body: string;
+  }>(
+    `${scannedCte}
+     SELECT p.id, p.slug, p.source_id,
+            COALESCE(p.compiled_truth, '') || E'\n\n' || COALESCE(p.timeline, '') AS body
+       FROM pages p
+       JOIN scanned s ON s.id = p.id
+      ORDER BY p.slug`,
+    [limit],
+  );
+
+  const rows = await engine.executeRaw<{
+    from_id: number; from_slug: string; to_slug: string;
+    to_source_id: string | null; link_kind: string | null;
+  }>(
+    `${scannedCte}
+     SELECT l.from_page_id AS from_id, f.slug AS from_slug,
+            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind
+       FROM links l
+       JOIN scanned s ON s.id = l.from_page_id
+       JOIN pages f ON f.id = l.from_page_id
+       JOIN pages t ON t.id = l.to_page_id
+      WHERE l.link_source = 'mentions'
+      ORDER BY f.slug, t.slug`,
+    [limit],
+  );
+
+  const byPage = new Map<number, typeof rows>();
+  for (const r of rows) {
+    const bucket = byPage.get(r.from_id);
+    if (bucket) bucket.push(r);
+    else byPage.set(r.from_id, [r]);
+  }
+
+  const staleByKind: Record<string, number> = {};
+  const examples: StaleMention[] = [];
+  let staleLinks = 0;
+
+  for (const page of bodies) {
+    const stored = byPage.get(page.id);
+    if (!stored || stored.length === 0) continue;
+
+    const fromSourceId = page.source_id ?? 'default';
+    const produced = new Set(
+      findMentionedEntities(page.body, gazetteer, {
+        fromSlug: page.slug,
+        fromSourceId,
+      }).map(m => `${m.source_id}::${m.slug}`),
+    );
+
+    for (const row of stored) {
+      const key = `${row.to_source_id ?? 'default'}::${row.to_slug}`;
+      if (produced.has(key)) continue;
+      staleLinks++;
+      const kind = row.link_kind ?? 'plain';
+      staleByKind[kind] = (staleByKind[kind] ?? 0) + 1;
+      if (examples.length < STALE_MENTIONS_MAX_EXAMPLES) {
+        examples.push({ from: page.slug, to: row.to_slug, kind });
+      }
+    }
+  }
+
+  return {
+    totalPagesWithMentions,
+    pagesScanned: bodies.length,
+    linksScanned: rows.length,
+    staleLinks,
+    staleByKind,
+    emptyGazetteer: gazetteer.size === 0,
+    examples,
+  };
 }

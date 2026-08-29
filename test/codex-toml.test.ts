@@ -36,7 +36,10 @@ describe('writeCodexHttpServerBlock', () => {
     expect(text).toContain(CODEX_TOML_BLOCK_BEGIN);
     expect(text).toContain('[mcp_servers.gbrain]');
     expect(text).toContain('url = "http://127.0.0.1:3131/mcp"');
-    expect(text).toContain('bearer_token = "gbrain_deadbeef"');
+    // #4574: the inline credential is the http_headers shape (loads on
+    // codex-cli 0.147.x AND 0.149.x); inline bearer_token bricks >=0.149.
+    expect(text).toContain('http_headers = { Authorization = "Bearer gbrain_deadbeef" }');
+    expect(text).not.toContain('bearer_token');
     expect(text).toContain(CODEX_TOML_BLOCK_END);
     expect(text.endsWith('\n')).toBe(true);
   });
@@ -147,6 +150,27 @@ describe('writeCodexHttpServerBlock', () => {
     expect(() => writeCodexHttpServerBlock(path, { ...BLOCK, name: 'my server' })).toThrow(/bare TOML key/);
     expect(existsSync(path)).toBe(false);
   });
+
+  test('legacy bearer_token managed block is upgraded in place to http_headers (#4574)', () => {
+    // Machines wired by older gbrain carry the pre-#4574 block that bricks
+    // codex-cli >=0.149 — the next write must replace it wholesale.
+    const path = tmpConfig();
+    const legacy = [
+      CODEX_TOML_BLOCK_BEGIN,
+      '[mcp_servers.gbrain]',
+      'url = "http://127.0.0.1:3131/mcp"',
+      'bearer_token = "gbrain_old"',
+      CODEX_TOML_BLOCK_END,
+      '',
+    ].join('\n');
+    writeFileSync(path, legacy);
+    const res = writeCodexHttpServerBlock(path, BLOCK);
+    expect(res.replacedPrior).toBe(true);
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain('http_headers = { Authorization = "Bearer gbrain_deadbeef" }');
+    expect(text).not.toContain('bearer_token');
+    expect(text).not.toContain('gbrain_old');
+  });
 });
 
 describe('removeCodexHttpServerBlock', () => {
@@ -189,11 +213,14 @@ describe('detectForeignCodexServer', () => {
       CODEX_TOML_BLOCK_BEGIN,
       '[mcp_servers.gbrain]',
       'url = "http://127.0.0.1:3131/mcp"',
-      'bearer_token = "t"',
+      'http_headers = { Authorization = "Bearer t" }',
       CODEX_TOML_BLOCK_END,
       '',
     ].join('\n');
     expect(detectForeignCodexServer(ours, 'gbrain')).toBe(false);
+    // a LEGACY managed block (pre-#4574 bearer_token shape) is still ours
+    const legacyOurs = ours.replace('http_headers = { Authorization = "Bearer t" }', 'bearer_token = "t"');
+    expect(detectForeignCodexServer(legacyOurs, 'gbrain')).toBe(false);
   });
 });
 
@@ -210,23 +237,23 @@ describe('renderCodexHttpServerBlock', () => {
   const parseToml = (t: string): Record<string, any> =>
     (Bun as unknown as { TOML: { parse(x: string): unknown } }).TOML.parse(t) as Record<string, any>;
 
-  test('parses back to exactly {bearer_token, url}; contains NO marker lines', () => {
+  test('parses back to exactly {http_headers, url}; contains NO marker lines', () => {
     const text = renderCodexHttpServerBlock(BLOCK);
     expect(text).not.toContain(CODEX_TOML_BLOCK_BEGIN);
     expect(text).not.toContain(CODEX_TOML_BLOCK_END);
     // markers are full-line comments — a marker-free snippet has no comment lines at all
     for (const line of text.split('\n')) expect(line.trimStart().startsWith('#')).toBe(false);
     const ours = parseToml(text).mcp_servers?.[BLOCK.name];
-    expect(Object.keys(ours as object).sort()).toEqual(['bearer_token', 'url']);
+    expect(Object.keys(ours as object).sort()).toEqual(['http_headers', 'url']);
     expect(ours.url).toBe(BLOCK.url);
-    expect(ours.bearer_token).toBe(BLOCK.bearerToken);
+    expect(ours.http_headers).toEqual({ Authorization: `Bearer ${BLOCK.bearerToken}` });
   });
 
   test('escaped values round-trip through the TOML parser', () => {
     const gnarly = { name: 'gbrain', url: 'http://127.0.0.1:3131/mcp', bearerToken: 'to"ken\\v2' };
     const ours = parseToml(renderCodexHttpServerBlock(gnarly)).mcp_servers?.gbrain;
-    expect(ours.bearer_token).toBe('to"ken\\v2');
-    expect(Object.keys(ours as object).sort()).toEqual(['bearer_token', 'url']);
+    expect(ours.http_headers.Authorization).toBe('Bearer to"ken\\v2');
+    expect(Object.keys(ours as object).sort()).toEqual(['http_headers', 'url']);
   });
 
   test('refuses a non-bare-key name (same assertion as the writer)', () => {

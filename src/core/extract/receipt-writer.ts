@@ -219,5 +219,15 @@ export async function writeReceipt(
     { sourceId: input.source_id },
   );
 
+  // #4009: receipts are audit artifacts — deliberately never run through
+  // the contextual-retrieval ladder. Born with a NULL
+  // contextual_retrieval_mode they tripped doctor's
+  // contextual_retrieval_coverage warn on every extraction run right
+  // after a reindex. Stamp mode 'none' so receipts are born CR-evaluated.
+  // NOT permanent: a reindex that takes the DB fallback clears the stamp
+  // and it recurs per receipt — the doctor check also excludes
+  // type='extract_receipt' from mode_null (belt+braces).
+  await engine.updatePageContextualRetrievalState(slug, input.source_id, 'none', null);
+
   return { slug, page };
 }

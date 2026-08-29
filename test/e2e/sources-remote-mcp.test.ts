@@ -143,9 +143,16 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     };
 
     // Register a sources_admin-scoped client (the "gstack token").
+    // #4433: sources_list row-filters to the caller's federated read grant,
+    // and registration defaults federated_read=[source_id]=['default'] — a
+    // default-grant client would no longer see the sources it adds in the
+    // listing. Grant the ids this suite creates so the remote_url-surfacing
+    // assertions stay about sources_list's projection, not the row filter
+    // (the read-only client keeps the default grant and pins the filter).
     const reg1 = execSync(
       'bun run src/cli.ts auth register-client e2e-sources-admin ' +
-        '--grant-types client_credentials --scopes "read sources_admin"',
+        '--grant-types client_credentials --scopes "read sources_admin" ' +
+        '--federated-read default,e2e-yc-artifacts,e2e-removable',
       { cwd: process.cwd(), encoding: 'utf8', env: subprocessEnv },
     );
     clientId = reg1.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
@@ -315,6 +322,10 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
   test('read-only token CAN list sources (read-scoped)', async () => {
     const result = await callMcp(readOnlyToken!, 'sources_list', {});
     expect(Array.isArray(result.sources)).toBe(true);
+    // #4433: the listing is row-filtered to the caller's federated read
+    // grant. This client kept the registration default (['default']), so a
+    // source outside its grant must not leak into its listing.
+    expect(result.sources.find((s: any) => s.id === 'e2e-yc-artifacts')).toBeUndefined();
   });
 
   test('CLI register-client rejects bogus scope (allowlist)', async () => {

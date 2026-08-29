@@ -13,6 +13,9 @@
  * includeCovered restores the full rescan (refresh semantics).
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   configureGateway,
@@ -22,11 +25,21 @@ import {
 import { extractTakesFromPages } from '../src/core/extract-takes-from-pages.ts';
 
 let engine: PGLiteEngine;
+let repo: string;
+
+/** #4473: takes are md-first — each probe page needs a real .md home. */
+function seedMd(slug: string, body: string): void {
+  writeFileSync(join(repo, `${slug}.md`), `# ${slug}\n\n${body}\n`, 'utf-8');
+}
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+
+  repo = mkdtempSync(join(tmpdir(), 'gb-takes-progression-'));
+  mkdirSync(join(repo, 'concepts'), { recursive: true });
+  await engine.setConfig('sync.repo_path', repo);
 
   configureGateway({
     chat_model: 'anthropic:claude-haiku-4-5-20251001',
@@ -48,12 +61,15 @@ beforeAll(async () => {
   await engine.putPage('concepts/progression-b', {
     type: 'concept', title: 'B', compiled_truth: body, frontmatter: {},
   });
+  seedMd('concepts/progression-a', body);
+  seedMd('concepts/progression-b', body);
 });
 
 afterAll(async () => {
   __setChatTransportForTests(null);
   resetGateway();
   await engine.disconnect();
+  rmSync(repo, { recursive: true, force: true });
 });
 
 describe('extractTakesFromPages — bootstrap progression', () => {
@@ -74,6 +90,7 @@ describe('extractTakesFromPages — bootstrap progression', () => {
     await engine.putPage('concepts/progression-c', {
       type: 'concept', title: 'C', compiled_truth: body, frontmatter: {},
     });
+    seedMd('concepts/progression-c', body);
     const r3 = await extractTakesFromPages(engine, { bootstrapEnabled: true, maxPages: 50 });
     expect(r3.pages_scanned).toBe(1);
   });

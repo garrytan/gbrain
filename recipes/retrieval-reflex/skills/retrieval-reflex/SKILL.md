@@ -2,10 +2,13 @@
 name: retrieval-reflex
 version: 0.1.0
 description: When/what to retrieve — open the brain page for a salient entity before answering from memory.
+# Reflex-only triggers (#4292): direct lookup questions ("who is", "tell
+# me about", ...) route to skills/query — this skill fires on the ambient
+# retrieve-before-answering reflex, not on explicit search requests.
 triggers:
-  - "who is"
-  - "what do we know about"
-  - "tell me about"
+  - "a named entity becomes the subject of the exchange"
+  - "a brain-page pointer appeared in context"
+  - "about to assert a detail about an entity from memory"
 mutating: false
 writes_pages: false
 writes_to: []

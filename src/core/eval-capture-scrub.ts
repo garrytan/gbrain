@@ -9,47 +9,46 @@
  *   1. Email addresses
  *   2. Phone numbers (US + international)
  *   3. US Social Security numbers (XXX-XX-XXXX shape, with year-like false-positive guard)
- *   4. Credit card numbers (13–19 digits with Luhn verification — blocks false positives)
- *   5. JWT-shaped tokens (three base64url segments joined by '.')
- *   6. Bearer tokens (Authorization: Bearer <opaque>)
+ *   4. JWT-shaped tokens (three base64url segments joined by '.')
+ *   5. Bearer tokens (Authorization: Bearer <opaque>)
+ *   6. Credit card numbers (13–19 digits with Luhn verification — blocks false positives)
  *
  * 80% of the real risk without a dependency on an NER model. If regex v1
  * proves insufficient we can layer a model-based scrubber later.
  *
- * Pure function, zero deps. Safe to call on arbitrary input. Adversarial
+ * Pure functions, zero deps. Safe to call on arbitrary input. Adversarial
  * regex input (catastrophic backtracking) is contained by the
  * possessive-quantifier-free patterns below and by the outer try/catch in
  * captureEvalCandidate (see src/core/eval-capture.ts), not by this
  * module itself.
+ *
+ * The families live in the exported ORDERED `PII_PATTERNS` array so the
+ * sensitivity scan (src/core/context/sensitivity-scan.ts) can detect
+ * without redacting via `findPii`. Order is load-bearing for `scrubPii`:
+ * email first so "user@example.com" doesn't get caught by phone/CC regex
+ * fragments; phones before SSN so +1-555-XX doesn't look like part of a
+ * dashes-only SSN; CC last since Luhn is expensive and irrelevant to
+ * everything else.
  */
 
 const REDACTED = '[REDACTED]';
 
-// Emails: RFC-5322-adjacent. Keeps the host so replay debug can say "an
-// email was redacted" without leaking the local-part.
-const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+/** Stable family identifiers, in scrub-application order. */
+export type PiiFamily = 'email' | 'phone' | 'ssn' | 'jwt' | 'bearer' | 'credit_card';
 
-// Phones: US (###-###-####, (###) ###-####, ##########) and E.164 (+country).
-// Reject short strings of 10 digits with no separators/prefix to limit
-// false positives on order numbers and other generic long integers.
-const PHONE_RE =
-  /(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]?\d{4}(?!\d)/g;
-
-// SSN: XXX-XX-XXXX with dashes required (bare 9-digit blobs are too
-// ambiguous — phone numbers, account IDs).
-const SSN_RE = /(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)/g;
-
-// JWT: three base64url segments. Lookbehind prevents partial matches in
-// the middle of longer identifiers.
-const JWT_RE =
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
-
-// Bearer tokens after Authorization header literal or "Bearer " prefix.
-const BEARER_RE = /\b(?:bearer|Bearer)\s+[A-Za-z0-9._~+/-]{10,}=*/g;
-
-// Credit card numbers: 13–19 digits with optional spaces/dashes. Every
-// match must pass Luhn to qualify — this is the key false-positive guard.
-const CC_RE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g;
+export interface PiiPattern {
+  family: PiiFamily;
+  /** Global regex for this family. Shared instance — loops must reset lastIndex. */
+  re: RegExp;
+  /**
+   * Optional semantic gate: a regex match that fails this is NOT a hit.
+   * The credit-card family's Luhn check lives here — the gate is part of
+   * the family's semantics, for both scrubbing and detection.
+   */
+  accept?: (match: string) => boolean;
+  /** Replacement used by `scrubPii` (default `[REDACTED]`). */
+  replacement?: string;
+}
 
 /** Luhn mod-10 check. Returns true when the digit sequence is a valid card number. */
 function luhnOk(digits: string): boolean {
@@ -68,37 +67,100 @@ function luhnOk(digits: string): boolean {
 }
 
 /**
- * Redact obvious PII from a captured query string.
- *
- * Order of operations matters: email first so "user@example.com" doesn't
- * get caught by phone/CC regex fragments. CC last since Luhn is expensive
- * and irrelevant to everything else.
+ * The six families, in application order (ORDER IS LOAD-BEARING — see the
+ * module doc). `scrubPii` folds over this array; `findPii` scans with it.
+ */
+export const PII_PATTERNS: readonly PiiPattern[] = [
+  {
+    // Emails: RFC-5322-adjacent. Keeps the host so replay debug can say "an
+    // email was redacted" without leaking the local-part.
+    family: 'email',
+    re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  },
+  {
+    // Phones: US (###-###-####, (###) ###-####, ##########) and E.164
+    // (+country). Reject short strings of 10 digits with no separators or
+    // prefix to limit false positives on order numbers and other generic
+    // long integers.
+    family: 'phone',
+    re: /(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]?\d{4}(?!\d)/g,
+  },
+  {
+    // SSN: XXX-XX-XXXX with dashes required (bare 9-digit blobs are too
+    // ambiguous — phone numbers, account IDs).
+    family: 'ssn',
+    re: /(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)/g,
+  },
+  {
+    // JWT: three base64url segments. Distinctive prefix, safe to run
+    // anywhere in the pipeline.
+    family: 'jwt',
+    re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  },
+  {
+    // Bearer tokens after Authorization header literal or "Bearer " prefix.
+    family: 'bearer',
+    re: /\b(?:bearer|Bearer)\s+[A-Za-z0-9._~+/-]{10,}=*/g,
+    replacement: `Bearer ${REDACTED}`,
+  },
+  {
+    // Credit card numbers: 13–19 digits with optional spaces/dashes. Every
+    // match must pass Luhn to qualify — this is the key false-positive guard.
+    family: 'credit_card',
+    re: /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g,
+    accept: (match) => {
+      const digitsOnly = match.replace(/\D/g, '');
+      if (digitsOnly.length < 13 || digitsOnly.length > 19) return false;
+      return luhnOk(digitsOnly);
+    },
+  },
+];
+
+export interface PiiFinding {
+  family: PiiFamily;
+  /** 0-based char offset of the match start within the scanned text. */
+  start: number;
+  /** Exclusive end offset. NEVER carries the matched text itself. */
+  end: number;
+}
+
+/**
+ * Detect PII without mutating anything. Each family scans the ORIGINAL
+ * text (unlike `scrubPii`, whose later families see earlier redactions),
+ * so findings may overlap across families — harmless for detector-mode
+ * callers that drop the whole entry on any hit. Findings are ordered
+ * family-major in PII_PATTERNS order, then by match position.
+ */
+export function findPii(text: string): PiiFinding[] {
+  if (!text) return [];
+  const out: PiiFinding[] = [];
+  for (const p of PII_PATTERNS) {
+    p.re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = p.re.exec(text)) !== null) {
+      if (m[0].length === 0) {
+        p.re.lastIndex++; // zero-width safety
+        continue;
+      }
+      if (p.accept && !p.accept(m[0])) continue;
+      out.push({ family: p.family, start: m.index, end: m.index + m[0].length });
+    }
+  }
+  return out;
+}
+
+/**
+ * Redact obvious PII from a captured query string: a fold over
+ * PII_PATTERNS in order. Behavior is byte-identical to the pre-refactor
+ * six-step replace chain (regression-pinned by test/eval-capture-scrub.test.ts).
  */
 export function scrubPii(input: string): string {
   if (!input) return input;
   let out = input;
-
-  // 1. Emails
-  out = out.replace(EMAIL_RE, REDACTED);
-
-  // 2. Phones (before SSN so +1-555-XX doesn't look like part of a dashes-only SSN)
-  out = out.replace(PHONE_RE, REDACTED);
-
-  // 3. SSN (after phones)
-  out = out.replace(SSN_RE, REDACTED);
-
-  // 4. JWT (distinctive prefix, safe to run anywhere in the pipeline)
-  out = out.replace(JWT_RE, REDACTED);
-
-  // 5. Bearer tokens
-  out = out.replace(BEARER_RE, `Bearer ${REDACTED}`);
-
-  // 6. Credit cards: every candidate must pass Luhn to be replaced.
-  out = out.replace(CC_RE, (match) => {
-    const digitsOnly = match.replace(/\D/g, '');
-    if (digitsOnly.length < 13 || digitsOnly.length > 19) return match;
-    return luhnOk(digitsOnly) ? REDACTED : match;
-  });
-
+  for (const p of PII_PATTERNS) {
+    out = out.replace(p.re, (match) =>
+      p.accept && !p.accept(match) ? match : (p.replacement ?? REDACTED),
+    );
+  }
   return out;
 }

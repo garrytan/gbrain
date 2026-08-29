@@ -27,30 +27,21 @@ export interface CodeDefResult {
   snippet: string;
 }
 
+// #4511: DEF_TYPES moved to src/core/chunkers/def-types.ts — the ONE shared
+// list for this lookup allowlist AND the chunker's merge guard (a symbol type
+// code-def can resolve must never have its symbol_name erased by
+// small-sibling merging). Re-exported here so existing importers keep their
+// surface.
+import { DEF_TYPES } from '../core/chunkers/def-types.ts';
+
+export { DEF_TYPES };
+
 export async function findCodeDef(
   engine: BrainEngine,
   symbol: string,
   opts: { limit?: number; language?: string } = {},
 ): Promise<CodeDefResult[]> {
   const limit = opts.limit ?? 20;
-  // v0.41 D2: SQL DDL targets (table/view/index/procedure/schema/database/
-  // trigger) are first-class definitions in the SQL sense. The chunker's
-  // normalizeSymbolType maps create_table → 'table' etc, so adding the SQL
-  // kinds here is what makes `gbrain code-def users` work against SQL.
-  // Method-level + member definitions. normalizeSymbolType only canonicalizes
-  // some node types; the rest fall through `type.replace(/_/g, ' ')`, so
-  // tree-sitter's method_declaration → 'method declaration', struct_specifier →
-  // 'struct specifier', protocol_declaration → 'protocol declaration', etc.
-  // Without these, code-def is blind to every method, constructor, field, C
-  // struct, and Swift protocol — which is most of an OO codebase. The plain
-  // 'struct' entry above never matched for the same reason (C emits the
-  // 'struct specifier' fallback form).
-  const DEF_TYPES = [
-    'function', 'class', 'interface', 'type', 'enum', 'struct', 'trait', 'module', 'contract',
-    'table', 'view', 'index', 'procedure', 'schema', 'database', 'trigger',
-    'method declaration', 'method definition', 'constructor declaration',
-    'field declaration', 'field definition', 'struct specifier', 'protocol declaration',
-  ];
   const params: unknown[] = [symbol, limit];
   let whereLang = '';
   if (opts.language) {
@@ -94,6 +85,42 @@ export async function findCodeDef(
   }));
 }
 
+/**
+ * #3789 aside — when findCodeDef returns 0 rows, distinguish "symbol does not
+ * exist" from "symbol exists but every row's symbol_type is outside the
+ * DEF_TYPES allowlist" (a normalizeSymbolType fallthrough gap, or data chunked
+ * by an older chunker). Returns the distinct filtered-out symbol types for the
+ * name; empty when the symbol genuinely has no named chunks. Runs ONLY on
+ * count:0, rides the symbol_name lookup path the result query already uses.
+ */
+export async function probeFilteredSymbolTypes(
+  engine: BrainEngine,
+  symbol: string,
+  opts: { language?: string } = {},
+): Promise<string[]> {
+  const params: unknown[] = [symbol];
+  let whereLang = '';
+  if (opts.language) {
+    params.push(opts.language);
+    whereLang = `AND cc.language = $${params.length}`;
+  }
+  const rows = await engine.executeRaw<{ symbol_type: string | null }>(
+    `SELECT DISTINCT cc.symbol_type
+     FROM content_chunks cc
+     JOIN pages p ON p.id = cc.page_id
+     WHERE cc.symbol_name = $1
+       ${whereLang}
+       AND p.page_kind = 'code'
+     ORDER BY cc.symbol_type
+     LIMIT 20`,
+    params,
+  );
+  const allow = new Set([...DEF_TYPES, 'export statement']);
+  return rows
+    .map((r) => r.symbol_type)
+    .filter((t): t is string => t != null && !allow.has(t));
+}
+
 function parseFlag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
@@ -131,17 +158,37 @@ export async function runCodeDef(engine: BrainEngine, args: string[]): Promise<v
     const results = await findCodeDef(engine, sym, { limit, language });
     // code-def is brain-wide (not source-scoped); readiness is 'symbol' grain.
     const readiness = await resolveCodeReadiness(engine, { kind: 'symbol', count: results.length });
+    // #3789: a count:0 that was filtered by the DEF_TYPES allowlist must not
+    // read as a bare ready:true / "symbol does not exist". Probe the distinct
+    // symbol types the name DOES have and surface the filtered ones.
+    let filteredTypes: string[] = [];
+    if (results.length === 0) {
+      try {
+        filteredTypes = await probeFilteredSymbolTypes(engine, sym, { language });
+      } catch {
+        // Supplementary signal — never fail the command on the probe.
+      }
+    }
+    const filteredHint = filteredTypes.length > 0
+      ? `Symbol "${sym}" IS indexed, but only with symbol type(s) outside the definition allowlist: ` +
+        `${filteredTypes.join(', ')}. Likely a DEF_TYPES gap or pre-upgrade chunk data — ` +
+        'try `gbrain code-refs` for these sites, and consider re-syncing the source.'
+      : null;
     if (shouldEmitJson(args)) {
       console.log(JSON.stringify({
         symbol: sym,
         count: results.length,
         status: readiness.status,
         ready: readiness.ready,
+        ...(filteredTypes.length > 0
+          ? { filtered_symbol_types: filteredTypes, hint: filteredHint }
+          : {}),
         results,
       }, null, 2));
     } else {
       if (results.length === 0) {
         console.log(`No definitions found for "${sym}"`);
+        if (filteredHint) console.log(filteredHint);
         const hint = readinessHint(readiness);
         if (hint) console.log(hint);
       } else {

@@ -45,6 +45,27 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.totalUsage.input_tokens).toBe(5);
   });
 
+  it("propagates 'length' when a zero-tool-call turn hit the output cap (#4088)", async () => {
+    __setChatTransportForTests(async () => ({
+      text: 'truncated partial outp',
+      blocks: [{ type: 'text', text: 'truncated partial outp' }] as ChatBlock[],
+      stopReason: 'length',
+      usage: { input_tokens: 22000, output_tokens: 8192, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+
+    const result = await toolLoop({
+      initialMessages: [{ role: 'user', content: 'hi' }],
+      tools: [],
+      toolHandlers: new Map(),
+    });
+
+    // NOT 'end' — an output-cap hit must stay distinguishable from a clean finish.
+    expect(result.stopReason).toBe('length');
+    expect(result.finalText).toBe('truncated partial outp');
+  });
+
   it('dispatches a single tool call and feeds the result back to the next turn', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {
@@ -341,5 +362,130 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(toolWasCalled).toBe(false);
     expect(result.stopReason).toBe('refusal');
     expect(result.finalText).toBe('I cannot help with that');
+  });
+
+  describe('acquireTurnPermit hook (#4194 CDX-7 — per-turn rate leases on the gateway path)', () => {
+    it('acquires before EVERY provider call and releases after each (incl. the final turn)', async () => {
+      const events: string[] = [];
+      let turn = 0;
+      __setChatTransportForTests(async () => {
+        events.push(`chat${turn}`);
+        turn++;
+        if (turn === 1) {
+          return {
+            text: '',
+            blocks: [{ type: 'tool-call', toolCallId: 'tc1', toolName: 'work', input: {} }] as ChatBlock[],
+            stopReason: 'tool_calls',
+            usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+            model: 'anthropic:claude-sonnet-4-6',
+            providerId: 'anthropic',
+          };
+        }
+        return {
+          text: 'done',
+          blocks: [{ type: 'text', text: 'done' }] as ChatBlock[],
+          stopReason: 'end',
+          usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6',
+          providerId: 'anthropic',
+        };
+      });
+
+      const result = await toolLoop({
+        initialMessages: [{ role: 'user', content: 'go' }],
+        tools: [{ name: 'work', description: 'w', inputSchema: { type: 'object' } }],
+        toolHandlers: new Map([['work', { idempotent: true, async execute() { return null; } }]]),
+        acquireTurnPermit: async () => {
+          events.push('acquire');
+          return () => { events.push('release'); };
+        },
+      });
+
+      expect(result.stopReason).toBe('end');
+      // Strict bracketing: acquire → chat → release, once per provider call.
+      expect(events).toEqual(['acquire', 'chat0', 'release', 'acquire', 'chat1', 'release']);
+    });
+
+    it('releases the permit even when the provider call throws', async () => {
+      const events: string[] = [];
+      __setChatTransportForTests(async () => {
+        throw new Error('provider exploded');
+      });
+
+      await expect(toolLoop({
+        initialMessages: [{ role: 'user', content: 'go' }],
+        tools: [],
+        toolHandlers: new Map(),
+        acquireTurnPermit: async () => {
+          events.push('acquire');
+          return () => { events.push('release'); };
+        },
+      })).rejects.toThrow('provider exploded');
+
+      expect(events).toEqual(['acquire', 'release']); // no leaked lease
+    });
+
+    it('an acquire failure (lease full) propagates to the caller WITHOUT a provider call', async () => {
+      let chatCalls = 0;
+      __setChatTransportForTests(async () => {
+        chatCalls++;
+        throw new Error('should never be reached');
+      });
+
+      class FakeLeaseFull extends Error {}
+      await expect(toolLoop({
+        initialMessages: [{ role: 'user', content: 'go' }],
+        tools: [],
+        toolHandlers: new Map(),
+        acquireTurnPermit: async () => { throw new FakeLeaseFull('bucket full'); },
+      })).rejects.toThrow('bucket full');
+
+      expect(chatCalls).toBe(0); // permit gates the provider call, not just accounting
+    });
+
+    it('object-form permit: release runs, and aborting the permit signal aborts the in-flight call', async () => {
+      const events: string[] = [];
+      const leaseLost = new AbortController();
+      __setChatTransportForTests(async (opts: any) =>
+        new Promise((_, reject) => {
+          opts.abortSignal?.addEventListener('abort', () =>
+            reject(new DOMException('lease pruned mid-call', 'AbortError')));
+        }));
+
+      const loop = toolLoop({
+        initialMessages: [{ role: 'user', content: 'go' }],
+        tools: [],
+        toolHandlers: new Map(),
+        acquireTurnPermit: async () => ({
+          release: () => { events.push('release'); },
+          signal: leaseLost.signal,
+        }),
+      });
+      setTimeout(() => leaseLost.abort(), 20);
+      await expect(loop).rejects.toThrow('lease pruned mid-call');
+      // The permit was still released (finally bracket) even on abort.
+      expect(events).toEqual(['release']);
+    });
+
+    it('a throwing release is swallowed (best-effort) and the loop result is unaffected', async () => {
+      __setChatTransportForTests(async () => ({
+        text: 'fine',
+        blocks: [{ type: 'text', text: 'fine' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6',
+        providerId: 'anthropic',
+      }));
+
+      const result = await toolLoop({
+        initialMessages: [{ role: 'user', content: 'go' }],
+        tools: [],
+        toolHandlers: new Map(),
+        acquireTurnPermit: async () => async () => { throw new Error('release hiccup'); },
+      });
+
+      expect(result.stopReason).toBe('end');
+      expect(result.finalText).toBe('fine');
+    });
   });
 });

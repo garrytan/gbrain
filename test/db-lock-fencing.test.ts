@@ -12,7 +12,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { tryAcquireDbLock, LockStolenError } from '../src/core/db-lock.ts';
-import { startCycleLockRefresher, buildYieldDuringPhase, type LockHandle } from '../src/core/cycle.ts';
+import { startCycleLockRefresher, buildYieldDuringPhase, isLockStolenAbort, type LockHandle } from '../src/core/cycle.ts';
 
 let engine: PGLiteEngine;
 
@@ -169,6 +169,65 @@ describe('startCycleLockRefresher (Tier-1 #1 + D5.11)', () => {
     await new Promise(r => setTimeout(r, 60));
     expect(calls).toBe(after);
   });
+
+  // #4309: the tick gate used to check ONLY the internal steal controller. An
+  // external abort (opts.signal) with a hung phase never reaches runCycle's
+  // finally, so the leaked timer renewed the fenced lock forever and no
+  // successor could ever take over.
+  test('external abort stops renewals even when stop() is never called (#4309)', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const external = new AbortController();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => { calls++; return true; }),
+      controller, 'test-lock', 15, external.signal,
+    );
+    try {
+      const deadline = Date.now() + 5_000;
+      while (calls === 0 && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 20));
+      }
+      expect(calls).toBeGreaterThan(0); // was renewing while un-aborted
+      external.abort();
+      // Deliberately do NOT call stop() — this is the hung-phase leak shape.
+      const after = calls;
+      await new Promise(r => setTimeout(r, 100));
+      expect(calls).toBe(after);
+      // An external abort is not a steal — the internal controller stays quiet.
+      expect(controller.signal.aborted).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  test('an already-aborted external signal never ticks (#4309)', async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    const external = new AbortController();
+    external.abort();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => { calls++; return true; }),
+      controller, 'test-lock', 15, external.signal,
+    );
+    try {
+      await new Promise(r => setTimeout(r, 80));
+      expect(calls).toBe(0);
+    } finally {
+      stop();
+    }
+  });
+
+  test('stop() after external abort is safe and idempotent (#4309)', async () => {
+    const controller = new AbortController();
+    const external = new AbortController();
+    const stop = startCycleLockRefresher(
+      fakeLock(async () => true),
+      controller, 'test-lock', 15, external.signal,
+    );
+    external.abort();
+    stop();
+    stop(); // second call must not throw
+  });
 });
 
 describe('buildYieldDuringPhase steal reporting', () => {
@@ -194,5 +253,36 @@ describe('buildYieldDuringPhase steal reporting', () => {
     );
     await fn!();
     expect(stolen).toBe(false);
+  });
+});
+
+describe('isLockStolenAbort — the steal decision does not depend on the reason (#4140)', () => {
+  // Duck-typed signals on purpose: `abort()` and `abort(undefined)` BOTH yield a
+  // DOMException, so `reason: undefined` — the state the runtime actually
+  // delivers — is unreachable through AbortController. This is the only way to
+  // pin it deterministically instead of waiting for the ~1-in-20 flake.
+
+  test('a steal with the reason DROPPED still classifies as a steal', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, undefined)).toBe(true);
+  });
+
+  test('a steal with the reason intact classifies as a steal (unchanged)', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: new LockStolenError('x') }, undefined)).toBe(true);
+  });
+
+  test('no steal when the controller never fired', () => {
+    expect(isLockStolenAbort({ aborted: false }, undefined)).toBe(false);
+    expect(isLockStolenAbort(undefined, undefined)).toBe(false);
+  });
+
+  test('an external abort still wins — it keeps the throw-out contract', () => {
+    // Both with and without a surviving reason, so the external conjunct is
+    // pinned independently of the reason.
+    expect(isLockStolenAbort({ aborted: true, reason: new LockStolenError('x') }, { aborted: true })).toBe(false);
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, { aborted: true })).toBe(false);
+  });
+
+  test('a non-aborted external signal does not suppress the steal', () => {
+    expect(isLockStolenAbort({ aborted: true, reason: undefined }, { aborted: false })).toBe(true);
   });
 });

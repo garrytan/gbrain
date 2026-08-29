@@ -303,8 +303,15 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       chatCalled = true;
       return stubChat('should not be called')(_o);
     };
-    await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat });
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat as typeof import('../../src/core/ai/gateway.ts').chat });
     expect(chatCalled).toBe(false);
+    expect((await engine.getPage('concepts/theme'))?.frontmatter.synthesis_mode).toBe('deterministic_tier');
+    expect(result.details?.synthesis_mode_counts).toEqual({
+      llm: 0,
+      deterministic_tier: 1,
+      budget_fallback: 0,
+      error_fallback: 0,
+    });
   });
 
   test('dry-run counts but does NOT write', async () => {
@@ -341,6 +348,98 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       `SELECT compiled_truth FROM pages WHERE slug = 'concepts/theme'`,
     );
     expect(rows[0].compiled_truth).toContain('Custom synthesized narrative');
+  });
+
+  test('prioritizes stronger concepts before spending the fixed LLM budget', async () => {
+    const atoms = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        slug: `weak-${i}`,
+        title: `Weak ${i}`,
+        body: `Weak body ${i}`,
+        concept_refs: ['weak-theme'],
+      })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        slug: `strong-${i}`,
+        title: `Strong ${i}`,
+        body: `Strong body ${i}`,
+        concept_refs: ['strong-theme'],
+      })),
+    ];
+    const firstCalls: string[] = [];
+    const firstChat = async (opts: ChatOpts) => {
+      firstCalls.push(String(opts.messages[0]?.content));
+      return stubChat('Strong model narrative.', {
+        input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+      })(opts);
+    };
+
+    const first = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: firstChat as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(firstCalls).toHaveLength(1);
+    expect(firstCalls[0]).toContain('Concept slug: strong-theme');
+    expect((await engine.getPage('concepts/strong-theme'))?.frontmatter.synthesis_mode).toBe('llm');
+    expect((await engine.getPage('concepts/weak-theme'))?.frontmatter.synthesis_mode).toBe('budget_fallback');
+    expect(first.details?.synthesis_mode_counts).toEqual({
+      llm: 1,
+      deterministic_tier: 0,
+      budget_fallback: 1,
+      error_fallback: 0,
+    });
+  });
+
+  test('marks LLM-error fallback output distinctly', async () => {
+    const atoms = Array.from({ length: 5 }, (_, i) => ({
+      slug: `error-${i}`,
+      title: `Error ${i}`,
+      body: `Error body ${i}`,
+      concept_refs: ['error-theme'],
+    }));
+    await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: (async () => { throw new Error('temporary provider failure'); }) as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect((await engine.getPage('concepts/error-theme'))?.frontmatter.synthesis_mode).toBe('error_fallback');
+  });
+
+  test('an empty model response is a truthful warning and error fallback', async () => {
+    const atoms = Array.from({ length: 5 }, (_, i) => ({
+      slug: `empty-${i}`,
+      title: `Empty ${i}`,
+      body: `Empty body ${i}`,
+      concept_refs: ['empty-theme'],
+    }));
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: stubChat(''),
+    });
+    expect(result.status).toBe('warn');
+    expect((result.details?.failures as unknown[])).toHaveLength(1);
+    expect((await engine.getPage('concepts/empty-theme'))?.frontmatter.synthesis_mode).toBe('error_fallback');
+  });
+
+  test('equal-strength concepts use a stable slug tie-break', async () => {
+    const atoms = [
+      ...Array.from({ length: 5 }, (_, i) => ({
+        slug: `z-${i}`, title: `Z ${i}`, body: `Z ${i}`, concept_refs: ['z-theme'],
+      })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        slug: `a-${i}`, title: `A ${i}`, body: `A ${i}`, concept_refs: ['a-theme'],
+      })),
+    ];
+    const calls: string[] = [];
+    await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: (async (opts: ChatOpts) => {
+        calls.push(String(opts.messages[0]?.content));
+        return stubChat('Stable narrative.')(opts);
+      }) as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain('Concept slug: a-theme');
+    expect(calls[1]).toContain('Concept slug: z-theme');
   });
 
   // #2163: concept pages must enter the retrieval surface. The write routes
@@ -486,6 +585,86 @@ describe('#2123: concepts label parsing', () => {
     expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b"}]`)[0].concepts).toBeUndefined();
     expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b","concepts":"not-an-array"}]`)[0].concepts).toBeUndefined();
     expect(parseAtomsResponse(`[{"title":"T","atom_type":"insight","body":"b","concepts":["Bad Label!"]}]`)[0].concepts).toBeUndefined();
+  });
+});
+
+// #3044 adoption — a whole-run LLM outage must halt the phase instead of
+// overwriting existing concept pages with error_fallback stub narratives.
+// Non-global per-item errors keep the error_fallback behavior (pinned by
+// 'marks LLM-error fallback output distinctly' above).
+describe('runPhaseSynthesizeConcepts — global-error halt (#3044)', () => {
+  // Equal-count T2 groups sort by slug, so call order is deterministic.
+  const mkGroups = (themes: string[]) =>
+    themes.flatMap((theme) =>
+      Array.from({ length: 6 }, (_, i) => ({
+        slug: `${theme}-${i}`,
+        title: `${theme} ${i}`,
+        body: `${theme} body ${i}`,
+        concept_refs: [theme],
+      })),
+    );
+
+  async function conceptCount(): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM pages WHERE type = 'concept' AND slug LIKE 'concepts/%'`,
+    );
+    return Number(rows[0].n);
+  }
+
+  test('auth error halts on the FIRST hit — no stub narrative is written', async () => {
+    let calls = 0;
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: mkGroups(['alpha-theme', 'beta-theme']),
+      _chat: (async () => {
+        calls++;
+        throw Object.assign(new Error('invalid x-api-key'), { status: 401 });
+      }) as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(calls).toBe(1); // beta-theme never called the LLM
+    expect(result.details?.aborted_global_error).toBe('auth');
+    expect(result.details?.concepts_written).toBe(0);
+    expect(result.status).toBe('warn');
+    const failures = result.details?.failures as Array<{ error: string }>;
+    expect(failures).toHaveLength(1);
+    expect(failures[0].error).toContain('whole-run condition');
+    expect(await conceptCount()).toBe(0); // pre-fix: 2 error_fallback stubs
+  });
+
+  test('below-streak 429 skips the stub write for that group and continues', async () => {
+    let calls = 0;
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: mkGroups(['alpha-theme', 'beta-theme', 'gamma-theme']),
+      _chat: (async (opts) => {
+        calls++;
+        if (calls === 1) throw Object.assign(new Error('rate limited'), { status: 429 });
+        return stubChat('Recovered narrative.')(opts as ChatOpts);
+      }) as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(calls).toBe(3);
+    expect(result.details?.aborted_global_error).toBeUndefined();
+    expect(result.details?.concepts_written).toBe(2);
+    // alpha-theme (the rate-limited group) keeps NO page — retried next run
+    // instead of stubbed; the others synthesized normally.
+    expect(await engine.getPage('concepts/alpha-theme')).toBeFalsy();
+    expect((await engine.getPage('concepts/beta-theme'))?.frontmatter.synthesis_mode).toBe('llm');
+    expect((await engine.getPage('concepts/gamma-theme'))?.frontmatter.synthesis_mode).toBe('llm');
+  });
+
+  test('3 consecutive 429s halt the phase with zero stub writes', async () => {
+    let calls = 0;
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: mkGroups(['alpha-theme', 'beta-theme', 'gamma-theme', 'delta-theme']),
+      _chat: (async () => {
+        calls++;
+        throw Object.assign(new Error('rate limited'), { status: 429 });
+      }) as typeof import('../../src/core/ai/gateway.ts').chat,
+    });
+    expect(calls).toBe(3); // 4th group never called the LLM
+    expect(result.details?.aborted_global_error).toBe('rate_limit');
+    expect(result.details?.concepts_written).toBe(0);
+    const failures = result.details?.failures as Array<{ error: string }>;
+    expect(failures[2].error).toContain('3 consecutive rate_limit errors');
+    expect(await conceptCount()).toBe(0);
   });
 });
 

@@ -13,7 +13,7 @@
  * Called at the end of initSchema(), after all migrations complete.
  */
 
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import type { BrainEngine } from './engine.ts';
 
 /** A column expected to exist in the database. */
@@ -187,28 +187,30 @@ export interface VerifyResult {
   failed: Array<{ table: string; column: string; error: string }>;
 }
 
+export interface DetectResult {
+  /** Total columns checked */
+  checked: number;
+  /** Columns that were missing */
+  missing: Array<{ table: string; column: string }>;
+}
+
 /**
- * Verify that every column defined in schema-embedded.ts actually exists
- * in the database. Self-heals missing columns via ALTER TABLE ADD COLUMN.
+ * Read-only pass: diff schema-embedded.ts's expected columns against
+ * information_schema.columns. Does NOT attempt any ALTER TABLE — callers
+ * that only need to detect drift (e.g. a doctor health check) should use
+ * this instead of verifySchema(), which mutates the database.
  *
- * Should be called after initSchema() + runMigrations() complete.
- *
- * @returns VerifyResult with details of what was checked and fixed.
- * @throws Error if any columns could not be healed (after attempting all).
+ * Extracted from verifySchema() (gbrain#4421) so `gbrain doctor` can report
+ * this same ledger-vs-live-schema drift without a plain diagnostic run
+ * silently issuing DDL.
  */
-export async function verifySchema(engine: BrainEngine): Promise<VerifyResult> {
+export async function detectMissingColumns(engine: BrainEngine): Promise<DetectResult> {
   const expected = parseExpectedColumns();
   const actualColumns = await getActualColumns(engine);
   const actualTables = await getActualTables(engine);
 
-  const result: VerifyResult = {
-    checked: 0,
-    missing: [],
-    healed: [],
-    failed: [],
-  };
+  const result: DetectResult = { checked: 0, missing: [] };
 
-  // Group expected columns by table for cleaner logging
   for (const col of expected) {
     // Skip tables that don't exist yet — they'll be created by schema.sql
     // on the next initSchema() call. We only verify columns on tables that
@@ -225,6 +227,29 @@ export async function verifySchema(engine: BrainEngine): Promise<VerifyResult> {
       result.missing.push({ table: col.table, column: col.column });
     }
   }
+
+  return result;
+}
+
+/**
+ * Verify that every column defined in schema-embedded.ts actually exists
+ * in the database. Self-heals missing columns via ALTER TABLE ADD COLUMN.
+ *
+ * Should be called after initSchema() + runMigrations() complete.
+ *
+ * @returns VerifyResult with details of what was checked and fixed.
+ * @throws Error if any columns could not be healed (after attempting all).
+ */
+export async function verifySchema(engine: BrainEngine): Promise<VerifyResult> {
+  const expected = parseExpectedColumns();
+  const detected = await detectMissingColumns(engine);
+
+  const result: VerifyResult = {
+    checked: detected.checked,
+    missing: detected.missing,
+    healed: [],
+    failed: [],
+  };
 
   if (result.missing.length === 0) {
     return result;

@@ -4,15 +4,16 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **Starter** marks membership in the ~27-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 121 tools across 23 areas. **Starter** marks membership in the ~27-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_health` | Brain health dashboard (embed coverage, stale pages, orphans). | admin |  |  |
-| `get_stats` | Brain statistics (page count, chunk count, etc.) | admin |  |  |
+| `get_health` | Brain health dashboard (embed coverage, stale pages, orphans) — remote callers see counters confined to their source grant. | admin |  |  |
+| `get_stats` | Brain statistics (page count, chunk count, etc.) — remote callers see counters confined to their source grant. | admin |  |  |
 | `get_status_snapshot` | Snapshot for `gbrain status` thin-client mode: sync freshness + last cycle + queue depths + worker liveness. | admin |  |  |
+| `get_usage` | Aggregate chat usage + cost from the chat_usage_log ledger (per-model and per-phase token counts, cache reads/writes, USD estimates) with explicit coverage fields. | admin |  |  |
 | `quarantine_list` | List quarantined (hidden) and optionally content-flagged pages by scanning page frontmatter, newest-updated first. | admin |  |  |
 | `run_doctor` | Run brain health checks and return a structured DoctorReport (thin-client doctor surface). | admin |  |  |
 | `run_onboard` | Probe brain health + optionally submit onboard remediations. | admin |  |  |
@@ -55,6 +56,7 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
+| `entity_identity_list` | List cross-source entity identity groups and their member pages. | read |  |  |
 | `extract_entities` | Extract entity names (people, companies) from text and create/update their brain stub pages. | write |  |  |
 | `extraction_pending` | List unverified auto-extracted entity stubs awaiting owner review (the quarantine lane from extract_entities). | read |  |  |
 
@@ -62,7 +64,7 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_brain_identity` | Brain identity + counters for thin-client banner. | read |  |  |
+| `get_brain_identity` | Brain identity + counters for thin-client banner — remote callers see counters confined to their source grant. | read |  |  |
 | `whoami` | Introspect the calling identity. | read | yes |  |
 
 ## ingest
@@ -88,12 +90,12 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `cancel_job` | Cancel a waiting, active, or delayed job | admin |  |  |
+| `cancel_job` | Cancel a waiting, active, or delayed job. | admin |  |  |
 | `get_agent_job` | Poll an agent job submitted via submit_agent. | agent | yes |  |
-| `get_job` | Get job status and details by ID | admin |  |  |
-| `get_job_progress` | Get structured progress for a running job | admin |  |  |
+| `get_job` | Get job status and details by ID. | admin |  |  |
+| `get_job_progress` | Get structured progress for a running job. | admin |  |  |
 | `get_job_stats` | Job queue statistics. | admin |  |  |
-| `list_jobs` | List jobs with optional filters | admin |  |  |
+| `list_jobs` | List jobs with optional filters. | admin |  |  |
 | `pause_job` | Pause a waiting, active, or delayed job | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
 | `resume_job` | Resume a paused job back to waiting | admin |  |  |
@@ -107,12 +109,20 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `add_link` | Create link between pages | write |  |  |
-| `find_orphans` | Find pages with no inbound wikilinks. | read |  |  |
+| `find_orphans` | Find disconnected pages. | read |  |  |
 | `get_backlinks` | List incoming links to a page | read | yes |  |
 | `get_links` | List outgoing links from a page | read |  |  |
 | `list_link_sources` | List distinct link_source provenances in the brain with edge counts (e.g. | read | yes |  |
 | `remove_link` | Remove link between pages | write |  |  |
 | `traverse_graph` | Traverse link graph from a page. | read | yes |  |
+
+## loops
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `loops_close` | Close an open loop by id: status 'done' (handled) or 'dropped' (not going to). | write |  |  |
+| `loops_mute` | Suppress a sender (email address) or thread id from opening NEW loops — the detector feedback primitive behind "never track this sender". | write |  |  |
+| `open_loops` | The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. | read |  |  |
 
 ## memory
 
@@ -148,12 +158,13 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 |---|---|---|---|---|
 | `capture` | Capture a quick note into the brain — the "just remember this" write. | write | yes |  |
 | `delete_page` | Soft-delete a page. | write |  |  |
+| `fetch` | Fetch the full text of one search result by its `id` (OpenAI deep-research contract: the search/fetch pair). | read |  |  |
 | `get_chunks` | Get content chunks for a page | read |  |  |
 | `get_page` | Read a page by slug (supports optional fuzzy matching). | read | yes |  |
 | `get_raw_data` | Retrieve raw data for a page | read |  |  |
 | `get_versions` | Page version history | read |  |  |
 | `list_pages` | List pages with optional filters. | read | yes |  |
-| `put_page` | Write/update a page (markdown with frontmatter). | write | yes |  |
+| `put_page` | Write or replace a page (markdown with frontmatter). | write | yes |  |
 | `put_raw_data` | Store raw API response data for a page | write |  |  |
 | `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |
 | `restore_page` | v0.26.5 — restore a soft-deleted page (clear deleted_at). | write |  |  |
@@ -228,6 +239,6 @@ Every non-localOnly operation on the MCP surface: 115 tools across 22 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `add_timeline_entry` | Add timeline entry to a page | write | yes |  |
+| `add_timeline_entry` | Add timeline entry to a page. | write | yes |  |
 | `get_timeline` | Get timeline entries for a page, optionally filtered by date window | read |  |  |
 

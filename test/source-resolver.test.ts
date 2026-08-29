@@ -29,7 +29,9 @@ function makeStub(registeredSources: string[], paths: Array<{ id: string; local_
           ? [{ id: target } as unknown as T]
           : []);
       }
-      if (sql.includes('SELECT id, local_path FROM sources')) {
+      // Tier-4 registered-source query — old shape and the #3880 shape
+      // (`SELECT id, local_path, archived FROM sources ...`).
+      if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
         return paths as unknown as T[];
       }
       return [];
@@ -198,7 +200,7 @@ describe('getDefaultSourcePath', () => {
           }
           return [];
         }
-        if (sql.includes('SELECT id, local_path FROM sources')) {
+        if (sql.includes('SELECT id, local_path FROM sources') || sql.includes(', archived FROM sources')) {
           return Object.entries(sourcePaths)
             .filter(([_, p]) => p !== null)
             .map(([id, local_path]) => ({ id, local_path }) as unknown as T);

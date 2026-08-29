@@ -47,10 +47,19 @@ afterAll(() => {
   try { if (_tmpHome) rmSync(_tmpHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-function makeCtx(opts: { remote?: boolean } = {}): OperationContext {
+function makeCtx(
+  opts: { remote?: boolean; storage?: { backend: 'local'; localPath: string } } = {},
+): OperationContext {
   return {
     engine: getEngine(),
-    config: { engine: 'postgres', database_url: process.env.DATABASE_URL! },
+    config: {
+      engine: 'postgres',
+      database_url: process.env.DATABASE_URL!,
+      // #4302: file_upload / file_url are fail-closed — they refuse with a
+      // typed storage_error unless a storage backend is configured. Tests
+      // that exercise the success path pass a local (temp-dir) backend here.
+      ...(opts.storage ? { storage: opts.storage } : {}),
+    },
     logger: { info: () => {}, warn: () => {}, error: () => {} },
     dryRun: false,
     // Default: trusted local invocation (matches `gbrain call` semantics).
@@ -315,18 +324,25 @@ describeE2E('E2E: Timeline', () => {
   afterAll(teardownDB);
 
   test('add_timeline_entry + get_timeline round trip', async () => {
-    await callOp('add_timeline_entry', {
+    const entryParams = {
       slug: 'people/sarah-chen',
       date: '2025-04-01',
       summary: 'Test timeline entry',
       detail: 'Added via E2E test',
       source: 'e2e-test',
-    });
+    };
+    const first = await callOp('add_timeline_entry', entryParams);
+    expect(first).toMatchObject({ status: 'ok' }); // #1856: result also carries write_through
+
+    // #3827: an identical retry is deduplicated by the unique index — the op
+    // must report the drop instead of a silent 'ok'.
+    const dup = await callOp('add_timeline_entry', entryParams);
+    expect(dup).toMatchObject({ status: 'skipped', reason: 'duplicate' });
 
     const timeline = await callOp('get_timeline', { slug: 'people/sarah-chen' }) as any[];
     expect(timeline.length).toBeGreaterThanOrEqual(1);
-    const entry = timeline.find((e: any) => e.summary === 'Test timeline entry');
-    expect(entry).toBeDefined();
+    const matching = timeline.filter((e: any) => e.summary === 'Test timeline entry');
+    expect(matching.length).toBe(1);
   }, 30_000);
 });
 
@@ -609,7 +625,7 @@ describeE2E('E2E: Ingest Log & Raw Data', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────
-// Files (stub verification)
+// Files (fail-closed refusal without a backend + real local-backend path)
 // ─────────────────────────────────────────────────────────────────
 
 describeE2E('E2E: Files', () => {
@@ -631,7 +647,24 @@ describeE2E('E2E: Files', () => {
     writeFileSync(tmpFile, 'fake pdf content');
 
     try {
-      const result = await callOp('file_upload', {
+      // #4302 (fail-closed storage honesty): with NO storage backend
+      // configured, file_upload must refuse with a typed storage_error and
+      // must NOT record a phantom files row.
+      let refused: any = null;
+      try {
+        await callOp('file_upload', { path: tmpFile, page_slug: 'people/sarah-chen' });
+      } catch (e) {
+        refused = e;
+      }
+      expect(refused).not.toBeNull();
+      expect(refused.code).toBe('storage_error');
+      expect(((await callOp('file_list', {})) as any[]).length).toBe(0);
+
+      // Success path: a real (local, temp-dir) backend — bytes stored,
+      // files row recorded, file_list + file_url read it back.
+      const storage = { backend: 'local' as const, localPath: join(tmpDir, 'storage') };
+      const uploadOp = operationsByName['file_upload'];
+      const result = await uploadOp.handler(makeCtx({ storage }), {
         path: tmpFile,
         page_slug: 'people/sarah-chen',
       }) as any;
@@ -647,9 +680,13 @@ describeE2E('E2E: Files', () => {
       expect(typeof files[0].size_bytes).toBe('number');
       expect(() => JSON.stringify(files)).not.toThrow();
 
-      // Verify file_url returns URI format
-      const url = await callOp('file_url', { storage_path: result.storage_path }) as any;
-      expect(url.url).toContain('gbrain:files/');
+      // Verify file_url resolves a REAL backend URL (#4302 replaced the
+      // gbrain:files/ placeholder with the backend's own URL after an
+      // existence probe; LocalStorage yields file://).
+      const urlOp = operationsByName['file_url'];
+      const url = await urlOp.handler(makeCtx({ storage }), { storage_path: result.storage_path }) as any;
+      expect(url.url).toMatch(/^file:\/\//);
+      expect(url.url).toContain('sarah-chen');
     } finally {
       rmSync(tmpDir, { recursive: true });
     }

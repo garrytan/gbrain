@@ -17,6 +17,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
+import { GBRAIN_MCP_INSTRUCTIONS } from '../src/mcp/instructions.ts';
 
 type SqlResult = unknown[] | unknown;
 type SqlHandler = (query: string, values: unknown[]) => SqlResult | Promise<SqlResult>;
@@ -213,6 +214,21 @@ describe('http-transport: auth', () => {
     expect(body.result.tools).toBeArray();
     expect(body.result.tools.length).toBeGreaterThan(0);
     expect(body.jsonrpc).toBe('2.0');
+  });
+
+  test('initialize returns the same canonical agent contract as stdio', async () => {
+    const r = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${VALID_TOKEN}`, 'Content-Type': 'application/json' },
+      body: rpc('initialize', {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'raw-http-contract-test', version: '1.0.0' },
+      }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json() as { result?: { instructions?: string } };
+    expect(body.result?.instructions).toBe(GBRAIN_MCP_INSTRUCTIONS);
   });
 
   test('2. missing Authorization header → 401', async () => {

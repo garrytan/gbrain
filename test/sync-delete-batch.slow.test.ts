@@ -78,3 +78,46 @@ test('10K-page batched delete completes in <5s on PGLite', async () => {
   // (bun:test doesn't have a metrics surface; just stderr-log.)
   process.stderr.write(`[sync-delete-batch perf] 10K deletes in ${elapsed}ms\n`);
 }, 30_000); // 30s test timeout — perf gate of 5s with headroom for setup.
+
+test('#4587: 10K-page batched SOFT delete completes in <5s on PGLite', async () => {
+  // Sync's delete lanes now run softDeletePages (UPDATE ... deleted_at),
+  // so the loop's perf promise moves with them — same gate, same chunking.
+  const N = 10_000;
+  const slugBatch = 1000;
+  for (let start = 0; start < N; start += slugBatch) {
+    const end = Math.min(start + slugBatch, N);
+    const values = [];
+    const params: string[] = [];
+    for (let i = start; i < end; i++) {
+      const slug = `perf/soft-${i}`;
+      params.push(slug);
+      values.push(`('default', $${params.length}, 'note', $${params.length}, 'body', '', '{}'::jsonb)`);
+    }
+    await engine.executeRaw(
+      `INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ${values.join(',')}`,
+      params,
+    );
+  }
+
+  const allSlugs = Array.from({ length: N }, (_, i) => `perf/soft-${i}`);
+  const start = Date.now();
+  let totalFlipped = 0;
+  for (let i = 0; i < allSlugs.length; i += DELETE_BATCH_SIZE) {
+    const batch = allSlugs.slice(i, i + DELETE_BATCH_SIZE);
+    const flipped = await engine.softDeletePages(batch, { sourceId: 'default' });
+    totalFlipped += flipped.length;
+  }
+  const elapsed = Date.now() - start;
+
+  expect(totalFlipped).toBe(N);
+  expect(elapsed).toBeLessThan(5000);
+
+  // Idempotency at scale: a full re-run flips nothing (deleted_at IS NULL).
+  let reFlipped = 0;
+  for (let i = 0; i < allSlugs.length; i += DELETE_BATCH_SIZE) {
+    reFlipped += (await engine.softDeletePages(allSlugs.slice(i, i + DELETE_BATCH_SIZE), { sourceId: 'default' })).length;
+  }
+  expect(reFlipped).toBe(0);
+
+  process.stderr.write(`[sync-delete-batch perf] 10K soft-deletes in ${elapsed}ms\n`);
+}, 30_000);

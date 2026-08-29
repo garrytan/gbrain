@@ -339,12 +339,16 @@ describe('BATCH_AUDIT_SITES typed enum + isBatchAuditSite guard (D10c codex)', (
     // Pin the set so a future "cleanup" PR can't silently drop a site and
     // break audit-attribution for the corresponding caller.
     const expected = new Set([
-      'addLinksBatch', 'addTimelineEntriesBatch', 'addTakesBatch', 'upsertChunks',
+      'addLinksBatch', 'addTimelineEntriesBatch', 'addTakesBatch', 'updateTakeEmbeddings', 'upsertChunks',
       'extract.links_inc', 'extract.timeline_inc',
       'extract.links_fs', 'extract.timeline_fs',
       'extract.links_db', 'extract.timeline_db',
       'extract.by_mention',
+      // #3674: --rebuild reconciling delete-then-insert of the mention scan's rows.
+      'extract.by_mention.rebuild',
       'extract.stale',
+      // #3961: atom-provenance edges banked after the completion-receipt flip.
+      'cycle.extract_atoms.provenance',
       'mcp.put_page.autolink',
       'sync.import_file',
       'reindex.markdown', 'reindex.multimodal',

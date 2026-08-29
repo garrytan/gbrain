@@ -2,16 +2,19 @@ import type { Recipe } from '../types.ts';
 import { probeLlamaServer } from '../probes.ts';
 
 /**
- * llama.cpp's `llama-server --embeddings` (also published as
- * `@llama.cpp/llama-server`). Exposes an OpenAI-compatible /v1/embeddings
- * endpoint. Distinct from Ollama: different default port (8080), different
- * model-management story (you launch it with `--model <path>`; the server
- * serves whatever model was passed).
+ * llama.cpp's `llama-server` (also published as `@llama.cpp/llama-server`).
+ * It exposes OpenAI-compatible chat and embedding endpoints, depending on
+ * how the server is launched. Distinct from Ollama: different default port
+ * (8080), different model-management story (you launch it with
+ * `--model <path>`; the server serves whatever model was passed).
  *
- * Like LiteLLM, this recipe ships with `models: []` because the model
- * identity is whatever the user launched llama-server with. They MUST
- * pass `--embedding-model llama-server:<id>` and `--embedding-dimensions
- * <N>`. The wizard refuses to pick implicit defaults.
+ * The embedding touchpoint ships with `models: []` because the model identity
+ * is whatever the user launched llama-server with. Users MUST pass
+ * `--embedding-model llama-server:<id>` and `--embedding-dimensions <N>`.
+ * The chat touchpoint follows the same user-provided model identity. Its
+ * prompt-cache capability reflects llama-server's default `--cache-prompt`
+ * behavior; a deployment launched with `--no-cache-prompt` must not use this
+ * recipe as a cache-capable subagent route.
  *
  * Reference: https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
  */
@@ -42,6 +45,18 @@ export const llamaServer: Recipe = {
       // server launched with a larger `-b` can raise this. v0.32 (#779).
       max_batch_items: 32,
     },
+    chat: {
+      // The model id is the value supplied to llama-server's --alias flag.
+      models: [],
+      supports_tools: true,
+      supports_subagent_loop: true,
+      supports_prompt_cache: true,
+      // The launched server's --ctx-size is deployment-specific. Keep the
+      // recipe conservative and let the gateway's standard fallback apply.
+      cost_per_1m_input_usd: 0,
+      cost_per_1m_output_usd: 0,
+      price_last_verified: '2026-08-11',
+    },
   },
   /**
    * Probe via the OpenAI-compatible /v1/models endpoint. Caller passes the
@@ -55,7 +70,7 @@ export const llamaServer: Recipe = {
     if (!result.reachable) {
       return {
         ready: false,
-        hint: `llama-server not reachable at ${url}. Start it with \`./llama-server --model <path> --embeddings\` or set LLAMA_SERVER_BASE_URL.`,
+        hint: `llama-server not reachable at ${url}. Start it with \`llama-server --model <path> --alias <id> --jinja --cache-prompt\` (omit --embeddings for chat) or set LLAMA_SERVER_BASE_URL.`,
       };
     }
     if (!result.models_endpoint_valid) {
@@ -67,5 +82,5 @@ export const llamaServer: Recipe = {
     return { ready: true };
   },
   setup_hint:
-    'Build llama.cpp, then `llama-server --model <gguf-path> --embeddings`. Set --embedding-model llama-server:<id> + --embedding-dimensions <N>.',
+    'Install/build llama.cpp, then `llama-server --model <gguf-path> --alias <id> --jinja --cache-prompt` for chat or add `--embeddings` for embeddings. Set LLAMA_SERVER_BASE_URL for a non-default port.',
 };

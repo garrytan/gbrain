@@ -15,7 +15,7 @@ import { join, relative, basename } from 'path';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { parseMarkdown, frontmatterBodyOffset } from '../core/markdown.ts';
+import { parseMarkdown, frontmatterBodyOffset, findTimelineSplitIndex } from '../core/markdown.ts';
 import { atomicWriteFileSync } from '../core/atomic-write.ts';
 import { withPageLock } from '../core/page-lock.ts';
 
@@ -41,7 +41,18 @@ export interface BacklinkGap {
  * filesystem-walker code that does `${dir}/${slug}` keeps working.
  */
 export function extractEntityRefs(content: string, _pagePath: string): { name: string; slug: string; dir: string }[] {
-  const refs = canonicalExtractEntityRefs(content);
+  return projectPeopleCompaniesRefs(canonicalExtractEntityRefs(content));
+}
+
+/**
+ * The legacy people/companies projection shared by the exported wrapper above
+ * and findBacklinkGaps (#1776: the gap walker extracts canonical refs ONCE per
+ * page and derives both this projection and the backlink-credit slug set from
+ * that single pass).
+ */
+function projectPeopleCompaniesRefs(
+  refs: { name: string; slug: string; dir: string }[],
+): { name: string; slug: string; dir: string }[] {
   return refs
     .filter(r => r.dir === 'people' || r.dir === 'companies')
     .map(r => ({
@@ -65,9 +76,18 @@ export function hasBacklink(targetContent: string, sourceFilename: string): bool
   return targetContent.includes(sourceFilename);
 }
 
-/** Build a timeline back-link entry */
-export function buildBacklinkEntry(sourceTitle: string, sourcePath: string, date: string): string {
-  return `- **${date}** | Referenced in [${sourceTitle}](${sourcePath})`;
+/** Build an undated back-link entry without inventing event chronology. */
+export function buildBacklinkEntry(sourceTitle: string, sourcePath: string): string {
+  // #1776: dir-shaped sources get an extension-less link (the brain-slug
+  // convention the canonical extractor parses, so a freshly-written row is
+  // credited by the next check pass instead of re-flagged). Root-level
+  // sources keep the `.md` form: the extractor only parses `dir/name`
+  // paths, so the legacy filename-substring check is the only thing that
+  // can credit those rows — stripping `.md` there would make fix→check
+  // non-idempotent (duplicate rows on every run).
+  const bare = sourcePath.replace(/^(?:\.\.\/)+/, '');
+  const linkPath = bare.includes('/') ? sourcePath.replace(/\.md$/, '') : sourcePath;
+  return `- Referenced in [${sourceTitle}](${linkPath})`;
 }
 
 /** Scan a brain directory for back-link gaps */
@@ -92,17 +112,28 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
   }
   walk(brainDir);
 
-  // Build a lookup of existing pages by directory/slug
+  // Build a lookup of existing pages by directory/slug. #1776: extract each
+  // page's canonical refs ONCE here — they feed both the gap candidates
+  // (people/companies projection) and the backlink-credit slug set, so
+  // extension-less convention links ([Alice](../people/alice),
+  // [[people/alice]]) count as backlinks even though the legacy
+  // `<basename>.md` substring check can't see them.
   const pagesBySlug = new Map<string, { path: string; content: string }>();
+  const refsByRelPath = new Map<string, { name: string; slug: string; dir: string }[]>();
+  const outgoingSlugsBySlug = new Map<string, Set<string>>();
   for (const page of allPages) {
     const slug = page.relPath.replace('.md', '');
     pagesBySlug.set(slug, { path: page.path, content: page.content });
+    const canonical = canonicalExtractEntityRefs(page.content);
+    refsByRelPath.set(page.relPath, canonical);
+    outgoingSlugsBySlug.set(slug, new Set(canonical.map(r => r.slug)));
   }
 
   // For each page, check entity references
   for (const page of allPages) {
-    const refs = extractEntityRefs(page.content, page.relPath);
+    const refs = projectPeopleCompaniesRefs(refsByRelPath.get(page.relPath) ?? []);
     const sourceFilename = basename(page.relPath);
+    const sourceSlug = page.relPath.replace(/\.md$/, '');
     // LOCAL PATCH (paolo, 2026-05-12): dedupe (source, target) pairs within
     // a single source page. extractEntityRefs returns one EntityRef per
     // occurrence, so a source page that mentions the same target N times
@@ -120,15 +151,19 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
       const target = pagesBySlug.get(targetSlug);
       if (!target) continue; // target page doesn't exist
 
-      // Check if the target already has a back-link to this source page
-      if (!hasBacklink(target.content, sourceFilename)) {
-        gaps.push({
-          sourcePage: page.relPath,
-          targetPage: targetSlug + '.md',
-          entityName: ref.name,
-          sourceTitle: extractPageTitle(page.content),
-        });
-      }
+      // Check if the target already has a back-link to this source page.
+      // Credited two ways (#1776): the legacy `<basename>.md` substring
+      // (old fixer rows, explicit .md links) OR the target's canonical
+      // outgoing refs containing the source slug (extension-less
+      // convention links and wikilinks the substring check misses).
+      if (hasBacklink(target.content, sourceFilename)) continue;
+      if (outgoingSlugsBySlug.get(targetSlug)?.has(sourceSlug)) continue;
+      gaps.push({
+        sourcePage: page.relPath,
+        targetPage: targetSlug + '.md',
+        entityName: ref.name,
+        sourceTitle: extractPageTitle(page.content),
+      });
     }
   }
 
@@ -159,37 +194,54 @@ function firstEditBlockingError(content: string, filePath: string): string | nul
 }
 
 /**
- * Insert a timeline entry into the body of `content`, never touching bytes
- * before `bodyStart`. The `## Timeline` heading is matched only as a real
- * heading line at/after bodyStart (CRLF-tolerant), so a `## Timeline` string
- * inside YAML frontmatter, a `### Timeline` sub-heading, or a
- * `## Timeline (2026)` variant never anchors the insertion. With multiple real
- * headings, the FIRST one wins deterministically (post-validation guards the
- * result either way). Exported for direct unit tests.
+ * Insert an undated back-link into a dedicated `## Referenced by` section,
+ * never touching bytes before `bodyStart` and never inserting into the
+ * timeline region. Existing timeline sentinels take precedence over bare
+ * `## Timeline` / `## History` headings.
  */
-export function insertTimelineEntry(content: string, bodyStart: number, entry: string): string {
+export function insertBacklinkEntry(content: string, bodyStart: number, entry: string): string {
   const bodySlice = content.slice(bodyStart);
-  const headingMatch = /^## Timeline[ \t]*\r?$/m.exec(bodySlice);
-
-  if (!headingMatch) {
-    // No real Timeline heading in the body — append a fresh section.
-    return content.trimEnd() + '\n\n## Timeline\n\n' + entry + '\n';
+  const lines = bodySlice.split('\n');
+  const splitIndex = findTimelineSplitIndex(lines);
+  let timelineStart = content.length;
+  if (splitIndex >= 0) {
+    timelineStart = bodyStart;
+    for (let i = 0; i < splitIndex; i++) timelineStart += lines[i].length + 1;
+  } else {
+    const bareTimeline = /^## (?:Timeline|History)[ \t]*\r?$/im.exec(bodySlice);
+    if (bareTimeline) timelineStart = bodyStart + bareTimeline.index;
   }
 
-  const headingAbs = bodyStart + headingMatch.index;
-  const headingLineEnd = content.indexOf('\n', headingAbs);
-  const sectionStart = headingLineEnd === -1 ? content.length : headingLineEnd + 1;
+  const beforeTimeline = content.slice(bodyStart, timelineStart);
+  const headingMatch = /^## Referenced by[ \t]*\r?$/im.exec(beforeTimeline);
+  const eol = bodySlice.includes('\r\n') ? '\r\n' : '\n';
 
-  const nextHeading = /^## /m.exec(content.slice(sectionStart));
-  if (nextHeading) {
-    const insertAt = sectionStart + nextHeading.index;
-    return content.slice(0, insertAt) + entry + '\n' + content.slice(insertAt);
+  if (headingMatch) {
+    const headingAbs = bodyStart + headingMatch.index;
+    const headingLineEnd = content.indexOf('\n', headingAbs);
+    const sectionStart = headingLineEnd === -1 ? content.length : headingLineEnd + 1;
+    const nextHeading = /^##\s+\S/m.exec(content.slice(sectionStart, timelineStart));
+    const sectionEnd = nextHeading ? sectionStart + nextHeading.index : timelineStart;
+    const suffix = content.slice(sectionEnd);
+    const updatedSection = content.slice(0, sectionEnd).trimEnd() + eol + entry + eol;
+    return suffix ? updatedSection + eol + suffix : updatedSection;
   }
-  return content.trimEnd() + '\n' + entry + '\n';
+
+  const prefix = content.slice(0, timelineStart).trimEnd();
+  const suffix = content.slice(timelineStart);
+  const section = `${prefix}${prefix ? eol + eol : ''}## Referenced by${eol}${eol}${entry}${eol}`;
+  return suffix ? section + eol + suffix : section;
 }
 
 /**
- * Fix back-link gaps by inserting timeline entries into target pages.
+ * @deprecated Compat alias whose name predates the undated 'Referenced by'
+ * behavior (entries are no longer dated timeline lines). Kept for downstream
+ * imports; new code uses insertBacklinkEntry.
+ */
+export const insertTimelineEntry = insertBacklinkEntry;
+
+/**
+ * Fix back-link gaps by inserting undated entries into target pages.
  *
  * Safety pipeline per target file (each failure isolates to that file and is
  * reported in `skipped` — one bad page can't kill the batch or corrupt itself):
@@ -204,7 +256,6 @@ export async function fixBacklinkGaps(
   dryRun: boolean = false,
   opts?: { lockRoot?: string },
 ): Promise<BacklinkFixOutcome> {
-  const today = new Date().toISOString().slice(0, 10);
   const outcome: BacklinkFixOutcome = { fixed: 0, skipped: [] };
 
   // Group gaps by target page to batch writes
@@ -242,8 +293,8 @@ export async function fixBacklinkGaps(
           const relPrefix = '../'.repeat(depth);
           const relPath = relPrefix + gap.sourcePage;
 
-          const entry = buildBacklinkEntry(gap.sourceTitle, relPath, today);
-          content = insertTimelineEntry(content, bodyStart, entry);
+          const entry = buildBacklinkEntry(gap.sourceTitle, relPath);
+          content = insertBacklinkEntry(content, bodyStart, entry);
           inserted++;
         }
 

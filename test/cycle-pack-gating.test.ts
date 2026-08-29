@@ -184,3 +184,24 @@ describe('v0.41 T9 R-GATE: dispatch result envelope', () => {
     expect(occurrences).toBe(2);
   });
 });
+
+// #2117 — the pack-gated skip summaries must tell the operator HOW to opt
+// in: declare the phase in the active pack's `phases:` list or activate a
+// lens pack that ships it (gbrain-creator / gbrain-everything). Source-shape
+// pin, matching this file's style.
+describe('#2117: pack-gated skip summaries are actionable', () => {
+  test('both skip summaries name the phases: key and a lens pack', () => {
+    const summaries = cycleTsSrc.match(
+      /summary: '(?:extract_atoms|synthesize_concepts): active pack[^']*'/g,
+    ) ?? [];
+    expect(summaries.length).toBe(2);
+    for (const s of summaries) {
+      expect(s).toContain('phases:');
+      expect(s).toContain('gbrain-creator');
+    }
+  });
+
+  test('extract_atoms skip summary keeps the drain hint', () => {
+    expect(cycleTsSrc).toContain('gbrain dream --phase extract_atoms --drain');
+  });
+});

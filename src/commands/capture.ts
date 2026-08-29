@@ -44,6 +44,7 @@ import { resolveSourceWithTier } from '../core/source-resolver.ts';
 import {
   defaultSlug,
   detectBinaryNullByte,
+  detectBinarySignature,
   normalizeForHash,
   deriveTitle,
   mergeCaptureFrontmatter,
@@ -285,6 +286,23 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     process.exit(1);
   }
 
+  // #4022 magic-byte guard runs FIRST: it names the actual format, and it
+  // catches the containers the NUL scan structurally cannot (an ASCII-armored
+  // PDF has no NUL in its head, so pre-fix it was decoded to mojibake and
+  // stored as a page body with its real text silently dropped).
+  const binaryFormat = detectBinarySignature(rawBuffer!);
+  if (binaryFormat !== null) {
+    console.error(
+      `gbrain capture: refusing to capture ${binaryFormat} content from ${inputLabel}\n` +
+      `  Detected by magic bytes. Storing it would write UTF-8 replacement characters as the\n` +
+      `  page body — for container formats the real text is compressed, so it would be lost\n` +
+      `  entirely while the command reported success.\n` +
+      `  Extract the text first, then capture that. For a PDF:\n` +
+      `    pdftotext ${inputLabel === 'stdin' ? 'input.pdf' : inputLabel} - | gbrain capture --stdin --slug <slug>`,
+    );
+    process.exit(1);
+  }
+
   // CV10 binary guard. Scans the first 8KB for NUL bytes; rejects with a
   // friendly message before UTF-8 decode mangles arbitrary bytes.
   const nullByteOffset = detectBinaryNullByte(rawBuffer!);
@@ -486,6 +504,7 @@ export const __testing = {
   deriveTitle,
   parseArgs,
   detectBinaryNullByte,
+  detectBinarySignature,
   normalizeForHash,
   maybeRewriteSourceFkError,
 };

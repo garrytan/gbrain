@@ -26,14 +26,23 @@ import { withEnv } from './helpers/with-env.ts';
 
 type StubSource = { id: string; local_path: string | null; archived?: boolean };
 
-function makeStub(sources: StubSource[], globalDefault: string | null = null) {
+function makeStub(
+  sources: StubSource[],
+  globalDefault: string | null = null,
+  opts?: { defaultActivePages?: number; pagesProbeThrows?: boolean },
+) {
   return {
     kind: 'pglite' as const,
     async executeRaw<T>(sql: string, _params?: unknown[]): Promise<T[]> {
-      // Two query shapes hit in the resolver:
+      // Query shapes hit in the resolver:
       //   1. tier 4 (local_path match): SELECT id, local_path FROM sources WHERE local_path IS NOT NULL
       //   2. assertSourceExists: SELECT id FROM sources WHERE id = $1
       //   3. tier 5.5 (sole_non_default): SELECT id FROM sources WHERE local_path IS NOT NULL AND id != 'default' AND archived = false
+      //   4. tier 5.5 emptiness guard (#3070): SELECT 1 ... FROM pages WHERE source_id = 'default' AND deleted_at IS NULL LIMIT 1
+      if (sql.includes('FROM pages')) {
+        if (opts?.pagesProbeThrows) throw new Error('relation "pages" probe failed (legacy schema)');
+        return (opts?.defaultActivePages ?? 0) > 0 ? ([{ one: 1 }] as unknown as T[]) : [];
+      }
       if (sql.includes('archived = false')) {
         return sources.filter(s => s.local_path !== null && s.id !== 'default' && s.archived !== true)
           .map(s => ({ id: s.id })) as unknown as T[];
@@ -42,9 +51,12 @@ function makeStub(sources: StubSource[], globalDefault: string | null = null) {
         return sources.filter(s => s.local_path !== null && s.id !== 'default')
           .map(s => ({ id: s.id })) as unknown as T[];
       }
-      if (sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL')) {
+      if (
+        sql.includes('SELECT id, local_path FROM sources WHERE local_path IS NOT NULL') ||
+        sql.includes(', archived FROM sources WHERE local_path IS NOT NULL')
+      ) {
         return sources.filter(s => s.local_path !== null)
-          .map(s => ({ id: s.id, local_path: s.local_path })) as unknown as T[];
+          .map(s => ({ id: s.id, local_path: s.local_path, archived: s.archived === true })) as unknown as T[];
       }
       if (sql.includes('SELECT id FROM sources WHERE id =')) {
         const id = (_params as string[])?.[0];
@@ -161,6 +173,129 @@ describe('#1434 — sole_non_default tier', () => {
     ]);
     const result = await resolveSourceWithTier(engine, null, '/tmp');
     expect(result.detail).toContain('only non-default');
+  });
+
+  // #3070 — the emptiness guard: the tier's charter is rescuing brains whose
+  // 'default' holds 0 pages. An ESTABLISHED default corpus must not have its
+  // bare writes hijacked into the sole side-source.
+  test("#3070: does NOT fire when 'default' holds an established corpus", async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { defaultActivePages: 1045 },
+    );
+    const result = await resolveSourceWithTier(engine, null, '/tmp');
+    expect(result.source_id).toBe('default');
+    expect(result.tier).toBe('seed_default');
+    expect(await resolveSourceId(engine, null, '/tmp')).toBe('default');
+  });
+
+  test('#3070: still fires when default is empty (the #1434 charter preserved)', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { defaultActivePages: 0 },
+    );
+    const result = await resolveSourceWithTier(engine, null, '/tmp');
+    expect(result.source_id).toBe('studiovault');
+    expect(result.tier).toBe('sole_non_default');
+  });
+
+  // The #3070 flip must not be silent: one stray page in 'default' quietly
+  // reroutes every bare command away from the sole side-source. A one-line
+  // stderr warning names both sides so the misroute is diagnosable.
+  test('#3070: the flip prints a one-line stderr warning naming both sources', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { defaultActivePages: 1 },
+    );
+    const originalError = console.error;
+    const errLines: string[] = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+    try {
+      await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: undefined }, async () => {
+        const result = await resolveSourceWithTier(engine, null, '/tmp');
+        expect(result.source_id).toBe('default');
+        expect(result.tier).toBe('seed_default');
+      });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errLines.length).toBe(1);
+    const line = errLines[0];
+    expect(line).toContain("'studiovault'");
+    expect(line).toContain("'default'");
+    expect(line).toContain('non-empty');
+  });
+
+  test('#3070: the flip warning is suppressed via GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { defaultActivePages: 1 },
+    );
+    const originalError = console.error;
+    const errLines: string[] = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+    try {
+      await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: '1' }, async () => {
+        const result = await resolveSourceWithTier(engine, null, '/tmp');
+        expect(result.source_id).toBe('default');
+      });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errLines.length).toBe(0);
+  });
+
+  test('#3070: no flip warning when default is empty (tier fires normally)', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { defaultActivePages: 0 },
+    );
+    const originalError = console.error;
+    const errLines: string[] = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+    try {
+      await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: undefined }, async () => {
+        const result = await resolveSourceWithTier(engine, null, '/tmp');
+        expect(result.source_id).toBe('studiovault');
+      });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errLines.length).toBe(0);
+  });
+
+  test('#3070: pages-probe failure keeps the pre-guard routing (legacy brain)', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'studiovault', local_path: '/Users/india/vault' },
+      ],
+      null,
+      { pagesProbeThrows: true },
+    );
+    const result = await resolveSourceWithTier(engine, null, '/tmp');
+    expect(result.source_id).toBe('studiovault');
+    expect(result.tier).toBe('sole_non_default');
   });
 });
 

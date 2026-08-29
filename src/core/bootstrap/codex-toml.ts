@@ -4,11 +4,15 @@
  * host-specs.ts for the verified format assumptions).
  *
  * Why a direct writer exists at all: `codex mcp add` cannot express an
- * inline `bearer_token` (only `--bearer-token-env-var`, which reintroduces
+ * inline credential (only `--bearer-token-env-var`, which reintroduces
  * the shell-profile dependency framework-spawned codex lacks), so the
  * harness lane owns exactly one `[mcp_servers.<name>]` table between two
  * full-line comment markers. Everything outside the markers survives
- * byte-for-byte.
+ * byte-for-byte. The credential is emitted as
+ * `http_headers = { Authorization = "Bearer <token>" }` — codex-cli >=0.149
+ * rejects an inline `bearer_token` for streamable_http AT CONFIG LOAD
+ * (bricking every codex session, #4574), while the http_headers inline-table
+ * shape loads on 0.147.x AND 0.149.x (reporter probe in #4574).
  *
  * Safety invariants [C10 + adversarial-verify corrections]:
  * - Foreign-server detection parses the file (Bun.TOML.parse) with our block
@@ -41,7 +45,8 @@ export interface CodexHttpServerBlock {
   name: string;
   /** Streamable-HTTP MCP endpoint url (normalized upstream). */
   url: string;
-  /** Bearer token written inline (the whole point of the direct writer). */
+  /** Bearer token written inline as `http_headers.Authorization` (the whole
+   * point of the direct writer; codex-cli >=0.149 rejects `bearer_token`). */
   bearerToken: string;
 }
 
@@ -138,13 +143,33 @@ export function detectForeignCodexServer(configText: string, name: string): bool
 }
 
 function renderBlock(block: CodexHttpServerBlock): string[] {
+  // http_headers inline table, NOT `bearer_token`: codex-cli >=0.149 rejects
+  // bearer_token for streamable_http at config load (#4574); this shape loads
+  // on 0.147.x and 0.149.x.
   return [
     CODEX_TOML_BLOCK_BEGIN,
     `[mcp_servers.${block.name}]`,
     `url = ${tomlString(block.url)}`,
-    `bearer_token = ${tomlString(block.bearerToken)}`,
+    `http_headers = { Authorization = ${tomlString(`Bearer ${block.bearerToken}`)} }`,
     CODEX_TOML_BLOCK_END,
   ];
+}
+
+/** Post-render assertion shared by the writer and the snippet renderer: our
+ * table's keys are EXACTLY [http_headers, url], and the http_headers inline
+ * table carries EXACTLY the Authorization header we wrote. Returns an error
+ * string (caller prefixes its own context) or null when valid. */
+function validateOurKeys(ours: unknown): string | null {
+  const ourKeys = typeof ours === 'object' && ours !== null ? Object.keys(ours as object).sort() : [];
+  if (ourKeys.join(',') !== 'http_headers,url') {
+    return `keys are [${ourKeys.join(', ')}], expected exactly [http_headers, url]`;
+  }
+  const headers = (ours as Record<string, unknown>).http_headers;
+  const headerKeys = typeof headers === 'object' && headers !== null ? Object.keys(headers as object) : [];
+  if (headerKeys.join(',') !== 'Authorization') {
+    return `http_headers keys are [${headerKeys.join(', ')}], expected exactly [Authorization]`;
+  }
+  return null;
 }
 
 /**
@@ -159,7 +184,7 @@ function renderBlock(block: CodexHttpServerBlock): string[] {
  *
  * Validation mirrors the writer: the bare-key name assertion up front, then
  * the rendered text is parsed back and our table's keys are asserted to be
- * exactly [bearer_token, url] (the same key-set check the writer's
+ * exactly [http_headers, url] (the same key-set check the writer's
  * post-render validation performs).
  */
 export function renderCodexHttpServerBlock(block: CodexHttpServerBlock): string {
@@ -170,13 +195,9 @@ export function renderCodexHttpServerBlock(block: CodexHttpServerBlock): string 
   const text = lines.join('\n');
   const parsed = parseToml(text);
   const servers = parsed.mcp_servers as Record<string, unknown> | undefined;
-  const ours = servers?.[block.name];
-  const ourKeys = typeof ours === 'object' && ours !== null ? Object.keys(ours as object).sort() : [];
-  if (ourKeys.join(',') !== 'bearer_token,url') {
-    throw new Error(
-      `render validation failed: [mcp_servers.${block.name}] keys are [${ourKeys.join(', ')}], ` +
-        `expected exactly [bearer_token, url].`,
-    );
+  const problem = validateOurKeys(servers?.[block.name]);
+  if (problem !== null) {
+    throw new Error(`render validation failed: [mcp_servers.${block.name}] ${problem}.`);
   }
   return text;
 }
@@ -243,12 +264,10 @@ export function writeCodexHttpServerBlock(
   // Post-render validation: parse + assert OUR table's keys are exactly ours.
   const rendered = parseToml(nextText);
   const renderedServers = rendered.mcp_servers as Record<string, unknown> | undefined;
-  const ours = renderedServers?.[block.name];
-  const ourKeys = typeof ours === 'object' && ours !== null ? Object.keys(ours as object).sort() : [];
-  if (ourKeys.join(',') !== 'bearer_token,url') {
+  const problem = validateOurKeys(renderedServers?.[block.name]);
+  if (problem !== null) {
     throw new Error(
-      `post-render validation failed: [mcp_servers.${block.name}] keys are [${ourKeys.join(', ')}], ` +
-        `expected exactly [bearer_token, url] — original file left untouched.`,
+      `post-render validation failed: [mcp_servers.${block.name}] ${problem} — original file left untouched.`,
     );
   }
 

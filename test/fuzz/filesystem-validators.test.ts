@@ -12,23 +12,38 @@
  * outside the dir, which is exactly the contract we want to fuzz.
  */
 
-import { describe, test, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import fc from 'fast-check';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, symlinkSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
 import { validateUploadPath } from '../../src/core/operations.ts';
 
 const NUM_RUNS = 500;
 
 let baseTmpRoot: string;
+let savedCwd: string;
 
 beforeAll(() => {
   baseTmpRoot = mkdtempSync(join(tmpdir(), 'gbrain-fuzz-fs-'));
+  // #4479: the `..`-probe expectations assume a cwd DEEP enough that
+  // resolve('..') stays well below the filesystem root. In the CI container
+  // the workdir is the depth-1 /app mount, where '..' resolves to '/' and
+  // relative('/', box) no longer starts with '..' — the probe "passes"
+  // confinement and the test false-fails as a container-only failure. Run
+  // the whole file from a guaranteed-deep working directory instead of
+  // depending on where the harness happened to be launched.
+  savedCwd = process.cwd();
+  const deepCwd = join(baseTmpRoot, 'deep', 'cwd', 'for', 'traversal', 'probes');
+  mkdirSync(deepCwd, { recursive: true });
+  process.chdir(deepCwd);
 });
 
 afterAll(() => {
+  // Restore BEFORE removing baseTmpRoot — rmSync of the cwd's ancestor
+  // leaves the process in a deleted directory otherwise.
+  process.chdir(savedCwd);
   rmSync(baseTmpRoot, { recursive: true, force: true });
 });
 
@@ -43,18 +58,24 @@ beforeEach(() => {
 });
 
 describe('validateUploadPath fuzz (fs-backed)', () => {
-  test('arbitrary relative paths: never wedges, never escapes confinement', () => {
+  test('arbitrary relative paths: never wedges, and any RETURNED path is inside the box', () => {
+    // A6 fix: the original suite passed (confinementDir, probe) — args
+    // reversed against the (filePath, root, strict) signature — and swallowed
+    // every throw, so the traversal/symlink properties tested nothing. The
+    // property now is real: candidate = join(box, probe), and when the
+    // validator RETURNS, the realpath it hands back must live inside the box.
+    const realBox = realpathSync(confinementDir);
     fc.assert(
       fc.property(fc.string({ minLength: 0, maxLength: 200 }), (relPath) => {
+        let returned: string | null = null;
         try {
-          validateUploadPath(confinementDir, relPath);
+          returned = validateUploadPath(join(confinementDir, relPath), confinementDir);
         } catch {
-          /* throwing is the expected behavior for traversal / invalid input */
+          /* throwing IS the contract for traversal / unresolvable input */
         }
-        // The contract: function returns without throwing OR throws. Either is fine.
-        // What we're ruling out: process crash, infinite loop (caught by fast-check
-        // run timeout), or silent path-escape (which would be a security bug — the
-        // ACTUAL behavior is a throw on any escape attempt).
+        if (returned !== null && !returned.startsWith(realBox + sep)) {
+          throw new Error(`validateUploadPath returned an out-of-box path for ${JSON.stringify(relPath)}: ${returned}`);
+        }
       }),
       { numRuns: NUM_RUNS },
     );
@@ -75,7 +96,7 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
       fc.property(traversalProbe, (probe) => {
         let threw = false;
         try {
-          validateUploadPath(confinementDir, probe);
+          validateUploadPath(join(confinementDir, probe), confinementDir);
         } catch {
           threw = true;
         }
@@ -114,7 +135,7 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
       symlinkSync(tmpdir(), linkPath);
       let threw = false;
       try {
-        validateUploadPath(confinementDir, 'evil-link');
+        validateUploadPath(linkPath, confinementDir);
       } catch {
         threw = true;
       }
@@ -123,4 +144,28 @@ describe('validateUploadPath fuzz (fs-backed)', () => {
       }
     },
   );
+
+  // A6: loose mode (strict:false) — outside-box files are allowed, but a
+  // final-component symlink is STILL rejected in both modes.
+  test('strict:false resolves an outside-box file but still rejects symlinks', () => {
+    const outsideFile = join(baseTmpRoot, 'outside.txt');
+    writeFileSync(outsideFile, 'outside');
+    const real = validateUploadPath(outsideFile, confinementDir, false);
+    expect(real).toBe(realpathSync(outsideFile));
+    expect(real.startsWith(realpathSync(confinementDir))).toBe(false);
+  });
+
+  test.skipIf(!symlinksAvailable)('strict:false still rejects a final-component symlink', () => {
+    const target = join(baseTmpRoot, 'loose-target.txt');
+    writeFileSync(target, 'target');
+    const linkPath = join(confinementDir, 'loose-link');
+    symlinkSync(target, linkPath);
+    let threw = false;
+    try {
+      validateUploadPath(linkPath, confinementDir, false);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+  });
 });

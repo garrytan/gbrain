@@ -33,9 +33,10 @@ session death. Anything worth remembering is recorded in the turn it is learned:
   `add_timeline_entry` via the gbrain tools. On this machine the brain database is
   single-writer: **write through the brain tools, never by editing `brain/` files
   directly** — a file edited by hand is invisible to search until a sync can run.
-- Facts worth recalling ("X prefers Y", "deadline moved to Z") → write a `## Facts`
-  fence on the relevant page (each line one fact). The brain ingests these
-  deterministically — no API key required.
+- Atomic facts worth recalling ("X prefers Y", "deadline moved to Z") →
+  `remember` with explicit provenance. For facts maintained inside a richer
+  entity page, write a `## Facts` fence (each line one fact); the brain ingests
+  these deterministically — no API key required.
 - Operational state (open commitments, corrections, active context) → `MEMORY.md`
   and `memory/YYYY-MM-DD.md` (file edits are correct for these two — they are loaded
   by path, not by search).

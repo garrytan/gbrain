@@ -111,8 +111,46 @@ export async function runInit(args: string[]) {
     nonInteractive: isNonInteractive,
   });
 
+  // db-availability loop (5a): Postgres-first ladder for agent-harness
+  // installs. Explicit opt-in flag — the zero-config `gbrain init` default
+  // stays PGLite (owner decision; the preference lives in the plugin lane).
+  if (args.includes('--prefer-postgres')) {
+    const { runPreferPostgresLadder } = await import('./init-prefer-postgres.ts');
+    return runPreferPostgresLadder({
+      jsonOutput,
+      apiKey,
+      customPath,
+      aiOpts,
+      schemaPack,
+      skipEmbedCheck,
+      allowDocker: args.includes('--allow-docker'),
+      allowCreateDb: args.includes('--allow-create-db'),
+      localPostgres: args.includes('--local-postgres'),
+    });
+  }
+
+  // #3753: a --force re-init with NO explicit engine choice preserves the
+  // configured engine — the D5 persisted-config-wins rule extended to the
+  // engine field. Pre-fix, the PGLite default branch below swallowed a
+  // postgres config: following the deferred-setup hint verbatim
+  // (`gbrain init --force --embedding-model ...`) silently rewrote
+  // config.json to engine=pglite, orphaning the postgres data behind a
+  // config that no longer pointed at it. Switching engines stays available
+  // by saying so (--pglite / --supabase / --url). loadConfigFileOnly, NOT
+  // loadConfig: a transient env DATABASE_URL must not count as a configured
+  // engine here (CDX2-7); the env plane keeps its existing precedence in
+  // the non-interactive branch below.
+  let preservedPostgresUrl: string | null = null;
+  if (isForce && !isPGLite && !isSupabase && !manualUrl) {
+    const fileCfg = loadConfigFileOnly();
+    if (fileCfg?.engine === 'postgres' && fileCfg.database_url) {
+      preservedPostgresUrl = fileCfg.database_url;
+      console.error('[init] Existing postgres engine preserved (pass --pglite to switch engines).');
+    }
+  }
+
   // Explicit PGLite mode
-  if (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive)) {
+  if (!preservedPostgresUrl && (isPGLite || (!isSupabase && !manualUrl && !isNonInteractive))) {
     // Smart detection: scan for .md files unless --pglite flag forces it
     if (!isPGLite && !isSupabase) {
       const fileCount = countMarkdownFiles(process.cwd());
@@ -142,10 +180,14 @@ export async function runInit(args: string[]) {
     const envUrl = effectiveEnvDatabaseUrl();
     if (envUrl) {
       databaseUrl = envUrl;
+    } else if (preservedPostgresUrl) {
+      databaseUrl = preservedPostgresUrl;
     } else {
       console.error('--non-interactive requires --url <connection_string> or GBRAIN_DATABASE_URL env var');
       process.exit(1);
     }
+  } else if (preservedPostgresUrl) {
+    databaseUrl = preservedPostgresUrl;
   } else {
     databaseUrl = await supabaseWizard();
   }
@@ -163,6 +205,11 @@ const INIT_BOOLEAN_FLAGS = new Set([
   '--json',
   '--no-embedding',
   '--skip-embed-check',
+  // db-availability loop (5a): Postgres-first ladder for harness installs.
+  '--prefer-postgres',
+  '--allow-docker',
+  '--allow-create-db',
+  '--local-postgres',
 ]);
 
 const INIT_VALUE_FLAGS = new Set([
@@ -539,9 +586,10 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
   console.error('  (enable semantic search later by re-running with a key:');
   console.error('   gbrain init --force --pglite --embedding-model <id>)');
   console.error('');
-  console.error('Or set a key for semantic search:');
-  console.error('  export VOYAGE_API_KEY=pa-…        # voyage:voyage-4 (1024d) — default');
-  console.error('  export OPENAI_API_KEY=sk-…        # openai:text-embedding-3-large (1536d)');
+  console.error('Or set a key to upgrade capabilities:');
+  console.error('  export VOYAGE_API_KEY=pa-…        # semantic search (voyage:voyage-4, 1024d) — default');
+  console.error('  export OPENAI_API_KEY=sk-…        # semantic search (1536d) + automatic fact extraction');
+  console.error('  export ANTHROPIC_API_KEY=sk-ant-… # automatic fact extraction (no embeddings API)');
   console.error('Then re-run: gbrain init --pglite');
   console.error('');
   console.error('Or pick explicitly:');
@@ -617,9 +665,12 @@ async function writeNewInstallRerankerDefault(
  *  (it would be a silent no-op), so pointing users there is a dead end. */
 function printKeylessContinueNotice(): void {
   console.error(
-    'No embedding provider keys detected — continuing in keyless mode:\n' +
+    'No provider keys detected — continuing in keyless mode:\n' +
     '  keyword search + memory your agent writes down itself. Everything works.\n' +
-    '  One optional key upgrades search to semantic — set the key, then re-run\n' +
+    '  One optional key upgrades capabilities — OpenAI: semantic search + automatic\n' +
+    '  fact extraction; Voyage: semantic search; Anthropic: fact extraction.\n' +
+    '  Fact extraction activates as soon as the key is set (no re-init); semantic\n' +
+    '  search needs a re-run:\n' +
     '  `gbrain init --force --pglite --embedding-model <id>` (re-imports via `gbrain sync`).',
   );
 }
@@ -822,21 +873,33 @@ async function resolveExpansionByEnv(out: ResolvedAIOptions): Promise<void> {
   // and falls back gracefully at call time when key isn't set.
 }
 
-async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
+/** @internal exported for tests — pins the no-persist contract (key-aware
+ *  runtime resolution replaced install-time chat_model pins). */
+export async function resolveChatByEnv(out: ResolvedAIOptions): Promise<void> {
   const ready = await groupReadyByProvider('chat');
   if (ready.length === 1) {
     const r = ready[0].recipe;
     const tp = r.touchpoints.chat!;
     if (Array.isArray(tp.models) && tp.models.length > 0) {
-      out.chat_model = `${r.id}:${tp.models[0]}`;
-      console.error(`Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Using ${out.chat_model} for chat.`);
+      // Deliberately does NOT write out.chat_model: key-aware tier defaults
+      // (model-config.ts resolveTierDefault + resolveEffectiveChatModel)
+      // route chat/extraction to this provider at runtime, and a persisted
+      // install-time pin freezes the provider choice — it goes stale the
+      // moment the user switches keys. Detection stays for the init summary;
+      // the displayed model is the same resolution the runtime will use
+      // (discovered-latest for OpenAI, recipe entry otherwise).
+      const { resolveTierDefault } = await import('../core/model-config.ts');
+      const effective = resolveTierDefault('reasoning');
+      const shown = effective.startsWith(`${r.id}:`) ? effective : `${r.id}:${tp.models[0]}`;
+      console.error(
+        `Detected ${r.auth_env?.required?.[0] ?? r.id} env var. Chat + fact extraction will use ` +
+        `${shown} (key-aware default; nothing written to config).`,
+      );
     }
   }
-  // 0 or >1 → silent: gateway default (`anthropic:claude-sonnet-4-6`) wins.
+  // 0 or >1 → silent: the key-aware tier default wins at runtime.
   // The subagent enforcement at minions/queue.ts already routes subagent jobs
-  // to Anthropic regardless of the chat_model setting (D7 caveat fires from
-  // T6's initPGLite post-config branch when chat_model is non-Anthropic and
-  // ANTHROPIC_API_KEY is missing).
+  // via classifyCapabilities regardless of the chat_model setting.
 }
 
 /**
@@ -1103,7 +1166,7 @@ function printResolvedAIChoice(
   }
 }
 
-async function initPGLite(opts: {
+export async function initPGLite(opts: {
   jsonOutput: boolean;
   apiKey: string | null;
   customPath: string | null;
@@ -1365,7 +1428,9 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   console.log('→ Do this next — give your agent memory (copy these three commands):');
   console.log('  claude mcp add gbrain -- gbrain serve --surface verbs');
   console.log('  gbrain remember "I prefer dark mode in every editor" --provenance demo --entity people/me');
-  console.log('  gbrain recall --entity people/me');
+  // #3697: recall takes the entity as a positional (there is no --entity flag;
+  // the old form only worked because recall skips unknown flags silently).
+  console.log('  gbrain recall people/me');
   console.log('Then ask your agent in a NEW session — it remembers.');
   console.log('');
   console.log('Note: memories agents save are readable by every agent connected to');
@@ -1382,7 +1447,30 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   );
 }
 
-async function initPostgres(opts: {
+/**
+ * db-availability loop (5a): typed failure for initPostgresCore. The ladder
+ * (`init --prefer-postgres`) treats it as RUNG FAILURE and falls through to
+ * the next rung; the initPostgres wrapper preserves the historical
+ * process.exit(1) for direct `--supabase`/`--url` invocations.
+ */
+export class InitPostgresFailure extends Error {
+  constructor(public reason: string, message?: string) {
+    super(message ?? reason);
+    this.name = 'InitPostgresFailure';
+  }
+}
+
+/** Exit-preserving wrapper — direct invocations keep their contract. */
+async function initPostgres(opts: Parameters<typeof initPostgresCore>[0]) {
+  try {
+    await initPostgresCore(opts);
+  } catch (e) {
+    if (e instanceof InitPostgresFailure) process.exit(1);
+    throw e;
+  }
+}
+
+export async function initPostgresCore(opts: {
   databaseUrl: string;
   jsonOutput: boolean;
   apiKey: string | null;
@@ -1417,7 +1505,7 @@ async function initPostgres(opts: {
       if (opts.jsonOutput) {
         console.log(JSON.stringify({ status: 'error', reason: 'preflight_failed', error: pre.error }));
       }
-      process.exit(1);
+      throw new InitPostgresFailure('preflight_failed', pre.error);
     }
     resolvedDim = pre.dim;
     resolvedModel = pre.model;
@@ -1502,8 +1590,13 @@ async function initPostgres(opts: {
           throw new Error('pgvector extension missing');
         }
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      // 5b: the deliberate throw above used to be EATEN here, so an install
+      // with no pgvector "succeeded" into initSchema and died later with a
+      // worse message. Rethrow it; only the pg_extension PROBE failure stays
+      // non-fatal (odd hosted PG catalogs — initSchema surfaces the truth).
+      if (e instanceof Error && e.message === 'pgvector extension missing') throw e;
+      // Non-fatal: probe-read failure only.
     }
 
     // v0.28.5 (A4) + v0.37.11.0 Lane B.5: refuse to silently re-template an
@@ -1530,12 +1623,13 @@ async function initPostgres(opts: {
             requested_dims: resolvedDim,
           }));
         }
-        process.exit(1);
+        throw new InitPostgresFailure('embedding_dim_mismatch');
       }
     }
 
     console.log('Running schema migration...');
-    await engine.initSchema();
+    const { runInitSchemaWithRetry } = await import('../core/init-schema-retry.ts');
+    await runInitSchemaWithRetry(engine);
 
     // v0.37.10.0 T6 (D11): post-initSchema invariant assertion guardrail.
     if (resolvedDim) {
@@ -1551,7 +1645,7 @@ async function initPostgres(opts: {
           source: 'init',
           engineKind: 'postgres',
         }));
-        process.exit(1);
+        throw new InitPostgresFailure('post_init_dim_invariant');
       }
     }
 

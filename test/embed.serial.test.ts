@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
+import type { DbLockHandle } from '../src/core/db-lock.ts';
 
 // Mock the embedding module BEFORE importing runEmbed, so runEmbed picks up
 // the mocked embedBatch. We track max concurrent invocations via a counter
@@ -37,6 +38,10 @@ mock.module('../src/core/embedding.ts', () => ({
   // setPageEmbeddingSignature / invalidateStaleSignatureEmbeddings resolve to
   // null via the Proxy default, so the signature value is inert here.
   currentEmbeddingSignature: () => 'test:model:1536',
+  // #3374: import-file.ts (imported by the routing test below) also pulls
+  // embedMultimodal from this module; the mock must export it or the import
+  // itself throws. Inert — no test here exercises the multimodal path.
+  embedMultimodal: async (inputs: unknown[]) => inputs.map(() => new Float32Array(512)),
 }));
 
 // Import AFTER mocking.
@@ -79,6 +84,9 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.GBRAIN_EMBED_CONCURRENCY;
   delete process.env.GBRAIN_EMBED_TIME_BUDGET_MS;
+  delete process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS;
+  delete process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS;
+  delete process.env.GBRAIN_EMBED_STALL_ABORT_SECONDS;
 });
 
 describe('runEmbed --all (parallel)', () => {
@@ -200,6 +208,63 @@ describe('runEmbed --all (parallel)', () => {
     await runEmbedCore(engine, { stale: true, signal: ac.signal });
 
     expect(invalidateCalled).toBe(false);
+  });
+
+  test('#4599 --stale: cleanup aborts an in-flight single-flight heartbeat refresh', async () => {
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS = '5';
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS = '1000';
+
+    let refreshCalls = 0;
+    let refreshSawSignal = false;
+    let finishRefresh: (outcome: string) => void = () => {};
+    const refreshOutcome = new Promise<string>((resolve) => { finishRefresh = resolve; });
+    const fakeLock: DbLockHandle = {
+      id: 'fake-hanging-refresh',
+      acquiredAt: '0',
+      release: async () => {},
+      refresh: async (opts?: { signal?: AbortSignal }) => {
+        refreshCalls++;
+        if (!opts?.signal) {
+          finishRefresh('missing-signal');
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return true;
+        }
+        refreshSawSignal = true;
+        return await new Promise<boolean>((resolve) => {
+          opts.signal!.addEventListener('abort', () => {
+            finishRefresh('aborted');
+            resolve(true);
+          }, { once: true });
+          setTimeout(() => {
+            finishRefresh('not-aborted');
+            resolve(true);
+          }, 200);
+        });
+      },
+    };
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 0,
+      countStaleChunks: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return 0;
+      },
+    });
+
+    const result = await runEmbedCore(engine, {
+      stale: true,
+      singleFlight: true,
+      quiet: true,
+      heldLocks: [fakeLock],
+    });
+    const outcome = await Promise.race([
+      refreshOutcome,
+      new Promise<string>((resolve) => setTimeout(() => resolve('timeout'), 500)),
+    ]);
+
+    expect(result.embedded).toBe(0);
+    expect(refreshCalls).toBeGreaterThan(0);
+    expect(refreshSawSignal).toBe(true);
+    expect(outcome).toBe('aborted');
   });
 
   test('respects GBRAIN_EMBED_CONCURRENCY=1 (serial)', async () => {
@@ -624,7 +689,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     }
   });
 
-  test('case 4: non-rate-limit error rethrows immediately without retry', async () => {
+  test('case 4: non-retriable error rethrows immediately without retry', async () => {
     const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
     let calls = 0;
     embedBatchBehavior = async () => {
@@ -632,8 +697,31 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
       throw new Error('500 internal server error');
     };
     await expect(embedBatchWithBackoff(['x'])).rejects.toThrow('500 internal server error');
-    // Single attempt — no retries on non-429.
+    // Single attempt — no retries on non-gateway 5xx (#3966 keeps 500 fatal).
     expect(calls).toBe(1);
+  });
+
+  test('case 4b: 502 Bad Gateway retries then succeeds (#3966)', async () => {
+    const { embedBatchWithBackoff, detectGatewayErrorFromCause } = await import('../src/commands/embed.ts');
+    expect(detectGatewayErrorFromCause({ cause: { status: 502 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 503 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 504 } })).toBe(true);
+    expect(detectGatewayErrorFromCause({ cause: { status: 500 } })).toBe(false);
+
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        // NIM-style wrap: status on cause; parseable delay keeps the test fast.
+        const err = new Error('[embed(nvidia:nvidia/nv-embed-v1)] Bad Gateway — try again in 10ms');
+        (err as any).cause = { status: 502 };
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
   });
 
   test('case 5: jitter range — same parsed delay produces non-identical sleeps across runs', async () => {
@@ -672,7 +760,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
   });
 
   test('case 7: AITransientError-shaped wrap with 429 cause triggers retry; 500 cause does not', async () => {
-    const { embedBatchWithBackoff, detect429FromCause } = await import('../src/commands/embed.ts');
+    const { embedBatchWithBackoff, detect429FromCause, detectGatewayErrorFromCause } = await import('../src/commands/embed.ts');
 
     // Pure helper checks first.
     expect(detect429FromCause({ cause: { status: 429 } })).toBe(true);
@@ -681,6 +769,7 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     expect(detect429FromCause({ status: 500 })).toBe(false);
     expect(detect429FromCause(undefined)).toBe(false);
     expect(detect429FromCause(null)).toBe(false);
+    expect(detectGatewayErrorFromCause({ cause: { cause: { status: 502 } } })).toBe(true);
     // Deep wrap (defensive — current normalizeAIError wraps once).
     expect(detect429FromCause({ cause: { cause: { status: 429 } } })).toBe(true);
 
@@ -720,6 +809,123 @@ describe('embedBatchWithBackoff (D2/D4/D4a/D8)', () => {
     expect(lastEmbedBatchOpts).toBeDefined();
     expect((lastEmbedBatchOpts as { maxRetries?: number }).maxRetries).toBe(0);
   });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #3374: transient network retry branch (timeout / conn-reset)
+// beside the 429 path, plain bounded backoff, never caller aborts.
+// ────────────────────────────────────────────────────────────────
+
+describe('#3374 — transient network retry branch', () => {
+  test('classifier: structured codes, TimeoutError name, message fallback', async () => {
+    const { isTransientNetworkEmbedError } = await import('../src/commands/embed.ts');
+    // Structured code on the error itself and through the cause chain.
+    const reset = new Error('request failed');
+    (reset as any).code = 'ECONNRESET';
+    expect(isTransientNetworkEmbedError(reset)).toBe(true);
+    expect(isTransientNetworkEmbedError({ cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } })).toBe(true);
+    expect(isTransientNetworkEmbedError({ cause: { cause: { code: 'ETIMEDOUT' } } })).toBe(true);
+    expect(isTransientNetworkEmbedError({ name: 'TimeoutError' })).toBe(true);
+    // Message fallback for wrappers that strip the code.
+    expect(isTransientNetworkEmbedError(new Error('socket hang up'))).toBe(true);
+    expect(isTransientNetworkEmbedError(new Error('fetch failed'))).toBe(true);
+    expect(isTransientNetworkEmbedError(new Error('request timed out'))).toBe(true);
+    // NOT transient: plain 500, permanent 4xx, caller aborts.
+    expect(isTransientNetworkEmbedError(new Error('500 internal server error'))).toBe(false);
+    expect(isTransientNetworkEmbedError(new Error('400 invalid input'))).toBe(false);
+    expect(isTransientNetworkEmbedError(new Error('The operation was aborted.'))).toBe(false);
+    expect(isTransientNetworkEmbedError(new Error('embed budget aborted'))).toBe(false);
+  });
+
+  test('backoff: plain bounded exponential with jitter, capped', async () => {
+    const { transientBackoffMs, TRANSIENT_NET_BASE_MS, TRANSIENT_NET_MAX_MS, RATE_LIMIT_JITTER } =
+      await import('../src/commands/embed.ts');
+    const mid = () => 0.5; // jitter multiplier = 1.0
+    expect(transientBackoffMs(0, mid)).toBe(TRANSIENT_NET_BASE_MS);
+    expect(transientBackoffMs(1, mid)).toBe(TRANSIENT_NET_BASE_MS * 2);
+    expect(transientBackoffMs(2, mid)).toBe(TRANSIENT_NET_BASE_MS * 4);
+    // Cap: attempt 10 would be 1024s uncapped.
+    expect(transientBackoffMs(10, mid)).toBe(TRANSIENT_NET_MAX_MS);
+    // Jitter bounds at the cap.
+    expect(transientBackoffMs(10, () => 0)).toBe(Math.floor(TRANSIENT_NET_MAX_MS * (1 - RATE_LIMIT_JITTER)));
+    expect(transientBackoffMs(10, () => 1)).toBe(Math.floor(TRANSIENT_NET_MAX_MS * (1 + RATE_LIMIT_JITTER)));
+  });
+
+  test('conn-reset retries then succeeds (no retry-after to parse)', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('socket hang up');
+        (err as any).code = 'ECONNRESET';
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
+  }, 10_000);
+
+  test('caller-initiated abort during the transient sleep bubbles out (never retried)', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    const controller = new AbortController();
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      const err = new Error('connect timeout');
+      (err as any).code = 'UND_ERR_CONNECT_TIMEOUT';
+      throw err;
+    };
+    setTimeout(() => controller.abort(), 50);
+    const t0 = Date.now();
+    await expect(embedBatchWithBackoff(['x'], { abortSignal: controller.signal })).rejects.toThrow();
+    // One attempt, abort wakes the ~1s backoff sleep early, loop exits.
+    expect(calls).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(600);
+  });
+
+  test('import-file path (#3374): a one-off conn reset no longer aborts the import', async () => {
+    const { importFromContent } = await import('../src/core/import-file.ts');
+    let calls = 0;
+    embedBatchBehavior = async (texts) => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('read ECONNRESET');
+        (err as any).code = 'ECONNRESET';
+        throw err;
+      }
+      return texts.map(() => new Float32Array(1536));
+    };
+    // Minimal working-DB mock: tx.putPage lands in a store the read-back
+    // guard can see; everything else resolves null via the Proxy default.
+    const pageStore = new Map<string, any>();
+    const tx = new Proxy({} as any, {
+      get(_, prop: string) {
+        if (prop === 'putPage') {
+          return async (slug: string, page: any) => { pageStore.set(slug, page); };
+        }
+        return () => Promise.resolve(null);
+      },
+    });
+    const engine = mockEngine({
+      getPage: async (slug: string) =>
+        pageStore.has(slug) ? { slug, ...pageStore.get(slug) } : null,
+      transaction: async (cb: (t: unknown) => Promise<unknown>) => cb(tx),
+    });
+    const res = await importFromContent(
+      engine,
+      'notes/transient-net-test',
+      '# Transient\n\nSome body text long enough to produce a chunk for embedding.',
+      {},
+    );
+    // Pre-fix: bare embedBatch → the first ECONNRESET propagated and the
+    // import aborted. Post-fix: one retry, then the page lands.
+    expect(calls).toBe(2);
+    expect(pageStore.has('notes/transient-net-test')).toBe(true);
+    expect(res).toBeDefined();
+  }, 10_000);
 });
 
 // ────────────────────────────────────────────────────────────────
@@ -1036,4 +1242,265 @@ describe('embed --stale contextual-retrieval wrapping (#3507)', () => {
     expect(seen.some((t) => t.startsWith('<context>'))).toBe(false);
     expect(restamps).toHaveLength(0);
   });
+});
+
+describe('#3796 — attempt-scaled 429 wait floors (rolling TPM window)', () => {
+  const mid = () => 0.5; // jitterFactor = 1 → deterministic
+
+  test('tiny provider hints get floored, and the floor escalates per attempt', async () => {
+    const { rateLimitDelayMs, RATE_LIMIT_ATTEMPT_FLOOR_MS } = await import('../src/commands/embed.ts');
+    // 'try again in 100ms' → hint = 600ms at mid jitter; every attempt floors above it.
+    const waits = [0, 1, 2, 3, 4].map((attempt) => rateLimitDelayMs('try again in 100ms', attempt, mid));
+    expect(waits).toEqual([...RATE_LIMIT_ATTEMPT_FLOOR_MS]);
+    // Strictly escalating ladder.
+    for (let i = 1; i < waits.length; i++) expect(waits[i]).toBeGreaterThan(waits[i - 1]);
+  });
+
+  test('a larger provider hint wins over the floor (Retry-After must be honored)', async () => {
+    const { rateLimitDelayMs, RATE_LIMIT_PAD_MS } = await import('../src/commands/embed.ts');
+    const hinted = 240_000 + RATE_LIMIT_PAD_MS;
+    for (const attempt of [0, 2, 4]) {
+      expect(rateLimitDelayMs('try again in 240s', attempt, mid)).toBe(hinted);
+    }
+  });
+
+  test('cumulative floored wait spans the rolling TPM minute even at worst-case jitter', async () => {
+    const { rateLimitDelayMs } = await import('../src/commands/embed.ts');
+    const low = () => 0; // jitterFactor = 1 - RATE_LIMIT_JITTER (worst case)
+    let total = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      total += rateLimitDelayMs('try again in 132ms', attempt, low);
+    }
+    // Pre-fix: 5 × ~442ms ≈ 2.2s — every retry burned inside the same TPM
+    // minute. Post-fix the ladder must span it.
+    expect(total).toBeGreaterThan(60_000);
+  });
+
+  test('attempts past the ladder clamp to the last floor', async () => {
+    const { rateLimitDelayMs, RATE_LIMIT_ATTEMPT_FLOOR_MS } = await import('../src/commands/embed.ts');
+    const last = RATE_LIMIT_ATTEMPT_FLOOR_MS[RATE_LIMIT_ATTEMPT_FLOOR_MS.length - 1];
+    expect(rateLimitDelayMs('429 slow down', 10, mid)).toBe(Math.max(last, rateLimitDelayMs('429 slow down', 4, mid)));
+    // Negative attempt (defensive) clamps to the first rung.
+    expect(rateLimitDelayMs('try again in 1ms', -1, mid)).toBe(RATE_LIMIT_ATTEMPT_FLOOR_MS[0]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────
+// #4599 stall watchdog — integration through runEmbedCore.
+// The wedge shape: an embed HTTP call that never settles and ignores its
+// abort signal (lost promise / dead pooler connection). The drain's own
+// finally is unreachable, so the watchdog must clean up ITSELF (X5) and
+// return an error RESULT (X6), never a process exit below the CLI layer.
+// ────────────────────────────────────────────────────────────────
+
+describe('#4599 stall watchdog (runEmbedCore --stale)', () => {
+  const staleRow = {
+    slug: 'wedged-page',
+    chunk_index: 0,
+    chunk_text: 'hello',
+    chunk_source: 'compiled_truth' as const,
+    model: null,
+    token_count: 1,
+    source_id: 'default',
+    page_id: 1,
+  };
+  const wedgedChunks = [
+    { chunk_index: 0, chunk_text: 'hello', chunk_source: 'compiled_truth', embedded_at: null, token_count: 1 },
+  ];
+
+  /**
+   * Emulated gbrain_cycle_locks table speaking the exact SQL shapes
+   * db-lock.ts's PGLite branch issues, so tryAcquireDbLock / release run the
+   * REAL lock code against an inspectable table.
+   */
+  function lockTableEmulator() {
+    const table = new Map<string, { fence: string }>();
+    const db = {
+      query: async (sql: string, params?: unknown[]) => {
+        if (/^\s*INSERT INTO gbrain_cycle_locks/i.test(sql)) {
+          const id = String(params?.[0]);
+          if (table.has(id)) return { rows: [] }; // held; steal predicate not emulated
+          const fence = `${Date.now()}.${Math.random()}`;
+          table.set(id, { fence });
+          return { rows: [{ id, fence }] };
+        }
+        if (/^\s*UPDATE gbrain_cycle_locks/i.test(sql)) {
+          const id = String(params?.[1]);
+          return { rows: table.has(id) ? [{ id }] : [] };
+        }
+        if (/^\s*DELETE FROM gbrain_cycle_locks/i.test(sql)) {
+          table.delete(String(params?.[0]));
+          return { rows: [] };
+        }
+        return { rows: [] };
+      },
+    };
+    return { table, db };
+  }
+
+  test('stall fires: single-flight locks released via the lock table, summary flushed, reason surfaces', async () => {
+    process.env.GBRAIN_EMBED_STALL_ABORT_SECONDS = '1';
+    // The #4599 wedge: never settles, ignores the abort signal entirely.
+    embedBatchBehavior = () => new Promise<Float32Array[]>(() => {});
+
+    const { table, db } = lockTableEmulator();
+    const engine = mockEngine({
+      kind: 'pglite',
+      db,
+      listAllSources: async () => [{ id: 'default' }],
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => [staleRow],
+      getChunks: async () => wedgedChunks,
+      upsertChunks: async () => {},
+    });
+
+    const stderrChunks: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    const origConsoleError = console.error;
+    (process.stderr as any).write = (chunk: any, ...rest: any[]) => {
+      stderrChunks.push(String(chunk));
+      return origWrite(chunk, ...rest);
+    };
+    console.error = (...args: any[]) => {
+      stderrChunks.push(args.map(String).join(' '));
+      origConsoleError(...args);
+    };
+    try {
+      const result = await runEmbedCore(engine, { stale: true, singleFlight: true, quiet: true });
+
+      // Error RESULT, not a throw — reason surfaces for structured callers.
+      expect(result.reason).toBe('stall_timeout');
+      // failures>0 consumers (cli verdict, cycle phase, jobs payload) light up too.
+      expect(result.failures).toBeGreaterThanOrEqual(1);
+      expect(result.failure_samples.some((s) => s.includes('stall_timeout'))).toBe(true);
+      expect(result.embedded).toBe(0);
+      // The lock was actually acquired for this run...
+      expect(result.lock_skipped).toBeUndefined();
+      // ...and the WATCHDOG released it (the wedged drain's finally is dead) —
+      // asserted against the lock table the real db-lock code wrote to.
+      expect(table.size).toBe(0);
+      // Summary flushed to stderr.
+      const err = stderrChunks.join('\n');
+      expect(err).toContain('stall watchdog');
+      expect(err).toContain('locks released');
+    } finally {
+      (process.stderr as any).write = origWrite;
+      console.error = origConsoleError;
+    }
+  }, 20_000);
+
+  test('non-CLI caller path: returns the error result without process exit; handlers fail the job via assertEmbedNotStalled', async () => {
+    process.env.GBRAIN_EMBED_STALL_ABORT_SECONDS = '1';
+    embedBatchBehavior = () => new Promise<Float32Array[]>(() => {});
+
+    const engine = mockEngine({
+      countStaleChunks: async () => 1,
+      listStaleChunks: async () => [staleRow],
+      getChunks: async () => wedgedChunks,
+      upsertChunks: async () => {},
+    });
+
+    // The minion/cycle shape: no singleFlight, plain runEmbedCore call. The
+    // fact that this await RESOLVES is the no-process-exit proof; the
+    // watchdog's referenced interval is also the only handle keeping the
+    // lost-promise hang alive here (the not-unref'd design).
+    const result = await runEmbedCore(engine, { stale: true, quiet: true });
+    expect(result.reason).toBe('stall_timeout');
+
+    // X6: the handler layer converts the error result into a FAILED JOB.
+    const { assertEmbedNotStalled } = await import('../src/core/embed-stall.ts');
+    expect(() => assertEmbedNotStalled(result)).toThrow(/stall_timeout/);
+  }, 20_000);
+
+  test('watchdog does not fire while successful progress keeps landing', async () => {
+    process.env.GBRAIN_EMBED_STALL_ABORT_SECONDS = '1';
+    // Normal-speed embeds: progress ticks, threshold never crossed.
+    const pages = Array.from({ length: 3 }, (_, i) => ({ slug: `ok-${i}` }));
+    const rows = pages.map((p, i) => ({ ...staleRow, slug: p.slug, page_id: i + 1 }));
+    let served = false;
+    const engine = mockEngine({
+      countStaleChunks: async () => rows.length,
+      listStaleChunks: async () => {
+        if (served) return [];
+        served = true;
+        return rows;
+      },
+      getChunks: async () => wedgedChunks,
+      upsertChunks: async () => {},
+    });
+
+    const result = await runEmbedCore(engine, { stale: true, quiet: true });
+    expect(result.reason).toBeUndefined();
+    expect(result.embedded).toBeGreaterThan(0);
+    expect(result.failures).toBe(0);
+  }, 20_000);
+});
+
+// ────────────────────────────────────────────────────────────────
+// #4647: single-flight lock heartbeat — per-tick refresh timeout
+// ────────────────────────────────────────────────────────────────
+//
+// The incident shape: a wedged pooler connection makes `refresh()` hang
+// FOREVER (it never settles and ignores the abort signal). Without the
+// per-tick timeout race, the first hung tick would leave `beating = true`
+// permanently — no consecutive-error accounting, no lock_lost, and the drain
+// runs unbounded without mutual exclusion. The fix bounds every tick with
+// GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS; three consecutive refresh_timeouts
+// must flip lock_lost and abort the drain.
+describe('#4647: heartbeat tick timeout — never-settling refresh', () => {
+  test('3 consecutive refresh timeouts → lock_lost + drain abort', async () => {
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_MS = '5';
+    process.env.GBRAIN_EMBED_LOCK_HEARTBEAT_TIMEOUT_MS = '10';
+
+    let refreshCalls = 0;
+    const fakeLock: DbLockHandle = {
+      id: 'wedged-pool-refresh',
+      acquiredAt: '0',
+      release: async () => {},
+      // The #4647 shape: never settles, never observes the abort signal.
+      refresh: () => {
+        refreshCalls++;
+        return new Promise<boolean>(() => {});
+      },
+    };
+
+    // Infinite stale feed at batchSize=1: the drain can ONLY terminate via
+    // the lock-loss abort. If the per-tick timeout regresses, this test
+    // hangs (and fails on its own timeout) instead of returning.
+    let listStaleCalls = 0;
+    let pageId = 0;
+    const engine = mockEngine({
+      countChunklessPagesWithContent: async () => 0,
+      listChunklessPagesWithContent: async () => [],
+      countStaleChunks: async () => 999999, // non-zero: pass the early "nothing stale" return
+      invalidateContentDriftEmbeddings: async () => 0,
+      listStaleChunks: async () => {
+        listStaleCalls++;
+        await new Promise((r) => setTimeout(r, 10));
+        pageId++;
+        return [{
+          slug: `p-${pageId}`, chunk_index: 0, chunk_text: 'hi',
+          chunk_source: 'compiled_truth' as const, model: null, token_count: 1,
+          source_id: 'default', page_id: pageId,
+        }];
+      },
+      getChunks: async () => [],
+      upsertChunks: async () => {},
+    });
+
+    const result = await runEmbedCore(engine, {
+      stale: true,
+      quiet: true,
+      batchSize: 1,
+      heldLocks: [fakeLock],
+    });
+
+    // Mutual exclusion is gone → the drain ABORTED with lock_lost set.
+    expect(result.lock_lost).toBe(true);
+    // The consecutive-error threshold (3) was actually exercised.
+    expect(refreshCalls).toBeGreaterThanOrEqual(3);
+    // The abort cut the infinite feed short (sanity bound: the drain did not
+    // keep looping after lock loss).
+    expect(listStaleCalls).toBeLessThan(200);
+  }, 15_000);
 });

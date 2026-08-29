@@ -25,7 +25,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 |---|---|---|---|---|---|
 | `voyage` (**default** — `voyage-4` @ 1024d; `rerank-2.5` reranker on the same key) | `VOYAGE_API_KEY` | 1024 | 0.06 (`voyage-4`) | no | yes (`voyage-multimodal-3`) |
 | `openai` | `OPENAI_API_KEY` | 1536 | 0.13 | no | no |
-| `openrouter` | `OPENROUTER_API_KEY` | 1536 | 0.02 | no | model-dependent |
+| `openrouter` | `OPENROUTER_API_KEY` | per-model (1536 for the default `openai/text-embedding-3-small`; unlisted ids require explicit dims) | 0.02 | no | model-dependent |
 | `zeroentropyai` — **DEPRECATED** (hosted API **shuts down 2026-09-04**; replacement `voyage:voyage-4` — see note below) | `ZEROENTROPY_API_KEY` | 2560 (Matryoshka to 1280/640/320/...) | 0.05 | no | no |
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
@@ -40,7 +40,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `deepseek` | (no embedding model — chat only) | — | — | — | — |
 | `groq` | (no embedding model — chat only) | — | — | — | — |
 
-**Note on local providers.** Ollama and llama-server have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running.
+**Note on local providers.** Ollama and llama-server have no required API key, so they don't show up in env-detection auto-pick. Pick them explicitly with `--embedding-model ollama:<model>` to avoid silently routing to a daemon that may not be running. Ollama can also run local chat/expansion models; set those routes explicitly with `gbrain config set models.chat ollama:<model>` and related per-task model keys.
 
 **Note on the ZeroEntropy hosted API.** ZeroEntropy announced (2026-07-24) that its hosted endpoints shut down on **2026-09-04**, and the recipe is deprecated: init auto-pick and the interactive picker exclude it (explicit `--embedding-model zeroentropyai:*` still works, with a loud warning), every ZE embed/rerank call prints a once-per-process deprecation warning, and `gbrain providers` annotates it DEPRECATED (`providers env zeroentropyai` prints the deprecation notice + migration command instead of the signup funnel, `providers explain` leads the row with ⚠ regardless of key readiness, and `gbrain doctor`'s ZE missing-key hint is migration-first). A brain still embedding through the hosted API loses semantic retrieval entirely on that date — query embedding uses the same endpoint, so existing vectors become unqueryable, not just new content. The off-ramp: `gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run` (cost preview), then `--yes`. 1280 is not a valid Voyage width (valid: 256/512/1024/2048), so a 1280d brain gets a one-time schema/HNSW rebuild to 1024; the OpenAI alternative keeps the width (flexible dims): `--to openai:text-embedding-3-small --dim 1280`. See [the migration guide](../guides/embedding-migration.md). Self-hosting the Apache-2.0 zembed-1 weights keeps every existing vector with zero re-embed, but the endpoint must speak ZeroEntropy's wire dialect — a generic OpenAI-compatible llama-server/Ollama will NOT work without a compat proxy (details in [`docs/ai-providers/zeroentropy.md`](../ai-providers/zeroentropy.md)). `gbrain doctor` (check `provider_sunset`) flags affected brains — including ZE-backed custom embedding columns — and prints target-aware paste-ready commands (Voyage at 1024; OpenAI keep-width when the brain's actual width is valid there); accepted the risk? `gbrain config set doctor.suppress_provider_sunset true` silences it.
 
@@ -82,7 +82,7 @@ The doctor distinguishes two repair paths:
 
 The main alternative to the Voyage default (its flexible-dim `text-embedding-3` models can keep an existing column width during a provider migration). Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 default), `text-embedding-3-small` (1536). Matryoshka via the `dimensions` field — gbrain pins it from `embedding_dimensions` config so existing 1536-dim brains stay aligned across SDK upgrades.
 
-Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
+Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. With `OPENAI_BASE_URL` set, embedding no longer requires `OPENAI_API_KEY` — the override targets local OpenAI-compatible servers (LM Studio, vLLM) that ignore auth, so gbrain sends a placeholder key instead of refusing (#4385). `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
 
 ### Voyage AI
 
@@ -112,7 +112,7 @@ For GCP service-account / Vertex AI auth (production deployments), see the v0.32
 
 Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
 
-**Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). OR's embedding catalog also includes `text-embedding-3-large`, `google/gemini-embedding-2-preview`, `qwen/qwen3-embedding-8b`, `bge-m3` — opt in via `--embedding-model openrouter:<id>`. Pricing matches the upstream provider (OR adds a small markup).
+**Embedding**: `openai/text-embedding-3-small` (1536d default, Matryoshka shrink to 512/768/1024). The recipe carries verified per-model native dims for its catalog — `openai/text-embedding-3-large` (3072), `qwen/qwen3-embedding-8b` (4096), `bge-m3` (1024) — so opting in via `--embedding-model openrouter:<id>` plans the right column width automatically. Any id NOT in that list (including `google/gemini-embedding-2-preview`, whose width is unverified) has no silent default: you must pass explicit dimensions (`--embedding-dimensions <N>` or `embedding_dimensions` config) or the command errors with the fix. Pricing matches the upstream provider (OR adds a small markup).
 
 **Chat**: every chat model OR proxies works through `/v1/chat/completions`. The recipe lists 8 curated entry points (GPT-5.2 family, Claude 4.5/4.6/4.7, Gemini 3 Flash Preview, DeepSeek); any other OR catalog ID also works. Tool-calling envelope is supported by the OR endpoint, but per-model capability varies — check https://openrouter.ai/models before counting on tools for a specific slug.
 
@@ -150,9 +150,27 @@ Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims)
 
 No env required — Ollama runs unauthenticated locally. Optional `OLLAMA_BASE_URL` (default `http://localhost:11434/v1`) and `OLLAMA_API_KEY` (for auth-enabled deployments).
 
-Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embed-8b` (4096d) and `snowflake-arctic-embed-l-v2` (1024d). `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
+Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1024d), `all-minilm` (384d), plus the larger modern embedders `qwen3-embedding:8b` (4096d) and `snowflake-arctic-embed2` (1024d) — those are the real pullable Ollama library tags; the earlier `qwen3-embed-8b` / `snowflake-arctic-embed-l-v2` spellings never matched a pullable tag and stay accepted only so brains initialized with them keep validating. `gbrain providers test --model ollama:nomic-embed-text` smoke-tests the local install.
 
 The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
+
+Ollama also exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so gbrain can use local chat models for query expansion, `think`, facts extraction, and dream synthesis. A minimal local setup:
+
+```bash
+ollama pull nomic-embed-text
+ollama pull qwen2.5-coder:14b
+
+gbrain init --pglite --embedding-model ollama:nomic-embed-text --embedding-dimensions 768
+gbrain config set models.chat ollama:qwen2.5-coder:14b
+gbrain config set models.expansion ollama:qwen2.5-coder:14b
+gbrain config set models.think ollama:qwen2.5-coder:14b
+gbrain config set models.dream.synthesize ollama:qwen2.5-coder:14b
+gbrain config set models.dream.synthesize_verdict ollama:qwen2.5-coder:14b
+gbrain config set models.dream.patterns ollama:qwen2.5-coder:14b
+gbrain config set facts.extraction_model ollama:qwen2.5-coder:14b
+```
+
+The recipe marks Ollama chat as **not** tool-capable. That is enough for local reasoning flows, but not for gbrain's subagent/tool loop; keep `models.tier.subagent` on a provider with tool calling when you need that path.
 
 ### llama-server (local, llama.cpp)
 
@@ -176,6 +194,15 @@ Three numbers matter:
 3. **HNSW cap**: pgvector's HNSW index supports up to 2000 dims. Brains above that fall back to exact vector scans (slower but correct; gbrain handles the SQL automatically via `chunkEmbeddingIndexSql` in `src/core/vector-index.ts`).
 
 For most users: **stay at 1024 or 1536**. Bigger isn't better below the noise floor; smaller saves disk + RAM with marginal recall loss on Matryoshka providers.
+
+## Bulk-embed failure knobs
+
+Two env vars tune how bulk embeds (`gbrain embed --stale` and the autopilot/minion cycles that ride the same stale path) behave under sustained failures. Both matter most against local serial servers (Ollama at `-np 1`, llama-server), where re-sending doomed requests compounds into congestion collapse:
+
+| Env var | Default | What it does |
+|---|---|---|
+| `GBRAIN_EMBED_QUARANTINE_AFTER` | 3 | Consecutive zero-progress attempts (no chunk embedded) before a page is quarantined for the rest of the process. An attempt that embeds ANY chunk resets the page's counter — partial progress shrinks the stale set, so the next pass sends a smaller request, not the identical doomed one. Quarantine is keyed per page (`source_id::slug`) and announced once on stderr; later passes skip quarantined pages with a count. Process-lifetime by design: restarting retries deliberately, and `frontmatter.embed_skip` is the permanent block. Non-numeric or non-positive values fall back to 3. |
+| `GBRAIN_EMBED_MAX_BATCH_TOKENS` | (unset) | Token cap per embedding request for recipes that ship without one — ollama, llama-server, and litellm declare `no_batch_cap` because real capacity depends on the operator's server. When set, chunk texts are pre-split into sub-batches within `cap × safety_factor` (default 0.8) tokens, estimated via the recipe's `chars_per_token` (default 4). A recipe-declared cap always wins; invalid values are ignored. Read once from the environment at process start, never at call time. Without it, `no_batch_cap` recipes still get a conservative 16-item sub-batch cap so the per-call embed timeout bounds a fixed amount of work. |
 
 ## My provider isn't listed
 

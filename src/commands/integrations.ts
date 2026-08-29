@@ -518,7 +518,10 @@ function heartbeatDir(id: string): string {
   return gbrainPath('integrations', id);
 }
 
-function heartbeatPath(id: string): string {
+// Exported for features.ts's heartbeat-backed "configured" check — both
+// surfaces must agree on the gbrainPath-based location (GBRAIN home
+// overrides apply; a hardcoded $HOME/.gbrain would diverge).
+export function heartbeatPath(id: string): string {
   return join(heartbeatDir(id), 'heartbeat.jsonl');
 }
 
@@ -576,10 +579,68 @@ export function checkSecrets(secrets: RecipeSecret[]): { set: string[]; missing:
 
 type IntegrationStatus = 'available' | 'configured' | 'active';
 
-function getStatus(recipe: ParsedRecipe): IntegrationStatus {
-  const { set, missing } = checkSecrets(recipe.frontmatter.secrets);
-  // All required secrets must be set to be "configured"
-  if (missing.length > 0) return 'available';
+/** Env var names a health check references (via `$VAR`) or names directly. */
+function checkEnvRefs(check: HealthCheck): string[] {
+  if (typeof check === 'string') return [];
+  switch (check.type) {
+    case 'env_exists':
+      return [check.name];
+    case 'http': {
+      const fields = [
+        check.url, check.body, check.auth_token, check.auth_user, check.auth_pass,
+        ...Object.values(check.headers || {}),
+      ].filter((v): v is string => typeof v === 'string');
+      const refs = new Set<string>();
+      for (const f of fields) {
+        for (const m of f.matchAll(/\$([A-Z_][A-Z0-9_]*)/g)) refs.add(m[1]);
+      }
+      return [...refs];
+    }
+    default:
+      return [];
+  }
+}
+
+/**
+ * Is a single `any_of` branch satisfied by the current env? env_exists needs its
+ * var present; http needs every `$VAR` it references present (a sync proxy for the
+ * network check — presence of the auth material, not liveness). command branches
+ * can't be evaluated from env, so they never mark a recipe "configured" on their own.
+ *
+ * `env` is resolved through `secretEnv()` (config.json folded over process.env), so a
+ * secret stored only in ~/.gbrain/config.json counts — same source `checkSecrets` and
+ * the env_exists health-check runner read, keeping getStatus consistent with them.
+ */
+function branchSatisfiedByEnv(check: HealthCheck, env: Record<string, string | undefined>): boolean {
+  if (typeof check === 'string') return false;
+  if (check.type === 'any_of') return check.checks.some(c => branchSatisfiedByEnv(c, env));
+  if (check.type === 'command') return false;
+  const refs = checkEnvRefs(check);
+  return refs.length > 0 && refs.every(v => !!env[v]);
+}
+
+/**
+ * A recipe is auth-configured when its secrets are set. The flat `secrets:` list
+ * conflates alternative auth paths (Option A ClawVisor OR Option B Google), so an
+ * all-of check reports a correctly-configured single-path user as "available". When
+ * the recipe declares its alternatives in an `any_of` health check, honor that: each
+ * `any_of` group needs one branch satisfied by env. Recipes with no `any_of` keep the
+ * original all-secrets-required rule.
+ */
+function authConfigured(recipe: ParsedRecipe): boolean {
+  const anyOfGroups = recipe.frontmatter.health_checks.filter(
+    (c): c is Extract<HealthCheck, { type: 'any_of' }> =>
+      typeof c === 'object' && c.type === 'any_of'
+  );
+  if (anyOfGroups.length > 0) {
+    const env = secretEnv();
+    return anyOfGroups.every(g => g.checks.some(c => branchSatisfiedByEnv(c, env)));
+  }
+  return checkSecrets(recipe.frontmatter.secrets).missing.length === 0;
+}
+
+export function getStatus(recipe: ParsedRecipe): IntegrationStatus {
+  if (!authConfigured(recipe)) return 'available';
 
   const heartbeat = readHeartbeat(recipe.frontmatter.id);
   const recentEvents = heartbeat.filter(e =>
@@ -1620,7 +1681,10 @@ async function cmdInstall(args: string[]): Promise<void> {
       const { written, manifestPath } = await installRecipeIntoHostRepo(recipeId, opts);
       console.log(`[install] ${recipeId}: copied ${written} files into ${realpathSync(opts.target)}`);
       console.log(`[install] manifest: ${manifestPath}`);
-      if (!opts.dryRun) {
+      // Gate the pointer on the hint actually existing (#4292) — a recipe
+      // without a post-install-hint.md must not send the operator to a 404.
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- manifestPath derives from a findRecipe()-validated bundle root (embedded recipes/ tree or the operator-set GBRAIN_RECIPES_DIR) joined with a literal filename; used only as an existsSync gate on printing a hint line, and `gbrain integrations` is wired only from cli.ts (trusted local, never MCP)
+      if (!opts.dryRun && existsSync(join(pathDirname(manifestPath), 'post-install-hint.md'))) {
         console.log('[install] next steps: see recipes/' + recipeId + '/install/post-install-hint.md');
       }
     }

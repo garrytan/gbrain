@@ -18,7 +18,8 @@
  *     file continues.
  *   - RUN-LEVEL (fail-closed integrity): importFromContent duplicate-lookup
  *     or read-back failures and putRawData misses rethrow and abort the run.
- *     Heuristic seam: import errors matching /too large/ stay per-session.
+ *     Heuristic seam: import errors matching /too large|invalid byte
+ *     sequence/ stay per-session.
  *
  * Watermark: the RESULT carries `cleanScan` (no errors anywhere, no limit
  * truncation) + `maxSessionTs`; the COMMAND advances the `--since last`
@@ -55,6 +56,13 @@ export interface TranscriptsIngestOpts {
   sourceId: string;
   /** Embedding opt-in (default OFF: bulk imports defer to the embed backfill). */
   embed?: boolean;
+  /**
+   * gbrain#4149: explicit byte-cap OVERRIDE threaded to every adapter's
+   * parse. Undefined = each adapter keeps its own format-specific default
+   * (Hermes 512MB store guard, 50MB jsonl cap, ...) — the override exists
+   * for legitimate oversized stores, not to replace the defaults.
+   */
+  maxBytes?: number;
   activePack?: IngestActivePack;
   /** Test seam for the redaction user-pattern file. */
   userPatternsPath?: string;
@@ -87,6 +95,8 @@ export interface IngestFileOutcome {
   sessions: IngestSessionOutcome[];
   skippedLines: number;
   drift: boolean;
+  /** Adapter degraded to a bounded read (e.g. codex head+tail) — part of the file was never scanned. */
+  truncated: boolean;
   error?: string;
 }
 
@@ -101,6 +111,8 @@ export interface TranscriptsIngestResult {
   imperatives: number;
   partsDeleted: number;
   driftFiles: number;
+  /** Files whose adapter reported a truncated (partially-unscanned) read. */
+  truncatedFiles: number;
   erroredFiles: number;
   /** EVERY slug the run touched — imported AND hash-skipped (--facts targets all). */
   slugsTouched: string[];
@@ -133,7 +145,9 @@ function lastMessageTs(messages: Array<{ timestamp: string }>): string {
 const RUN_ABORT_MARKER = 'transcripts-ingest run abort';
 
 function isPerSessionImportError(err: unknown): boolean {
-  return err instanceof Error && /too large/i.test(err.message);
+  // 'invalid byte sequence' is Postgres rejecting the DATA (e.g. a U+0000 a
+  // sanitizer missed, #4392) — one bad session, never a DB-down signal.
+  return err instanceof Error && /too large|invalid byte sequence/i.test(err.message);
 }
 
 export async function runTranscriptsIngest(
@@ -151,6 +165,7 @@ export async function runTranscriptsIngest(
     imperatives: 0,
     partsDeleted: 0,
     driftFiles: 0,
+    truncatedFiles: 0,
     erroredFiles: 0,
     slugsTouched: [],
     cleanScan: true,
@@ -174,6 +189,7 @@ export async function runTranscriptsIngest(
       sessions: [],
       skippedLines: 0,
       drift: false,
+      truncated: false,
     };
     result.files.push(fileOutcome);
 
@@ -194,7 +210,11 @@ export async function runTranscriptsIngest(
     }
     fileOutcome.format = detected.adapter.format;
 
-    const gen = detected.adapter.parse(path);
+    // gbrain#4149: thread the explicit cap override; omit the opts object
+    // entirely when unset so adapters keep their native defaults.
+    const gen = opts.maxBytes != null
+      ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })
+      : detected.adapter.parse(path);
     try {
       let step = await gen.next();
       while (!step.done) {
@@ -389,6 +409,14 @@ export async function runTranscriptsIngest(
           // file read mid-write, corruption) — freeze the watermark so a
           // later repair with an older timestamp is still picked up.
           // Re-scans stay cheap via content-hash skip.
+          result.cleanScan = false;
+        }
+        if (diag.truncated) {
+          // A bounded read (codex head+tail over an over-budget rollout)
+          // skipped a window of the file — advancing the since-watermark
+          // over that unscanned window would drop its sessions permanently.
+          fileOutcome.truncated = true;
+          result.truncatedFiles++;
           result.cleanScan = false;
         }
       }

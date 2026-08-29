@@ -76,6 +76,12 @@ export interface MinionJob {
   remove_on_complete: boolean;
   remove_on_fail: boolean;
   idempotency_key: string | null;
+  /** Private dream-inline queue owner job, when this job is owned by an inline parent. */
+  private_queue_owner_job_id: number | null;
+  /** Private dream-inline queue owner token; random per phase run. */
+  private_queue_owner_token: string | null;
+  /** Renewable private-queue lease. Startup recovery may cancel only after this expires. */
+  private_queue_lease_until: Date | null;
 
   // v12: scheduler polish — quiet-hours gate + deterministic stagger
   quiet_hours: Record<string, unknown> | null;
@@ -140,6 +146,13 @@ export interface MinionJobInput {
   max_spawn_depth?: number;
   /** Global dedup key. Same key returns the existing job, no second row created. */
   idempotency_key?: string;
+  /**
+   * Internal: owner metadata for parent-owned `dream-inline-*` queues. Used by
+   * startup recovery to distinguish crashed owners from live private queues.
+   */
+  private_queue_owner_job_id?: number | null;
+  private_queue_owner_token?: string | null;
+  private_queue_lease_ms?: number | null;
   /** Submission backpressure: cap waiting jobs with this name before inserting
    *  a new row. Scope is (name, queue, source), where source reads
    *  data.sourceId ?? data.source_id; a submission with NO source key counts
@@ -455,6 +468,9 @@ export function rowToMinionJob(row: Record<string, unknown>): MinionJob {
     remove_on_complete: row.remove_on_complete === true,
     remove_on_fail: row.remove_on_fail === true,
     idempotency_key: (row.idempotency_key as string) || null,
+    private_queue_owner_job_id: (row.private_queue_owner_job_id as number | null) ?? null,
+    private_queue_owner_token: (row.private_queue_owner_token as string) || null,
+    private_queue_lease_until: row.private_queue_lease_until ? new Date(row.private_queue_lease_until as string) : null,
     quiet_hours: row.quiet_hours ? (typeof row.quiet_hours === 'string' ? JSON.parse(row.quiet_hours) : row.quiet_hours) as Record<string, unknown> : null,
     stagger_key: (row.stagger_key as string) || null,
     result: row.result ? (typeof row.result === 'string' ? JSON.parse(row.result) : row.result) as Record<string, unknown> : null,
@@ -541,6 +557,33 @@ export interface SubagentHandlerData {
    * tool-registry build time.
    */
   source_id?: string;
+  /**
+   * #4217 — when true, a job whose put_page writes were ALL attempted-and-
+   * failed FAILS (UnrecoverableError → dead, idempotency key released)
+   * instead of reporting `completed` with zero pages. Set by the dream
+   * synthesize + patterns fan-outs (jobs whose entire purpose is writing
+   * pages). Left unset for open-ended `gbrain agent run` jobs, where one
+   * rejected write plus a useful read-only answer is a legitimate
+   * completion — those still get truthful pages_* counts on the result.
+   * Same trust story as `allowed_slug_prefixes` (PROTECTED_JOB_NAMES).
+   */
+  require_writes?: boolean;
+  /**
+   * #4216 — synthesis execution mode. 'oneshot' = single structured
+   * completion + programmatic validated writes, falling back to the agentic
+   * loop in the SAME job when the output fails validation. Unset/'agentic'
+   * = the classic multi-turn tool loop. Trusted field (PROTECTED_JOB_NAMES);
+   * old binaries ignore it and run agentic — safe mixed-version degradation.
+   */
+  mode?: 'agentic' | 'oneshot';
+  /**
+   * #4216/CDX-9 — the exact transcript hash suffix every oneshot page slug
+   * must end with (`<hash6>` or `<hash6>-c<idx>` for chunked transcripts).
+   * The suffix is the idempotency boundary between transcripts; oneshot
+   * validation enforces it structurally instead of trusting prompt
+   * discipline. Set by the dream fan-out alongside `mode`.
+   */
+  oneshot_slug_suffix?: string;
   /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
@@ -658,6 +701,17 @@ export type SubagentStopReason =
   | 'refusal'     // detected via stop_reason + content shape
   | 'error';      // unrecoverable (empty response retry exhausted, etc.)
 
+/**
+ * #4216 — why a oneshot attempt fell back to the agentic loop. Owned here
+ * (the lower layer) so subagent-oneshot.ts and the result type can never
+ * drift; 'no_put_page_tool' and 'too_many_pages' distinguish operator
+ * misconfiguration and contract overflow from model-output failures in the
+ * fallback_reasons telemetry.
+ */
+export type OneshotFallbackReason =
+  | 'unparseable' | 'length' | 'refusal' | 'bad_slug' | 'no_wikilink'
+  | 'empty_no_skip' | 'oneshot_timeout' | 'no_put_page_tool' | 'too_many_pages';
+
 /** Terminal result payload emitted by the subagent handler. */
 export interface SubagentResult {
   /** Concatenated text from the final assistant message. */
@@ -673,4 +727,28 @@ export interface SubagentResult {
     cache_read: number;
     cache_create: number;
   };
+  /**
+   * #4217 structural write accounting, merged by finalizeWriteAccounting on
+   * every subagent job. attempted = settled rows only (complete + failed);
+   * pending rows count toward neither.
+   */
+  pages_attempted?: number;
+  pages_written?: number;
+  pages_failed?: number;
+  /**
+   * #4216 — which execution path produced this result: 'oneshot' (single
+   * structured call), 'agentic_fallback' (oneshot attempt failed validation,
+   * same job fell through to the loop), or 'agentic' (mode never requested
+   * oneshot). Absent on pre-wave results.
+   */
+  synth_mode_used?: 'oneshot' | 'agentic_fallback' | 'agentic';
+  /**
+   * #4216 — why the oneshot attempt fell back (only on synth_mode_used =
+   * 'agentic_fallback').
+   */
+  fallback_reason?: OneshotFallbackReason;
+  /** #4216 — slugs written by the oneshot path (operator visibility supplement). */
+  written_refs?: Array<{ slug: string; status: 'complete' | 'failed' }>;
+  /** #4216 — true when a retried oneshot job finalized from a prior invocation's ledger. */
+  recovered?: boolean;
 }

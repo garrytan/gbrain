@@ -33,14 +33,21 @@ import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { VERB_NAMES } from '../../src/core/verbs.ts';
+import { GBRAIN_MCP_INSTRUCTIONS } from '../../src/mcp/instructions.ts';
 
 // Distinctive token so keyword search can't accidentally match anything else.
 const MARKER = 'qantani-marker-9f3z';
+const FEDERATED_MARKER = 'umbriel-federated-marker-71c4';
 
 function textOf(result: unknown): string {
   const content = (result as { content?: Array<{ type?: string; text?: string }> })?.content;
   if (!Array.isArray(content)) return '';
   return content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n');
+}
+
+function resultSourceIds(text: string): string[] {
+  const result = JSON.parse(text) as Array<{ source_id?: unknown }>;
+  return result.flatMap((row) => (typeof row.source_id === 'string' ? [row.source_id] : []));
 }
 
 describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', () => {
@@ -62,6 +69,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     env.GBRAIN_HOME = home;
     delete env.DATABASE_URL;
     delete env.GBRAIN_DATABASE_URL;
+    delete env.GBRAIN_SOURCE;
 
     // 1. Init a local PGLite brain (the "from nothing" step).
     execFileSync('bun', ['run', 'src/cli.ts', 'init', '--pglite', '--no-embedding', '--non-interactive'], {
@@ -80,6 +88,26 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     execFileSync('bun', ['run', 'src/cli.ts', 'import', notes, '--no-embed'], {
       cwd: process.cwd(), env, stdio: 'ignore',
     });
+
+    // Seed a second source that participates in unqualified federated reads.
+    // Import through the CLI so this uses the ordinary source registration
+    // and page-routing path.
+    const federatedNotes = join(home, 'federated-notes');
+    mkdirSync(federatedNotes, { recursive: true });
+    writeFileSync(
+      join(federatedNotes, 'marker.md'),
+      `---\ntitle: ${FEDERATED_MARKER} note\n---\n\n# ${FEDERATED_MARKER}\n\nThis page exists only in the federated source.\n`,
+    );
+    execFileSync(
+      'bun',
+      ['run', 'src/cli.ts', 'sources', 'add', 'federated-source', '--path', federatedNotes, '--federated', '--force'],
+      { cwd: process.cwd(), env, stdio: 'ignore' },
+    );
+    execFileSync(
+      'bun',
+      ['run', 'src/cli.ts', 'import', federatedNotes, '--no-embed', '--source-id', 'federated-source'],
+      { cwd: process.cwd(), env, stdio: 'ignore' },
+    );
 
     // 3. Let the MCP SDK spawn `gbrain serve` (stdio) and run the initialize
     //    handshake — exactly what `claude mcp add gbrain -- gbrain serve` does.
@@ -102,6 +130,7 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
 
   test('initialize handshake + tools/list exposes the core retrieval tools', async () => {
     expect(connected).toBe(true);
+    expect(client!.getInstructions()).toBe(GBRAIN_MCP_INSTRUCTIONS);
     const { tools } = await client!.listTools();
     const names = new Set(tools.map((t) => t.name));
     // The core MCP tools the connect LEARN_INSTRUCTION promises always work.
@@ -130,6 +159,28 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     const text = textOf(res);
     // The result payload (slug / title / snippet) must mention the marker.
     expect(text).toContain(MARKER);
+  }, 30_000);
+
+  test('query treats an explicit __all__ like an omitted source in federated stdio', async () => {
+    expect(connected).toBe(true);
+    const args = { query: FEDERATED_MARKER, expand: false, limit: 5 };
+
+    const omitted = textOf(await client!.callTool({ name: 'query', arguments: args }));
+    const explicitAll = textOf(await client!.callTool({
+      name: 'query',
+      arguments: { ...args, source_id: '__all__' },
+    }));
+    const explicitDefault = textOf(await client!.callTool({
+      name: 'query',
+      arguments: { ...args, source_id: 'default' },
+    }));
+
+    expect(omitted).toContain(FEDERATED_MARKER);
+    expect(explicitAll).toContain(FEDERATED_MARKER);
+    expect(explicitDefault).not.toContain(FEDERATED_MARKER);
+    expect(resultSourceIds(omitted)).toContain('federated-source');
+    expect(resultSourceIds(explicitAll)).toContain('federated-source');
+    expect(resultSourceIds(explicitDefault)).not.toContain('federated-source');
   }, 30_000);
 });
 

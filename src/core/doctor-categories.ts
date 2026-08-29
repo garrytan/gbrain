@@ -60,6 +60,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'calibration_freshness',
   'child_table_orphans',
   'chronicle_projection_health',
+  'code_chunk_metadata',
   'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
@@ -94,6 +95,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'image_assets',
   'integrity',
   'jsonb_integrity',
+  // #4222 — near-empty entity pages that accreted huge edge counts (junk
+  // hubs polluting the graph): a data-quality signal, sibling of
+  // scraper_junk_pages / graph_coverage.
+  'junk_entity_hubs',
   'link_resolution_opportunity',
   'links_extraction_lag',
   'markdown_body_completeness',
@@ -109,6 +114,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'scraper_junk_pages',
   'source_config_shape',
   'source_routing_health',
+  'stale_mentions',
   'stub_guard_24h',
   'sync_failures',
   'sync_freshness',
@@ -155,15 +161,19 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_harness_health',
   'bootstrap_hooks_heartbeat',
   'bootstrap_last_verify',
+  'backup_coverage',
   'bootstrap_push_health',
   'bootstrap_durability_job',
   'bootstrap_runbook_skew',
   'bootstrap_serve_lock',
   'batch_retry_health',
   'brainstorm_health',
+  'connectors',
+  'chat_fallback_chain_inert',
   'connection',
   'db_only_collector_collision',
   'federation_health',
+  'google_oauth',
   'home_dir_in_worktree',
   'index_audit',
   'npm_squat',
@@ -172,6 +182,9 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'orphan_clones',
   'pgbouncer_prepare',
   'pglite_data_dir',
+  // db-availability loop: engine-fit + repair-recurrence signals.
+  'pglite_scale',
+  'db_repair_recurrence',
   'pglite_leftovers',
   'pgvector',
   'plugin_lane_collision',
@@ -193,6 +206,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'supervisor_singleton',
   'sync_consolidation',
   'wedged_queue',
+  'orphaned_private_queue',
   'worker_oom_loop',
   'ze_embedding_health',
 ]);
@@ -207,6 +221,11 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'minions_migration',
   'multi_source_drift',
   'pack_upgrade_available',
+  // #550 — pages UNIQUE(source_id, slug) upsert arbiter presence: schema
+  // coherence healed by `gbrain apply-migrations` (sibling of
+  // timeline_dedup_index / schema_version).
+  'pages_upsert_arbiter',
+  'schema_columns',
   'schema_pack_active',
   'schema_pack_consistency',
   'schema_pack_source_drift',

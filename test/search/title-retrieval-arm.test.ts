@@ -13,7 +13,8 @@
  * Fixes under test:
  *   C1 — engine.searchTitles: page-grain candidates from pages.search_vector
  *        (title weight 'A'), joined to one representative chunk, fused into
- *        hybridSearch as a keyword-class RRF list. No query-length gate.
+ *        hybridSearch as a keyword-class RRF list. Human-sized long title
+ *        queries stay intact; oversized pasted context is bounded.
  *   C2 — searchKeyword retries ONCE with OR-of-terms when strict AND
  *        returns zero rows; strict results always win when non-empty.
  *
@@ -26,7 +27,12 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { hybridSearch } from '../../src/core/search/hybrid.ts';
-import { buildOrFallbackWebsearchQuery } from '../../src/core/search/sql-ranking.ts';
+import {
+  MAX_WEBSEARCH_QUERY_CHARS,
+  MAX_WEBSEARCH_QUERY_TERMS,
+  boundWebsearchQuery,
+  buildOrFallbackWebsearchQuery,
+} from '../../src/core/search/sql-ranking.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -109,6 +115,16 @@ describe('searchTitles — D1 title candidate arm', () => {
 
     const hits = await engine.searchTitles(longTitle, { limit: 10 });
     expect(hits.map(r => r.slug)).toContain('reports/emerald-falcon');
+  });
+
+  test('oversized pasted context is bounded before title FTS while preserving early terms', async () => {
+    await seedTitleOnlyPage();
+    const filler = Array.from({ length: 5000 }, (_, i) => `oversizedtoken${i}`).join(' ');
+    const hugeQuery = `Chronomancer Codex Ledger ${filler}`;
+    expect(hugeQuery.length).toBeGreaterThan(MAX_WEBSEARCH_QUERY_CHARS);
+
+    const hits = await engine.searchTitles(hugeQuery, { limit: 10 });
+    expect(hits.map(r => r.slug)).toContain('projects/chronomancer');
   });
 
   test('representative chunk prefers compiled_truth, else lowest chunk_index', async () => {
@@ -230,6 +246,39 @@ describe('searchKeyword — D2 AND→OR fallback', () => {
   });
 });
 
+describe('hybridSearch — search.keywordOrFallback knob (v=25)', () => {
+  // Title deliberately shares no token with the query so the D1 title arm
+  // can't rescue the page — isolates the keyword arm's OR retry, which is
+  // what the knob gates.
+  async function seedLabJournal(): Promise<void> {
+    await engine.putPage('notes/lab-journal', {
+      type: 'note',
+      title: 'Lab Journal',
+      compiled_truth: 'quantum lattice harmonics resonance experiments',
+    });
+    await engine.upsertChunks('notes/lab-journal', [
+      {
+        chunk_index: 0,
+        chunk_text: 'quantum lattice harmonics resonance experiments',
+        chunk_source: 'compiled_truth',
+      },
+    ]);
+  }
+
+  test('bundle default (on): the OR retry rescues through the full hybrid path', async () => {
+    await seedLabJournal();
+    const results = await hybridSearch(engine, 'quantum lattice harmonics zzzmissingtoken', { limit: 10 });
+    expect(results.map(r => r.slug)).toContain('notes/lab-journal');
+  });
+
+  test('search.keywordOrFallback=false suppresses the OR retry end-to-end', async () => {
+    await seedLabJournal();
+    await engine.setConfig('search.keywordOrFallback', 'false');
+    const results = await hybridSearch(engine, 'quantum lattice harmonics zzzmissingtoken', { limit: 10 });
+    expect(results.map(r => r.slug)).not.toContain('notes/lab-journal');
+  });
+});
+
 describe('buildOrFallbackWebsearchQuery — pure', () => {
   test('joins tokens with OR', () => {
     expect(buildOrFallbackWebsearchQuery('alpha beta')).toBe('alpha OR beta');
@@ -254,6 +303,26 @@ describe('buildOrFallbackWebsearchQuery — pure', () => {
     expect(buildOrFallbackWebsearchQuery('alpha AND beta')).toBe('alpha OR beta');
     // Only operator words survive tokenization → nothing left to relax.
     expect(buildOrFallbackWebsearchQuery('or and')).toBeNull();
+  });
+});
+
+describe('boundWebsearchQuery — pure', () => {
+  test('leaves ordinary title-sized queries unchanged', () => {
+    const q = 'Chronomancer Codex Ledger';
+    expect(boundWebsearchQuery(q)).toBe(q);
+  });
+
+  test('caps by term count without dropping the early useful prefix', () => {
+    const q = Array.from({ length: MAX_WEBSEARCH_QUERY_TERMS + 10 }, (_, i) => `term${i}`).join(' ');
+    const bounded = boundWebsearchQuery(q);
+    expect(bounded).toContain('term0');
+    expect(bounded).toContain(`term${MAX_WEBSEARCH_QUERY_TERMS - 1}`);
+    expect(bounded).not.toContain(`term${MAX_WEBSEARCH_QUERY_TERMS + 1}`);
+  });
+
+  test('caps very long single-token input by character length', () => {
+    const q = 'x'.repeat(MAX_WEBSEARCH_QUERY_CHARS + 100);
+    expect(boundWebsearchQuery(q).length).toBe(MAX_WEBSEARCH_QUERY_CHARS);
   });
 });
 

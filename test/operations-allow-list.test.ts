@@ -98,6 +98,31 @@ describe('matchesSlugAllowList — glob semantics', () => {
 describe('put_page — trusted-workspace allow-list', () => {
   const put_page = findOp('put_page');
 
+  test('REJECTS malformed slugs before they reach the write path', async () => {
+    const ctx = makeCtx({
+      allowedSlugPrefixes: ['wiki/originals/*'],
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'wiki/originals/ideas/secrets-readonly- trusted-services',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+    });
+  });
+
+  test('accepts a valid slug inside the allow-list in dry-run mode', async () => {
+    const ctx = makeCtx({
+      allowedSlugPrefixes: ['wiki/originals/*'],
+      dryRun: true,
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'wiki/originals/ideas/secrets-readonly-trusted-services',
+      content: '---\ntitle: x\n---\nbody',
+    })).resolves.toMatchObject({
+      dry_run: true,
+    });
+  });
+
   test('REJECTS when slug is outside the allow-list', async () => {
     const ctx = makeCtx({
       allowedSlugPrefixes: ['wiki/personal/reflections/*', 'wiki/originals/*'],
@@ -122,6 +147,80 @@ describe('put_page — trusted-workspace allow-list', () => {
     })).rejects.toMatchObject({
       code: 'permission_denied',
     });
+  });
+});
+
+describe('put_page — strict slug validation', () => {
+  const put_page = findOp('put_page');
+
+  test('REJECTS malformed slugs for trusted local callers too', async () => {
+    const ctx = makeCtx({
+      remote: false,
+      viaSubagent: false,
+      subagentId: undefined,
+      allowedSlugPrefixes: undefined,
+      dryRun: true,
+    });
+    await expect(put_page.handler(ctx, {
+      slug: 'notes/contains a space',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({
+      code: 'invalid_params',
+    });
+  });
+
+  // #4665 compat: the sync slugifier deliberately preserves '.' and '_'
+  // inside segments (slugifySegment: 'v1.0.0' → 'v1.0.0', 'my_file_name' →
+  // 'my_file_name'), so the op boundary MUST round-trip those slugs or every
+  // synced page with a dot/underscore becomes un-updatable via put_page.
+  const trustedLocalDryRun = () => makeCtx({
+    remote: false,
+    viaSubagent: false,
+    subagentId: undefined,
+    allowedSlugPrefixes: undefined,
+    dryRun: true,
+  });
+
+  test('ACCEPTS sync-slugifier dot slugs (notes/v1.0.0)', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'notes/v1.0.0',
+      content: '---\ntitle: x\n---\nbody',
+    })).resolves.toMatchObject({ dry_run: true, slug: 'notes/v1.0.0' });
+  });
+
+  test('ACCEPTS sync-slugifier underscore slugs (people/my_file_name)', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'people/my_file_name',
+      content: '---\ntitle: x\n---\nbody',
+    })).resolves.toMatchObject({ dry_run: true, slug: 'people/my_file_name' });
+  });
+
+  test('ACCEPTS CJK slugs (unicode word-char class survives the #4665 widen)', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'inbox/品牌圣经',
+      content: '---\ntitle: x\n---\nbody',
+    })).resolves.toMatchObject({ dry_run: true, slug: 'inbox/品牌圣经' });
+  });
+
+  test('still REJECTS dot-LED segments (hidden files)', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'notes/.hidden',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+
+  test('still REJECTS traversal (dot-dot segments)', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'notes/../etc/passwd',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+  });
+
+  test('still REJECTS control characters', async () => {
+    await expect(put_page.handler(trustedLocalDryRun(), {
+      slug: 'notes/a\u0007b',
+      content: '---\ntitle: x\n---\nbody',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
   });
 });
 

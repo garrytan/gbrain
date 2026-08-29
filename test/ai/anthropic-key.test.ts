@@ -10,7 +10,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from '../helpers/with-env.ts';
-import { hasAnthropicKey, resolveAnthropicKey } from '../../src/core/ai/anthropic-key.ts';
+import {
+  hasAnthropicKey,
+  resolveAnthropicKey,
+  setGatewayAnthropicKeySnapshot,
+} from '../../src/core/ai/anthropic-key.ts';
 
 const tmpDirs: string[] = [];
 function freshHome(withConfig?: Record<string, unknown>): string {
@@ -92,5 +96,57 @@ describe('resolveAnthropicKey (#2048 — subagent config-key auth)', () => {
         expect(resolveAnthropicKey()).toBeUndefined();
       },
     );
+  });
+});
+
+// #2119 read-side: the gateway env snapshot sits BETWEEN env and file.
+// configureGateway() pushes it (push seam — this module never imports
+// gateway.ts); these tests drive the setter directly to pin the layer order.
+describe('resolveAnthropicKey gateway snapshot layer (#2119)', () => {
+  test('snapshot wins over the config file when env is unset', async () => {
+    const home = freshHome({ anthropic_api_key: 'sk-from-config' });
+    try {
+      setGatewayAnthropicKeySnapshot('sk-from-gateway-env');
+      await withEnv(
+        { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+        async () => {
+          expect(resolveAnthropicKey()).toBe('sk-from-gateway-env');
+          expect(hasAnthropicKey()).toBe(true);
+        },
+      );
+    } finally {
+      setGatewayAnthropicKeySnapshot(undefined);
+    }
+  });
+
+  test('env still wins over the snapshot', async () => {
+    const home = freshHome();
+    try {
+      setGatewayAnthropicKeySnapshot('sk-from-gateway-env');
+      await withEnv(
+        { ANTHROPIC_API_KEY: 'sk-from-env', GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+        async () => {
+          expect(resolveAnthropicKey()).toBe('sk-from-env');
+        },
+      );
+    } finally {
+      setGatewayAnthropicKeySnapshot(undefined);
+    }
+  });
+
+  test('clearing the snapshot falls back to the file layer', async () => {
+    const home = freshHome({ anthropic_api_key: 'sk-from-config' });
+    try {
+      setGatewayAnthropicKeySnapshot('sk-from-gateway-env');
+      setGatewayAnthropicKeySnapshot(undefined);
+      await withEnv(
+        { ANTHROPIC_API_KEY: undefined, GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+        async () => {
+          expect(resolveAnthropicKey()).toBe('sk-from-config');
+        },
+      );
+    } finally {
+      setGatewayAnthropicKeySnapshot(undefined);
+    }
   });
 });

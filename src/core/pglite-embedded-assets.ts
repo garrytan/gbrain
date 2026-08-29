@@ -14,7 +14,12 @@
  * bootstrap templates in src/core/bootstrap/assets.ts). Each import resolves to
  * a runtime FILE PATH string that is readable in BOTH modes — the real
  * node_modules path under `bun run`, a `/$bunfs/root/...` path in the compiled
- * binary. We then hand PGLite the assets directly via PGliteOptions:
+ * binary. Those file-typed imports live in pglite-embedded-asset-paths.ts (the
+ * bundler ANCHOR) and are reached through resolvePgliteAssetPaths()'s tiered
+ * lookup, because a bun-global install hoists @electric-sql/pglite out of
+ * gbrain's own node_modules on upgrade and the anchor's repo-relative
+ * specifiers stop resolving (#4116) — tier 2 then derives the dist dir from
+ * module resolution instead. We hand PGLite the assets via PGliteOptions:
  *
  *   - `pgliteWasmModule`  — pglite.wasm bytes → WebAssembly.compile
  *   - `initdbWasmModule`  — initdb.wasm bytes → WebAssembly.compile
@@ -40,26 +45,107 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync, statSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Extension } from '@electric-sql/pglite';
 
-// The package's `exports` map does not expose `./dist/*`, so a bare package
-// subpath (`@electric-sql/pglite/dist/pglite.wasm`) does NOT resolve under Bun.
-// Reach the dist assets via a repo-relative node_modules path instead — this
-// resolves in both `bun run` and `bun build --compile`.
-// @ts-ignore — type: 'file' import attribute is valid Bun syntax, not in lib.d.ts
-import PGLITE_WASM_PATH from '../../node_modules/@electric-sql/pglite/dist/pglite.wasm' with { type: 'file' };
-// @ts-ignore
-import INITDB_WASM_PATH from '../../node_modules/@electric-sql/pglite/dist/initdb.wasm' with { type: 'file' };
-// @ts-ignore
-import FS_BUNDLE_PATH from '../../node_modules/@electric-sql/pglite/dist/pglite.data' with { type: 'file' };
-// @ts-ignore
-import VECTOR_TARBALL_PATH from '../../node_modules/@electric-sql/pglite/dist/vector.tar.gz' with { type: 'file' };
-// @ts-ignore
-import PG_TRGM_TARBALL_PATH from '../../node_modules/@electric-sql/pglite/dist/pg_trgm.tar.gz' with { type: 'file' };
+/** The five on-disk asset paths PGLite's runtime needs, however they were found. */
+export interface PgliteAssetPaths {
+  pgliteWasm: string;
+  initdbWasm: string;
+  fsBundle: string;
+  vectorTarball: string;
+  pgTrgmTarball: string;
+}
+
+const ASSET_FILES = {
+  pgliteWasm: 'pglite.wasm',
+  initdbWasm: 'initdb.wasm',
+  fsBundle: 'pglite.data',
+  vectorTarball: 'vector.tar.gz',
+  pgTrgmTarball: 'pg_trgm.tar.gz',
+} as const;
+
+function allAssetsExist(paths: PgliteAssetPaths): boolean {
+  return Object.values(paths).every((p) => typeof p === 'string' && p.length > 0 && existsSync(p));
+}
+
+/**
+ * Derive PGLite's dist directory from module resolution — the SAME specifier
+ * pglite-engine.ts imports, so the assets can never come from a different
+ * pglite copy than the JS runtime actually loaded. Returns null when the
+ * package cannot be resolved (compiled binary without the anchor, broken
+ * install), letting the caller raise the actionable tier-3 error.
+ */
+function resolvePgliteDistDir(): string | null {
+  // Primary: import.meta.resolve — synchronous under Bun, returns a file URL.
+  try {
+    const url = import.meta.resolve('@electric-sql/pglite');
+    if (typeof url === 'string' && url.startsWith('file:')) {
+      const dir = dirname(fileURLToPath(url));
+      if (existsSync(join(dir, ASSET_FILES.pgliteWasm))) return dir;
+    }
+  } catch { /* fall through to createRequire */ }
+  // Secondary: CJS resolution from this module's own URL.
+  try {
+    const nodeRequire = createRequire(import.meta.url);
+    const dir = dirname(nodeRequire.resolve('@electric-sql/pglite'));
+    if (existsSync(join(dir, ASSET_FILES.pgliteWasm))) return dir;
+  } catch { /* both resolvers failed */ }
+  return null;
+}
+
+/**
+ * Two-tier asset resolution (#4116).
+ *
+ * Tier 1 (compiled binary + nested-node_modules checkout): load the bundler
+ * anchor module, whose literal `with { type: 'file' }` imports the compiler
+ * embeds. The import() REJECTS in a hoisted package install — bun-global
+ * upgrades dedupe @electric-sql/pglite to the global root, so the anchor's
+ * repo-relative specifiers stop resolving; that rejection is expected and
+ * routes to tier 2. Exported for direct unit testing.
+ *
+ * Tier 2 (hoisted package lane): derive the dist dir via module resolution.
+ *
+ * Tier 3: throw one actionable error naming everything that was tried.
+ */
+export async function resolvePgliteAssetPaths(): Promise<{ paths: PgliteAssetPaths; source: 'embedded' | 'resolved' }> {
+  let embeddedTried = 'anchor module did not resolve (hoisted or partial install)';
+  try {
+    // Literal specifier so the bundler statically follows it and embeds the
+    // anchor's assets. Not an engine-live file, but marked for consistency:
+    // engine-dynamic-import-ok (bundler anchor vs hoisted package layout, #4116)
+    const anchor = await import('./pglite-embedded-asset-paths.ts');
+    const paths: PgliteAssetPaths = { ...anchor.EMBEDDED_PGLITE_ASSET_PATHS };
+    if (allAssetsExist(paths)) return { paths, source: 'embedded' };
+    embeddedTried = `anchor resolved but assets missing on disk (looked near ${paths.pgliteWasm})`;
+  } catch { /* hoisted layout: anchor specifiers unresolvable — expected, use tier 2 */ }
+
+  const dist = resolvePgliteDistDir();
+  if (dist) {
+    const paths: PgliteAssetPaths = {
+      pgliteWasm: join(dist, ASSET_FILES.pgliteWasm),
+      initdbWasm: join(dist, ASSET_FILES.initdbWasm),
+      fsBundle: join(dist, ASSET_FILES.fsBundle),
+      vectorTarball: join(dist, ASSET_FILES.vectorTarball),
+      pgTrgmTarball: join(dist, ASSET_FILES.pgTrgmTarball),
+    };
+    if (allAssetsExist(paths)) return { paths, source: 'resolved' };
+  }
+
+  throw new Error(
+    'PGLite runtime assets not found. ' +
+    `Tried the embedded bundle (${embeddedTried}) and module resolution of ` +
+    `@electric-sql/pglite (${dist ? `dist dir ${dist} is incomplete` : 'package not resolvable from gbrain'}). ` +
+    'This usually means the install is missing or hoisted in a way gbrain cannot reach. ' +
+    'Reinstall from the canonical source: bun install -g github:garrytan/gbrain ' +
+    '(or bun install in a source checkout). Never install from the npm registry: ' +
+    'the npm package named gbrain is unrelated (see gbrain doctor).',
+  );
+}
 
 /**
  * The subset of PGliteOptions we supply so PGLite never fetches/reads its
@@ -101,14 +187,15 @@ function materializeTarball(embeddedPath: string, baseName: string): URL {
 }
 
 async function build(): Promise<EmbeddedPgliteOptions> {
+  const { paths } = await resolvePgliteAssetPaths();
   const [pgliteWasmModule, initdbWasmModule] = await Promise.all([
-    WebAssembly.compile(readFileSync(PGLITE_WASM_PATH as unknown as string)),
-    WebAssembly.compile(readFileSync(INITDB_WASM_PATH as unknown as string)),
+    WebAssembly.compile(readFileSync(paths.pgliteWasm)),
+    WebAssembly.compile(readFileSync(paths.initdbWasm)),
   ]);
-  const fsBundle = new Blob([readFileSync(FS_BUNDLE_PATH as unknown as string)]);
+  const fsBundle = new Blob([readFileSync(paths.fsBundle)]);
 
-  const vectorBundle = materializeTarball(VECTOR_TARBALL_PATH as unknown as string, 'vector.tar.gz');
-  const pgTrgmBundle = materializeTarball(PG_TRGM_TARBALL_PATH as unknown as string, 'pg_trgm.tar.gz');
+  const vectorBundle = materializeTarball(paths.vectorTarball, 'vector.tar.gz');
+  const pgTrgmBundle = materializeTarball(paths.pgTrgmTarball, 'pg_trgm.tar.gz');
 
   // Custom extensions mirror the stock ones (dist/vector/index.js,
   // dist/contrib/pg_trgm.js) but hand back the embedded tarball's file URL

@@ -27,6 +27,10 @@ import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
+// #3657 seam: the sunsetting legacy reranker default has ONE code home
+// (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
+// resolve through it so the September default swap is a one-line change.
+import { LEGACY_DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
 
 /**
  * Look up the `reranker.default_timeout_ms` declared by the resolved
@@ -73,6 +77,17 @@ export interface ModeBundle {
   /** Zero-LLM intent classifier weight adjustments (PR #897). On for everyone. */
   intentWeighting: boolean;
   /**
+   * Keyword-arm AND→OR zero-recall fallback (fix/title-retrieval-arm, D2).
+   * websearch AND semantics at chunk grain mean one non-co-occurring token
+   * zeroes keyword recall; the fallback retries once with OR-of-terms.
+   * On corpora the FTS config can't stem (CJK/agglutinative text under
+   * 'english') the OR retry can match a large fraction of the corpus, and
+   * ts_rank has no IDF to demote common-token hits — the relaxed rows read
+   * as noise in the RRF blend. This knob lets those corpora turn the
+   * fallback off. Default on (the previous hardcoded behavior).
+   */
+  keywordOrFallback: boolean;
+  /**
    * Per-call token budget cap (PR #897). undefined = no-op (tokenmax).
    * 4000 = tight (conservative, fits Haiku context loop).
    * 12000 = balanced (sweet-spot for Sonnet).
@@ -104,7 +119,8 @@ export interface ModeBundle {
    */
   reranker_enabled: boolean;
   /**
-   * Provider:model for the reranker. Bundle default `'zeroentropyai:zerank-2'`
+   * Provider:model for the reranker. Bundle default is
+   * `LEGACY_DEFAULT_RERANKER_MODEL` (ai/defaults.ts — currently zerank-2)
    * — LEGACY until the September removal (v0.46.3 split-default: existing
    * ZE-keyed brains keep a working reranker until the hosted API dies on
    * 2026-09-04; voyage-keyed new installs get an explicit
@@ -155,6 +171,15 @@ export interface ModeBundle {
    * Override: per-call SearchOpts → `search.title_boost` config → bundle.
    */
   title_boost: number | undefined;
+
+  /**
+   * v0.46.15 — cosine floor for evidence's `high_vector_match` (see
+   * evidence.ts DEFAULT_HIGH_COSINE_FLOOR). Config `search.evidence_cosine_floor`.
+   * Deliberately EXCLUDED from knobsHash: it shapes the evidence LABEL, not
+   * the result set — a floor change serves TTL-bounded stale labels on cached
+   * rows, which is acceptable for an operator tuning knob.
+   */
+  evidence_cosine_floor: number | undefined;
 
   // v0.36 cross-modal wave knobs (D2 + D3 + D6 + D8 + D13 + LLM-intent).
   // All three mode bundles default these to the same values — cross-modal
@@ -268,6 +293,24 @@ export interface ModeBundle {
    */
   autocut_jump: number;
   /**
+   * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
+   * this, autocut no-ops (gap normalization by a weak top manufactures
+   * spurious cliffs). Scale-dependent on the reranker — the September
+   * reranker default flip must re-tune it. Config: `search.autocut_min_top`.
+   */
+  autocut_min_top: number;
+  /**
+   * Autocut floor: never trim the returned set below this many results when
+   * candidates exist. Default 1 (the never-empty failsafe — the previous
+   * hardcoded behavior, so nothing changes unless an operator opts in).
+   * Raising it protects "deep but present" answers on score curves without a
+   * dramatic cliff (a reranker whose scores decay smoothly makes the largest
+   * gap a noisy cut signal) — useful when the consumer is an LLM that reads
+   * the whole returned list, where "deep but visible" beats "trimmed away".
+   * Override: `search.autocut_min_keep` config → mode bundle.
+   */
+  autocut_min_keep: number;
+  /**
    * v0.43 — relational recall arm. When on, a relational query ("who invested
    * in widget-co", "what connects fund-a and fund-b") resolves its seed
    * entity and walks the typed-edge graph, injecting edge-derived candidates
@@ -294,13 +337,14 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: 4000,
     expansion: false,
     searchLimit: 10,
     // v0.35.0.0+: reranker off — conservative is cost-sensitive; reranker
     // spend doesn't fit the tier's value prop.
     reranker_enabled: false,
-    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
     reranker_top_n_in: 30,
     reranker_top_n_out: null,
     reranker_timeout_ms: 5000,
@@ -309,6 +353,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -332,12 +377,15 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: false,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
   balanced: Object.freeze({
     cache_enabled: true,
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: 12000,
     expansion: false,
     searchLimit: 25,
@@ -350,7 +398,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // return input order unchanged. Opt out with
     // `gbrain config set search.reranker.enabled false`.
     reranker_enabled: true,
-    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
     // v0.42.3.0 D4: topNIn = searchLimit (25) so the cross-encoder scores
     // every result the limit slice will return — no unscored tail for autocut
     // to wrongly drop (Codex #2). Was 30; tracking searchLimit is the
@@ -363,6 +411,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -390,12 +439,15 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
     cache_similarity_threshold: 0.92,
     cache_ttl_seconds: 3600,
     intentWeighting: true,
+    keywordOrFallback: true,
     tokenBudget: undefined,
     expansion: true,
     searchLimit: 50,
@@ -405,7 +457,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // their fee. ~$0.0003/query at this shape; rounding error vs the
     // tier's $700/mo @ Opus pairing per CLAUDE.md cost matrix.
     reranker_enabled: true,
-    reranker_model: 'zeroentropyai:zerank-2',
+    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
     // v0.42.3.0 D4: topNIn = searchLimit (50) so every returned result is
     // cross-encoder scored — closes the Codex #2 recall gap where autocut
     // would drop the deliberately-preserved un-reranked tail (results 31-50).
@@ -418,6 +470,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     floor_ratio: undefined,
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
+    evidence_cosine_floor: 0.8,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -441,6 +494,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
     autocut_jump: 0.2,
+    autocut_min_top: 0.35,
+    autocut_min_keep: 1,
   }),
 });
 
@@ -460,6 +515,7 @@ export interface SearchKeyOverrides {
   cache_similarity_threshold?: number;
   cache_ttl_seconds?: number;
   intentWeighting?: boolean;
+  keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
@@ -476,6 +532,8 @@ export interface SearchKeyOverrides {
   floor_ratio?: number;
   // T2 — title-phrase boost override.
   title_boost?: number;
+  // v0.46.15 — evidence cosine-floor override (label-only; not in knobsHash).
+  evidence_cosine_floor?: number;
   // v0.36 cross-modal overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -495,6 +553,8 @@ export interface SearchKeyOverrides {
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
   autocut_jump?: number;
+  autocut_min_top?: number;
+  autocut_min_keep?: number;
 }
 
 /**
@@ -509,6 +569,7 @@ export interface SearchPerCallOpts {
   cache_similarity_threshold?: number;
   cache_ttl_seconds?: number;
   intentWeighting?: boolean;
+  keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
   searchLimit?: number;
@@ -522,6 +583,8 @@ export interface SearchPerCallOpts {
   floor_ratio?: number;
   // T2 — title-phrase boost per-call override.
   title_boost?: number;
+  // v0.46.15 — evidence cosine-floor per-call override.
+  evidence_cosine_floor?: number;
   // v0.36 cross-modal per-call overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -541,6 +604,8 @@ export interface SearchPerCallOpts {
   // numeric per-call knob threaded through the bundle.
   autocut?: boolean;
   autocut_jump?: number;
+  autocut_min_top?: number;
+  autocut_min_keep?: number;
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
@@ -609,6 +674,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     cache_similarity_threshold: pick('cache_similarity_threshold'),
     cache_ttl_seconds: pick('cache_ttl_seconds'),
     intentWeighting: pick('intentWeighting'),
+    keywordOrFallback: pick('keywordOrFallback'),
     tokenBudget: pick('tokenBudget'),
     expansion: pick('expansion'),
     searchLimit: pick('searchLimit'),
@@ -620,6 +686,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.35.6.0 — floor-ratio resolved via the same pick chain.
     floor_ratio: pick('floor_ratio'),
     title_boost: pick('title_boost'),
+    evidence_cosine_floor: pick('evidence_cosine_floor'),
     // v0.36 cross-modal knobs
     cross_modal_both_text_weight: pick('cross_modal_both_text_weight'),
     cross_modal_both_image_weight: pick('cross_modal_both_image_weight'),
@@ -636,6 +703,8 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.42.3.0 — autocut resolved via the same pick chain.
     autocut: pick('autocut'),
     autocut_jump: pick('autocut_jump'),
+    autocut_min_top: pick('autocut_min_top'),
+    autocut_min_keep: pick('autocut_min_keep'),
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
@@ -805,7 +874,82 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // degraded:[{stage:'cache_prestamp'}] at hit time (belt-and-braces).
 // (Merge note: both this wave and master's #3515 wave claimed v=16 in
 // flight; the merge sequences them as 16 then 17.)
-export const KNOBS_HASH_VERSION = 17;
+//
+// bump 18→19 (#3621): `ack=` (autocut minKeep floor) joins the key. The
+// floor changes how many rows survive the cut, so a minKeep=1 write
+// (trimmed to the cliff) must NOT be served to a minKeep=6 lookup (which
+// expects the floor) — same contamination class as ac=/acj=. The PR
+// authored this as v=16; master had already reached 18, so it sequences
+// here per the D8 convention. Same one-time global cold-miss pattern.
+//
+// bump 19→20 (#3002): pre-fusion pool floor. hybridSearch's innerLimit
+// gains a floor (PRE_FUSION_POOL_FLOOR=50, and at least offset+limit), so
+// every recall arm fetches a wider candidate pool at small limits — same
+// knobs, different result set. A cache row written under the old limit*2
+// pool math must NOT be served post-upgrade.
+//
+// bump 20→21 (#895): recency DEFAULT_FALLBACK coefficient lowered 0.5→0.3
+// (recency-decay.ts) so unmapped notes can't out-boost entity pages under
+// --recency. A compile-time constant, not a per-call knob, but it reorders
+// every recency-weighted result set, so pre-fix cache rows must become
+// unreachable. Both bumps ship in the same release; no new key parts —
+// the version bump alone invalidates. Same one-time global cold-miss
+// pattern as the bumps above; refills within cache.ttl_seconds (3600s).
+//
+// bump 21→22 (mw2 wave): result-affecting stamp/injection changes for
+// identical knobs — #1663 exact-lookup injection, #3995 relational page-1
+// evidence slot, #3783 keyword_hit stamps, #4220 status. Pre-upgrade rows
+// (≤1h TTL) would be served missing the injected identity page + honesty
+// stamps, and CRAG then mis-grades them weak_semantic. Version-only
+// invalidation; one-time cold-miss spike on upgrade.
+//
+// bump 22→23 folds excludePrivate (#4352): the private-visibility posture
+// joins the key via ctx.excludePrivate (xp=). #4352 originally shipped a
+// wholesale cache skip for excludePrivate=true — but that posture is the
+// DEFAULT for every remote MCP caller, so the skip disabled the semantic
+// cache for exactly the highest-volume beneficiaries. Folding it instead
+// means cache rows written with private rows included can never serve a
+// private-excluding lookup and vice versa, and remote callers get their
+// ~50% cache savings back. Same contamination class as detail (v=16) and
+// hardExcludes (v=12); same one-time global cold-miss pattern as the bumps
+// above, refills within cache.ttl_seconds (3600s default).
+//
+// bump 23→24 (#4358 residual): hybrid.ts's `pagedRequest` skip-cache gate
+// only bypassed the cache for offset>0 (the #4368 wave absorbed the
+// positive-offset half of the original #4358 fix, which used `!== 0`, as
+// `> 0`). A negative offset re-slices an already-sliced stored page just as
+// badly as a positive one, and — since offset isn't part of this hash — a
+// negative-offset request could read OR write the same cache row an
+// offset=0 (or any other offset) request shares. Any row written while that
+// gap was live may hold a wrong page under a knobsHash a clean request can
+// still reach. No new key part; the bump alone invalidates (the PR authored
+// this as v=22; master had already reached 23, so it sequences here per the
+// D8 convention). Same one-time global cold-miss pattern as the bumps
+// above; refills within cache.ttl_seconds (3600s).
+//
+// bump 24→25 (#3617): `kof=` (keyword AND→OR fallback knob) joins the key.
+// The PR authored this as 23→24, but 24 was claimed by the negative-offset
+// bump above while it was open, so it takes the next free number per the D8
+// convention. Same one-time global cold-miss pattern as the bumps above.
+//
+// bump 25→26 folds salience/recency + intent_patterns (#4415) — wave-g. Three
+// new ctx parts:
+//   sal=/rec= — the EFFECTIVE per-call salience/recency modes (explicit
+//     SearchOpts ?? auto-suggested, resolved by the same chain bare
+//     hybridSearch uses — see hybrid.ts resolveEffectiveSalience/
+//     resolveEffectiveRecency). #4415 extended the per-call knobs to the
+//     default MCP `search` surface, so a salience:'strong' write (reordered
+//     result set) could be served to a salience:'off' lookup of the same
+//     query for the whole TTL — same contamination class as det= (v=16).
+//   ipat= — fingerprint of the applied `search.intent_patterns` config.
+//     The patterns change classification (intent weights + auto salience/
+//     recency/detail) and therefore results; without the fold, a config
+//     edit kept serving old-classification rows for up to the TTL.
+// Same one-time global cold-miss pattern as the bumps above; refills
+// within cache.ttl_seconds (3600s default). (Authored as 23→24 on the
+// wave-g branch; 24 and 25 were claimed by the two bumps above while it
+// was in flight, so it takes the next free number per the D8 convention.)
+export const KNOBS_HASH_VERSION = 26;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -855,6 +999,38 @@ export interface KnobsHashContext {
    * as col=/prov=. Undefined falls back to 'medium' (the documented default).
    */
   detail?: 'low' | 'medium' | 'high';
+  /**
+   * v=23 (#4352 follow-up): the private-visibility posture for this call.
+   * `excludePrivate=true` (the default for every remote MCP caller) filters
+   * `visibility: private` pages out of every recall arm, so the result set
+   * differs from a trusted private-included run. Lives in ctx (not
+   * ResolvedSearchKnobs) because it's per-call trust posture, not a mode
+   * knob — same path as detail/hardExcludes. Undefined hashes like `false`
+   * (private included), matching enforcement's strict `=== true` semantics.
+   */
+  excludePrivate?: boolean;
+  /**
+   * v=24 (#4415, wave-g): the EFFECTIVE salience/recency boost modes for
+   * this call — per-call SearchOpts, or the classifier's auto-suggestion
+   * when the caller didn't specify (hybridSearchCached resolves them with
+   * the same chain bare hybridSearch uses). Both reorder the post-fusion
+   * result set, so a 'strong' write must never serve an 'off' lookup.
+   * Undefined falls back to 'off' (the classifier's default for unmatched
+   * queries) so legacy callers hash stably.
+   */
+  salience?: 'off' | 'on' | 'strong';
+  recency?: 'off' | 'on' | 'strong';
+  /**
+   * v=24 (#4415, wave-g): fingerprint of the applied `search.intent_patterns`
+   * config (query-intent.ts intentPatternFingerprint — 'none' when unset).
+   * The patterns change classification (intent weights + auto salience/
+   * recency/detail) and therefore results; folding the fingerprint makes a
+   * config edit invalidate immediately instead of after the TTL. Threaded
+   * through ctx (not read process-globally like fts=) because the applied
+   * config is PER ENGINE (wave-g) — a process-global read would key one
+   * brain's rows under another brain's patterns in a multi-engine process.
+   */
+  intentPatterns?: string;
 }
 
 export function knobsHash(
@@ -934,6 +1110,10 @@ export function knobsHash(
     // etc.) so a partial-knobs caller (tests passing a minimal literal) can't
     // crash the hash. Typed callers always carry the field.
     `acj=${(knobs.autocut_jump ?? 0.2).toFixed(2)}`,
+    // v=18 addition (v0.46.15 #1863, append-only): weak-top floor. A floored
+    // write (full cluster kept on a weak top) must not be served to an
+    // unfloored lookup and vice versa — the kept set differs.
+    `acm=${(knobs.autocut_min_top ?? 0.35).toFixed(2)}`,
     // v=10 additions (v0.43, append-only): relational recall arm. A
     // relational-on write (edge-seeded result set) must NOT be served to a
     // relational-off lookup — same contamination class as graph_signals. The
@@ -963,6 +1143,36 @@ export function knobsHash(
     // a low write (compiled-truth-only set) must never be served to a
     // medium/high lookup. Undefined falls back to 'medium' (the default).
     `det=${ctx?.detail ?? 'medium'}`,
+    // v=19 addition (#3621, append-only): autocut minKeep floor. Changing the
+    // floor changes how many rows survive the cut, so a write under one floor
+    // must not serve a lookup under another — same contamination class as
+    // ac=/acj=. Token is `ack=`, not the PR's original `acm=`: master's
+    // weak-top floor (v=18) already owns `acm=`. `?? 1` mirrors the defensive
+    // read of acj= above for partial-knobs callers.
+    `ack=${Math.max(1, Math.floor(knobs.autocut_min_keep ?? 1))}`,
+    // v=23 addition (#4352 follow-up, append-only): private-visibility
+    // posture. A private-included (trusted) write must never serve a
+    // private-excluding (remote-default) lookup and vice versa. Replaces
+    // #4352's wholesale skipCache bypass, which disabled the semantic cache
+    // for every remote MCP caller (excludePrivate=true is their default).
+    // Strict `=== true` mirrors the enforcement predicate so undefined and
+    // false (both private-included) hash identically.
+    `xp=${ctx?.excludePrivate === true ? 1 : 0}`,
+    // v=25 addition (#3617, append-only): keyword AND→OR fallback knob. A
+    // fallback-on write (OR-relaxed rows blended in) must not be served
+    // to a fallback-off lookup — the zero-strict-recall result sets are
+    // disjoint (relaxed rows vs empty keyword arm). `?? true` mirrors the
+    // module's defensive read of other knobs for partial-knobs callers.
+    `kof=${(knobs.keywordOrFallback ?? true) ? 1 : 0}`,
+    // v=26 additions (#4415, wave-g, append-only): effective salience/
+    // recency boost modes + applied intent-pattern config fingerprint. A
+    // salience/recency-boosted (reordered) write must never serve a lookup
+    // under different modes, and a `search.intent_patterns` edit changes
+    // classification → results, so it must change the key. 'off'/'none'
+    // fallbacks keep legacy callers stable.
+    `sal=${ctx?.salience ?? 'off'}`,
+    `rec=${ctx?.recency ?? 'off'}`,
+    `ipat=${ctx?.intentPatterns ?? 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1000,6 +1210,10 @@ export function loadOverridesFromConfig(
   const iw = get('search.intentWeighting');
   if (iw !== undefined) {
     out.intentWeighting = iw === '1' || iw.toLowerCase() === 'true';
+  }
+  const kof = get('search.keywordOrFallback');
+  if (kof !== undefined) {
+    out.keywordOrFallback = kof === '1' || kof.toLowerCase() === 'true';
   }
   const tb = get('search.tokenBudget');
   if (tb !== undefined) {
@@ -1068,6 +1282,14 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 1.0 && n <= 5.0) out.title_boost = n;
   }
 
+  // v0.46.15 — evidence cosine floor (label-only knob; deliberately not in
+  // knobsHash). [0, 1] sanity-bounded.
+  const ecf = get('search.evidence_cosine_floor');
+  if (ecf !== undefined) {
+    const n = parseFloat(ecf);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.evidence_cosine_floor = n;
+  }
+
   // v0.36 cross-modal overrides (D3 registry)
   const cmbt = get('search.cross_modal.both_mode_text_weight');
   if (cmbt !== undefined) {
@@ -1129,6 +1351,21 @@ export function loadOverridesFromConfig(
     const n = parseFloat(acj);
     if (Number.isFinite(n) && n > 0 && n <= 1) out.autocut_jump = n;
   }
+  // v0.46.15 (#1863) — weak-top floor. [0, 1]; 0 disables the floor.
+  const acm = get('search.autocut_min_top');
+  if (acm !== undefined) {
+    const n = parseFloat(acm);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) out.autocut_min_top = n;
+  }
+
+  // `search.autocut_min_keep` floors the cut (integer ≥ 1; 1 = the previous
+  // hardcoded failsafe). Out-of-range/non-numeric falls through to the bundle
+  // — mirrors autocutFromConfig's validation in autocut.ts.
+  const ack = get('search.autocut_min_keep');
+  if (ack !== undefined) {
+    const n = parseInt(ack, 10);
+    if (Number.isFinite(n) && n >= 1) out.autocut_min_keep = n;
+  }
 
   // v0.43 — relational recall arm.
   const rel = get('search.relational_retrieval');
@@ -1150,6 +1387,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.cache.similarity_threshold',
   'search.cache.ttl_seconds',
   'search.intentWeighting',
+  'search.keywordOrFallback',
   'search.tokenBudget',
   'search.expansion',
   'search.searchLimit',
@@ -1162,6 +1400,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   // v0.35.6.0 — floor-ratio gate
   'search.floor_ratio',
   'search.title_boost',
+  'search.evidence_cosine_floor',
   // v0.36 cross-modal keys (D3)
   'search.cross_modal.both_mode_text_weight',
   'search.cross_modal.both_mode_image_weight',
@@ -1183,6 +1422,8 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.relational_retrieval',
   'search.relational_retrieval_depth',
   'search.autocut_jump',
+  'search.autocut_min_top',
+  'search.autocut_min_keep',
 ]);
 
 /**

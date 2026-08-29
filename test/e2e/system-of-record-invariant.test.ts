@@ -43,6 +43,8 @@ import { runExtractCore } from '../../src/commands/extract.ts';
 import { extractTakes } from '../../src/core/cycle/extract-takes.ts';
 import { runExtractFacts } from '../../src/core/cycle/extract-facts.ts';
 import { parseFactsFence, stripFactsFence } from '../../src/core/facts-fence.ts';
+import { operationsByName } from '../../src/core/operations.ts';
+import type { OperationContext } from '../../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -344,6 +346,117 @@ ${remoteBody}`, { noEmbed: true, sourceId: 'default', remote: true });
     const after = await engine.getPage(slug, { sourceId: 'default' });
     expect(after?.compiled_truth).toContain('PRIVATE_ONLY_FACT');
     expect(parseFactsFence(after?.compiled_truth ?? '').facts).toHaveLength(1);
+  });
+
+  // #3625 escalation: splitBody() routes a `## Facts` fence placed below the
+  // timeline sentinel into page.timeline instead of compiled_truth. The
+  // get_page strip trigger above only covered compiled_truth, so an
+  // untrusted remote caller could read a private fence row verbatim via the
+  // `timeline` field. Exercises the real get_page operation handler (not
+  // just the stripFactsFence helper) with ctx.remote=true.
+  test('a below-sentinel facts fence in page.timeline is stripped for untrusted remote readers too', async () => {
+    const slug = 'people/timeline-fence-leak';
+    await engine.putPage(slug, {
+      title: 'Timeline Fence Leak',
+      type: 'person',
+      compiled_truth: '# Timeline Fence Leak\n\nSome text.\n\n<!-- timeline -->\n',
+      frontmatter: {},
+      timeline: `## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | WORLD_TIMELINE_ROW | fact | 1.0 | world | high | 2026-01-01 |  | s |  |
+| 2 | PRIVATE_TIMELINE_ROW | fact | 1.0 | private | high | 2026-01-01 |  | s |  |
+<!--- gbrain:facts:end -->
+`,
+    });
+
+    const ctx = { engine, remote: true, sourceId: 'default' } as unknown as OperationContext;
+    const remote = await operationsByName.get_page.handler(ctx, { slug }) as { timeline?: string };
+    expect(remote.timeline).toContain('WORLD_TIMELINE_ROW');
+    expect(remote.timeline).not.toContain('PRIVATE_TIMELINE_ROW');
+
+    // Local CLI callers still see the full fence, unaffected by the strip.
+    const local = await operationsByName.get_page.handler(
+      { engine, remote: false, sourceId: 'default' } as unknown as OperationContext,
+      { slug },
+    ) as { timeline?: string };
+    expect(local.timeline).toContain('PRIVATE_TIMELINE_ROW');
+  });
+
+  // #3625, real splitBody() path (not a hand-built post-split fixture): a
+  // page authored with the `## Facts` fence below `<!-- timeline -->` — the
+  // LLM-composed shape the issue describes — imported through the actual
+  // production write path (importFromContent → parseMarkdown → splitBody).
+  test('a fence written below the sentinel really does land in page.timeline via splitBody, and extract_facts preserves the existing index instead of wiping it', async () => {
+    const slug = 'people/real-split-fence';
+    const fenceRows = `| 1 | REAL_SPLIT_FACT | fact | 1.0 | world | high | 2026-01-01 |  | s |  |`;
+
+    // v1: fence correctly placed above the sentinel — reconciles normally.
+    await importFromContent(engine, slug, `---
+type: person
+title: Real Split Fence
+slug: ${slug}
+---
+
+# Real Split Fence
+
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+${fenceRows}
+<!--- gbrain:facts:end -->
+
+<!-- timeline -->
+`, { noEmbed: true, sourceId: 'default' });
+
+    const seeded = await engine.getPage(slug, { sourceId: 'default' });
+    expect(seeded?.compiled_truth).toContain('gbrain:facts:begin');
+    await runExtractFacts(engine, { slugs: [slug] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seededRows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = $1`, [slug],
+    );
+    expect(seededRows.rows.map((r: { fact: string }) => r.fact)).toEqual(['REAL_SPLIT_FACT']);
+
+    // v2: same fence, moved below the sentinel — the LLM-composed shape.
+    await importFromContent(engine, slug, `---
+type: person
+title: Real Split Fence
+slug: ${slug}
+---
+
+# Real Split Fence
+
+<!-- timeline -->
+
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+${fenceRows}
+<!--- gbrain:facts:end -->
+`, { noEmbed: true, sourceId: 'default' });
+
+    // Prove splitBody really did route it to timeline, not compiled_truth —
+    // the premise this whole fix rests on.
+    const moved = await engine.getPage(slug, { sourceId: 'default' });
+    expect(moved?.compiled_truth ?? '').not.toContain('gbrain:facts:begin');
+    expect(moved?.timeline ?? '').toContain('gbrain:facts:begin');
+
+    const r = await runExtractFacts(engine, { slugs: [slug] });
+    expect(r.warnings.some(w => w.includes('FACTS_FENCE_BELOW_SENTINEL'))).toBe(true);
+    expect(r.factsDeleted).toBe(0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const afterRows = await (engine as any).db.query(
+      `SELECT fact FROM facts WHERE source_markdown_slug = $1`, [slug],
+    );
+    expect(afterRows.rows.map((r: { fact: string }) => r.fact)).toEqual(['REAL_SPLIT_FACT']);
   });
 });
 

@@ -1067,6 +1067,161 @@ describe('addSource --path — #2707 git-repo validation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// addSource --path — #3903 attach path to an existing path-less source
+//
+// `gbrain sync --source X` on a no-local_path source prints
+// "Run: gbrain sources add X --path <path>", but addSource used to throw
+// source_id_taken for ANY existing id — the only recovery it offered was
+// `sources remove --confirm-destructive`, which cascades page deletion.
+// Attaching a local_path to an existing row with local_path IS NULL is
+// non-destructive and is exactly what the sync hint promises.
+//
+// Runs OUTSIDE withEnv2 (real system git) because the attach path reuses the
+// #2707 git validation, which the fake-git harness defeats.
+// ---------------------------------------------------------------------------
+
+describe('addSource --path — #3903 attach to existing path-less source', () => {
+  const SANDBOX = join(tmpdir(), `gbrain-3903-attach-${process.pid}`);
+
+  function makeGitRepo(name: string): string {
+    const dir = join(SANDBOX, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'README.md'), '# fixture');
+    execFileSync('git', ['-C', dir, 'init', '-q']);
+    execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
+    execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+    execFileSync('git', ['-C', dir, 'add', '-A']);
+    execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'initial import']);
+    return dir;
+  }
+
+  beforeEach(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+    mkdirSync(SANDBOX, { recursive: true });
+  });
+  afterAll(() => {
+    rmSync(SANDBOX, { recursive: true, force: true });
+  });
+
+  test('attach happy path: NULL local_path + --path updates the row, keeps config', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('attach-me', 'Attach Me', NULL, '{"federated":true}'::jsonb)`,
+    );
+    const gitDir = makeGitRepo('attach-happy');
+    const row = await addSource(engine, { id: 'attach-me', localPath: gitDir });
+    expect(row.id).toBe('attach-me');
+    expect(row.local_path).toBe(gitDir);
+    // Attach is an UPDATE, not a re-INSERT: name + config survive.
+    expect(row.name).toBe('Attach Me');
+    expect((row.config as any).federated).toBe(true);
+  });
+
+  test('attach applies explicitly-passed --name and --federated (review: not silently dropped)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('attach-flags', 'Old Name', NULL, '{"federated":true,"other":"kept"}'::jsonb)`,
+    );
+    const gitDir = makeGitRepo('attach-flags');
+    const row = await addSource(engine, {
+      id: 'attach-flags',
+      localPath: gitDir,
+      name: 'New Name',
+      federated: false, // explicit false must override the stored true
+    });
+    expect(row.local_path).toBe(gitDir);
+    expect(row.name).toBe('New Name');
+    expect((row.config as any).federated).toBe(false);
+    // Merge, not replace: unrelated config keys survive the attach.
+    expect((row.config as any).other).toBe('kept');
+  });
+
+  test('attach still runs the #2707 git validation (not_a_git_repo unless --force)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('attach-plain', 'x', NULL, '{}'::jsonb)`,
+    );
+    const plainDir = join(SANDBOX, 'plain-attach');
+    mkdirSync(plainDir, { recursive: true });
+
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'attach-plain', localPath: plainDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('not_a_git_repo');
+    // Row untouched (local_path still NULL).
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = 'attach-plain'`,
+    );
+    expect(rows[0]?.local_path).toBeNull();
+
+    // --force attaches anyway (same escape hatch as fresh registration).
+    const row = await addSource(engine, { id: 'attach-plain', localPath: plainDir, force: true });
+    expect(row.local_path).toBe(plainDir);
+  });
+
+  test('attach runs the overlap check against other sources', async () => {
+    const gitDir = makeGitRepo('overlap-owner');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('overlap-owner', 'overlap-owner', $1, '{}'::jsonb)`,
+      [gitDir],
+    );
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('attach-overlap', 'attach-overlap', NULL, '{}'::jsonb)`,
+    );
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'attach-overlap', localPath: gitDir });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('overlapping_path');
+  });
+
+  test('taken-WITH-path still throws, and the message warns remove deletes pages', async () => {
+    const gitDir = makeGitRepo('already-pathed');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('has-path', 'x', $1, '{}'::jsonb)`,
+      [gitDir],
+    );
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, { id: 'has-path', localPath: join(SANDBOX, 'elsewhere') });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('source_id_taken');
+    expect(threw?.message).toMatch(/deletes every page/i);
+  });
+
+  test('NULL local_path + --url does NOT attach (still source_id_taken)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config)
+         VALUES ('attach-url', 'x', NULL, '{}'::jsonb)`,
+    );
+    let threw: SourceOpError | undefined;
+    try {
+      await addSource(engine, {
+        id: 'attach-url',
+        remoteUrl: 'https://github.com/example/repo',
+      });
+    } catch (e) {
+      threw = e as SourceOpError;
+    }
+    expect(threw).toBeInstanceOf(SourceOpError);
+    expect(threw?.code).toBe('source_id_taken');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isPathContained — symlink-safe confinement helper (exported for reuse)
 // ---------------------------------------------------------------------------
 
@@ -1105,5 +1260,53 @@ describe('isPathContained', () => {
 
   test('returns false for missing paths (fail-closed)', () => {
     expect(isPathContained(join(SANDBOX, 'never'), SANDBOX)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.46 github-kind source registration (Path C in addSource): a fresh mirror
+// is federated by default so unqualified search/query span it, unless the
+// caller explicitly passes federated:false.
+// ---------------------------------------------------------------------------
+
+describe('addSource github kind', () => {
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
+  async function addGithubSource(federated?: boolean | null) {
+    const ghDir = join(CLONE_ROOT, 'ghsrc-github');
+    await addSource(engine, {
+      id: 'ghsrc',
+      ...(federated !== undefined ? { federated } : {}),
+      github: {
+        tokenEnv: 'GH_TOKEN',
+        handle: 'example-handle',
+        scope: 'repos',
+        repos: ['example/repo'],
+        dir: ghDir,
+        involvement: false,
+      },
+    });
+    const rows = await engine.executeRaw<{ config: unknown }>(
+      `SELECT config FROM sources WHERE id = 'ghsrc'`,
+    );
+    return rows[0]?.config as Record<string, unknown>;
+  }
+
+  test('defaults to federated:true (searchable alongside the vault)', async () => {
+    const config = await addGithubSource();
+    expect(config.federated).toBe(true);
+  });
+
+  test('explicit federated:false opts out of unqualified reads', async () => {
+    const config = await addGithubSource(false);
+    expect(config.federated).toBe(false);
+  });
+
+  test('github mirror is not reported as a broken git clone', async () => {
+    await addGithubSource();
+    const status = await getSourceStatus(engine, 'ghsrc');
+    expect(status.clone_state).toBe('not-applicable');
   });
 });

@@ -77,7 +77,13 @@ interface PageRow {
   updated_at: string;
 }
 
-function parseFrontmatter(raw: unknown): Record<string, unknown> {
+/**
+ * Exported so callers outside this module (e.g. the doctor's
+ * `effective_date_health` check) can normalize a raw `pages.frontmatter`
+ * JSONB value the same way the backfill walk does, before feeding it to
+ * `computeEffectiveDate`.
+ */
+export function parseFrontmatter(raw: unknown): Record<string, unknown> {
   if (raw == null) return {};
   if (typeof raw === 'string') {
     try { return JSON.parse(raw) as Record<string, unknown>; }

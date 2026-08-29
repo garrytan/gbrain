@@ -20,6 +20,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   __setChatTransportForTests,
   __setEmbedTransportForTests,
+  configureGateway,
   resetGateway,
   type ChatResult,
 } from '../src/core/ai/gateway.ts';
@@ -323,8 +324,10 @@ describe('runExtractConversationFactsCore', () => {
   let repoDir: string;
   let chatFailure: Error | null = null;
   let chatHook: (() => Promise<void>) | null = null;
+  let mainChatCalls = 0;
   let chatStopReason: ChatResult['stopReason'] = 'end';
   let chatTextOverride: string | null = null;
+  let embeddedTexts: string[] = [];
   let fallbackCalls = 0;
   let fallbackContents: string[] = [];
   let fallbackControlError: Error | null = null;
@@ -378,6 +381,7 @@ describe('runExtractConversationFactsCore', () => {
           providerId: 'stub',
         };
       }
+      mainChatCalls++;
       if (chatFailure) throw chatFailure;
       const hook = chatHook;
       chatHook = null;
@@ -408,9 +412,10 @@ describe('runExtractConversationFactsCore', () => {
 
     // Deterministic embedding stub.
     __setEmbedTransportForTests(
-      (async () => ({
-        embeddings: [Array.from({ length: 1536 }, () => 0.1)],
-      })) as never,
+      (async ({ values }: { values: string[] }) => {
+        embeddedTexts.push(...values);
+        return { embeddings: values.map(() => Array.from({ length: 1536 }, () => 0.1)) };
+      }) as never,
     );
   });
 
@@ -425,8 +430,10 @@ describe('runExtractConversationFactsCore', () => {
   beforeEach(async () => {
     chatFailure = null;
     chatHook = null;
+    mainChatCalls = 0;
     chatStopReason = 'end';
     chatTextOverride = null;
+    embeddedTexts = [];
     fallbackCalls = 0;
     fallbackContents = [];
     fallbackControlError = null;
@@ -525,6 +532,60 @@ describe('runExtractConversationFactsCore', () => {
     expect(result.pages_processed).toBe(1);
     expect(result.facts_inserted).toBe(0);
     expect(result.segments_processed).toBeGreaterThanOrEqual(1);
+  });
+
+  test('historical backfill embeds and retains high, medium, low, and absent-tier facts', async () => {
+    // Regression target: passing high-only admission into the historical
+    // extractor call would suppress low (and absent-tier) facts before embed.
+    chatTextOverride = JSON.stringify({
+      facts: [
+        { fact: 'historical-high', kind: 'event', notability: 'high' },
+        { fact: 'historical-medium', kind: 'fact', notability: 'medium' },
+        { fact: 'historical-low', kind: 'fact', notability: 'low' },
+        { fact: 'historical-absent', kind: 'fact' },
+      ],
+    });
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'test' },
+    });
+    await engine.putPage('conversations/historical-tier-coverage', {
+      type: 'conversation',
+      title: 'Historical tier coverage',
+      compiled_truth: [
+        fmt('Alice Example', '2024-03-15', '9:00 AM', 'first message'),
+        fmt('Bob Demo', '2024-03-15', '9:05 AM', 'second message'),
+      ].join('\n'),
+      timeline: '',
+      frontmatter: {},
+    });
+
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/historical-tier-coverage',
+      sleepMs: 0,
+    });
+    const rows = await engine.executeRaw<{ fact: string; notability: string; has_embedding: boolean }>(
+      `SELECT fact, notability, embedding IS NOT NULL AS has_embedding
+       FROM facts WHERE source = $1 ORDER BY row_num`,
+      [PER_SEGMENT_SOURCE_PREFIX],
+    );
+
+    expect(result.facts_extracted).toBe(4);
+    expect(result.facts_inserted).toBe(4);
+    expect(embeddedTexts).toEqual([
+      'historical-high',
+      'historical-medium',
+      'historical-low',
+      'historical-absent',
+    ]);
+    expect(rows).toEqual([
+      { fact: 'historical-high', notability: 'high', has_embedding: true },
+      { fact: 'historical-medium', notability: 'medium', has_embedding: true },
+      { fact: 'historical-low', notability: 'low', has_embedding: true },
+      { fact: 'historical-absent', notability: 'medium', has_embedding: true },
+    ]);
   });
 
   test('dry-run does not write the extract_rollup_7d cache row', async () => {
@@ -681,6 +742,32 @@ describe('runExtractConversationFactsCore', () => {
     });
   });
 
+  test('extraction BudgetExhausted halts the run after one attempt (#3669)', async () => {
+    // Regression: extractFactsFromTurnWithOutcome folds a BudgetExhausted
+    // thrown by the provider into `{ ok: false, error }`; the per-segment
+    // failure branch used to wrap it in a plain Error, stripping the
+    // BUDGET_EXHAUSTED tag. The worker pool's D13 must-abort check never
+    // fired, so every remaining page burned a doomed reserve-denied attempt
+    // instead of the run halting with budget_exhausted = true.
+    chatFailure = new BudgetExhausted('reserve denied', {
+      reason: 'cost',
+      spent: 5,
+      cap: 5,
+    });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        sleepMs: 0,
+      });
+      // Halted-with-receipt, not a per-page failure loop: exactly ONE
+      // extraction attempt (not one per eligible page), and the partial
+      // result reports the budget stop.
+      expect(result.budget_exhausted).toBe(true);
+      expect(mainChatCalls).toBe(1);
+      expect(result.pages_failed).toBe(0);
+    });
+  });
+
   test('provider AbortError fails open while the caller signal is live', async () => {
     await engine.setConfig('conversation_parser.llm_fallback_enabled', 'true');
     fallbackControlError = Object.assign(new Error('provider timeout'), { name: 'AbortError' });
@@ -804,6 +891,58 @@ describe('runExtractConversationFactsCore', () => {
       [TERMINAL_AUDIT_SOURCE, `${TERMINAL_AUDIT_SOURCE}:conversations/imessage/alice-example:page-%`],
     );
     expect(Number(terminalRows[0]?.count ?? 0)).toBe(1);
+  });
+
+  test('canonicalizes a raw LLM entity display name before writing facts.entity_slug', async () => {
+    chatTextOverride = JSON.stringify({
+      facts: [{
+        fact: 'Alice Example signed the offer letter.',
+        kind: 'event',
+        entity: 'Alice Example',
+        confidence: 1.0,
+        notability: 'high',
+      }],
+    });
+
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+      `SELECT entity_slug FROM facts
+        WHERE source = $1 AND source_markdown_slug = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, 'conversations/imessage/alice-example'],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.entity_slug === 'people/alice-example')).toBe(true);
+  });
+
+  test('preserves an already-canonical LLM entity slug', async () => {
+    chatTextOverride = JSON.stringify({
+      facts: [{
+        fact: 'Alice Example started the new role.',
+        kind: 'event',
+        entity: 'people/alice-example',
+        confidence: 1.0,
+        notability: 'high',
+      }],
+    });
+
+    await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/imessage/alice-example',
+      sleepMs: 0,
+    });
+
+    const rows = await engine.executeRaw<{ entity_slug: string | null }>(
+      `SELECT entity_slug FROM facts
+        WHERE source = $1 AND source_markdown_slug = $2`,
+      [PER_SEGMENT_SOURCE_PREFIX, 'conversations/imessage/alice-example'],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((row) => row.entity_slug === 'people/alice-example')).toBe(true);
   });
 
   test('terminal outcome skips a completed page after checkpoint GC', async () => {
@@ -1357,5 +1496,144 @@ describe('runExtractConversationFactsCore', () => {
 describe('body cap constant (Eng A2)', () => {
   test('MAX_PAGE_BODY_BYTES is 25MB', () => {
     expect(MAX_PAGE_BODY_BYTES).toBe(25 * 1024 * 1024);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4136 — folded speaker headings: decline gate, counter, non-terminal skip.
+// Self-contained engine + transport (the main describe resets both in its
+// afterAll, so this block installs its own).
+// ---------------------------------------------------------------------------
+
+describe('#4136 folded speaker headings — decline gate is non-terminal', () => {
+  let engine: PGLiteEngine;
+
+  const FOLDED_BODY = [
+    '## User', '', 'What is the deploy command?', '',
+    '## Claude', '', 'Run the deploy script from the repo root.', '',
+    '## User', '', 'Thanks.',
+  ].join('\n');
+
+  const NOTES_BODY = [
+    '## User', '', 'Journal entry one.', '',
+    '## Notes', '', 'unfenced doc heading inside my own page', '',
+    '## User', '', 'Journal entry two.',
+  ].join('\n');
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+    await engine.setConfig('facts.extraction_enabled', 'true');
+    await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
+    __setChatTransportForTests(async (): Promise<ChatResult> => ({
+      text: '{"facts":[]}',
+      blocks: [{ type: 'text', text: '{"facts":[]}' }],
+      stopReason: 'end',
+      usage: { input_tokens: 5, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-4-5-20251001',
+      providerId: 'anthropic',
+    }));
+    await engine.putPage('conversations/folded-claude-example', {
+      type: 'conversation',
+      title: 'Folded transcript',
+      compiled_truth: FOLDED_BODY,
+      timeline: '',
+      frontmatter: { date: '2026-06-02' },
+    });
+    await engine.putPage('conversations/notes-journal-example', {
+      type: 'conversation',
+      title: 'Single-speaker journal with a Notes heading',
+      compiled_truth: NOTES_BODY,
+      timeline: '',
+      frontmatter: { date: '2026-06-02' },
+    });
+  });
+
+  afterAll(async () => {
+    __setChatTransportForTests(null);
+    resetGateway();
+    await engine.disconnect();
+  });
+
+  test('a folded speaker-shaped heading with degenerate speakers DECLINES: counter bumped, zero facts, NO durable audit row', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/folded-claude-example',
+      sleepMs: 0,
+    });
+    expect(result.pages_skipped_unrecognized_speaker).toBe(1);
+    expect(result.facts_inserted).toBe(0);
+    // The single highest-risk line (#4136): a decline must NOT write the
+    // EXTRACTION_NOT_APPLICABLE row — that row is versionToken-keyed and
+    // would skip the page forever, even after the parser learns the label.
+    expect(result.pages_marked_non_extractable).toBe(0);
+    const markers = await engine.executeRaw<{ count: string | number }>(
+      `SELECT COUNT(*) AS count FROM facts WHERE source = $1 AND source_session LIKE $2`,
+      [NON_EXTRACTABLE_AUDIT_SOURCE, `${NON_EXTRACTABLE_AUDIT_SOURCE}:conversations/folded-claude-example:%`],
+    );
+    expect(Number(markers[0]?.count ?? 0)).toBe(0);
+  });
+
+  test('RETRYABLE: a second run re-considers the declined page instead of short-circuiting at the outcome gate', async () => {
+    const second = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/folded-claude-example',
+      sleepMs: 0,
+    });
+    expect(second.pages_considered).toBe(1);
+    expect(second.pages_skipped_completed).toBe(0);
+    expect(second.pages_skipped_non_extractable).toBe(0);
+    expect(second.pages_skipped_unrecognized_speaker).toBe(1); // declined again — visibly, not silently
+  });
+
+  test('WARN-ONLY branch: a speaker-shaped fold BETWEEN alternating speakers proceeds with the stderr warn (residual risk, visible)', async () => {
+    await engine.putPage('conversations/folded-multispeaker-example', {
+      type: 'conversation',
+      title: 'Folded heading between alternating speakers',
+      compiled_truth: [
+        '## User', '', 'Question one?', '',
+        '## Assistant', '', 'Answer one.', '',
+        '## Claude', '', 'A folded reply.', '',
+        '## User', '', 'Question two?', '',
+        '## Assistant', '', 'Answer two.',
+      ].join('\n'),
+      timeline: '',
+      frontmatter: { date: '2026-06-02' },
+    });
+    const warns: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    (process.stderr as unknown as { write: (c: string) => boolean }).write = (c: string) => {
+      warns.push(String(c));
+      return origWrite(c);
+    };
+    try {
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default',
+        slug: 'conversations/folded-multispeaker-example',
+        sleepMs: 0,
+      });
+      // Speakers alternate (User + Assistant = 2 distinct) → NOT declined,
+      // extraction proceeds, and the warn names the folded label.
+      expect(result.pages_skipped_unrecognized_speaker).toBe(0);
+      expect(result.pages_processed).toBe(1);
+      expect(warns.some((w) => w.includes('folded unrecognized heading(s) [Claude]') && w.includes('proceeding'))).toBe(true);
+    } finally {
+      (process.stderr as unknown as { write: unknown }).write = origWrite;
+    }
+  });
+
+  test('NO REGRESSION: a single-speaker page with an unfenced doc heading (## Notes) is warn-only and still extracts', async () => {
+    const result = await runExtractConversationFactsCore(engine, {
+      sourceId: 'default',
+      slug: 'conversations/notes-journal-example',
+      sleepMs: 0,
+    });
+    // 'Notes' is stoplisted → not speaker-shaped → no decline, extraction
+    // proceeds through the normal pipeline (eng F3: the bare
+    // "non-empty + degenerate speakers" rule would have false-declined this).
+    expect(result.pages_skipped_unrecognized_speaker).toBe(0);
+    expect(result.pages_processed).toBe(1);
+    expect(result.segments_processed).toBeGreaterThanOrEqual(1);
   });
 });

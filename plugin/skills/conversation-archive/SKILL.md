@@ -71,8 +71,14 @@ procedure whenever the source is one of those six formats:
 ```
 gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
 gbrain transcripts ingest                                  # discover harness logs
+gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
 gbrain transcripts status                                  # found vs imported gaps
 ```
+
+`--max-bytes` note: the cap is part of the `--since last` checkpoint
+fingerprint — running with a different cap (or dropping it) starts a fresh
+watermark scope, so a capped run's skipped tail is never mistaken for
+already-scanned.
 
 Native-vs-manual delta to know: the native lane redacts SECRETS (key
 patterns) plus your `~/.gbrain/harvest-private-patterns.txt` regexes and
@@ -357,6 +363,13 @@ Evolution:
 
 ## Dedup (sharp boundaries)
 
+- **[chat-connectors](../chat-connectors/SKILL.md)** — the LIVE, account-connected
+  lane: connect a ChatGPT/Claude account and sync new conversations
+  automatically (cookie/OAuth, incremental watermark, scheduled). This skill owns
+  the EXPORT-FILE lane (a downloaded `conversations.json`) and ALL retrieval/
+  tracing. Route "connect my chatgpt / keep my conversations synced" there;
+  route "I downloaded my export" / "when did I first discuss X" here. Perplexity
+  (no live connector) uses this skill's manual conversion.
 - **[voice-note-ingest](../voice-note-ingest/SKILL.md)** — audio. Voice
   memos and audio messages route there (transcription + exact-phrasing
   filing). This skill handles text chat exports and session logs.

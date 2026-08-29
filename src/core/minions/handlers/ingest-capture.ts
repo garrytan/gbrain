@@ -37,11 +37,16 @@ import { importFromContent } from '../../import-file.ts';
 
 export interface IngestCaptureResult {
   slug: string;
-  status: 'imported' | 'skipped' | 'error';
+  status: 'imported' | 'skipped' | 'deleted' | 'error';
   chunks: number;
   untrusted_payload: boolean;
   source_kind: string;
   source_uri: string;
+  source_fallback?: {
+    requested: string;
+    effective: 'default';
+    reason: 'not_registered' | 'archived' | 'fk_violation';
+  };
 }
 
 /** Builds the default slug for an event when the caller didn't provide one. */
@@ -55,7 +60,7 @@ export function defaultSlugForEvent(event: IngestionEvent, now: Date = new Date(
 
 export function makeIngestCaptureHandler(engine: BrainEngine) {
   return async function ingestCaptureHandler(job: MinionJobContext): Promise<IngestCaptureResult> {
-    const data = job.data as { event?: unknown; slug?: unknown };
+    const data = job.data as { event?: unknown; slug?: unknown; sourceId?: unknown };
     const event = data.event as IngestionEvent | undefined;
     if (!event) {
       throw new Error('ingest_capture: job.data.event is required');
@@ -65,10 +70,14 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       throw new Error(`ingest_capture: invalid event payload: ${validationErr.message}`);
     }
 
-    // Slug resolution.
+    // Slug resolution. #3756 added the top-level event.slug (required for
+    // tombstones, optional upsert hint) between the caller-provided job slug
+    // and the legacy metadata.slug channel.
     let slug: string;
     if (typeof data.slug === 'string' && data.slug.length > 0) {
       slug = data.slug;
+    } else if (typeof event.slug === 'string' && event.slug.length > 0) {
+      slug = event.slug;
     } else if (
       event.metadata &&
       typeof (event.metadata as Record<string, unknown>).slug === 'string'
@@ -94,7 +103,26 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       event.content_type === 'application/json' ||
       event.content_type === 'unknown';
 
-    if (!isText) {
+    // #3756: tombstones carry no importable content — they name a page to
+    // delete. Content-type gating below is an import concern; skip it.
+    const isTombstone = event.kind === 'tombstone';
+
+    if (isTombstone && event.untrusted_payload !== false) {
+      // Trusted-source gate: an untrusted channel (webhook payload, URL
+      // fetcher) must never be able to delete pages. FAIL-CLOSED: deletes
+      // require the EXPLICIT trusted marker (untrusted_payload: false) —
+      // rejecting only `=== true` left an omitted flag treated as trusted,
+      // so any emitter that forgot the field could tombstone pages. Fail
+      // the job loud so the attempt is visible in the jobs ledger, not
+      // silently dropped.
+      throw new Error(
+        'ingest_capture: refusing tombstone without an explicit trusted marker — ' +
+          'deletes are only honored from trusted local emitters that set ' +
+          'untrusted_payload: false on the event',
+      );
+    }
+
+    if (!isText && !isTombstone) {
       // Binary content without a processor would land as a path-string
       // page, which isn't useful. Surface as job-level error so the
       // operator sees the gap in `gbrain doctor` and can decide whether
@@ -113,22 +141,54 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     // by passing { noEmbed: false } in job.data.
     const noEmbed = (data as { noEmbed?: unknown }).noEmbed !== false;
 
-    // #1522: thread the validated event's provenance into the page write
-    // instead of dropping it on the floor. source_kind / source_uri are
-    // pure provenance strings (no scoping power) and persist
-    // unconditionally via importFromContent's putPage write-through.
+    // Write-source resolution — two distinct paths, kept separate on purpose.
     //
-    // event.source_id is the emitter's IngestionSource instance id, NOT
-    // necessarily a registered brain source (the webhook path fabricates
-    // `webhook-<clientId>`, which pages.source_id's FK would reject). It
-    // routes the page write only when BOTH hold:
-    //   - the event is trusted (fail-closed: an untrusted webhook payload
-    //     carries a caller-controlled x-gbrain-source-id header and must
-    //     not get to choose its write source), AND
-    //   - the id names a registered source row.
-    // Otherwise the write keeps the pre-fix default-source routing.
+    //   1. job.data.sourceId — the server-resolved write source. The webhook
+    //      route sets it from authInfo.sourceId (never from a request header),
+    //      so it is not caller-chosen on that path. NOTE it is not structurally
+    //      confined to that producer: `ingest_capture` is absent from
+    //      PROTECTED_JOB_NAMES, so an admin-scoped `submit_job` can also set it
+    //      (as it can already forge event.source_id on path 2). Validated here
+    //      against a LIVE (non-archived) sources row; on a miss we fall back to
+    //      the default source AND report it via source_fallback (+ a stderr
+    //      warning) so the miss is observable.
+    //   2. event.source_id — the daemon / non-webhook emitter path (#1522):
+    //      used iff it names a registered source row, silent fallback to default
+    //      otherwise. Deliberately NOT archived-filtered and NOT reported, so
+    //      daemon steady-state behavior stays byte-identical (an unregistered
+    //      emitter id is normal there, not worth a per-capture warning). A source
+    //      that vanishes mid-write is still caught by the FK-violation retry
+    //      below (never-lose) regardless of path.
     let sourceId: string | undefined;
-    if (!untrustedPayload) {
+    let sourceFallback: IngestCaptureResult['source_fallback'];
+    const trustedSourceId =
+      typeof data.sourceId === 'string' && data.sourceId.length > 0
+        ? data.sourceId
+        : undefined;
+    if (trustedSourceId && trustedSourceId !== 'default') {
+      // `archived` reads as a real JS boolean on both engines; match the
+      // established idiom at sources-ops.ts:784 (`?.archived === true`).
+      //
+      // This read is outside the write transaction, so a source archived in the
+      // gap still has its row and the write's FK succeeds: the capture lands in
+      // a just-archived source (search hides archived sources) and reports no
+      // fallback. Deliberately not locked — archiving is an operator action with
+      // a recovery window, the page is recoverable by un-archiving, and taking a
+      // row lock on `sources` for every capture would serialize ingestion behind
+      // it. Deletion, the destructive case, IS covered by the FK retry below.
+      const rows = await engine.executeRaw<{ id: string; archived: boolean | null }>(
+        `SELECT id, archived FROM sources WHERE id = $1`,
+        [trustedSourceId],
+      );
+      if (rows.length === 0) {
+        sourceFallback = { requested: trustedSourceId, effective: 'default', reason: 'not_registered' };
+      } else if (rows[0]?.archived === true) {
+        sourceFallback = { requested: trustedSourceId, effective: 'default', reason: 'archived' };
+      } else {
+        sourceId = trustedSourceId;
+      }
+    } else if (!untrustedPayload && event.source_id && event.source_id !== 'default') {
+      // #1522 daemon path, unchanged: register-and-use, silent default fallback.
       const rows = await engine.executeRaw<{ id: string }>(
         `SELECT id FROM sources WHERE id = $1`,
         [event.source_id],
@@ -136,13 +196,86 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       if (rows.length > 0) sourceId = event.source_id;
     }
 
-    const result = await importFromContent(engine, slug, event.content, {
+    // #3756: tombstone → reconciler-style soft-delete (deleted_at stamp, page
+    // restorable), scoped to the resolved source — never unscoped, so a
+    // same-slug page in another source is untouched. Idempotent: a missing or
+    // already-deleted page reports 'skipped'.
+    if (isTombstone) {
+      const deleted = await engine.softDeletePage(slug, { sourceId: sourceId ?? 'default' });
+      if (sourceFallback) {
+        console.error(
+          `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
+            `(${sourceFallback.reason}); tombstone applied under default`,
+        );
+      }
+      return {
+        slug,
+        status: deleted ? 'deleted' : 'skipped',
+        chunks: 0,
+        untrusted_payload: untrustedPayload,
+        source_kind: event.source_kind,
+        source_uri: event.source_uri,
+        ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
+      };
+    }
+
+    // Shared across the write and its FK-violation retry so provenance can't
+    // drift between the two call sites.
+    const importOpts = {
       noEmbed,
-      sourceId,
       source_kind: event.source_kind,
       source_uri: event.source_uri,
       ingested_via: 'ingest_capture',
-    });
+      // #1699 trust boundary. This handler bypasses the put_page op layer, so
+      // the marker-stripping put_page performs for remote callers never ran on
+      // this path. Untrusted content (every POST /ingest body) must not be able
+      // to carry gate-owned frontmatter: `quarantine` hides a page from search,
+      // and `content_flag.detail` injects text into the agent-trusted warning
+      // channel. Trusted daemon emitters leave it false and keep their markers.
+      remote: untrustedPayload,
+    };
+
+    let result;
+    try {
+      result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId });
+    } catch (err) {
+      // The sources row can vanish (ON DELETE CASCADE) between the pre-check and
+      // this write. 23503 = foreign_key_violation (cf. oauth-provider.ts:1053),
+      // but SQLSTATE alone is too broad: a violation from chunks/tags/versions
+      // would be misread as "source unavailable" and silently rewritten to the
+      // default partition, masking a real integrity failure.
+      //
+      // Match the PAGES source FK specifically. Matching any message mentioning
+      // "source" is not tight enough to carry a routing decision: many tables
+      // reference sources(id) (files_source_id_fkey, facts_source_id_fkey,
+      // code_edges, calibration_profiles, …), so a genuine integrity failure on
+      // one of those would be rewritten as reason:'fk_violation' — exactly the
+      // masking this check exists to prevent. maybeRewriteSourceFkError
+      // (commands/capture.ts) can afford the looser match because it only
+      // formats a human hint; here the verdict moves data. Prefer the driver's
+      // structured constraint/table fields (postgres.js and PGLite both expose
+      // them) and fall back to the message for wrapped errors.
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const fkErr = err as { code?: string; constraint?: string; table?: string };
+      const namesPagesSourceFk =
+        (typeof fkErr.constraint === 'string' && /^pages_source_id_fk/.test(fkErr.constraint)) ||
+        (fkErr.table === 'pages' && typeof fkErr.constraint === 'string' && fkErr.constraint.includes('source')) ||
+        /pages_source_id_fk/.test(errMsg) ||
+        (errMsg.includes('foreign key constraint') && errMsg.includes('"pages"'));
+      const isSourceFk = fkErr?.code === '23503' && namesPagesSourceFk;
+      if (sourceId !== undefined && isSourceFk) {
+        sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
+        result = await importFromContent(engine, slug, event.content, { ...importOpts, sourceId: undefined });
+      } else {
+        throw err;
+      }
+    }
+    if (sourceFallback) {
+      console.error(
+        `[WARN] ingest_capture: requested source '${sourceFallback.requested}' unavailable ` +
+        `(${sourceFallback.reason}); wrote under default`,
+      );
+    }
 
     return {
       slug,
@@ -151,6 +284,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       untrusted_payload: untrustedPayload,
       source_kind: event.source_kind,
       source_uri: event.source_uri,
+      ...(sourceFallback ? { source_fallback: sourceFallback } : {}),
     };
   };
 }

@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { RemediationStep } from '../remediation-step.ts';
 import { makeRemediationStep } from '../remediation-step.ts';
+import { QUARANTINE_FILTER_FRAGMENT } from '../quarantine.ts';
 
 /** Shared shape returned by all four checks. */
 export interface OnboardCheckResult {
@@ -43,6 +44,77 @@ async function safeCount(engine: BrainEngine, sql: string, params: unknown[] = [
   } catch {
     return 0;
   }
+}
+
+const VISIBLE_ENTITY_PREDICATE = `p.type IN ('person', 'company', 'organization', 'entity')
+  AND p.deleted_at IS NULL
+  AND ${QUARANTINE_FILTER_FRAGMENT}`;
+
+type CoverageFeature =
+  | { table: 'links'; pageIdColumn: 'to_page_id' }
+  | { table: 'timeline_entries'; pageIdColumn: 'page_id' };
+
+interface EntityCoverageSample {
+  matched: number;
+  sampleSize: number;
+}
+
+/** Parse a SQL count defensively: coverage is an operator-facing health metric,
+ * so a malformed driver value must not escape as NaN or a negative count. */
+function finiteCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+/**
+ * Count the feature numerator and denominator from the SAME sampled CTE.
+ * TABLESAMPLE BERNOULLI returns a random number of rows; deriving its
+ * denominator from `total * requestedPercent` can make coverage exceed 100%.
+ */
+async function sampleVisibleEntityCoverage(
+  engine: BrainEngine,
+  sampleClause: string,
+  feature: CoverageFeature,
+): Promise<EntityCoverageSample> {
+  try {
+    const result = await engine.executeRaw(
+      `WITH sampled_entities AS (
+         SELECT p.id
+           FROM pages p ${sampleClause}
+          WHERE ${VISIBLE_ENTITY_PREDICATE}
+       )
+       SELECT
+         COUNT(*)::int AS sample_size,
+         COUNT(*) FILTER (
+           WHERE EXISTS (
+             SELECT 1
+               FROM ${feature.table} f
+              WHERE f.${feature.pageIdColumn} = s.id
+           )
+         )::int AS matched
+         FROM sampled_entities s`,
+    );
+    const rows = (result as { rows?: Array<Record<string, unknown>> } | undefined)?.rows
+      ?? (result as Array<Record<string, unknown>> | undefined)
+      ?? [];
+    const row = rows[0] ?? {};
+    const sampleSize = finiteCount(row.sample_size);
+    // The SQL shape guarantees matched <= sample_size. Keep a defensive clamp
+    // at the rendering boundary so a driver/fixture anomaly still cannot emit
+    // impossible percentages or feed a negative value into sqrt().
+    const matched = Math.min(sampleSize, finiteCount(row.matched));
+    return { matched, sampleSize };
+  } catch {
+    return { matched: 0, sampleSize: 0 };
+  }
+}
+
+function coverageWithConfidence(sample: EntityCoverageSample): { coverage: number; ci: number } {
+  const rawCoverage = sample.sampleSize > 0 ? sample.matched / sample.sampleSize : 0;
+  const coverage = Math.min(1, Math.max(0, rawCoverage));
+  const variance = Math.max(0, coverage * (1 - coverage));
+  const ci = Math.sqrt(variance / Math.max(1, sample.sampleSize));
+  return { coverage, ci };
 }
 
 /**
@@ -102,6 +174,43 @@ export async function checkEmbedStaleness(
 }
 
 /**
+ * Can `extract-ner` actually do anything on this brain?
+ *
+ * Three-state on purpose. The recommender must be able to tell "the pack
+ * declares no NER rules" (a real, explainable no-auto-fix) from "the pack
+ * could not be resolved at all" (an operator problem). Collapsing both into
+ * a bare `false` is what turns a phantom recommendation into a phantom
+ * SILENCE: the nag disappears and nothing says why.
+ *
+ * Resolution goes through `loadActivePackForLocalEngine`, which is also what
+ * the `extract-ner` handler uses — so recommender and handler cannot resolve
+ * different packs and then disagree about the same brain. That helper pins
+ * `remote: false` (an onboard check is a LOCAL surface; the generic
+ * `loadActivePackBestEffort` defaults `remote: ctx.remote ?? true`, and a
+ * tier-1 trust rejection would arrive here masquerading as "pack has no NER
+ * rules") and pairs file-only config with the engine's DB-side `schema_pack`,
+ * matching `checkPackUpgradeAvailable` / `checkTypeProliferation` below.
+ *
+ * Those two siblings still open-code the same resolution rather than calling
+ * the shared helper: their outer `catch` returns a distinguishable
+ * `Check skipped: <message>`, which a null-swallowing helper would flatten
+ * into "No active pack".
+ */
+async function resolveNerInferenceCapability(
+  engine: BrainEngine,
+): Promise<'supported' | 'no_rules' | 'unresolved'> {
+  try {
+    const { loadActivePackForLocalEngine, packSupportsNerInference } =
+      await import('../schema-pack/best-effort.ts');
+    const pack = await loadActivePackForLocalEngine(engine);
+    if (!pack) return 'unresolved';
+    return packSupportsNerInference(pack) ? 'supported' : 'no_rules';
+  } catch {
+    return 'unresolved';
+  }
+}
+
+/**
  * entity_link_coverage: fraction of entity pages with at least one inbound link.
  *
  * Per A21 + codex finding #15: TABLESAMPLE BERNOULLI on Postgres when
@@ -115,12 +224,12 @@ export async function checkEmbedStaleness(
 export async function checkEntityLinkCoverage(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  // Total entity pages
+  // Total visible entity pages. Quarantined pages are hidden from the brain,
+  // so they are outside both the coverage numerator and denominator.
   const totalEntities = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM pages
-       WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS count FROM pages p
+       WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
   if (totalEntities === 0) {
@@ -137,23 +246,12 @@ export async function checkEntityLinkCoverage(
     : 100;
   const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
-  // Sample query: counts entities with inbound links
-  const linkedCount = await safeCount(
+  const sample = await sampleVisibleEntityCoverage(
     engine,
-    `SELECT COUNT(*) AS count FROM (
-       SELECT p.id FROM pages p ${sampleClause}
-       WHERE p.type IN ('person', 'company', 'organization', 'entity')
-         AND p.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = p.id)
-     ) sub`,
+    sampleClause,
+    { table: 'links', pageIdColumn: 'to_page_id' },
   );
-  const sampleSize = useSample
-    ? Math.max(1, Math.round(totalEntities * (samplePct / 100)))
-    : totalEntities;
-
-  const coverage = sampleSize > 0 ? linkedCount / sampleSize : 0;
-  // Wilson-ish confidence interval (1σ; ±sqrt(p(1-p)/n))
-  const ci = Math.sqrt((coverage * (1 - coverage)) / Math.max(1, sampleSize));
+  const { coverage, ci } = coverageWithConfidence(sample);
 
   const pct = Math.round(coverage * 100);
   const ciPct = (ci * 100).toFixed(1);
@@ -170,32 +268,36 @@ export async function checkEntityLinkCoverage(
   // surfaces the same fix via the onboard plan either way.
   if (coverage >= 0.7) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
-  } else if (coverage >= 0.4) {
-    status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'medium',
-      est_seconds: 300,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
   } else {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 70%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_ner_links',
-      job: 'extract-ner',
-      params: {},
-      severity: 'high',
-      est_seconds: 600,
-      est_usd_cost: 0,
-      rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
-      status: 'remediable',
-    }));
+    // Only recommend NER extraction if the active pack actually declares
+    // inference.regex rules — otherwise `extract-ner` is a structural no-op
+    // (pack_unavailable, 0 links) and the recommendation could never clear.
+    //
+    // Recommender and handler now share BOTH halves of the question: the same
+    // resolver (`loadActivePackForLocalEngine`) picks the pack, and the same
+    // predicate (`packSupportsNerInference`) judges its capability. Sharing
+    // only the predicate would still have let the two resolve different packs.
+    const nerCapability = await resolveNerInferenceCapability(engine);
+    if (nerCapability === 'supported') {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_ner_links',
+        job: 'extract-ner',
+        params: {},
+        severity: coverage >= 0.4 ? 'medium' : 'high',
+        est_seconds: coverage >= 0.4 ? 300 : 600,
+        est_usd_cost: 0,
+        rationale: `Entity link coverage at ${pct}%; NER extraction lifts typed-link density`,
+        status: 'remediable',
+      }));
+    } else if (nerCapability === 'no_rules') {
+      message += ' — no auto-fix: the active schema pack declares no NER inference rules'
+        + ' (add link_types[].inference.regex, or upgrade the pack)';
+    } else {
+      message += ' — no auto-fix: could not resolve the active schema pack, so NER'
+        + ' capability is unknown (see `gbrain doctor` schema_pack checks)';
+    }
   }
   return {
     check: { name: 'entity_link_coverage', status, message },
@@ -213,9 +315,8 @@ export async function checkTimelineCoverage(
 ): Promise<OnboardCheckResult> {
   const totalEntities = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM pages
-       WHERE type IN ('person', 'company', 'organization', 'entity')
-         AND deleted_at IS NULL`,
+    `SELECT COUNT(*) AS count FROM pages p
+       WHERE ${VISIBLE_ENTITY_PREDICATE}`,
   );
 
   if (totalEntities === 0) {
@@ -231,21 +332,12 @@ export async function checkTimelineCoverage(
     : 100;
   const sampleClause = useSample ? `TABLESAMPLE BERNOULLI (${samplePct.toFixed(2)})` : '';
 
-  const withTimelineCount = await safeCount(
+  const sample = await sampleVisibleEntityCoverage(
     engine,
-    `SELECT COUNT(*) AS count FROM (
-       SELECT p.id FROM pages p ${sampleClause}
-       WHERE p.type IN ('person', 'company', 'organization', 'entity')
-         AND p.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id = p.id)
-     ) sub`,
+    sampleClause,
+    { table: 'timeline_entries', pageIdColumn: 'page_id' },
   );
-  const sampleSize = useSample
-    ? Math.max(1, Math.round(totalEntities * (samplePct / 100)))
-    : totalEntities;
-
-  const coverage = sampleSize > 0 ? withTimelineCount / sampleSize : 0;
-  const ci = Math.sqrt((coverage * (1 - coverage)) / Math.max(1, sampleSize));
+  const { coverage, ci } = coverageWithConfidence(sample);
   const pct = Math.round(coverage * 100);
   const ciPct = (ci * 100).toFixed(1);
   const sampleNote = useSample ? ` (sampled ${samplePct.toFixed(1)}%)` : '';
@@ -259,32 +351,31 @@ export async function checkTimelineCoverage(
   // code doesn't flip on a fresh brain.
   if (coverage >= 0.9) {
     message = `Coverage ${pct}% ± ${ciPct}%${sampleNote}`;
-  } else if (coverage >= 0.7) {
-    status = 'warn';
-    message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'medium',
-      est_seconds: 240,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
   } else {
     status = 'warn';
     message = `Coverage ${pct}% ± ${ciPct}% (target 90%)${sampleNote}`;
-    remediations.push(makeRemediationStep({
-      id: 'onboard.extract_timeline_from_meetings',
-      job: 'extract-timeline-from-meetings',
-      params: {},
-      severity: 'high',
-      est_seconds: 480,
-      est_usd_cost: 0,
-      rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
-      status: 'remediable',
-    }));
+    // Only recommend meeting-derived timeline extraction if there are dated
+    // meeting pages to extract FROM — otherwise the job creates 0 entries
+    // (it skips meetings without effective_date) and the rec never clears.
+    const datableMeetings = await safeCount(
+      engine,
+      `SELECT COUNT(*) AS count FROM pages
+         WHERE type = 'meeting' AND effective_date IS NOT NULL AND deleted_at IS NULL`,
+    );
+    if (datableMeetings > 0) {
+      remediations.push(makeRemediationStep({
+        id: 'onboard.extract_timeline_from_meetings',
+        job: 'extract-timeline-from-meetings',
+        params: {},
+        severity: coverage >= 0.7 ? 'medium' : 'high',
+        est_seconds: coverage >= 0.7 ? 240 : 480,
+        est_usd_cost: 0,
+        rationale: `Timeline coverage at ${pct}%; meeting-derived entries lift it`,
+        status: 'remediable',
+      }));
+    } else {
+      message += ' — no auto-fix: no dated meeting pages to extract timeline entries from';
+    }
   }
   return {
     check: { name: 'timeline_coverage', status, message },
@@ -517,9 +608,9 @@ export async function checkTypeProliferation(
 }
 
 /**
- * dangling_aliases (F12): surfaces slug_aliases rows whose canonical page
- * no longer exists in the pages table. Source-scoped JOIN prevents
- * cross-source false-positive deletion.
+ * dangling_aliases (F12): surfaces both slug_aliases redirects and
+ * page_aliases free-text names whose target page no longer exists.
+ * Source-scoped JOINs prevent cross-source false-positive deletion.
  *
  * v0.42 ships surface-only (no auto-GC RemediationStep). v0.43+ may add
  * `cleanup-dangling-aliases` as an auto_apply handler once detection is
@@ -532,7 +623,7 @@ export async function checkTypeProliferation(
 export async function checkDanglingAliases(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  const n = await safeCount(
+  const slugAliases = await safeCount(
     engine,
     `SELECT COUNT(*) AS count FROM slug_aliases sa
      LEFT JOIN pages p
@@ -541,16 +632,30 @@ export async function checkDanglingAliases(
       AND p.deleted_at IS NULL
      WHERE p.id IS NULL`,
   );
+  const pageAliases = await safeCount(
+    engine,
+    `SELECT COUNT(*) AS count FROM page_aliases pa
+     LEFT JOIN pages p
+       ON p.slug = pa.slug
+      AND p.source_id = pa.source_id
+      AND p.deleted_at IS NULL
+     WHERE p.id IS NULL`,
+  );
+  const n = slugAliases + pageAliases;
   if (n > 0) {
     return {
       check: {
         name: 'dangling_aliases',
         status: 'warn',
         message:
-          `${n} alias rows point at deleted canonicals. Safe GC (source-scoped): ` +
+          `${n} alias rows point at missing/deleted pages ` +
+          `(${slugAliases} slug redirects; ${pageAliases} free-text page aliases). ` +
+          `Safe GC (source-scoped): ` +
           `\`DELETE FROM slug_aliases sa WHERE NOT EXISTS (SELECT 1 FROM pages p ` +
           `WHERE p.slug = sa.canonical_slug AND p.source_id = sa.source_id ` +
-          `AND p.deleted_at IS NULL);\``,
+          `AND p.deleted_at IS NULL); DELETE FROM page_aliases pa WHERE NOT EXISTS ` +
+          `(SELECT 1 FROM pages p WHERE p.slug = pa.slug ` +
+          `AND p.source_id = pa.source_id AND p.deleted_at IS NULL);\``,
       },
       remediations: [],  // v0.42: surface-only; auto-GC v0.43+
     };

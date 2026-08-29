@@ -10,6 +10,8 @@
 
 import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { __testing } from '../src/core/cycle/patterns.ts';
 
 const patternsSrc = readFileSync(
   new URL('../src/core/cycle/patterns.ts', import.meta.url),
@@ -18,8 +20,13 @@ const patternsSrc = readFileSync(
 
 describe('patterns phase wiring', () => {
   test('imports queue + waitForCompletion + types', () => {
-    expect(patternsSrc).toContain("import { MinionQueue }");
-    expect(patternsSrc).toContain('waitForCompletion');
+    expect(patternsSrc).toContain("import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue }");
+    // The post-drain wait must be the lease-renewing variant — a plain
+    // waitForCompletion would let the private-queue lease lapse mid-wait.
+    expect(patternsSrc).toContain('waitForCompletionRenewing');
+    // The keepalive must come from the shared throttled factory (T0
+    // extraction) — an inline closure here and in synthesize drifts.
+    expect(patternsSrc).toContain('makeThrottledLeaseRenewer');
     expect(patternsSrc).toContain('SubagentHandlerData');
   });
 
@@ -74,6 +81,24 @@ describe('patterns phase wiring', () => {
 });
 
 describe('patterns scope filter', () => {
+  test('reflection excerpts never split a UTF-16 surrogate pair', async () => {
+    const rocket = '\uD83D\uDE80';
+    const compiledTruth = `${'a'.repeat(599)}${rocket}tail`;
+    const engine = {
+      executeRaw: async () => [{
+        slug: 'wiki/personal/reflections/example',
+        title: 'Example',
+        compiled_truth: compiledTruth,
+      }],
+    } as unknown as BrainEngine;
+
+    const [reflection] = await __testing.gatherReflections(engine, 30);
+
+    expect(reflection.excerpt.isWellFormed()).toBe(true);
+    expect(reflection.excerpt.endsWith(rocket)).toBe(false);
+    expect(reflection.excerpt.length).toBe(599);
+  });
+
   test('filters reflections by slug LIKE <source_slug_prefix>/%', () => {
     // #2415 made the top-level namespace root configurable
     // (dream.synthesize.output_root, default 'wiki'). A later patch made the

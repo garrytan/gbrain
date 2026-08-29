@@ -17,7 +17,7 @@
  * sibling test files in the same bun-test process.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, chmodSync, mkdirSync, rmSync } from 'node:fs';
+import { writeFileSync, chmodSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { LanguageModelV2CallOptions } from '@ai-sdk/provider';
@@ -120,6 +120,54 @@ describe('claude-cli LanguageModel — text-only round trip', () => {
       expect(result.content[0]).toEqual({ type: 'text', text: 'hello world' });
       expect(result.usage.inputTokens).toBe(12);
       expect(result.usage.outputTokens).toBe(34);
+      // baseEnvelope's default cache_read_input_tokens is 0 (present, not
+      // omitted) — pins "present zero" as distinct from the omitted/undefined
+      // case covered below.
+      expect(result.usage.cachedInputTokens).toBe(0);
+    });
+  });
+
+  test('maps cache_read_input_tokens onto usage.cachedInputTokens', async () => {
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope('hello world', {
+          usage: {
+            input_tokens: 12,
+            output_tokens: 34,
+            cache_read_input_tokens: 9001,
+            cache_creation_input_tokens: 0,
+          },
+        }),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+
+      expect(result.usage.cachedInputTokens).toBe(9001);
+    });
+  });
+
+  test('leaves usage.cachedInputTokens undefined when the CLI omits cache_read_input_tokens', async () => {
+    await withStubEnv(async () => {
+      stageResponse({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'hello world',
+        stop_reason: 'end_turn',
+        session_id: 'test-session',
+        num_turns: 1,
+        usage: { input_tokens: 12, output_tokens: 34 },
+      });
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('hi')],
+      } as LanguageModelV2CallOptions);
+
+      expect(result.usage.cachedInputTokens).toBeUndefined();
     });
   });
 
@@ -160,13 +208,135 @@ describe('claude-cli LanguageModel — tool use', () => {
       expect(result.finishReason).toBe('tool-calls');
       expect(result.content).toHaveLength(2);
       expect(result.content[0]).toMatchObject({ type: 'text', text: 'I will look up the pattern first.' });
+      // #4155: the model-supplied id is NEVER trusted for uniqueness — gbrain
+      // mints its own (the subprocess has no cross-turn memory and repeats
+      // short ids like toolu_01, violating uniq_subagent_tools_use_id).
       expect(result.content[1]).toMatchObject({
         type: 'tool-call',
-        toolCallId: 'toolu_01ABC',
         toolName: 'search',
         input: '{"query":"n+1 query"}',
       });
+      // #4155: a stray model-supplied id (older cached behavior — the prompt
+      // no longer asks for one) is tolerated but IGNORED; the id is minted.
+      const call = result.content[1] as { toolCallId: string };
+      expect(call.toolCallId).toMatch(/^toolu_claude_cli_/);
+      expect(call.toolCallId).not.toBe('toolu_01ABC');
     });
+  });
+
+  test('repeated model-supplied ids across turns mint DISTINCT ids (#4155)', async () => {
+    // Two doGenerate calls (fresh subprocess each) both emit `toolu_01` —
+    // exactly the production collision that dead-lettered dream patterns jobs.
+    await withStubEnv(async () => {
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const block = [
+        '<use_tools>',
+        '[{"id": "toolu_01", "name": "search", "input": {"q": "a"}}]',
+        '</use_tools>',
+      ].join('\n');
+      const tools = [{ type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } }];
+
+      stageResponse(baseEnvelope(block));
+      const r1 = await new ClaudeCliLanguageModel('claude-sonnet-4-6').doGenerate({
+        prompt: [userMessage('turn 1')], tools,
+      } as LanguageModelV2CallOptions);
+      stageResponse(baseEnvelope(block));
+      const r2 = await new ClaudeCliLanguageModel('claude-sonnet-4-6').doGenerate({
+        prompt: [userMessage('turn 2')], tools,
+      } as LanguageModelV2CallOptions);
+
+      const id1 = (r1.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      const id2 = (r2.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  test('duplicate ids WITHIN one <use_tools> block mint distinct ids (#4155)', async () => {
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope(
+          [
+            '<use_tools>',
+            '[',
+            '  {"id": "toolu_01", "name": "search", "input": {"q": "a"}},',
+            '  {"id": "toolu_01", "name": "get_page", "input": {"slug": "x"}}',
+            ']',
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('dup ids')],
+        tools: [
+          { type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } },
+          { type: 'function', name: 'get_page', description: '', inputSchema: { type: 'object', properties: {} } },
+        ],
+      } as LanguageModelV2CallOptions);
+      const ids = result.content
+        .filter(c => c.type === 'tool-call')
+        .map(c => (c as { toolCallId: string }).toolCallId);
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
+    });
+  });
+
+  test('#4155: mints a fresh id per call — two identical envelopes yield distinct ids', async () => {
+    await withStubEnv(async () => {
+      const envelope = baseEnvelope(
+        [
+          '<use_tools>',
+          '[{"id": "toolu_01", "name": "search", "input": {"query": "same"}}]',
+          '</use_tools>',
+        ].join('\n'),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const opts = {
+        prompt: [userMessage('turn one')],
+        tools: [
+          {
+            type: 'function',
+            name: 'search',
+            description: 'Search the brain',
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+          },
+        ],
+      } as LanguageModelV2CallOptions;
+
+      stageResponse(envelope);
+      const first = await model.doGenerate(opts);
+      stageResponse(envelope);
+      const second = await model.doGenerate(opts);
+
+      const id1 = (first.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      const id2 = (second.content.find(c => c.type === 'tool-call') as { toolCallId: string }).toolCallId;
+      // The model repeated toolu_01 both turns (it structurally cannot avoid
+      // repeating: fresh subprocess + id-stripped replay). The adapter must
+      // still produce unique ids — this repetition is what dead-lettered
+      // dream patterns jobs pre-fix.
+      expect(id1).toMatch(/^toolu_claude_cli_/);
+      expect(id2).toMatch(/^toolu_claude_cli_/);
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  test('#4155: prompt protocol no longer asks the model to invent an id (source-shape pin)', () => {
+    // The stub harness cannot capture argv, so pin the protocol template at
+    // the source level (same style as the repo's other source-shape guards):
+    // asking the model for "a unique id" is structurally unsatisfiable — a
+    // fresh subprocess replayed from an id-stripped transcript cannot avoid
+    // repeats, which is exactly what collided real dream jobs to death.
+    const src = readFileSync(
+      new URL('../src/core/ai/providers/claude-cli-language-model.ts', import.meta.url).pathname,
+      'utf-8',
+    );
+    expect(src).toContain('{"name": "<tool name>", "input":');
+    expect(src).not.toContain('unique tool call id');
+    expect(src).not.toContain('toolu_01ABC');
+    // The unconditional mint is present and model ids are never trusted.
+    expect(src).toMatch(/const id = `toolu_claude_cli_\$\{randomUUIDv7\(\)\}`/);
   });
 
   test('parses multiple parallel tool calls in a single block', async () => {
@@ -377,19 +547,24 @@ describe('claude-cli LanguageModel — context isolation', () => {
     });
   });
 
-  test('scrubs ANTHROPIC_* credentials from the child env (subscription-only auth)', async () => {
+  test('scrubs ANTHROPIC_* credentials and cloud-auth backend switches from the child env (subscription-only auth)', async () => {
     await withStubEnv(async () => {
       await withEnv(
         {
           ANTHROPIC_API_KEY: 'sk-should-never-leak',
           ANTHROPIC_AUTH_TOKEN: 'tok-should-never-leak',
           ANTHROPIC_BASE_URL: 'https://proxy.should.never.leak',
+          CLAUDE_CODE_USE_BEDROCK: '1',
+          CLAUDE_CODE_USE_VERTEX: '1',
+          CLAUDE_CODE_USE_MANTLE: '1',
+          CLAUDE_CODE_USE_FOUNDRY: '1',
+          CLAUDE_CODE_USE_ANTHROPIC_AWS: '1',
         },
         async () => {
           const envLog = join(stubDir, 'env.log');
           const envStub = [
             '#!/bin/sh',
-            `printf "key=%s\\ntoken=%s\\nbase=%s\\n" "\${ANTHROPIC_API_KEY:-UNSET}" "\${ANTHROPIC_AUTH_TOKEN:-UNSET}" "\${ANTHROPIC_BASE_URL:-UNSET}" > "${envLog}"`,
+            `printf "key=%s\\ntoken=%s\\nbase=%s\\nbedrock=%s\\nvertex=%s\\nmantle=%s\\nfoundry=%s\\nanthropicAws=%s\\n" "\${ANTHROPIC_API_KEY:-UNSET}" "\${ANTHROPIC_AUTH_TOKEN:-UNSET}" "\${ANTHROPIC_BASE_URL:-UNSET}" "\${CLAUDE_CODE_USE_BEDROCK:-UNSET}" "\${CLAUDE_CODE_USE_VERTEX:-UNSET}" "\${CLAUDE_CODE_USE_MANTLE:-UNSET}" "\${CLAUDE_CODE_USE_FOUNDRY:-UNSET}" "\${CLAUDE_CODE_USE_ANTHROPIC_AWS:-UNSET}" > "${envLog}"`,
             'cat > /dev/null',
             `cat "${stubResponsePath}"`,
           ].join('\n');
@@ -409,6 +584,11 @@ describe('claude-cli LanguageModel — context isolation', () => {
             expect(seen).toContain('key=UNSET');
             expect(seen).toContain('token=UNSET');
             expect(seen).toContain('base=UNSET');
+            expect(seen).toContain('bedrock=UNSET');
+            expect(seen).toContain('vertex=UNSET');
+            expect(seen).toContain('mantle=UNSET');
+            expect(seen).toContain('foundry=UNSET');
+            expect(seen).toContain('anthropicAws=UNSET');
           } finally {
             const fastStub = [
               '#!/bin/sh',
@@ -454,6 +634,215 @@ describe('claude-cli LanguageModel — abort + error envelopes', () => {
         writeFileSync(stubBin, fastStub);
         chmodSync(stubBin, 0o755);
       }
+    });
+  });
+
+  test('non-zero exit with a result envelope on stdout surfaces a typed API error', async () => {
+    // Real-world shape: on an API 429 (spend/rate limit) the CLI exits 1 but
+    // still writes the formatted result envelope to stdout. The provider must
+    // surface the status + human-readable message, not a raw blob.
+    await withStubEnv(async () => {
+      stageResponse(baseEnvelope(
+        "You've hit your monthly spend limit · raise it at claude.ai/settings/usage?from=cc_cli_limit_message",
+        { is_error: true, api_error_status: 429 },
+      ));
+      const failStub = [
+        '#!/bin/sh',
+        'cat > /dev/null',
+        `cat "${stubResponsePath}"`,
+        'exit 1',
+      ].join('\n');
+      writeFileSync(stubBin, failStub);
+      chmodSync(stubBin, 0o755);
+      try {
+        const { ClaudeCliLanguageModel, ClaudeCliProcessError } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        let caught: unknown;
+        try {
+          await model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions);
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(ClaudeCliProcessError);
+        const err = caught as InstanceType<typeof ClaudeCliProcessError>;
+        expect(err.message).toMatch(/claude-cli API error 429/);
+        expect(err.message).toContain('monthly spend limit');
+        expect(err.apiErrorStatus).toBe(429);
+        expect(err.exitCode).toBe(1);
+      } finally {
+        const fastStub = [
+          '#!/bin/sh',
+          'cat > /dev/null',
+          `cat "${stubResponsePath}"`,
+        ].join('\n');
+        writeFileSync(stubBin, fastStub);
+        chmodSync(stubBin, 0o755);
+      }
+    });
+  });
+
+  test('non-zero exit with non-JSON stdout falls back to the raw blob message', async () => {
+    await withStubEnv(async () => {
+      writeFileSync(stubResponsePath, 'segfault-ish garbage output');
+      const failStub = [
+        '#!/bin/sh',
+        'cat > /dev/null',
+        `cat "${stubResponsePath}"`,
+        'exit 1',
+      ].join('\n');
+      writeFileSync(stubBin, failStub);
+      chmodSync(stubBin, 0o755);
+      try {
+        const { ClaudeCliLanguageModel, ClaudeCliProcessError } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        let caught: unknown;
+        try {
+          await model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions);
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(ClaudeCliProcessError);
+        const err = caught as InstanceType<typeof ClaudeCliProcessError>;
+        expect(err.message).toMatch(/claude-cli exited 1/);
+        expect(err.message).toContain('segfault-ish garbage output');
+        expect(err.apiErrorStatus).toBeUndefined();
+        expect(err.exitCode).toBe(1);
+      } finally {
+        const fastStub = [
+          '#!/bin/sh',
+          'cat > /dev/null',
+          `cat "${stubResponsePath}"`,
+        ].join('\n');
+        writeFileSync(stubBin, fastStub);
+        chmodSync(stubBin, 0o755);
+      }
+    });
+  });
+
+  test('non-zero exit with a SUCCESS envelope falls back to the blob message with stderr', async () => {
+    // A crash after a successful API turn (envelope written, then the CLI
+    // dies) is a process failure, not an API error: the envelope path must
+    // require is_error, and the blob fallback must keep stderr (where the
+    // crash reason lives) instead of reporting a misleading API success.
+    await withStubEnv(async () => {
+      stageResponse(baseEnvelope('the model answered fine'));
+      const failStub = [
+        '#!/bin/sh',
+        'cat > /dev/null',
+        `cat "${stubResponsePath}"`,
+        'echo "boom-from-stderr" >&2',
+        'exit 1',
+      ].join('\n');
+      writeFileSync(stubBin, failStub);
+      chmodSync(stubBin, 0o755);
+      try {
+        const { ClaudeCliLanguageModel, ClaudeCliProcessError } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        let caught: unknown;
+        try {
+          await model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions);
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(ClaudeCliProcessError);
+        const err = caught as InstanceType<typeof ClaudeCliProcessError>;
+        expect(err.message).toMatch(/claude-cli exited 1/);
+        expect(err.message).toContain('boom-from-stderr');
+        expect(err.apiErrorStatus).toBeUndefined();
+        expect(err.exitCode).toBe(1);
+      } finally {
+        const fastStub = [
+          '#!/bin/sh',
+          'cat > /dev/null',
+          `cat "${stubResponsePath}"`,
+        ].join('\n');
+        writeFileSync(stubBin, fastStub);
+        chmodSync(stubBin, 0o755);
+      }
+    });
+  });
+
+  test('non-zero exit keeps the raw blob behind a --- raw --- marker (auth-looking stdout never classifies)', async () => {
+    // The blob can carry model/page-derived text; classifyGlobalLlmError's
+    // phrase regexes only scan text before the marker, so an essay
+    // mentioning api keys in stdout must not read as a whole-run auth
+    // outage.
+    await withStubEnv(async () => {
+      writeFileSync(stubResponsePath, 'essay draft: invalid x-api-key handling and rate limit tips');
+      const failStub = [
+        '#!/bin/sh',
+        'cat > /dev/null',
+        `cat "${stubResponsePath}"`,
+        'exit 1',
+      ].join('\n');
+      writeFileSync(stubBin, failStub);
+      chmodSync(stubBin, 0o755);
+      try {
+        const { ClaudeCliLanguageModel, ClaudeCliProcessError } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const { classifyGlobalLlmError } = await import('../src/core/ai/errors.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        let caught: unknown;
+        try {
+          await model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions);
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught).toBeInstanceOf(ClaudeCliProcessError);
+        const err = caught as InstanceType<typeof ClaudeCliProcessError>;
+        expect(err.message).toMatch(/claude-cli exited 1/);
+        expect(err.message).toContain('--- raw ---');
+        // The blob sits AFTER the marker, so the phrase never classifies.
+        expect(err.message.indexOf('--- raw ---')).toBeLessThan(err.message.indexOf('invalid x-api-key'));
+        expect(classifyGlobalLlmError(err)).toBeNull();
+      } finally {
+        const fastStub = [
+          '#!/bin/sh',
+          'cat > /dev/null',
+          `cat "${stubResponsePath}"`,
+        ].join('\n');
+        writeFileSync(stubBin, fastStub);
+        chmodSync(stubBin, 0o755);
+      }
+    });
+  });
+
+  test('exit 0 with a JSON primitive on stdout rejects instead of crashing', async () => {
+    // JSON.parse accepts bare primitives (null / numbers / strings); none of
+    // them is a result envelope. Each must reject through the promise, never
+    // throw inside the close callback.
+    await withStubEnv(async () => {
+      for (const raw of ['null', '42', '"str"']) {
+        writeFileSync(stubResponsePath, raw);
+        const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        await expect(
+          model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions),
+        ).rejects.toThrow(/claude-cli output not JSON/);
+      }
+    });
+  });
+
+  test('exit 0 + is_error + api_error_status surfaces the same typed API error', async () => {
+    await withStubEnv(async () => {
+      stageResponse({
+        ...baseEnvelope('overloaded, please retry'),
+        is_error: true,
+        api_error_status: 529,
+      });
+      const { ClaudeCliLanguageModel, ClaudeCliProcessError } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      let caught: unknown;
+      try {
+        await model.doGenerate({ prompt: [userMessage('x')] } as LanguageModelV2CallOptions);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(ClaudeCliProcessError);
+      const err = caught as InstanceType<typeof ClaudeCliProcessError>;
+      expect(err.message).toMatch(/claude-cli API error 529/);
+      expect(err.message).toContain('overloaded');
+      expect(err.apiErrorStatus).toBe(529);
+      expect(err.exitCode).toBe(0);
     });
   });
 

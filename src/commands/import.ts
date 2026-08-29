@@ -1,6 +1,6 @@
 import { readdirSync, lstatSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join, relative } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { cpus, totalmem } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
@@ -15,6 +15,7 @@ import {
   isImageFilePath as isImageFilePathFromSync,
   matchesAnyGlob,
   pruneDir,
+  isPathPruned,
   SYNC_SKIP_FILES,
   type SyncStrategy,
 } from '../core/sync.ts';
@@ -26,6 +27,50 @@ import {
   resolveImportTargetDir,
   resumeFilter,
 } from '../core/import-checkpoint.ts';
+import { realpathOrResolve } from '../core/path-confine.ts';
+
+/** Return a refusal when an import target lies outside every admitted root. */
+export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
+  if (configuredRoots.length === 0) return null;
+  const target = realpathOrResolve(dir);
+  const admitted = configuredRoots.some((candidate) => {
+    const root = realpathOrResolve(candidate);
+    const rel = relative(root, target);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  });
+  if (admitted) return null;
+  return (
+    `Import root ${target} is not under the configured root for the destination source ` +
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- error-message hint construction, no fs operation
+        `(${configuredRoots.map((root) => resolve(root)).join(', ')}). ` +
+    `Pass --allow-noncanonical-root to override deliberately.`
+  );
+}
+
+/** Resolve only roots belonging to the selected import destination. */
+export async function listConfiguredRoots(
+  engine: BrainEngine,
+  destinationSourceId: string,
+): Promise<string[]> {
+  const roots: string[] = [];
+  try {
+    const rows = await engine.executeRaw<{ local_path: string | null }>(
+      `SELECT local_path FROM sources WHERE id = $1`,
+      [destinationSourceId],
+    );
+    for (const row of rows) if (row.local_path) roots.push(resolve(row.local_path)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- resolves REGISTERED roots to build the containment allowlist (#4388 guard)
+    if (destinationSourceId === 'default') {
+      const legacyRoot = await engine.getConfig('sync.repo_path');
+      if (legacyRoot) roots.push(resolve(legacyRoot)); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: registered root canonicalization for the guard allowlist
+    }
+  } catch (error) {
+    throw new Error(
+      `Cannot determine configured source roots: ` +
+      `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return [...new Set(roots)];
+}
 
 /**
  * Records one failed file against the run's error-grouping state and
@@ -87,6 +132,23 @@ export class ImportAbortError extends Error {
   }
 }
 
+/**
+ * #3969 — a poll that changed nothing is not an ingest event. Cron-driven
+ * `import`/`sync` against a mostly-static tree was writing an ingest_log row
+ * every run ("Imported 0 pages, N skipped, 0 chunks" — 93% of rows on a
+ * 15-minute cadence), burying real events past get_ingest_log's default
+ * LIMIT 20. Shared by runImport (directory imports) and performSync (git
+ * syncs). `logNoop` (CLI `--log-noop`) opts back into per-poll rows for
+ * deployments using them as a liveness signal.
+ */
+export function shouldLogIngest(
+  counts: { imported: number; errors: number; chunksCreated: number },
+  logNoop: boolean,
+): boolean {
+  if (logNoop) return true;
+  return counts.imported > 0 || counts.errors > 0 || counts.chunksCreated > 0;
+}
+
 /** Bug 9 — surface per-file failures so callers (performFullSync) can gate state advances. */
 export interface RunImportResult {
   imported: number;
@@ -115,6 +177,15 @@ export async function runImport(
      */
     exclude?: string[];
     /**
+     * #2404-class: repeatable glob patterns (same dialect as `exclude`)
+     * that waive the leading-dot prune heuristic for matching paths — see
+     * `isPathPruned` in core/sync.ts. Unlike `exclude`, this cannot be a
+     * post-collection filter: a pruned path is never collected in the
+     * first place, so it has to reach `collectSyncableFiles` itself.
+     * Threaded by performFullSync for `gbrain sync --include-hidden`.
+     */
+    includeHidden?: string[];
+    /**
      * Opt out of the git-visible fast path and walk the filesystem directly,
      * so markdown/code files matched by .gitignore can still be imported.
      */
@@ -129,8 +200,11 @@ export async function runImport(
   } = {},
 ): Promise<RunImportResult> {
   const noEmbed = args.includes('--no-embed');
+  const allowNoncanonicalRoot = args.includes('--allow-noncanonical-root');
   const fresh = args.includes('--fresh');
   const jsonOutput = args.includes('--json');
+  // #3969: opt back into per-poll ingest_log rows (default: no-op runs skip the write).
+  const logNoop = args.includes('--log-noop');
   const includeGitignored = args.includes('--include-gitignored') || opts.includeGitignored === true;
 
   // #3637: under --json, stdout belongs to the JSON document alone. The
@@ -257,7 +331,7 @@ export async function runImport(
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
@@ -274,6 +348,35 @@ export async function runImport(
     throw new ImportAbortError(`import target not readable: ${dirArg}`);
   }
 
+  if (!allowNoncanonicalRoot) {
+    try {
+      const strictRoot = (await engine.getConfig('import.require_configured_root')) === 'true';
+      if (strictRoot) {
+        const configuredRoots = await listConfiguredRoots(engine, sourceId ?? 'default');
+        if (configuredRoots.length === 0) {
+          console.error(
+            'import.require_configured_root is enabled but the destination source has no configured root. ' +
+            'Configure its local_path or pass --allow-noncanonical-root deliberately.',
+          );
+          throw new ImportAbortError('configured-root admission has no destination root');
+        }
+        const refusal = configuredRootImportError(dir, configuredRoots);
+        if (refusal) {
+          console.error(refusal);
+          throw new ImportAbortError('import target is outside the configured destination root');
+        }
+      }
+    } catch (error) {
+      if (error instanceof ImportAbortError) throw error;
+      console.error(
+        `Cannot evaluate configured-root admission: ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        `Pass --allow-noncanonical-root to bypass deliberately.`,
+      );
+      throw new ImportAbortError('configured-root admission failed closed');
+    }
+  }
+
   // v0.31.2: collect under the right strategy. Pre-fix this called
   // collectMarkdownFiles unconditionally — code-strategy first sync
   // silently no-op'd because no code file ever made it through walker
@@ -284,6 +387,7 @@ export async function runImport(
   const malformedExcluded: string[] = [];
   let allFiles = collectSyncableFiles(dir, {
     strategy, includeGitignored,
+    includeHidden: opts.includeHidden,
     onExcluded: (rel) => { malformedExcluded.push(rel); },
   });
   console.error(
@@ -645,13 +749,22 @@ export async function runImport(
     }
   }
 
-  // Log the ingest
-  await engine.logIngest({
-    source_type: 'directory',
-    source_ref: dir,
-    pages_updated: importedSlugs,
-    summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
-  });
+  // Log the ingest. #3969: skip the row when the run changed nothing
+  // (imported=0, errors=0, chunks=0) unless --log-noop — see shouldLogIngest.
+  // `sourceId ?? 'default'` mirrors the fallback `processFile` itself uses
+  // when calling importFile/importImageFile — this must report the source
+  // the pages actually landed in, not the unresolved CLI arg (see #3838:
+  // pre-fix this field always read 'default' regardless of where
+  // resolveSourceWithTier actually routed the run).
+  if (shouldLogIngest({ imported, errors, chunksCreated }, logNoop)) {
+    await engine.logIngest({
+      source_type: 'directory',
+      source_ref: dir,
+      source_id: sourceId ?? 'default',
+      pages_updated: importedSlugs,
+      summary: `Imported ${imported} pages, ${skipped} skipped, ${chunksCreated} chunks`,
+    });
+  }
 
   // Import → sync continuity: write sync checkpoint if this is a git repo.
   // Bug 9 — gate last_commit on "no failures" so import doesn't silently
@@ -677,7 +790,13 @@ export async function runImport(
     // state as last time" from "new broken state." Source-scoped (#1939 #2).
     if (failures.length > 0) {
       const { recordFailures } = await import('../core/sync.ts');
-      recordFailures(opts.sourceId ?? 'default', failures, gitHead);
+      // #3838: `opts.sourceId` is the caller-supplied value, which stays
+      // undefined for a bare CLI invocation unless the resolver's
+      // sole_non_default tier explicitly adopted it (see the comment above
+      // this function's sourceId resolution). Use the resolved `sourceId`
+      // — the same value every importFile/importImageFile call in this run
+      // actually wrote to — so the ledger is keyed by the true source.
+      recordFailures(sourceId ?? 'default', failures, gitHead);
     }
 
     // #3839: a path that failed on a prior run and succeeded (imported or
@@ -689,7 +808,9 @@ export async function runImport(
     // is only partially clean.
     if (succeededPaths.length > 0) {
       const { clearFailures } = await import('../core/sync.ts');
-      clearFailures(opts.sourceId ?? 'default', succeededPaths);
+      // #3838: keyed by the resolved source, matching recordFailures above —
+      // a row recorded under the resolved source must clear under it too.
+      clearFailures(sourceId ?? 'default', succeededPaths);
     }
 
     // #2114 guard: the global sync.* keys describe THE brain repo (the
@@ -760,6 +881,8 @@ interface CollectOpts {
    * file — no rename guidance, no skipped count (structured-review finding).
    */
   onExcluded?: (relPath: string) => void;
+  /** See `RunImportOpts.includeHidden` — same repeatable-glob semantics. */
+  includeHidden?: string[];
 }
 
 /**
@@ -783,17 +906,21 @@ function isCollectibleForWalker(
   path: string,
   strategy: SyncStrategy,
   multimodalOn: boolean,
+  includeHidden?: string[],
 ): boolean {
   // #2607: apply the SAME segment-level prune gate as incremental sync's
-  // `classifySync` (core/sync.ts). The FS walk below prunes at descent time,
+  // `classifySync` (core/sync.ts) — via the shared `isPathPruned`, so this
+  // and `classifySync` cannot drift the way #923/#202 drifted before
+  // `PRUNE_DIR_NAMES` existed. The FS walk below prunes at descent time,
   // but the git fast path enumerates via `git ls-files` and historically
   // filtered only by extension — so `sync --full` imported (and resurrected
   // previously-deleted) pages under dot-dirs / vendored trees that incremental
   // sync excludes. Full and incremental must agree on the exclusion set.
-  // (In the FS-walk route `path` is a basename, so this is the same dot-file
-  // check pruneDir already applied there — no behavior change on that route.)
-  const segments = path.split('/');
-  if (segments.some((seg) => !pruneDir(seg))) return false;
+  // (In the FS-walk route `path` is a basename, so `includeHidden` has no
+  // segment to waive there — that route's directory-level prune already ran
+  // via unmodified `pruneDir` before a file entry is ever reached; see
+  // `isPathPruned`'s doc comment for that scope note.)
+  if (isPathPruned(path, includeHidden)) return false;
 
   // Malformed filenames (brackets / control chars — markdown-link syntax as a
   // literal filename) are rejected on BOTH collection routes, same as
@@ -803,6 +930,7 @@ function isCollectibleForWalker(
   // Metafiles are directory scaffolding (READMEs / index / log / schema /
   // resolver), not typed brain pages — same exclusion `sync`'s `isSyncable`
   // applies. Guards both the FS-walk and the git-fast-path collection routes.
+  const segments = path.split('/');
   const basename = segments[segments.length - 1] || '';
   if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return false;
 
@@ -838,6 +966,7 @@ function gitListSyncableFiles(
   strategy: SyncStrategy,
   multimodalOn: boolean,
   onExcluded?: (relPath: string) => void,
+  includeHidden?: string[],
 ): string[] | null {
   let stdout: string;
   try {
@@ -856,7 +985,7 @@ function gitListSyncableFiles(
     // exclusion is reportable — other filters (strategy, prune, metafile)
     // are silent by design; this one hides renameable content.
     if (hasMalformedPathSegment(rel)) { onExcluded?.(rel); continue; }
-    if (!isCollectibleForWalker(rel, strategy, multimodalOn)) continue;
+    if (!isCollectibleForWalker(rel, strategy, multimodalOn, includeHidden)) continue;
     const full = join(dir, rel);
     let st;
     try {
@@ -901,7 +1030,7 @@ export function collectSyncableFiles(dir: string, opts: CollectOpts = {}): strin
   // PLUS untracked-not-ignored, so uncommitted source is still indexed. Non-git
   // dirs (or git unavailable) fall through to the FS walk below.
   if (!opts.includeGitignored) {
-    const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, opts.onExcluded);
+    const gitFiles = gitListSyncableFiles(dir, strategy, multimodalOn, opts.onExcluded, opts.includeHidden);
     if (gitFiles) return gitFiles;
   }
 

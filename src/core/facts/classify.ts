@@ -18,6 +18,7 @@
 
 import { chat, isAvailable } from '../ai/gateway.ts';
 import type { ChatResult } from '../ai/gateway.ts';
+import { resolveTierDefault } from '../model-config.ts';
 import type { FactRow, FactKind } from '../engine.ts';
 
 /** Classifier output. id is the matching candidate's id when not 'independent'. */
@@ -95,7 +96,11 @@ export async function classifyAgainstCandidates(
   }
 
   // Try the classifier. On failure, fall back to cosine ≥ 0.92 → DUPLICATE.
-  if (!isAvailable('chat')) {
+  // Engine-free key-aware default (utility tier) + gate on the model this
+  // call will ACTUALLY use — the bare isAvailable('chat') probed the global
+  // chat model, which can disagree with the classifier model.
+  const classifierModel = opts.model ?? resolveTierDefault('utility');
+  if (!isAvailable('chat', classifierModel)) {
     if (topId !== null && topScore >= fallback) {
       return { decision: 'duplicate', matched_id: topId, reason: 'cosine_fallback' };
     }
@@ -105,7 +110,7 @@ export async function classifyAgainstCandidates(
   let classifierResult: ChatResult | null = null;
   try {
     classifierResult = await chat({
-      model: opts.model ?? 'anthropic:claude-haiku-4-5-20251001',
+      model: classifierModel,
       system: CLASSIFIER_SYSTEM,
       messages: [
         {

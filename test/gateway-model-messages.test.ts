@@ -177,4 +177,110 @@ describe('toModelMessages — v6 ModelMessage shape', () => {
     expect((out[2] as any).role).toBe('tool');
     expect((out[2] as any).content[0].output).toEqual({ type: 'json', value: { hits: 0 } });
   });
+
+  // #4201 — per-part provider state (Gemini 3.x thoughtSignature) rides
+  // ChatBlock.providerMetadata inbound and MUST re-attach as providerOptions
+  // outbound, and ONLY when present (absent → parts stay byte-identical).
+  describe('per-part providerMetadata echo (#4201)', () => {
+    const sig = { google: { thoughtSignature: 'opaque-sig-abc' } };
+
+    test('tool-call block with providerMetadata emits providerOptions', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: { q: 'x' }, providerMetadata: sig }],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+      expect(out[0].content[0].providerMetadata).toBeUndefined();
+    });
+
+    test('text block with providerMetadata emits providerOptions', () => {
+      const msgs: ChatMessage[] = [
+        { role: 'assistant', content: [{ type: 'text', text: 'thinking done', providerMetadata: sig }] },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+    });
+
+    test('tool-result block with providerMetadata emits providerOptions on the tool part', () => {
+      const msgs: ChatMessage[] = [
+        { role: 'user', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'search', output: 'ok', providerMetadata: sig }] },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].role).toBe('tool');
+      expect(out[0].content[0].providerOptions).toEqual(sig);
+    });
+
+    test('blocks WITHOUT providerMetadata gain no providerOptions key (byte-identical)', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'hi' },
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'search', input: {} },
+          ],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect('providerOptions' in out[0].content[0]).toBe(false);
+      expect('providerOptions' in out[0].content[1]).toBe(false);
+    });
+
+    // OpenAI's Responses API rejects a later turn whose history has a
+    // `function_call` item with no matching `reasoning` item — "Item
+    // '<fc_id>' of type 'function_call' was provided without its required
+    // 'reasoning' item: '<rs_id>'." Reproduced against the live API
+    // (openai:gpt-5.6-luna, 2-turn tool-calling conversation) before this
+    // fix: turn 1 captured zero reasoning blocks despite the server minting
+    // one, and turn 2 400'd with exactly that message. This block covers the
+    // outbound half of the fix — reasoning blocks must round-trip through
+    // toModelMessages() the same way tool-call/text blocks already do.
+    const reasoningSig = { openai: { itemId: 'rs_abc123', reasoningEncryptedContent: 'opaque-blob' } };
+
+    test('reasoning block with providerMetadata emits providerOptions', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: 'weighing the tradeoff...', providerMetadata: reasoningSig },
+            { type: 'tool-call', toolCallId: 'c1', toolName: 'get_forecast', input: { city: 'Tokyo' } },
+          ],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0]).toEqual({
+        type: 'reasoning',
+        text: 'weighing the tradeoff...',
+        providerOptions: reasoningSig,
+      });
+    });
+
+    test('reasoning block without providerMetadata gains no providerOptions key', () => {
+      const msgs: ChatMessage[] = [
+        { role: 'assistant', content: [{ type: 'reasoning', text: 'no id captured' }] },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content[0]).toEqual({ type: 'reasoning', text: 'no id captured' });
+    });
+
+    // Same defensive filter as text blocks (some reasoning models surface
+    // text: null/undefined thinking parts that AI SDK v6's Zod schema
+    // rejects) — a reasoning block with a non-string `text` must be dropped,
+    // not sent through and poison the whole call.
+    test('reasoning block with non-string text is dropped, sibling blocks survive', () => {
+      const msgs: ChatMessage[] = [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', text: undefined as unknown as string },
+            { type: 'text', text: 'ok' },
+          ],
+        },
+      ];
+      const out = toModelMessages(msgs) as any[];
+      expect(out[0].content).toEqual([{ type: 'text', text: 'ok' }]);
+    });
+  });
 });

@@ -282,7 +282,7 @@ describe('voice-gate templates', () => {
     expect(out).toContain('Not enough resolved X calls yet');
   });
 
-  test('nudgeTemplate includes the hush command', () => {
+  test('nudgeTemplate names the auto-quiet pattern, not a fictional hush command (#3697)', () => {
     const out = nudgeTemplate({
       domain: 'macro',
       conviction: 0.85,
@@ -290,7 +290,12 @@ describe('voice-gate templates', () => {
       nRecentTotal: 3,
       hushPattern: 'over-confident-macro',
     });
-    expect(out).toContain('gbrain takes nudge --hush over-confident-macro');
+    // `gbrain takes nudge --hush` never existed as a subcommand; the 14-day
+    // quiet period is automatic via take_nudge_log. The template must not
+    // advertise a command that exits "Unknown subcommand".
+    expect(out).not.toContain('gbrain takes nudge');
+    expect(out).toContain('over-confident-macro');
+    expect(out).toContain('14 days');
     expect(out).toContain('0.85');
     expect(out).toContain('2 of 3 missed');
   });

@@ -8,7 +8,8 @@ import {
   isStatementTimeoutError,
   isRetryableConnError,
 } from './retry-matcher.ts';
-import { repairTimelineDedupIndex } from './timeline-dedup-repair.ts';
+import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
+import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -634,12 +635,24 @@ export const MIGRATIONS: Migration[] = [
         // 0b. Swap pages.UNIQUE(slug) → UNIQUE(source_id, slug).
         //     Deferred from v21 so PR #356 closes the integrity
         //     window. PGLite already did this swap in its v21 path.
+        //     #550: guard by index SHAPE (any non-partial unique index on
+        //     exactly {source_id, slug}), not by constraint NAME — a
+        //     name-only guard skips the ADD when the name is squatted by a
+        //     misshapen constraint, leaving every putPage ON CONFLICT broken.
         await tx.runMigration(23, `
           ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
           DO $$ BEGIN
             IF NOT EXISTS (
-              SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+              SELECT 1 FROM pg_index i
+               WHERE i.indrelid = 'pages'::regclass
+                 AND i.indisunique
+                 AND i.indpred IS NULL
+                 AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                        FROM pg_attribute a
+                       WHERE a.attrelid = i.indrelid
+                         AND a.attnum = ANY (i.indkey::int2[])) = ARRAY['slug','source_id']
             ) THEN
+              ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
               ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
                 UNIQUE (source_id, slug);
             END IF;
@@ -791,10 +804,19 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
 
         ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_slug_key;
+        -- #550: guard by index SHAPE, not constraint NAME (see v23 twin).
         DO $$ BEGIN
           IF NOT EXISTS (
-            SELECT 1 FROM pg_constraint WHERE conname = 'pages_source_slug_key'
+            SELECT 1 FROM pg_index i
+             WHERE i.indrelid = 'pages'::regclass
+               AND i.indisunique
+               AND i.indpred IS NULL
+               AND (SELECT array_agg(a.attname::text ORDER BY a.attname)
+                      FROM pg_attribute a
+                     WHERE a.attrelid = i.indrelid
+                       AND a.attnum = ANY (i.indkey::int2[])) = ARRAY['slug','source_id']
           ) THEN
+            ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
             ALTER TABLE pages ADD CONSTRAINT pages_source_slug_key
               UNIQUE (source_id, slug);
           END IF;
@@ -928,7 +950,7 @@ export const MIGRATIONS: Migration[] = [
           -- on future runs even after switching to a bypass role. Raising
           -- aborts the transaction, leaves schema_version at the prior value,
           -- and lets the next invocation retry after the role is fixed.
-          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+          RAISE EXCEPTION 'v24 rls_backfill_missing_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Grant it (as postgres or a managed-Postgres master user): ALTER ROLE % BYPASSRLS; then re-run. The migration will retry automatically on the next initSchema call.', current_user, current_user;
         END IF;
 
         -- These 8 are guaranteed to exist: schema.sql creates them (idempotent
@@ -1211,7 +1233,7 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            RAISE EXCEPTION 'v29 cathedral_ii_code_edges_rls: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Grant it (as postgres or a managed-Postgres master user): ALTER ROLE % BYPASSRLS; then re-run. The migration will retry automatically on the next initSchema call.', current_user, current_user;
           END IF;
 
           ALTER TABLE code_edges_chunk ENABLE ROW LEVEL SECURITY;
@@ -1440,7 +1462,7 @@ export const MIGRATIONS: Migration[] = [
         BEGIN
           SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass; -- #1385: superuser + inherited-role BYPASSRLS, not just the role's own rolbypassrls
           IF NOT has_bypass THEN
-            RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role). The migration will retry automatically on the next initSchema call.', current_user;
+            RAISE EXCEPTION 'v31 eval_capture_tables: role % does not have BYPASSRLS privilege — cannot enable RLS safely. Grant it (as postgres or a managed-Postgres master user): ALTER ROLE % BYPASSRLS; then re-run. The migration will retry automatically on the next initSchema call.', current_user, current_user;
           END IF;
 
           CREATE TABLE IF NOT EXISTS eval_candidates (
@@ -1563,7 +1585,7 @@ export const MIGRATIONS: Migration[] = [
           ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
           ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
         ELSE
-          RAISE WARNING 'v32: role % lacks BYPASSRLS — skipping RLS on OAuth tables. Re-run as postgres (or a BYPASSRLS role) to harden.', current_user;
+          RAISE WARNING 'v32: role % lacks BYPASSRLS — skipping RLS on OAuth tables. Grant it (as postgres or a managed-Postgres master user): ALTER ROLE % BYPASSRLS; then re-run to harden.', current_user, current_user;
         END IF;
       END $$;
     `,
@@ -1720,9 +1742,17 @@ export const MIGRATIONS: Migration[] = [
     //     the DDL transaction, so a failed ALTER aborts the offending CREATE
     //     TABLE. That's a loud signal, not a silent gap. Wrapping would CREATE
     //     the silent path this migration exists to close.
-    //   - No privilege pre-check — runMigrations rethrows on SQL failure and
-    //     gates config.version, so a non-superuser run already fails loud with
-    //     an actionable Postgres error.
+    //   - Create-if-absent, NOT DROP+CREATE (#3603). CREATE EVENT TRIGGER is
+    //     superuser-reserved and on managed Postgres (RDS/Aurora) no reachable
+    //     app role has rolsuper — rds_superuser is NOT enough — so the original
+    //     ungated DROP+CREATE could never apply: config.version stalled at 34
+    //     forever while the server kept serving, and every later migration
+    //     silently never ran. Both the function and the trigger are gated on
+    //     existence so an operator can pre-create them once as the master user
+    //     and have this migration converge (CREATE OR REPLACE / DROP would fail
+    //     on master-owned objects). When absent AND uncreatable, the
+    //     insufficient_privilege handler raises ONE actionable message instead
+    //     of the raw permission error; anything else still fails loud.
     //
     // BREAKING CHANGE: the backfill is a one-time override of intentionally
     // RLS-off public tables that don't carry the GBRAIN:RLS_EXEMPT comment.
@@ -1735,28 +1765,50 @@ export const MIGRATIONS: Migration[] = [
         -- A failure here aborts the CREATE TABLE so no public.* table is ever
         -- created without RLS. object_identity is pre-quoted by Postgres
         -- (e.g. "public"."My Table"), so %s is correct — %I would double-quote.
-        CREATE OR REPLACE FUNCTION auto_enable_rls()
-        RETURNS event_trigger AS $$
-        DECLARE
-          obj record;
+        -- #3603: create-if-absent for BOTH objects (see the posture comment
+        -- above) so a master-user pre-create converges on managed Postgres.
+        DO $v35$
         BEGIN
-          FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
-            WHERE object_type = 'table'
-            AND schema_name = 'public'
-          LOOP
-            EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
-          END LOOP;
-        END;
-        $$ LANGUAGE plpgsql;
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE p.proname = 'auto_enable_rls' AND n.nspname = 'public'
+          ) THEN
+            EXECUTE $fn$
+              CREATE FUNCTION auto_enable_rls()
+              RETURNS event_trigger AS $body$
+              DECLARE
+                obj record;
+              BEGIN
+                FOR obj IN SELECT * FROM pg_event_trigger_ddl_commands()
+                  WHERE object_type = 'table'
+                  AND schema_name = 'public'
+                LOOP
+                  EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', obj.object_identity);
+                END LOOP;
+              END;
+              $body$ LANGUAGE plpgsql
+            $fn$;
+          END IF;
 
-        -- WHEN TAG covers all three table-creation syntaxes Postgres reports.
-        -- CREATE TABLE / CREATE TABLE AS / SELECT INTO produce distinct command
-        -- tags; covering only 'CREATE TABLE' would leave a syntax-shaped hole.
-        DROP EVENT TRIGGER IF EXISTS auto_rls_on_create_table;
-        CREATE EVENT TRIGGER auto_rls_on_create_table
-          ON ddl_command_end
-          WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
-          EXECUTE FUNCTION auto_enable_rls();
+          -- WHEN TAG covers all three table-creation syntaxes Postgres reports.
+          -- CREATE TABLE / CREATE TABLE AS / SELECT INTO produce distinct command
+          -- tags; covering only 'CREATE TABLE' would leave a syntax-shaped hole.
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_event_trigger WHERE evtname = 'auto_rls_on_create_table'
+          ) THEN
+            BEGIN
+              EXECUTE $trg$
+                CREATE EVENT TRIGGER auto_rls_on_create_table
+                  ON ddl_command_end
+                  WHEN TAG IN ('CREATE TABLE', 'CREATE TABLE AS', 'SELECT INTO')
+                  EXECUTE FUNCTION auto_enable_rls()
+              $trg$;
+            EXCEPTION WHEN insufficient_privilege THEN
+              RAISE EXCEPTION 'v35 auto_rls_event_trigger: role % may not CREATE EVENT TRIGGER (superuser-only; on managed Postgres only the master user can — rds_superuser is not enough). Pre-create the auto_enable_rls() function and the auto_rls_on_create_table event trigger as that user (SQL in src/core/migrate.ts v35), then re-run: this migration passes create-if-absent and retries automatically on the next initSchema call.', current_user;
+            END;
+          END IF;
+        END $v35$;
 
         -- One-time backfill of every existing public.* base table without RLS.
         -- Honors the same GBRAIN:RLS_EXEMPT regex doctor.ts uses
@@ -1771,7 +1823,7 @@ export const MIGRATIONS: Migration[] = [
           IF NOT has_bypass THEN
             -- Same posture as v24: raise to abort the migration so the runner
             -- leaves config.version unbumped and retries on the next call.
-            RAISE EXCEPTION 'v35 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Re-run as postgres (or another BYPASSRLS role).', current_user;
+            RAISE EXCEPTION 'v35 auto_rls_event_trigger backfill: role % does not have BYPASSRLS — cannot enable RLS safely. Grant it (as postgres or a managed-Postgres master user): ALTER ROLE % BYPASSRLS; then re-run. The migration will retry automatically on the next initSchema call.', current_user, current_user;
           END IF;
 
           FOR r IN
@@ -5206,7 +5258,7 @@ export const MIGRATIONS: Migration[] = [
     // v110/v115 tables); pinned by the volunteer-context Postgres e2e.
     // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY needed.
     // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
-    // src/core/schema-embedded.ts.
+    // src/core/schema-embedded.generated.ts.
     idempotent: true,
     sql: `
       CREATE TABLE IF NOT EXISTS context_volunteer_events (
@@ -5853,6 +5905,511 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE minion_jobs ADD CONSTRAINT chk_lock_duration_positive CHECK (lock_duration_ms IS NULL OR (lock_duration_ms >= 5000 AND lock_duration_ms <= 3600000));
     `,
   },
+  {
+    version: 131,
+    name: 'drop_job_wide_subagent_tool_use_id_unique',
+    // #4155 — tool_use_id stores the RAW provider id, and some providers
+    // legitimately reuse the same short id on every turn (claude-cli spawns a
+    // fresh subprocess per turn from an id-stripped transcript, so the model
+    // re-invents ids like "toolu_01"). The job-wide UNIQUE (job_id,
+    // tool_use_id) constraint encoded the false assumption that provider ids
+    // are unique within a job; a reuse collided (this was never any INSERT's
+    // conflict target) and dead-lettered the job. Row identity is already
+    // carried by subagent_tool_executions_stable_id UNIQUE (job_id,
+    // message_idx, ordinal); readers resolve executions by (message_idx,
+    // tool_use_id). A narrower unique (e.g. adding message_idx) would still
+    // dead-letter a turn that reuses one id twice, so no replacement
+    // constraint is added. Same SQL on both engines; DROP CONSTRAINT IF
+    // EXISTS makes re-runs a no-op (v82 pglite precedent).
+    // (Authored as v129; renumbered to v131 after #4152 and #4145 landed
+    // 129/130 first — same renumber pattern as v130 itself.)
+    // Mixed-version fleets: an OLD binary still naming this constraint as an
+    // ON CONFLICT target errors (SQLSTATE 42P10) on every tool persist once
+    // the drop runs — fail-loud, not corrupting. Multi-worker Postgres
+    // deployments should stop `jobs work` daemons before upgrading and
+    // restart them on the new binary (release-noted in v0.46.14.0).
+    idempotent: true,
+    sql: `
+      ALTER TABLE subagent_tool_executions
+        DROP CONSTRAINT IF EXISTS uniq_subagent_tools_use_id;
+    `,
+  },
+  {
+    version: 132,
+    name: 'session_context_state_checkpoint_manifest',
+    // Cathedral 5 (checkpoint compaction): per-session brain-link manifest
+    // banked by the compaction-boundary harvest and rendered into the
+    // post-compaction SessionStart pack. A dedicated column because the
+    // table's existing jsonb columns are TYPED arrays with validators —
+    // there is no free-form bag to extend. Shape: newest-first array of
+    // {slug, title, at, n, seg} capped at 20 (dedup-by-slug on append);
+    // `seg` is the content hash of the harvested corpus segment, the
+    // completion key the OpenClaw assemble poll matches on. DDL-literal
+    // '[]'::jsonb default (safe — the double-encode trap bites binds, not
+    // DDL); writes bind via $N::text::jsonb in session-state.ts. Row-level
+    // 7-day/LRU GC (gcSessionContextState) covers the column for free.
+    // Readers are fail-open: pre-v132 brains return an empty manifest.
+    // No index (PK-probed only). Keep in sync with src/schema.sql
+    // (regenerate schema-embedded.ts via build:schema) and
+    // src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE session_context_state ADD COLUMN IF NOT EXISTS checkpoint_manifest JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `,
+  },
+  {
+    version: 133,
+    name: 'content_chunks_embedded_text_hash',
+    // #4246: per-chunk embed-time content revision. upsertChunks stamps
+    // md5(chunk_text) whenever an embedding lands; a later text rewrite that
+    // keeps the vector is then detectable (embedded_text_hash <> md5(chunk_text))
+    // and invalidateContentDriftEmbeddings NULLs it into the existing
+    // embed-stale cursor. Deliberately NO backfill: hashing existing rows
+    // would assert "this vector matches this text" for rows where that is
+    // exactly what's in question, and treating NULL as stale would force a
+    // corpus-wide re-embed spike on upgrade. NULL is grandfathered (heal-
+    // forward); each row picks up its hash on its next re-embed. No index:
+    // the column is only scanned by the invalidation sweep inside embed
+    // runs (bootstrap-coverage: column-only, no probe needed). Keep in sync
+    // with src/schema.sql (regenerate schema-embedded.ts via build:schema)
+    // and src/core/pglite-schema.ts.
+    idempotent: true,
+    sql: `
+      ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT;
+    `,
+  },
+  {
+    version: 134,
+    name: 'restore_chunks_embedding_null_partial_indexes',
+    // #4252 heal: `migrate embeddings` rebuilt content_chunks.embedding via
+    // DROP COLUMN, which cascade-dropped the `embedding IS NULL` partial
+    // indexes (v66 idx_chunks_embedding_null, v103 content_chunks_stale_idx)
+    // without recreating them. runSchemaTransition now captures + replays
+    // dependent indexes, but brains that already ran a transition lost both
+    // permanently — v66/v103 are recorded as applied, so their IF NOT EXISTS
+    // never re-runs. Re-issue both defs; a no-op everywhere else.
+    // Engine-aware split mirrors v103: Postgres uses CREATE INDEX
+    // CONCURRENTLY + invalid-remnant pre-drop; PGLite plain CREATE INDEX.
+    transaction: false,
+    sql: '',
+    handler: async (engine) => {
+      const defs: Array<[string, string]> = [
+        ['idx_chunks_embedding_null', `ON content_chunks (page_id, chunk_index) WHERE embedding IS NULL;`],
+        ['content_chunks_stale_idx', `ON content_chunks (page_id, chunk_index) WHERE embedding IS NULL;`],
+      ];
+      for (const [name, tail] of defs) {
+        if (engine.kind === 'postgres') {
+          await dropInvalidConcurrentIndex(engine, 134, name);
+          await engine.runMigration(
+            134,
+            `CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name} ${tail}`
+          );
+        } else {
+          await engine.runMigration(
+            134,
+            `CREATE INDEX IF NOT EXISTS ${name} ${tail}`
+          );
+        }
+      }
+    },
+  },
+  {
+    version: 135,
+    name: 'facts_event_time_index',
+    // Event-time recall (FactListOpts.eventTime) filters and orders on
+    // COALESCE(valid_from, created_at), which the created_at index at v40
+    // (idx_facts_since) cannot serve. Without a matching expression index
+    // the common `recall` shape — epoch cutoff, no entity, ORDER BY … LIMIT n
+    // — degrades from an index scan that stops at n rows into a full scan of
+    // the source plus a sort. Mirrors idx_facts_since's shape (same leading
+    // column, same partial predicate) so the two paths cost the same.
+    idempotent: true,
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_facts_since_event_time
+        ON facts (source_id, (COALESCE(valid_from, created_at)) DESC)
+        WHERE expired_at IS NULL;
+    `,
+  },
+  {
+    version: 136,
+    name: 'minion_private_queue_owner_metadata',
+    // issue #4332: durable ownership/liveness metadata for parent-owned
+    // dream-inline queues. Startup recovery uses these columns to cancel only
+    // orphaned private queues (terminal/missing owner or expired lease), never
+    // live queues and never legacy unowned rows.
+    idempotent: true,
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_job_id INTEGER REFERENCES minion_jobs(id) ON DELETE SET NULL;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_owner_token TEXT;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS private_queue_lease_until TIMESTAMPTZ;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_recovery
+        ON minion_jobs (queue, private_queue_lease_until)
+        WHERE queue LIKE 'dream-inline-%'
+          AND status IN ('waiting','active','delayed','waiting-children','paused');
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_private_queue_owner
+        ON minion_jobs (private_queue_owner_job_id)
+        WHERE private_queue_owner_job_id IS NOT NULL;
+    `,
+  },
+  {
+    version: 137,
+    name: 'entity_identities',
+    // #4224 — cross-source entity identity groups (federation v1).
+    //
+    // The identity KEY for a page is (source_id, slug): the same real-world
+    // entity can exist as `people/alice` in the `wiki` source AND
+    // `people/alice-chen` in a mounted team source, and NOTHING today says
+    // they are the same entity. This table groups member pages (by page_id,
+    // resolved from (source_id, slug) at link time) under an opaque
+    // `entity_id` handle.
+    //
+    // v1 is MANUAL-ONLY: rows are created exclusively by the
+    // entity_identity_link op (localOnly write) — no auto-matching, no
+    // similarity heuristics. `established_by` records the linking actor
+    // ('manual' for v1; a future auto-matcher would stamp its own tag and
+    // a sub-1.0 confidence).
+    //
+    // Shape invariants:
+    //   - UNIQUE (source_id, page_id): a page belongs to at most ONE
+    //     identity group (re-linking moves it — explicit manual intent).
+    //   - At most one canonical member per identity (partial unique index):
+    //     the canonical member is the identity's display/primary page.
+    //   - page_id FK ON DELETE CASCADE: deleting a page dissolves its
+    //     membership, never dangles.
+    //
+    // Consumed by src/core/entity-identity.ts (helpers + the flag-gated
+    // retrieval union) and the entity_identity_* ops. Same DDL on both
+    // engines via this shared migration.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS entity_identities (
+        id             BIGSERIAL PRIMARY KEY,
+        entity_id      TEXT NOT NULL,
+        source_id      TEXT NOT NULL,
+        page_id        INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        confidence     DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+        established_by TEXT NOT NULL DEFAULT 'manual',
+        established_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        canonical      BOOLEAN NOT NULL DEFAULT false,
+        CONSTRAINT entity_identities_page_uniq UNIQUE (source_id, page_id)
+      );
+      CREATE INDEX IF NOT EXISTS entity_identities_entity_idx
+        ON entity_identities (entity_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS entity_identities_canonical_uniq
+        ON entity_identities (entity_id) WHERE canonical;
+    `,
+  },
+  {
+    version: 138,
+    name: 'timeline_dedup_md5_summary',
+    // #3737 — idx_timeline_dedup keyed the RAW summary, so any incompressible
+    // summary over the btree v4 row cap ("index row size N exceeds btree
+    // version 4 maximum 2704") aborted the whole timeline insert — long
+    // transcript-derived summaries broke timeline writes brain-wide. Re-key
+    // the dedup tuple on md5(summary): fixed 32-char datum, same dedup
+    // semantics (md5-equal ⟺ summary-equal modulo negligible collisions).
+    // Both insert sites infer ON CONFLICT (page_id, date, md5(summary),
+    // source) against this expression index. Existing rows were unique on
+    // the raw tuple, so the md5 tuple is unique too — no pre-dedupe needed.
+    // The #2038 shape self-heal (timeline-dedup-repair.ts) expects the SAME
+    // md5 shape, so it converges drifted brains instead of reverting this.
+    idempotent: true,
+    sql: `
+      DROP INDEX IF EXISTS idx_timeline_dedup;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup
+        ON timeline_entries(page_id, date, md5(summary), source);
+    `,
+  },
+  {
+    version: 139,
+    name: 'timeline_legacy_source_split_repair',
+    // #3957 follow-up — one-time legacy-row shape repair. The pre-#3957
+    // DB-path parser wrote timeline rows with source='' and the UNSPLIT
+    // `Source — Summary` bullet text as summary; the parser now emits the
+    // split (source, summary) shape (source='markdown' / the parsed label),
+    // so the (page_id, date, md5(summary), source) dedup index can never
+    // collapse a re-extraction onto a legacy row — every re-extract would
+    // duplicate it. Rewrite legacy rows to the shape the next re-extract
+    // will emit, content-anchored per page (see
+    // timeline-dedup-repair.ts:repairLegacyTimelineSourceRows). Rows whose
+    // bullet no longer exists in content are left as-is (they can't
+    // duplicate); rows whose new-shape duplicate already landed are deleted.
+    // Idempotent: rewritten rows no longer match source=''. Handler-only
+    // (runs outside a transaction; every statement is individually safe to
+    // re-run). Both engines share one SQL text via executeRaw.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      const r = await repairLegacyTimelineSourceRows(engine);
+      if (r.rowsRewritten > 0 || r.rowsDeleted > 0) {
+        migrationNotice(
+          `  NOTICE: v139 rewrote ${r.rowsRewritten} legacy timeline row(s) to the split ` +
+          `(source, summary) shape` +
+          (r.rowsDeleted > 0 ? ` and removed ${r.rowsDeleted} already-duplicated row(s)` : '') +
+          ` across ${r.pagesScanned} page(s), so re-extraction dedups instead of duplicating (#3957).\n`,
+        );
+      }
+    },
+  },
+  {
+    version: 140,
+    name: 'chat_usage_log',
+    // #4218 (revives the #3392 shape): durable per-call chat usage ledger.
+    // gateway.chat() inserts one row per SUCCESSFUL call (fire-and-forget via
+    // the chat-usage sink; see src/core/ai/chat-usage.ts) with the answering
+    // model, best-effort phase attribution, token counts incl. prompt-cache
+    // reads/writes, and a canonical-table cost estimate (NULL when the model
+    // has no pricing — never a fake 0). Read back by the `get_usage` op.
+    // Created empty; plain CREATE INDEX is instant — no CONCURRENTLY. RLS:
+    // covered by the v35 auto_rls_on_create_table event trigger on Postgres.
+    // Keep in sync with src/schema.sql, src/core/pglite-schema.ts,
+    // src/core/schema-embedded.generated.ts.
+    idempotent: true,
+    sql: `
+      CREATE TABLE IF NOT EXISTS chat_usage_log (
+        id                 BIGSERIAL PRIMARY KEY,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        model              TEXT NOT NULL,
+        provider           TEXT,
+        phase              TEXT,
+        input_tokens       INTEGER NOT NULL DEFAULT 0,
+        output_tokens      INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd           DOUBLE PRECISION
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_usage_log_created
+        ON chat_usage_log (created_at);
+      CREATE INDEX IF NOT EXISTS idx_chat_usage_log_model
+        ON chat_usage_log (model, created_at);
+    `,
+  },
+  {
+    version: 141,
+    name: 'extract_rollup_expected_limit',
+    // #4482: orthogonal counter for EXPECTED-limit stops (per-source budget /
+    // walltime caps working as designed). halt_count keeps its historical
+    // meaning — rows written before this migration conflate error halts and
+    // cap stops and are deliberately NOT reclassified (they read as 0 caps,
+    // i.e. "unknown"). New writers record error halts in halt_count and cap
+    // stops here, so doctor's extract_health failure rate can exclude
+    // self-imposed capacity limits while keeping them observable.
+    idempotent: true,
+    sql: `
+      ALTER TABLE extract_rollup_7d
+        ADD COLUMN IF NOT EXISTS expected_limit_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 142,
+    name: 'takes_embedding_dimension_matches_config',
+    // #2089: takes was created with a hard-coded vector(1536), while the
+    // configured embedding model can emit another width (for example the
+    // default zembed-1 2560d). The vector writer cannot be useful until the
+    // column shares the configured dimension with content_chunks/facts.
+    // Renumbered v141 → v142: the wave-k branch shipped this AS v141 while
+    // master consumed v141 for extract_rollup_expected_limit (#4482), so a
+    // brain that ran the branch pre-merge recorded version 141 and would
+    // skip master's v141 forever. The guarded DDL below re-applies it here
+    // as a redundant first statement — idempotent, a no-op on fresh paths.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      // Skew guard (see renumber note above): branch-tester DBs at v141
+      // missed extract_rollup_expected_limit; IF NOT EXISTS makes this free
+      // everywhere else.
+      await engine.executeRaw(
+        `ALTER TABLE extract_rollup_7d
+           ADD COLUMN IF NOT EXISTS expected_limit_count INTEGER NOT NULL DEFAULT 0`,
+      );
+      const dimRows = await engine.executeRaw<{ value: string }>(
+        `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+      );
+      const configured = Number.parseInt(dimRows[0]?.value ?? '', 10);
+      const embeddingDim = Number.isInteger(configured) && configured > 0 && configured <= 16000
+        ? configured
+        : 1536;
+
+      const typeRows = await engine.executeRaw<{ formatted: string | null }>(
+        `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname = 'takes'
+           AND a.attname = 'embedding'
+           AND NOT a.attisdropped`,
+      );
+      const current = typeRows[0]?.formatted?.match(/vector\((\d+)\)/i)?.[1];
+      if (current && Number.parseInt(current, 10) === embeddingDim) return;
+
+      await engine.executeRaw(`DROP INDEX IF EXISTS idx_takes_embedding_hnsw`);
+      // Existing vectors cannot be cast across dimensions. Null them before
+      // replacing the column; the next `gbrain takes embed` repopulates them.
+      await engine.executeRaw(`UPDATE takes SET embedding = NULL, embedded_at = NULL`);
+      await engine.executeRaw(`ALTER TABLE takes DROP COLUMN IF EXISTS embedding`);
+      await engine.executeRaw(`ALTER TABLE takes ADD COLUMN embedding VECTOR(${embeddingDim})`);
+      if (embeddingDim <= hnswMaxDimsForType('vector')) {
+        await engine.executeRaw(
+          `CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw ON takes
+             USING hnsw (embedding vector_cosine_ops)
+             WHERE active AND embedding IS NOT NULL`,
+        );
+      }
+      process.stderr.write(`  v142: takes.embedding resized to vector(${embeddingDim}); existing take vectors cleared\n`);
+    },
+  },
+  {
+    // Train port: renumbered 138 -> 142 -> 143 (wave-k pass 1 appended
+    // v138-v141 on the branch, then master consumed v142 for the
+    // takes-embedding resize above; LATEST_VERSION is Math.max so only the
+    // duplicate id needed fixing). Guarded DDL below is idempotent, so a
+    // brain that ran the branch's v142 spelling records v143 as a no-op.
+    version: 143,
+    name: 'dream_verdicts_ttl',
+    // #4069 (reimplemented): 30-day TTL on the significance-verdict cache.
+    // `triage_version`/`model` (v129) already invalidate rows semantically,
+    // but nothing ever DELETED rows — verdicts for deleted or re-hashed
+    // transcripts lived forever. Reads treat expired rows as misses (so
+    // long-lived transcripts re-judge at a 30-day cadence, refreshing the
+    // TTL) and runPhaseSynthesize sweeps expired rows best-effort. Backfill
+    // derives expiry from judged_at so pre-TTL rows keep their original age
+    // instead of gaining a fresh 30 days. The interval literal mirrors
+    // DREAM_VERDICT_TTL_SECONDS (engine.ts) and the schema.sql default.
+    idempotent: true,
+    // Statement order matters (#4657 adversarial review): SET DEFAULT runs
+    // BEFORE the backfill so a concurrent pre-v143 writer (e.g. an old
+    // autopilot daemon judging transcripts mid-upgrade) inserts rows that
+    // pick up the default instead of NULL — otherwise a NULL landing between
+    // the backfill UPDATE and SET NOT NULL fails the migration on every
+    // retry for as long as the legacy writer keeps writing. Safe to edit:
+    // the ledger records no SQL checksum, recorded brains never re-run v143,
+    // and the reordered form is idempotent for everyone else.
+    sql: `
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+      ALTER TABLE dream_verdicts
+        ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');
+      UPDATE dream_verdicts
+        SET expires_at = judged_at + interval '30 days'
+        WHERE expires_at IS NULL;
+      ALTER TABLE dream_verdicts
+        ALTER COLUMN expires_at SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx
+        ON dream_verdicts (expires_at);
+    `,
+  },
+  {
+    version: 144,
+    name: 'open_loops',
+    // Gmail-first open-loop engine: the structured record behind
+    // "who is waiting on you, what you promised". One row per open loop,
+    // deduped per source on dedup_key:
+    //   'thread:<threadId>:<loop_type>'  — deterministic thread-state loops
+    //   'commit:<sha8(canonical json)>'  — LLM-extracted commitments
+    // Loops CLOSE by state transition (done/dropped/stale), never delete —
+    // reply-driven auto-close flips status and keeps the audit trail.
+    // fact_id points at the projected facts row (kind=commitment) so entity
+    // cards / recall see the same commitment through the existing read paths.
+    // Written by src/core/google/loop-detect.ts + loops-extract.ts; read by
+    // the open_loops op (src/core/ops/loops.ts). Same DDL on both engines.
+    idempotent: true,
+    sql: `
+      -- Skew-guard re-apply of master's v143 (dream_verdicts_ttl) for
+      -- branch-tester DBs that recorded 142/143 before the renumber; all
+      -- statements are idempotent no-ops where v143 already ran.
+      ALTER TABLE dream_verdicts ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+      UPDATE dream_verdicts
+        SET expires_at = judged_at + interval '30 days'
+        WHERE expires_at IS NULL;
+      ALTER TABLE dream_verdicts
+        ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days'),
+        ALTER COLUMN expires_at SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS dream_verdicts_expires_idx
+        ON dream_verdicts (expires_at);
+      CREATE TABLE IF NOT EXISTS open_loops (
+        id                 BIGSERIAL PRIMARY KEY,
+        source_id          TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        dedup_key          TEXT NOT NULL,
+        loop_type          TEXT NOT NULL CHECK (loop_type IN (
+                             'commitment_owed_by_me','commitment_owed_to_me',
+                             'unanswered_inbound','unanswered_outbound','decision_pending')),
+        counterparty_slug  TEXT,
+        counterparty_email TEXT,
+        summary            TEXT NOT NULL,
+        evidence           JSONB NOT NULL DEFAULT '[]'::jsonb,
+        thread_id          TEXT,
+        page_slug          TEXT,
+        due_at             TIMESTAMPTZ,
+        status             TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','dropped','stale')),
+        detector           TEXT NOT NULL CHECK (detector IN ('deterministic_thread','llm_extract','manual')),
+        confidence         REAL NOT NULL DEFAULT 1.0,
+        fact_id            BIGINT,
+        opened_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_activity_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        closed_at          TIMESTAMPTZ,
+        closed_by          TEXT,
+        created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT open_loops_dedup UNIQUE (source_id, dedup_key)
+      );
+      CREATE INDEX IF NOT EXISTS open_loops_status_idx
+        ON open_loops (source_id, status, last_activity_at DESC);
+      CREATE INDEX IF NOT EXISTS open_loops_counterparty_idx
+        ON open_loops (source_id, counterparty_slug) WHERE status = 'open';
+      CREATE INDEX IF NOT EXISTS open_loops_thread_idx
+        ON open_loops (source_id, thread_id) WHERE status = 'open';
+      CREATE TABLE IF NOT EXISTS loop_suppressions (
+        id         BIGSERIAL PRIMARY KEY,
+        source_id  TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        kind       TEXT NOT NULL CHECK (kind IN ('sender','thread')),
+        value      TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT loop_suppressions_uniq UNIQUE (source_id, kind, value)
+      );
+    `,
+    // Skew guard (mirrors master's own renumber pattern): the
+    // gmail-open-loop-engine branch shipped open_loops as v142, then v143,
+    // while master consumed v142 (takes_embedding_dimension_matches_config,
+    // #2089) and v143 (dream_verdicts_ttl, #4069) — a brain that ran the
+    // branch pre-merge recorded 142/143 and would skip those forever. The
+    // sql above re-applies dream_verdicts_ttl (idempotent DDL) and this
+    // handler re-applies the takes resize (dimension check = no-op
+    // everywhere it already ran).
+    handler: async (engine) => {
+      const dimRows = await engine.executeRaw<{ value: string }>(
+        `SELECT value FROM config WHERE key = 'embedding_dimensions'`,
+      );
+      const configured = Number.parseInt(dimRows[0]?.value ?? '', 10);
+      const embeddingDim = Number.isInteger(configured) && configured > 0 && configured <= 16000
+        ? configured
+        : 1536;
+      const typeRows = await engine.executeRaw<{ formatted: string | null }>(
+        `SELECT format_type(a.atttypid, a.atttypmod) AS formatted
+          FROM pg_attribute a
+          JOIN pg_class c ON c.oid = a.attrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND c.relname = 'takes'
+           AND a.attname = 'embedding'
+           AND NOT a.attisdropped`,
+      );
+      const current = typeRows[0]?.formatted?.match(/vector\((\d+)\)/i)?.[1];
+      if (current && Number.parseInt(current, 10) === embeddingDim) return;
+
+      await engine.executeRaw(`DROP INDEX IF EXISTS idx_takes_embedding_hnsw`);
+      await engine.executeRaw(`UPDATE takes SET embedding = NULL, embedded_at = NULL`);
+      await engine.executeRaw(`ALTER TABLE takes DROP COLUMN IF EXISTS embedding`);
+      await engine.executeRaw(`ALTER TABLE takes ADD COLUMN embedding VECTOR(${embeddingDim})`);
+      if (embeddingDim <= hnswMaxDimsForType('vector')) {
+        await engine.executeRaw(
+          `CREATE INDEX IF NOT EXISTS idx_takes_embedding_hnsw ON takes
+             USING hnsw (embedding vector_cosine_ops)
+             WHERE active AND embedding IS NOT NULL`,
+        );
+      }
+      process.stderr.write(`  v144 skew guard: takes.embedding resized to vector(${embeddingDim})\n`);
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -6203,8 +6760,26 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     if (r.repaired) {
       console.error(
         `[migrate] healed idx_timeline_dedup drift (#2038): ${r.before.join(',') || '(absent)'} ` +
-        `→ page_id,date,summary,source` +
+        `→ page_id,date,md5(summary),source` +
         (r.collapsedDuplicates > 0 ? ` (collapsed ${r.collapsedDuplicates} duplicate row(s))` : ''),
+      );
+    }
+  } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
+
+  // #550: same drift class for the pages upsert arbiter. When the
+  // UNIQUE(source_id, slug) constraint vanishes (partial restore, manual DDL,
+  // name-only migration guards), EVERY putPage fails with "no unique or
+  // exclusion constraint" and neither re-initSchema nor the version counter
+  // can see it. ADD-only self-heal; refuses (loudly) on duplicate rows.
+  try {
+    const p = await repairPagesUpsertArbiter(engine);
+    if (p.repaired) {
+      console.error(`[migrate] restored pages_source_slug_key UNIQUE(source_id, slug) (#550)`);
+    } else if (p.reason === 'duplicates') {
+      console.error(
+        `[migrate] cannot restore pages_source_slug_key: ${p.duplicateGroups} duplicate ` +
+        `(source_id, slug) group(s) exist — page upserts will keep failing until the ` +
+        `duplicates are resolved (#550). See \`gbrain doctor\`.`,
       );
     }
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }

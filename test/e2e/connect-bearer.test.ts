@@ -96,6 +96,31 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     }
   }, 30_000);
 
+  test('initialize handshake serves the canonical agent contract as instructions', async () => {
+    // The `serve --http` lane builds its own per-request MCP Server — the
+    // stdio and legacy-transport lanes are pinned elsewhere, but this lane
+    // had no instructions coverage. A real SDK initialize against the live
+    // runServeHttp process must surface GBRAIN_MCP_INSTRUCTIONS verbatim.
+    expect(serverReady).toBe(true);
+    const { GBRAIN_MCP_INSTRUCTIONS } = await import('../../src/mcp/instructions.ts');
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const client = new Client(
+      { name: 'gbrain-instructions-e2e', version: '1' },
+      { capabilities: {} },
+    );
+    try {
+      await client.connect(transport);
+      expect(client.getInstructions()).toBe(GBRAIN_MCP_INSTRUCTIONS);
+    } finally {
+      try { await client.close(); } catch { /* best-effort */ }
+    }
+  }, 30_000);
+
   test('wrong token classifies as auth', async () => {
     expect(serverReady).toBe(true);
     const r = await probeBrainIdentity(MCP_URL, 'gbrain_deadbeef', { timeoutMs: 15_000 });

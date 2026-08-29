@@ -1018,7 +1018,7 @@ describe('redirect_uri validation (DCR)', () => {
         scope: 'read',
         token_endpoint_auth_method: 'client_secret_post',
       }),
-    ).rejects.toThrow(/https/);
+    ).rejects.toThrow(/https|loopback|custom scheme/i);
   });
 
   test('non-URL string is rejected', async () => {
@@ -1031,6 +1031,59 @@ describe('redirect_uri validation (DCR)', () => {
         token_endpoint_auth_method: 'client_secret_post',
       }),
     ).rejects.toThrow();
+  });
+
+  test('native-app custom scheme redirect_uri is allowed (RFC 8252 §7.1)', async () => {
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'warp-custom-scheme',
+      redirect_uris: ['warp://oauth/callback'],
+      grant_types: ['authorization_code'],
+      scope: 'read',
+      token_endpoint_auth_method: 'none',
+    });
+    expect(result.client_id).toStartWith('gbrain_cl_');
+    const stored = await provider.clientsStore.getClient(result.client_id);
+    expect(stored!.redirect_uris).toEqual(['warp://oauth/callback']);
+  });
+
+  test('browser pseudo-schemes are rejected in the custom-scheme branch', async () => {
+    // javascript:/data:/vbscript:/blob: are not native-app schemes — a
+    // "redirect" to one is script injection. The custom-scheme allow branch
+    // must not let them through.
+    for (const uri of [
+      'javascript://alert(1)',
+      'data://text/html;base64,PGh0bWw+',
+      'vbscript://msgbox',
+      'blob://example.com/uuid',
+    ]) {
+      await expect(
+        provider.clientsStore.registerClient!({
+          client_name: 'pseudo-scheme-client',
+          redirect_uris: [uri],
+          grant_types: ['authorization_code'],
+          scope: 'read',
+          token_endpoint_auth_method: 'none',
+        }),
+      ).rejects.toThrow(/pseudo-scheme/);
+    }
+  });
+
+  test('DCR validation failures throw InvalidClientMetadataError (not plain Error)', async () => {
+    const { InvalidClientMetadataError } = await import(
+      '@modelcontextprotocol/sdk/server/auth/errors.js'
+    );
+    try {
+      await provider.clientsStore.registerClient!({
+        client_name: 'http-rejected-type',
+        redirect_uris: ['http://example.com/callback'],
+        grant_types: ['authorization_code'],
+        scope: 'read',
+        token_endpoint_auth_method: 'client_secret_post',
+      });
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InvalidClientMetadataError);
+    }
   });
 
   // pgArray escape regression: an element containing a comma must be stored
@@ -1318,16 +1371,38 @@ describe('v0.28 ALLOWED_SCOPES allowlist', () => {
     }
   });
 
-  test('registerClient (DCR) rejects unknown scope strings', async () => {
-    await expect(
-      provider.clientsStore.registerClient!({
-        client_name: 'dcr-bad-scope',
+  test('registerClient (DCR) filters unknown scopes and keeps allowed ones', async () => {
+    // DCR is unauthenticated and clients (rmcp / OIDC-flavored stacks) often
+    // append offline_access etc. Filter unknowns instead of 500ing.
+    const result = await provider.clientsStore.registerClient!({
+      client_name: 'dcr-filter-scope',
+      redirect_uris: ['https://example.com/cb'],
+      grant_types: ['authorization_code'],
+      scope: 'read write offline_access openid',
+      token_endpoint_auth_method: 'none',
+    } as any);
+    expect(result.scope).toBe('read write');
+    const stored = await provider.clientsStore.getClient(result.client_id);
+    expect(stored!.scope).toBe('read write');
+  });
+
+  test('registerClient (DCR) rejects when every requested scope is unknown', async () => {
+    const { InvalidClientMetadataError } = await import(
+      '@modelcontextprotocol/sdk/server/auth/errors.js'
+    );
+    try {
+      await provider.clientsStore.registerClient!({
+        client_name: 'dcr-all-unknown-scope',
         redirect_uris: ['https://example.com/cb'],
         grant_types: ['authorization_code'],
-        scope: 'read bogus_scope',
-        token_endpoint_auth_method: 'client_secret_post',
-      } as any),
-    ).rejects.toThrow(/Unknown scope/);
+        scope: 'openid offline_access',
+        token_endpoint_auth_method: 'none',
+      } as any);
+      throw new Error('expected throw');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InvalidClientMetadataError);
+      expect((e as Error).message).toMatch(/No recognized scopes/);
+    }
   });
 });
 
@@ -1769,7 +1844,9 @@ describe('v0.41.3 DCR validator (T5)', () => {
   test('DCR rejects unknown token_endpoint_auth_method — closes --enable-dcr loose path', async () => {
     // Pre-v0.41.3 the DCR registration handler defaulted to 'client_secret_post'
     // for any unknown value, silently swallowing typos. T5 throws so the bad
-    // input fails loud — same gate as CLI + admin paths.
+    // input fails loud. DCR wraps the inner InvalidTokenEndpointAuthMethodError
+    // as InvalidClientMetadataError so the MCP SDK returns HTTP 400 instead of
+    // opaque 500 (Warp/rmcp regression).
     await expect(
       provider.clientsStore.registerClient!({
         client_name: 'dcr-bad-test',
@@ -1778,7 +1855,7 @@ describe('v0.41.3 DCR validator (T5)', () => {
         redirect_uris: ['https://example.test/cb'],
         token_endpoint_auth_method: 'frobnicate',
       } as any),
-    ).rejects.toThrow(InvalidTokenEndpointAuthMethodError);
+    ).rejects.toThrow(InvalidClientMetadataError);
   });
 
   test('DCR accepts "none" → public PKCE client', async () => {
@@ -1843,4 +1920,108 @@ describe('#1353 DCR default-grant hardening', () => {
     const stored = await insecure.clientsStore.getClient(reg.client_id);
     expect(stored?.grant_types).toEqual(['client_credentials']);
   });
+});
+
+// ---------------------------------------------------------------------------
+// #2833 — legacy last_used_at bookkeeping must not block or fail verification.
+// The legacy branch of verifyAccessToken used to AWAIT an un-debounced
+// `UPDATE access_tokens SET last_used_at = now()` on every verify: a slow or
+// failing UPDATE made every legacy-token request hang or 401, and every
+// verify burned a write. Post-fix it is a debounced (60s) fire-and-forget,
+// mirroring src/mcp/http-transport.ts validateToken.
+// ---------------------------------------------------------------------------
+
+describe('legacy last_used_at debounce (#2833)', () => {
+  async function insertLegacyToken(name: string): Promise<{ token: string; hash: string }> {
+    const token = generateToken('gbrain_');
+    const hash = hashToken(token);
+    await sql`
+      INSERT INTO access_tokens (id, name, token_hash)
+      VALUES (${crypto.randomUUID()}, ${name}, ${hash})
+    `;
+    return { token, hash };
+  }
+
+  async function readLastUsedAt(hash: string): Promise<Date | null> {
+    const rows = await sql`SELECT last_used_at FROM access_tokens WHERE token_hash = ${hash}`;
+    const v = rows[0]?.last_used_at;
+    return v == null ? null : new Date(v as string | Date);
+  }
+
+  /** Poll until cond() or ~timeoutMs elapsed (fire-and-forget writes need a tick). */
+  async function waitFor(cond: () => Promise<boolean>, timeoutMs = 3000): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (await cond()) return true;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    return cond();
+  }
+
+  test('verify still resolves with valid auth when the last_used_at UPDATE rejects', async () => {
+    const { token } = await insertLegacyToken('debounce-reject-agent');
+    const rejectingSql: typeof sql = (strings, ...values) => {
+      const q = strings.join('?');
+      if (/UPDATE\s+access_tokens/i.test(q)) {
+        return Promise.reject(new Error('injected UPDATE failure'));
+      }
+      return sql(strings, ...values);
+    };
+    const p = new GBrainOAuthProvider({ sql: rejectingSql, tokenTtl: 60, refreshTtl: 300 });
+    const authInfo = await p.verifyAccessToken(token);
+    expect(authInfo.clientId).toBe('debounce-reject-agent');
+    expect(authInfo.scopes).toEqual(['read', 'write', 'admin']);
+  });
+
+  test('verify still resolves when the last_used_at UPDATE hangs forever', async () => {
+    const { token } = await insertLegacyToken('debounce-hang-agent');
+    const hangingSql: typeof sql = (strings, ...values) => {
+      const q = strings.join('?');
+      if (/UPDATE\s+access_tokens/i.test(q)) {
+        return new Promise(() => { /* never settles */ });
+      }
+      return sql(strings, ...values);
+    };
+    const p = new GBrainOAuthProvider({ sql: hangingSql, tokenTtl: 60, refreshTtl: 300 });
+    const authInfo = await p.verifyAccessToken(token);
+    expect(authInfo.clientId).toBe('debounce-hang-agent');
+  }, 10_000);
+
+  test('NULL last_used_at is populated on first verify (fire-and-forget)', async () => {
+    const { token, hash } = await insertLegacyToken('debounce-null-agent');
+    expect(await readLastUsedAt(hash)).toBeNull();
+    await provider.verifyAccessToken(token);
+    const populated = await waitFor(async () => (await readLastUsedAt(hash)) !== null);
+    expect(populated).toBe(true);
+  }, 10_000);
+
+  test('fresh last_used_at (<60s old) is NOT rewritten on a second verify', async () => {
+    const { token, hash } = await insertLegacyToken('debounce-fresh-agent');
+    await sql`
+      UPDATE access_tokens SET last_used_at = now() - interval '10 seconds'
+      WHERE token_hash = ${hash}
+    `;
+    const before = await readLastUsedAt(hash);
+    expect(before).not.toBeNull();
+    await provider.verifyAccessToken(token);
+    // Give any (buggy, un-debounced) write time to land.
+    await new Promise(r => setTimeout(r, 300));
+    const after = await readLastUsedAt(hash);
+    expect(after!.getTime()).toBe(before!.getTime());
+  }, 10_000);
+
+  test('stale last_used_at (>60s old) advances after a verify', async () => {
+    const { token, hash } = await insertLegacyToken('debounce-stale-agent');
+    await sql`
+      UPDATE access_tokens SET last_used_at = now() - interval '2 hours'
+      WHERE token_hash = ${hash}
+    `;
+    const before = await readLastUsedAt(hash);
+    await provider.verifyAccessToken(token);
+    const advanced = await waitFor(async () => {
+      const cur = await readLastUsedAt(hash);
+      return cur !== null && cur.getTime() > before!.getTime();
+    });
+    expect(advanced).toBe(true);
+  }, 10_000);
 });

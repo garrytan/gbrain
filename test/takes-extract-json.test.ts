@@ -51,6 +51,10 @@ describe('gbrain takes extract --from-pages --json (#3962)', () => {
       claims_extracted: 0,
       consent_gate_blocked: false,
       llm_unavailable: false,
+      // #4473: md-first skip accounting.
+      pages_skipped: 0,
+      skipped: [],
+      mirror_warnings: 0,
     });
   });
 });

@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, mkdirSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { listScenarios, loadScenario, readBrief } from '../src/core/claw-test/scenarios.ts';
@@ -174,6 +174,78 @@ describe('readBrief', () => {
     scaffoldScenario('reads-brief', '{"kind":"fresh-install","expected_phases":[]}', '# Hello world');
     const cfg = loadScenario('reads-brief');
     expect(readBrief(cfg)).toBe('# Hello world');
+  });
+});
+
+describe('every shipped fixture loads (exhaustive guard)', () => {
+  // The shipped fixtures root, addressed directly — NOT through the
+  // GBRAIN_CLAW_SCENARIOS_DIR override this file's beforeEach installs.
+  const SHIPPED_ROOT = join(import.meta.dir, 'fixtures', 'claw-test-scenarios');
+
+  // Ratchet: fixtures whose scenario.json declares a kind the loader does not
+  // accept YET. Each entry is asserted to (a) still be well-formed JSON with
+  // its declared kind (fixture-rot guard) and (b) FAIL loadScenario with the
+  // unknown-kind error. The moment the kind is wired (TODOS.md:5529-5545,
+  // "Wire the orphaned voice-agent-install ScenarioKind"), assertion (b)
+  // flips and forces the entry OUT of this map, promoting the fixture to the
+  // full every-fixture-loads assertion below. Adding a NEW orphaned fixture
+  // requires a reviewer-visible entry here.
+  const KNOWN_ORPHANS: Record<string, { declaredKind: string }> = {
+    'voice-agent-install': { declaredKind: 'voice-agent-install' },
+  };
+
+  function shippedDirs(): string[] {
+    return readdirSync(SHIPPED_ROOT)
+      .filter(name => statSync(join(SHIPPED_ROOT, name)).isDirectory())
+      .sort();
+  }
+
+  test('fixtures root exists and carries the known scenario floor', () => {
+    expect(existsSync(SHIPPED_ROOT)).toBe(true);
+    const dirs = shippedDirs();
+    // Floor, not ceiling: new scenarios are welcome, but the three that exist
+    // today can never silently vanish out from under the guard.
+    for (const required of ['fresh-install', 'upgrade-from-v0.18', 'voice-agent-install']) {
+      expect(dirs).toContain(required);
+    }
+  });
+
+  test('no invisible dead fixtures: every scenario dir has scenario.json + BRIEF.md and is listed', () => {
+    const dirs = shippedDirs();
+    for (const name of dirs) {
+      // listScenarios silently filters dirs without scenario.json — a
+      // half-committed fixture would otherwise sit dead and unlisted forever.
+      expect(existsSync(join(SHIPPED_ROOT, name, 'scenario.json'))).toBe(true);
+      expect(existsSync(join(SHIPPED_ROOT, name, 'BRIEF.md'))).toBe(true);
+    }
+    expect(listScenarios(SHIPPED_ROOT)).toEqual(dirs);
+  });
+
+  test('every non-orphaned fixture loads via loadScenario with coherent config', () => {
+    const names = listScenarios(SHIPPED_ROOT).filter(n => !(n in KNOWN_ORPHANS));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const cfg = loadScenario(name, SHIPPED_ROOT);
+      const declared = JSON.parse(readFileSync(join(SHIPPED_ROOT, name, 'scenario.json'), 'utf-8'));
+      expect(cfg.name).toBe(name);
+      expect(cfg.kind).toBe(declared.kind);
+      expect(cfg.expectedPhases.length).toBeGreaterThan(0);
+      expect(readBrief(cfg).trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  test('known orphans are pinned: well-formed fixture, loader still rejects the kind', () => {
+    for (const [name, { declaredKind }] of Object.entries(KNOWN_ORPHANS)) {
+      // (a) The fixture itself must not rot while it waits for wiring.
+      const raw = JSON.parse(readFileSync(join(SHIPPED_ROOT, name, 'scenario.json'), 'utf-8'));
+      expect(raw.kind).toBe(declaredKind);
+      expect(Array.isArray(raw.expected_phases)).toBe(true);
+      expect(raw.expected_phases.length).toBeGreaterThan(0);
+      // (b) The ratchet: once ScenarioKind accepts this kind, this assertion
+      // fails and the entry must move to the full-load sweep above. Do NOT
+      // loosen this to a skip — a test that cannot fail is not coverage.
+      expect(() => loadScenario(name, SHIPPED_ROOT)).toThrow(/unknown kind/);
+    }
   });
 });
 

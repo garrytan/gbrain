@@ -7,20 +7,32 @@
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
-import { looksConceptShaped } from '../search/query-intent.ts';
+import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
+import {
+  gradeRetrievalConfidence,
+  shouldEscalateRetrieval,
+  confidenceRank,
+  type CragMetaBlock,
+} from '../search/crag.ts';
 import { expandQuery } from '../search/expansion.ts';
 import { dedupResults } from '../search/dedup.ts';
+import { markKeywordHits } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { HybridSearchMeta } from '../types.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
+import { applySnippetCap, DEFAULT_AGENT_SNIPPET_CHARS } from '../search/snippet-cap.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { QUERY_DESCRIPTION, SEARCH_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
 import {
   federatedSearchScope,
+  parseSourceIdParam,
   resolvePerCallMode,
+  stampDeepResearchIds,
   stampEvidenceSafe,
   maybeCaptureSearch,
+  thinkSourceScopeOpts,
 } from './context.ts';
 
 // --- Search ---
@@ -58,6 +70,69 @@ function buildRetrievalResponseMeta(
   };
 }
 
+/**
+ * #3985: normalize the `types` param. MCP passes a real array; the CLI
+ * passes `--types person,company` as one string. Rejects non-string entries
+ * and an all-empty list loudly (invalid_params) instead of silently
+ * dropping the filter. The SQL-level plumbing (SearchOpts.types → both
+ * engines' keyword/title/vector legs) has existed since v0.33 (whoknows);
+ * this just exposes it on the public search/query ops.
+ */
+function normalizeTypesParam(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const arr = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(',')
+      : null;
+  if (arr === null || arr.some((t) => typeof t !== 'string')) {
+    throw new OperationError(
+      'invalid_params',
+      '`types` must be an array of page-type strings (CLI: --types person,company).',
+    );
+  }
+  const types = [...new Set((arr as string[]).map((t) => t.trim()).filter(Boolean))];
+  if (types.length === 0) {
+    throw new OperationError(
+      'invalid_params',
+      '`types` was provided but contained no usable page-type strings (CLI: --types person,company).',
+    );
+  }
+  return types;
+}
+
+const TYPES_PARAM_DESCRIPTION =
+  "Filter results to pages whose `type` is in this list (e.g. ['person','company']). " +
+  'CLI: --types person,company. Applied at SQL level on every retrieval leg — the same ' +
+  'filter `whoknows` uses. Stacks with all other filters.';
+
+const SNIPPET_CHARS_PARAM_DESCRIPTION =
+  'Cap each result\'s chunk_text at N characters (a "… [truncated]" marker names the ' +
+  'get_page recovery move). 0 forces full text. Unset: subagent tool loops default to ' +
+  'the agent.search_snippet_chars config (300; 0=full); every other caller gets full text. (#3800)';
+
+/**
+ * #3800: resolve the effective snippet cap for one call. Explicit
+ * `snippet_chars` param wins (0 = full text); else subagent callers
+ * (ctx.viaSubagent — fail-closed dispatcher flag) read the
+ * `agent.search_snippet_chars` config, defaulting to 300; every other
+ * caller gets full text (cap 0 = no-op).
+ */
+async function resolveSnippetCap(ctx: OperationContext, p: Record<string, unknown>): Promise<number> {
+  if (typeof p.snippet_chars === 'number' && Number.isFinite(p.snippet_chars)) {
+    return Math.max(0, Math.floor(p.snippet_chars as number));
+  }
+  if (ctx.viaSubagent !== true) return 0;
+  try {
+    const raw = await ctx.engine.getConfig('agent.search_snippet_chars');
+    if (raw != null && raw !== '') {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+    }
+  } catch { /* fail-open to the default */ }
+  return DEFAULT_AGENT_SNIPPET_CHARS;
+}
+
 const search: Operation = {
   name: 'search',
   description: SEARCH_DESCRIPTION,
@@ -66,14 +141,56 @@ const search: Operation = {
     limit: { type: 'number', description: 'Max results (default 20)' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only.' },
+    // #4398: per-call source scope, mirroring `query` — MCP clients passed it
+    // here, got 'unknown parameter ignored', and read UNSCOPED results.
+    source_id: {
+      type: 'string',
+      description:
+        "Scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile); when unset, an unqualified read spans every federated source. Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+    },
+    // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
+    types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
+    // #3800: subagent token economy — per-call snippet cap.
+    snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
+    // #4415: explicit ranking-axis overrides (the same knobs `query` has had
+    // since v0.29.1). The auto-detect banks are English regex, so on a
+    // non-English brain the recency/salience stages never fire — these flags
+    // (CLI: --salience / --recency) are the per-call override; the
+    // search.intent_patterns config is the per-brain fix.
+    salience: {
+      type: 'string',
+      enum: ['off', 'on', 'strong'],
+      description:
+        "Salience boost (emotional_weight + take_count, no time component): 'off' | 'on' | 'strong'. " +
+        'Omit and gbrain auto-detects from query text. Independent of `recency`.',
+    },
+    recency: {
+      type: 'string',
+      enum: ['off', 'on', 'strong'],
+      description:
+        "Recency boost (per-prefix age decay, no mattering signal): 'off' | 'on' | 'strong'. " +
+        'Omit and gbrain auto-detects. Independent of `salience`. Ignored on the keyword-only opt-out path.',
+    },
   },
   handler: async (ctx, p) => {
     const startedAt = Date.now();
     const queryText = p.query as string;
     const limit = (p.limit as number) || 20;
     const offset = (p.offset as number) || 0;
-    // #2561: unqualified trusted-local search spans federated sources.
-    const scope = federatedSearchScope(ctx);
+    // #3985: validated multi-type filter, threaded into both branches below.
+    const types = normalizeTypesParam(p.types);
+    // #3800: snippet cap (param > subagent config default > full text).
+    const snippetCap = await resolveSnippetCap(ctx, p);
+    // #4398: explicit per-call source_id wins over ctx.sourceId, validated
+    // (invalid ids throw invalid_params) then resolved through the single
+    // trust+grant resolver (resolveRequestedScope inside federatedSearchScope)
+    // — out-of-grant ids throw permission_denied, and #2561's unqualified
+    // trusted-local federated span is unchanged.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'search', { allowAll: true });
+    const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4352 — untrusted callers never see `visibility: private` pages
+    // (config-gated; trusted local CLI unchanged).
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
     // T4/D5 — per-call mode honored ONLY for trusted/local callers so a remote
     // OAuth client can't escalate to the costly tokenmax bundle. Local + unknown
@@ -86,8 +203,12 @@ const search: Operation = {
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, ...scope });
+      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, ...(types ? { types } : {}), ...scope });
       const results = dedupResults(raw);
+      // #3783 — every row here IS a keyword hit (direct FTS path); mark
+      // before stamping so evidence still reads keyword_exact.
+      markKeywordHits(results);
+      stampDeepResearchIds(results);
       stampEvidenceSafe(results);
       // #1699: the keyword-only opt-out must STILL surface the content_flag
       // agent-warning channel (hybridSearch stamps it; this branch bypasses
@@ -100,7 +221,8 @@ const search: Operation = {
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
       ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, null, { conceptHint: true }));
-      return results;
+      // #3800: cap AFTER capture/meta so eval + cache see the real payload.
+      return applySnippetCap(results, snippetCap);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -110,15 +232,22 @@ const search: Operation = {
       limit,
       offset,
       expansion: false,
+      excludePrivate,
+      ...(types ? { types } : {}),
       ...scope,
       ...(perCallMode ? { mode: perCallMode } : {}),
+      // #4415: agent-explicit recency + salience (same posture as `query`).
+      salience: p.salience as 'off' | 'on' | 'strong' | undefined,
+      recency: p.recency as 'off' | 'on' | 'strong' | undefined,
       onMeta: (m) => { capturedMeta = m; },
     });
+    stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
     maybeCaptureSearch(ctx, queryText, results, latency_ms, true, capturedMeta);
     ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, capturedMeta, { conceptHint: true }));
-    return results;
+    // #3800: cap AFTER capture/meta so eval + cache see the real payload.
+    return applySnippetCap(results, snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'search', positional: ['query'] },
@@ -139,8 +268,27 @@ const query: Operation = {
      *  CLI loads the file, base64-encodes, and passes through `image`). */
     image: { type: 'string', description: 'Base64-encoded image bytes for image-similarity search (CLI: --image <path>).' },
     image_mime: { type: 'string', description: 'MIME type for the image bytes (auto-derived from path on CLI; required when calling op directly).' },
-    limit: { type: 'number', description: 'Max results (default 20)' },
+    // #4356 — the text/hybrid path no longer hard-defaults this to 20; an
+    // omitted OR falsy (0) `limit` resolves from the active search mode's
+    // searchLimit (10/25/50 for conservative/balanced/tokenmax by default,
+    // overridable via the `search.searchLimit` config key — see mode.ts
+    // `pick()`). 0 is treated as "unset" rather than "return zero rows",
+    // matching the existing convention on every other limit surface with
+    // this same shape (`search`'s own limit below, and the image-
+    // similarity branch below it) — none of which support a literal
+    // empty-result request today; introducing that only here would be a
+    // new, undocumented asymmetry rather than a limit-consistency fix.
+    // (`search_by_image`, a separate op in src/core/ops/image.ts, has the
+    // same convention but isn't "in this file".) The image-similarity path
+    // (`image` param) is unaffected by this change and still hard-defaults
+    // to 20 regardless of mode — out of scope here, tracked separately
+    // (#4356 Problem 2).
+    limit: { type: 'number', description: 'Max results. For text queries, omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override). For image-similarity queries (`image` param), always defaults to 20 regardless of mode.' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
+    // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
+    types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
+    // #3800: subagent token economy — per-call snippet cap.
+    snippet_chars: { type: 'number', description: SNIPPET_CHARS_PARAM_DESCRIPTION },
     expand: { type: 'boolean', description: 'Enable multi-query expansion (default: true)' },
     detail: { type: 'string', description: 'Result detail level: low (compiled truth only), medium (default, all with dedup), high (all chunks)' },
     mode: { type: 'string', description: 'Search mode (conservative|balanced|tokenmax). Local callers only; remote uses configured mode.' },
@@ -184,7 +332,7 @@ const query: Operation = {
     source_id: {
       type: 'string',
       description:
-        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to span every source for trusted local callers; for remote callers '__all__' spans only your granted sources.",
+        "v0.34: scope search to a single source. Defaults to OperationContext.sourceId (set from CLI --source / GBRAIN_SOURCE / .gbrain-source dotfile). Pass '__all__' to span every source for trusted local callers. For remote callers, '__all__' uses the same scope as omission: an OAuth grant when present, otherwise the transport-computed federated sources for grantless local stdio.",
     },
     cross_modal: {
       type: 'string',
@@ -228,6 +376,11 @@ const query: Operation = {
     const expand = p.expand !== false;
     const detail = (p.detail as 'low' | 'medium' | 'high') || undefined;
     const queryText = p.query as string | undefined;
+    // #3985: validated multi-type filter (text path; the image-similarity
+    // branch below also honors it — searchVector filters types at SQL level).
+    const types = normalizeTypesParam(p.types);
+    // #3800: snippet cap (param > subagent config default > full text).
+    const snippetCap = await resolveSnippetCap(ctx, p);
     const imageData = p.image as string | undefined;
     const imageMime = (p.image_mime as string) || 'image/jpeg';
     const embeddingColumnParam =
@@ -244,6 +397,9 @@ const query: Operation = {
     // #2561: unqualified trusted-local query spans federated sources (per-call
     // source_id / remote grants still resolve through resolveRequestedScope).
     const querySourceScope = federatedSearchScope(ctx, sourceIdParam);
+    // #4352 — same enforcement for the full-control query op (both the image
+    // searchVector branch and the text hybrid path below).
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
 
     // v0.27.1: image-similarity branch. Bypasses hybridSearch (which is
     // text-only); embeds the image via embedMultimodal and runs a direct
@@ -261,9 +417,11 @@ const query: Operation = {
         limit: (p.limit as number) || 20,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
+        excludePrivate,
+        ...(types ? { types } : {}),
         ...querySourceScope,
       });
-      return results;
+      return applySnippetCap(results, snippetCap);
     }
 
     if (!queryText) {
@@ -289,14 +447,26 @@ const query: Operation = {
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // semantic cache + token budget + intent weighting fire automatically.
     // Plain hybridSearch remains the bare API for callers that opt out.
-    const results = await hybridSearchCached(ctx.engine, queryText, {
-      limit: (p.limit as number) || 20,
+    // (#1663: `let` — the CRAG gate below may swap in an escalated run.)
+    let results = await hybridSearchCached(ctx.engine, queryText, {
+      // #4356 — was a hard `|| 20`, independent of the mode-resolution
+      // hybridSearchCached applies when `limit` is falsy (undefined OR 0):
+      // `opts?.limit || resolvedMode.searchLimit` (hybrid.ts). Passing
+      // `undefined` through instead of hard-defaulting to 20 lets that
+      // resolution apply (10/25/50 for conservative/balanced/tokenmax).
+      // `(p.limit as number) || undefined` keeps 0 in that same "unset"
+      // bucket rather than requesting a literal empty result — see the
+      // `limit` param description above for why.
+      limit: (p.limit as number) || undefined,
       offset: (p.offset as number) || 0,
+      excludePrivate,
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
       // T4/D5 — per-call mode (local/trusted only; remote ignored).
       ...((): { mode?: string } => { const m = resolvePerCallMode(ctx, p.mode); return m ? { mode: m } : {}; })(),
       detail,
+      // #3985: multi-type filter — SearchOpts.types reaches every leg.
+      types,
       language: (p.lang as string) || undefined,
       symbolKind: (p.symbol_kind as string) || undefined,
       nearSymbol: (p.near_symbol as string) || undefined,
@@ -329,6 +499,104 @@ const query: Operation = {
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
     });
+    // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
+    // reads the stamped honesty signals: evidence, exact_lookup, rerank
+    // score), attach grade + query shape to the retrieval meta on EVERY call,
+    // and — config-gated, default OFF — escalate a weak result once:
+    //   search.crag_escalation=true → one high-ceiling retrieval re-run
+    //     (expansion + relational + wide limit, autocut off). Filters
+    //     (scope/types/since/until/lang) are preserved; keep the better run.
+    //   search.crag_think=true → still weak + LOCAL caller → run think and
+    //     attach its synthesis to the meta (spend-gated by config + trust).
+    const queryShape = classifyQueryShape(queryText);
+    let grade = gradeRetrievalConfidence(results);
+    const crag: CragMetaBlock = {
+      confidence: grade.level,
+      reason: grade.reason,
+      query_shape: queryShape,
+      ...(grade.top_rerank_score !== undefined ? { top_rerank_score: grade.top_rerank_score } : {}),
+    };
+    if (grade.level === 'weak') {
+      const [escalationCfg, thinkCfg] = await Promise.all([
+        ctx.engine.getConfig('search.crag_escalation').catch(() => null),
+        ctx.engine.getConfig('search.crag_think').catch(() => null),
+      ]);
+      if (shouldEscalateRetrieval(grade, { enabled: escalationCfg === 'true' })) {
+        try {
+          let escalatedMeta: HybridSearchMeta | null = null;
+          const escalated = await hybridSearchCached(ctx.engine, queryText, {
+            limit: Math.max((p.limit as number) || 20, 50),
+            offset: (p.offset as number) || 0,
+            expansion: true,
+            expandFn: expandQuery,
+            relationalRetrieval: true,
+            autocut: false,
+            detail,
+            // Preserve the caller's #3985 type filter on the re-run (raw
+            // pass-through; the base call already rejected malformed input).
+            ...(Array.isArray(p.types) || typeof p.types === 'string'
+              ? {
+                  types: (Array.isArray(p.types) ? (p.types as string[]) : (p.types as string).split(','))
+                    .map((t) => t.trim())
+                    .filter(Boolean),
+                }
+              : {}),
+            language: (p.lang as string) || undefined,
+            symbolKind: (p.symbol_kind as string) || undefined,
+            // Preserve the caller's symbol-proximity constraints too — an
+            // escalated set that ignores --near-symbol/--walk-depth must not
+            // replace correctly-filtered weak results.
+            nearSymbol: (p.near_symbol as string) || undefined,
+            walkDepth: typeof p.walk_depth === 'number' ? (p.walk_depth as number) : undefined,
+            ...querySourceScope,
+            since: typeof p.since === 'string' ? p.since : undefined,
+            until: typeof p.until === 'string' ? p.until : undefined,
+            crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
+            embeddingColumn: embeddingColumnParam,
+            onMeta: (m) => { escalatedMeta = m; },
+          });
+          const regraded = gradeRetrievalConfidence(escalated);
+          crag.escalated = true;
+          crag.escalated_confidence = regraded.level;
+          if (confidenceRank(regraded.level) > confidenceRank(grade.level)) {
+            results = escalated;
+            capturedMeta = escalatedMeta;
+            grade = regraded;
+            crag.confidence = regraded.level;
+            crag.reason = regraded.reason;
+          }
+        } catch {
+          // Escalation is best-effort — never fail the original result set.
+        }
+      }
+      if (grade.level === 'weak') {
+        // The honest next move for a still-weak result. Hint always; auto-run
+        // only when the operator opted in AND the caller is trusted-local
+        // (spend + privacy: think synthesizes with the configured LLM).
+        crag.escalate_to_think = true;
+        if (thinkCfg === 'true' && ctx.remote === false) {
+          try {
+            const { runThink } = await import('../think/index.ts');
+            const thinkScope = thinkSourceScopeOpts(ctx);
+            const t = await runThink(ctx.engine, {
+              question: queryText,
+              since: typeof p.since === 'string' ? p.since : undefined,
+              until: typeof p.until === 'string' ? p.until : undefined,
+              ...thinkScope,
+              remote: false,
+            });
+            crag.think = {
+              answer: t.answer,
+              citations: t.citations.length,
+              ...(t.synthesis_status ? { synthesis_status: t.synthesis_status } : {}),
+              model: t.modelUsed,
+            };
+          } catch {
+            // think escalation is best-effort; the hint above still stands.
+          }
+        }
+      }
+    }
     const latency_ms = Date.now() - startedAt;
 
     // v0.37.0 (D11): op-layer last_retrieved_at write-back. Same shape as the
@@ -362,8 +630,14 @@ const query: Operation = {
     }
 
     // WP2/D3: query never nudges toward itself — no concept hint here.
-    ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, capturedMeta));
-    return results;
+    // #1663: the CRAG grade rides the same retrieval meta channel.
+    ctx.emitResponseMeta?.('retrieval', {
+      ...buildRetrievalResponseMeta(queryText, results, capturedMeta),
+      crag,
+    });
+    // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
+    // and recorded the real payload; only the returned envelope is snipped.
+    return applySnippetCap(results, snippetCap);
   },
   scope: 'read',
   cliHints: { name: 'query', positional: ['query'] },

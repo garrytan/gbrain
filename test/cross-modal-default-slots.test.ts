@@ -9,7 +9,12 @@
  */
 import { describe, expect, test } from 'bun:test';
 
-import { DEFAULT_SLOTS } from '../src/core/cross-modal-eval/runner.ts';
+import {
+  DEFAULT_SLOTS,
+  DEFAULT_DIMENSIONS,
+  buildPrompt,
+  dimensionScoreKey,
+} from '../src/core/cross-modal-eval/runner.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import { splitProviderModelId } from '../src/core/model-id.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
@@ -43,5 +48,27 @@ describe('cross-modal DEFAULT_SLOTS ↔ recipe consistency', () => {
   test('slots span three distinct providers (uncorrelated blind spots)', () => {
     const providers = new Set(DEFAULT_SLOTS.map(s => splitProviderModelId(s.model).provider));
     expect(providers.size).toBe(3);
+  });
+});
+
+// #3491 (the #4338 approach): the judge prompt pins the exact "scores" keys.
+// The pre-fix "dim_1_name" placeholder let each judge invent its own
+// spelling/casing, splitting one dimension into per-model singletons at
+// aggregation; aggregate.ts's trim+lowercase normalization is the backstop.
+describe('cross-modal judge-key pinning', () => {
+  test('dimensionScoreKey takes the label before the em-dash', () => {
+    expect(dimensionScoreKey('GOAL_ACHIEVEMENT — Does it work?')).toBe('GOAL_ACHIEVEMENT');
+    expect(dimensionScoreKey('  custom dimension without separator ')).toBe(
+      'custom dimension without separator',
+    );
+  });
+
+  test('buildPrompt enumerates every dimension key verbatim (no placeholder)', () => {
+    const prompt = buildPrompt('task', DEFAULT_DIMENSIONS, 'output');
+    for (const dim of DEFAULT_DIMENSIONS) {
+      expect(prompt).toContain(`"${dimensionScoreKey(dim)}": { "score": N, "feedback": "..." },`);
+    }
+    expect(prompt).not.toContain('dim_1_name');
+    expect(prompt).toContain('using EXACTLY these keys under "scores"');
   });
 });

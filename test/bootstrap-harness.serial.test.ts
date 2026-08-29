@@ -226,7 +226,10 @@ describe('full apply', () => {
     expect(f.calls.some((c) => c[0] === 'codex')).toBe(false);
     const toml = readFileSync(f.codexConfig, 'utf8');
     expect(toml).toContain(CODEX_TOML_BLOCK_BEGIN);
-    expect(toml).toContain(`bearer_token = "${TOKEN_A}"`);
+    // #4574: http_headers inline-table credential — never inline bearer_token
+    // (codex-cli >=0.149 rejects it at config load, bricking every session).
+    expect(toml).toContain(`http_headers = { Authorization = "Bearer ${TOKEN_A}" }`);
+    expect(toml).not.toContain('bearer_token');
 
     const settings = readJson(f.userSettings);
     expect((settings.permissions as { allow: string[] }).allow).toEqual(['mcp__gbrain']);
@@ -457,7 +460,7 @@ describe('--status', () => {
     const code = await statusHarness(parseHarnessArgs(['--status']), f.deps);
     expect(code).toBe(0);
     expect(f.out.join('\n')).toMatch(/token: OK .*codex config block/);
-    expect(f.out.join('\n')).toMatch(/degraded on Postgres/);
+    expect(f.out.join('\n')).toMatch(/needs a running gbrain serve on Postgres/);
   });
 
   test('revoked-under-a-green-receipt: token verify fails → exit 1', async () => {
@@ -653,7 +656,9 @@ describe('outside-voice hardening (X-batch)', () => {
     expect(f.err.join('\n')).toMatch(/accepted an INVALID credential/);
     expect(f.revoked).toEqual([ID_A]); // the fresh mint never stays live
     // Nothing left wired: the fresh codex block was rolled back.
-    expect(existsSync(f.codexConfig) ? readFileSync(f.codexConfig, 'utf8') : '').not.toContain('bearer_token');
+    const leftover = existsSync(f.codexConfig) ? readFileSync(f.codexConfig, 'utf8') : '';
+    expect(leftover).not.toContain('http_headers');
+    expect(leftover).not.toContain('bearer_token');
   });
 
   test('[X5] smoke failure on a FRESH claude add removes the registration (pre-run state) and fails the target', async () => {
@@ -833,7 +838,26 @@ describe('parse helpers', () => {
   test('parseCodexBlockBearer reads only OUR managed block', () => {
     const ours = [
       '[mcp_servers.other]',
-      'bearer_token = "not_ours"',
+      'http_headers = { Authorization = "Bearer not_ours" }',
+      CODEX_TOML_BLOCK_BEGIN,
+      '[mcp_servers.gbrain]',
+      'url = "http://127.0.0.1:3131/mcp"',
+      `http_headers = { Authorization = "Bearer ${TOKEN_A}" }`,
+      `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} end`,
+      '',
+    ].join('\n');
+    expect(parseCodexBlockBearer(ours)).toBe(TOKEN_A);
+    expect(parseCodexBlockBearer('[mcp_servers.x]\nhttp_headers = { Authorization = "Bearer y" }\n')).toBeNull();
+    // [C8] parity with the claude lane: with an expected url, a block pointing
+    // at another brain's serve must NOT hand its bearer over.
+    expect(parseCodexBlockBearer(ours, URL)).toBe(TOKEN_A);
+    expect(parseCodexBlockBearer(ours, 'http://127.0.0.1:9999/mcp')).toBeNull();
+  });
+
+  test('parseCodexBlockBearer legacy fallback: pre-#4574 bearer_token blocks still recover', () => {
+    // Machines wired by older gbrain carry `bearer_token = "<t>"` — status
+    // and rotation must still read the token so the next apply can fix them.
+    const legacy = [
       CODEX_TOML_BLOCK_BEGIN,
       '[mcp_servers.gbrain]',
       'url = "http://127.0.0.1:3131/mcp"',
@@ -841,12 +865,15 @@ describe('parse helpers', () => {
       `# gbrain:${GBRAIN_HARNESS_MARKER_VALUE} end`,
       '',
     ].join('\n');
-    expect(parseCodexBlockBearer(ours)).toBe(TOKEN_A);
-    expect(parseCodexBlockBearer('[mcp_servers.x]\nbearer_token = "y"\n')).toBeNull();
-    // [C8] parity with the claude lane: with an expected url, a block pointing
-    // at another brain's serve must NOT hand its bearer over.
-    expect(parseCodexBlockBearer(ours, URL)).toBe(TOKEN_A);
-    expect(parseCodexBlockBearer(ours, 'http://127.0.0.1:9999/mcp')).toBeNull();
+    expect(parseCodexBlockBearer(legacy)).toBe(TOKEN_A);
+    expect(parseCodexBlockBearer(legacy, URL)).toBe(TOKEN_A);
+    expect(parseCodexBlockBearer(legacy, 'http://127.0.0.1:9999/mcp')).toBeNull();
+    // A hand-edited non-Bearer Authorization header is not ours to recover.
+    const handEdited = legacy.replace(
+      `bearer_token = "${TOKEN_A}"`,
+      'http_headers = { Authorization = "Basic dXNlcjpwdw==" }',
+    );
+    expect(parseCodexBlockBearer(handEdited)).toBeNull();
   });
 
   test('codexBlockOwnsName: only a table INSIDE the managed block counts as ours', () => {

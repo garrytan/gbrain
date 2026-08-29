@@ -1,0 +1,6 @@
+// Routing eval fixtures for skills/query. Check 5 (W2, v0.17).
+// Each line: {intent, expected_skill, ambiguous_with?}.
+// D-CX-6 rule: intent must paraphrase the trigger, not copy it.
+{"intent": "Who is Paul Graham and what has he written about startups", "expected_skill": "query"}
+{"intent": "I need background on the Series B round Acme raised last year", "expected_skill": "query", "ambiguous_with": ["brain-ops"]}
+{"intent": "Do we already have notes on this person", "expected_skill": "query", "ambiguous_with": ["brain-ops"]}

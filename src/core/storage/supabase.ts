@@ -5,6 +5,9 @@ const TUS_THRESHOLD = 100 * 1024 * 1024;   // 100 MB — use TUS resumable above
 const TUS_CHUNK_SIZE = 6 * 1024 * 1024;     // 6 MB chunks for TUS uploads
 const SIGNED_URL_EXPIRY = 3600;             // 1 hour
 
+/** Injectable fetch seam (same shape as github-source.ts); tests stub the network. */
+export type FetchImpl = (url: string, init: RequestInit) => Promise<Response>;
+
 /**
  * Supabase Storage — uses the Supabase Storage REST API.
  * Auth via the service role key (not the anon key).
@@ -17,11 +20,13 @@ export class SupabaseStorage implements StorageBackend {
   private projectUrl: string;
   private serviceRoleKey: string;
   private bucket: string;
+  private fetchImpl: FetchImpl;
 
-  constructor(config: StorageConfig) {
+  constructor(config: StorageConfig, fetchImpl: FetchImpl = fetch) {
     this.projectUrl = config.projectUrl || '';
     this.serviceRoleKey = config.serviceRoleKey || '';
     this.bucket = config.bucket;
+    this.fetchImpl = fetchImpl;
     if (!this.projectUrl || !this.serviceRoleKey) {
       throw new Error('Supabase storage requires projectUrl and serviceRoleKey in config');
     }
@@ -48,7 +53,7 @@ export class SupabaseStorage implements StorageBackend {
 
   /** Standard single-request upload for files < 100 MB */
   private async uploadStandard(path: string, data: Buffer, mime?: string): Promise<void> {
-    const res = await fetch(this.url(path), {
+    const res = await this.fetchImpl(this.url(path), {
       method: 'POST',
       headers: {
         ...this.headers(),
@@ -72,7 +77,7 @@ export class SupabaseStorage implements StorageBackend {
     const objectName = `${this.bucket}/${path}`;
 
     // Step 1: Create the upload session
-    const createRes = await fetch(tusUrl, {
+    const createRes = await this.fetchImpl(tusUrl, {
       method: 'POST',
       headers: {
         ...this.headers(),
@@ -104,7 +109,7 @@ export class SupabaseStorage implements StorageBackend {
         try {
           // On retry, check server's actual offset (TUS spec requirement)
           if (attempt > 0) {
-            const headRes = await fetch(uploadUrl, {
+            const headRes = await this.fetchImpl(uploadUrl, {
               method: 'HEAD',
               headers: { ...this.headers(), 'Tus-Resumable': '1.0.0' },
             });
@@ -117,7 +122,7 @@ export class SupabaseStorage implements StorageBackend {
           const end = Math.min(offset + TUS_CHUNK_SIZE, data.length);
           const chunk = data.subarray(offset, end);
 
-          const patchRes = await fetch(uploadUrl, {
+          const patchRes = await this.fetchImpl(uploadUrl, {
             method: 'PATCH',
             headers: {
               ...this.headers(),
@@ -148,7 +153,7 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async download(path: string): Promise<Buffer> {
-    const res = await fetch(this.url(path), {
+    const res = await this.fetchImpl(this.url(path), {
       headers: this.headers(),
     });
     if (!res.ok) throw new Error(`Supabase download failed: ${res.status}`);
@@ -156,7 +161,7 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async delete(path: string): Promise<void> {
-    const res = await fetch(`${this.projectUrl}/storage/v1/object/${this.bucket}`, {
+    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/${this.bucket}`, {
       method: 'DELETE',
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ prefixes: [path] }),
@@ -165,7 +170,7 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async exists(path: string): Promise<boolean> {
-    const res = await fetch(this.url(path), {
+    const res = await this.fetchImpl(this.url(path), {
       method: 'HEAD',
       headers: this.headers(),
     });
@@ -173,7 +178,7 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async list(prefix: string): Promise<string[]> {
-    const res = await fetch(`${this.projectUrl}/storage/v1/object/list/${this.bucket}`, {
+    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/list/${this.bucket}`, {
       method: 'POST',
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ prefix, limit: 1000 }),
@@ -185,7 +190,7 @@ export class SupabaseStorage implements StorageBackend {
 
   /** Generate a signed URL with 1-hour expiry for private bucket access */
   async getSignedUrl(path: string, expiresIn: number = SIGNED_URL_EXPIRY): Promise<string> {
-    const res = await fetch(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${path}`, {
+    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${path}`, {
       method: 'POST',
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ expiresIn }),

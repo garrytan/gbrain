@@ -247,13 +247,17 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
   test('returns "no probe runs" note on empty table', async () => {
     if (!engine) return;
     const op = operationsByName['find_contradictions'];
+    // Trusted local brain-wide ctx: these tests pin op MECHANICS against a
+    // seeded report with no page rows. A scoped/remote ctx would (correctly)
+    // drop every finding under the both-endpoints-in-scope pass — that
+    // contract is pinned in test/salience-source-scope.test.ts, not here.
     const ctx: OperationContext = {
       engine,
       config: {} as OperationContext['config'],
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as OperationContext['logger'],
       dryRun: false,
-      remote: true,
-      sourceId: 'default',
+      remote: false,
+      sourceId: undefined as unknown as string,
     };
     const result = await op.handler(ctx, {}) as { contradictions: unknown[]; note?: string };
     expect(result.contradictions).toEqual([]);
@@ -273,8 +277,8 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
         contradictions: [
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
-            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, source_tier: 'bulk', holder: null, text: 'b', effective_date: null, effective_date_source: null },
+            a: { slug: 'companies/acme-example', chunk_id: 1, take_id: null, take_row_num: null, source_tier: 'curated', holder: null, text: 'a', effective_date: null, effective_date_source: null },
+            b: { slug: 'openclaw/chat/x', chunk_id: 2, take_id: null, take_row_num: null, source_tier: 'bulk', holder: null, text: 'b', effective_date: null, effective_date_source: null },
             combined_score: 1.5,
             verdict: 'contradiction',
             severity: 'high',
@@ -285,8 +289,8 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
           },
           {
             kind: 'cross_slug_chunks',
-            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, source_tier: 'curated', holder: null, text: 'c', effective_date: null, effective_date_source: null },
-            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, source_tier: 'curated', holder: null, text: 'd', effective_date: null, effective_date_source: null },
+            a: { slug: 'people/alice-example', chunk_id: 3, take_id: null, take_row_num: null, source_tier: 'curated', holder: null, text: 'c', effective_date: null, effective_date_source: null },
+            b: { slug: 'people/alice-smith-example', chunk_id: 4, take_id: null, take_row_num: null, source_tier: 'curated', holder: null, text: 'd', effective_date: null, effective_date_source: null },
             combined_score: 1.2,
             verdict: 'contradiction',
             severity: 'low',
@@ -300,13 +304,17 @@ describe('E2E: find_contradictions MCP op on Postgres', () => {
     }), 100);
 
     const op = operationsByName['find_contradictions'];
+    // Trusted local brain-wide ctx: these tests pin op MECHANICS against a
+    // seeded report with no page rows. A scoped/remote ctx would (correctly)
+    // drop every finding under the both-endpoints-in-scope pass — that
+    // contract is pinned in test/salience-source-scope.test.ts, not here.
     const ctx: OperationContext = {
       engine,
       config: {} as OperationContext['config'],
       logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} } as unknown as OperationContext['logger'],
       dryRun: false,
-      remote: true,
-      sourceId: 'default',
+      remote: false,
+      sourceId: undefined as unknown as string,
     };
 
     const all = await op.handler(ctx, {}) as { contradictions: unknown[]; total_in_run: number };

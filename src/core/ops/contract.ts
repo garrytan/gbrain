@@ -166,6 +166,15 @@ export interface AuthInfo {
    */
   sourceId?: string;
   /**
+   * #3242 (serve --http parity): distinguishes an operator-set source scope
+   * from the historical no-grant 'default' floor. `false` ONLY for a legacy
+   * bearer token whose `access_tokens.permissions.source_id` is absent —
+   * the one case whose unqualified reads may widen to the federated set.
+   * `true` (or undefined, e.g. OAuth clients) never widens. Mirrors
+   * `AuthResult.hasSourceGrant` in `src/mcp/http-transport.ts`.
+   */
+  hasSourceGrant?: boolean;
+  /**
    * v0.34.1 (#876): array of source ids this OAuth client may READ
    * from (federation). Sourced from `oauth_clients.federated_read`.
    * Independent of `sourceId` (write authority): a "WeCare L3 dept"
@@ -324,6 +333,17 @@ export interface OperationContext {
    */
   allowedSlugPrefixes?: string[];
   /**
+   * #4216 — defer chunk embeddings on put_page writes: importFromContent runs
+   * noEmbed and the standing embed machinery (embed phase / phase-end
+   * backfill / the stale-embed sweep) picks the chunks up via the
+   * `embedding IS NULL` partial index. Set ONLY by server-side dispatchers
+   * (the oneshot runner's programmatic writes); never hydrated from any wire
+   * payload, so remote callers cannot toggle it. (Flag spelled without dashes
+   * here on purpose — the flag-registry generator harvests bare dash-dash
+   * tokens from comments.)
+   */
+  deferEmbeds?: boolean;
+  /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
    * may leave it undefined — consumers default to quiet/no-progress for
@@ -411,7 +431,8 @@ export interface OperationContext {
    * `config.federated = true` source, so an unqualified read/search spans
    * federated sources as docs/guides/multi-source-brains.md promises.
    *
-   * Consumed exclusively by `federatedSearchScope`. Fail-closed remains:
+   * Consumed exclusively by `federatedSearchScope` and the graph-four
+   * re-route `routeCodeIntelScope` (#4011). Fail-closed remains:
    * a grant (`ctx.auth.allowedSources`) or a per-call `source_id` always
    * wins, and a context without this field never widens.
    */

@@ -53,6 +53,20 @@ export interface EmbeddingTouchpoint {
    * `default_dims`, so a recipe can declare only the models it knows.
    */
   model_dims?: Readonly<Record<string, number>>;
+  /**
+   * #4530: per-model maximum tokens PER SINGLE INPUT, keyed like model_dims
+   * (partial by design — declare only the models whose limit is known).
+   * Distinct from max_batch_tokens (whole-request budget): some hosted
+   * encoders enforce a hard per-input cap far below any batch budget —
+   * nvidia/nv-embedqa-e5-v5 rejects any single input over 512 tokens with a
+   * non-transient 400, so chunks over the cap can never embed. When the
+   * ACTIVE embedding model declares a value here, the markdown chunker caps
+   * emitted chunks at floor(limit × EMBED_INPUT_SAFETY) estimated tokens
+   * (resolveMaxChunkTokens in src/core/embedding-input-limit.ts) — SPLIT,
+   * never truncated. Models absent from the map keep
+   * DEFAULT_MAX_CHUNK_TOKENS.
+   */
+  max_input_tokens?: Readonly<Record<string, number>>;
   dims_options?: number[]; // for Matryoshka-aware providers
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string; // ISO date
@@ -202,6 +216,14 @@ export interface ExpansionTouchpoint {
   models: string[];
   cost_per_1m_tokens_usd?: number;
   price_last_verified?: string;
+  /**
+   * Recipe-level timeout fallback for `gbrain models doctor`'s expansion
+   * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
+   * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
+   * latency) declare the headroom it needs instead of the probe's flat 5000ms
+   * default false-failing on every run.
+   */
+  default_timeout_ms?: number;
 }
 
 /**
@@ -264,9 +286,11 @@ export interface ChatTouchpoint {
   supports_tools: boolean;
   /**
    * Stable enough across crashes/replays to drive a Minions subagent loop.
-   * Strictly stronger than supports_tools.
+   * Strictly stronger than supports_tools. Boolean for recipe-wide behavior;
+   * predicate when only some routed model ids are loop-safe (OpenRouter
+   * Anthropic routes vs other proxied families).
    */
-  supports_subagent_loop: boolean;
+  supports_subagent_loop: boolean | ((modelId: string) => boolean);
   /**
    * Prompt caching honored for this chat touchpoint. Static booleans cover
    * native providers; openai-compatible aggregators may decide per model id
@@ -274,6 +298,17 @@ export interface ChatTouchpoint {
    * model family).
    */
   supports_prompt_cache?: boolean | ((modelId: string) => boolean);
+  /**
+   * Model reasons/thinks BY DEFAULT, spending output-token budget on internal
+   * reasoning before any answer text (DeepSeek v4's thinking mode bills
+   * reasoning as output and counts it against `max_tokens`). Consumers that
+   * size output caps (e.g. `think`'s `maxOutputTokensFor`) grant these models
+   * the same headroom as thinking-by-default Claude 5 / OpenAI reasoning
+   * models. Boolean for recipe-wide behavior; predicate when only some routed
+   * model ids think by default. Distinct from "can be asked to think" —
+   * default-off reasoning modes should NOT set this (gbrain#4172).
+   */
+  thinking_by_default?: boolean | ((modelId: string) => boolean);
   /**
    * Backend honors OpenAI structured outputs (a strict `json_schema`
    * response_format). Threaded into `createOpenAICompatible`'s
@@ -285,10 +320,20 @@ export interface ChatTouchpoint {
    * known to honor it.
    */
   supports_structured_outputs?: boolean;
+  /** Per-model overrides for providers whose chat models have different context windows. */
+  model_context_tokens?: Record<string, number>;
   max_context_tokens?: number;
   cost_per_1m_input_usd?: number;
   cost_per_1m_output_usd?: number;
   price_last_verified?: string;
+  /**
+   * Recipe-level timeout fallback for `gbrain models doctor`'s chat
+   * reachability probe. Mirrors `RerankerTouchpoint.default_timeout_ms`: lets
+   * a slow-start provider (e.g. a subprocess-dispatched CLI with real cold-start
+   * latency) declare the headroom it needs instead of the probe's flat 5000ms
+   * default false-failing on every run.
+   */
+  default_timeout_ms?: number;
 }
 
 export interface Recipe {
@@ -452,6 +497,13 @@ export interface AIGatewayConfig {
    * Allows brains using OpenAI for text to use Voyage for image embeddings.
    */
   embedding_multimodal_model?: string;
+  /**
+   * Separate model for image OCR (e.g. "openai:gpt-4o-mini"). When set,
+   * generateOcrText() routes to this model instead of expansion_model.
+   * A direct "provider:model" string like embedding_multimodal_model —
+   * deliberately never models.tier-resolved (#4107).
+   */
+  embedding_image_ocr_model?: string;
   /** Current expansion model as "provider:modelId". */
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */

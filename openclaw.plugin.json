@@ -1,7 +1,7 @@
 {
   "id": "gbrain-context-engine",
   "name": "gbrain",
-  "version": "0.46.13.0",
+  "version": "0.47.6.0",
   "description": "Personal knowledge brain with Postgres + pgvector hybrid search",
   "family": "bundle-plugin",
   "configSchema": {
@@ -45,6 +45,7 @@
     "skills/briefing",
     "skills/bulk-ingestion",
     "skills/capture",
+    "skills/chat-connectors",
     "skills/citation-fixer",
     "skills/citation-graph-ingest",
     "skills/cold-start",
@@ -65,6 +66,7 @@
     "skills/fact-check",
     "skills/functional-area-resolver",
     "skills/gbrain-advisor",
+    "skills/google-loops",
     "skills/idea-ingest",
     "skills/idea-lineage",
     "skills/ingest",

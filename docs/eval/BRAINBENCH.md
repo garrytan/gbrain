@@ -21,17 +21,13 @@ Every scoreboard row carries a `seam` column:
 | Harness | Seam | What the row actually measures |
 |---|---|---|
 | `openclaw` | **production** | The shipped OpenClaw context-engine pipeline, byte-for-byte (`extractCandidates` → `resolveEntitiesToPointers`, 3-pointer budget, prior-context suppression, markdown pointer block). |
-| `claude-code` | **contract** | gbrain's memory primitives driven through the UserPromptSubmit hook wire contract (`{prompt, session_id, cwd}` in → `{hookSpecificOutput.additionalContext}` out, exported from `src/eval/brainbench/adapters/claude-code.ts`). 2-pointer budget; NO conversation memory — this row deliberately models the memoryless wire contract (suppression off), so the re-injection cost is visible as `false_fire_rate`; the shipped `gbrain hook user-prompt` layers transcript-based cross-turn dedupe on top of this same contract. |
-| `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. Measures how much push quality degrades when injection is mostly static. |
+| `claude-code` | **production** (v0.46.15) | The shipped Claude Code integration end-to-end: fixture turns become `UserPromptSubmit` stdin JSON; `gbrain hook user-prompt` executes for real (stdin parse → synthesized-transcript window parse → cross-turn dedupe via `hook_additional_context` attachments → IPC `turn_context` over a real unix socket with the real shared secret → `additionalContext`). The row now measures the shipped pointer budget, the volunteer layer, and the transcript dedupe — not a memoryless contract sim. Bench-pinned deviations (disclosed): generous `userPromptDeadlineMs` (10s vs 800ms — CI-load flake control; deadline behavior is hook-suite territory), the push-failure banner suppressed, heartbeat telemetry writes disabled, and the hook's config pointed at the run-scoped bench brain (operator-environment isolation; parallel-test safe). |
+| `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. v0.46.15: fixture conversations round-trip through the REAL rollout format + the shipped parser (`src/core/transcripts/codex.ts`) for turn selection — parser drift now tanks the row visibly. Fragment DELIVERY remains a harness-shaped assumption (no shipped codex injection path yet); the full production flip is a filed follow-up. |
 
 **Contract rows do NOT measure third-party harness behavior.** They measure
 gbrain's primitives under each harness's injection-shape constraints. The rows
 are comparable because fixtures, brain, and gold are identical — only the seam
-contract varies. The real Claude Code integration has landed (`gbrain hook
-user-prompt`, registered by `gbrain bootstrap`); flipping this adapter to exec
-the real hook and report `production` numbers is a filed follow-up (TODOS.md —
-"Flip contract adapters to production"). Same for codex fragments when that
-integration lands. Also not graded, by design: the production orchestrator's
+varies. Also not graded, by design: the production orchestrator's
 config gate, integration heartbeat, and 1500 ms timeout wrapper.
 
 All three adapters drive ONE shared pipeline (`adapters/shared.ts`) with
@@ -66,19 +62,30 @@ grading is faked in v1.
 
 ### Difficulty is stratified on purpose
 
-Several know-to-ask variants exercise documented v1 reflex limits (lowercase
-mentions, surname-only references — `src/core/context/entity-salience.ts`).
-Gold records what SHOULD happen; the committed baseline records what the
-current system does (`know_to_ask_failure_rate` ≈ 0.15 at v1). The gap is the
-measured roadmap, not a bug in the bench.
+Several know-to-ask variants exercise what were documented v1 reflex limits
+(lowercase mentions, surname-only references —
+`src/core/context/entity-salience.ts`). Gold records what SHOULD happen; the
+committed baseline records what the current system does. At v1 that gap read
+`know_to_ask_failure_rate` ≈ 0.15 — "the measured roadmap, not a bug in the
+bench." The v0.46.15 identity wave closed it (weak-alias + surname lexical
+arms): the rate is 0.00 on all three harnesses, with `false_fire_rate` and
+`push_precision` unmoved — the roadmap framing worked exactly as designed.
 
 ## Pre-registered expectations (v1, recorded before the first published run)
 
-1. The production seam (openclaw) leads `push_recall` strictly: 3-pointer > 2-pointer > 1-fragment budgets. *(Observed at landing: 0.81 / 0.65 / 0.45.)*
-2. The no-suppression contract (claude-code) is the only seam with `false_fire_rate` > 0. *(Observed: 0.02–0.03.)*
+1. The production seam (openclaw) leads `push_recall` strictly: 3-pointer > 2-pointer > 1-fragment budgets. *(Observed at landing: 0.81 / 0.65 / 0.45. v0.46.15 identity wave + seam flip: 0.90 / 1.00 / 0.54 — the claude-code row now measures the shipped hook path, whose turn_context assembly (pointers + volunteered pages + real dedupe) outruns the raw pointer budget; the ordering hypothesis applied to the CONTRACT rows and is superseded for flipped rows.)*
+2. The no-suppression contract (claude-code) is the only seam with `false_fire_rate` > 0. *(Observed: 0.02–0.03. v0.46.15: 0 — the production seam's real transcript dedupe removes the re-injection cost the contract row deliberately exposed.)*
 3. `write_back_fidelity` = 1.0 and `provenance_accuracy` = 1.0 in deterministic mode — the production pipeline must not lose or mis-attribute gold facts it was handed. Anything below 1.0 is a pipeline bug, not benchmark noise.
 4. `source_isolation_violations` = 0 everywhere.
 5. `push_precision` = 1.0 at v1 (exact-match resolution arms cannot inject an irrelevant page on this corpus); expected to dip below 1.0 when fuzzy/semantic resolution lands — that dip is the precision/recall trade made visible.
+
+The quality floors derived from these expectations are an **executable test**
+(`test/brainbench-floors.test.ts`), asserted against the committed baseline on
+every suite run: `know_to_ask_failure_rate` ≤ 0.05, `false_fire_rate` ≤ 0.03,
+`push_precision` ≥ 0.95, `push_recall` ≥ 0.88 / 0.72 / 0.52
+(openclaw / claude-code / codex), `source_isolation_violations` = 0 in every
+cell. A baseline update that violates a floor fails the suite — a threshold
+violation can no longer be banked by blessing a new baseline.
 
 ## Determinism & statistical posture
 

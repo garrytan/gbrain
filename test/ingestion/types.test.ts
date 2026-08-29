@@ -193,3 +193,44 @@ describe('IngestionEventError', () => {
     expect(err).toBeInstanceOf(Error);
   });
 });
+
+// #3756 — event kinds: 'upsert' (default) imports, 'tombstone' soft-deletes
+// the page named by `slug`. The delete signal is validated at the boundary
+// like everything else.
+describe('validateIngestionEvent — kind + slug (#3756)', () => {
+  test('accepts kind: upsert', () => {
+    expect(validateIngestionEvent(makeEvent({ kind: 'upsert' }))).toBeNull();
+  });
+
+  test('accepts kind: tombstone with a slug', () => {
+    expect(validateIngestionEvent(makeEvent({ kind: 'tombstone', slug: 'inbox/old-page' }))).toBeNull();
+  });
+
+  test('accepts optional slug on an upsert', () => {
+    expect(validateIngestionEvent(makeEvent({ slug: 'inbox/target' }))).toBeNull();
+  });
+
+  test('rejects an unknown kind', () => {
+    const err = validateIngestionEvent({ ...makeEvent(), kind: 'delete' });
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('kind');
+  });
+
+  test('rejects kind: tombstone without a slug', () => {
+    const err = validateIngestionEvent(makeEvent({ kind: 'tombstone' }));
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('slug');
+  });
+
+  test('rejects a non-string slug', () => {
+    const err = validateIngestionEvent({ ...makeEvent(), slug: 42 });
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('slug');
+  });
+
+  test('rejects an empty-string slug', () => {
+    const err = validateIngestionEvent({ ...makeEvent(), slug: '' });
+    expect(err).not.toBeNull();
+    expect(err!.field).toBe('slug');
+  });
+});

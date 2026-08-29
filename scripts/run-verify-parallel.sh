@@ -55,6 +55,10 @@ CHECKS=(
   # can fail (bad fixture → exit 1) before it counts as coverage. Registry:
   # scripts/guards-manifest.tsv (package.json's stale `check:all` copy deleted).
   "check:guard-self-test"
+  # B4 (test-gap wave 2): runtime-reachability walk over src/** — hard-fails
+  # true orphans (unreachable from every entrypoint AND every test), ratchets
+  # the test-only-reachable tier. Whole-tree readFileSync walk, ~1s.
+  "check:orphan-modules"
   # Chronicle eval: $0, deterministic, exit-0-only-on-perfect (6 gold tasks).
   # Boots its own PGLite — budget ≤60s under a saturated pool; if it breaches
   # ~100s under contention, move it into the serial-tests CI job instead.

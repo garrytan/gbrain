@@ -55,7 +55,9 @@ describe('doctor command', () => {
   test('subagent_capability checks explicit models.subagent before tier/default fallbacks', async () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const config = new Map<string, string | null>([
-      ['models.subagent', 'openai:gpt-5.2'],
+      // A model whose recipe declares no prompt caching, so the precedence
+      // this test is about is visible through the resulting warn.
+      ['models.subagent', 'google:gemini-1.5-pro'],
       ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
       ['models.default', 'anthropic:claude-sonnet-4-6'],
     ]);
@@ -65,8 +67,46 @@ describe('doctor command', () => {
       },
     } as any);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('models.subagent is "openai:gpt-5.2"');
+    expect(check.message).toContain('models.subagent is "google:gemini-1.5-pro"');
     expect(check.message).toContain('prompt caching');
+  });
+
+  test('subagent_capability warns when models.subagent declares the loop unsupported', async () => {
+    // moonshot supports tools but declares supports_subagent_loop: false —
+    // pre-fix this classified as tools-sufficient and doctor reported no issue.
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.subagent', 'moonshot:kimi-k2.5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('models.subagent is "moonshot:kimi-k2.5"');
+    expect(check.message).toContain('supports_subagent_loop: false');
+    // Explicit models.subagent is refused at dispatch (no silent fallback).
+    expect(check.message).toContain('refused at dispatch');
+  });
+
+  test('subagent_capability distinguishes fallback wording for inherited tier source', async () => {
+    // models.tier.subagent routes through enforceSubagentCapable, which
+    // silently falls back to TIER_DEFAULTS.subagent — doctor must not claim
+    // dispatch refusal for that source.
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
+      ['models.tier.subagent', 'moonshot:kimi-k2.5'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('supports_subagent_loop: false');
+    expect(check.message).toContain('fall back');
+    expect(check.message).not.toContain('refused at dispatch');
   });
 
   test('subagent_capability reports explicit models.subagent on the ok path', async () => {
@@ -88,7 +128,7 @@ describe('doctor command', () => {
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const config = new Map<string, string | null>([
       ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
-      ['models.default', 'openai:gpt-5.2'],
+      ['models.default', 'google:gemini-1.5-pro'],
     ]);
     const check = await checkSubagentCapability({
       async getConfig(key: string): Promise<string | null> {
@@ -96,7 +136,7 @@ describe('doctor command', () => {
       },
     } as any);
     expect(check.status).toBe('warn');
-    expect(check.message).toContain('models.default is "openai:gpt-5.2"');
+    expect(check.message).toContain('models.default is "google:gemini-1.5-pro"');
   });
 
   test('reranker_health warns on repeated unknown rerank failures', async () => {
@@ -159,11 +199,13 @@ describe('doctor command', () => {
   test('runDoctor accepts null engine for filesystem-only mode', async () => {
     const { runDoctor } = await import('../src/commands/doctor.ts');
     // runDoctor should accept null engine — it runs filesystem checks only.
-    // Signature is (engine, args, dbSource?) — third param is optional and
-    // used by --fast to distinguish "no config" from "user skipped DB check".
-    // Function.length counts required params only (JS ignores ?-marked).
+    // Signature is (engine, args, dbSource?, connectError?) — third param is
+    // optional and used by --fast to distinguish "no config" from "user
+    // skipped DB check"; fourth (db-availability wave) carries the connect
+    // error so the null-engine path can synthesize a classified `connection`
+    // check instead of omitting it entirely on a total outage.
     expect(runDoctor.length).toBeGreaterThanOrEqual(2);
-    expect(runDoctor.length).toBeLessThanOrEqual(3);
+    expect(runDoctor.length).toBeLessThanOrEqual(4);
   });
 
   test('doctor --json suppresses implicit progress unless --progress-json is explicit', async () => {
@@ -1310,12 +1352,17 @@ describe('stub_guard_24h check (v0.34.5)', () => {
 });
 
 describe('v0.40.4 — graph_signals_coverage check', () => {
-  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
-  const { checkGraphSignalsCoverage } = require('../src/commands/doctor.ts');
+  // await import, not require: a sync require() of the ESM doctor graph makes
+  // Bun's warm transpiler cache parse `with { type: 'file' }` template assets
+  // as code (Syntax Error → "module not instantiated" cascade on re-runs).
+  let PGLiteEngine: any;
+  let checkGraphSignalsCoverage: any;
 
   let engine: any;
 
   beforeAll(async () => {
+    ({ PGLiteEngine } = await import('../src/core/pglite-engine.ts'));
+    ({ checkGraphSignalsCoverage } = await import('../src/commands/doctor.ts'));
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' });
     await engine.initSchema();
@@ -1417,12 +1464,15 @@ describe('v0.40.4 — graph_signals_coverage check', () => {
 // ─── issue #972 — link_resolution_opportunity check ───────────────────────
 
 describe('issue #972 — link_resolution_opportunity check', () => {
-  const { PGLiteEngine } = require('../src/core/pglite-engine.ts');
-  const { checkLinkResolutionOpportunity } = require('../src/commands/doctor.ts');
+  // await import, not require — see graph_signals_coverage describe above.
+  let PGLiteEngine: any;
+  let checkLinkResolutionOpportunity: any;
 
   let engine: any;
 
   beforeAll(async () => {
+    ({ PGLiteEngine } = await import('../src/core/pglite-engine.ts'));
+    ({ checkLinkResolutionOpportunity } = await import('../src/commands/doctor.ts'));
     engine = new PGLiteEngine();
     await engine.connect({ engine: 'pglite' });
     await engine.initSchema();

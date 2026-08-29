@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGlite } from '@electric-sql/pglite';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
@@ -9,12 +10,21 @@ import type { MinionJob } from '../src/core/minions/types.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
+let workerBackedQueue: MinionQueue;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({ database_url: '' }); // in-memory
   await engine.initSchema();
   queue = new MinionQueue(engine);
+  const workerBackedEngine = new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'kind') return 'postgres';
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as BrainEngine;
+  workerBackedQueue = new MinionQueue(workerBackedEngine);
 });
 
 afterAll(async () => {
@@ -342,7 +352,7 @@ describe('MinionQueue: #1737 attempt accounting on dead-letter', () => {
 
 describe('MinionQueue: #1737 per-handler default timeout', () => {
   test('long handler with no explicit timeout_ms gets the 30-min default stamped', async () => {
-    const job = await queue.add('embed-backfill', { sourceId: 'x' });
+    const job = await workerBackedQueue.add('embed-backfill', { sourceId: 'x' });
     expect(job.timeout_ms).toBe(30 * 60 * 1000);
   });
 
@@ -371,7 +381,7 @@ describe('MinionQueue: #1737 per-handler default timeout', () => {
   });
 
   test('explicit timeout_ms always wins over the default', async () => {
-    const job = await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    const job = await workerBackedQueue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
     expect(job.timeout_ms).toBe(5000);
   });
 
@@ -423,7 +433,7 @@ describe('MinionQueue: claim-time timeout fallback', () => {
   });
 
   test('explicit timeout_ms is never overridden at claim', async () => {
-    await queue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
+    await workerBackedQueue.add('embed-backfill', { sourceId: 'x' }, { timeout_ms: 5000 });
     const claimed = await queue.claim('tok-explicit', 30_000, 'default', ['embed-backfill']);
     expect(claimed).not.toBeNull();
     expect(claimed!.timeout_ms).toBe(5000);

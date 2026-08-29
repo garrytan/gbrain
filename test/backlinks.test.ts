@@ -74,9 +74,157 @@ describe('hasBacklink', () => {
 });
 
 describe('buildBacklinkEntry', () => {
-  test('builds properly formatted entry', () => {
-    const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md', '2026-04-11');
-    expect(entry).toBe('- **2026-04-11** | Referenced in [Q1 Review](../../meetings/q1-review.md)');
+  test('dir-shaped source: undated extension-less link (#1776, brain-slug convention)', () => {
+    const entry = buildBacklinkEntry('Q1 Review', '../../meetings/q1-review.md');
+    expect(entry).toBe('- Referenced in [Q1 Review](../../meetings/q1-review)');
+    expect(entry).not.toMatch(/\*\*\d{4}-\d{2}-\d{2}\*\*/);
+  });
+
+  test('root-level source keeps .md and stays undated (only the filename substring can credit it)', () => {
+    // The canonical extractor only parses `dir/name` paths, so an
+    // extension-less link to a root-level page would never be credited on
+    // the next check pass and the fixer would append duplicates forever.
+    const entry = buildBacklinkEntry('Notes', '../notes.md');
+    expect(entry).toBe('- Referenced in [Notes](../notes.md)');
+    expect(entry).not.toMatch(/\*\*\d{4}-\d{2}-\d{2}\*\*/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1776: extension-less convention links must count as backlinks
+// ---------------------------------------------------------------------------
+
+describe('findBacklinkGaps — extension-less backlink credit (#1776)', () => {
+  const fs = { mkdtempSync, writeFileSync, mkdirSync, rmSync };
+  const os = { tmpdir };
+
+  function makeRoot(): string {
+    const root = fs.mkdtempSync(join(os.tmpdir(), 'gbrain-backlinks-1776-'));
+    fs.mkdirSync(join(root, 'people'));
+    fs.mkdirSync(join(root, 'companies'));
+    fs.mkdirSync(join(root, 'meetings'));
+    return root;
+  }
+
+  test('bidirectional extension-less pair → 0 gaps', () => {
+    const root = makeRoot();
+    try {
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n\nWorks at [Acme](../companies/acme).\n');
+      fs.writeFileSync(join(root, 'companies/acme.md'), '# Acme\n\nFounded by [Alice](../people/alice).\n');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('one-way mention → exactly 1 gap', () => {
+    const root = makeRoot();
+    try {
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n\nWorks at [Acme](../companies/acme).\n');
+      fs.writeFileSync(join(root, 'companies/acme.md'), '# Acme\n\nNo links back.\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      expect(gaps[0].sourcePage).toBe('people/alice.md');
+      expect(gaps[0].targetPage).toBe('companies/acme.md');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy .md fixer row still credited; wikilink backlink credited too', () => {
+    const root = makeRoot();
+    try {
+      // standup mentions both alice (who has a legacy .md fixer row) and
+      // bob (who links back via a [[meetings/...]] wikilink).
+      fs.writeFileSync(
+        join(root, 'meetings/standup.md'),
+        '# Standup\n\n[Alice](../people/alice) and [Bob](../people/bob).\n',
+      );
+      fs.writeFileSync(
+        join(root, 'people/alice.md'),
+        '# Alice\n\n## Timeline\n\n- **2026-01-01** | Referenced in [Standup](../meetings/standup.md)\n',
+      );
+      fs.writeFileSync(join(root, 'people/bob.md'), '# Bob\n\nSee [[meetings/standup]].\n');
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fix then check → 0 gaps (fixer output is credited by the next scan)', async () => {
+    const root = makeRoot();
+    const lockRoot = join(root, '.locks');
+    try {
+      fs.writeFileSync(join(root, 'meetings/standup.md'), '# Standup\n\nSaw [Alice](../people/alice).\n');
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('double-run: a second gap→fix→re-scan loop inserts NOTHING (byte-identical pages)', async () => {
+    // The real production loop is find → fix → re-scan. Run it twice over a
+    // page that has a timeline region: the second pass must find zero gaps
+    // and leave every byte alone — no duplicate rows, no second
+    // '## Referenced by' heading, no drift of the timeline boundary.
+    const root = makeRoot();
+    const lockRoot = join(root, '.locks');
+    try {
+      fs.writeFileSync(join(root, 'meetings/standup.md'), '# Standup\n\nSaw [Alice](../people/alice).\n');
+      fs.writeFileSync(
+        join(root, 'people/alice.md'),
+        '# Alice\n\n## History\n\n- **2025-12-03** | meeting — Kickoff\n',
+      );
+
+      // Loop 1: one gap, fixed.
+      const gaps1 = findBacklinkGaps(root);
+      expect(gaps1).toHaveLength(1);
+      const outcome1 = await fixBacklinkGaps(root, gaps1, false, { lockRoot });
+      expect(outcome1.fixed).toBe(1);
+      const afterFirst = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(afterFirst).toContain('- Referenced in [Standup](../meetings/standup)');
+      // The section landed ABOVE the History region.
+      expect(afterFirst.indexOf('## Referenced by')).toBeLessThan(afterFirst.indexOf('## History'));
+
+      // Loop 2: the re-scan credits the fixer's own row → zero gaps, and a
+      // second fix pass (even fed the ORIGINAL gap list) writes nothing new.
+      const gaps2 = findBacklinkGaps(root);
+      expect(gaps2).toHaveLength(0);
+      await fixBacklinkGaps(root, gaps2, false, { lockRoot });
+      const afterSecond = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(afterSecond).toBe(afterFirst);
+      expect(afterSecond.match(/^## Referenced by$/gm)).toHaveLength(1);
+      expect(afterSecond.match(/- Referenced in \[Standup\]/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fix then check → 0 gaps for a root-level source page (.md row, legacy credit)', async () => {
+    const root = makeRoot();
+    const lockRoot = join(root, '.locks');
+    try {
+      fs.writeFileSync(join(root, 'inbox.md'), '# Inbox\n\nPing [Alice](people/alice).\n');
+      fs.writeFileSync(join(root, 'people/alice.md'), '# Alice\n');
+      const gaps = findBacklinkGaps(root);
+      expect(gaps).toHaveLength(1);
+      const outcome = await fixBacklinkGaps(root, gaps, false, { lockRoot });
+      expect(outcome.fixed).toBe(1);
+      const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
+      expect(after).toContain('- Referenced in [Inbox](../inbox.md)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
+      expect(findBacklinkGaps(root)).toHaveLength(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -115,11 +263,11 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   fixBacklinkGaps,
-  insertTimelineEntry,
+  insertBacklinkEntry,
   findBacklinkGaps,
   type BacklinkGap,
 } from '../src/commands/backlinks.ts';
-import { frontmatterBodyOffset } from '../src/core/markdown.ts';
+import { frontmatterBodyOffset, parseMarkdown, serializeMarkdown } from '../src/core/markdown.ts';
 import { acquirePageLock } from '../src/core/page-lock.ts';
 
 const fence = '---';
@@ -174,8 +322,8 @@ describe('frontmatterBodyOffset', () => {
   });
 });
 
-describe('insertTimelineEntry', () => {
-  test('never anchors on a "## Timeline" string inside frontmatter', () => {
+describe('insertBacklinkEntry', () => {
+  test('never anchors on a section heading inside frontmatter', () => {
     // GUARD-DISTINGUISHING fixture (adversarial-review finding: a quoted
     // `description: "## Timeline"` is never at line start, so the ^-anchored
     // regex ignores it even WITHOUT the bodyStart slice — the old fixture
@@ -186,43 +334,103 @@ describe('insertTimelineEntry', () => {
     const content = `${fence}\ntype: person\n## Timeline\ntitle: Alice\n${fence}\n# Alice\n\nBody text.\n`;
     const bodyStart = frontmatterBodyOffset(content);
     expect(bodyStart).toBeGreaterThan(0);
-    const out = insertTimelineEntry(content, bodyStart, '- new entry');
+    const out = insertBacklinkEntry(content, bodyStart, '- new entry');
     // Frontmatter bytes untouched — a broken guard would have inserted the
     // entry into the YAML block right under the comment line.
     expect(out.slice(0, bodyStart)).toBe(content.slice(0, bodyStart));
-    // No real body heading exists → a fresh section is appended at EOF.
+    // No real body heading exists → a fresh Referenced by section is appended.
+    expect(out.slice(bodyStart)).toContain('## Referenced by');
     expect(out.trimEnd().endsWith('- new entry')).toBe(true);
     expect(out.indexOf('- new entry')).toBeGreaterThan(bodyStart);
   });
 
-  test('### Timeline and ## Timeline (2026) near-misses do not match; fresh section appended', () => {
-    const content = `# Alice\n\n### Timeline\n\nsub\n\n## Timeline (2026)\n\nyear\n`;
-    const out = insertTimelineEntry(content, 0, '- entry');
-    expect(out).toContain('\n\n## Timeline\n\n- entry\n');
-    // near-miss sections untouched
-    expect(out).toContain('### Timeline\n\nsub');
-    expect(out).toContain('## Timeline (2026)\n\nyear');
+  test('creates a Referenced by section before a bare Timeline section', () => {
+    const content = `# Alice\n\n## Timeline\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- entry');
+    expect(out).toContain('## Referenced by\n\n- entry\n\n## Timeline');
+    expect(out.indexOf('- entry')).toBeLessThan(out.indexOf('## Timeline'));
   });
 
-  test('two real ## Timeline headings → entry lands in the FIRST section', () => {
-    const content = `# Alice\n\n## Timeline\n\n- first section\n\n## Notes\n\nx\n\n## Timeline\n\n- second section\n`;
-    const out = insertTimelineEntry(content, 0, '- new');
-    const firstIdx = out.indexOf('- new');
-    expect(firstIdx).toBeGreaterThan(out.indexOf('- first section'));
-    expect(firstIdx).toBeLessThan(out.indexOf('## Notes'));
+  test('appends to an existing Referenced by section without crossing into Timeline', () => {
+    const content = `# Alice\n\n## Referenced by\n\n- old\n\n## Timeline\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
+    expect(out).toContain('## Referenced by\n\n- old\n- new\n\n## Timeline');
+    expect(out.indexOf('- new')).toBeLessThan(out.indexOf('## Timeline'));
   });
 
-  test('CRLF heading line matches', () => {
-    const content = `# Alice\r\n\r\n## Timeline\r\n\r\n- old\r\n\r\n## Notes\r\nx\r\n`;
-    const out = insertTimelineEntry(content, 0, '- new');
+  test('places Referenced by before an explicit timeline sentinel', () => {
+    const content = `# Alice\n\n<!-- timeline -->\n\n## Timeline\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
+    expect(out).toContain('## Referenced by\n\n- new\n\n<!-- timeline -->');
+    expect(out.indexOf('- new')).toBeLessThan(out.indexOf('<!-- timeline -->'));
+  });
+
+  test('CRLF Referenced by heading matches', () => {
+    const content = `# Alice\r\n\r\n## Referenced by\r\n\r\n- old\r\n\r\n## Notes\r\nx\r\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
     expect(out.indexOf('- new')).toBeGreaterThan(out.indexOf('- old'));
     expect(out.indexOf('- new')).toBeLessThan(out.indexOf('## Notes'));
   });
 
-  test('heading present, no next section → appended at trimmed EOF', () => {
-    const content = `# Alice\n\n## Timeline\n\n- old\n`;
-    const out = insertTimelineEntry(content, 0, '- new');
-    expect(out.endsWith('- old\n- new\n')).toBe(true);
+  // Near-miss heading pin (re-added on adoption — the section detector must
+  // not anchor on lookalike headings): `### Timeline` and `## Timeline (2026)`
+  // are NOT timeline boundaries, so the fresh Referenced by section appends at
+  // EOF below them rather than splitting in front of a non-timeline section.
+  test('### Timeline and ## Timeline (2026) near-misses are not timeline boundaries', () => {
+    const content = `# Alice\n\n### Timeline\n\nsub\n\n## Timeline (2026)\n\nyear\n`;
+    const out = insertBacklinkEntry(content, 0, '- entry');
+    // near-miss sections untouched, section appended AFTER them
+    expect(out).toContain('### Timeline\n\nsub');
+    expect(out).toContain('## Timeline (2026)\n\nyear');
+    expect(out.indexOf('## Referenced by')).toBeGreaterThan(out.indexOf('## Timeline (2026)'));
+    expect(out.trimEnd().endsWith('- entry')).toBe(true);
+  });
+
+  // Determinism guard (adapted from the pre-adoption first-heading pin): with
+  // two real `## Timeline` headings the section lands before the FIRST one.
+  test('two real ## Timeline headings → Referenced by placed before the FIRST', () => {
+    const content = `# Alice\n\n## Timeline\n\n- first section\n\n## Notes\n\nx\n\n## Timeline\n\n- second section\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
+    const newIdx = out.indexOf('- new');
+    expect(newIdx).toBeGreaterThan(out.indexOf('# Alice'));
+    expect(newIdx).toBeLessThan(out.indexOf('## Timeline'));
+    expect(newIdx).toBeLessThan(out.indexOf('- first section'));
+  });
+
+  // CRLF timeline-boundary coverage (adapted from the deleted CRLF heading
+  // test): the bare-heading fallback tolerates `\r` and the inserted section
+  // uses the file's dominant EOL.
+  test('CRLF bare Timeline heading is a boundary; inserted section uses CRLF', () => {
+    const content = `# Alice\r\n\r\n## Timeline\r\n\r\n- **2025-12-03** | old\r\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
+    expect(out).toContain('## Referenced by\r\n\r\n- new\r\n\r\n## Timeline');
+    expect(out.indexOf('- new')).toBeLessThan(out.indexOf('## Timeline'));
+  });
+
+  test('## History is a timeline-region boundary: the section lands BEFORE it', () => {
+    // The bare-heading fallback matches History alongside Timeline — a page
+    // that keeps its dated log under `## History` must not get backlink rows
+    // appended INTO that region.
+    const content = `# Alice\n\n## History\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- entry');
+    expect(out).toContain('## Referenced by\n\n- entry\n\n## History');
+    expect(out.indexOf('- entry')).toBeLessThan(out.indexOf('## History'));
+  });
+
+  test('lowercase ## timeline matches the boundary (case-insensitive heading regex)', () => {
+    const content = `# Alice\n\n## timeline\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- entry');
+    expect(out).toContain('## Referenced by\n\n- entry\n\n## timeline');
+    expect(out.indexOf('- entry')).toBeLessThan(out.indexOf('## timeline'));
+  });
+
+  test('dashed `--- timeline ---` sentinel is a boundary: section placed before it', () => {
+    // findTimelineSplitIndex's rule-2 sentinel form — takes precedence over
+    // any bare heading, so the section must land ABOVE the dashes.
+    const content = `# Alice\n\nBody prose.\n\n--- timeline ---\n\n- **2025-12-03** | meeting — Kickoff\n`;
+    const out = insertBacklinkEntry(content, 0, '- new');
+    expect(out).toContain('## Referenced by\n\n- new\n\n--- timeline ---');
+    expect(out.indexOf('- new')).toBeLessThan(out.indexOf('--- timeline ---'));
   });
 });
 
@@ -238,7 +446,10 @@ describe('fixBacklinkGaps safety pipeline', () => {
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
       const bodyStart = frontmatterBodyOffset(original);
       expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
-      expect(after).toContain('Referenced in [Standup](../meetings/standup.md)');
+      // #1776: dir-shaped fixer rows are extension-less so the next check
+      // pass credits them through the canonical extractor.
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
     } finally {
       cleanup();
@@ -254,7 +465,7 @@ describe('fixBacklinkGaps safety pipeline', () => {
       expect(outcome.skipped).toHaveLength(0);
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
       expect(after.startsWith('# Alice')).toBe(true);
-      expect(after).toContain('## Timeline');
+      expect(after).toContain('## Referenced by');
     } finally {
       cleanup();
     }
@@ -347,16 +558,16 @@ describe('fixBacklinkGaps safety pipeline', () => {
       const after = readFileSync(join(root, 'people/alice.md'), 'utf-8');
       const bodyStart = frontmatterBodyOffset(original);
       expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
-      expect(after.slice(bodyStart)).toContain('## Timeline');
+      expect(after.slice(bodyStart)).toContain('## Referenced by');
     } finally {
       cleanup();
     }
   });
 
-  test('two gaps from different source pages batch into one target write: fixed=2, both bullets under Timeline', async () => {
+  test('sentinel-less dated timeline survives backlink repair and both backlinks stay outside it', async () => {
     const { root, lockRoot, cleanup } = makeFixture();
     try {
-      const original = `${fence}\ntype: person\ntitle: Alice\n${fence}\n# Alice\n\n## Timeline\n\n- old\n`;
+      const original = `${fence}\ntype: person\ntitle: Alice\n${fence}\n# Alice\n\n## Timeline\n\n- **2025-12-03** | meeting — Kickoff\n- **2026-01-14** | meeting — Follow-up\n`;
       writeFileSync(join(root, 'people/alice.md'), original);
       const gaps: BacklinkGap[] = [
         { sourcePage: 'meetings/standup.md', targetPage: 'people/alice.md', entityName: 'Alice', sourceTitle: 'Standup' },
@@ -369,15 +580,28 @@ describe('fixBacklinkGaps safety pipeline', () => {
       // Frontmatter byte-identical.
       const bodyStart = frontmatterBodyOffset(original);
       expect(after.slice(0, bodyStart)).toBe(original.slice(0, bodyStart));
-      // Both bullets present, and both land BELOW the Timeline heading.
+      // Both backlinks land in compiled truth, before the preserved timeline.
       const headingIdx = after.indexOf('## Timeline');
       expect(headingIdx).toBeGreaterThan(bodyStart);
-      const standupIdx = after.indexOf('Referenced in [Standup](../meetings/standup.md)');
-      const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro.md)');
-      expect(standupIdx).toBeGreaterThan(headingIdx);
-      expect(retroIdx).toBeGreaterThan(headingIdx);
+      const standupIdx = after.indexOf('Referenced in [Standup](../meetings/standup)');
+      const retroIdx = after.indexOf('Referenced in [Retro](../meetings/retro)');
+      expect(standupIdx).toBeLessThan(headingIdx);
+      expect(retroIdx).toBeLessThan(headingIdx);
+      expect(after).toContain('- Referenced in [Standup](../meetings/standup)');
+      expect(after).toContain('- Referenced in [Retro](../meetings/retro)');
+      expect(after).not.toMatch(/- \*\*\d{4}-\d{2}-\d{2}\*\* \| Referenced in/);
       // Exactly one Timeline section — the second gap must not mint a new one.
       expect(after.match(/^## Timeline$/gm)).toHaveLength(1);
+      expect(after.match(/^## Referenced by$/gm)).toHaveLength(1);
+      const parsed = parseMarkdown(after, 'people/alice.md');
+      expect(parsed.timeline).toContain('Kickoff');
+      expect(parsed.timeline).toContain('Follow-up');
+      expect(parsed.timeline).not.toContain('Referenced in');
+      expect(parsed.compiled_truth).toContain('Referenced in [Standup]');
+      const reserialized = serializeMarkdown({}, parsed.compiled_truth, parsed.timeline, {
+        type: 'person', title: 'Alice', tags: [],
+      });
+      expect(reserialized.match(/^## Timeline$/gm)).toHaveLength(1);
       // No tmp residue from the atomic-write pipeline.
       expect(readdirSync(join(root, 'people')).filter(f => f.includes('.tmp.'))).toHaveLength(0);
     } finally {

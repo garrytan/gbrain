@@ -7,13 +7,14 @@
  * depth-1 indexed reads. Deliberately NOT the recursive-CTE traversal
  * (traversePaths) — the card is a latency contract, not a graph walk.
  *
- * Resolution precedence (frozen): alias > exact title > slug-suffix; ties
- * break on GREATEST(updated_at, last_retrieved_at) — "last_touched" is the
- * card's OUTPUT name, not a column. Multi-hit → best match wins, runners-up
- * land in `suggestions`. Miss → `found: false` + keyword near-misses with
- * create_safety hints. NEVER throws for data reasons; each arm is guarded so
- * a pre-page_aliases brain still resolves via arm 2 (same posture as the
- * shipped reflex).
+ * Resolution precedence (frozen): alias > exact slug > exact title >
+ * slug-suffix. Exact-title collisions prefer entity-shaped pages over
+ * transcript/note containers; otherwise ties break on GREATEST(updated_at,
+ * last_retrieved_at) — "last_touched" is the card's OUTPUT name, not a
+ * column. Multi-hit → best match wins, runners-up land in `suggestions`.
+ * Miss → `found: false` + keyword near-misses with create_safety hints. NEVER
+ * throws for data reasons; each arm is guarded so a pre-page_aliases brain
+ * still resolves via arm 2 (same posture as the shipped reflex).
  *
  * Privacy: `summary` runs through safeSynopsis (the get_page fence boundary);
  * facts respect visibility for remote callers (world-only).
@@ -23,7 +24,7 @@ import type { BrainEngine, FactRow } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
-import { stampEvidence } from '../search/evidence.ts';
+import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { SearchResult } from '../types.ts';
 
 const EDGE_CAP = 10;
@@ -31,6 +32,7 @@ const OPEN_THREADS_CAP = 3;
 const OPEN_THREAD_TIMELINE_WINDOW_DAYS = 90;
 const SUGGESTION_CAP = 3;
 const FACT_FETCH_CAP = 100;
+const ENTITY_PAGE_TYPES = new Set(['person', 'company', 'organization', 'entity']);
 
 export interface EntityCardEdge {
   type: string;
@@ -43,6 +45,16 @@ export interface EntityOpenThread {
   kind: 'commitment' | 'recent_event';
   text: string;
   date: string | null;
+  /**
+   * v0.47 open-loop engine — ADDITIVE OPTIONAL fields (legal under the
+   * MEMORY_VERBS v1 freeze; absent on threads not backed by an open_loops
+   * row). direction is from the account owner's perspective.
+   */
+  direction?: 'owed_by_me' | 'owed_to_me' | 'their_turn' | 'my_turn';
+  due?: string | null;
+  counterparty?: string | null;
+  status?: string;
+  loop_id?: number;
 }
 
 export interface EntityCard {
@@ -105,6 +117,16 @@ export async function buildEntityCard(
   const trimmed = (name ?? '').trim();
   if (!trimmed) return { found: false, suggestions: [] };
 
+  // #4352 — untrusted callers never resolve a `visibility: private` page into
+  // a card (or a near-miss suggestion). Trust + config gate resolve through
+  // the shared helper; local (remote:false) callers are unchanged. Covers
+  // entity, context_pack, and delta (all route through buildEntityCard).
+  const { resolveExcludePrivatePages, privatePagesFilterFragment } = await import('../search/private-visibility.ts');
+  const excludePrivate = await resolveExcludePrivatePages(engine, opts.remote ? undefined : false);
+  // Predicate text lives ONCE (private-visibility.ts) — both card queries
+  // below select `FROM pages` unaliased, so qualify with the table name.
+  const privatePredicate = excludePrivate ? ` AND ${privatePagesFilterFragment('pages')}` : '';
+
   const norm = normalizeAlias(trimmed);
   const titleLc = trimmed.toLowerCase();
   // Two exact-slug candidates: the slugified form for free-text names AND the
@@ -142,7 +164,7 @@ export async function buildEntityCard(
           AND source_id = $1
           AND ( lower(title) = $2
              OR slug = ANY($3::text[])
-             OR slug LIKE $4 )`,
+             OR slug LIKE $4 )${privatePredicate}`,
       [sourceId, titleLc, exactSlugs, `%/${slug || trimmed}`],
     );
   } catch {
@@ -162,7 +184,7 @@ export async function buildEntityCard(
       const extra = await engine.executeRaw<CardPageRow>(
         `SELECT slug, source_id, title, type, frontmatter, compiled_truth, updated_at, last_retrieved_at
            FROM pages
-          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])`,
+          WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${privatePredicate}`,
         [sourceId, missing],
       );
       for (const r of extra) rowBySlug.set(r.slug, r);
@@ -171,14 +193,22 @@ export async function buildEntityCard(
     }
   }
 
-  // Rank candidates: arm rank asc, then GREATEST(updated_at, last_retrieved_at) desc.
+  // Rank candidates: arm rank asc. Inside the precision arm an explicit slug
+  // stays stronger than title inference; otherwise exact-title collisions
+  // prefer an entity page over transcript/note containers. Recency remains
+  // the final tie-break within the same match shape.
   const candidates = [...rankBySlug.entries()]
     .map(([s, rank]) => ({ slug: s, rank, row: rowBySlug.get(s) }))
     .filter((c): c is { slug: string; rank: number; row: CardPageRow } => c.row !== undefined)
-    .sort((a, b) => a.rank - b.rank || lastTouchedMs(b.row) - lastTouchedMs(a.row));
+    .sort((a, b) =>
+      a.rank - b.rank
+      || (a.rank === ARM_EXACT
+        ? exactMatchPreference(a.row, exactSlugs) - exactMatchPreference(b.row, exactSlugs)
+        : 0)
+      || lastTouchedMs(b.row) - lastTouchedMs(a.row));
 
   if (candidates.length === 0) {
-    return { found: false, suggestions: await nearMissSuggestions(engine, sourceId, trimmed) };
+    return { found: false, suggestions: await nearMissSuggestions(engine, sourceId, trimmed, excludePrivate) };
   }
 
   const best = candidates[0];
@@ -197,6 +227,11 @@ export async function buildEntityCard(
   };
 }
 
+function exactMatchPreference(row: CardPageRow, exactSlugs: string[]): number {
+  if (exactSlugs.includes(row.slug)) return 0;
+  return ENTITY_PAGE_TYPES.has(row.type ?? '') ? 1 : 2;
+}
+
 async function assembleCard(
   engine: BrainEngine,
   sourceId: string,
@@ -212,7 +247,7 @@ async function assembleCard(
   // [ship P1.2] Incoming edges + backlink_count are SOURCE-SAFE on BOTH sides.
   // engine.getBacklinks(slug,{sourceId}) only scopes the TARGET page's source,
   // so a foreign-source page linking to a same-named entity would leak its
-  // slug; engine.getBacklinkCounts has no source param at all. We instead run
+  // slug; engine.getBacklinkCounts counts inbound from ALL sources. We run
   // a both-sides-scoped query here (f.source_id = t.source_id = this source),
   // mentions excluded (matching the backlink-count convention). Outgoing edges
   // (getLinks) are the entity's OWN declared links — from-side scoped — so they
@@ -272,13 +307,58 @@ async function assembleCard(
     }
   }
 
-  // Open threads (best-effort v1): active commitments first, then recent
-  // timeline entries inside the window, capped together.
+  // Open threads (best-effort v1): open-loop rows first (v0.47 — richest:
+  // direction, due, loop_id), then active commitment facts NOT already
+  // represented by a loop, then recent timeline entries; capped together.
   const openThreads: EntityOpenThread[] = [];
+  const loopFactIds = new Set<number>();
+  try {
+    // Zero-LLM, indexed lookup — stays inside the p99<100ms budget.
+    const loopRows = await engine.executeRaw<{
+      id: number;
+      loop_type: string;
+      summary: string;
+      due_at: string | null;
+      last_activity_at: string;
+      fact_id: number | null;
+    }>(
+      `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
+       FROM open_loops
+       WHERE status = 'open' AND counterparty_slug = $1 AND source_id = $2
+       ORDER BY last_activity_at DESC
+       LIMIT ${OPEN_THREADS_CAP}`,
+      [pageSlug, sourceId],
+    );
+    for (const l of loopRows) {
+      if (l.fact_id !== null) loopFactIds.add(Number(l.fact_id));
+      const direction: EntityOpenThread['direction'] =
+        l.loop_type === 'commitment_owed_by_me'
+          ? 'owed_by_me'
+          : l.loop_type === 'commitment_owed_to_me'
+            ? 'owed_to_me'
+            : l.loop_type === 'unanswered_inbound'
+              ? 'my_turn'
+              : 'their_turn';
+      openThreads.push({
+        kind: 'commitment',
+        text: l.summary,
+        date: typeof l.last_activity_at === 'string' ? l.last_activity_at : new Date(l.last_activity_at).toISOString(),
+        direction,
+        due: l.due_at ? (typeof l.due_at === 'string' ? l.due_at : new Date(l.due_at).toISOString()) : null,
+        counterparty: pageSlug,
+        status: 'open',
+        loop_id: Number(l.id),
+      });
+      if (openThreads.length >= OPEN_THREADS_CAP) break;
+    }
+  } catch {
+    /* pre-v144 brains have no open_loops table — facts path below covers it */
+  }
   for (const f of facts) {
-    if (f.kind !== 'commitment') continue;
-    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
     if (openThreads.length >= OPEN_THREADS_CAP) break;
+    if (f.kind !== 'commitment') continue;
+    if (f.id !== undefined && loopFactIds.has(f.id)) continue; // already surfaced via its loop
+    openThreads.push({ kind: 'commitment', text: f.fact, date: f.valid_from?.toISOString() ?? null });
   }
   if (openThreads.length < OPEN_THREADS_CAP) {
     const cutoff = Date.now() - OPEN_THREAD_TIMELINE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -317,10 +397,13 @@ async function nearMissSuggestions(
   engine: BrainEngine,
   sourceId: string,
   name: string,
+  excludePrivate = false,
 ): Promise<EntitySuggestion[]> {
   try {
-    const raw = await engine.searchKeyword(name, { limit: SUGGESTION_CAP, sourceId });
+    const raw = await engine.searchKeyword(name, { limit: SUGGESTION_CAP, sourceId, excludePrivate });
     const results = raw as SearchResult[];
+    // #3783 — direct FTS path: every row is a keyword hit by construction.
+    markKeywordHits(results);
     stampEvidence(results);
     return results.map(r => ({
       slug: r.slug,

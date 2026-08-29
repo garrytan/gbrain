@@ -8,6 +8,14 @@ Without this: the agent triages email mechanically ("you have 12 unread"), preps
 
 ## Implementation
 
+**Now native:** the email half of this pattern no longer needs hand-rolled
+collection or thread tracking. The google connector ingests Gmail/Calendar/
+Contacts (`docs/guides/google-connect.md`) and the open-loop engine
+(`docs/guides/open-loops.md`) maintains real loop rows behind `gbrain waiting`
+and the `open_loops` op. `context.open_threads` in the workflows below is
+backed by those rows — entity cards carry `direction`, `due`, and `loop_id`
+per thread. The daily-operation contract lives in `skills/google-loops/SKILL.md`.
+
 Before hand-rolling these: gbrain bundles the morning-briefing half of this
 pattern as the `briefing` skill (`skills/briefing/`) and the task-prep half
 as `daily-task-prep` (`skills/daily-task-prep/`). Use the workflows below to
@@ -16,6 +24,11 @@ extend or customize what those skills already ship.
 ```
 # WORKFLOW 1: Email Triage
 on email_batch(emails):
+    # Step 0: Load the open-loop state FIRST — who is already waiting on you
+    #   (real loop rows: deterministic thread detector + commitment extractor)
+    waiting = gbrain waiting --json     # or the open_loops op over MCP
+    #   Refuses on stale google sources by design — run the sync it names first
+
     for email in emails:
         # Step 1: Search sender BEFORE reading the email body
         #   Brain context makes triage 10x better
@@ -24,13 +37,15 @@ on email_batch(emails):
             context = gbrain get <sender_slug>
             #   Now you know: who they are, relationship history,
             #   what they care about, open threads
+            #   context.open_threads entries are backed by loop rows and
+            #   carry direction ("owed_by_me"/"owed_to_me"), due, loop_id
 
         # Step 2: Read the email WITH brain context loaded
         #   Classification is now informed, not mechanical
 
         # Step 3: Classify with context
-        if context.relationship == "inner_circle" or context.has_open_threads:
-            priority = "urgent"
+        if context.relationship == "inner_circle" or sender in waiting.counterparties:
+            priority = "urgent"     # they're already waiting on the user
         elif context.is_known_entity:
             priority = "normal"
         else:
@@ -41,9 +56,12 @@ on email_batch(emails):
             draft = compose_reply(
                 email,
                 context=context,           # their brain page
-                open_threads=context.open_threads,  # what you're working on together
+                open_threads=context.open_threads,  # loop-backed: what's owed, by whom, due when
                 relationship=context.relationship   # tone calibration
             )
+        # After the user sends a reply, the loop closes itself on the next
+        # sync (closed_by: reply_detected); commitments close via
+        # `gbrain loops done <loop_id>`
 
 # WORKFLOW 2: Meeting Prep
 on upcoming_meeting(meeting):
@@ -84,14 +102,22 @@ on inbox_cleared():
 
 # WORKFLOW 4: Scheduling Nudges
 on schedule_request(meeting):
+    # The ranked source of truth for "who is owed what" is the loop engine:
+    waiting = gbrain waiting --json     # top counterparties, due dates, evidence
+
     for attendee in meeting.attendees:
         page = gbrain get <attendee_slug>
         if page.last_interaction > 6_weeks_ago:
             nudge("You haven't met with {attendee} in {weeks} weeks")
-        if page.has_open_threads:
-            nudge("{attendee} has an open thread about {topic}")
+        for thread in page.open_threads:      # loop-backed entries
+            if thread.direction == "owed_by_me":
+                nudge("You owe {attendee}: {thread.summary} (due {thread.due})")
+            else:
+                nudge("{attendee} owes you: {thread.summary} — worth raising in the meeting")
         if page.relationship_temperature == "cooling":
             nudge("Relationship with {attendee} may need attention")
+        # When a nudge is resolved in the meeting, close it:
+        #   gbrain loops done <thread.loop_id>
 ```
 
 ## Tricky Spots

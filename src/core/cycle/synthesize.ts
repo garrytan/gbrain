@@ -41,24 +41,34 @@
  */
 
 import type Anthropic from '@anthropic-ai/sdk';
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chat as gatewayChat, validateModelId, type ChatResult } from '../ai/gateway.ts';
 import { AIConfigError } from '../ai/errors.ts';
+import { resolveChatContextTokens } from '../ai/model-resolver.ts';
 import { normalizeModelId, splitProviderModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
-import { MinionQueue } from '../minions/queue.ts';
+import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
+import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS } from './patterns.ts';
 import { isQueueQuotaExceededError } from '../minions/admission.ts';
-import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
-import { isRetryableConnError } from '../retry-matcher.ts';
-import { waitForCompletion, TimeoutError } from '../minions/wait-for-completion.ts';
-import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
-import type { MinionJobInput, MinionJobContext, MinionHandler, SubagentHandlerData } from '../minions/types.ts';
+import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-completion.ts';
+import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
+import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
+import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
+import { throwIfAborted } from '../abort-check.ts';
+
+// Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
+// allow-list loader to filing-rules.ts (#2397); patterns.ts and the
+// __testing surface import from here unchanged.
+export { runSubagentsInline, runDrainRenewalTick };
+import { loadAllowedSlugPrefixes } from './filing-rules.ts';
+export { loadAllowedSlugPrefixes };
 import { discoverTranscripts, DEFAULT_EXCLUDE_PATTERNS, type DiscoveredTranscript } from './transcript-discovery.ts';
+import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
@@ -71,25 +81,6 @@ import { PAGE_SLUG_SEG } from '../cjk.ts';
 const SUMMARY_SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'u');
 
 // ── Model context budget (D1, D5, D7, D9) ─────────────────────────────
-
-/**
- * Anthropic model id → input context window (tokens).
- * Unknown id (non-Anthropic alias, custom string) → safe 200K-token fallback
- * via `computeChunkCharBudget`. Codex finding #4: `resolveModel()` does not
- * canonicalize to Anthropic-only; this map keys on the exact strings the
- * resolver returns for known Anthropic aliases.
- */
-const MODEL_CONTEXT_TOKENS: Record<string, number> = {
-  'claude-fable-5': 1_000_000,
-  'claude-opus-5': 1_000_000,
-  'claude-sonnet-5': 1_000_000,
-  'claude-opus-4-8': 1_000_000,
-  'claude-opus-4-7': 1_000_000,
-  'claude-opus-4-6': 1_000_000,
-  'claude-sonnet-4-6': 200_000,
-  'claude-sonnet-4-5': 200_000,
-  'claude-haiku-4-5-20251001': 200_000,
-};
 
 /** Token-to-char ratio. 3.5 matches PR #748; conservative for English text. */
 export const CHARS_PER_TOKEN = 3.5;
@@ -140,8 +131,8 @@ const DEFAULT_MAX_TURNS = 16;
  *
  * Resolution:
  *   - configMaxPromptTokens (already floored at MIN_PROMPT_TOKENS) wins when set.
- *   - Else the model's MODEL_CONTEXT_TOKENS entry × HEADROOM_RATIO.
- *   - Else (non-Anthropic alias / custom id) UNKNOWN_MODEL_BUDGET_TOKENS, with
+ *   - Else the official recipe/model resolver's context declaration × HEADROOM_RATIO.
+ *   - Else (unqualified custom id / unknown provider / undeclared recipe) UNKNOWN_MODEL_BUDGET_TOKENS, with
  *     a once-per-process stderr warning.
  *
  * D7 scope: this bounds the INITIAL prompt size only. Tool-loop turn-N
@@ -155,14 +146,22 @@ export function computeChunkCharBudget(
   if (configMaxPromptTokens !== null) {
     return Math.floor(configMaxPromptTokens * CHARS_PER_TOKEN);
   }
-  // Lookup keyed on the bare model name (after prefix strip), mirroring
-  // ANTHROPIC_OUTPUT_CAPS in brainstorm/judges.ts: resolveModel returns
-  // provider-prefixed strings when TIER_DEFAULTS / config values carry a
-  // prefix (the current tier defaults all do), so a raw keyed lookup sent
-  // every tier-resolved brain to the unknown-model fallback — a 5x budget
-  // cut on 1M-context models.
-  const bare = splitProviderModelId(model).model || model;
-  const ctx = MODEL_CONTEXT_TOKENS[bare];
+  // Bare Claude ids are the one legacy shape resolveModel may still return;
+  // all other bare/custom ids remain unknown rather than guessing a provider.
+  const split = splitProviderModelId(model);
+  const qualified = split.provider
+    ? model
+    : model.startsWith('claude-')
+      ? normalizeModelId(model)
+      : null;
+  let ctx: number | undefined;
+  if (qualified) {
+    try {
+      ctx = resolveChatContextTokens(qualified);
+    } catch (err) {
+      if (!(err instanceof AIConfigError)) throw err;
+    }
+  }
   if (ctx === undefined) {
     warnUnknownModelOnce(model);
     return Math.floor(UNKNOWN_MODEL_BUDGET_TOKENS * CHARS_PER_TOKEN);
@@ -175,7 +174,7 @@ function warnUnknownModelOnce(model: string): void {
   if (_unknownModelWarned.has(model)) return;
   _unknownModelWarned.add(model);
   process.stderr.write(
-    `[dream] model "${model}" is not in MODEL_CONTEXT_TOKENS; ` +
+    `[dream] model "${model}" has no declared chat context window; ` +
     `using ${UNKNOWN_MODEL_BUDGET_TOKENS}-token fallback budget. ` +
     `Set dream.synthesize.max_prompt_tokens to override.\n`,
   );
@@ -288,58 +287,13 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 
 // ── Public entry ──────────────────────────────────────────────────────
 
-/**
- * One drain-loop lock-renewal tick, extracted for hermetic tests (worker.ts
- * parity is `runLockRenewalTick`; this is the deliberately simpler best-effort
- * variant — no audit channel, no reconnect, no time-based give-up).
- *
- * Fixes the issue #6 abandoned-racer class in the cycle drain: the previous
- * inline tick had no per-call timeout, so a hung renewLock stacked one
- * checked-out pool slot per interval firing forever. Now each call carries an
- * AbortSignal that is aborted when the timeout wins the race (the query is
- * cancelled and its slot released), and callers guard re-entrancy so at most
- * one renewal is in flight.
- *
- * Returns after the renewal settles or times out; a `false` renewal invokes
- * `onLost` (token fence lost — caller aborts the handler). Errors and
- * timeouts are swallowed: best-effort, the next tick retries.
- */
-export async function runDrainRenewalTick(
-  renewLock: (
-    id: number,
-    lockToken: string,
-    lockMs: number,
-    opts?: { signal?: AbortSignal },
-  ) => Promise<boolean>,
-  jobId: number,
-  lockToken: string,
-  lockMs: number,
-  onLost: () => void,
-  callTimeoutMs: number,
-): Promise<void> {
-  const callAbort = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    const ok = await Promise.race([
-      renewLock(jobId, lockToken, lockMs, { signal: callAbort.signal }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          callAbort.abort();
-          reject(new Error(`renewLock timed out after ${callTimeoutMs}ms`));
-        }, callTimeoutMs);
-      }),
-    ]);
-    if (!ok) onLost();
-  } catch {
-    /* best-effort; next tick retries */
-  } finally {
-    if (timer != null) clearTimeout(timer);
-  }
-}
-
 export interface SynthesizePhaseOpts {
   brainDir: string;
   dryRun: boolean;
+  /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
+   *  cancelled cycle must stop judge calls, inline children, and every
+   *  derived-state write instead of running out the force-evict grace. */
+  signal?: AbortSignal;
   /** Generic in-cycle keepalive for cycle-lock TTL renewal during long waits. */
   yieldDuringPhase?: () => Promise<void>;
   /**
@@ -350,6 +304,13 @@ export interface SynthesizePhaseOpts {
   date?: string;
   from?: string;
   to?: string;
+  /** #4168 sibling: absolute wall-clock deadline (epoch ms) of the enclosing
+   *  minion job. When set, child-subagent timeout_ms/wait are clamped via the
+   *  clampSubagentBudgets template so a child submitted late in the cycle
+   *  cannot outlive the parent's kill switch; under the minimum budget the
+   *  phase skips honestly instead of submitting a guaranteed-timeout child.
+   *  Null/unset (`gbrain dream` CLI) keeps the configured defaults. */
+  deadlineAtMs?: number | null;
   /**
    * Disable the self-consumption guard. Wired from the
    * `--unsafe-bypass-dream-guard` CLI flag. NOT auto-applied for `--input`
@@ -365,6 +326,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** Internal: minion owner job id for private dream-inline queue recovery. */
+  privateQueueOwnerJobId?: number | null;
   /**
    * issue #2860 — `gbrain dream --phase synthesize --once`. Bypasses the
    * `dream.synthesize.enabled` gate for THIS call only (does NOT bypass
@@ -374,249 +337,12 @@ export interface SynthesizePhaseOpts {
   once?: boolean;
 }
 
-const INLINE_LOCK_MS = 30_000;
-
-/**
- * Drain this phase's private child queue inline: drive the same claim → run →
- * complete/fail loop a worker would perform, from the parent's own slot.
- *
- * Why inline on BOTH engines:
- *   - PGLite: no separate Minions worker can run at all (the embedded
- *     data-dir holds an exclusive file lock), so children would sit in
- *     'waiting' until waitForCompletion times out.
- *   - Postgres (#2050): the parent phase itself runs as a job inside a
- *     `jobs work` process. A worker whose slots are all occupied by such
- *     parents (autopilot spawns its drain worker at the default
- *     concurrency=1) can never claim the child the parent is blocking on —
- *     a structural self-deadlock. Running children inline means a child
- *     never needs a worker slot, so the deadlock is impossible at ANY
- *     concurrency, and no extra DB-pool pressure is added: the child's work
- *     replaces the parent's idle waitForCompletion polling in the slot the
- *     parent already holds.
- *
- * `yieldDuringPhase` is ticked on a 60s interval while a child runs so the
- * 5-min cycle lock TTL keeps refreshing during long (up to 30-min) children.
- * The child's own claim lock is heartbeated at lockMs/3 (worker cadence
- * parity) — on Postgres a concurrent worker sweeps handleStalled() across
- * ALL queues, so without renewal any child running longer than lockMs would
- * be requeued mid-run and stall-churned to dead.
- */
-export async function runSubagentsInline(
-  engine: BrainEngine,
-  queue: MinionQueue,
-  queueName: string,
-  yieldDuringPhase?: () => Promise<void>,
-  handler: MinionHandler = makeSubagentHandler({ engine }),
-  lockMs: number = INLINE_LOCK_MS,
-): Promise<void> {
-  // #3555 interaction: the drain's queue ops used to be bare awaits, so a
-  // transient pooler reap mid-drain threw out of the loop and stranded the
-  // remaining children in this per-run private queue — which no worker will
-  // ever claim. Mirror the worker's recovery: on a retryable connection
-  // error, rebuild the pool (shared reconnectAfterConnectionError) and retry
-  // the loop; non-retryable errors still propagate (real bug → phase fails).
-  const MAX_CONN_ERROR_STREAK = 5;
-  let connErrorStreak = 0;
-  let sawConnError = false;
-  const recoverOrThrow = async (site: string, e: unknown): Promise<void> => {
-    if (!isRetryableConnError(e) || ++connErrorStreak > MAX_CONN_ERROR_STREAK) throw e;
-    sawConnError = true;
-    const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`[dream] inline drain ${site} hit a connection error; reconnecting and retrying: ${msg}\n`);
-    await reconnectAfterConnectionError(engine, `inline-${site}`, e);
-    // Small cooperative backoff (setTimeout keeps the cycle-lock keepalive
-    // and any concurrent timers firing) before the loop retries.
-    await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(50, Math.floor(lockMs / 3)))));
-  };
-
-  while (true) {
-    const lockToken = randomUUID();
-    let job: Awaited<ReturnType<MinionQueue['claim']>>;
-    try {
-      // Housekeeping a worker would normally perform, so child rows can reach
-      // terminal states (delayed retries promoted, timeouts dead-lettered)
-      // before the synth parent enters waitForCompletion polling.
-      await queue.promoteDelayed();
-      await queue.handleStalled();
-      await queue.handleTimeouts();
-      await queue.handleWallClockTimeouts(lockMs);
-
-      job = await queue.claim(lockToken, lockMs, queueName, ['subagent']);
-    } catch (e) {
-      await recoverOrThrow('queue-ops', e);
-      continue;
-    }
-    connErrorStreak = 0;
-    if (!job) {
-      if (!sawConnError) return;
-      // A connection-error window may have left a child 'active' under a
-      // lock nobody renews (a claim that committed but whose row never
-      // reached us, or a lost outcome write below). handleStalled() at the
-      // loop top requeues it once the lock expires (≤ lockMs), so only exit
-      // once the queue is actually quiet.
-      let active = 0;
-      try {
-        const rows = await engine.executeRaw<{ n: number }>(
-          `SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = 'active'`,
-          [queueName],
-        );
-        active = rows[0]?.n ?? 0;
-      } catch (e) {
-        await recoverOrThrow('active-check', e);
-        continue;
-      }
-      if (active === 0) return;
-      await new Promise((r) => setTimeout(r, 1000));
-      continue;
-    }
-
-    const abort = new AbortController();
-    const shutdown = new AbortController();
-    const context: MinionJobContext = {
-      id: job.id,
-      name: job.name,
-      data: job.data,
-      attempts_made: job.attempts_made,
-      signal: abort.signal,
-      deadlineAtMs: job.timeout_at != null ? job.timeout_at.getTime() : null,
-      shutdownSignal: shutdown.signal,
-      updateProgress: async (progress: unknown) => {
-        await queue.updateProgress(job.id, lockToken, progress);
-      },
-      updateTokens: async (tokens) => {
-        await queue.updateTokens(job.id, lockToken, tokens);
-      },
-      log: async (message) => {
-        const value = typeof message === 'string' ? message : JSON.stringify(message);
-        await engine.executeRaw(
-          `UPDATE minion_jobs SET stacktrace = COALESCE(stacktrace, '[]'::jsonb) || to_jsonb($1::text),
-            updated_at = now()
-           WHERE id = $2 AND status = 'active' AND lock_token = $3`,
-          [value, job.id, lockToken],
-        );
-      },
-      isActive: async () => {
-        const rows = await engine.executeRaw<{ id: number }>(
-          `SELECT id FROM minion_jobs WHERE id = $1 AND status = 'active' AND lock_token = $2`,
-          [job.id, lockToken],
-        );
-        return rows.length > 0;
-      },
-      readInbox: async () => queue.readInbox(job.id, lockToken),
-    };
-
-    // Per-job deadline enforcement (worker.ts parity). While the drain loop
-    // awaits the handler, the handleTimeouts sweep above can't run, so nothing
-    // else can stop a child that blows past timeout_ms — the handler only
-    // stops when ctx.signal fires. Derive the delay from the claim-time
-    // timeout_at stamp so timer, DB sweeper, and deadlineAtMs agree.
-    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-    if (job.timeout_ms != null) {
-      const delayMs = job.timeout_at != null
-        ? Math.max(0, job.timeout_at.getTime() - Date.now())
-        : job.timeout_ms;
-      timeoutTimer = setTimeout(() => {
-        if (!abort.signal.aborted) abort.abort(new Error('timeout'));
-      }, delayMs);
-    }
-
-    // Cycle-lock keepalive while the child runs (best-effort, never throws).
-    const keepalive = yieldDuringPhase
-      ? setInterval(() => { yieldDuringPhase().catch(() => { /* best-effort */ }); }, 60_000)
-      : null;
-    // #2050: heartbeat the child's claim lock while the handler runs so a
-    // concurrent Postgres worker's handleStalled() sweep (all queues, not
-    // just its own) can't requeue a live child. A false return means the row
-    // was cancelled or reclaimed — abort the handler. Errors are swallowed
-    // (best-effort; the next tick retries), never an unhandledRejection.
-    // Re-entrancy guard + per-call cancellation via runDrainRenewalTick: a
-    // hung renewLock no longer stacks a fresh checked-out pool slot per
-    // interval firing (issue #6 abandoned-racer class).
-    let drainTickInFlight = false;
-    const renewTimer = setInterval(() => {
-      if (drainTickInFlight) return;
-      drainTickInFlight = true;
-      void runDrainRenewalTick(
-        (id, tok, ms, opts) => queue.renewLock(id, tok, ms, opts),
-        job.id,
-        lockToken,
-        lockMs,
-        () => {
-          if (!abort.signal.aborted) abort.abort(new Error('lock-renewal-failed'));
-        },
-        Math.max(1000, Math.floor(lockMs / 3)),
-      ).finally(() => {
-        drainTickInFlight = false;
-      });
-    }, Math.max(50, Math.floor(lockMs / 3)));
-    // Run, then record — separated so a completeJob connection error can't
-    // masquerade as a handler failure, and a failJob connection error can't
-    // escape the drain and strand the remaining children (worker.ts #1720
-    // parity: reconnect + retry the recording once; if it still fails, leave
-    // the row for the loop's own handleStalled to requeue after lock expiry).
-    let result: unknown;
-    let handlerErr: unknown;
-    let handlerRan = false;
-    try {
-      result = await handler(context);
-      handlerRan = true;
-    } catch (e) {
-      handlerErr = e;
-    }
-    const record = async (): Promise<void> => {
-      if (handlerRan) {
-        await queue.completeJob(
-          job.id,
-          lockToken,
-          result != null ? (typeof result === 'object' ? result as Record<string, unknown> : { value: result }) : undefined,
-        );
-        return;
-      }
-      // Timeout is terminal (handleTimeouts parity: stall → retry,
-      // timeout → dead), never a delayed retry.
-      const timedOut = abort.signal.aborted;
-      const errorText = timedOut ? 'timeout exceeded' : (handlerErr instanceof Error ? handlerErr.message : String(handlerErr));
-      const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
-      await queue.failJob(
-        job.id,
-        lockToken,
-        errorText,
-        timedOut || attemptsExhausted ? 'dead' : 'delayed',
-        0,
-      );
-    };
-    try {
-      try {
-        await record();
-      } catch (recordErr) {
-        if (!isRetryableConnError(recordErr)) throw recordErr;
-        sawConnError = true;
-        const msg = recordErr instanceof Error ? recordErr.message : String(recordErr);
-        process.stderr.write(`[dream] inline drain: recording job ${job.id} outcome hit a connection error; reconnecting and retrying once: ${msg}\n`);
-        await reconnectAfterConnectionError(engine, 'inline-record', recordErr);
-        try {
-          await record();
-        } catch (retryErr) {
-          // Leave the row to the loop's own handleStalled: the claim lock
-          // stops renewing (finally clears renewTimer), expires within
-          // lockMs, and the next iteration requeues it on a live pool.
-          const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-          process.stderr.write(`[dream] inline drain: outcome recording retry for job ${job.id} also failed (${retryMsg}); leaving the row for stall requeue\n`);
-        }
-      }
-    } finally {
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      if (keepalive) clearInterval(keepalive);
-      clearInterval(renewTimer);
-    }
-  }
-}
-
 export async function runPhaseSynthesize(
   engine: BrainEngine,
   opts: SynthesizePhaseOpts,
 ): Promise<PhaseResult> {
   const start = Date.now();
+  let ownedPrivateQueue: { queue: MinionQueue; name: string } | null = null;
   // Normalize brainDir to an absolute path BEFORE any reverse-write. Without
   // this, a relative or empty brainDir flows down to writeReversePages →
   // `join(brainDir, '${slug}.md')` → relative path → resolves against cwd at
@@ -635,7 +361,26 @@ export async function runPhaseSynthesize(
     opts.brainDir = resolve(opts.brainDir);
   }
   try {
+    throwIfAborted(opts.signal, '[dream] synthesize');
     const config = await loadSynthConfig(engine);
+
+    // #4168 sibling: clamp the child-subagent budgets to the REAL remaining
+    // job time (patterns.ts clampSubagentBudgets template). Pre-fix,
+    // DEFAULT_SUBAGENT_TIMEOUT_MS (30min) was submitted raw as the child's
+    // timeout_ms even when the parent cycle had two minutes left — the same
+    // deadline-equals-kill-switch collision propose_takes had, one process
+    // boundary further out.
+    const clamped = clampSubagentBudgets(
+      { subagentTimeoutMs: config.subagentTimeoutMs, subagentWaitTimeoutMs: config.subagentWaitTimeoutMs },
+      opts.deadlineAtMs,
+      Date.now(),
+    );
+    if (clamped === null) {
+      return skipped('insufficient_cycle_budget',
+        'remaining cycle budget too small to submit a synthesize child that could finish; next cycle retries with a fresh budget');
+    }
+    config.subagentTimeoutMs = clamped.timeoutMs;
+    config.subagentWaitTimeoutMs = clamped.waitTimeoutMs;
 
     // Allow ad-hoc --input to run even when config is disabled.
     if (!opts.inputFile && !config.corpusDir) {
@@ -694,6 +439,16 @@ export async function runPhaseSynthesize(
       return ok('no transcripts to process', { transcripts_processed: 0, pages_written: 0 });
     }
 
+    // Best-effort housekeeping (#4069): expiry is enforced on reads
+    // regardless, so a sweep failure must not block synthesis when the
+    // database is otherwise usable.
+    try {
+      const swept = await engine.sweepDreamVerdicts();
+      if (swept > 0) process.stderr.write(`[dream] swept ${swept} expired verdict cache row(s)\n`);
+    } catch (e) {
+      process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
+
     // Scored triage (#4152): cached in dream_verdicts, judged on miss by the
     // utility-tier model through a bounded pool with a wall-clock miss budget.
     // Provider-aware judge client routes through gateway.chat, so any
@@ -707,6 +462,7 @@ export async function runPhaseSynthesize(
       threshold: config.triage.threshold,
       concurrency: config.triage.concurrency,
       maxMs: config.triage.maxMs,
+      signal: opts.signal,
     }, opts.yieldDuringPhase);
     const verdicts = pass.reports;
 
@@ -774,10 +530,30 @@ export async function runPhaseSynthesize(
 
     // Fan-out: submit one subagent per worth-processing transcript (or one
     // per chunk for transcripts that exceed the model's per-prompt budget).
-    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot);
+    // #4117: the validated per-lane namespaces derive extra allow-list globs
+    // so a custom reflections/originals prefix is actually writable.
+    const allowedSlugPrefixes = await loadAllowedSlugPrefixes(config.outputRoot, engine, {
+      reflectionsPrefix: config.reflectionsPrefix,
+      originalsPrefix: config.originalsPrefix,
+    });
     if (allowedSlugPrefixes.length === 0) {
       return failed(makeError('InternalError', 'NO_ALLOWLIST',
         'skills/_brain-filing-rules.json missing dream_synthesize_paths.globs'));
+    }
+
+    // #4216: pre-retrieval manifest context — one slug snapshot + basename
+    // index per phase, reused across every transcript's LINK CANDIDATES
+    // block. Scoped to the cycle's write source so manifest reads see the
+    // same universe the oneshot validator probes. Best-effort: a failure
+    // here degrades to the manifest-less prompt.
+    const cycleSourceId = opts.sourceId ?? 'default';
+    let manifestCtx: ManifestContext | null = null;
+    if (config.linkManifest) {
+      try {
+        manifestCtx = await buildManifestContext(engine, cycleSourceId);
+      } catch (e) {
+        process.stderr.write(`[dream] manifest context build failed (continuing without manifests): ${e instanceof Error ? e.message : String(e)}\n`);
+      }
     }
 
     const queue = new MinionQueue(engine);
@@ -786,6 +562,17 @@ export async function runPhaseSynthesize(
     // unrelated 'default'-queue jobs, and a 'default'-queue worker must never
     // claim a child this parent is about to run itself.
     const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    ownedPrivateQueue = { queue, name: childQueueName };
+    const privateQueueOwnerToken = randomUUID();
+    // Rolling 10-min lease renewed every ≤30s from the drain loop (idle polls,
+    // claim iterations, per-child keepalive) and the post-drain chunked wait —
+    // a crashed run's queue becomes lease-recoverable within ~10 minutes
+    // instead of a wait-timeout-sized horizon. The whole wrapper (lease AND
+    // cycle-lock refresh) is 30s-throttled so 1-5s polls cost one UPDATE per
+    // half-minute, not per poll; the cycle lock's 5-min TTL is ample at 30s.
+    const renewPrivateQueueLease = queue.makeThrottledLeaseRenewer(
+      childQueueName, privateQueueOwnerToken, opts.yieldDuringPhase,
+    );
     const childIds: number[] = [];
     /** Map child job_id → chunk metadata for D6 orchestrator-side slug rewrite. */
     const chunkInfo = new Map<number, { idx: number; hash6: string }>();
@@ -795,7 +582,6 @@ export async function runPhaseSynthesize(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const cycleSourceId = opts.sourceId ?? 'default';
     const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
       engine,
       cycleSourceId,
@@ -826,10 +612,21 @@ export async function runPhaseSynthesize(
     // this run would be rejected too — record one skip per remaining file
     // without hammering the queue.
     let quotaHit = false;
+    // #4168 red-team: transcripts deferred because the parent job budget ran
+    // out mid-fan-out (distinct from the quota latch: deferral is budget-time,
+    // quota is admission-space; both stop further submits this run).
+    const budgetExhaustedDeferrals: string[] = [];
     for (const t of worthProcessing) {
+      // #4077: never submit new children after cancellation; the finally's
+      // reconcilePrivateQueue cancels anything already submitted.
+      throwIfAborted(opts.signal, '[dream] synthesize fan-out');
       if (quotaHit) {
         skipReports.push({ filePath: t.filePath, reason: 'admission_quota: submission stopped this run' });
         continue;
+      }
+      if (budgetExhaustedDeferrals.length > 0) {
+        budgetExhaustedDeferrals.push(basename(t.filePath));
+        continue; // budget gone — defer the rest, don't submit more children
       }
       const hash16 = t.contentHash.slice(0, 16);
       const hash6 = t.contentHash.slice(0, 6);
@@ -920,6 +717,16 @@ export async function runPhaseSynthesize(
           ? `anthropic:${config.model}`
           : config.model;
       const triageVerdict = pass.byPath.get(t.filePath);
+      // #4216: per-transcript LINK CANDIDATES manifest (zero-embed; entities/
+      // segment notes come from the cached triage verdict).
+      let manifestBlock = '';
+      if (manifestCtx) {
+        const manifest = await buildLinkManifest(
+          engine, manifestCtx, triageVerdict, t.basename,
+          { outputRoot: config.outputRoot, sourceId: cycleSourceId },
+        );
+        manifestBlock = manifest.block;
+      }
       // Fresh (non-coalesced) chunk submissions for THIS transcript — rolled
       // back if a later chunk hits the admission quota, so a transcript never
       // half-synthesizes while its skip report claims it was skipped
@@ -931,10 +738,23 @@ export async function runPhaseSynthesize(
           prompt: buildSynthesisPrompt(
             t, chunks[i], i, chunks.length, priorContradictionsBlock, config.outputRoot,
             buildTriageMapBlock(triageVerdict, chunks[i], chunks.length),
+            manifestBlock,
+            allowedSlugPrefixes,
+            // #4117: validated per-lane namespaces.
+            config.reflectionsPrefix,
+            config.originalsPrefix,
           ),
           model: subagentModel,
           max_turns: config.maxTurns,
           allowed_slug_prefixes: allowedSlugPrefixes,
+          // #4216: execution mode + the structural slug-suffix contract
+          // (CDX-9) + #4217 write requirement — a synthesis child whose every
+          // write failed must dead-letter, not report completed.
+          mode: config.mode,
+          oneshot_slug_suffix: chunks.length > 1
+            ? `${t.contentHash.slice(0, 6)}-c${i}`
+            : t.contentHash.slice(0, 6),
+          require_writes: true,
           // #1586: scope every child tool call to the cycle's resolved source
           // so put_page writes land there instead of the hardcoded 'default'.
           ...(opts.sourceId ? { source_id: opts.sourceId } : {}),
@@ -948,12 +768,30 @@ export async function runPhaseSynthesize(
         const idempotency_key = isChunked
           ? `${synthesisKey}:c${i}of${chunks.length}`
           : synthesisKey;
+        // #4168 red-team: the phase is a FAN-OUT and children drain
+        // sequentially with claim-time-anchored kill switches, so a single
+        // phase-start clamp only bounds the FIRST child. Re-clamp against the
+        // live clock per submit; when the remaining parent budget drops under
+        // the minimum, stop submitting — deferred transcripts retry next
+        // cycle (partial > guaranteed-timeout children).
+        const perChild = clampSubagentBudgets(
+          { subagentTimeoutMs: config.subagentTimeoutMs, subagentWaitTimeoutMs: config.subagentWaitTimeoutMs },
+          opts.deadlineAtMs,
+          Date.now(),
+        );
+        if (perChild === null) {
+          budgetExhaustedDeferrals.push(basename(t.filePath));
+          break;
+        }
         const submitOpts: Partial<MinionJobInput> = {
           max_stalled: 3,
           on_child_fail: 'continue',
           idempotency_key,
-          timeout_ms: config.subagentTimeoutMs,
+          timeout_ms: perChild.timeoutMs,
           queue: childQueueName,
+          private_queue_owner_job_id: opts.privateQueueOwnerJobId ?? null,
+          private_queue_owner_token: privateQueueOwnerToken,
+          private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
         };
         let child: Awaited<ReturnType<typeof queue.add>>;
         try {
@@ -1042,24 +880,76 @@ export async function runPhaseSynthesize(
     // terminal child states instead of polling waiters until
     // subagentWaitTimeoutMs expires. Runs on BOTH engines — on Postgres the
     // parent job otherwise deadlocks a fully-occupied worker (#2050).
-    await runSubagentsInline(engine, queue, childQueueName, opts.yieldDuringPhase);
+    // #4194: bounded concurrency on Postgres; PGLite is FORCED serial (the
+    // embedded engine is single-process/exclusive — concurrent loops would
+    // contend on one WASM instance for zero gain).
+    let effectiveConcurrency = Math.min(config.inlineConcurrency, childIds.length);
+    if (engine.kind === 'pglite' && effectiveConcurrency > 1) {
+      process.stderr.write(
+        `[dream] dream.synthesize.inline_concurrency=${config.inlineConcurrency} ignored on PGLite (exclusive engine); draining serially.\n`,
+      );
+      effectiveConcurrency = 1;
+    }
+    const drainStartedAt = Date.now();
+    await runSubagentsInline(
+      engine, queue, childQueueName, renewPrivateQueueLease,
+      undefined, undefined, effectiveConcurrency, opts.deadlineAtMs ?? null,
+      opts.signal ?? null,
+    );
+    // Captured HERE: everything after this line (waiters, collection,
+    // provenance, reverse-writes, backfill) is post-drain phase work and must
+    // not inflate the #4194 drain observability number.
+    const drainMs = Date.now() - drainStartedAt;
+
+    // #4168 adversarial: children the deadline-gated drain never claimed
+    // would strand in this per-run private queue forever (no worker claims
+    // it). Cancel them and defer their transcripts to the next cycle.
+    if (opts.deadlineAtMs != null) {
+      const stillWaiting = await engine.executeRaw<{ id: number }>(
+        `SELECT id FROM minion_jobs WHERE queue = $1 AND status IN ('waiting', 'delayed')`,
+        [childQueueName],
+      );
+      for (const row of stillWaiting) {
+        const cancelled = await queue.cancelJob(row.id);
+        if (cancelled) {
+          const src = jobRawSource.get(row.id);
+          if (src) budgetExhaustedDeferrals.push(basename(src));
+        }
+      }
+    }
 
     // Wait for every child to reach a terminal state. Tick yieldDuringPhase
     // every 5 min so the cycle lock TTL refreshes.
-    const childOutcomes: Array<{ jobId: number; status: string; turns?: number }> = [];
+    const childOutcomes: Array<{ jobId: number; status: string; turns?: number; synth_mode_used?: string; fallback_reason?: string }> = [];
     for (const jobId of childIds) {
       try {
-        const job = await waitForCompletion(queue, jobId, {
-          timeoutMs: config.subagentWaitTimeoutMs,
+        // #4168 red-team: bound each wait by the REMAINING parent budget
+        // (never negative-or-zero — floor at 1s so the fast path still
+        // observes an already-terminal child), not just the per-child config.
+        const remainingParentMs = opts.deadlineAtMs != null
+          ? Math.max(1000, opts.deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - Date.now())
+          : config.subagentWaitTimeoutMs;
+        const job = await waitForCompletionRenewing(queue, jobId, {
+          timeoutMs: Math.min(config.subagentWaitTimeoutMs, remainingParentMs),
           pollMs: 5 * 1000,
+          renew: renewPrivateQueueLease,
+          signal: opts.signal,
         });
+        // #4077: on abort the wait returns its last snapshot instead of
+        // throwing — unwind before recording a non-terminal status as an
+        // outcome (finally cancels the still-live children).
+        throwIfAborted(opts.signal, '[dream] synthesize completion wait');
         // Turn telemetry: surfaces max_turns cap pressure in details.synthesis
-        // so the 30→16 default can be re-litigated on data.
-        const turns = (job.result as { turns_count?: unknown } | null | undefined)?.turns_count;
+        // so the 30→16 default can be re-litigated on data. #4216 adds the
+        // execution-path markers so operators see oneshot vs fallback mix.
+        const jr = job.result as { turns_count?: unknown; synth_mode_used?: unknown; fallback_reason?: unknown } | null | undefined;
+        const turns = jr?.turns_count;
         childOutcomes.push({
           jobId,
           status: job.status,
           ...(typeof turns === 'number' && Number.isFinite(turns) ? { turns } : {}),
+          ...(typeof jr?.synth_mode_used === 'string' ? { synth_mode_used: jr.synth_mode_used } : {}),
+          ...(typeof jr?.fallback_reason === 'string' ? { fallback_reason: jr.fallback_reason } : {}),
         });
       } catch (e) {
         if (e instanceof TimeoutError) {
@@ -1091,25 +981,149 @@ export async function runPhaseSynthesize(
     // of every child-written page BEFORE reverse-rendering, so generated pages
     // are queryable (`frontmatter->>'dream_generated'`) and a later put_page
     // write-through (which re-renders from the DB row) can't erase the stamp.
-    await stampDreamProvenance(engine, writtenRefs, summaryDate);
+    await stampDreamProvenance(engine, writtenRefs, summaryDate, opts.signal);
 
     // Dual-write: reverse-render each DB row → markdown file.
-    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId);
+    const reverseWriteCount = await reverseWriteRefs(engine, opts.brainDir, writtenRefs, cycleSourceId, opts.signal);
 
     // Summary index page (deterministic; orchestrator-written via direct
     // engine.putPage so no allow-list path needed).
-    const summarySlug = `dream-cycle-summaries/${summaryDate}`;
+    const summarySlug = buildDreamSummarySlug(config.outputRoot, summaryDate);
     // Back-compat: writeSummaryPage takes string[] for display; map refs back to slugs.
     const writtenSlugs = writtenRefs.map(r => r.slug);
     if (SUMMARY_SLUG_RE.test(summarySlug)) {
-      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId);
+      await writeSummaryPage(engine, opts.brainDir, summarySlug, summaryDate, writtenSlugs, childOutcomes, cycleSourceId, opts.signal);
     }
 
-    // Write completion timestamp ON SUCCESS only.
-    await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    // #4077: nothing below runs for a cancelled cycle — no phase-end embed
+    // spend, no cooldown stamp (the next run must retry these transcripts).
+    throwIfAborted(opts.signal, '[dream] synthesize completion');
+
+    // CDX-8: deferred-embed closure. Oneshot children write chunks with
+    // `embedding IS NULL`; the global `embed` phase only runs on SOME
+    // invocation shapes (autopilot per-source cycles run NON_GLOBAL_PHASES,
+    // and `--phase synthesize` never reaches it), so close the freshness gap
+    // HERE. Runs whenever this phase wrote pages REGARDLESS of the current
+    // mode (a revert to agentic must still sweep debt left by earlier oneshot
+    // runs — cheap no-op when nothing is stale), and is BOUNDED by a 120s
+    // abort signal: the stale backlog can predate this run (embeds disabled
+    // for a while, big noEmbed sync) and an unbounded sweep would block the
+    // phase past the cycle-lock TTL. The standing stale-embed machinery owns
+    // any remainder. Best-effort: never fails a phase that wrote its pages.
+    if (writtenSlugs.length > 0) {
+      try {
+        const { isAvailable } = await import('../ai/gateway.ts');
+        if (isAvailable('embedding')) {
+          const { embedStalePages } = await import('../embed-stale.ts');
+          const { currentEmbeddingSignature } = await import('../embedding.ts');
+          // Scoped to THIS phase's written pages only — the spend is exactly
+          // the deferred cost of our own writes (what the agentic inline
+          // path would have paid at put_page time), so it needs no backfill
+          // lock, budget ledger, or cooldown; the source-wide stale backlog
+          // stays the budget-tracked embed-backfill job's business. Racing a
+          // concurrent backfill is idempotent (it finds these chunks
+          // embedded). Signature stamping keeps the new pages inside the
+          // v0.41.31 model-drift invalidation contract.
+          const embedSig = currentEmbeddingSignature();
+          const embedRes = await embedStalePages(engine, writtenSlugs, cycleSourceId, {
+            signal: AbortSignal.timeout(120_000),
+            ...(embedSig !== null && { embeddingSignature: embedSig }),
+          });
+          if (embedRes.embedded > 0) {
+            process.stderr.write(`[dream] phase-end embed of written pages: ${embedRes.embedded} chunk(s)${embedRes.aborted ? ' (120s budget hit; stale sweep owns the rest)' : ''}.\n`);
+          }
+        }
+      } catch (e) {
+        process.stderr.write(`[dream] phase-end embed failed (the stale-embed sweep will catch up): ${e instanceof Error ? e.message : String(e)}\n`);
+      }
+    }
+
+    // #4194 telemetry: queue-wait + runtime percentiles from the children's
+    // own timestamps, so a slow-but-healthy cycle is observable while it
+    // drains and a concurrency change shows up as a queue-wait drop.
+    let queueWaitP50: number | null = null;
+    let queueWaitP95: number | null = null;
+    let runtimeP50: number | null = null;
+    let runtimeP95: number | null = null;
+    try {
+      const timing = await engine.executeRaw<{ created_at: Date | string; started_at: Date | string | null; finished_at: Date | string | null }>(
+        `SELECT created_at, started_at, finished_at FROM minion_jobs WHERE id = ANY($1::bigint[])`,
+        [childIds],
+      );
+      const ts = (v: Date | string | null): number | null => v == null ? null : (v instanceof Date ? v.getTime() : new Date(v).getTime());
+      const waits: number[] = [];
+      const runtimes: number[] = [];
+      for (const row of timing) {
+        const created = ts(row.created_at);
+        const started = ts(row.started_at);
+        const finished = ts(row.finished_at);
+        if (created != null && started != null && started >= created) waits.push(started - created);
+        if (started != null && finished != null && finished >= started) runtimes.push(finished - started);
+      }
+      queueWaitP50 = percentile(waits, 50);
+      queueWaitP95 = percentile(waits, 95);
+      runtimeP50 = percentile(runtimes, 50);
+      runtimeP95 = percentile(runtimes, 95);
+    } catch { /* telemetry is best-effort */ }
+
+    // CDX-4 phase outcome gate: dead children must not masquerade as a clean
+    // phase. Vocabulary discipline: 'dead'/'cancelled' are TERMINAL failures
+    // (nothing will ever be written for that key); 'timeout' means the PARENT
+    // stopped waiting — the child's real outcome is unknown and may still
+    // land, so it degrades the phase but is never grounds for the ALL-DEAD
+    // error. ALL children terminally failed → the phase itself failed (mirror
+    // patterns.ts's outcome gate — "22 dead jobs, zero pages, phase ok" was
+    // barely better than the #4217 incident). ANY child non-completed → the
+    // cooldown stamp is SKIPPED: dead jobs release their idempotency keys
+    // (queue.ts), so the next nightly run retries exactly the failed
+    // transcripts instead of being suppressed for cooldown_hours.
+    const deadChildren = childOutcomes.filter(o => o.status === 'dead' || o.status === 'cancelled');
+    const failedChildren = childOutcomes.filter(o => o.status !== 'completed');
+    if (childOutcomes.length > 0 && deadChildren.length === childOutcomes.length) {
+      return failed(makeError('InternalError', 'SYNTH_ALL_CHILDREN_DEAD',
+        `all ${childOutcomes.length} synthesis child job(s) ended '${deadChildren[0].status}' ` +
+        `(${deadChildren.map(o => `${o.jobId}:${o.status}`).slice(0, 5).join(', ')}${deadChildren.length > 5 ? ', …' : ''}); ` +
+        `nothing was written — see minion_jobs error_text for the cause`),
+        // Keep fan-out observability on the failure path: operators (and the
+        // fan-out-shape tests) still see what was submitted and how it died.
+        {
+          transcripts_discovered: transcripts.length,
+          children_submitted: childIds.length,
+          child_outcomes: childOutcomes,
+          skips: skipReports,
+          verdicts,
+          triage: triageDetails,
+          synthesis: {
+            jobs: childIds.length,
+            max_turns_config: config.maxTurns,
+            inline_concurrency_config: config.inlineConcurrency,
+            inline_concurrency_effective: effectiveConcurrency,
+            dead_jobs: deadChildren.length,
+            degraded: true,
+          },
+        });
+    }
+
+    // Write completion timestamp ON SUCCESS only — and only when every child
+    // completed (CDX-4: the cooldown must not suppress the retry of failed or
+    // still-unknown keys) AND nothing was budget-deferred (#4168 adversarial:
+    // "deferred transcripts retry next cycle" is a lie if the next cycle is
+    // cooldown-skipped for half a day).
+    if (failedChildren.length === 0 && budgetExhaustedDeferrals.length === 0) {
+      await engine.setConfig('dream.synthesize.last_completion_ts', new Date().toISOString());
+    } else {
+      process.stderr.write(
+        `[dream] synthesize: ${failedChildren.length}/${childOutcomes.length} child job(s) incomplete + ${budgetExhaustedDeferrals.length} deferred — cooldown NOT stamped so the next run retries them.\n`,
+      );
+    }
 
     const ms = Date.now() - start;
-    const submittedTranscripts = worthProcessing.length - skipReports.length;
+    // Adversarial F3: deferred transcripts were NOT synthesized — a run that
+    // deferred 8 of 10 must not report "10 synthesized".
+    const submittedTranscripts = Math.max(
+      0,
+      worthProcessing.length - skipReports.length - budgetExhaustedDeferrals.length,
+    );
     const turnsSamples = childOutcomes.filter(
       (o): o is { jobId: number; status: string; turns: number } => typeof o.turns === 'number',
     );
@@ -1127,6 +1141,7 @@ export async function runPhaseSynthesize(
       // transcript for single-chunk). Differs from transcripts_processed
       // when chunking is in play.
       children_submitted: childIds.length,
+      budget_deferred_transcripts: budgetExhaustedDeferrals,
       // D5 cap hits + D8 legacy-key skips + daily_cap_reached. Empty when nothing skipped.
       skips: skipReports,
       summary_slug: summarySlug,
@@ -1138,11 +1153,56 @@ export async function runPhaseSynthesize(
         avg_turns: turnsSamples.length > 0
           ? Math.round((turnsSamples.reduce((a, o) => a + o.turns, 0) / turnsSamples.length) * 10) / 10
           : null,
+        // #4216 execution-path mix.
+        mode: config.mode,
+        oneshot_jobs: childOutcomes.filter(o => o.synth_mode_used === 'oneshot').length,
+        fallback_jobs: childOutcomes.filter(o => o.synth_mode_used === 'agentic_fallback').length,
+        agentic_jobs: childOutcomes.filter(o => o.synth_mode_used === 'agentic').length,
+        fallback_reasons: childOutcomes.reduce<Record<string, number>>((acc, o) => {
+          if (o.fallback_reason) acc[o.fallback_reason] = (acc[o.fallback_reason] ?? 0) + 1;
+          return acc;
+        }, {}),
+        // #4194 drain observability.
+        inline_concurrency_config: config.inlineConcurrency,
+        inline_concurrency_effective: effectiveConcurrency,
+        drain_ms: drainMs,
+        queue_wait_ms_p50: queueWaitP50,
+        queue_wait_ms_p95: queueWaitP95,
+        child_runtime_ms_p50: runtimeP50,
+        child_runtime_ms_p95: runtimeP95,
+        // CDX-4: dead-child visibility (0 on a clean run). dead_jobs counts
+        // TERMINAL failures only (dead/cancelled — same semantics as the
+        // failure-path details); non_completed_jobs additionally includes
+        // 'timeout' (parent stopped waiting, outcome unknown).
+        dead_jobs: deadChildren.length,
+        non_completed_jobs: failedChildren.length,
+        degraded: failedChildren.length > 0,
       },
     });
   } catch (e) {
     return failed(makeError('InternalError', 'SYNTH_PHASE_FAIL',
       e instanceof Error ? (e.message || 'synthesize phase threw') : String(e)));
+  } finally {
+    if (ownedPrivateQueue) {
+      try {
+        const cancelled = await ownedPrivateQueue.queue.reconcilePrivateQueue(
+          ownedPrivateQueue.name,
+          'private queue owner terminalized: synthesize phase ended',
+        );
+        if (cancelled.length > 0) {
+          process.stderr.write(
+            `[dream] synthesize reconciled ${cancelled.length} non-terminal child job(s) from ${ownedPrivateQueue.name}\n`,
+          );
+        }
+      } catch (cleanupError) {
+        // The phase result must survive a transient cleanup failure; Doctor
+        // and waiting-TTL remain delayed backstops and will surface/reap it.
+        process.stderr.write(
+          `[dream] synthesize private-queue cleanup failed for ${ownedPrivateQueue.name}: ` +
+          `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}\n`,
+        );
+      }
+    }
   }
 }
 
@@ -1197,8 +1257,45 @@ export interface SynthConfig {
    * grammar; invalid values fall back to 'wiki' with a stderr warning.
    */
   outputRoot: string;
+  /**
+   * #4117: per-lane namespaces (see loadDreamNamespaces). Defaults derive
+   * from outputRoot; config keys dream.synthesize.reflections_slug_prefix /
+   * dream.synthesize.originals_slug_prefix override them individually.
+   */
+  reflectionsPrefix: string;
+  originalsPrefix: string;
   subagentTimeoutMs: number;
   subagentWaitTimeoutMs: number;
+  /**
+   * #4194: concurrent inline-drain loops for this phase's private child
+   * queue. Config `dream.synthesize.inline_concurrency`, default 1 (serial —
+   * the pre-#4194 behavior), clamped [1,8]. PGLite is FORCED serial at the
+   * callsite (exclusive-engine safety). Provider ceilings stay with the rate
+   * leases — this knob only parallelizes the drain machinery.
+   */
+  inlineConcurrency: number;
+  /**
+   * #4216: inject the pre-retrieval LINK CANDIDATES manifest into the
+   * synthesis prompt (both modes). Config `dream.synthesize.link_manifest`,
+   * default true. Zero-embed retrieval from triage entities/segments; turning
+   * it off restores the pre-wave "search for targets yourself" prompt.
+   */
+  linkManifest: boolean;
+  /**
+   * #4216: synthesis execution mode. 'oneshot' (DEFAULT) = one structured
+   * completion + programmatic validated writes with automatic per-transcript
+   * fallback to the agentic loop; 'agentic' = the classic multi-turn tool
+   * loop. Config `dream.synthesize.mode`; unknown values warn + default.
+   * Revert dial: `gbrain config set dream.synthesize.mode agentic`.
+   */
+  mode: 'agentic' | 'oneshot';
+}
+
+/** Keep orchestrator summaries inside a configured non-default namespace. */
+export function buildDreamSummarySlug(outputRoot: string, summaryDate: string): string {
+  return outputRoot === 'wiki'
+    ? `dream-cycle-summaries/${summaryDate}`
+    : `${outputRoot}/dream-cycle-summaries/${summaryDate}`;
 }
 
 /** #2415: shared output-root resolution (synthesize + patterns phases). */
@@ -1211,6 +1308,47 @@ export async function loadOutputRoot(engine: BrainEngine): Promise<string> {
     `[dream] dream.synthesize.output_root "${raw}" is not a valid slug prefix; falling back to "wiki".\n`,
   );
   return 'wiki';
+}
+
+/**
+ * #4117: per-lane output namespaces. `dream.synthesize.output_root` moves
+ * the whole tree; these two keys move the REFLECTIONS and ORIGINALS lanes
+ * individually (brains whose schema has no `personal/reflections` /
+ * `originals/ideas` convention). SUMMARY_SLUG_RE-validated with a stderr
+ * warning + default fallback — an invalid value can never leak an
+ * unvalidated prefix into the prompt or the write allow-list (fail-closed:
+ * the derived allow-list glob only ever comes from a validated prefix).
+ * Mirrors the `dream.patterns.{source,output}_slug_prefix` shape.
+ */
+export interface DreamNamespaces {
+  /** Where reflections land. Config `dream.synthesize.reflections_slug_prefix`; default `<output_root>/personal/reflections`. */
+  reflectionsPrefix: string;
+  /** Where originals land. Config `dream.synthesize.originals_slug_prefix`; default `<output_root>/originals/ideas`. */
+  originalsPrefix: string;
+}
+
+export async function loadDreamNamespaces(
+  engine: BrainEngine,
+  outputRoot: string,
+): Promise<DreamNamespaces> {
+  const resolvePrefix = async (key: string, fallback: string): Promise<string> => {
+    const raw = await engine.getConfig(key);
+    if (!raw) return fallback;
+    const trimmed = raw.trim().replace(/^\/+|\/+$/g, '');
+    if (SUMMARY_SLUG_RE.test(trimmed)) return trimmed;
+    process.stderr.write(
+      `[dream] ${key} "${raw}" is not a valid slug prefix; falling back to "${fallback}".\n`,
+    );
+    return fallback;
+  };
+  return {
+    reflectionsPrefix: await resolvePrefix(
+      'dream.synthesize.reflections_slug_prefix', `${outputRoot}/personal/reflections`,
+    ),
+    originalsPrefix: await resolvePrefix(
+      'dream.synthesize.originals_slug_prefix', `${outputRoot}/originals/ideas`,
+    ),
+  };
 }
 
 export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig> {
@@ -1275,6 +1413,21 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     'dream.synthesize.subagent_wait_timeout_ms',
     DEFAULT_SUBAGENT_WAIT_TIMEOUT_MS,
   );
+  // #4194: clamp [1,8] — 8 stays under the default lease cap (32) so a
+  // misconfigured pool can never self-starve the provider bucket.
+  const inlineConcurrency = Math.max(1, Math.min(8,
+    Math.floor(await getNumberConfig(engine, 'dream.synthesize.inline_concurrency', 1)) || 1));
+  // #4216: manifest default ON; only an explicit 'false'/'0'/'off' disables.
+  const linkManifestRaw = (await engine.getConfig('dream.synthesize.link_manifest'))?.trim().toLowerCase();
+  const linkManifest = !(linkManifestRaw === 'false' || linkManifestRaw === '0' || linkManifestRaw === 'off');
+  // #4216: mode default 'oneshot' (D1=A). loadOutputRoot pattern: unknown
+  // values warn to stderr and fall back to the default rather than failing.
+  const modeRaw = (await engine.getConfig('dream.synthesize.mode'))?.trim().toLowerCase();
+  let synthMode: 'agentic' | 'oneshot' = 'oneshot';
+  if (modeRaw === 'agentic') synthMode = 'agentic';
+  else if (modeRaw && modeRaw !== 'oneshot') {
+    process.stderr.write(`[dream] dream.synthesize.mode "${modeRaw}" is not 'oneshot' | 'agentic'; using 'oneshot'.\n`);
+  }
 
   let excludePatterns: string[] = [...DEFAULT_EXCLUDE_PATTERNS];
   if (excludeStr) {
@@ -1301,6 +1454,10 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     }
   }
 
+  // #4117: resolve the root once, then the per-lane namespaces from it.
+  const outputRoot = await loadOutputRoot(engine);
+  const namespaces = await loadDreamNamespaces(engine, outputRoot);
+
   return {
     enabled,
     corpusDir: corpusDir ?? null,
@@ -1321,9 +1478,14 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
     cooldownHours,
     maxPromptTokens,
     maxChunksPerTranscript,
-    outputRoot: await loadOutputRoot(engine),
+    outputRoot,
+    // #4117: per-lane namespaces derived from outputRoot unless overridden.
+    ...namespaces,
     subagentTimeoutMs,
     subagentWaitTimeoutMs,
+    inlineConcurrency,
+    linkManifest,
+    mode: synthMode,
   };
 }
 
@@ -1373,42 +1535,16 @@ async function checkCooldown(
 }
 
 // ── Allow-list source of truth ───────────────────────────────────────
-
-/**
- * #2415: `outputRoot` remaps the canonical `wiki/`-rooted globs to the
- * configured namespace (e.g. `notes/personal/reflections/*`). Default 'wiki'
- * returns the globs verbatim. Shared by the patterns phase (imported there —
- * the two phases must enforce the same allow-list).
- */
-export async function loadAllowedSlugPrefixes(outputRoot = 'wiki'): Promise<string[]> {
-  // Search a few known locations relative to the binary / repo. The first
-  // hit wins; if none found, return [].
-  const candidates = [
-    join(process.cwd(), 'skills', '_brain-filing-rules.json'),
-    join(__dirname, '..', '..', '..', 'skills', '_brain-filing-rules.json'),
-  ];
-  for (const path of candidates) {
-    if (!existsSync(path)) continue;
-    try {
-      const raw = readFileSync(path, 'utf8');
-      const parsed = JSON.parse(raw) as { dream_synthesize_paths?: { globs?: unknown } };
-      const globs = parsed?.dream_synthesize_paths?.globs;
-      if (Array.isArray(globs) && globs.every(g => typeof g === 'string')) {
-        if (outputRoot === 'wiki') return globs as string[];
-        return (globs as string[]).map(g =>
-          g.startsWith('wiki/') ? `${outputRoot}/${g.slice('wiki/'.length)}` : g,
-        );
-      }
-    } catch { /* try next */ }
-  }
-  return [];
-}
+// #2397: peeled to filing-rules.ts (cwd > engine-resolved brain repo >
+// __dirname > bundled-JSON ladder). Re-exported below so patterns.ts and
+// the tests keep importing from here.
 
 // ── Significance judge (gateway-routed; provider-agnostic) ──────────────
 //
-// The JudgeClient interface is unchanged for test-seam stability — existing
-// tests that pass a mock client to judgeSignificance keep working byte-
-// identically. Only the construction path moved from `new Anthropic()` to
+// The JudgeClient interface keeps the legacy create(params) call shape for
+// test-seam stability — existing mocks keep working (the options bag is
+// optional, #4077 cooperative cancellation). Only the construction path
+// moved from `new Anthropic()` to
 // `gateway.chat()` so any provider with a registered recipe (Anthropic,
 // DeepSeek, OpenRouter, Voyage, Ollama, llama-server, etc.) is reachable
 // via `gbrain config set models.dream.synthesize_verdict <provider>:<model>`.
@@ -1420,7 +1556,10 @@ export async function loadAllowedSlugPrefixes(outputRoot = 'wiki'): Promise<stri
 // for AIConfigError surfacing mid-run.
 
 export interface JudgeClient {
-  create: (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
+  create: (
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    options?: { signal?: AbortSignal },
+  ) => Promise<Anthropic.Message>;
 }
 
 /**
@@ -1458,7 +1597,7 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
   if (v.parsed.providerId === 'anthropic' && !hasAnthropicKey()) return null;
 
   return {
-    create: async (params): Promise<Anthropic.Message> => {
+    create: async (params, options): Promise<Anthropic.Message> => {
       // Map Anthropic.MessageCreateParamsNonStreaming → gateway.ChatOpts.
       // `judgeSignificance` always sends string content + string system,
       // and the adapter only TEXT-flattens the array-of-blocks shape —
@@ -1485,6 +1624,16 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         system,
         messages,
         maxTokens: params.max_tokens,
+        // DeepSeek v4 thinks by default and bills reasoning as OUTPUT tokens
+        // against max_tokens (recipe thinking_by_default, #4172). The judge
+        // wants only the small JSON verdict, so pin thinking off per-call —
+        // the openai-compatible adapter spreads providerOptions[recipe.id]
+        // into the wire body, where `thinking` is DeepSeek's documented knob.
+        ...(v.parsed.providerId === 'deepseek'
+          ? { providerOptions: { deepseek: { thinking: { type: 'disabled' } } } }
+          : {}),
+        // #4077: a cancelled cycle tears down the in-flight judge call too.
+        abortSignal: options?.signal,
       });
 
       // Map gateway.ChatResult → Anthropic.Message shape. judgeSignificance
@@ -1614,7 +1763,7 @@ export async function judgeSignificance(
   client: JudgeClient,
   t: DiscoveredTranscript,
   verdictModel = 'claude-haiku-4-5-20251001',
-  opts: { maxChars?: number; maxTokens?: number } = {},
+  opts: { maxChars?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): Promise<TriageResult> {
   const maxChars = Math.max(1000, opts.maxChars ?? DEFAULT_TRIAGE_MAX_CHARS);
   const { text: trimmed, sampledPct } = buildTriageSample(t.content, maxChars);
@@ -1658,7 +1807,7 @@ two reasons. Quote verbatim; never paraphrase inside "quote".`;
     max_tokens: opts.maxTokens ?? DEFAULT_TRIAGE_MAX_TOKENS,
     system: sys,
     messages: [{ role: 'user', content: `Transcript ${t.basename}:\n\n${trimmed}` }],
-  });
+  }, { signal: opts.signal });
 
   // stop_reason === 'max_tokens' means the response was cut off; 'refusal'
   // means the model refused or a content filter blocked it. Even if a
@@ -1836,6 +1985,9 @@ export interface TriagePassCfg {
   concurrency: number;
   /** Wall-clock budget (ms) for cache-MISS judging; 0 = unlimited. Hits are always free. */
   maxMs: number;
+  /** #4077: cooperative cancellation — no new judge pulls, no post-abort
+   *  dream_verdicts writes; the abort unwinds the pass (phase fails). */
+  signal?: AbortSignal;
   /** Retriage: ignore the cache entirely. */
   force?: boolean;
   /** Retriage --since: cached rows judged before this instant are stale (re-judged). */
@@ -1983,12 +2135,16 @@ export async function runTriagePass(
       };
       return;
     }
+    // #4077: never START a judge call after cancellation; the in-flight call
+    // below rides the same signal via the gateway's abortSignal.
+    throwIfAborted(cfg.signal, '[dream] significance judge');
     try {
       let triage: TriageResult;
       try {
         triage = await judgeSignificance(judge, t, cfg.model, {
           maxChars: cfg.maxChars,
           maxTokens: cfg.maxTokens,
+          signal: cfg.signal,
         });
       } finally {
         // Spend accounting (outside-voice CX3): the paid call happened whether
@@ -2020,6 +2176,9 @@ export async function runTriagePass(
         };
         return;
       }
+      // #4077: a cancelled cycle must not bank new dream_verdicts rows for
+      // work it is abandoning — the next run re-judges from a clean slate.
+      throwIfAborted(cfg.signal, '[dream] significance judge');
       await engine.putDreamVerdict(t.filePath, t.contentHash, {
         worth_processing: triage.worth_processing,
         reasons: triage.reasons,
@@ -2230,6 +2389,13 @@ function buildSynthesisPrompt(
   priorContradictionsBlock = '',
   outputRoot = 'wiki',
   triageMapBlock = '',
+  linkManifestBlock = '',
+  allowedSlugPrefixes: string[] = [],
+  // #4117: per-lane namespaces. Defaults derive from outputRoot so existing
+  // callers/tests are byte-identical; loadSynthConfig passes the validated
+  // config-resolved values.
+  reflectionsPrefix = `${outputRoot}/personal/reflections`,
+  originalsPrefix = `${outputRoot}/originals/ideas`,
 ): string {
   const dateHint = t.inferredDate ?? today();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
@@ -2243,28 +2409,40 @@ function buildSynthesisPrompt(
   const transcriptHeader = isChunked
     ? `${t.filePath} (chunk ${chunkIdx + 1}/${chunkTotal})`
     : t.filePath;
+  // #4216 rule-2 wording: with a manifest present, the model is pointed at the
+  // pre-resolved candidates FIRST (the search tool stays available on the
+  // agentic path; the oneshot path has no tools, and this same prompt must be
+  // byte-identical across a oneshot attempt and its agentic fallback).
+  const crossRefRule = linkManifestBlock
+    ? 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Pick targets from the LINK CANDIDATES above (or another page you write in this response); use the search tool, if available, only when no candidate fits.'
+    : 'Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., `[ref](people/jane-doe)` or `[[people/jane-doe]]`) to existing brain content. Use the search tool to find existing pages first.';
+  // OV-7: the write allow-list must live in the PROMPT, not only in the
+  // put_page tool schema — the oneshot path never sees a tool schema.
+  const allowedPathsBlock = allowedSlugPrefixes.length > 0
+    ? `\n\nALLOWED WRITE PATHS (writes outside these are rejected)\n${allowedSlugPrefixes.map(p => `- ${p}`).join('\n')}`
+    : '';
   return `You are synthesizing a conversation transcript into the user's personal knowledge brain.
 
 CONTEXT
 - Today's date: ${dateHint}
 - Transcript hash suffix (USE THIS in slugs): ${hashSuffix}
-- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}
+- Source file basename: ${baseSlugSegment}${chunkBanner}${priorContradictionsBlock}${triageMapBlock}${linkManifestBlock}${allowedPathsBlock}
 
 OUTPUT POLICY (ALL of these are required)
 1. Quote the user verbatim. Do not paraphrase memorable phrasings.
-2. Cross-reference compulsively: every new page MUST contain at least one wikilink (e.g., \`[ref](people/jane-doe)\` or \`[[people/jane-doe]]\`) to existing brain content. Use the search tool to find existing pages first.
-3. Do NOT write to any path outside the allow-list shown in the put_page schema.
+2. ${crossRefRule}
+3. Do NOT write to any path outside the ALLOWED WRITE PATHS above${allowedSlugPrefixes.length > 0 ? '' : ' (shown in the put_page schema)'}.
 4. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated segments. NO underscores, NO file extensions.
 5. Self-contained opening: begin every new page's body with a 2-3 sentence summary that a reader unfamiliar with this transcript could understand on its own, before any quotes or detail. Do not assume the reader has the source conversation for context.
 
 TASKS
 A. Reflections (self-knowledge, pattern recognition, emotional processing):
-   slug: \`${outputRoot}/personal/reflections/${dateHint}-<topic-slug>-${hashSuffix}\`
+   slug: \`${reflectionsPrefix}/${dateHint}-<topic-slug>-${hashSuffix}\`
 
 B. Originals (new ideas, frames, theses, mental models):
-   slug: \`${outputRoot}/originals/ideas/${dateHint}-<idea-slug>-${hashSuffix}\`
+   slug: \`${originalsPrefix}/${dateHint}-<idea-slug>-${hashSuffix}\`
 
-C. People mentions: search first; if a page exists, do not put_page over it (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
+C. People mentions: ${linkManifestBlock ? 'check LINK CANDIDATES (and the search tool, when available) first' : 'search first, when a search tool is available'}; never write over an existing person page (the orchestrator handles people enrichment via timeline entries — your job is the reflection/original synthesis, NOT modifying existing person pages).
 
 D. If nothing in this transcript meets the bar (significance filter already passed but the content is still routine), return without writing anything.
 
@@ -2436,10 +2614,14 @@ async function stampDreamProvenance(
   engine: BrainEngine,
   refs: Array<{ slug: string; source_id: string; raw_source?: string }>,
   cycleDate: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (refs.length === 0) return;
   const { executeRawJsonb } = await import('../sql-query.ts');
   for (const { slug, source_id, raw_source } of refs) {
+    // #4077: per-row abort check — the per-row try below is only for stamp
+    // failures and must not swallow the cancellation unwind.
+    throwIfAborted(signal, '[dream] synthesize provenance');
     try {
       await executeRawJsonb(
         engine,
@@ -2470,14 +2652,19 @@ async function reverseWriteRefs(
   brainDir: string,
   refs: Array<{ slug: string; source_id: string }>,
   nativeSourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<number> {
   let count = 0;
   for (const { slug, source_id } of refs) {
+    throwIfAborted(signal, '[dream] synthesize reverse-write');
     // v0.32.8 F6: validate source_id is filesystem-safe before any join().
     validateSourceId(source_id);
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
     const tags = await engine.getTags(slug, { sourceId: source_id });
+    // #4077: re-check after the row reads — an abort that lands during
+    // getPage/getTags must not reach this ref's file write.
+    throwIfAborted(signal, '[dream] synthesize reverse-write');
     try {
       const md = renderPageToMarkdown(page, tags);
       // v0.32.8 F6: foreign-source pages land at brainDir/.sources/<id>/<slug>.md
@@ -2532,7 +2719,9 @@ async function writeSummaryPage(
   writtenSlugs: string[],
   childOutcomes: Array<{ jobId: number; status: string }>,
   sourceId = 'default',
+  signal?: AbortSignal,
 ): Promise<void> {
+  throwIfAborted(signal, '[dream] synthesize summary');
   const completed = childOutcomes.filter(c => c.status === 'completed').length;
   const failed = childOutcomes.length - completed;
 
@@ -2587,7 +2776,31 @@ async function writeSummaryPage(
     frontmatter: parsed.frontmatter,
   }, { sourceId });
 
-  // Also write to disk (orchestrator dual-write).
+  // Also write to disk (orchestrator dual-write). #4506: the unconditional
+  // file write dirtied clean source repos (an untracked
+  // dream-cycle-summaries/<date>.md after every nightly run). Two
+  // suppressors, both leaving the DB row untouched:
+  //   - explicit knob `dream.synthesize.summary_file_write=false|0|off`
+  //     (default ON — back-compat for brains that expect the dual-write);
+  //   - a gbrain.yml storage tier that declares the summary slug `db_only`
+  //     (the DB/file-plane split the reporter expected to cover this path).
+  const fileWriteRaw = (await engine.getConfig('dream.synthesize.summary_file_write'))?.trim().toLowerCase();
+  const fileWriteEnabled = !(fileWriteRaw === 'false' || fileWriteRaw === '0' || fileWriteRaw === 'off');
+  let dbOnlyTier = false;
+  if (fileWriteEnabled) {
+    try {
+      const storage = loadStorageConfig(brainDir);
+      dbOnlyTier = storage !== null && isDbOnly(summarySlug, storage);
+    } catch {
+      // Unreadable gbrain.yml — keep the dual-write default (fail-open to
+      // pre-#4506 behavior; sync owns loud storage-config validation).
+    }
+  }
+  if (!fileWriteEnabled || dbOnlyTier) {
+    const why = !fileWriteEnabled ? 'dream.synthesize.summary_file_write=off' : 'db_only storage tier';
+    process.stderr.write(`[dream] summary file-write skipped (${why}): ${summarySlug} lives in the DB only\n`);
+    return;
+  }
   try {
     const filePath = join(brainDir, `${summarySlug}.md`);
     mkdirSync(dirname(filePath), { recursive: true });
@@ -2629,13 +2842,13 @@ function skipped(reason: string, summary: string): PhaseResult {
   };
 }
 
-function failed(error: PhaseError): PhaseResult {
+function failed(error: PhaseError, details: Record<string, unknown> = {}): PhaseResult {
   return {
     phase: 'synthesize',
     status: 'fail',
     duration_ms: 0,
     summary: 'synthesize phase failed',
-    details: {},
+    details,
     error,
   };
 }
@@ -2651,8 +2864,10 @@ function makeError(cls: string, code: string, message: string, hint?: string): P
 export const __testing = {
   collectChildPutPageSlugs,
   buildSynthesisPrompt,
+  buildDreamSummarySlug,
   stampDreamProvenance,
   reverseWriteRefs,
   runSubagentsInline,
   loadSynthConfig,
+  writeSummaryPage,
 };

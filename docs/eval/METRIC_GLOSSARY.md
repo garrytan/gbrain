@@ -10,23 +10,23 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Key:** `precision@k`
 
-**Plain English:** Of the top k results the engine returned, what fraction were actually relevant? High precision means few junk results in the top of the list.
+**Plain English:** Of the top k unique pages the engine returned, what fraction were actually relevant? Multiple chunks from one page count once. High precision means few junk pages in the top of the list.
 
-**Range:** 0..1, higher is better. P@10 = 0.7 means 7 of the top 10 results were on-topic.
+**Range:** 0..1, higher is better. The denominator stays k even when fewer than k unique pages are returned; P@10 = 0.7 means 7 relevant pages in the top 10 slots.
 
 ### Recall at k (R@k)
 
 **Key:** `recall@k`
 
-**Plain English:** Of all the relevant results that exist in the brain, what fraction did the engine find in its top k? High recall means few missed answers.
+**Plain English:** Of all the relevant pages that exist in the brain, what fraction did the engine find in its first k unique pages? Multiple chunks from one page count once. High recall means few missed answers.
 
-**Range:** 0..1, higher is better. R@10 = 0.81 means out of every 100 questions, the right answer was in the top 10 for 81 of them.
+**Range:** 0..1, higher is better. R@10 = 0.81 means 81% of all labeled relevant pages appeared in the first 10 unique results.
 
 ### Mean Reciprocal Rank (MRR)
 
 **Key:** `mrr`
 
-**Plain English:** On average, how far down the list is the FIRST relevant result? An MRR of 1.0 means the first hit is always right; an MRR of 0.5 means it's typically at rank 2.
+**Plain English:** On average, how far down the unique-page list is the FIRST relevant result? Repeated chunks do not consume ranks. An MRR of 1.0 means the first page is always right; an MRR of 0.5 means it's typically at rank 2.
 
 **Range:** 0..1, higher is better. Computed as the average of 1/rank-of-first-relevant-result across all test queries.
 
@@ -34,7 +34,7 @@ Every metric `gbrain eval *` and `gbrain search stats` reports has a plain-Engli
 
 **Key:** `ndcg@k`
 
-**Plain English:** Like precision@k, but the engine gets MORE credit for putting good results near the top than near rank k. A perfect ordering scores 1.0; a totally random ordering scores near 0.
+**Plain English:** Like precision@k, but the engine gets MORE credit for putting good pages near the top than near rank k. Each page earns gain once even if several chunks matched. A perfect ordering scores 1.0; a totally random ordering scores near 0.
 
 **Range:** 0..1, higher is better. nDCG@10 above 0.65 is the common "ship it" threshold for hybrid retrieval on technical corpora.
 

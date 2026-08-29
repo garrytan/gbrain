@@ -14,6 +14,7 @@ import {
   FACTS_DEFAULT_VISIBILITY_KEY,
 } from '../src/core/facts/visibility.ts';
 import { runFactsBackstop } from '../src/core/facts/backstop.ts';
+import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import {
   markShortLivedCliProcess,
   __resetShortLivedCliForTests,
@@ -191,6 +192,20 @@ describe('ontology_propose visibility site (operations.ts ~:5812) [ENG-8]', () =
 });
 
 describe('backstop minion-payload visibility site (backstop.ts queue mode) [ENG-8]', () => {
+  // The backstop gates on extraction availability before enqueueing; this
+  // block asserts the minion PAYLOAD, not availability — stub the chat
+  // transport so the gate passes regardless of shard env keys.
+  beforeAll(() => {
+    __setChatTransportForTests(async () => ({
+      text: '[]',
+      blocks: [{ type: 'text', text: '[]' }],
+      stopReason: 'end' as const,
+      usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-sonnet-4-6',
+      providerId: 'anthropic',
+    }));
+  });
+  afterAll(() => { __setChatTransportForTests(null); });
   afterEach(async () => {
     __resetShortLivedCliForTests();
     await engine.unsetConfig(FACTS_DEFAULT_VISIBILITY_KEY);

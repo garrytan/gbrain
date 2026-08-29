@@ -86,7 +86,7 @@ the repo. The architectural rule still holds — these aren't
 | `mcp_request_log` | Audit trail. Volatile by design. |
 | `minion_jobs` / `minion_inbox` / `minion_attachments` | Job queue. Restarts re-enqueue or drop. |
 | `eval_candidates` / `eval_capture_failures` | Contributor-mode dev loop; opt-in capture. |
-| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rebuildable via `gbrain dream retriage --force`. |
+| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rows carry a 30-day `expires_at` TTL (migration v143): reads treat expired rows as misses and the synthesize phase sweeps them, so nothing lives forever. Rebuildable via `gbrain dream retriage --force`. |
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
 | `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |

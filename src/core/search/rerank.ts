@@ -96,6 +96,11 @@ export async function applyReranker(
     });
   } catch (err) {
     const reason = classifyRerankFailure(err);
+    // #3657 post-sunset short-circuit: the gateway already wrote the ONE
+    // per-process-per-model audit row (and the once-per-process stderr line)
+    // when it skipped the HTTP call — a per-query row here would flood the
+    // audit file on every search until the user migrates. Fail open at once.
+    if (reason === 'sunset_short_circuit') return results;
     const errorSummary = err instanceof Error ? err.message : String(err);
     try {
       logRerankFailure({

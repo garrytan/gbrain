@@ -6,14 +6,70 @@
  */
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
+import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
+// Leaf module (no flag surface of its own) — see that file for why this
+// isn't imported from extract-conversation-facts.ts directly (#4135).
+import { ALLOWED_TYPES } from '../../../core/facts/conversation-types.ts';
+
+function hasNonEmptyChatFallbackChain(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) return false;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.some((entry) => typeof entry === 'string' && entry.trim().length > 0);
+    }
+  } catch {
+    // `config set` stores raw strings; any non-empty non-JSON value is set.
+  }
+  return true;
+}
+
+/**
+ * `chat_fallback_chain` is accepted by config and reaches the gateway config,
+ * but no production chat path consumes it. Keep the warning in doctor rather
+ * than config loading so ordinary commands stay quiet. Returning null for an
+ * empty value keeps clean doctor reports silent instead of adding an OK line.
+ */
+export async function checkChatFallbackChainInert(
+  engine: BrainEngine,
+  effectiveConfig: Pick<GBrainConfig, 'chat_fallback_chain'> | null = loadConfig(),
+): Promise<Check | null> {
+  const fileOrEnvSet = hasNonEmptyChatFallbackChain(effectiveConfig?.chat_fallback_chain);
+  const dbValue = await engine.getConfig('chat_fallback_chain').catch(() => null);
+  if (!fileOrEnvSet && !hasNonEmptyChatFallbackChain(dbValue)) return null;
+  return {
+    name: 'chat_fallback_chain_inert',
+    status: 'warn',
+    message:
+      '`chat_fallback_chain` is set but currently has no effect: no production chat path consumes it. ' +
+      'If you set it expecting fallback behavior, clear it from every plane that still holds a value: ' +
+      'the DB (`gbrain config unset chat_fallback_chain`), `~/.gbrain/config.json`, and `GBRAIN_CHAT_FALLBACK_CHAIN`.',
+  };
+}
 
 /**
  * v0.32.3 [CDX-20]: surface mode + per-key override drift.
  *
- * Status stays `ok` (never warns; never docks health score). If
- * search.mode is unset → suggest picking one. If overrides contradict
- * the mode (e.g. mode=conservative but cache.enabled=false), say so in
- * the message and paste a `gbrain search modes --reset` fix command.
+ * Original contract: status stays `ok` (never warns; never docks health
+ * score); the hint lives in `message`, including a paste-ready
+ * `gbrain search modes --reset` consolidation command whenever per-key
+ * overrides exist.
+ *
+ * #3657/#4382 sunset amendment: the reset advice was a foot-gun on brains
+ * whose overrides exist precisely to hold the reranker OFF the sunsetting
+ * mode-bundle default — `--reset` clears `search.reranker.*` (they are in
+ * SEARCH_MODE_CONFIG_KEYS) while preserving `search.mode`, silently
+ * re-arming a provider gbrain itself knows is shutting down. So:
+ *   - the ACTIVE resolved reranker (mode bundle + overrides, the same
+ *     plane hybrid search reranks with) matching RERANKER_SUNSETS → WARN
+ *     with the sunset date + the paste-ready replacement;
+ *   - overrides present AND the PURE-BUNDLE resolution (what `--reset`
+ *     restores) matching RERANKER_SUNSETS → keep `ok`, but WITHHOLD the
+ *     reset recommendation and name the overrides load-bearing;
+ *   - otherwise the original [CDX-20] behavior is unchanged.
  */
 
 export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
@@ -24,26 +80,71 @@ export async function checkSearchMode(engine: BrainEngine): Promise<Check> {
     // override roster — they aren't knobs.
     const overrideKeys = overrides.filter(k => k !== 'search.mode' && k !== 'search.mode_upgrade_notice_shown');
 
-    if (!mode) {
+    // #3657/#4382: resolve the active reranker AND what a reset would arm.
+    let activeSunset: import('../../../core/ai/defaults.ts').RerankerSunset | null = null;
+    let resetSunset: import('../../../core/ai/defaults.ts').RerankerSunset | null = null;
+    let activeReranker: string | undefined;
+    let resetReranker: string | undefined;
+    try {
+      const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
+      const { rerankerSunset } = await import('../../../core/ai/defaults.ts');
+      const loaded = await loadSearchModeConfig(engine);
+      const active = resolveSearchMode(loaded);
+      if (active.reranker_enabled) {
+        activeReranker = active.reranker_model;
+        activeSunset = rerankerSunset(active.reranker_model);
+      }
+      // Pure bundle for the same mode — `search modes --reset` clears the
+      // per-key overrides but deliberately preserves search.mode.
+      const bundle = resolveSearchMode({ mode: loaded.mode });
+      if (bundle.reranker_enabled) {
+        resetReranker = bundle.reranker_model;
+        resetSunset = rerankerSunset(bundle.reranker_model);
+      }
+    } catch {
+      // Mode resolution failed — make no sunset claim; legacy copy below.
+    }
+
+    const context = !mode
+      ? 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.'
+      : overrideKeys.length === 0
+        ? `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`
+        : `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}).`;
+
+    if (activeSunset) {
       return {
         name: 'search_mode',
-        status: 'ok',
-        message: 'search.mode is unset (using balanced fallback). Run `gbrain search modes` to see what is running and pick a mode explicitly.',
+        status: 'warn',
+        message:
+          `${context} The active reranker (${activeReranker}) is on a provider with an announced ` +
+          `shutdown: the hosted API dies on ${activeSunset.date}, after which rerank calls fail open ` +
+          `to unreranked order. Fix: gbrain config set search.reranker.model ${activeSunset.replacement} ` +
+          `(or disable: gbrain config set search.reranker.enabled false).`,
       };
     }
 
-    if (overrideKeys.length === 0) {
+    if (!mode || overrideKeys.length === 0) {
+      return { name: 'search_mode', status: 'ok', message: context };
+    }
+
+    if (resetSunset) {
+      // Overrides are what keep this brain OFF the sunsetting bundle default
+      // — recommending a reset here re-arms a dying provider (#4382).
       return {
         name: 'search_mode',
         status: 'ok',
-        message: `Mode: ${mode} (no per-key overrides — mode bundle is canonical).`,
+        message:
+          `${context} These override(s) are load-bearing: a mode-bundle reset would restore ` +
+          `reranker_model=${resetReranker}, whose provider shuts down on ${resetSunset.date} — ` +
+          `so no consolidation is recommended. To consolidate later, first re-set ` +
+          `search.reranker.model to a live provider after resetting.`,
       };
     }
 
     return {
       name: 'search_mode',
       status: 'ok',
-      message: `Mode: ${mode} with ${overrideKeys.length} per-key override(s) (${overrideKeys.join(', ')}). To consolidate to the pure mode bundle: gbrain search modes --reset`,
+      message: `${context} To consolidate to the pure mode bundle: gbrain search modes --reset`,
     };
   } catch (e) {
     return {
@@ -250,6 +351,21 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
             `${source} is "${resolved}" which references an unknown provider. ` +
             `Use a recipe-declared provider. ` +
             `Fix: \`gbrain config set ${source} anthropic:claude-sonnet-4-6\` or pick another known provider.`,
+        };
+      }
+      if (verdict === 'unusable:no_subagent_loop') {
+        return {
+          name: 'subagent_capability',
+          status: 'warn',
+          message:
+            `${source} is "${resolved}" but that provider's recipe declares supports_subagent_loop: false — ` +
+            `its tool calling is not stable enough across crashes/replays to drive the subagent loop. ` +
+            `The subagent loop cannot run on this model — ` +
+            (source === 'models.subagent'
+              ? `jobs are refused at dispatch. `
+              : `runtime will fall back to claude-sonnet-4-6. `) +
+            `Fix: \`gbrain config set ${source} <provider>:<model>\` with a provider whose recipe declares ` +
+            `supports_subagent_loop: true (e.g. anthropic:claude-sonnet-4-6).`,
         };
       }
       if (verdict === 'degraded:no_caching') {
@@ -475,7 +591,9 @@ export async function computeConversationFactsBacklogCheck(
     const typesRaw = await engine.getConfig(
       'cycle.conversation_facts_backfill.types',
     );
-    let types = ['conversation', 'meeting', 'slack', 'email', 'imessage', 'imessage-daily'];
+    // Default mirrors ALLOWED_TYPES — the single source of truth for the
+    // conversation-facts type allowlist (#4135).
+    let types: string[] = [...ALLOWED_TYPES];
     if (typesRaw) {
       try {
         const parsed = JSON.parse(typesRaw);

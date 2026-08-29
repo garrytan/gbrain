@@ -204,7 +204,15 @@ async function main(): Promise<number> {
     // dotfiles and Bun-auto-loaded .env files can't reroute the brain.
     const child = spawnSync(
       process.execPath,
-      [join(ROOT, 'src', 'cli.ts'), 'eval', 'gate', '--qrels', QRELS_PATH, '--embedder', 'deterministic', '--json'],
+      [
+        join(ROOT, 'src', 'cli.ts'), 'eval', 'gate', '--qrels', QRELS_PATH, '--embedder', 'deterministic', '--json',
+        // v0.46.8: the corpus grew concept-paraphrase queries (q13/q14) and
+        // the pre-wave observed rate was 10/12 — raise the expected_top1
+        // floor from the loose default (0.50) to 0.85 so a single-query
+        // top-1 regression (incl. a concept-weight regression) actually
+        // FAILS the gate instead of coasting on the old floor.
+        '--threshold-expected-top1', '0.85',
+      ],
       {
         cwd: tmpHome,
         env: childEnv as NodeJS.ProcessEnv,

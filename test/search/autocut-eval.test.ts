@@ -195,3 +195,32 @@ describe('autocut eval gate (D2 — precision lift without recall regression)', 
     }
   });
 });
+
+describe('v0.46.15 (#1863) — weak-top floor', () => {
+  const scoreOfR = (r: { rerank_score?: number }) => r.rerank_score;
+  const mkScores = (scores: number[]) => scores.map((s, i) => ({ id: i, rerank_score: s }));
+
+  test('the #1863 collapse case: weak top (0.317) no longer manufactures a confident cliff', () => {
+    // Rare cross-source query: every score is low; the old normalization by
+    // the weak top made ordinary decay look like a >=20% cliff and collapsed
+    // the list to 1. The floor keeps the full cluster.
+    const weak = mkScores([0.317, 0.21, 0.19, 0.18, 0.15]);
+    const r = applyAutocut(weak, scoreOfR, { ...DEFAULT_AUTOCUT });
+    expect(r.decision.applied).toBe(false);
+    expect(r.kept.length).toBe(5);
+  });
+
+  test('strong-top cliffs still cut exactly as before', () => {
+    const strong = mkScores([0.95, 0.92, 0.31, 0.12]);
+    const r = applyAutocut(strong, scoreOfR, { ...DEFAULT_AUTOCUT });
+    expect(r.decision.applied).toBe(true);
+    expect(r.kept.length).toBe(2);
+  });
+
+  test('floor is tunable: 0 disables it (pre-wave behavior)', () => {
+    const weak = mkScores([0.317, 0.05]);
+    const r = applyAutocut(weak, scoreOfR, { ...DEFAULT_AUTOCUT, minTopScore: 0 });
+    expect(r.decision.applied).toBe(true);
+    expect(r.kept.length).toBe(1);
+  });
+});

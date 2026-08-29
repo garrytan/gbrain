@@ -81,6 +81,56 @@ async function insertFact(args: {
   return r[0].id;
 }
 
+describe('#4057 — consolidation work-window eligibility', () => {
+  test('#4057: consolidated rows cannot hide older unconsolidated facts beyond the 100-row window', async () => {
+    const slug = 'cdx4-over-100-active';
+    const pageId = await seedPage(slug);
+    const oldDate = new Date('2025-01-01T00:00:00Z');
+    const recentDate = new Date('2026-01-01T00:00:00Z');
+
+    for (let i = 0; i < 100; i++) {
+      await insertFact({
+        entity_slug: slug,
+        text: 'already consolidated claim',
+        valid_from: new Date(recentDate.getTime() + i * 60_000),
+      });
+    }
+    const take = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder)
+       VALUES ($1, 1, 'already consolidated claim', 'fact', 'self')
+       RETURNING id`,
+      [pageId],
+    );
+    await engine.executeRaw(
+      `UPDATE facts
+          SET consolidated_at = now(), consolidated_into = $1
+        WHERE entity_slug = $2`,
+      [take[0].id, slug],
+    );
+
+    for (let i = 0; i < 3; i++) {
+      await insertFact({
+        entity_slug: slug,
+        text: 'still pending claim',
+        valid_from: new Date(oldDate.getTime() + i * 60_000),
+      });
+    }
+
+    const result = await runPhaseConsolidate(engine, {});
+
+    expect(result.details.facts_consolidated).toBe(3);
+    const pending = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count
+         FROM facts
+        WHERE entity_slug = $1
+          AND expired_at IS NULL
+          AND consolidated_at IS NULL`,
+      [slug],
+    );
+    expect(Number(pending[0].count)).toBe(0);
+  });
+});
+
 describe('R4a — chronological valid_until writeback', () => {
   test('cluster of 3 chronologically-ordered facts: 2 older get valid_until set, newest stays NULL', async () => {
     await seedPage('cdx4-acme-mrr');

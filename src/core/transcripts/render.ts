@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { DEFAULT_BYTES_BLOCK } from '../content-sanity.ts';
 import { redactFindings } from '../secret-scan.ts';
 import { loadPatterns } from '../skillpack/harvest-lint.ts';
+import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
 import { BUILTIN_PATTERNS } from '../conversation-parser/builtins.ts';
 import type { ParsedSession, TranscriptMessage } from './types.ts';
@@ -122,7 +123,10 @@ export function redactSession(
   let imperativesFlagged = 0;
 
   const clean = (text: string): string => {
-    let out = ensureWellFormed(text);
+    // sanitizeForJsonb (NUL-strip + well-form): transcripts capture raw tool
+    // output that legitimately carries U+0000, which Postgres text/jsonb
+    // reject at the write boundary (#4392).
+    let out = sanitizeForJsonb(text);
     const r = redactFindings(out);
     redactionCount += r.redactions.length;
     out = r.text;

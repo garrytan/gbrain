@@ -34,11 +34,13 @@ import { CostTracker, estimateUpperBoundCost } from './cost-tracker.ts';
 import { buildSourceTierBreakdown, classifySlugTier } from './cross-source.ts';
 import { shouldSkipForDateMismatch } from './date-filter.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
+import { resolveTierDefault } from '../model-config.ts';
 import { BudgetTracker, BudgetExhausted } from '../budget/budget-tracker.ts';
 import { judgeContradiction, type JudgeInput, type JudgeOutput } from './judge.ts';
 import { JudgeErrorCollector } from './judge-errors.ts';
 import { buildHotPages } from './severity-classify.ts';
 import { pairToFinding } from './auto-supersession.ts';
+import { isJudgeFailedRun, sumVerdicts } from './run-health.ts';
 import {
   PROMPT_VERSION,
   SCHEMA_VERSION,
@@ -53,7 +55,6 @@ import {
 } from './types.ts';
 
 const DEFAULT_TOP_K = 5;
-const DEFAULT_JUDGE_MODEL = 'anthropic:claude-haiku-4-5';
 const DEFAULT_MAX_PAIR_CHARS = 1500;
 
 /** Caller-supplied judge function signature; defaults to judgeContradiction. */
@@ -111,6 +112,7 @@ function searchResultToMember(r: SearchResult): PairMember {
     slug: r.slug,
     chunk_id: r.chunk_id,
     take_id: null,
+    take_row_num: null,
     source_tier: classifySlugTier(r.slug),
     holder: null,
     text: r.chunk_text,
@@ -130,7 +132,7 @@ function searchResultToMember(r: SearchResult): PairMember {
  * `pages.effective_date` here — for v1 they share the same page anchor.
  */
 function takeToMember(
-  take: { id: number; page_slug: string; claim: string; holder: string },
+  take: { id: number; row_num: number; page_slug: string; claim: string; holder: string },
   source_tier: ReturnType<typeof classifySlugTier>,
   effective_date: string | null,
   effective_date_source: string | null,
@@ -139,6 +141,10 @@ function takeToMember(
     slug: take.page_slug,
     chunk_id: null,
     take_id: take.id,
+    // gbrain#4169: the per-page row number is what `takes supersede --row`
+    // addresses. listActiveTakesForPages already SELECTs t.* so it rides
+    // along for free; takeToMember just stopped dropping it.
+    take_row_num: take.row_num,
     source_tier,
     holder: take.holder,
     text: take.claim,
@@ -264,7 +270,10 @@ export async function runContradictionProbe(opts: RunnerOpts): Promise<RunnerRes
 
 async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResult> {
   const startedAt = Date.now();
-  const judgeModel = opts.judgeModel ?? DEFAULT_JUDGE_MODEL;
+  // #3813: key-aware tier default, not a hardcoded Anthropic model — an
+  // OPENAI_API_KEY-only install must not route the judge to an unservable
+  // provider.
+  const judgeModel = opts.judgeModel ?? resolveTierDefault('utility');
   const topK = Math.max(1, opts.topK ?? DEFAULT_TOP_K);
   const sampling = opts.sampling ?? 'deterministic';
   const budgetUsd = opts.budgetUsd ?? 5.0;
@@ -442,8 +451,16 @@ async function _runContradictionProbeInner(opts: RunnerOpts): Promise<RunnerResu
   const runId = new Date(startedAt).toISOString().replace(/[:.]/g, '-').replace(/-(?=\d{3}Z$)/, '.');
   const durationMs = Date.now() - startedAt;
 
+  // #3889: a run where EVERY judge call errored has zero verdicts — its
+  // "0 contradictions" headline is untrustworthy. Stamp the status so the
+  // CLI + doctor can refuse to render it as a clean green result.
+  const runStatus = isJudgeFailedRun(sumVerdicts(verdictBreakdown), judgeErrors.total)
+    ? ('judge_failed' as const)
+    : ('ok' as const);
+
   const report: ProbeReport = {
     schema_version: SCHEMA_VERSION,
+    run_status: runStatus,
     run_id: runId,
     judge_model: judgeModel,
     prompt_version: PROMPT_VERSION,

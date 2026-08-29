@@ -29,6 +29,10 @@ const HELP_WITHOUT_BRAIN = [
   'jobs',
   // #4152: dream answers --help (and the retriage subverb help) engine-free.
   'dream',
+  // cathedral-5: runCompileContext honours help before reading the engine
+  // (SELF_HELP_WITHOUT_ENGINE loader, same shape as dream/jobs).
+  'compile-context',
+  'sources',
   // cathedral-6: agent answers --help (incl. `register --help`) engine-free.
   'agent',
   // ZE interim cleanup: the retired ze-switch shim answers --help engine-free

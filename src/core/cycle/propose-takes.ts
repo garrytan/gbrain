@@ -38,12 +38,15 @@
  */
 
 import { randomUUID, createHash } from 'node:crypto';
-import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { BaseCyclePhase, CYCLE_DEADLINE_RESERVE_MS, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
 import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
+import { isConfigTruthy } from '../config.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -141,6 +144,17 @@ export type ProposeTakesExtractor = (input: {
   pageBody: string;
   existingTakes: Array<{ claim: string; kind: string; holder: string; weight: number }>;
   modelHint?: string;
+  /**
+   * #4494: output cap for the extractor call (default
+   * PROPOSE_TAKES_MAX_TOKENS). Configurable via dream.propose_takes.max_tokens
+   * because thinking models spend reasoning tokens INSIDE maxTokens — at the
+   * 2048 default a thinking model can burn the whole budget before emitting
+   * any JSON, truncating EVERY page into a permanent per-page retry loop.
+   */
+  maxTokens?: number;
+  /** #4494: escalated cap for the one truncation retry (default
+   *  PROPOSE_TAKES_RETRY_MAX_TOKENS; clamped to >= maxTokens). */
+  retryMaxTokens?: number;
 }) => Promise<ProposedTake[]>;
 
 export interface ProposeTakesOpts extends BasePhaseOpts {
@@ -158,6 +172,12 @@ export interface ProposeTakesOpts extends BasePhaseOpts {
   skipPagesWithFence?: boolean;
   /** Override the phase wall-clock deadline (tests). Default: 30 min. */
   deadlineMs?: number;
+  /**
+   * #4102 — `gbrain dream --phase propose_takes --once` bypasses the
+   * `cycle.propose_takes.enabled` off switch for THIS call only (mirrors the
+   * conversation_facts_backfill `once` semantics; never reads/writes config).
+   */
+  once?: boolean;
 }
 
 export interface ProposeTakesResult {
@@ -170,6 +190,26 @@ export interface ProposeTakesResult {
   budget_exhausted: boolean;
   /** True when the phase deadline fired before the page loop completed (partial result). */
   deadline_hit?: boolean;
+  /**
+   * Set when the page loop broke on a whole-run LLM failure (#3044):
+   * auth/billing on the first hit, rate_limit after RATE_LIMIT_HALT_STREAK
+   * consecutive hits. The phase reports 'warn' ('fail' when NO extractor
+   * call succeeded) and the rollup records a halt so the condition can't
+   * hide behind a green summary.
+   */
+  aborted_global_error?: GlobalLlmErrorClass;
+  /**
+   * #3763: set when the page loop halted because EVERY extractor call failed
+   * (zero successes) for EXTRACTOR_FAILURE_HALT_STREAK consecutive pages —
+   * a dead extractor lane (bad model id, broken recipe, systematic truncation)
+   * that would otherwise re-bill every remaining page. Folds into `halted`
+   * and reports the phase as 'fail'.
+   */
+  aborted_failure_streak?: boolean;
+  /** Extractor calls that returned (idempotency cache hits don't count). */
+  llm_calls_succeeded: number;
+  /** Extractor calls that threw (global or per-page alike). */
+  llm_calls_failed: number;
   warnings: string[];
 }
 
@@ -195,7 +235,10 @@ async function listCandidatePages(
   scope: ScopedReadOpts,
   limit: number,
 ): Promise<ProposeTakesPageRow[]> {
-  const where = ['deleted_at IS NULL'];
+  const where = [
+    'deleted_at IS NULL',
+    "type IS DISTINCT FROM 'extract_receipt'",
+  ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
     params.push(scope.sourceIds);
@@ -273,6 +316,36 @@ export function extractExistingTakesForDedup(pageBody: string): Array<{
 const EXTRACTOR_CALL_TIMEOUT_MS = 90_000;
 
 /**
+ * #3763 — output caps for the extractor call. A stopReason 'length' response
+ * at the base cap retries ONCE at the escalated cap (facts/extract.ts #2113
+ * parity); a still-truncated retry throws an error NAMING the truncation
+ * instead of the old generic 'transient — retry' (which re-billed the page
+ * every cycle forever while hiding the real cause).
+ *
+ * #4494 — these are now DEFAULTS, overridable via
+ * `dream.propose_takes.max_tokens` / `dream.propose_takes.retry_max_tokens`
+ * (floor 256; retry clamped >= base), mirroring dream.triage.max_tokens.
+ * Thinking models (DeepSeek-R1, MiniMax-M3, Claude with extended thinking)
+ * spend reasoning tokens INSIDE the maxTokens budget, so field deployments
+ * saw every dense page truncate at 2048 → retry at 4096 → truncate again →
+ * throw → re-bill next cycle, forever. Raising the config key breaks that
+ * loop without inflating the default for non-thinking models.
+ */
+export const PROPOSE_TAKES_MAX_TOKENS = 2048;
+export const PROPOSE_TAKES_RETRY_MAX_TOKENS = 4096;
+
+/**
+ * #3763 — halt streak for a dead extractor lane. When EVERY extractor call in
+ * the run has failed (zero successes) and the failure count reaches this
+ * streak, the page loop halts instead of burning an LLM call (and its input
+ * tokens) on every remaining page. Any single success disarms the halt for
+ * the rest of the run — a mixed run is per-page noise, not a dead lane.
+ * Deliberately NO failure tombstone (#3910 policy): failed pages retry next
+ * cycle once the underlying cause clears.
+ */
+export const EXTRACTOR_FAILURE_HALT_STREAK = 5;
+
+/**
  * Production extractor — calls gateway.chat with the EXTRACT_TAKES_PROMPT
  * and parses the JSON array output. Returns [] on parse failure (logged as
  * warning, not thrown — one bad page must not abort the phase).
@@ -289,15 +362,50 @@ export async function defaultExtractor(
     .replace('{EXISTING_TAKES_JSON}', JSON.stringify(input.existingTakes, null, 2))
     .replace('{PAGE_BODY}', input.pageBody);
 
+  // #4494: per-run configurable caps (dream.propose_takes.max_tokens /
+  // .retry_max_tokens), threaded by the phase; the #3763 constants stay as
+  // defaults. Retry is clamped >= base so a partial override can't shrink
+  // the escalation below the first attempt.
+  const baseMaxTokens = Math.max(256, Math.floor(input.maxTokens ?? PROPOSE_TAKES_MAX_TOKENS));
+  const retryMaxTokens = Math.max(
+    baseMaxTokens,
+    Math.floor(input.retryMaxTokens ?? PROPOSE_TAKES_RETRY_MAX_TOKENS),
+  );
+
   // Bound each call so one stalled provider socket can't pin the phase for the
   // full gateway default (GBRAIN_AI_CHAT_TIMEOUT_MS, 300s) x pageLimit. The
   // caller already catches per-page errors, logs a warning, and continues.
-  const result = await gatewayChat({
+  const call = (maxTokens: number) => gatewayChat({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
-    maxTokens: 2048,
+    maxTokens,
     abortSignal: AbortSignal.timeout(EXTRACTOR_CALL_TIMEOUT_MS),
   });
+  let result = await call(baseMaxTokens);
+
+  // #3763: a truncated response (stopReason 'length' — e.g. reasoning tokens
+  // eating the cap, or a dense page extracting many claims) produced
+  // unparseable JSON that the ambiguity guard below rethrew as a GENERIC
+  // 'transient — retry', so the page was re-billed at the same too-small cap
+  // every cycle forever. Retry ONCE at the escalated cap (#2113 parity);
+  // still-truncated throws a message that NAMES the truncation so the phase
+  // warning tells the operator what actually happened.
+  if (result.stopReason === 'length') {
+    process.stderr.write(
+      `[propose_takes] WARN: extractor output truncated at maxTokens=${baseMaxTokens} ` +
+      `(${input.pagePath}); retrying once at ${retryMaxTokens}\n`,
+    );
+    result = await call(retryMaxTokens);
+    if (result.stopReason === 'length') {
+      throw new Error(
+        `propose_takes extractor: output truncated (stopReason=length) even at ` +
+        `maxTokens=${retryMaxTokens} on ${input.pagePath} — ` +
+        `page prose extracts more than the cap can carry; raise ` +
+        `dream.propose_takes.max_tokens (thinking models spend reasoning tokens ` +
+        `inside this budget); no tombstone written, page retries next cycle`,
+      );
+    }
+  }
 
   // ChatResult.text is already the concatenated text content.
   const takes = parseExtractorOutput(result.text);
@@ -404,18 +512,68 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
  * BaseCyclePhase subclass. Walks pages, checks idempotency cache, calls
  * extractor, writes proposals.
  */
+/**
+ * #4168 — the phase deadline is DERIVED, never a literal. The old
+ * PHASE_DEADLINE_MS thirty-minute literal was bit-identical to the
+ * autopilot-cycle handler anchor (and the clocks were not even co-started:
+ * the job clock starts at claim, this phase starts LATE in ALL_PHASES), so
+ * the clean-exit `deadline_hit` path was structurally unreachable in
+ * production — cycles died on wall-clock instead of completing partial and
+ * `cycle_freshness` never advanced. Same duplicated-literal class as #2781.
+ *
+ * Fail-loud derivation (autopilot-timeout.ts precedent): a missing handler
+ * anchor throws HERE, at module load — which propagates through cycle.ts's
+ * dynamic import and fails the WHOLE cycle visibly rather than one phase
+ * silently. Accepted trade; the drift-guard test pins the inequality.
+ */
+function requireCycleAnchorMs(): number {
+  const ms = defaultTimeoutMsFor('autopilot-cycle');
+  if (ms === null) {
+    throw new Error(
+      "propose_takes: 'autopilot-cycle' has no entry in HANDLER_DEFAULT_TIMEOUT_MS " +
+      '(handler-timeouts.ts) — the phase deadline can no longer be derived from it. See #4168.',
+    );
+  }
+  return ms;
+}
+
+/** Headroom for grade_takes + calibration_profile, which run AFTER this
+ *  phase in the same calibration block with no deadline of their own. */
+export const PHASE_DEADLINE_FRACTION_OF_JOB = 0.8;
+export const PROPOSE_TAKES_FALLBACK_DEADLINE_MS = Math.floor(
+  requireCycleAnchorMs() * PHASE_DEADLINE_FRACTION_OF_JOB,
+);
+/** Mirrors MIN_PATTERNS_SUBAGENT_BUDGET_MS: below this the phase cannot do
+ *  useful LLM work before the job's kill switch — skip honestly instead. */
+export const MIN_PROPOSE_TAKES_BUDGET_MS = 2 * 60 * 1000;
+
+/**
+ * Resolve the phase's wall-clock budget from the REAL remaining job time
+ * when it is known. Shaped like patterns.ts's clampSubagentBudgets: null
+ * means "not worth starting" (caller returns an honest skip). Pure —
+ * unit-testable without an engine.
+ */
+export function resolveProposeTakesDeadlineMs(
+  deadlineAtMs: number | null | undefined,
+  nowMs: number,
+): number | null {
+  if (deadlineAtMs == null) return PROPOSE_TAKES_FALLBACK_DEADLINE_MS;
+  const remaining = deadlineAtMs - CYCLE_DEADLINE_RESERVE_MS - nowMs;
+  // Red-team + adversarial F4: the grade_takes/calibration_profile headroom
+  // the 0.8 fraction exists for must apply on the THREADED path too, and the
+  // MIN floor must gate the FRACTIONED value — clamping a sub-MIN fraction
+  // back UP to MIN would hand propose_takes the whole remaining window and
+  // start the downstream phases inside the reserve. Under the floor, skip
+  // honestly instead.
+  const fractioned = Math.floor(remaining * PHASE_DEADLINE_FRACTION_OF_JOB);
+  if (fractioned < MIN_PROPOSE_TAKES_BUDGET_MS) return null;
+  return Math.min(fractioned, PROPOSE_TAKES_FALLBACK_DEADLINE_MS);
+}
+
 class ProposeTakesPhase extends BaseCyclePhase {
   readonly name = 'propose_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.propose_takes.budget_usd';
   protected readonly budgetUsdDefault = 5.0;
-  /**
-   * Hard wall-clock deadline for the phase. Even with the per-call timeout in
-   * defaultExtractor, a long tail of slow-but-completing calls can accumulate.
-   * The phase breaks cleanly and returns a partial result with
-   * `deadline_hit: true` instead of being killed mid-write by an outer
-   * `timeout` wrapper (the recurring SIGTERM in nightly dream runs).
-   */
-  private static readonly PHASE_DEADLINE_MS = 30 * 60 * 1000;
 
   protected override mapErrorCode(err: unknown): string {
     if (err instanceof GBrainError) return err.problem;
@@ -432,15 +590,76 @@ class ProposeTakesPhase extends BaseCyclePhase {
     _ctx: OperationContext,
     opts: ProposeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
+    // #4102 — off switch. The phase is ON by default (it ships in the default
+    // phase list), but `gbrain config set cycle.propose_takes.enabled false`
+    // must actually stop the LLM spend. Only an EXPLICIT falsy value skips
+    // (unset = default on, fail-open on read errors so a config-plane blip
+    // never silently disables the phase); `--once` bypasses for one run.
+    if (!opts.once) {
+      let enabledRaw: string | null = null;
+      try {
+        enabledRaw = await engine.getConfig?.('cycle.propose_takes.enabled') ?? null;
+      } catch {
+        enabledRaw = null;
+      }
+      if (enabledRaw != null && !isConfigTruthy(enabledRaw)) {
+        return {
+          summary: 'propose_takes skipped: cycle.propose_takes.enabled=false',
+          details: {
+            reason: 'disabled',
+            enable_hint: 'gbrain config set cycle.propose_takes.enabled true',
+            pages_scanned: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+            proposals_inserted: 0,
+            tombstones_written: 0,
+            budget_exhausted: false,
+            warnings: [],
+          },
+          status: 'skipped',
+        };
+      }
+    }
+
     const extractor = opts.extractor ?? defaultExtractor;
     const promptVersion = opts.promptVersion ?? PROPOSE_TAKES_PROMPT_VERSION;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
-    const deadlineMs = opts.deadlineMs ?? ProposeTakesPhase.PHASE_DEADLINE_MS;
+    // gbrain#4168: explicit test override wins; otherwise the REAL remaining
+    // job budget (when the cycle threads deadlineAtMs) clamped to the derived
+    // fallback. At the default installed-daemon interval the old 30-min
+    // literal was bit-identical to the job timeout floor, and since this
+    // phase starts after earlier phases, phase-elapsed always trailed
+    // job-elapsed — the clean partial-exit below was unreachable and cycles
+    // dead-lettered instead of banking work. Resolved to null = not enough
+    // budget to start (see the honest-skip return after the provider probe).
+    const resolvedDeadlineMs =
+      opts.deadlineMs ?? resolveProposeTakesDeadlineMs(opts.deadlineAtMs, Date.now());
     const phaseStartMs = Date.now();
     const proposalRunId = `propose-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}-${randomUUID().slice(0, 8)}`;
 
     const modelId = opts.model ?? getChatModel();
+
+    // #4494: configurable extractor output caps (dream.triage.max_tokens
+    // precedent — floor 256, retry clamped >= base, fail-open to the #3763
+    // defaults on any config-plane error). Thinking models spend reasoning
+    // tokens inside maxTokens, so the hardcoded 2048/4096 pair put dense
+    // pages into a permanent truncate → retry → truncate → re-bill loop.
+    let extractorMaxTokens = PROPOSE_TAKES_MAX_TOKENS;
+    let extractorRetryMaxTokens = PROPOSE_TAKES_RETRY_MAX_TOKENS;
+    try {
+      const readCap = async (key: string): Promise<number | null> => {
+        const raw = await engine.getConfig?.(key);
+        if (raw == null || String(raw).trim() === '') return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+      const baseCap = await readCap('dream.propose_takes.max_tokens');
+      if (baseCap != null) extractorMaxTokens = Math.max(256, Math.floor(baseCap));
+      const retryCap = await readCap('dream.propose_takes.retry_max_tokens');
+      if (retryCap != null) extractorRetryMaxTokens = Math.floor(retryCap);
+    } catch { /* keep defaults */ }
+    extractorRetryMaxTokens = Math.max(extractorMaxTokens, extractorRetryMaxTokens);
 
     // With the default (gateway) extractor, skip cheaply when the resolved
     // model's provider can't run — same probe semantics as patterns.ts /
@@ -468,6 +687,39 @@ class ProposeTakesPhase extends BaseCyclePhase {
       }
     }
 
+    // #4168 honest skip — placed AFTER the cheap provider probe (patterns.ts
+    // ordering precedent) and BEFORE any rollup/DB write, matching the
+    // no_provider skip: an insufficient-budget run records neither a halt
+    // nor a completed round. On a brain where earlier phases eat the whole
+    // job budget this fires EVERY cycle — the reason string and operator
+    // hint are load-bearing observability, not decoration (a repeated-skip
+    // doctor check is a filed follow-up).
+    if (resolvedDeadlineMs === null) {
+      return {
+        summary:
+          `propose_takes skipped: remaining cycle budget under ` +
+          `${Math.round(MIN_PROPOSE_TAKES_BUDGET_MS / 1000)}s ` +
+          `(reserve ${Math.round(CYCLE_DEADLINE_RESERVE_MS / 1000)}s) — earlier phases consumed ` +
+          `the job budget; raise the autopilot interval or the autopilot-cycle handler anchor ` +
+          `if this repeats every cycle. Next cycle retries with a fresh budget.`,
+        details: {
+          reason: 'insufficient_cycle_budget',
+          // The job deadline is WHY the phase can't start — carry the same
+          // flag the mid-run partial exit sets so dashboards see one signal.
+          deadline_hit: true,
+          pages_scanned: 0,
+          cache_hits: 0,
+          cache_misses: 0,
+          proposals_inserted: 0,
+          tombstones_written: 0,
+          budget_exhausted: false,
+          warnings: [],
+        },
+        status: 'skipped',
+      };
+    }
+    const deadlineMs = resolvedDeadlineMs;
+
     const result: ProposeTakesResult = {
       pages_scanned: 0,
       cache_hits: 0,
@@ -475,8 +727,24 @@ class ProposeTakesPhase extends BaseCyclePhase {
       proposals_inserted: 0,
       tombstones_written: 0,
       budget_exhausted: false,
+      llm_calls_succeeded: 0,
+      llm_calls_failed: 0,
       warnings: [],
+      deadline_hit: false,
     };
+
+    // gbrain#4168: job budget already inside the reserve window — exit
+    // cleanly before ANY work (the in-loop `elapsed > deadline` check can't
+    // fire on the first iteration when the effective deadline is 0).
+    if (deadlineMs <= 0) {
+      result.warnings.push('phase skipped: job deadline already inside the reserve window');
+      result.deadline_hit = true;
+      return {
+        summary: `propose_takes: skipped — job deadline inside the reserve window (run ${proposalRunId})`,
+        details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+        status: 'warn' as PhaseStatus,
+      };
+    }
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase.
     const pages = await listCandidatePages(engine, scope, pageLimit);
@@ -484,6 +752,11 @@ class ProposeTakesPhase extends BaseCyclePhase {
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
     }
+
+    // #3044 — shared halt policy: auth/billing halt on the first hit, a
+    // rate_limit streak halts after RATE_LIMIT_HALT_STREAK consecutive
+    // failures. A successful call resets the streak.
+    const llmHalt = createGlobalLlmHaltTracker();
 
     for (const page of pages) {
       // Phase deadline check. Break (not throw) so the phase returns a
@@ -538,7 +811,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
         break;
       }
 
-      // Call the extractor. Errors on a single page log a warning but do not abort.
+      // Call the extractor. Per-page errors log a warning and continue —
+      // UNLESS they classify as a whole-run condition (#3044): auth/billing
+      // halts on the first hit (a revoked key or exhausted spend limit fails
+      // identically on every remaining page); a bare rate_limit halts only
+      // after RATE_LIMIT_HALT_STREAK consecutive hits (a burst 429 can clear
+      // between pages).
       let proposals: ProposedTake[];
       try {
         proposals = await extractor({
@@ -546,12 +824,44 @@ class ProposeTakesPhase extends BaseCyclePhase {
           pageBody: body,
           existingTakes,
           modelHint: opts.model,
+          // #4494: configurable output caps (see resolution above).
+          maxTokens: extractorMaxTokens,
+          retryMaxTokens: extractorRetryMaxTokens,
         });
       } catch (err) {
+        result.llm_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
-        result.warnings.push(`extractor failed on ${page.slug}: ${msg}`);
+        const detail = `extractor failed on ${page.slug}: ${msg}`;
+        const decision = llmHalt.observe(err);
+        if (decision !== 'continue') {
+          result.aborted_global_error = haltedClassOf(decision)!;
+          result.warnings.push(
+            `aborting phase at page ${result.pages_scanned}/${pages.length}: ` +
+            `${llmHalt.note()} (${detail})`,
+          );
+          break;
+        }
+        result.warnings.push(detail);
+        // #3763: N consecutive failures with ZERO successes = dead lane.
+        // Halt instead of spending an LLM call on every remaining page. A
+        // single success anywhere in the run keeps llm_calls_succeeded > 0
+        // and permanently disarms this halt (mixed runs are per-page noise).
+        if (
+          result.llm_calls_succeeded === 0 &&
+          result.llm_calls_failed >= EXTRACTOR_FAILURE_HALT_STREAK
+        ) {
+          result.aborted_failure_streak = true;
+          result.warnings.push(
+            `aborting phase at page ${result.pages_scanned}/${pages.length}: ` +
+            `${result.llm_calls_failed} consecutive extractor failures with zero successes — ` +
+            `halting to avoid re-billing every remaining page (no tombstones written; pages retry next cycle)`,
+          );
+          break;
+        }
         continue;
       }
+      result.llm_calls_succeeded += 1;
+      llmHalt.reset();
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into
@@ -562,7 +872,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb, $12)
            ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING
            RETURNING id`,
           [
@@ -599,7 +909,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
           `INSERT INTO take_proposals
              (source_id, page_slug, content_hash, prompt_version, proposal_run_id,
               claim_text, kind, holder, weight, domain, dedup_against_fence_rows, model_id, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'rejected')
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb, $12, 'rejected')
            ON CONFLICT (source_id, page_slug, content_hash, prompt_version, md5(claim_text)) DO NOTHING`,
           [
             sourceId,
@@ -643,20 +953,56 @@ class ProposeTakesPhase extends BaseCyclePhase {
         console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
       }
     }
-    // A deadline-hit run halted mid-list the same way a budget-exhausted one
-    // does — record it as a halt, not a completed round.
-    const halted = result.budget_exhausted || result.deadline_hit === true;
+    // #4482: three-way stop classification. A budget/deadline cap is the
+    // extractor working as designed (partial progress banked; the rest
+    // drains over future runs) — recorded as expected_limit_delta, a
+    // capacity signal doctor's failure rate excludes. A global-error abort
+    // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
+    // from today. An error alongside a cap counts as the error.
+    // `halted` (any incomplete round, caps included) is kept for the phase
+    // result's status/details below — the diagnostic split is rollup-only.
+    const halted =
+      result.budget_exhausted ||
+      result.deadline_hit === true ||
+      result.aborted_global_error !== undefined ||
+      result.aborted_failure_streak === true;
     await upsertExtractRollup(engine, {
       kind: 'takes.proposed',
       source_id: sourceIdForReceipt,
-      round_completed_delta: halted ? 0 : 1,
-      halt_delta: halted ? 1 : 0,
+      ...classifyRunStop({
+        budget_exhausted: result.budget_exhausted === true,
+        deadline_hit: result.deadline_hit === true,
+        error:
+          result.aborted_global_error !== undefined ||
+          result.aborted_failure_streak === true,
+      }),
     });
 
+    // Status folds warnings in (the extract_facts precedent from #1928): a
+    // run with swallowed per-page failures must not read as a clean 'ok'.
+    // Severity split (#3044): a global halt with ZERO successful extractor
+    // calls means the whole LLM lane is down — that is a phase 'fail', not a
+    // 'warn' (deriveStatus turns one failed phase into a 'partial' cycle;
+    // the autopilot handler deliberately does not throw on partial). A halt
+    // after some successes is a partial run → 'warn'.
+    const warningCount = result.warnings.length;
+    // #3763: an all-failures streak halt is the same severity as a
+    // zero-success global halt — the whole extractor lane is down.
+    const phaseFailed =
+      (result.aborted_global_error !== undefined && result.llm_calls_succeeded === 0) ||
+      result.aborted_failure_streak === true;
     return {
-      summary: `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})`,
-      details: { ...result, proposal_run_id: proposalRunId, prompt_version: promptVersion },
-      status: result.budget_exhausted || result.deadline_hit ? 'warn' : 'ok',
+      summary:
+        `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})` +
+        (result.aborted_global_error
+          ? `; aborted on ${result.aborted_global_error} error after ${result.pages_scanned} page(s)`
+          : '') +
+        (result.aborted_failure_streak
+          ? `; aborted after ${result.llm_calls_failed} consecutive extractor failures (zero successes)`
+          : '') +
+        (warningCount > 0 ? ` (${warningCount} warning(s))` : ''),
+      details: { ...result, halted, proposal_run_id: proposalRunId, prompt_version: promptVersion },
+      status: phaseFailed ? 'fail' : halted || warningCount > 0 ? 'warn' : 'ok',
     };
   }
 }

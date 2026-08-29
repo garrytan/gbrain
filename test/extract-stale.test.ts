@@ -15,7 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runExtract } from '../src/commands/extract.ts';
+import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../src/core/link-extraction.ts';
 import type { PageInput } from '../src/core/types.ts';
 
@@ -146,6 +146,61 @@ describe('gbrain extract --stale', () => {
     expect(await stampOf('companies/acme')).toBeNull();
     // Still stale after dry-run.
     expect(await engine.countStalePagesForExtraction()).toBe(2);
+  });
+
+  test('#3478: isolated source does not create a cross-source fallback link', async () => {
+    // $N::text::jsonb (never bare ::jsonb on a stringified param) per the
+    // JSONB invariant in CLAUDE.md.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      ['isolated-kb', JSON.stringify({ federated: false })],
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/private',
+        companyPage('Private', '[Alice](people/alice) advises Private.'),
+        { sourceId: 'isolated-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'isolated-kb']);
+
+      // The target exists only in 'default'; a non-federated source must NOT
+      // fall back across the source boundary (edge would leak isolated pages
+      // into cross-source graph reads).
+      const links = await engine.getLinks('companies/private', { sourceId: 'isolated-kb' });
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(false);
+    } finally {
+      // truncateAll clears pages but not sources — remove the fixture row so
+      // later tests in this file see the pristine sources table.
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'isolated-kb'`);
+    }
+  });
+
+  test('#3478: federated source preserves the cross-source default fallback', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, $2::text::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config`,
+      ['shared-kb', JSON.stringify({ federated: true })],
+    );
+    try {
+      await engine.putPage('people/alice', personPage('Alice'));
+      await engine.putPage(
+        'companies/shared',
+        companyPage('Shared', '[Alice](people/alice) advises Shared.'),
+        { sourceId: 'shared-kb' },
+      );
+
+      await runExtract(engine, ['--stale', '--source-id', 'shared-kb']);
+
+      // The target exists only in default, so a created edge proves the
+      // federated fallback stayed enabled.
+      const links = await engine.getLinks('companies/shared', { sourceId: 'shared-kb' });
+      expect(links.some(l => l.to_slug === 'people/alice')).toBe(true);
+    } finally {
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'shared-kb'`);
+    }
   });
 
   test('CRITICAL (CDX-1): page edited after stamp is re-extracted', async () => {
@@ -360,6 +415,29 @@ describe('gbrain extract --stale', () => {
     // The gate lives in extractPageLinks opts now, not in a resolver swap —
     // the page is still stamped either way.
     expect(await stampOf('concepts/knowledge-graph')).not.toBeNull();
+  });
+
+  test('#4062 review: timeBudgetMs caps the sweep between batches (in-cycle drain stays bounded)', async () => {
+    // 26 stale pages > STALE_BATCH_SIZE (25): the first keyset batch drains
+    // 25, the 0ms budget trips, and the sweep exits with the remainder still
+    // stale — exactly how the cycle's in-line drain nibbles a big backlog
+    // instead of consuming the whole cycle.
+    for (let i = 0; i < 26; i++) {
+      await engine.putPage(`people/budget-${String(i).padStart(2, '0')}`, personPage(`Budget ${i}`));
+    }
+    const r = await extractStaleFromDB(engine, {
+      dryRun: false, jsonMode: true, includeFrontmatter: false, catchUp: false,
+      timeBudgetMs: 0,
+    });
+    expect(r.pagesProcessed).toBe(25);
+    expect(r.staleRemaining).toBe(1);
+
+    // Default budget (~30 min) finishes the remainder.
+    const r2 = await extractStaleFromDB(engine, {
+      dryRun: false, jsonMode: true, includeFrontmatter: false, catchUp: false,
+    });
+    expect(r2.pagesProcessed).toBe(1);
+    expect(r2.staleRemaining).toBe(0);
   });
 
 });

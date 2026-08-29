@@ -73,7 +73,7 @@ import {
   type ExtractedFact,
 } from '../core/facts/extract.ts';
 import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from '../core/ai/gateway.ts';
-import { BudgetTracker, BudgetExhausted } from '../core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, loadPricingOverrides } from '../core/budget/budget-tracker.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
@@ -92,7 +92,30 @@ import { parseWorkers, resolveWorkersWithClamp } from '../core/sync-concurrency.
 import { withRefreshingLock, LockUnavailableError } from '../core/db-lock.ts';
 import { assertFactsEmbeddingDimMatchesConfig } from '../core/embedding-dim-check.ts';
 import { writeReceipt, shortRunId } from '../core/extract/receipt-writer.ts';
-import { upsertExtractRollup } from '../core/extract/rollup-writer.ts';
+import { upsertExtractRollup, classifyRunStop } from '../core/extract/rollup-writer.ts';
+import { ALLOWED_TYPES, type AllowedType } from '../core/facts/conversation-types.ts';
+import { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE } from '../core/facts/audit-sources.ts';
+import {
+  emptySaveTimeResolutionCounts,
+  formatSaveTimeResolutionCounts,
+  mergeSaveTimeResolutionCounts,
+  resolveExtractedEntitiesForSave,
+} from '../core/entities/resolve-on-save.ts';
+
+// Re-exported verbatim so existing importers (this file's own helpers below
+// and this file's tests) keep working unchanged; doctor.ts, jobs.ts,
+// sources.ts, and the cycle backfill phase import the leaf directly. Moved to
+// src/core/facts/conversation-types.ts (see that file for why) so a
+// consumer that only needs the six values doesn't also pull in this file's
+// own CLI flag surface.
+export { ALLOWED_TYPES };
+export type { AllowedType };
+
+// Re-exported for existing importers (test/extract-conversation-facts.test.ts,
+// test/doctor-conversation-facts-backlog.test.ts, src/eval/brainbench/metrics/write-back.ts).
+// The values themselves now live in ../core/facts/audit-sources.ts — see that
+// leaf module's docstring for why (engine-live static-import requirement).
+export { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE };
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -112,6 +135,25 @@ export const DEFAULT_SEGMENT_MAX_MESSAGES = 30;
 
 /** Minimum messages required for a segment to be worth extracting. */
 export const MIN_SEGMENT_MESSAGES = 2;
+
+// #4136 — labels that are common DOCUMENT section headings, never lost
+// speakers. Gate the DECLINE only (a miss here is warn-noise on healthy
+// pages, never data loss — fail-open by construction).
+const DOC_HEADING_STOPLIST = new Set([
+  'summary', 'results', 'notes', 'context', 'overview', 'background',
+  'example', 'examples', 'usage', 'steps', 'details', 'references',
+  'sources', 'appendix', 'conclusion', 'introduction', 'todo', 'tasks',
+  'output', 'input', 'goals', 'plan', 'ideas', 'agenda', 'decisions',
+  'actions', 'findings',
+]);
+
+/** #4136 — does a folded heading label LOOK like a speaker (1-2 title-cased
+ *  words, not a stoplisted doc heading)? Only speaker-shaped folds can
+ *  decline a page; everything else is warn-only. */
+function isSpeakerShapedHeadingLabel(label: string): boolean {
+  if (!/^[A-Z][A-Za-z0-9._-]*( [A-Z][A-Za-z0-9._-]*)?$/.test(label)) return false;
+  return !DOC_HEADING_STOPLIST.has(label.toLowerCase());
+}
 
 /** Delay between extractor calls so we don't burst the chat provider. */
 export const DEFAULT_INTER_CALL_SLEEP_MS = 200;
@@ -135,21 +177,11 @@ export const MAX_PAGE_BODY_BYTES = 25 * 1024 * 1024;
 /** Default cost cap when no tracker is passed explicitly. */
 export const DEFAULT_MAX_COST_USD = 5.0;
 
-/**
- * Allowlist of page types this command operates on. Mirrors
- * cycle.conversation_facts_backfill.types config default. CLI's
- * `--types` flag is an explicit per-run override; cycle config is
- * the single source of truth.
- */
-export const ALLOWED_TYPES = [
-  'conversation',
-  'meeting',
-  'slack',
-  'email',
-  'imessage',
-  'imessage-daily',
-] as const;
-export type AllowedType = (typeof ALLOWED_TYPES)[number];
+// ALLOWED_TYPES / AllowedType now live in
+// ../core/facts/conversation-types.ts (imported + re-exported above).
+// Mirrors cycle.conversation_facts_backfill.types config default. CLI's
+// `--types` flag is an explicit per-run override; cycle config is the
+// single source of truth.
 
 /**
  * Granular collector page-types that alias into each canonical conversation
@@ -201,21 +233,13 @@ export const CHECKPOINT_OP = 'extract-conversation-facts';
  */
 export const PER_SEGMENT_SOURCE_PREFIX = 'cli:extract-conversation-facts';
 
-/**
- * Source string written on the page-level terminal audit row (Eng-v2 C7).
- * Doctor's backlog query matches THIS source + source_session, not
- * the per-segment source. Partial extraction = no terminal row = page
- * stays in backlog.
- */
-export const TERMINAL_AUDIT_SOURCE = 'cli:extract-conversation-facts:terminal:v2';
-
-/**
- * Durable outcome for a successfully scanned page that contains no eligible
- * multi-message segment. Kept distinct from successful extraction so operator
- * surfaces can report the truth without rescanning the page forever.
- */
-export const NON_EXTRACTABLE_AUDIT_SOURCE =
-  'cli:extract-conversation-facts:non-extractable:v2';
+// TERMINAL_AUDIT_SOURCE / NON_EXTRACTABLE_AUDIT_SOURCE: defined in
+// ../core/facts/audit-sources.ts, imported + re-exported above. (Doctor's
+// backlog query matches TERMINAL_AUDIT_SOURCE + source_session, not the
+// per-segment source; partial extraction = no terminal row = page stays in
+// backlog. NON_EXTRACTABLE_AUDIT_SOURCE is kept distinct from successful
+// extraction so operator surfaces can report the truth without rescanning
+// the page forever.)
 
 // ---------------------------------------------------------------------------
 // Public types.
@@ -318,6 +342,11 @@ export interface ExtractConversationFactsResult {
   pages_skipped_non_extractable: number;
   /** Durable scanned-not-extractable outcomes written by this run. */
   pages_marked_non_extractable: number;
+  /** #4136 — pages declined because the winning heading pattern folded a
+   *  speaker-shaped unrecognized heading and the parse had fewer than two
+   *  distinct speakers (attribution would be wrong). Non-terminal: no
+   *  durable audit row is written, so a future parser/pattern fix retries. */
+  pages_skipped_unrecognized_speaker: number;
   /** Pages whose claim reached extraction but failed before durable outcome. */
   pages_failed: number;
   /**
@@ -343,6 +372,10 @@ export interface ExtractConversationFactsResult {
   segments_processed: number;
   facts_extracted: number;
   facts_inserted: number;
+  /** Entity values that reached the shipped deterministic fallback slug path. */
+  fallback_slugify_count: number;
+  /** Entity values kept raw after a best-effort resolution failure. */
+  resolution_errors: number;
   budget_exhausted?: boolean;
   spent_usd?: number;
 }
@@ -368,7 +401,7 @@ import {
 } from '../core/conversation-parser/parse.ts';
 import { readConversationBodyForParsing } from '../core/conversation-parser/body.ts';
 import { runLlmFallback } from '../core/conversation-parser/llm-fallback.ts';
-import { resolveModel } from '../core/model-config.ts';
+import { resolveModel, resolveTierDefault } from '../core/model-config.ts';
 
 /**
  * v0.41.13.0 — back-compat shape for direct callers + the existing
@@ -907,6 +940,34 @@ async function processPage(
   if (parseResult.timezone_warning) {
     process.stderr.write(parseResult.timezone_warning + '\n');
   }
+  // #4136 — the winning heading pattern folded heading-shaped lines into the
+  // previous turn's body instead of anchoring them. Decline ONLY when a
+  // folded label is speaker-shaped (title-cased, not a doc heading) AND the
+  // parse produced fewer than two distinct speakers — the reported repro is
+  // exactly this shape ([User, User] with the assistant's reply swallowed).
+  // A multi-speaker page with folds is warn-only (residual risk, visible).
+  // phase stays 'regex_match', so the LLM fallback gate below stays closed.
+  const foldedHeadings = parseResult.unrecognized_headings ?? [];
+  const speakerShapedFolds = foldedHeadings.filter(isSpeakerShapedHeadingLabel);
+  const declinedUnrecognizedSpeaker =
+    speakerShapedFolds.length > 0 &&
+    new Set(messages.map((m) => m.speaker)).size < 2;
+  if (foldedHeadings.length > 0) {
+    const detail =
+      `pattern=${parseResult.matched_pattern_id} folded unrecognized heading(s) ` +
+      `[${foldedHeadings.join(', ')}] into the previous turn`;
+    if (declinedUnrecognizedSpeaker) {
+      process.stderr.write(
+        `[extract-conversation-facts] ${page.slug}: ${detail}; declining extraction (speaker attribution would be wrong)\n`,
+      );
+      state.result.pages_skipped_unrecognized_speaker++;
+      messages = [];
+    } else if (speakerShapedFolds.length > 0) {
+      process.stderr.write(
+        `[extract-conversation-facts] ${page.slug}: ${detail}; proceeding (speakers alternate) — facts near those headings may be misattributed\n`,
+      );
+    }
+  }
   // The fallback runs only for a true built-in miss. It never replaces or
   // polishes a deterministic parse, and it remains unreachable unless the
   // operator explicitly enables conversation_parser.llm_fallback_enabled.
@@ -941,7 +1002,13 @@ async function processPage(
     if (
       !state.dryRun &&
       parseResult.phase !== 'no_match' &&
-      allSegments.length === 0
+      allSegments.length === 0 &&
+      // #4136 — a decline must stay NON-TERMINAL. The audit row is keyed by
+      // a content versionToken and skips the page on every future run; a
+      // declined page must retry once the parser learns the label instead.
+      // (Trade, stated: pre-existing wrong-speaker facts also skip the
+      // orphan cleanup below until the page re-extracts.)
+      !declinedUnrecognizedSpeaker
     ) {
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
         const cleaned = await deleteOrphanFactsForPage(
@@ -995,6 +1062,7 @@ async function processPage(
   let newestEnd: string | null = null;
   let segmentsThisPage = 0;
   let pageInsertedTotal = 0;
+  const pageResolution = emptySaveTimeResolutionCounts();
 
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
@@ -1026,6 +1094,12 @@ async function processPage(
         abortSignal: state.signal,
       });
       if (!extraction.ok) {
+        // #3669 — rethrow BudgetExhausted UNWRAPPED. Wrapping it in a plain
+        // Error strips the BUDGET_EXHAUSTED tag, so the worker pool's D13
+        // must-abort check never fires and every remaining page burns a
+        // reserve_denied attempt instead of the run halting with a
+        // budget_exhausted receipt (core catch → halted receipt → return).
+        if (extraction.error instanceof BudgetExhausted) throw extraction.error;
         const detail = extraction.error instanceof Error
           ? `: ${extraction.error.message}`
           : '';
@@ -1040,10 +1114,32 @@ async function processPage(
     segmentsThisPage++;
     state.result.facts_extracted += extracted.length;
 
+    // This bulk path bypasses writeSingleFact and writes through insertFacts.
+    // Canonicalize every extractor-provided entity via the shipped resolver
+    // (alias_exact / prefix / fuzzy / slugify) while source scope is known.
+    const segmentResolution = await resolveExtractedEntitiesForSave(
+      state.engine,
+      state.sourceId,
+      extracted,
+      (raw, message) => {
+        process.stderr.write(
+          `[extract-conversation-facts] ${page.slug} segment ${seg.startIso}..${seg.endIso} ` +
+          `entity resolution failed for ${JSON.stringify(raw)}: ${message}; keeping raw value\n`,
+        );
+      },
+    );
+    const commitSegmentResolutionTelemetry = () => {
+      mergeSaveTimeResolutionCounts(pageResolution, segmentResolution);
+      state.result.fallback_slugify_count += segmentResolution.fallback_slugify_count;
+      state.result.resolution_errors += segmentResolution.resolution_errors;
+    };
+
     if (!state.dryRun && extracted.length > 0) {
-      // Eng-v2 C1 / E11: page-global row_num. Each fact in this batch gets
-      // a unique row_num within (source_id, source_markdown_slug); the
-      // accumulator increments across the segment loop.
+      // Eng-v2 C1 / E11: page-global row_num stays unique across segments.
+      // entity_slug is already canonical here — resolveExtractedEntitiesForSave
+      // (above) ran every fact through the shipped resolver cascade (#3729/#4052),
+      // so master's per-row resolveEntitySlug mapper (#4567's independent fix for
+      // the same issue) is superseded rather than layered on top.
       const rows = extracted.map((fact, i) => ({
         ...fact,
         row_num: rowNum + i,
@@ -1063,9 +1159,11 @@ async function processPage(
       pageInsertedTotal += ins.inserted;
       state.result.facts_inserted += ins.inserted;
       rowNum += extracted.length;
+      commitSegmentResolutionTelemetry();
     } else {
       // dry-run: count for reporting, no DB write.
       rowNum += extracted.length;
+      commitSegmentResolutionTelemetry();
     }
 
     newestEnd = seg.endIso;
@@ -1111,7 +1209,8 @@ async function processPage(
   }
 
   process.stderr.write(
-    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal} facts inserted across ${segmentsThisPage} segments\n`,
+    `[extract-conversation-facts] ${page.slug}: ${pageInsertedTotal} facts inserted across ${segmentsThisPage} segments ` +
+    `entity_resolution_counts=${formatSaveTimeResolutionCounts(pageResolution.counts)}\n`,
   );
 
   state.result.pages_processed++;
@@ -1195,6 +1294,7 @@ export async function runExtractConversationFactsCore(
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
+    pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     pages_llm_fallback: 0,
     pages_lock_skipped: 0,
@@ -1202,6 +1302,8 @@ export async function runExtractConversationFactsCore(
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
+    fallback_slugify_count: 0,
+    resolution_errors: 0,
   };
 
   // F2: honor brain-wide kill-switch unless overridden.
@@ -1250,7 +1352,8 @@ export async function runExtractConversationFactsCore(
   const llmFallbackModel = llmFallbackEnabled
     ? await resolveModel(engine, {
         tier: 'utility',
-        fallback: 'anthropic:claude-haiku-4-5-20251001',
+        // #3813: last-resort fallback stays key-aware, never hardcoded Anthropic.
+        fallback: resolveTierDefault('utility'),
       })
     : null;
 
@@ -1479,6 +1582,7 @@ export async function runExtractConversationFactsCore(
       const tracker = new BudgetTracker({
         maxCostUsd: opts.maxCostUsd ?? DEFAULT_MAX_COST_USD,
         label: `extract-conversation-facts:${sourceId}`,
+        pricingOverrides: await loadPricingOverrides(engine),
       });
       ownedTracker = tracker;
       try {
@@ -1588,13 +1692,20 @@ async function writeRunReceiptAndRollup(
   // Rollup UPSERT: ALWAYS fire so doctor's extract_health sees the
   // cycle ran (even no-op runs are signal — they prove the extractor
   // was alive). Best-effort per F-OUT-19.
-  const incomplete = halted || result.pages_failed > 0;
+  //
+  // #4482: a run that stopped ONLY because it hit its per-source budget cap
+  // is working as designed (partial progress banked; the backlog drains over
+  // future runs) — record it as expected_limit_delta, not halt_delta, so
+  // doctor's extract_health failure rate stops warning on normal
+  // bigger-backlog-than-budget operation. Per-page failures stay error halts.
   await upsertExtractRollup(engine, {
     kind: 'facts.conversation',
     source_id: sourceId,
     cost_delta: result.spent_usd ?? 0,
-    round_completed_delta: incomplete ? 0 : 1,
-    halt_delta: incomplete ? 1 : 0,
+    ...classifyRunStop({
+      budget_exhausted: halted,
+      error: result.pages_failed > 0,
+    }),
   });
 }
 
@@ -1811,7 +1922,13 @@ export async function runExtractConversationFacts(
   // reporting an availability error (#2590).
   if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
   if (!parsed.dryRun && !isAvailable('chat')) {
-    console.error('Chat gateway unavailable. Configure an Anthropic or compatible chat model, or pass --dry-run to preview segmentation.');
+    console.error(
+      'Chat gateway unavailable. Set a provider key (OPENAI_API_KEY or ANTHROPIC_API_KEY — ' +
+      'extraction routes to whichever is present), or configure a model explicitly ' +
+      '(`gbrain config set facts.extraction_model <provider:model>`), or pass --dry-run to ' +
+      'preview segmentation. Keyless brains capture memory via agent-authored `## Facts` ' +
+      'fences and the `remember` verb instead.',
+    );
     process.exit(1);
   }
 
@@ -1825,6 +1942,7 @@ export async function runExtractConversationFacts(
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
+    pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     pages_llm_fallback: 0,
     pages_lock_skipped: 0,
@@ -1832,6 +1950,8 @@ export async function runExtractConversationFacts(
     segments_processed: 0,
     facts_extracted: 0,
     facts_inserted: 0,
+    fallback_slugify_count: 0,
+    resolution_errors: 0,
   };
   let totalSpent = 0;
   let anyBudgetExhausted = false;
@@ -1870,6 +1990,7 @@ export async function runExtractConversationFacts(
       aggregate.pages_skipped_completed += perSource.pages_skipped_completed;
       aggregate.pages_skipped_non_extractable += perSource.pages_skipped_non_extractable;
       aggregate.pages_marked_non_extractable += perSource.pages_marked_non_extractable;
+      aggregate.pages_skipped_unrecognized_speaker += perSource.pages_skipped_unrecognized_speaker;
       aggregate.pages_failed += perSource.pages_failed;
       aggregate.pages_llm_fallback += perSource.pages_llm_fallback;
       aggregate.pages_lock_skipped += perSource.pages_lock_skipped;
@@ -1877,6 +1998,8 @@ export async function runExtractConversationFacts(
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
       aggregate.facts_inserted += perSource.facts_inserted;
+      aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
+      aggregate.resolution_errors += perSource.resolution_errors;
       if (perSource.budget_exhausted) anyBudgetExhausted = true;
       if (perSource.spent_usd) totalSpent += perSource.spent_usd;
 
@@ -1909,6 +2032,9 @@ export async function runExtractConversationFacts(
   if (aggregate.pages_skipped_non_extractable > 0) {
     console.log(`  Skipped ${aggregate.pages_skipped_non_extractable} page(s) previously scanned as not extractable.`);
   }
+  if (aggregate.pages_skipped_unrecognized_speaker > 0) {
+    console.log(`  Declined ${aggregate.pages_skipped_unrecognized_speaker} page(s) with unrecognized speaker headings (attribution would be wrong; retried next run).`);
+  }
   if (aggregate.pages_marked_non_extractable > 0) {
     console.log(`  Marked ${aggregate.pages_marked_non_extractable} page(s) as scanned, not extractable.`);
   }
@@ -1923,6 +2049,12 @@ export async function runExtractConversationFacts(
   }
   if (aggregate.orphan_facts_cleaned > 0) {
     console.log(`  Cleaned ${aggregate.orphan_facts_cleaned} orphan fact(s) from prior partial runs (D11 replay safety).`);
+  }
+  if (aggregate.fallback_slugify_count > 0) {
+    console.log(`  Minted ${aggregate.fallback_slugify_count} entity slug(s) via fallback_slugify.`);
+  }
+  if (aggregate.resolution_errors > 0) {
+    console.log(`  Kept ${aggregate.resolution_errors} raw entity value(s) after best-effort resolution errors.`);
   }
   if (anyBudgetExhausted) {
     console.log(`  Budget cap reached. Re-run with a higher --max-cost-usd to continue.`);
@@ -1962,7 +2094,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isAbortError(err: unknown): boolean {
+export function isAbortError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.name === 'AbortError' || /aborted|cancell?ed/i.test(err.message);
 }

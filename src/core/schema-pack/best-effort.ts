@@ -22,7 +22,8 @@
 // pack-load problem) — not silent (results look normal but contradict
 // user intent).
 
-import { loadConfig } from '../config.ts';
+import { loadConfig, loadConfigFileOnly } from '../config.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import { loadActivePack } from './load-active.ts';
 import type { ResolvedPack } from './registry.ts';
@@ -56,4 +57,65 @@ export async function loadActivePackBestEffort(
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the active pack for a LOCAL, engine-backed surface.
+ *
+ * Prefer this over `loadActivePackBestEffort` anywhere you hold a live engine
+ * and are running locally. It differs in the two ways that bite such callers:
+ *
+ *   - **`remote: false`.** `loadActivePackBestEffort` defaults
+ *     `remote: ctx.remote ?? true`, so a caller that has no real
+ *     OperationContext (and passes something like `{ engine } as never`)
+ *     silently runs under REMOTE trust gating. A tier-1 trust rejection then
+ *     returns null — indistinguishable from "there is no pack".
+ *   - **DB-side pack visibility.** Reads the engine's `schema_pack` config key
+ *     and pairs it with FILE-ONLY config, so a post-unify DB-side pack flip is
+ *     visible. Full `loadConfig()` merges transient env/database state and can
+ *     resolve a DIFFERENT pack than the onboard checks do — which is how a
+ *     recommender and its handler end up disagreeing about the same brain.
+ *
+ * Same null contract as `loadActivePackBestEffort` (D4): null means the pack
+ * could not be resolved and is NOT a license to fall back to hardcoded
+ * defaults. Callers acting on a *capability* question must additionally
+ * surface null DISTINCTLY from "resolved, but lacks the capability" —
+ * collapsing the two converts a loud failure into a silent one.
+ *
+ * Does not thread tier-3 `sourceId`: the callers here ask a brain-wide
+ * question, and the previous `{ engine } as never` shape passed no sourceId
+ * either, so this is behavior-neutral on that tier.
+ */
+export async function loadActivePackForLocalEngine(
+  engine: Pick<BrainEngine, 'getConfig'>,
+): Promise<ResolvedPack | null> {
+  try {
+    let dbConfig: string | undefined;
+    try {
+      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
+    } catch { /* engine.config may not exist on very old brains */ }
+    return await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
+      .catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does the active pack declare at least one `link_types[].inference.regex`
+ * rule? This is the EXACT capability `extractNerLinks` requires — without it,
+ * NER extraction is a structural no-op (returns `pack_unavailable`, 0 links).
+ *
+ * Shared so the onboard recommender (`checks.ts`, which suggests `extract-ner`)
+ * and the handler (`extract-ner.ts`) gate on ONE definition. Recommending a
+ * fix the handler will silently skip is the phantom-recommendation bug this
+ * closes; co-locating the predicate with the loader keeps the two from drifting
+ * (same anti-drift rationale as `loadActivePackBestEffort` above).
+ */
+export function packSupportsNerInference(pack: ResolvedPack | null | undefined): boolean {
+  const linkTypes = pack?.manifest?.link_types;
+  if (!linkTypes || linkTypes.length === 0) return false;
+  return linkTypes.some(
+    (lt) => lt.inference && typeof lt.inference === 'object' && 'regex' in lt.inference,
+  );
 }

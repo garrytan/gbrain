@@ -21,6 +21,7 @@ import { readFileSync, existsSync } from 'node:fs';
 export interface LongMemEvalProbeArgs {
   fixturePath: string;
   outputPath: string;
+  searchConfigSnapshot?: Record<string, string>;
 }
 
 /** Arguments accepted by the cross-modal adapter. */
@@ -54,7 +55,10 @@ export interface CrossModalBatchSummary {
  */
 export async function runLongMemEvalForProbe(args: LongMemEvalProbeArgs): Promise<void> {
   const { runEvalLongMemEval } = await import('../../commands/eval-longmemeval.ts');
-  await runEvalLongMemEval([args.fixturePath, '--output', args.outputPath]);
+  await runEvalLongMemEval(
+    [args.fixturePath, '--output', args.outputPath],
+    { searchConfigSnapshot: args.searchConfigSnapshot },
+  );
 }
 
 /**

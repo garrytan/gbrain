@@ -18,7 +18,7 @@
  */
 import { describe, test, expect } from 'bun:test';
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -414,5 +414,32 @@ describe('gbrain pglite-repair — argument + quarantine hardening (adversarial 
     expect(parseJsonLine(cap.logs).code).toBe('refused_reap_quarantine');
     // No surgery: no backup dir created.
     expect(readdirSync(join(dir, '..')).some((f) => f.includes('.wal-repair-backup-'))).toBe(false);
+  });
+});
+
+describe('gbrain pglite-repair — interactive confirm wiring (#4318 residual)', () => {
+  test('uses the shared confirm-prompt helper, not a local reimplementation', () => {
+    // This file's own inline `promptYesNo` had the same close-before-resolve
+    // race that #4318 fixed in sync-cost-gate.ts/reindex-code.ts: `rl.close()`
+    // fired inside the answer callback synchronously triggered an unguarded
+    // `rl.on('close', () => resolve(false))`, so a typed "y" was silently
+    // read as decline. This pins the fix at the source level — a future
+    // change that reintroduces a local `promptYesNo`/`createInterface` here
+    // (rather than importing the shared, race-free helper) fails this test,
+    // even though `test/confirm-prompt.test.ts` cannot see this file at all.
+    // test-reads-source-ok: pins that the local reimplementation stays gone
+    // and the shared helper is wired with the exact stderr-preserving args —
+    // there's no exported/injectable seam to assert this behaviorally.
+    const src = readFileSync(join(import.meta.dir, '../src/commands/pglite-repair.ts'), 'utf8');
+    expect(src).toContain("import { promptYesNo } from '../core/confirm-prompt.ts';");
+    expect(src).not.toMatch(/\bfunction promptYesNo\b/);
+    expect(src).not.toContain("from 'readline'");
+    // The call site itself must keep the prompt on stderr — confirm-prompt's
+    // default `output` is stdout, and `--json` callers depend on stdout
+    // staying machine-readable-only. Checking the import above isn't enough:
+    // dropping `{ output: process.stderr }` from this call would still pass
+    // that assertion while leaking the prompt into --json output.
+    expect(src).toContain("await promptYesNo('Repair now? [y/N] ', { output: process.stderr });");
+    expect(src).not.toContain("from 'node:readline'");
   });
 });

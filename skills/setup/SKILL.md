@@ -72,8 +72,27 @@ Supabase gives you managed Postgres + pgvector (vector search built in) for $25/
 - Supabase path only: an OpenAI API key (for semantic search embeddings, ~$4-5 for 7,500 pages)
 - A git-backed markdown knowledge base (or start fresh)
 
+## Detect what exists FIRST
+
+Before any init decision, one engine-free command answers everything:
+
+```bash
+gbrain engine status --json
+```
+
+It reports the effective engine (PGLite vs Postgres), where the connection
+URL comes from (env vs config file), env-shadow conflicts, and — with
+`--probe` — whether the database is actually reachable. It works with the
+database DOWN. An already-configured brain means setup is a no-op (or a
+[postgres-adopt](../postgres-adopt/SKILL.md) conversation, not an init).
+
 ## Available init options
 
+- `gbrain init --prefer-postgres` -- **the harness-install default**: tries
+  Postgres first (env URL → Supabase token discovery → local Postgres →
+  opt-in docker) and falls back to PGLite with an upgrade note. Add
+  `--allow-docker` / `--allow-create-db` only after the user opts in.
+  `--json` reports which rung won.
 - `gbrain init` -- no flags: creates a local PGLite brain. Zero config, no account, no API key required.
 - `gbrain init --pglite` -- explicit local PGLite brain
 - `gbrain init --supabase` -- interactive wizard (prompts for connection string)
@@ -82,7 +101,9 @@ Supabase gives you managed Postgres + pgvector (vector search built in) for $25/
 - `gbrain doctor --json` -- health check after init
 
 Choose Supabase for 1000+ files or multi-machine access. The PGLite default
-covers everything else with no external dependencies.
+covers everything else with no external dependencies. (Tradeoff to name:
+per-turn bootstrap hook injection is PGLite-only today; Postgres brains use
+MCP-every-session — `docs/guides/bootstrap.md`.)
 
 ## Phase A.5: Choose Topology (run BEFORE Phase A)
 
@@ -208,7 +229,10 @@ Guide the user through creating a Supabase project:
 **Access token storage:** If your agent runs as an always-on daemon, persist the
 Supabase access token in its environment as `SUPABASE_ACCESS_TOKEN`; interactive-harness
 users (Claude Code, Codex) should put it in their shell profile or `.env`. gbrain
-doesn't store it, you need it for future `gbrain doctor` runs. Generate at:
+doesn't store it. `gbrain init --prefer-postgres` consumes it (with
+`SUPABASE_PROJECT_REF` on multi-project accounts and `SUPABASE_DB_PASSWORD` for
+the connection string) to discover the pooler URL via the Management API —
+discovery only; the candidate URL is probed before anything persists. Generate at:
 https://supabase.com/dashboard/account/tokens
 
 ## Phase B: BYO Postgres (alternative)

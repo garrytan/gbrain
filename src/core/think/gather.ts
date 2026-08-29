@@ -17,7 +17,8 @@
 
 import type { BrainEngine, TakeHit, Take } from '../engine.ts';
 import { hybridSearch } from '../search/hybrid.ts';
-import type { SearchResult } from '../types.ts';
+import type { Page, SearchResult } from '../types.ts';
+import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
@@ -34,6 +35,7 @@ export interface ThinkGatherOpts {
   graphDepth?: number;
   /** Optional pre-computed embedding for the question. Lets the caller share embedding cost. */
   questionEmbedding?: Float32Array;
+  window?: TemporalWindow;
   /** When set, MCP-bound calls forward this allow-list to takes_search. Local CLI leaves unset. */
   takesHoldersAllowList?: string[];
   /** Source scope inherited from the caller. Federated array wins over scalar. */
@@ -62,6 +64,7 @@ export interface ThinkGatherResult {
     takesFromVector: number;
     graphHits: number;
     questionSanitizedFor: 'expansion' | 'none';
+    window?: { dropped: number; undatedKept: number };
   };
 }
 
@@ -124,13 +127,46 @@ export async function runGather(
   const sanitizedQuestion = sanitizeQueryForPrompt(opts.question);
 
   const warnings: string[] = [];
+  const window = opts.window;
+
+  const toSearchResult = (page: Page, rank: number): SearchResult => ({
+    slug: page.slug, page_id: page.id, title: page.title, type: page.type,
+    chunk_text: page.compiled_truth ?? '', chunk_source: 'compiled_truth',
+    chunk_id: 0, chunk_index: 0, score: 1 / (51 + rank), stale: false,
+    source_id: page.source_id ?? 'default',
+    effective_date: page.effective_date instanceof Date ? page.effective_date.toISOString() : null,
+    effective_date_source: page.effective_date_source ?? null,
+  });
+
+  let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
 
   // Stream 1: hybrid page search (existing primitive).
-  const pagesPromise = hybridSearch(engine, opts.question, {
+  const pagesPromise = (window ? Promise.all([
+    hybridSearch(engine, opts.question, {
+      limit: Math.min(gatherLimit * 4, 200),
+      expansion: false,
+      ...sourceScope,
+    }),
+    engine.listPages({
+      ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
+      ...(window.endMs !== null ? { effective_before: new Date(window.endMs).toISOString() } : {}),
+      limit: 50, ...sourceScope,
+    }).then(pages => pages.map(toSearchResult)).catch((e) => {
+      warnings.push('GATHER_WINDOW_FLOOR_FAILED');
+      process.stderr.write(`[think.gather] window floor failed: ${(e as Error).message}\n`);
+      return [] as SearchResult[];
+    }),
+  ]).then(([hybrid, floor]) => {
+    const seen = new Set<string>();
+    const combined = [...hybrid, ...floor].filter(page => !seen.has(page.slug) && !!seen.add(page.slug));
+    const filtered = filterPagesToWindow(combined, window);
+    windowDiagnostic = { dropped: filtered.droppedOutOfWindow, undatedKept: filtered.undatedKept };
+    return filtered.kept.slice(0, gatherLimit);
+  }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
-    expansion: false,  // think provides its own anchor + graph context; no need for re-expansion
+    expansion: false,
     ...sourceScope,
-  }).catch((e) => {
+  })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
     process.stderr.write(`[think.gather] hybrid stream failed: ${(e as Error).message}\n`);
     return [] as SearchResult[];
@@ -178,9 +214,51 @@ export async function runGather(
         })
     : Promise.resolve([] as string[]);
 
-  const [pages, takesKw, takesVec, graphSlugs] = await Promise.all([
-    pagesPromise, takesKwPromise, takesVecPromise, graphPromise,
+  // Stream 5 (#2903): anchor page hydration. The graph stream returns slugs
+  // only; when the hybrid stream misses the anchor page (unchunked stub,
+  // no lexical overlap with the question), --anchor used to deliver zero
+  // anchor CONTENT to the prompt. Fetch the page directly so its
+  // compiled_truth always reaches the <pages> block.
+  let anchorHydrateFailed = false;
+  const anchorPagePromise: Promise<Page | null> = opts.anchor
+    ? engine.getPage(opts.anchor, sourceScope).catch((e) => {
+        anchorHydrateFailed = true;
+        warnings.push('GATHER_ANCHOR_HYDRATE_FAILED');
+        process.stderr.write(`[think.gather] anchor hydrate failed: ${(e as Error).message}\n`);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const [pages, takesKw, takesVec, graphSlugs, anchorPage] = await Promise.all([
+    pagesPromise, takesKwPromise, takesVecPromise, graphPromise, anchorPagePromise,
   ]);
+
+  // Diagnostics honesty: count hybrid's own hits BEFORE the synthetic
+  // anchor row is (possibly) unshifted below.
+  const pagesFromHybrid = pages.length;
+
+  if (opts.anchor && !anchorPage && !anchorHydrateFailed) {
+    // The anchor slug resolves to no page (typo, wrong source scope, or
+    // deleted). Distinct from a hydrate ERROR: the caller asked to anchor on
+    // something that isn't there.
+    warnings.push('ANCHOR_PAGE_NOT_FOUND');
+  }
+  if (anchorPage && !pages.some(p => p.slug === anchorPage.slug)) {
+    pages.unshift({
+      slug: anchorPage.slug,
+      page_id: anchorPage.id,
+      title: anchorPage.title,
+      type: anchorPage.type,
+      chunk_text: anchorPage.compiled_truth,
+      chunk_source: 'compiled_truth',
+      chunk_id: 0,
+      chunk_index: 0,
+      // Synthetic rank-0 row: the caller explicitly anchored on this page,
+      // so it pins the top slot ahead of the fused hybrid scores.
+      score: pages.length > 0 ? pages[0].score : 1,
+      stale: false,
+    });
+  }
 
   // Fuse takes streams (keyword + vector). Key by (page_slug, row_num).
   const fusedTakes = fuseRanked(
@@ -194,11 +272,12 @@ export async function runGather(
     graphSlugs,
     warnings,
     diagnostics: {
-      pagesFromHybrid: pages.length,
+      pagesFromHybrid,
       takesFromKeyword: takesKw.length,
       takesFromVector: takesVec.length,
       graphHits: graphSlugs.length,
       questionSanitizedFor: sanitizedQuestion === opts.question ? 'none' : 'expansion',
+      ...(windowDiagnostic ? { window: windowDiagnostic } : {}),
     },
   };
 }
@@ -313,12 +392,49 @@ function surrogateSafeWindowEnd(content: string, requested: number): number {
   return endsAtHigh && followedByLow ? end - 1 : end;
 }
 
-function excerptWindow(content: string, requestedStart: number, excerptLen: number): string {
+/** #4510 — an excerpt plus what was cut, so callers can mark truncation. */
+export interface ExcerptResult {
+  text: string;
+  /** True when page content BEFORE the excerpt was cut away. */
+  truncatedStart: boolean;
+  /** True when page content AFTER the excerpt was cut away. */
+  truncatedEnd: boolean;
+}
+
+/**
+ * Maximum share of the window each edge may sacrifice to land on a line
+ * boundary (#4510). Tables/checklists cut mid-cell read as complete rows to
+ * the model; snapping to line boundaries fixes that. The cap keeps a single
+ * very long line (dense prose, minified content) from eating the window —
+ * past it, the raw character cut stands and the truncation MARKER carries
+ * the honesty instead.
+ */
+const EXCERPT_LINE_SNAP_MAX_SHARE = 0.25;
+
+function excerptWindow(content: string, requestedStart: number, excerptLen: number): ExcerptResult {
   const boundedStart = Math.max(0, Math.min(requestedStart, content.length));
   const requestedEnd = Math.min(content.length, boundedStart + Math.max(0, excerptLen));
-  const start = surrogateSafeWindowStart(content, boundedStart);
-  const end = Math.max(start, surrogateSafeWindowEnd(content, requestedEnd));
-  return ensureWellFormed(content.slice(start, end));
+  let start = surrogateSafeWindowStart(content, boundedStart);
+  let end = Math.max(start, surrogateSafeWindowEnd(content, requestedEnd));
+  // #4510: never sever mid-line when a nearby line boundary exists. Drop the
+  // partial FIRST line (advance start to the next newline) and the partial
+  // LAST line (retreat end to the last newline) — each bounded by
+  // EXCERPT_LINE_SNAP_MAX_SHARE of the window so long-line prose keeps its
+  // character cut instead of losing a quarter of the excerpt.
+  const snapBudget = Math.max(1, Math.floor(excerptLen * EXCERPT_LINE_SNAP_MAX_SHARE));
+  if (start > 0 && content[start - 1] !== '\n') {
+    const nl = content.indexOf('\n', start);
+    if (nl !== -1 && nl < end && nl + 1 - start <= snapBudget) start = nl + 1;
+  }
+  if (end < content.length && content[end] !== '\n' && content[end - 1] !== '\n') {
+    const nl = content.lastIndexOf('\n', end - 1);
+    if (nl > start && end - nl <= snapBudget) end = nl;
+  }
+  return {
+    text: ensureWellFormed(content.slice(start, end)),
+    truncatedStart: start > 0,
+    truncatedEnd: end < content.length,
+  };
 }
 
 /** Select the fixed-budget window containing the strongest unique query-term coverage. */
@@ -328,8 +444,26 @@ export function selectRelevantExcerpt(
   excerptLen: number,
   pageIdentity = '',
 ): string {
-  if (excerptLen <= 0) return '';
-  if (content.length <= excerptLen) return ensureWellFormed(content);
+  return selectRelevantExcerptDetailed(content, query, excerptLen, pageIdentity).text;
+}
+
+/**
+ * #4510 — like selectRelevantExcerpt but reports whether either edge cut page
+ * content, so renderers can mark truncation explicitly instead of letting a
+ * severed table read as a complete one.
+ */
+export function selectRelevantExcerptDetailed(
+  content: string,
+  query: string,
+  excerptLen: number,
+  pageIdentity = '',
+): ExcerptResult {
+  if (excerptLen <= 0) {
+    return { text: '', truncatedStart: content.length > 0, truncatedEnd: content.length > 0 };
+  }
+  if (content.length <= excerptLen) {
+    return { text: ensureWellFormed(content), truncatedStart: false, truncatedEnd: false };
+  }
 
   const uniqueTerms = Array.from(new Set(
     excerptTokens(query)
@@ -426,9 +560,36 @@ export function selectRelevantExcerpt(
 }
 
 /**
+ * #4510 — pages-block char budget. The per-page excerpt length is
+ * budget-aware: `min(ceiling, totalBudget / pageCount)` with the caller's
+ * `floor` as the guaranteed minimum, so a big gather never collapses each
+ * page below the floor, and a small gather delivers each page in a much
+ * larger (often complete) window instead of wasting the budget.
+ */
+const PAGES_BLOCK_TOTAL_BUDGET_CHARS = 12_000;
+const PAGES_BLOCK_EXCERPT_CEILING_CHARS = 2_400;
+
+/** Budget-aware per-page excerpt length for the pages block (#4510). */
+export function pagesBlockExcerptLen(pageCount: number, floor = 600): number {
+  if (pageCount <= 0) return floor;
+  return Math.max(floor, Math.min(
+    PAGES_BLOCK_EXCERPT_CEILING_CHARS,
+    Math.floor(PAGES_BLOCK_TOTAL_BUDGET_CHARS / pageCount),
+  ));
+}
+
+/** Truncation markers (#4510): the model must be able to tell "the table ends
+ * here" from "the text was cut here" — an unmarked severed table reads as a
+ * complete one. Exported for tests and downstream renderers. */
+export const EXCERPT_CUT_START_MARKER = '[… earlier page content omitted …]';
+export const EXCERPT_CUT_END_MARKER = '[… page continues beyond this excerpt — read the full page for the rest …]';
+
+/**
  * Render gather results into the per-block strings the prompt builder uses.
  * Pages are rendered as `<page slug="..." score="...">excerpt</page>`;
  * takes are rendered via the renderTakesBlock helper from sanitize.ts.
+ * `excerptLen` is exact per page — callers wanting budget-aware sizing pass
+ * `pagesBlockExcerptLen(pages.length)` (the think pipeline does).
  */
 export function renderPagesBlock(
   pages: SearchResult[],
@@ -447,13 +608,17 @@ export function renderPagesBlock(
     const title = String(page.title ?? '');
     const slugIdentity = slug.split('/').pop()?.replace(/[-_]/g, ' ') ?? '';
     const content = String(page.chunk_text ?? page.compiled_truth ?? page.snippet ?? '');
-    const excerpt = selectRelevantExcerpt(
+    const excerpt = selectRelevantExcerptDetailed(
       content,
       query,
       excerptLen,
       `${title} ${slugIdentity}`,
     );
-    return `<page slug="${slug}" rank="${idx + 1}">\n${excerpt}\n</page>`;
+    const body =
+      (excerpt.truncatedStart ? `${EXCERPT_CUT_START_MARKER}\n` : '') +
+      excerpt.text +
+      (excerpt.truncatedEnd ? `\n${EXCERPT_CUT_END_MARKER}` : '');
+    return `<page slug="${slug}" rank="${idx + 1}">\n${body}\n</page>`;
   }).join('\n\n');
 }
 

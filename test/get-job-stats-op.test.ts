@@ -73,6 +73,45 @@ describe('get_job_stats op', () => {
   });
 });
 
+describe('get_job_stats — private dream-inline queues', () => {
+  const PRIVATE_QUEUE = 'dream-inline-1700000000000-abcd1234';
+
+  test('a would-be-wedged dream-inline queue reports private_queue true, wedged false', async () => {
+    // Exact wedge signature (waiting, 0 live-lock active, stale completion):
+    // ONLY the private-queue classification keeps wedged false here — if it
+    // regressed, this fixture would trip the wedge derivation.
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, created_at, updated_at)
+       VALUES ('subagent', '${PRIVATE_QUEUE}', 'waiting', now() - interval '2 hours', now() - interval '2 hours')`,
+    );
+    await engine.executeRaw(
+      `INSERT INTO minion_jobs (name, queue, status, updated_at)
+       VALUES ('subagent', '${PRIVATE_QUEUE}', 'completed', now() - interval '90 minutes')`,
+    );
+    await withEnv({ GBRAIN_WEDGED_QUEUE_WARN_MINUTES: undefined }, async () => {
+      const res = await dispatchToolCall(engine, 'get_job_stats', { queue: PRIVATE_QUEUE }, { ...STDIO });
+      expect(res.isError ?? false).toBe(false);
+      const body = parsed(res);
+      expect(body.wedge.queue).toBe(PRIVATE_QUEUE);
+      expect(body.wedge.waiting).toBeGreaterThan(0); // the fixture really is the wedge shape
+      expect(body.private_queue).toBe(true);
+      expect(body.wedged).toBe(false);
+    });
+  });
+
+  test('the default queue reports private_queue false', async () => {
+    const res = await dispatchToolCall(engine, 'get_job_stats', { queue: 'default' }, { ...STDIO });
+    const body = parsed(res);
+    expect(body.private_queue).toBe(false);
+  });
+
+  test('description pins the private-queue wedge guidance MCP consumers act on', () => {
+    const desc = operationsByName['get_job_stats'].description ?? '';
+    expect(desc).toContain('wedged is NEVER true');
+    expect(desc).toContain('parent-owned dream-inline queue');
+  });
+});
+
 describe('deriveWedgeSignal (shared with the CLI line + doctor check)', () => {
   // deriveWedgeSignal reads GBRAIN_WEDGED_QUEUE_WARN_MINUTES per call — pin
   // it to unset so a tuned dev/CI host (e.g. =120) can't flip the 60-minute

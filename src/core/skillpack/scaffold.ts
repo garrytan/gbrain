@@ -39,6 +39,12 @@ export interface ScaffoldOptions {
   targetWorkspace: string;
   /** Single skill slug, or `null` for --all. */
   skillSlug: string | null;
+  /**
+   * Plural selection (persona filtering for the openclaw harness lane).
+   * Mutually exclusive with a non-null `skillSlug`; resolved against the
+   * openclaw universe like every other workspace scaffold.
+   */
+  skillSlugs?: readonly string[];
   /** Dry-run: validate + report; no writes. */
   dryRun?: boolean;
 }
@@ -99,6 +105,7 @@ export function runScaffold(opts: ScaffoldOptions): ScaffoldResult {
     entries = enumerateScaffoldEntries({
       gbrainRoot: opts.gbrainRoot,
       skillSlug: opts.skillSlug ?? undefined,
+      skillSlugs: opts.skillSlugs,
       manifest,
     });
   } catch (err) {

@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
+import { heartbeatPath } from './integrations.ts';
 import { VERSION } from '../version.ts';
 
 // --- Types ---
@@ -39,13 +40,17 @@ interface FeatureScanResult {
 
 // --- Embedded recipe metadata (binary-safe, no disk reads) ---
 
-const RECIPE_META = [
-  { id: 'email-to-brain', name: 'Email to Brain', secrets: ['GMAIL_APP_PASSWORD'] },
-  { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['GOOGLE_CALENDAR_API_KEY'] },
+// Secret names MUST match the corresponding recipes/<id>.md frontmatter, and are
+// treated as ANY-of, not all-of: a recipe whose auth is an `any_of` health check
+// (ClawVisor OR direct OAuth) is configured as soon as one path is present.
+// Pinned by test/features-recipe-secrets.test.ts.
+export const RECIPE_META = [
+  { id: 'email-to-brain', name: 'Email to Brain', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
+  { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
   { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] },
   { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
-  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_API_KEY'] },
-  { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['OAUTH_CLIENT_SECRET'] },
+  { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_TOKEN'] },
+  { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
   { id: 'ngrok-tunnel', name: 'Ngrok Tunnel', secrets: ['NGROK_AUTHTOKEN'] },
 ] as const;
 
@@ -72,6 +77,31 @@ function saveOffers(offers: FeatureOffersFile) {
   } catch { /* best-effort */ }
 }
 
+// Real-world check: did this integration actually get set up?
+// Heartbeat files are written by Hermes during install (and by other hosts),
+// so they are the source of truth for "is this wired up" — not just whether
+// a secret env var happens to be exported in this shell.
+function integrationHeartbeatExists(recipeId: string): boolean {
+  try {
+    const heartbeat = heartbeatPath(recipeId);
+    if (!existsSync(heartbeat)) return false;
+    const lines = readFileSync(heartbeat, 'utf-8')
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+    return lines.some(line => {
+      try {
+        const evt = JSON.parse(line);
+        return evt?.event === 'setup_complete';
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 function shouldPitch(rec: FeatureRecommendation, offers: FeatureOffersFile, currentVersion: string): boolean {
   if (rec.priority === 1) return true; // always pitch data quality
   const majorMinor = currentVersion.split('.').slice(0, 2).join('.');
@@ -82,7 +112,7 @@ function shouldPitch(rec: FeatureRecommendation, offers: FeatureOffersFile, curr
 
 // --- Scanners ---
 
-async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
+export async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
   const stats = await engine.getStats();
   const health = await engine.getHealth();
   const recommendations: FeatureRecommendation[] = [];
@@ -146,9 +176,19 @@ async function scanFeatures(engine: BrainEngine): Promise<FeatureScanResult> {
     }
 
     // Unconfigured integrations
-    const unconfigured = RECIPE_META.filter(r =>
-      !r.secrets.every(s => process.env[s])
-    );
+    // ANY-of: a recipe is configured once one of its declared secrets is present.
+    // `every` made any recipe with alternative auth paths permanently
+    // "unconfigured", since a ClawVisor user never sets GOOGLE_CLIENT_ID and
+    // vice versa.
+    // A recipe also counts as configured if a real setup heartbeat file exists
+    // on disk (wired up via Hermes/another host). Env-only checks produced
+    // false "not configured" reports for integrations that were actually
+    // installed.
+    const unconfigured = RECIPE_META.filter(r => {
+      const envOk = r.secrets.some(s => !!process.env[s]);
+      if (envOk) return false;
+      return !integrationHeartbeatExists(r.id);
+    });
     if (unconfigured.length > 0) {
       recommendations.push({
         id: 'no-integrations', priority: 2,
@@ -189,8 +229,15 @@ async function executeAutoFix(rec: FeatureRecommendation, engine: BrainEngine): 
     switch (rec.id) {
       case 'missing-embeddings':
       case 'low-coverage': {
-        const { runEmbed } = await import('./embed.ts');
-        await runEmbed(engine, ['--stale']);
+        // X6 (#4599): go through the CORE seam, not the CLI wrapper —
+        // runEmbed maps a stall-watchdog abort to process.exit(1), which
+        // would kill this whole auto-fix loop mid-run. The core returns an
+        // error RESULT; assertEmbedNotStalled turns it into a throw that
+        // this function's catch reports as { success: false }.
+        const { runEmbedCore } = await import('./embed.ts');
+        const { assertEmbedNotStalled } = await import('../core/embed-stall.ts');
+        const result = await runEmbedCore(engine, { stale: true, singleFlight: true });
+        assertEmbedNotStalled(result);
         return { success: true, output: 'Stale embeddings refreshed' };
       }
       case 'zero-links': {

@@ -32,7 +32,7 @@ import {
   PROVENANCE_AUTO_EXTRACTED,
 } from '../src/core/extraction-review.ts';
 import { enrichEntity, extractAndEnrich } from '../src/core/enrichment-service.ts';
-import { rrfFusion, hybridSearch } from '../src/core/search/hybrid.ts';
+import { rrfFusion, hybridSearch, stampUnverifiedExtractions } from '../src/core/search/hybrid.ts';
 import { buildSourceFactorCase } from '../src/core/search/sql-ranking.ts';
 import { operationsByName, OperationError, type OperationContext } from '../src/core/operations.ts';
 import { checkUnverifiedExtractions } from '../src/commands/doctor.ts';
@@ -72,6 +72,7 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM links');
   await engine.executeRaw('DELETE FROM timeline_entries');
   await engine.executeRaw('DELETE FROM pages');
+  await engine.executeRaw('DELETE FROM slug_aliases');
 });
 
 function ctx(over: Partial<OperationContext> = {}): OperationContext {
@@ -175,6 +176,32 @@ describe('rrfFusion compiled-truth boost skip', () => {
 // ---------------------------------------------------------------------------
 
 describe('enrichEntity trust lane', () => {
+  test('resolves slug aliases before checking or writing entity pages', async () => {
+    await engine.putPage('people/aditya-vikram-singh', {
+      title: 'Aditya Vikram Singh',
+      type: 'person',
+      compiled_truth: '# Aditya Vikram Singh',
+      timeline: '',
+      frontmatter: {},
+    });
+    await engine.executeRaw(
+      `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug)
+       VALUES ('default', 'people/avsingh', 'people/aditya-vikram-singh')`,
+    );
+
+    const result = await enrichEntity(engine, {
+      entityName: 'Avsingh',
+      entityType: 'person',
+      context: 'canonical identity mention',
+      sourceSlug: 'notes/daily',
+    }, { trusted: true });
+
+    expect(result.slug).toBe('people/aditya-vikram-singh');
+    expect(result.action).toBe('updated');
+    expect(await engine.getPage('people/avsingh')).toBeNull();
+    expect(await engine.getPage('people/aditya-vikram-singh')).not.toBeNull();
+  });
+
   test('default (opts omitted) → fail-closed quarantine markers', async () => {
     const r = await enrichEntity(engine, {
       entityName: 'Mallory Fake',
@@ -232,15 +259,190 @@ describe('enrichEntity trust lane', () => {
     expect(real.score / fake.score).toBeCloseTo(1.2, 5);
   });
 
-  test('getUnverifiedExtractionPageIds returns only marked pages', async () => {
+  test('getUnverifiedExtractionPageIds flags only quarantined pages as unverified', async () => {
     await enrichEntity(engine, { entityName: 'Fake Guy', entityType: 'person', context: 'c', sourceSlug: 's' });
     await enrichEntity(engine, { entityName: 'Real Guy', entityType: 'person', context: 'c', sourceSlug: 's' }, { trusted: true });
     const fake = await engine.getPage('people/fake-guy');
     const real = await engine.getPage('people/real-guy');
-    const set = await engine.getUnverifiedExtractionPageIds([fake!.id, real!.id]);
-    expect(set.has(fake!.id)).toBe(true);
-    expect(set.has(real!.id)).toBe(false);
+    const marks = await engine.getUnverifiedExtractionPageIds([fake!.id, real!.id]);
+    expect(marks.get(fake!.id)).toEqual({ unverified: true, status: 'unverified' });
+    // Trusted write carries no status frontmatter at all → no entry.
+    expect(marks.has(real!.id)).toBe(false);
     expect((await engine.getUnverifiedExtractionPageIds([])).size).toBe(0);
+  });
+
+  test('#4220: non-quarantine statuses (draft/superseded/restricted) surface without the unverified flag', async () => {
+    const statuses = ['draft', 'superseded', 'restricted'] as const;
+    const ids: number[] = [];
+    for (const status of statuses) {
+      await engine.putPage(`notes/status-${status}`, {
+        type: 'note',
+        title: `Status ${status}`,
+        compiled_truth: `A ${status} page.`,
+        timeline: '',
+        frontmatter: { status },
+      });
+      const page = await engine.getPage(`notes/status-${status}`);
+      ids.push(page!.id);
+    }
+    // A page whose status is 'unverified' but WITHOUT auto-extracted
+    // provenance must surface the status while staying un-flagged: the
+    // quarantine lane requires the marker pair.
+    await engine.putPage('notes/status-user-unverified', {
+      type: 'note',
+      title: 'User unverified',
+      compiled_truth: 'User-authored page reusing the status key.',
+      timeline: '',
+      frontmatter: { status: 'unverified' },
+    });
+    const userPage = await engine.getPage('notes/status-user-unverified');
+    ids.push(userPage!.id);
+
+    const marks = await engine.getUnverifiedExtractionPageIds(ids);
+    expect(marks.get(ids[0]!)).toEqual({ unverified: false, status: 'draft' });
+    expect(marks.get(ids[1]!)).toEqual({ unverified: false, status: 'superseded' });
+    expect(marks.get(ids[2]!)).toEqual({ unverified: false, status: 'restricted' });
+    expect(marks.get(userPage!.id)).toEqual({ unverified: false, status: 'unverified' });
+  });
+
+  test('#4220: stampUnverifiedExtractions stamps SearchResult.status always, unverified only for stubs', async () => {
+    await enrichEntity(engine, { entityName: 'Stamp Fake', entityType: 'person', context: 'c', sourceSlug: 's' });
+    await engine.putPage('notes/stamp-draft', {
+      type: 'note',
+      title: 'Stamp Draft',
+      compiled_truth: 'draft body',
+      timeline: '',
+      frontmatter: { status: 'draft' },
+    });
+    await engine.putPage('notes/stamp-clean', {
+      type: 'note',
+      title: 'Stamp Clean',
+      compiled_truth: 'clean body',
+      timeline: '',
+      frontmatter: {},
+    });
+    const stub = await engine.getPage('people/stamp-fake');
+    const draft = await engine.getPage('notes/stamp-draft');
+    const clean = await engine.getPage('notes/stamp-clean');
+
+    const mk = (page: { id: number; slug: string }): SearchResult => ({
+      slug: page.slug,
+      page_id: page.id,
+      title: page.slug,
+      type: 'note',
+      chunk_text: 'x',
+      chunk_source: 'compiled_truth',
+      chunk_id: 0,
+      chunk_index: 0,
+      score: 1,
+      stale: false,
+    });
+    const results = [mk(stub!), mk(draft!), mk(clean!)];
+    await stampUnverifiedExtractions(engine, results);
+
+    expect(results[0]!.status).toBe('unverified');
+    expect(results[0]!.unverified).toBe(true);
+    expect(results[1]!.status).toBe('draft');
+    expect(results[1]!.unverified).toBeUndefined();
+    expect(results[2]!.status).toBeUndefined();
+    expect(results[2]!.unverified).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3994: created stubs must land in the retrieval surface. The old CREATE
+// path wrote via bare engine.putPage, which never chunks — so every fresh
+// entity stub had zero content_chunks rows and was invisible to the keyword
+// and vector recall arms. The fix routes through serializeMarkdown +
+// importFromContent (the #2163 concept-page precedent).
+// ---------------------------------------------------------------------------
+
+describe('enrichEntity created stubs are retrieval-visible (#3994)', () => {
+  async function chunkCount(slug: string): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      'SELECT count(*)::int AS n FROM content_chunks c JOIN pages p ON p.id = c.page_id WHERE p.slug = $1',
+      [slug],
+    );
+    return Number(rows[0]!.n);
+  }
+
+  test('fresh untrusted stub has >=1 chunk row, markers intact, keyword arm hits', async () => {
+    const r = await enrichEntity(engine, {
+      entityName: 'Charlie Example',
+      entityType: 'person',
+      context: 'Met at the zebrafish conference',
+      sourceSlug: 'meetings/2026-04-03',
+    });
+    expect(r.action).toBe('created');
+    expect(r.quarantined).toBe(true);
+
+    // Quarantine markers survive the import pipeline round-trip.
+    const page = await engine.getPage('people/charlie-example');
+    expect(page).toBeDefined();
+    expect(isUnverifiedExtraction(page!.frontmatter)).toBe(true);
+    expect(page!.frontmatter[EXTRACTION_STATUS_KEY]).toBe(STATUS_UNVERIFIED);
+
+    // The stub is chunked (pre-fix putPage path wrote zero chunk rows).
+    expect(await chunkCount('people/charlie-example')).toBeGreaterThanOrEqual(1);
+
+    // ...and therefore reachable by the keyword recall arm.
+    const hits = await engine.searchKeyword('zebrafish conference', { limit: 10 });
+    expect(hits.some((h) => h.slug === 'people/charlie-example')).toBe(true);
+  });
+
+  test('trusted stub is chunked too, without quarantine markers', async () => {
+    await enrichEntity(engine, {
+      entityName: 'Trusted Chunky',
+      entityType: 'person',
+      context: 'quarterly planning offsite',
+      sourceSlug: 'notes/daily',
+    }, { trusted: true });
+    expect(await chunkCount('people/trusted-chunky')).toBeGreaterThanOrEqual(1);
+    const page = await engine.getPage('people/trusted-chunky');
+    expect(isUnverifiedExtraction(page!.frontmatter)).toBe(false);
+  });
+
+  test('pipeline failure: stderr-warns the downgrade, then the unchunked fallback still lands the page', async () => {
+    // importFromContent runs inside engine.transaction; the fallback putPage
+    // does not. Breaking transaction() forces the fallback arm only.
+    const failingEngine = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'transaction') {
+          return async () => { throw new Error('simulated pipeline boom'); };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as typeof engine;
+
+    const errChunks: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      errChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    let r: Awaited<ReturnType<typeof enrichEntity>>;
+    try {
+      r = await enrichEntity(failingEngine, {
+        entityName: 'Fallback Freddy',
+        entityType: 'person',
+        context: 'silent downgrade regression check',
+        sourceSlug: 'notes/daily',
+      }, { trusted: true });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    expect(r.action).toBe('created');
+    // The downgrade is LOUD (#3994 review): import error + unchunked warning.
+    const warn = errChunks.join('');
+    expect(warn).toContain('[enrich] import pipeline failed for stub people/fallback-freddy');
+    expect(warn).toContain('simulated pipeline boom');
+    expect(warn).toContain('not chunked/embedded');
+    // The page still exists (fail-open), just without chunk rows.
+    const page = await engine.getPage('people/fallback-freddy');
+    expect(page).toBeDefined();
+    expect(await chunkCount('people/fallback-freddy')).toBe(0);
   });
 });
 

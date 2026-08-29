@@ -135,7 +135,15 @@ describe('BudgetTracker.reserve', () => {
     expect(caught).toBeInstanceOf(BudgetExhausted);
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
     expect((caught as BudgetExhausted).modelId).toBe('mystery:some-unreleased-model');
-    expect((caught as Error).message).toMatch(/anthropic-pricing\.ts/);
+    expect((caught as Error).message).toMatch(/model-pricing\.ts/);
+    const audit = readAudit();
+    expect(audit).toContainEqual(expect.objectContaining({
+      event: 'reserve_no_pricing',
+      kind: 'chat',
+      model: 'mystery:some-unreleased-model',
+      reason: 'no_pricing',
+      schema_version: 1,
+    }));
   });
 
   test('v0.41.20.0: slash-prefix anthropic/claude-* under --max-cost does NOT no_pricing throw (THE FIX)', () => {
@@ -168,6 +176,33 @@ describe('BudgetTracker.reserve', () => {
         kind: 'chat',
       }),
     ).not.toThrow();
+  });
+
+  test('#2504: canonical-priced non-Anthropic chat models reserve under a cap', () => {
+    // These models live only in CANONICAL_PRICING, not in the bare-keyed
+    // ANTHROPIC_PRICING view. A capped BudgetTracker must still price them
+    // instead of TX2 hard-failing no_pricing.
+    for (const modelId of [
+      'deepseek:deepseek-chat',
+      'openai:gpt-5.2',
+      'google:gemini-2.0-flash',
+    ]) {
+      const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+      expect(() =>
+        t.reserve({
+          modelId,
+          estimatedInputTokens: 1_000,
+          maxOutputTokens: 1_000,
+          kind: 'chat',
+        }),
+      ).not.toThrow();
+    }
+    const audit = readAudit();
+    expect(audit.filter((e) => e.event === 'reserve').map((e) => e.model)).toEqual([
+      'deepseek:deepseek-chat',
+      'openai:gpt-5.2',
+      'google:gemini-2.0-flash',
+    ]);
   });
 
   test('no cap + unknown pricing: warns once per process, no throw', () => {
@@ -415,6 +450,70 @@ describe('BudgetTracker.record', () => {
     const audit = readAudit();
     expect(audit[0].embedding_dims).toBe(3072);
     expect(audit[0].kind).toBe('embed');
+  });
+});
+
+describe('BudgetTracker outstanding reservations (#4365)', () => {
+  // Haiku 4.5: $1/M input + $5/M output → 10K in + 10K out projects $0.06.
+  const estimate = {
+    modelId: 'claude-haiku-4-5-20251001',
+    estimatedInputTokens: 10_000,
+    maxOutputTokens: 10_000,
+    kind: 'chat' as const,
+  };
+
+  test('concurrent reservations count against the cap', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    // Bank $0.90 of real spend (900K input tokens at $1/M).
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 900_000, outputTokens: 0, kind: 'chat' });
+    // One $0.06 projection fits ($0.96 ≤ $1.00)…
+    expect(() => t.reserve(estimate)).not.toThrow();
+    // …but a second concurrent one must NOT: $0.90 + $0.06 outstanding
+    // + $0.06 projected = $1.02 > $1.00. Pre-fix, admission ignored the
+    // in-flight reservation and every parallel call passed at $0.96.
+    let caught: unknown = null;
+    try {
+      t.reserve(estimate);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('cost');
+    expect((caught as Error).message).toContain('outstanding');
+    const denied = readAudit().find((e) => e.event === 'reserve_denied');
+    expect(denied).toBeDefined();
+    expect(denied!.outstanding_usd as number).toBeCloseTo(0.06, 9);
+  });
+
+  test('record() settles the reservation: reserve→record→reserve at the same margin succeeds', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 900_000, outputTokens: 0, kind: 'chat' });
+    t.reserve(estimate);
+    // Actual usage far under the projection: cumulative $0.901.
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    // Outstanding released — the same $0.06 projection fits again
+    // ($0.901 + $0.06 = $0.961 ≤ $1.00).
+    expect(() => t.reserve(estimate)).not.toThrow();
+  });
+
+  test('record() under the post-resolution model id still settles (same-kind fallback)', () => {
+    // gateway.chat reserves with the pre-resolution string (alias/bare/slash
+    // form) but records `${recipe.id}:${modelId}` — a missed pop would leak
+    // phantom outstanding budget forever.
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 900_000, outputTokens: 0, kind: 'chat' });
+    t.reserve({ ...estimate, modelId: 'anthropic/claude-haiku-4-5-20251001' });
+    t.record({ modelId: 'anthropic:claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    expect(() => t.reserve(estimate)).not.toThrow();
+  });
+
+  test('unreserved records (expand/OCR) never drive outstanding negative', () => {
+    const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+    // Two records with no prior reserve — the pop must be a no-op both times.
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    t.record({ modelId: 'claude-haiku-4-5-20251001', inputTokens: 1000, outputTokens: 0, kind: 'chat' });
+    // Admission math is unaffected: $0.002 spent + $0.06 projected fits.
+    expect(() => t.reserve(estimate)).not.toThrow();
   });
 });
 

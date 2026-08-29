@@ -98,6 +98,8 @@ export {
 
 export {
   loadActivePack,
+  loadResolvedPackByName,
+  resolveLoadedPack,
   resolveActivePackNameOnly,
   __setPackLocatorForTests,
   _resetPackLocatorForTests,

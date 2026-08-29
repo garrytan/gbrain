@@ -132,7 +132,9 @@ per-transcript synthesis subagents. The dials:
 - `dream.triage.max_tokens` (default 2048, floor 256) — judge output budget.
 - `dream.triage.concurrency` (default 4, clamped 1–16) — concurrent judge
   calls.
-- `dream.synthesize.max_turns` (default 16) — synthesis turn budget. The
+- `dream.synthesize.max_turns` (default 16) — synthesis turn budget for
+  agentic children and oneshot fallbacks (the default oneshot path — see
+  the next section — is a single completion and never spends turns). The
   triage map hands the subagent pre-extracted segments, so the mid-tier
   default model (`models.dream.synthesize`, tier `reasoning`) with a 16-turn
   budget is the intended pairing — frontier-model overrides are unnecessary
@@ -157,6 +159,44 @@ gbrain dream retriage --dry-run          # what would change (zero LLM calls)
 gbrain dream retriage --reconcile-queue  # re-score + cancel below-threshold queued jobs
 gbrain dream retriage --audit-rejects 20 # synthesis-model second opinion on 20 rejects
 ```
+
+### Synthesis speed: oneshot mode + the drain pool
+
+Above the triage cascade sit the execution dials (#4216/#4194):
+
+- `dream.synthesize.mode` (default `oneshot`) — how each synthesis child
+  runs. `oneshot` makes ONE tool-less completion against a prompt that
+  already carries a pre-retrieved **LINK CANDIDATES** manifest and the write
+  allow-list, then validates and writes the pages programmatically (slug
+  grammar, allow-list, transcript hash suffix, exact-match wikilinks — all
+  checked before any write; embeds deferred out of the model path and
+  backfilled at phase end by a bounded pass over just the pages the phase
+  wrote — never a source-wide sweep). A response that fails any check automatically
+  falls back to the classic agentic loop **in the same job** — no lost work,
+  no resubmission. Typical effect: 10+ provider round-trips per transcript
+  (up to the 16-turn default cap, more on raised `max_turns`) → 1. Revert
+  dial: `gbrain config set dream.synthesize.mode agentic`.
+- `dream.synthesize.link_manifest` (default on) — the zero-embed
+  pre-retrieval manifest (built from the triage verdict's cached entities +
+  segment notes). Benefits BOTH modes: agentic children stop burning turns
+  on low-yield searches; oneshot children get their link targets up front.
+- `dream.synthesize.inline_concurrency` (default 1, clamp 1–8) — concurrent
+  drain loops for the per-run child queue on Postgres (PGLite always drains
+  serially). Provider ceilings stay with the rate leases (every provider
+  round-trip on every path holds a lease slot), so this dial only removes
+  queue-wait, never over-drives the API.
+
+Reading the phase report (`details.synthesis`): `mode`, `oneshot_jobs` /
+`fallback_jobs` / `agentic_jobs` + a `fallback_reasons` histogram (a rising
+fallback rate means the model is failing the output contract — check the
+top reason before considering the agentic revert), `queue_wait_ms_p50/p95`
+and `child_runtime_ms_p50/p95` (a slow-but-healthy drain is visible instead
+of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
+with any non-completed child does NOT stamp the cooldown, so the next
+nightly retries exactly the failed transcripts; a run whose EVERY child
+died fails the phase loudly. Synthesis children also fail (dead-letter)
+when every attempted page write failed — `completed` can no longer mean
+"zero pages written".
 
 ### What It Does
 

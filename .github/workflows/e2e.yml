@@ -116,6 +116,91 @@ jobs:
         # (the unit wrappers strip the URL per #3485).
         run: bun test --timeout=60000 test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/phantom-redirect-engine-parity.test.ts
 
+  # ──────────────────────────────────────────────────────────────────────
+  # selected-e2e (test-gap plan G1): PR-time signal for the e2e files that
+  # otherwise run only in the scheduled nightly full glob.
+  # scripts/select-e2e.ts picks the diff-relevant files — fail-closed:
+  # uncertain diffs emit ALL, git failure exits 2 and FAILS this job (the
+  # run step must never be wrapped in `|| true`). Files already carried by
+  # the named jobs and the live-key token spenders are excluded with a loud
+  # per-file echo (no silent caps); the nightly full glob remains the
+  # backstop for the excluded set. Fork PRs: this job needs ONLY the
+  # Postgres service container (no repository secrets), so outside
+  # contributors run it natively — no skip path needed. select-e2e's
+  # --classify-only mode is load-bearing in coverage-diff-gate.ts on every
+  # PR; this job consumes the default file-selection mode and must not
+  # change the script's exit semantics. On scheduled runs the step
+  # early-exits green: coverage-full-e2e already runs the full glob that
+  # night, and a skipped-vs-success result here would break the
+  # e2e-cache-write `success()` gate that nightly writes rely on.
+  selected-e2e:
+    name: Selected E2E (diff-relevant)
+    needs: e2e-cache-check
+    if: needs.e2e-cache-check.outputs.hit != 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          # select-e2e diffs origin/master...HEAD — needs real history.
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.3.13
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - name: Select and run diff-relevant E2E files
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "scheduled run — coverage-full-e2e carries the full glob tonight; nothing to select"
+            exit 0
+          fi
+          git fetch origin master --quiet
+          # exit 2 from the selector fails this step — fail-loud by design.
+          bun scripts/select-e2e.ts > /tmp/selected.txt
+          # Exclusions (echoed per file, never silent): files the named jobs
+          # above already run this same workflow, plus live-key token
+          # spenders (this job carries no provider keys, so they would
+          # self-skip anyway — the list makes the spend guarantee explicit).
+          EXCLUDE='test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/engine-parity.test.ts test/e2e/serve-http-multi-agent.test.ts test/e2e/postgres-bootstrap.test.ts test/e2e/sync-delegation-under-serve.serial.test.ts test/e2e/dream-synthesize-pglite.test.ts test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts test/e2e/voyage-rerank-live.test.ts test/e2e/voyage-multimodal.test.ts'
+          : > /tmp/run.txt
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case " $EXCLUDE " in
+              *" $f "*) echo "excluded (named-job / live-key lane): $f" ;;
+              *) echo "$f" >> /tmp/run.txt ;;
+            esac
+          done < /tmp/selected.txt
+          COUNT=$(wc -l < /tmp/run.txt | tr -d ' ')
+          echo "selector emitted $(wc -l < /tmp/selected.txt | tr -d ' ') file(s); running $COUNT after exclusions"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "doc-only or fully-excluded diff — nothing to run here"
+            exit 0
+          fi
+          xargs -a /tmp/run.txt bash scripts/run-e2e.sh
+
   tier1:
     name: Tier 1 (Mechanical)
     needs: e2e-cache-check
@@ -174,6 +259,41 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Create isolated database for the bootstrap suite
+        # The bootstrap suite rewinds the schema ledger and replays every
+        # migration; replayed constraint-adds (e.g. facts_source_id_fkey)
+        # break on rows earlier tier1 suites legitimately leave in
+        # gbrain_test (the suite's own TRUNCATE list predates facts). The
+        # nightly lane masks this via preceding files' TRUNCATE CASCADE —
+        # here it gets a database of its own instead.
+        run: PGPASSWORD=postgres psql -h localhost -U postgres -d gbrain_test -c 'CREATE DATABASE gbrain_bootstrap_test'
+      - name: Run Postgres bootstrap suite
+        # Forward-reference bootstrap on REAL Postgres (#366/#375/#378, the
+        # v121/#2626 wedge class, v0.46.26 private-queue lifecycle incl. the
+        # token-only probe). Previously reachable only via the nightly
+        # coverage-full-e2e glob, so a broken PostgresEngine bootstrap block
+        # could reach master with every PR lane green. Own invocation line
+        # and its OWN database (see the step above). Named files only, no glob.
+        run: bun test --timeout=60000 test/e2e/postgres-bootstrap.test.ts
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_bootstrap_test
+          # #3485 preload guard: this job intentionally tests against a DB.
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+      - name: Run serve-delegated sync suite
+        # Serve-delegated sync (PGLite): a real `gbrain serve` owns the
+        # single-writer lock while real `gbrain sync` subprocesses delegate
+        # through its IPC socket, get SIGKILLed mid-run, and resume. Own
+        # invocation line, and deliberately NO DATABASE_URL — the suite is
+        # PGLite-only (env DATABASE_URL is a live gbrain config source and
+        # would flip the sandboxed brain to Postgres; the file also
+        # self-strips). Named files only, no glob.
+        run: bun test --timeout=240000 test/e2e/sync-delegation-under-serve.serial.test.ts
+      - name: Run PGLite inline subagent drain suite
+        # dream-synthesize-pglite pins the inline drain's per-child lease
+        # keepalive (v0.46.26 private-queue lifecycle) — previously nightly-
+        # glob-only, where the keepalive pin broke silently. Deliberately NO
+        # DATABASE_URL: the suite is PGLite-only. Named files only, no glob.
+        run: bun test --timeout=120000 test/e2e/dream-synthesize-pglite.test.ts
 
   tier2:
     name: Tier 2 (LLM Skills)
@@ -447,7 +567,7 @@ jobs:
   # the same proof a push green is.
   # ──────────────────────────────────────────────────────────────────────
   e2e-cache-write:
-    needs: [e2e-cache-check, jsonb-parity, tier1, tier2]
+    needs: [e2e-cache-check, jsonb-parity, tier1, tier2, selected-e2e]
     if: success() && needs.e2e-cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -469,7 +589,7 @@ jobs:
   # run, or when every gated job succeeded.
   # ──────────────────────────────────────────────────────────────────────
   e2e-status:
-    needs: [e2e-cache-check, jsonb-parity, tier1, tier2]
+    needs: [e2e-cache-check, jsonb-parity, tier1, tier2, selected-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -480,9 +600,10 @@ jobs:
           JSONB="${{ needs.jsonb-parity.result }}"
           TIER1="${{ needs.tier1.result }}"
           TIER2="${{ needs.tier2.result }}"
+          SELECTED="${{ needs.selected-e2e.result }}"
           EVENT="${{ github.event_name }}"
           echo "e2e-cache-check.hit=$HIT event=$EVENT"
-          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier2=$TIER2"
+          echo "jsonb-parity=$JSONB  tier1=$TIER1  tier2=$TIER2  selected-e2e=$SELECTED"
           # schedule AND workflow_dispatch always run the real suite — a
           # manual dispatch is an explicit ask for a live run, so a cache
           # hit must not report green-without-running for either.
@@ -490,7 +611,7 @@ jobs:
             echo "✓ e2e cache HIT for hash ${{ needs.e2e-cache-check.outputs.hash }} — E2E green"
             exit 0
           fi
-          for r in "$JSONB" "$TIER1" "$TIER2"; do
+          for r in "$JSONB" "$TIER1" "$TIER2" "$SELECTED"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated e2e job did not succeed (got $r) — E2E fail"
               exit 1

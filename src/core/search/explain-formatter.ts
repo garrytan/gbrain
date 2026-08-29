@@ -48,6 +48,11 @@ export function formatResultExplain(
   // final score and label "no boosts applied" downstream.
   const base = result.base_score ?? result.score;
   lines.push(`   base=${fmt(base)} (rrf+cosine)`);
+  // v0.46.15: raw query↔chunk cosine (the calibrated semantic signal evidence
+  // keys off). Absent on keyword-only / no-embedding paths.
+  if (typeof result.cosine === 'number') {
+    lines.push(`   cosine=${fmt(result.cosine)} (raw query↔chunk similarity)`);
+  }
 
   let anyBoost = false;
 

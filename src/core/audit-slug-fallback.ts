@@ -58,11 +58,15 @@ const writer = createAuditWriter<SlugFallbackAuditEvent>({
  * logging). Write failure to the JSONL is logged but does NOT throw — the
  * import succeeds either way.
  */
-export function logSlugFallback(slug: string, sourcePath: string): void {
+export function logSlugFallback(
+  slug: string,
+  sourcePath: string,
+  reason: 'path slugified empty' | 'normalization-equivalent identity restore' = 'path slugified empty',
+): void {
   // D7 dual logging — every fallback gets an operator-visible stderr line
   // regardless of audit write success. Lives in this caller, not in the
   // shared writer, because only this audit module wants per-call stderr.
-  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; path slugified empty)\n`);
+  process.stderr.write(`[gbrain] slug fallback: ${sourcePath} → ${slug} (frontmatter slug; ${reason})\n`);
   writer.log({
     slug,
     source_path: sourcePath,

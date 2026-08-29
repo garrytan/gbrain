@@ -101,10 +101,19 @@ export function normalizeStructuredCitations(
   return { citations, warnings };
 }
 
+/** Machine-stable closure key: `slug` for page citations, `slug#row` for take citations. */
+function citationKey(c: ParsedCitation): string {
+  return c.row_num === null ? c.page_slug : `${c.page_slug}#${c.row_num}`;
+}
+
 /**
  * Combine the structured citations + body fallback into a single resolved
  * list. Strategy:
- *   - If structured has any valid entries, use them as the source of truth.
+ *   - If structured has any valid entries, use them as the source of truth,
+ *     but still parse the inline markers and warn on any delta between the
+ *     two sets (#4376: a drifted/fabricated visible marker otherwise
+ *     surfaces with zero warnings). Warn-only — per the trust contract
+ *     above, a mismatch never fails the synthesis.
  *   - Otherwise fall back to the inline-marker scan and emit a warning so
  *     callers know the synthesis was rendered without explicit structured
  *     citations.
@@ -115,7 +124,21 @@ export function resolveCitations(
 ): { citations: ParsedCitation[]; warnings: string[]; usedFallback: boolean } {
   const structured = normalizeStructuredCitations(structuredRaw);
   if (structured.citations.length > 0) {
-    return { citations: structured.citations, warnings: structured.warnings, usedFallback: false };
+    const warnings = [...structured.warnings];
+    const inline = parseInlineCitations(answerBody);
+    const inlineKeys = new Set(inline.map(citationKey));
+    const structuredKeys = new Set(structured.citations.map(citationKey));
+    for (const c of inline) {
+      if (!structuredKeys.has(citationKey(c))) {
+        warnings.push(`CITATIONS_INLINE_NOT_IN_STRUCTURED:${citationKey(c)}`);
+      }
+    }
+    for (const c of structured.citations) {
+      if (!inlineKeys.has(citationKey(c))) {
+        warnings.push(`CITATIONS_STRUCTURED_NOT_INLINE:${citationKey(c)}`);
+      }
+    }
+    return { citations: structured.citations, warnings, usedFallback: false };
   }
   const fallback = parseInlineCitations(answerBody);
   const warnings = [...structured.warnings, 'CITATIONS_REGEX_FALLBACK'];

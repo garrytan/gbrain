@@ -15,9 +15,12 @@
  * What it owns:
  *   - schema transition per dim-pinned column (content_chunks / facts /
  *     query_cache repaired independently), HNSW policy via vector-index.ts
- *   - staleness + resume: invalidateStaleSignatureEmbeddings widened with
- *     `includeNullSignature: true` (#3391) + the NULL-embedding cursor (the
- *     NULL column IS the checkpoint: a killed run re-runs the same command)
+ *   - staleness + resume: guarded stale-signature invalidation
+ *     (embedding-invalidation.ts — embed_skip pages retained, #4306) widened
+ *     with `includeNullSignature: true` (#3391), false-target-stamp clearing
+ *     keyed on the chunks' model column (#4305), + the NULL-embedding cursor
+ *     (the NULL column IS the checkpoint: a killed run re-runs the same
+ *     command)
  *   - migration marker v2 (started_at preserved on same-target resume,
  *     retarget history, force_sunset_target) + transactional completion
  *     bookkeeping; markers stay content-free (privacy)
@@ -39,6 +42,11 @@ import type { BrainEngine } from './engine.ts';
 import { resolveRecipe, embeddingDimsForModel } from './ai/model-resolver.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from './embedding-pricing.ts';
 import { readContentChunksEmbeddingDim } from './embedding-dim-check.ts';
+import {
+  invalidateStaleSignatureEmbeddingsGuarded,
+  countFalseStampedChunks,
+  clearFalseStampedSignatures,
+} from './embedding-invalidation.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { hnswIndexExpected } from './vector-index.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
@@ -136,6 +144,14 @@ export function formatEnvOverrideWarning(w: EnvOverrideWarning): string {
  *   src/schema.sql:169  -> idx_chunks_embedding_image
  *   src/core/pglite-schema.ts:130 -> idx_chunks_embedding_image
  *
+ * #4252: DROP COLUMN cascades away EVERY index depending on the column, not
+ * only the ones named here — it silently discarded the partial btree indexes
+ * on `embedding IS NULL` (idx_chunks_embedding_null from migration v66,
+ * content_chunks_stale_idx from v103) that `embed --stale` needs. So the
+ * transition captures every dependent index def via pg_depend (the exact set
+ * the cascade drops) before the drop and replays it after the rebuild;
+ * hard-coded names would just recreate this bug on the next index addition.
+ *
  * IF NOT EXISTS on CREATE INDEX makes the operation safe to re-run during
  * `--resume`.
  */
@@ -160,6 +176,25 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
   // 1280d, making voyage-multimodal-3 unable to write to it. The same
   // class of bug applies to embedding_multimodal — leave both untouched.
   await engine.transaction(async (tx) => {
+    // #4252: capture every index the DROP COLUMN below will cascade-drop.
+    // pg_depend holds the exact column→index dependency edges the cascade
+    // follows, so this also catches indexes that reference the column only
+    // in a partial WHERE predicate (which a pg_indexes.indexdef text match
+    // could not do without false-matching embedding_image/_multimodal).
+    const dependentIndexes = await tx.executeRaw<{ name: string; def: string }>(
+      `SELECT DISTINCT c.relname AS name, pg_get_indexdef(d.objid) AS def
+         FROM pg_depend d
+         JOIN pg_class c ON c.oid = d.objid AND c.relkind = 'i'
+        WHERE d.classid = 'pg_class'::regclass
+          AND d.refclassid = 'pg_class'::regclass
+          AND d.deptype = 'a'
+          AND d.refobjid = to_regclass('content_chunks')
+          AND d.refobjsubid = (
+            SELECT attnum FROM pg_attribute
+             WHERE attrelid = to_regclass('content_chunks')
+               AND attname = 'embedding' AND NOT attisdropped)`,
+    );
+
     // Text embedding column — transition to target dim.
     await tx.executeRaw(`DROP INDEX IF EXISTS idx_chunks_embedding`);
     await tx.executeRaw(`ALTER TABLE content_chunks DROP COLUMN IF EXISTS embedding`);
@@ -170,6 +205,17 @@ export async function runSchemaTransition(engine: BrainEngine, targetDim: number
     if (hnswIndexExpected('vector', targetDim)) {
       await tx.executeRaw(
         `CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON content_chunks USING hnsw (embedding vector_cosine_ops)`,
+      );
+    }
+    // #4252: replay the captured dependent indexes the cascade dropped.
+    // idx_chunks_embedding is skipped (recreated above under the cap policy);
+    // any other HNSW def on the column obeys the same cap. Btree/partial defs
+    // are dim-agnostic and replay unconditionally.
+    for (const idx of dependentIndexes) {
+      if (idx.name === 'idx_chunks_embedding') continue;
+      if (/USING hnsw/i.test(idx.def) && !hnswIndexExpected('vector', targetDim)) continue;
+      await tx.executeRaw(
+        idx.def.replace(/^CREATE (UNIQUE )?INDEX /, 'CREATE $1INDEX IF NOT EXISTS '),
       );
     }
 
@@ -422,6 +468,10 @@ export interface EmbeddingMigrationPlan {
    * (pre-v108). Included in chunks_to_embed via includeNullSignature.
    */
   null_signature_chunks: number;
+  /** #4305 visibility: embedded chunks on pages FALSELY stamped with the
+   *  target signature while their chunks' `model` names another provider.
+   *  Included in chunks_to_embed (apply clears the stamps + re-embeds). */
+  false_stamped_chunks: number;
   est_cost_usd: number;
   /** False when the target model has no entry in EMBEDDING_PRICING. */
   price_known: boolean;
@@ -540,6 +590,10 @@ export function migrationSignature(toModel: string, toDims: number): string {
   return `${toModel}:${toDims}`;
 }
 
+// #4305 chunk-model truth helpers live with the invalidation guard
+// (embedding-invalidation.ts); re-exported to keep one migration surface.
+export { countFalseStampedChunks, clearFalseStampedSignatures } from './embedding-invalidation.ts';
+
 /**
  * Resolve + validate the target `provider:model` and dimensions.
  * Throws with a paste-ready message on an unknown provider or when the
@@ -607,10 +661,15 @@ export async function planEmbeddingMigration(
   let wide: number;
   let narrow: number;
   let totalChars: number;
+  let falseStamped = { pages: 0, chunks: 0, chars: 0 };
   if (col.exists) {
     wide = await engine.countStaleChunks({ signature: sig, includeNullSignature: true });
     narrow = await engine.countStaleChunks({ signature: sig });
     totalChars = await engine.sumStaleChunkChars({ signature: sig, includeNullSignature: true });
+    // #4305: the signature-keyed predicates above trust the page stamp; this
+    // counts what the stamp hides. No overlap — the stale predicates skip
+    // exactly the target-stamped pages' EMBEDDED chunks counted here.
+    falseStamped = await countFalseStampedChunks(engine, toModel, toDims);
   } else {
     // Column ABSENT: the stale predicates reference cc.embedding and would
     // throw. Every chunk needs embedding once the column is (re)built.
@@ -689,9 +748,10 @@ export async function planEmbeddingMigration(
     to_dims: toDims,
     // ONE computation shared with apply's trigger (absent column ⇒ build).
     dim_change: schemaRebuildNeeded(col.dims, toDims),
-    chunks_to_embed: wide,
-    total_chars: totalChars,
+    chunks_to_embed: wide + falseStamped.chunks,
+    total_chars: totalChars + falseStamped.chars,
     null_signature_chunks: wide - narrow,
+    false_stamped_chunks: falseStamped.chunks,
     est_cost_usd: estCostUsd,
     price_known: price.kind === 'known',
     resuming,
@@ -720,8 +780,12 @@ export interface MigrationStatusReport {
   /** facts rows whose text-space vector is NULL (regenerate on next extract/write). */
   facts_pending: number | null;
   synopsis_tier_pages: number | null;
-  /** Stale count vs the live marker's target (else null — no target known). */
-  stale_vs_target: { target: string | null; stale: number | null };
+  /** Stale count vs the live marker's target (else null — no target known);
+   *  `false_stamped` (#4305) = embedded chunks hidden behind pages falsely
+   *  stamped with the target signature (chunk model disagrees). */
+  stale_vs_target: { target: string | null; stale: number | null; false_stamped: number | null };
+  /** #4306: NULL-embedding chunks on embed_skip pages (excluded from re-embed by design). */
+  embed_skip_null_chunks: number | null;
 }
 
 /**
@@ -797,7 +861,7 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
     synopsisTier = Number(rows[0]?.n ?? 0);
   } catch { /* report null */ }
 
-  let staleVsTarget: MigrationStatusReport['stale_vs_target'] = { target: null, stale: null };
+  let staleVsTarget: MigrationStatusReport['stale_vs_target'] = { target: null, stale: null, false_stamped: null };
   const target = marker.state
     ? { model: marker.state.to_model, dims: marker.state.to_dims }
     : dbModel && dbDims && Number.isFinite(Number(dbDims))
@@ -809,11 +873,29 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
         signature: migrationSignature(target.model, target.dims),
         includeNullSignature: true,
       });
-      staleVsTarget = { target: `${target.model} (${target.dims}d)`, stale };
+      // #4305: what the stale predicate can't see — old-space chunks behind a
+      // false target stamp ("0 stale" must never read as converged).
+      let falseStamped: number | null = null;
+      try {
+        falseStamped = (await countFalseStampedChunks(engine, target.model, target.dims)).chunks;
+      } catch { /* report null */ }
+      staleVsTarget = { target: `${target.model} (${target.dims}d)`, stale, false_stamped: falseStamped };
     } catch {
-      staleVsTarget = { target: `${target.model} (${target.dims}d)`, stale: null };
+      staleVsTarget = { target: `${target.model} (${target.dims}d)`, stale: null, false_stamped: null };
     }
   }
+
+  // #4306 visibility: intentionally-skipped pages with NULL vectors.
+  let embedSkipNull: number | null = null;
+  try {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+          AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
+    );
+    embedSkipNull = Number(rows[0]?.n ?? 0);
+  } catch { /* report null */ }
 
   return {
     marker: markerReport,
@@ -827,6 +909,7 @@ export async function readMigrationStatus(engine: BrainEngine): Promise<Migratio
     facts_pending: factsPending,
     synopsis_tier_pages: synopsisTier,
     stale_vs_target: staleVsTarget,
+    embed_skip_null_chunks: embedSkipNull,
   };
 }
 
@@ -920,8 +1003,15 @@ export interface MigrationVerify {
     column_dims: number | null;
     pinned_widths: Array<{ table: string; dims: number | null }>;
     stale_wide: number;
+    /** #4305: embedded chunks hidden behind a false target stamp (blocker). */
+    false_stamped_chunks: number;
     missing_embeddings: number;
     chunkless_pages: number;
+    /** #4306 visibility: NULL-embedding chunks on embed_skip pages. NOT a
+     *  blocker (those pages are excluded from re-embedding by design —
+     *  blocking would wedge completion forever), but a "complete" verdict
+     *  must never silently hide them. */
+    embed_skip_null_chunks: number;
     marker: 'none' | 'same_target' | 'different_target' | 'corrupt';
     file_plane_ok: boolean;
   };
@@ -966,8 +1056,13 @@ export async function verifyMigrationComplete(
 
   const sig = migrationSignature(target.toModel, target.toDims);
   let staleWide = 0;
+  let falseStamped = 0;
   if (col.exists) {
     staleWide = await engine.countStaleChunks({ signature: sig, includeNullSignature: true });
+    // #4305: the stale predicate trusts the page stamp — cross-check it
+    // against the chunks' model column so a falsely target-stamped page can
+    // never make verify claim "nothing to migrate".
+    falseStamped = (await countFalseStampedChunks(engine, target.toModel, target.toDims)).chunks;
   } else {
     // Absent column: the stale predicate would throw; every chunk is pending.
     const rows = await engine.executeRaw<{ n: number }>(
@@ -977,6 +1072,9 @@ export async function verifyMigrationComplete(
   }
   if (staleWide > 0) {
     blockers.push(`${staleWide} chunk(s) not in the target embedding space`);
+  }
+  if (falseStamped > 0) {
+    blockers.push(`${falseStamped} embedded chunk(s) carry a non-target model under pages already stamped with the target signature (false stamp) — a run clears those stamps and re-embeds them`);
   }
 
   // Belt-and-braces raw NULL residue via the (post-truth-fix) health count —
@@ -1001,6 +1099,20 @@ export async function verifyMigrationComplete(
   }
   if (chunkless > 0) {
     blockers.push(`${chunkless} contentful page(s) have no chunks yet (the re-embed pass heals these)`);
+  }
+
+  // #4306 visibility (report-only, never a blocker — see the interface note).
+  let embedSkipNull = 0;
+  try {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+          AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
+    );
+    embedSkipNull = Number(rows[0]?.n ?? 0);
+  } catch {
+    // Report-only census; a probe failure never blocks the verdict.
   }
 
   const marker = await readMigrationState(engine);
@@ -1033,8 +1145,10 @@ export async function verifyMigrationComplete(
       column_dims: col.dims,
       pinned_widths: pinned,
       stale_wide: staleWide,
+      false_stamped_chunks: falseStamped,
       missing_embeddings: missing,
       chunkless_pages: chunkless,
+      embed_skip_null_chunks: embedSkipNull,
       marker: markerState,
       file_plane_ok: filePlaneOk,
     },
@@ -1136,6 +1250,12 @@ export async function applyEmbeddingMigration(
     // 3. #3391: mark EVERYTHING not in the target space as stale, including
     //    NULL-signature (pre-v108) pages. After a schema transition this is
     //    a cheap no-op (the column rebuild already nulled every embedding).
+    //    #4305: FIRST clear false target stamps (chunk model contradicts a
+    //    signature already claiming the target) so the NULL-signature-
+    //    inclusive invalidation below re-embeds them. #4306: invalidation
+    //    goes through the guarded wrapper — an embed_skip page's retained
+    //    vectors are invisible to every stale selector, so NULLing them
+    //    would be permanent loss.
     //
     //    ORDERING (adversarial review): invalidation MUST precede the config
     //    writes below. On a SAME-dim provider swap there is no schema
@@ -1145,7 +1265,8 @@ export async function applyEmbeddingMigration(
     //    WRONG results. Invalidating first makes the crash window safe:
     //    config still says the old provider, and the rows are merely stale
     //    (empty/degraded results, never wrong ones).
-    const invalidated = await engine.invalidateStaleSignatureEmbeddings({
+    await clearFalseStampedSignatures(engine, plan.to_model, plan.to_dims);
+    const invalidated = await invalidateStaleSignatureEmbeddingsGuarded(engine, {
       signature: migrationSignature(plan.to_model, plan.to_dims),
       includeNullSignature: true,
     });

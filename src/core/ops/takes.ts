@@ -20,6 +20,7 @@ import {
   resolveTakesRepoDir,
   TakesWriteError,
 } from '../takes-write.ts';
+import { embedQuery } from '../embedding.ts';
 
 // --- v0.28: Takes ---
 
@@ -207,6 +208,8 @@ const think: Operation = {
     const { runThink, persistSynthesis } = await import('../think/index.ts');
     const result = await runThink(ctx.engine, {
       question: String(p.question),
+      // #3734: MCP think must populate the question vector for takes retrieval.
+      embedQuestion: (q) => embedQuery(q),
       anchor: p.anchor ? String(p.anchor) : undefined,
       rounds: typeof p.rounds === 'number' ? (p.rounds as number) : undefined,
       save: safeSave,
@@ -234,12 +237,33 @@ const think: Operation = {
       for (const w of persisted.warnings) result.warnings.push(w);
     }
 
+    // #2556: `take` was gated (safeTake) but never EXECUTED — runThink ignores
+    // opts.take, so a local `take: true` silently persisted nothing. Persist
+    // md-first through the canonical takes write-through; refusals surface as
+    // loud machine-stable warnings + take_row:null. Remote stays blocked above.
+    let takeRow: number | null = null;
+    if (safeTake) {
+      if (!p.anchor) {
+        result.warnings.push('TAKE_REQUIRES_ANCHOR');
+      } else {
+        const { persistTakeFromSynthesis } = await import('../think/persist-take.ts');
+        const persisted = await persistTakeFromSynthesis(ctx.engine, result, {
+          anchor: String(p.anchor),
+          sourceId: ctx.sourceId,
+          lockTimeoutMs: 2000,
+        });
+        takeRow = persisted.take_row;
+        for (const w of persisted.warnings) result.warnings.push(w);
+      }
+    }
+
     return {
       ...result,
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any
       // falsy) to null so callers never see an empty-string "slug".
       saved_slug: savedSlug || null,
       evidence_inserted: evidenceInserted,
+      take_row: takeRow,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
     };
   },

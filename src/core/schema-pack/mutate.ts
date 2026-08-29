@@ -74,6 +74,7 @@ export class SchemaPackMutationError extends Error {
   readonly code:
     | 'PACK_NOT_FOUND'
     | 'PACK_READONLY'
+    | 'INVALID_PACK_NAME'
     | 'PACK_CORRUPT'
     | 'TYPE_EXISTS'
     | 'TYPE_NOT_FOUND'
@@ -125,11 +126,40 @@ export interface MutateOpts extends PackLockOpts {
 // ────────────────────────────────────────────────────────────────────────
 
 /**
+ * SECURITY: shared pack-name guard for every caller-supplied pack name that
+ * gets joined into a filesystem path under $GBRAIN_HOME/schema-packs/ — the
+ * mutate path below (locateMutablePackFile, remote-reachable via the admin
+ * schema_apply_mutations op) AND the read path (schema_lint in
+ * ops/schema-packs.ts, remote-reachable at read scope). A traversal-shaped
+ * name (`../`, absolute, separators, NUL) would escape the packs dir; the
+ * leading-alnum requirement blocks '.', '..' and dotfiles, and the charset
+ * blocks every path separator + NUL, so every derived path stays contained
+ * by construction.
+ *
+ * Dots and underscores are deliberately ADMITTED: the manifest schema itself
+ * blesses /^[a-z0-9._-]+$/ (manifest-v1.ts), and `gbrain schema init`/`fork`
+ * never validated names — so packs like 'my_pack' / 'notes.v2' exist legally
+ * and refusing them here would permanently brick their mutation/lint.
+ */
+export function isValidPackName(name: string): boolean {
+  return name.length > 0 && name.length <= 128 && /^[a-z0-9][a-z0-9._-]*$/.test(name);
+}
+
+/**
  * Locate a user-mutable pack file. Bundled packs (gbrain-base,
  * gbrain-recommended) are explicitly refused per D6 — they live inside
  * the installed module and edits would be lost on upgrade.
  */
 export function locateMutablePackFile(name: string): { path: string; format: PackFileFormat } {
+  // SECURITY: isValidPackName (above) keeps the join contained. The message
+  // never echoes a resolved path (existence-oracle discipline).
+  if (!isValidPackName(name)) {
+    throw new SchemaPackMutationError(
+      'INVALID_PACK_NAME',
+      `pack name must be a lowercase slug starting with [a-z0-9] (matching ^[a-z0-9][a-z0-9._-]*$, max 128 chars); got ${JSON.stringify(name.slice(0, 64))}`,
+      { pack: name.slice(0, 64) },
+    );
+  }
   if (BUNDLED_PACK_NAMES.has(name)) {
     throw new SchemaPackMutationError(
       'PACK_READONLY',

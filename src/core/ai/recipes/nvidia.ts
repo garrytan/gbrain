@@ -58,6 +58,16 @@ export const nvidia: Recipe = {
       // supported via explicit embedding_dimensions (2048 or 4096).
       default_dims: 1024,
       dims_options: [1024, 2048, 4096],
+      // #4530: hard per-INPUT token caps (distinct from the batch budget).
+      // nv-embedqa-e5-v5 is an e5-family encoder with the original 512-token
+      // pre-training context; the hosted endpoint rejects any single input
+      // over it with a non-transient 400 ("Input length N exceeds maximum
+      // allowed token size 512"). Declaring it here makes the chunker split
+      // chunks to fit (resolveMaxChunkTokens). Only confirmed limits are
+      // declared — models absent from the map keep the default cap.
+      max_input_tokens: {
+        'nvidia/nv-embedqa-e5-v5': 512,
+      },
       // Conservative split; hosted NVIDIA embedding endpoints require
       // input_type and may reject large payloads before tokenizing.
       max_batch_tokens: 8192,

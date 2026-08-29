@@ -511,3 +511,48 @@ describe('IngestionDaemon — config passthrough', () => {
     await daemon.stop();
   });
 });
+
+// #3756 — tombstone events dedup on (source_kind, 'tombstone', slug), not on
+// content_hash: two deletes of the same slug within the window are one
+// delete, and a tombstone must never shadow an upsert that happens to carry
+// the same content_hash.
+describe('daemon — tombstone dedup (#3756)', () => {
+  test('same-slug tombstones dedup; different slugs pass', async () => {
+    const { logger } = makeCaptureLogger();
+    const { dispatch, recorded } = makeRecordingDispatcher();
+    const daemon = new IngestionDaemon({
+      engine: makeThrowingEngine(),
+      logger,
+      dispatch,
+    });
+    const { source, push } = makeControllableSource('s', 'mock');
+    daemon.register({ source });
+    await daemon.start();
+    push(makeEvent({ kind: 'tombstone', slug: 'inbox/a', content: 'tombstone one' }));
+    push(makeEvent({ kind: 'tombstone', slug: 'inbox/a', content: 'tombstone two (different hash, same slug)' }));
+    push(makeEvent({ kind: 'tombstone', slug: 'inbox/b', content: 'tombstone one' }));
+    await flushMicrotasks();
+    expect(recorded).toHaveLength(2);
+    expect(recorded.map((e) => e.slug)).toEqual(['inbox/a', 'inbox/b']);
+    await daemon.stop();
+  });
+
+  test('a tombstone does not shadow an upsert with the same content_hash', async () => {
+    const { logger } = makeCaptureLogger();
+    const { dispatch, recorded } = makeRecordingDispatcher();
+    const daemon = new IngestionDaemon({
+      engine: makeThrowingEngine(),
+      logger,
+      dispatch,
+    });
+    const { source, push } = makeControllableSource('s', 'mock');
+    daemon.register({ source });
+    await daemon.start();
+    const shared = 'identical body';
+    push(makeEvent({ kind: 'tombstone', slug: 'inbox/x', content: shared }));
+    push(makeEvent({ content: shared }));
+    await flushMicrotasks();
+    expect(recorded).toHaveLength(2);
+    await daemon.stop();
+  });
+});

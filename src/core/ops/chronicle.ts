@@ -7,8 +7,25 @@
  * ../operations.ts. Never import from '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import type { Operation, OperationContext } from './contract.ts';
 import { sourceScopeOpts } from './context.ts';
+
+// ── Remote diary redaction (fail-closed) ─────────────────────────────────
+// The exact mechanism the ontology siblings use (`ctx.remote !== false` →
+// life/diary provenance is redacted; only strictly-local `remote: false`
+// sees it). A timeline row is diary-sourced when its depth page OR its
+// event page lives under life/diary/, or its `source` provenance
+// references a life/diary page.
+const DIARY_PREFIX = 'life/diary/';
+function redactDiaryTimeline<
+  T extends { page_slug?: string | null; event_slug?: string | null; source?: string | null },
+>(ctx: OperationContext, rows: T[]): T[] {
+  if (ctx.remote === false) return rows;
+  return rows.filter((r) =>
+    !(r.page_slug ?? '').startsWith(DIARY_PREFIX) &&
+    !(r.event_slug ?? '').startsWith(DIARY_PREFIX) &&
+    !(r.source ?? '').includes(DIARY_PREFIX));
+}
 
 // ── v0.42.x — Life Chronicle (#2390) timeline read ops ───────────────────
 // CLI names avoid the existing `timeline` (get_timeline, a page's own timeline):
@@ -28,11 +45,11 @@ const chronicle_day: Operation = {
     narrative: { type: 'boolean', description: 'Also return a prose day-by-day narrative.' },
   },
   handler: async (ctx, p) => {
-    const rows = await ctx.engine.getTimelineForDate(String(p.date), {
+    const rows = redactDiaryTimeline(ctx, await ctx.engine.getTimelineForDate(String(p.date), {
       week: p.week === true,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...sourceScopeOpts(ctx),
-    });
+    }));
     if (p.narrative === true) {
       const { renderTimelineNarrative } = await import('../chronicle/narrative.ts');
       return { date: String(p.date), narrative: renderTimelineNarrative(rows), events: rows };
@@ -52,11 +69,11 @@ const chronicle_on_this_day: Operation = {
     date: { type: 'string', description: 'Anchor day YYYY-MM-DD (default today); matches its month-day in prior years.' },
     limit: { type: 'number', description: 'Max rows (default 50).' },
   },
-  handler: async (ctx, p) => ctx.engine.getOnThisDay({
+  handler: async (ctx, p) => redactDiaryTimeline(ctx, await ctx.engine.getOnThisDay({
     date: typeof p.date === 'string' ? p.date : undefined,
     limit: typeof p.limit === 'number' ? p.limit : undefined,
     ...sourceScopeOpts(ctx),
-  }),
+  })),
   cliHints: { name: 'on-this-day' },
 };
 
@@ -72,11 +89,11 @@ const chronicle_since: Operation = {
     limit: { type: 'number', description: 'Max rows (default 200).' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getSince(String(p.date), {
+    return redactDiaryTimeline(ctx, await ctx.engine.getSince(String(p.date), {
       kind: typeof p.kind === 'string' ? p.kind : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       ...sourceScopeOpts(ctx),
-    });
+    }));
   },
   cliHints: { name: 'since', positional: ['date'] },
 };
@@ -92,10 +109,18 @@ const chronicle_last_seen: Operation = {
     asof: { type: 'string', description: 'Reference day YYYY-MM-DD for days_ago (default today).' },
   },
   handler: async (ctx, p) => {
-    return ctx.engine.getLastSeen(String(p.entity), {
+    const res = await ctx.engine.getLastSeen(String(p.entity), {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       ...sourceScopeOpts(ctx),
     });
+    // Fail-closed diary redaction: when the evidence is a life/diary event
+    // (or a life/diary page is queried AS the entity), remote callers get
+    // the never-seen shape rather than a diary-derived sighting.
+    if (ctx.remote !== false &&
+        ((res.last_event_slug ?? '').startsWith(DIARY_PREFIX) || String(p.entity).startsWith(DIARY_PREFIX))) {
+      return { ...res, last_date: null, last_event_slug: null, days_ago: null };
+    }
+    return res;
   },
   cliHints: { name: 'last-seen', positional: ['entity'] },
 };
@@ -215,13 +240,16 @@ const volunteer_chronicle: Operation = {
     const entities = typeof p.entities === 'string'
       ? p.entities.split(',').map((s) => s.trim()).filter(Boolean)
       : undefined;
-    return loadChronicleContext(ctx.engine, {
+    const result = await loadChronicleContext(ctx.engine, {
       days: typeof p.days === 'number' ? p.days : undefined,
       entities,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       remote: ctx.remote !== false,
       ...sourceScopeOpts(ctx),
     });
+    // Same fail-closed diary redaction as the timeline reads: the loader
+    // redacts diary-sourced ONTOLOGY; the recent timeline is redacted here.
+    return { ...result, recent_timeline: redactDiaryTimeline(ctx, result.recent_timeline) };
   },
   cliHints: { name: 'orient' },
 };
@@ -265,7 +293,7 @@ const chronicle_backfill: Operation = {
         eligible++;
         if (dryRun || !queue) continue;
         try {
-          await queue.add('chronicle_extract', { slug: page.slug, sourceId: ctx.sourceId ?? 'default' });
+          await queue.add('chronicle_extract', { slug: page.slug, sourceId: page.source_id });
           enqueued++;
         } catch (e) {
           // Never swallow — surface per-page failures (the #2057 no-swallow pattern).

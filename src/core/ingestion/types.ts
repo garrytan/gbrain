@@ -96,6 +96,22 @@ export interface IngestionEvent {
    *  a path-pointer. */
   content_hash: string;
   /**
+   * Event kind (#3756). 'upsert' (the default when unset — every pre-existing
+   * source keeps its behavior) imports `content` as a page. 'tombstone'
+   * signals the source observed a DELETION upstream: the daemon dedups it on
+   * (source_kind, 'tombstone', slug) instead of content_hash, and the
+   * ingest_capture handler maps it to a reconciler-style soft-delete of
+   * `slug` — trusted emitters only (untrusted_payload events must never
+   * delete).
+   */
+  kind?: 'upsert' | 'tombstone';
+  /**
+   * Target page slug (#3756). REQUIRED for kind:'tombstone' (names the page
+   * to soft-delete). Optional for upserts, where it takes precedence over
+   * `metadata.slug` and the generated inbox default.
+   */
+  slug?: string;
+  /**
    * Trust tag. Set to true by sources that receive input from untrusted
    * channels (webhook, future URL fetcher sources). The downstream put_page
    * handler honors this flag: skips auto-link entity extraction and applies
@@ -103,8 +119,9 @@ export interface IngestionEvent {
    * watcher reading the user's own brain repo) MUST leave this false.
    */
   untrusted_payload?: boolean;
-  /** Optional source-specific metadata. Free-form. Persisted into the page's
-   *  frontmatter under `ingestion_metadata` when present. */
+  /** Optional source-specific metadata. Free-form. Reserved for future
+   *  persistence into page frontmatter under `ingestion_metadata`; not yet
+   *  implemented — nothing reads this field today. */
   metadata?: Record<string, unknown>;
 }
 
@@ -304,6 +321,31 @@ export function validateIngestionEvent(event: unknown): IngestionEventError | nu
     return new IngestionEventError(
       'content_hash',
       `must be 64 lowercase hex characters (SHA-256); got '${hash.slice(0, 16)}...'`,
+      e as Partial<IngestionEvent>,
+    );
+  }
+
+  // kind is optional; when present it must be from the closed set (#3756).
+  if (e.kind !== undefined && e.kind !== 'upsert' && e.kind !== 'tombstone') {
+    return new IngestionEventError(
+      'kind',
+      `must be 'upsert' or 'tombstone' when present; got '${String(e.kind)}'`,
+      e as Partial<IngestionEvent>,
+    );
+  }
+
+  // slug is optional for upserts, REQUIRED for tombstones (#3756).
+  if (e.slug !== undefined && (typeof e.slug !== 'string' || e.slug.length === 0)) {
+    return new IngestionEventError(
+      'slug',
+      'must be a non-empty string when present',
+      e as Partial<IngestionEvent>,
+    );
+  }
+  if (e.kind === 'tombstone' && typeof e.slug !== 'string') {
+    return new IngestionEventError(
+      'slug',
+      "is required for kind 'tombstone' (names the page to soft-delete)",
       e as Partial<IngestionEvent>,
     );
   }

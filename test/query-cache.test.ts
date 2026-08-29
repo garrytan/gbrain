@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { SemanticQueryCache, cacheRowId } from '../src/core/search/query-cache.ts';
+import { SemanticQueryCache, cacheRowId, cacheTextGuard } from '../src/core/search/query-cache.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import type { SearchResult, HybridSearchMeta } from '../src/core/types.ts';
 
@@ -248,6 +248,104 @@ describe('SemanticQueryCache \u2014 management', () => {
   });
 });
 
+describe('cacheTextGuard (#1469)', () => {
+  test('verbatim equality after NFKC / case / whitespace normalization', () => {
+    expect(cacheTextGuard('what is foo', 'what is foo')).toBe(true);
+    expect(cacheTextGuard('What  is\tFoo ', 'what is foo')).toBe(true);
+    // NFKC folds full-width Latin to half-width.
+    expect(cacheTextGuard('\uff57\uff48\uff41\uff54 \uff49\uff53 \uff46\uff4f\uff4f', 'what is foo')).toBe(true);
+  });
+
+  test('unrelated queries fail the guard', () => {
+    expect(cacheTextGuard('quarterly revenue projections', 'kimchi fried rice recipe')).toBe(false);
+  });
+
+  test('near-paraphrase passes via char-bigram Dice >= 0.5', () => {
+    expect(cacheTextGuard('what is the foo bar', 'what is foo bar')).toBe(true);
+  });
+
+  test('distinct Korean queries fail the guard (CJK-safe, no token boundary needed)', () => {
+    expect(cacheTextGuard('\uae40\uce58 \ub9cc\ub4dc\ub294 \ubc29\ubc95', '\uc11c\uc6b8 \ub0a0\uc528 \uc608\ubcf4')).toBe(false);
+  });
+
+  test('near-identical Korean queries pass the guard', () => {
+    // "how to make kimchi" vs the shorter "\ubc95" form \u2014 high bigram overlap.
+    expect(cacheTextGuard('\uae40\uce58 \ub9cc\ub4dc\ub294 \ubc29\ubc95', '\uae40\uce58 \ub9cc\ub4dc\ub294 \ubc95')).toBe(true);
+  });
+
+  test('degenerate short strings: equality only, no spurious Dice pass', () => {
+    expect(cacheTextGuard('a', 'a')).toBe(true);
+    expect(cacheTextGuard('a', 'b')).toBe(false);
+    expect(cacheTextGuard('', '')).toBe(true);
+    expect(cacheTextGuard('', 'foo')).toBe(false);
+  });
+});
+
+describe('SemanticQueryCache \u2014 text guard on lookup (#1469)', () => {
+  test('degenerate embedding space: unrelated query text is a MISS even at cosine ~1.0', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(200);
+    await cache.store('quarterly revenue projections', emb, [makeResult('finance')], META);
+    // Same (collapsed) embedding, totally different query \u2014 must NOT be served.
+    const hit = await cache.lookup(emb, { queryText: 'kimchi fried rice recipe' });
+    expect(hit.hit).toBe(false);
+  });
+
+  test('verbatim query text is a hit through the guard', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(201);
+    await cache.store('quarterly revenue projections', emb, [makeResult('finance')], META);
+    const hit = await cache.lookup(emb, { queryText: 'Quarterly  Revenue Projections' });
+    expect(hit.hit).toBe(true);
+    expect(hit.results?.[0].slug).toBe('finance');
+  });
+
+  test('paraphrase (bigram Dice >= 0.5) is a hit', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(202);
+    await cache.store('what is foo bar', emb, [makeResult('foobar')], META);
+    const hit = await cache.lookup(emb, { queryText: 'what is the foo bar' });
+    expect(hit.hit).toBe(true);
+    expect(hit.results?.[0].slug).toBe('foobar');
+  });
+
+  test('legacy path: no queryText preserves pre-guard behavior', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(203);
+    await cache.store('some cached query', emb, [makeResult('legacy')], META);
+    const hit = await cache.lookup(emb);
+    expect(hit.hit).toBe(true);
+    expect(hit.results?.[0].slug).toBe('legacy');
+  });
+
+  test('Korean distinct queries do not collapse; guard scans past the closest candidate', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const embA = makeEmbedding(300);
+    // Near-neighbor for the second row: cosine > 0.92 vs embA but strictly
+    // farther than embA itself, so the WRONG row sorts first.
+    const embB = new Float32Array(embA);
+    for (let i = 0; i < 10; i++) embB[i] += 0.005;
+    let mag = 0;
+    for (let i = 0; i < DIM; i++) mag += embB[i] * embB[i];
+    mag = Math.sqrt(mag);
+    for (let i = 0; i < DIM; i++) embB[i] /= mag;
+
+    // "Seoul weather forecast" (closest to lookup emb) vs "how to make kimchi".
+    await cache.store('\uc11c\uc6b8 \ub0a0\uc528 \uc608\ubcf4', embA, [makeResult('weather')], META);
+    await cache.store('\uae40\uce58 \ub9cc\ub4dc\ub294 \ubc29\ubc95', embB, [makeResult('kimchi')], META);
+
+    // Lookup with the kimchi TEXT but an embedding closest to the weather row:
+    // the guard must skip the closer non-matching candidate and serve kimchi.
+    const hit = await cache.lookup(embA, { queryText: '\uae40\uce58 \ub9cc\ub4dc\ub294 \ubc29\ubc95' });
+    expect(hit.hit).toBe(true);
+    expect(hit.results?.[0].slug).toBe('kimchi');
+
+    // A third, unrelated Korean query matches NEITHER cached text \u2192 miss.
+    const miss = await cache.lookup(embA, { queryText: '\uc8fc\uc2dd \uc2dc\uc7a5 \ubd84\uc11d' });
+    expect(miss.hit).toBe(false);
+  });
+});
+
 describe('SemanticQueryCache \u2014 disabled', () => {
   test('disabled cache is a pure no-op on lookup', async () => {
     const cache = new SemanticQueryCache(engine, { enabled: false });
@@ -256,5 +354,75 @@ describe('SemanticQueryCache \u2014 disabled', () => {
     // Even after a store call, lookup must miss because enabled=false.
     const hit = await cache.lookup(emb);
     expect(hit.hit).toBe(false);
+  });
+});
+
+/**
+ * Wrap the real engine so every executeRaw SQL string is recorded (and
+ * optionally intercepted) while all other methods delegate untouched.
+ */
+function spyExecuteRaw(
+  onCall: (sql: string, params?: unknown[]) => Promise<void> | void,
+): PGLiteEngine {
+  return new Proxy(engine, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop, target);
+      if (prop === 'executeRaw' && typeof v === 'function') {
+        return async (sql: string, params?: unknown[], o?: { signal?: AbortSignal }) => {
+          await onCall(sql, params);
+          return v.call(target, sql, params, o);
+        };
+      }
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+  }) as unknown as PGLiteEngine;
+}
+
+describe('SemanticQueryCache \u2014 light candidates, winner-only payload fetch (D2)', () => {
+  test('lookup ships ONE heavy payload: candidate select carries no results/meta; winner fetched by id', async () => {
+    // Three near-identical embeddings so the candidate query returns
+    // multiple rows within the 0.92 threshold \u2014 pre-D2, all of their
+    // results/meta JSONB payloads shipped just to keep one.
+    const cache = new SemanticQueryCache(engine);
+    const winnerEmb = makeEmbedding(4200);
+    await cache.store('who is alice-example', winnerEmb, [makeResult('people/alice-example')], META);
+    await cache.store('who is alice example', makeEmbedding(4201), [makeResult('people/alice-two')], META);
+    await cache.store('who was alice-example', makeEmbedding(4202), [makeResult('people/alice-three')], META);
+
+    const calls: string[] = [];
+    const spyCache = new SemanticQueryCache(spyExecuteRaw((sql) => void calls.push(sql)));
+    const hit = await spyCache.lookup(winnerEmb, { queryText: 'who is alice-example' });
+
+    expect(hit.hit).toBe(true);
+    expect(hit.results?.[0]?.slug).toBe('people/alice-example');
+    expect(hit.meta?.intent).toBe('general');
+
+    const selects = calls.filter((q) => q.trimStart().toUpperCase().startsWith('SELECT'));
+    expect(selects.length).toBe(2);
+    // Candidate query is LIGHT: id/query_text/distance/age only.
+    expect(selects[0]).toContain('qc.id, qc.query_text');
+    expect(selects[0]).not.toContain('qc.results');
+    expect(selects[0]).not.toContain('qc.meta');
+    // Exactly one heavy fetch, keyed by the winner's id.
+    expect(selects[1]).toContain('SELECT results, meta FROM query_cache WHERE id = $1');
+  });
+
+  test('winner row deleted between the two statements is a miss, not a throw', async () => {
+    const cache = new SemanticQueryCache(engine);
+    const emb = makeEmbedding(4300);
+    await cache.store('race window query', emb, [makeResult('race/window')], META);
+
+    // Simulate a concurrent prune/clear landing between the candidate
+    // select and the payload fetch: delete the winner right before its
+    // by-id payload query executes.
+    const racing = new SemanticQueryCache(
+      spyExecuteRaw(async (sql, params) => {
+        if (sql.includes('SELECT results, meta FROM query_cache')) {
+          await engine.executeRaw(`DELETE FROM query_cache WHERE id = $1`, [params![0]]);
+        }
+      }),
+    );
+    const res = await racing.lookup(emb, { queryText: 'race window query' });
+    expect(res.hit).toBe(false);
   });
 });

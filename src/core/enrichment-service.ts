@@ -16,6 +16,16 @@
 import type { BrainEngine } from './engine.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
+// #3994: created stubs route through serializeMarkdown + importFromContent
+// (the same parse→chunk→embed pipeline put_page uses) instead of a bare
+// engine.putPage, so fresh entity pages land in the retrieval surface
+// (content_chunks + embeddings) — the #2163 concept-page precedent.
+import { importFromContent } from './import-file.ts';
+import { serializeMarkdown } from './markdown.ts';
+import { isAvailable } from './ai/gateway.ts';
+// #4222: shared generic-token reject list — same list gates the by-mention
+// gazetteer and drives the junk_entity_hubs doctor check.
+import { isJunkEntityName } from './entity-name-quality.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,7 +108,9 @@ export async function enrichEntity(
   request: EnrichmentRequest,
   opts?: EnrichmentTrustOptions,
 ): Promise<EnrichmentResult> {
-  const slug = slugifyEntity(request.entityName, request.entityType);
+  const candidateSlug = slugifyEntity(request.entityName, request.entityType);
+  const sourceId = opts?.sourceId ?? 'default';
+  const slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
   const trusted = opts?.trusted === true;
   const scope = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
@@ -119,24 +131,63 @@ export async function enrichEntity(
     // UPDATE path — add timeline entry
     action = 'updated';
   } else {
+    // #4222: refuse to MINT a page for a junk entity name — a single
+    // generic token ("Will", "Info", "Chief", "Unknown") or a bare
+    // @handle. These come from over-eager extractors and become
+    // near-empty mega-hubs that accrete thousands of mention edges.
+    // Existing pages are user-visible and stay trusted (CK12 precedent);
+    // only creation is gated — no auto-delete, ever.
+    if (isJunkEntityName(request.entityName)) {
+      return {
+        slug,
+        action: 'skipped',
+        tier,
+        backlinkCreated: false,
+        timelineAdded: false,
+        mentionCount,
+        mentionSources,
+        suggestedTier,
+        tierEscalated,
+      };
+    }
     // CREATE path — new entity page
     const title = request.entityName;
     const type = request.entityType;
     const content = generateStubContent(request.entityName, request.entityType, request.context);
-    await engine.putPage(slug, {
-      title,
-      type,
-      compiled_truth: content,
-      timeline: '',
-      frontmatter: {
-        created: new Date().toISOString().split('T')[0],
-        source: request.sourceSlug,
-        tier,
-        // issue #160 quarantine lane: stubs extracted from untrusted input
-        // carry provenance + unverified markers until the owner reviews them.
-        ...(trusted ? {} : quarantineMarkers()),
-      },
-    }, scope);
+    const frontmatter = {
+      created: new Date().toISOString().split('T')[0],
+      source: request.sourceSlug,
+      tier,
+      // issue #160 quarantine lane: stubs extracted from untrusted input
+      // carry provenance + unverified markers until the owner reviews them.
+      ...(trusted ? {} : quarantineMarkers()),
+    };
+    try {
+      // #3994: canonical import pipeline so the stub is chunked (+ embedded
+      // when a provider is configured) and reachable by the recall arms.
+      const md = serializeMarkdown(frontmatter, content, '', { type, title, tags: [] });
+      await importFromContent(engine, slug, md, {
+        noEmbed: !isAvailable('embedding'),
+        ...(opts?.sourceId ? { sourceId: opts.sourceId } : {}),
+      });
+    } catch (e) {
+      // Fail-open fallback: a pipeline error (parse edge case, size guard)
+      // must never regress the batch — the pre-#3994 direct write still
+      // produces a page (unchunked, but present + reviewable). Warn loudly:
+      // silence here would hide that the stub is invisible to vector recall
+      // until the next `gbrain embed --stale` / re-import sweep.
+      process.stderr.write(
+        `[enrich] import pipeline failed for stub ${slug} (${e instanceof Error ? e.message : String(e)}); ` +
+        'falling back to a direct unchunked write — the page exists but is not chunked/embedded until re-imported.\n',
+      );
+      await engine.putPage(slug, {
+        title,
+        type,
+        compiled_truth: content,
+        timeline: '',
+        frontmatter,
+      }, scope);
+    }
     action = 'created';
   }
 

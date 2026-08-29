@@ -14,7 +14,10 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { parseCorsAllowlistOAuth, resolveCorsOrigin } from '../src/commands/serve-http.ts';
+import express from 'express';
+import cors from 'cors';
+import type { Server } from 'http';
+import { parseCorsAllowlistOAuth, resolveCorsOrigin, mountOAuthCorsGate } from '../src/commands/serve-http.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 describe('parseCorsAllowlistOAuth', () => {
@@ -114,5 +117,112 @@ describe('resolveCorsOrigin', () => {
     const calls: Array<boolean | undefined> = [];
     (fn as Function)('https://Claude.AI', (_err: unknown, allow?: boolean) => calls.push(allow));
     expect(calls[0]).toBe(false);
+  });
+});
+
+/**
+ * Integration coverage for #3845.
+ *
+ * The MCP SDK's mcpAuthRouter mounts a bare `cors()` (origin `*`) as the first
+ * middleware on /token, /revoke, and /register. gbrain's own gate runs first,
+ * but with a denied/default-deny origin cors@2.8.x neither sets a header nor
+ * short-circuits — it calls next() — so the SDK's `*` answered the preflight,
+ * leaking the endpoint surface to any web origin.
+ *
+ * These tests wire the REAL exported `mountOAuthCorsGate` in front of a
+ * bare-cors "SDK" router (same ordering as serve-http.ts) and assert the
+ * preflight is default-deny. A plain `cors(oauthOptions)` mount fails every
+ * "no allow-origin" assertion below (that is the pre-fix regression).
+ */
+describe('mountOAuthCorsGate — OAuth preflight is default-deny (#3845)', () => {
+  function buildApp(allowlist: Set<string> | null): express.Express {
+    const oauthOptions: cors.CorsOptions = {
+      origin: resolveCorsOrigin(allowlist),
+      credentials: false,
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    };
+    const app = express();
+    // gbrain gate (runs first) — mirrors serve-http.ts.
+    app.use('/token', mountOAuthCorsGate(oauthOptions));
+    app.use('/revoke', mountOAuthCorsGate(oauthOptions));
+    // Downstream SDK-style router: bare cors() then the POST handler.
+    const sdk = express.Router();
+    sdk.use('/token', cors());
+    sdk.post('/token', (_req, res) => res.json({ ok: true }));
+    sdk.use('/revoke', cors());
+    sdk.post('/revoke', (_req, res) => res.json({ ok: true }));
+    app.use(sdk);
+    return app;
+  }
+
+  async function withServer<T>(
+    allowlist: Set<string> | null,
+    fn: (base: string) => Promise<T>,
+  ): Promise<T> {
+    const server: Server = buildApp(allowlist).listen(0);
+    await new Promise<void>(resolve => server.once('listening', () => resolve()));
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    try {
+      return await fn(`http://127.0.0.1:${port}`);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+
+  function preflight(base: string, path: string, origin: string) {
+    return fetch(`${base}${path}`, {
+      method: 'OPTIONS',
+      headers: { Origin: origin, 'Access-Control-Request-Method': 'POST' },
+    });
+  }
+
+  test('allowlist unset → OPTIONS /token carries no Allow-Origin (was: *)', async () => {
+    await withEnv({ GBRAIN_HTTP_CORS_ORIGIN: undefined }, async () => {
+      await withServer(null, async base => {
+        const res = await preflight(base, '/token', 'https://evil.example');
+        expect(res.headers.get('access-control-allow-origin')).toBeNull();
+        expect(res.status).toBe(204);
+      });
+    });
+  });
+
+  test('allowlist unset → OPTIONS /revoke carries no Allow-Origin (was: *)', async () => {
+    await withServer(null, async base => {
+      const res = await preflight(base, '/revoke', 'https://evil.example');
+      expect(res.headers.get('access-control-allow-origin')).toBeNull();
+      expect(res.status).toBe(204);
+    });
+  });
+
+  test('allowlist set → non-listed Origin preflight is denied (no Allow-Origin)', async () => {
+    await withServer(new Set(['https://claude.ai']), async base => {
+      const res = await preflight(base, '/token', 'https://evil.example');
+      expect(res.headers.get('access-control-allow-origin')).toBeNull();
+      expect(res.status).toBe(204);
+    });
+  });
+
+  test('allowlist set → listed Origin preflight reflects that Origin', async () => {
+    await withServer(new Set(['https://claude.ai']), async base => {
+      const res = await preflight(base, '/token', 'https://claude.ai');
+      expect(res.headers.get('access-control-allow-origin')).toBe('https://claude.ai');
+      expect(res.status).toBe(204);
+    });
+  });
+
+  test('actual POST still reaches the downstream handler (gate only guards preflight)', async () => {
+    await withServer(null, async base => {
+      const res = await fetch(`${base}/token`, {
+        method: 'POST',
+        headers: { Origin: 'https://evil.example', 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      // The gate never touches non-OPTIONS requests — they fall straight
+      // through to the token handler untouched.
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    });
   });
 });

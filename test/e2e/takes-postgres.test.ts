@@ -179,6 +179,9 @@ d('v0.28 takes engine — Postgres', () => {
     const stale = await engine.listStaleTakes();
     expect(stale.length).toBe(count);
     expect(stale[0]).toHaveProperty('take_id');
+    expect(typeof stale[0]!.take_id).toBe('number');
+    expect(typeof stale[0]!.row_num).toBe('number');
+    expect(() => JSON.stringify(stale)).not.toThrow();
   });
 });
 

@@ -7,6 +7,16 @@
 # in each phase, reports delta_pct. The contract that matters: search p99
 # shouldn't blow up while sync is running.
 #
+# History note (#4143): a v0.45.13.0..v0.46.6.0 hang in this script was NOT a
+# read-under-sync problem — writers were irrelevant (NUM_WRITERS=0 still hung).
+# The trigger was NUM_QUERIES being an exact multiple of the telemetry flush
+# threshold (100): the fire-and-forget flush had a statement in flight when the
+# workload called engine.disconnect(), and PGLite's close() deadlocks
+# permanently with in-flight statements. Fixed by the background-work drain in
+# disconnect() + a bounded close; pinned by
+# test/search-telemetry-disconnect-hang.serial.test.ts. If this script hangs
+# again, suspect teardown, not lock contention.
+#
 # Informational-only by default (delta_pct gets reported but exit stays 0).
 # Set STRICT_LATENCY=1 to fail when p99 delta exceeds threshold.
 #
@@ -36,6 +46,10 @@ echo "[read_latency] running baseline + under-load workload..."
 
 unset DATABASE_URL || true
 set +e
+# #4284 canary: arm the out-of-band disconnect watchdog. The drain keeps it
+# silent on a healthy run; a regression of the #4143 wedge class dies loudly
+# at ~30s (SIGTERM 20s + SIGKILL +10s) instead of the 600s deadline kill —
+# and the stderr log names the wedge via the pglite-disconnect-watchdog label.
 timeout 600s env \
   BRAIN_PAGES="${BRAIN_PAGES:-500}" \
   NUM_QUERIES="${NUM_QUERIES:-200}" \
@@ -43,6 +57,8 @@ timeout 600s env \
   WRITES_PER_WRITER="${WRITES_PER_WRITER:-25}" \
   STRICT="${STRICT_LATENCY:-0}" \
   THRESHOLD_PCT="${THRESHOLD_PCT:-50}" \
+  GBRAIN_PGLITE_CLOSE_WATCHDOG_MS="${GBRAIN_PGLITE_CLOSE_WATCHDOG_MS:-20000}" \
+  GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS="${GBRAIN_PGLITE_CLOSE_WATCHDOG_GRACE_MS:-10000}" \
   bun run tests/heavy/_read_latency_workload.ts > "$WORKLOAD_OUT" 2>>"$LOG_DIR/heavy-read_latency-stderr-$TS.log"
 WORKLOAD_RC=$?
 set -e

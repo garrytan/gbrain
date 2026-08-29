@@ -13,6 +13,8 @@
  * and surfaces them via a normalized `ProviderCapabilities` shape that the
  * gateway's `toolLoop()` consumes to decide:
  *   - REFUSE at submit when tool-calling is unsupported (D6 — useless loop)
+ *   - REFUSE at submit/dispatch when the recipe declares
+ *     `supports_subagent_loop: false` (or a per-id predicate returns false)
  *   - WARN at submit when prompt caching is unavailable (D6 — cost regression)
  *   - INFO at submit when parallel tools unsupported (D6 — just slower)
  *
@@ -21,7 +23,7 @@
  * decisions don't depend on it.
  */
 
-import { resolveRecipe } from './model-resolver.ts';
+import { resolveChatContextTokens, resolveRecipe } from './model-resolver.ts';
 import { listRecipes } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 
@@ -30,9 +32,27 @@ export interface ProviderCapabilities {
   supportsToolCalling: boolean;
 
   /**
-   * Anthropic-style ephemeral prompt cache markers honored. When false, the
-   * loop runs hot (no cache_control injection) and per-turn costs scale
-   * linearly with conversation length. Doesn't break the loop; just costs more.
+   * Provider's tool calling is stable enough across crashes/replays (stable
+   * tool_call_ids) to drive the Minions subagent loop. Mirrors the recipe's
+   * `chat.supports_subagent_loop` declaration (`src/core/ai/types.ts`), which
+   * is intentionally separate from — and strictly stronger than —
+   * `supports_tools`: some chat-capable models have flaky tool-calling or
+   * unstable tool_call_id behavior across replays.
+   */
+  supportsSubagentLoop: boolean;
+
+  /**
+   * The provider caches prompt prefixes at all — by either mechanism:
+   * automatically server-side (OpenAI, DeepSeek; nothing to attach, and the
+   * Anthropic-namespace marker the gateway adds is inert on them), or when the
+   * request carries explicit `cache_control` markers (Anthropic). When false,
+   * the loop runs hot and per-turn costs scale linearly with conversation
+   * length. Doesn't break the loop; just costs more.
+   *
+   * This is deliberately "does it cache", not "does it honor our markers":
+   * `enforceSubagentCapable` and `doctor` use it to decide whether to warn an
+   * operator off a provider for cost reasons, and that advice is wrong for a
+   * provider that caches without being asked.
    */
   supportsPromptCaching: boolean;
 
@@ -92,8 +112,12 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
 
   const promptCache = chat.supports_prompt_cache;
 
+  const subagentLoop = chat.supports_subagent_loop;
   return {
     supportsToolCalling: chat.supports_tools === true,
+    supportsSubagentLoop: typeof subagentLoop === 'function'
+      ? subagentLoop(parsed.modelId)
+      : subagentLoop === true,
     supportsPromptCaching: typeof promptCache === 'function'
       ? promptCache(parsed.modelId)
       : promptCache === true,
@@ -101,11 +125,13 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
     supportsParallelTools: chat.supports_tools === true,
-    // Not exposed by ChatTouchpoint today — defaults to false. Recipes can add
-    // a `supports_thinking` field later without breaking this helper (it'll
-    // just keep returning false until a recipe sets it).
-    supportsThinking: false,
-    maxContext: chat.max_context_tokens ?? 128_000,
+    // Recipe-declared thinking-by-default (gbrain#4172): true when the model
+    // reasons without being asked and bills that reasoning as output tokens.
+    // Boolean or per-model predicate, mirroring supports_prompt_cache.
+    supportsThinking: typeof chat.thinking_by_default === 'function'
+      ? chat.thinking_by_default(parsed.modelId)
+      : chat.thinking_by_default === true,
+    maxContext: resolveChatContextTokens(modelString) ?? 128_000,
   };
 }
 
@@ -113,8 +139,8 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
  * Tier-1 gate consumed by `enforceSubagentCapable()` in src/core/model-config.ts
  * (D6 + D7). Returns:
  *
- *   - `'ok'` — provider has tool-calling, prompt caching, and parallel tools.
- *     Loop runs at full speed.
+ *   - `'ok'` — provider has tool-calling, a loop-stable declaration, prompt
+ *     caching, and parallel tools. Loop runs at full speed.
  *   - `'degraded:no_caching'` — provider supports tools but lacks prompt
  *     caching. Loop runs but per-turn cost is higher. Warn once per
  *     (source, model) pair.
@@ -122,6 +148,10 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
  *     loop will dispatch serially. Info-log; no warn.
  *   - `'unusable:no_tools'` — provider lacks tool calling entirely. Refuse at
  *     submit; the loop has no way to execute brain ops.
+ *   - `'unusable:no_subagent_loop'` — provider has tool calling but its recipe
+ *     declares `supports_subagent_loop: false` (tool_call_ids not stable
+ *     across crash/replay). Refuse at submit; the loop would start but can't
+ *     reconcile on replay — a correctness issue, not a cost/perf one.
  *   - `'unknown'` — the provider/model isn't in any recipe. Refuse at submit
  *     (defensive: don't spend money on an unrecognized provider).
  *
@@ -133,6 +163,7 @@ export type CapabilityVerdict =
   | 'degraded:no_caching'
   | 'degraded:no_parallel'
   | 'unusable:no_tools'
+  | 'unusable:no_subagent_loop'
   | 'unknown';
 
 export function classifyCapabilities(modelString: string): CapabilityVerdict {
@@ -143,6 +174,7 @@ export function classifyCapabilities(modelString: string): CapabilityVerdict {
     return 'unknown';
   }
   if (!caps.supportsToolCalling) return 'unusable:no_tools';
+  if (!caps.supportsSubagentLoop) return 'unusable:no_subagent_loop';
   if (!caps.supportsPromptCaching) return 'degraded:no_caching';
   if (!caps.supportsParallelTools) return 'degraded:no_parallel';
   return 'ok';

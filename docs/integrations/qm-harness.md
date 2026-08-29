@@ -54,13 +54,13 @@ Isolation model:
   `people/*` pages the caller never named — the same capability
   `extract_facts` is denied for, reached through an in-prefix write. It is
   skipped for bound clients. `POST /ingest` is refused outright: its handler
-  bypasses the op layer *and* discards the source grant for untrusted
-  payloads, so it would write into the `default` source.
+  bypasses the op layer, so `enforceClientSlugFence` never runs and a bound
+  client could write any slug inside its granted source.
 ### Known limitations — read these before you rely on the fence
 
 The write fence is a **write** boundary within a source. It is not a privacy
 boundary, and it does not make every side effect prefix-clean. As of
-v0.42.73.2:
+v0.47.1.0:
 
 - **The fence follows a delegated write.** When a client with `agent` scope
   hands work to a subagent via `submit_agent`, that subagent runs under its own
@@ -86,20 +86,30 @@ v0.42.73.2:
   page content. Unreachable in the layout above (the `agents` source is
   path-less and holds no code pages); it applies only if you point employee
   writes at a code-synced source.
-- **A few read ops are still brain-wide** and ignore the federated grant:
-  `get_recent_salience`, `find_anomalies`, `find_contradictions`, and
-  `sources_list`/`sources_status` (which expose source ids, paths and URLs).
-  A read-scoped client can learn facts derived from sources it was not
-  granted. Pre-existing, not introduced by the fence; if that matters for
-  your deployment, withhold those tools at the harness layer for now.
+- **Contradiction findings are matched by slug, not source.** The read ops
+  that used to be brain-wide — `get_recent_salience`, `find_anomalies`,
+  `find_contradictions`, and `sources_list`/`sources_status` — now honor the
+  federated grant (`sources_status` answers `not_found` for an out-of-grant
+  id, indistinguishable from a nonexistent source). The residual is
+  `find_contradictions`: findings carry no source attribution, so the scope
+  check is slug existence within the grant — a finding derived from an
+  ungranted source stays visible when a granted source holds a page with
+  the same slug. Per-endpoint source attribution is the filed follow-up
+  (TODOS.md); withhold `find_contradictions` at the harness layer if that
+  residual matters for your deployment.
 - **Reads touch `last_retrieved_at`** on the pages they return, including
   pages in read-only sources. Freshness/usage signals are therefore
   writable-by-reading; nothing else about the page is.
-- **`POST /ingest` writes land in the `default` source** regardless of the
-  calling client's `source_id`, because the handler discards the source for
-  untrusted payloads. Bound clients are refused the route outright for this
-  reason; if you point a webhook integration at it, scope that brain's
-  `default` source deliberately.
+- **`POST /ingest` writes land in the calling client's granted source.** The
+  write source is resolved server-side from `oauth_clients.source_id`; the
+  caller-supplied `X-Gbrain-Source-Id` header does not route anything, so a
+  client cannot choose its own write partition. A client registered without a
+  source writes to `default`, and a write falls back to `default` if its
+  source is unregistered, archived, or deleted mid-write (the job result
+  reports this via `source_fallback`). If you point a webhook integration at
+  this route, give its client an explicit `--source` so its captures do not
+  accumulate in the brain's `default` source. Bound clients are still refused
+  the route outright, because the slug fence cannot run on this path.
 - **Tradeoff to state out loud:** read isolation is per-source, so within the
   shared `agents` source every employee can *read* every prefix (including
   other employees' `emp-*/`). That matches qm's transparent-by-default,

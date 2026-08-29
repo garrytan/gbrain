@@ -153,16 +153,25 @@ describe('#3513 — applyStdinParam content preservation (subprocess driver)', (
     expect(params?.content).toBe('---\ntitle: x\n---\nbody');
   }, 30_000);
 
-  test('/dev/null yields empty-string content (readable, empty — pre-fix parity)', async () => {
+  // #2822: empty/whitespace stdin is NO input — the param stays unset so the
+  // required-param usage error fires, instead of '' flowing into a
+  // destructive empty write. (Pre-#2822 these pinned params.content === ''.)
+  test('/dev/null leaves the stdin param unset (#2822)', async () => {
     const { exited, params } = await runDriver({ file: '/dev/null' });
     expect(exited).toBe(true);
-    expect(params?.content).toBe('');
+    expect(params).toEqual({});
   }, 30_000);
 
-  test('empty closed pipe yields empty-string content', async () => {
+  test('empty closed pipe leaves the stdin param unset (#2822)', async () => {
     const { exited, params } = await runDriver('closed-empty');
     expect(exited).toBe(true);
-    expect(params?.content).toBe('');
+    expect(params).toEqual({});
+  }, 30_000);
+
+  test('whitespace-only piped input leaves the stdin param unset (#2822)', async () => {
+    const { exited, params } = await runDriver({ data: '  \n\t\n' });
+    expect(exited).toBe(true);
+    expect(params).toEqual({});
   }, 30_000);
 
   test('held-open pipe times out and leaves the param unset', async () => {

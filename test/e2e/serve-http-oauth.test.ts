@@ -161,6 +161,99 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     return `gbrain_admin=${match![1]}`;
   }
 
+  // ── C4/C5/C6 helpers ──────────────────────────────────────────────────
+
+  // /mcp responses arrive either as plain JSON or as an SSE stream
+  // (`event: message\ndata: {...}`) depending on the SDK transport's
+  // negotiated response mode. Extract the JSON-RPC envelope either way.
+  function parseJsonRpc(text: string): any {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{')) return JSON.parse(trimmed);
+    const dataLines = trimmed.split('\n').filter(l => l.startsWith('data:'));
+    if (dataLines.length === 0) {
+      throw new Error('No JSON-RPC payload in /mcp response: ' + trimmed.slice(0, 200));
+    }
+    return JSON.parse(dataLines[dataLines.length - 1].slice('data:'.length).trim());
+  }
+
+  // tools/call + tools/list wrapper that unwraps the JSON-RPC result.
+  // Scope denials are TOOL results (200 + isError:true envelope), never
+  // transport-level errors, so a non-200 here is always a test failure.
+  async function mcpToolResult(token: string, method: string, params?: any): Promise<any> {
+    const res = await mcpCall(token, method, params);
+    expect(res.status).toBe(200);
+    const rpc = parseJsonRpc(await res.text());
+    expect(rpc.error).toBeUndefined();
+    return rpc.result;
+  }
+
+  // Mint a token for an arbitrary client (mintToken above is pinned to the
+  // fixture client).
+  async function mintFor(id: string, secret: string, scope: string): Promise<string> {
+    const res = await fetch(`${BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=client_credentials&client_id=${id}&client_secret=${secret}&scope=${encodeURIComponent(scope)}`,
+    });
+    expect(res.ok).toBe(true);
+    return ((await res.json()) as any).access_token;
+  }
+
+  async function registerThrowawayClient(name: string, scopes: string): Promise<{ id: string; secret: string }> {
+    const { execSync } = await import('child_process');
+    const reg = execSync(
+      `bun run src/cli.ts auth register-client ${name} --grant-types client_credentials --scopes "${scopes}"`,
+      { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
+    );
+    const id = reg.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1];
+    const secret = reg.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1];
+    if (!id || !secret) throw new Error(`Failed to register ${name}:\n` + reg);
+    dcrClientIds.push(id); // afterAll cleanup
+    return { id, secret };
+  }
+
+  // Dedicated read+write client for C4/C5 so mcp_request_log assertions are
+  // isolated from the shared fixture client's rows. Registered lazily once.
+  let c45Client: { id: string; secret: string } | undefined;
+  async function ensureC45Client(): Promise<{ id: string; secret: string }> {
+    if (!c45Client) {
+      c45Client = await registerThrowawayClient(`e2e-c45-scope-${Date.now()}`, 'read write');
+    }
+    return c45Client;
+  }
+
+  async function withSql<T>(fn: (sql: any) => Promise<T>): Promise<T> {
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    try {
+      return await fn(sql);
+    } finally {
+      await sql.end();
+    }
+  }
+
+  // The request-log INSERT is awaited server-side but best-effort; poll so a
+  // slow commit never flakes the assertion. Returns the rows (oldest first)
+  // once `ready` is satisfied, or the last observed rows after ~3s.
+  async function pollLogRows(
+    sql: any,
+    tokenName: string,
+    ready: (rows: Array<Record<string, unknown>>) => boolean,
+  ): Promise<Array<Record<string, unknown>>> {
+    let rows: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < 20; i++) {
+      rows = await sql`
+        SELECT id, operation, status, error_message, params->>'tool_count' AS tool_count
+        FROM mcp_request_log
+        WHERE token_name = ${tokenName}
+        ORDER BY id ASC
+      ` as unknown as Array<Record<string, unknown>>;
+      if (ready(rows)) return rows;
+      await new Promise(r => setTimeout(r, 150));
+    }
+    return rows;
+  }
+
   // =========================================================================
   // Fix 1: client_credentials tokens validate at /mcp
   // =========================================================================
@@ -1163,4 +1256,277 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(rejected).toBe(true);
     expect(body).not.toMatch(/"job_id"\s*:\s*"?\d+/);
   }, 15_000);
+
+  // =========================================================================
+  // C4: scope-gate sweep over the real server
+  // =========================================================================
+  //
+  // Pins the EXACT insufficient_scope envelope serve-http's scope-deny branch
+  // returns (serve-http.ts CallToolRequestSchema handler), the
+  // status='denied_after_list' request-log row it writes (amendment 33: a
+  // call-time scope deny is a list-level denial because tools/list uses the
+  // same hasScope predicate), the FOV-4 agentCallable carve-out, and the
+  // scope-filtered tools/list. Every denied assertion pairs with an allowed
+  // control on the same token (anti-vacuity).
+
+  test('C4: read-only token — put_page returns the exact insufficient_scope envelope + denied_after_list row; search allowed (control)', async () => {
+    const { id, secret } = await ensureC45Client();
+    const readToken = await mintFor(id, secret, 'read');
+
+    // Denied: put_page requires 'write'.
+    const denied = await mcpToolResult(readToken, 'tools/call', {
+      name: 'put_page',
+      arguments: { slug: 'e2e-c4-denied', content: '---\ntitle: t\n---\nbody' },
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.parse(denied.content[0].text)).toEqual({
+      error: 'insufficient_scope',
+      message: "Operation put_page requires 'write' scope",
+      your_scopes: ['read'],
+    });
+
+    // Allowed control (anti-vacuity): same token, read op succeeds.
+    const allowed = await mcpToolResult(readToken, 'tools/call', {
+      name: 'search',
+      arguments: { query: 'e2e-c4-control', limit: 1 },
+    });
+    expect(allowed.isError).not.toBe(true);
+
+    await withSql(async (sql) => {
+      const rows = await pollLogRows(sql, id, r =>
+        r.some(row => row.operation === 'put_page') && r.some(row => row.operation === 'search'));
+      const deniedRow = rows.find(row => row.operation === 'put_page');
+      expect(deniedRow).toBeDefined();
+      expect(deniedRow!.status).toBe('denied_after_list');
+      expect(deniedRow!.error_message).toBe("insufficient_scope: requires 'write'");
+      // Control row: the allowed read logs plain success (not denied).
+      const controlRow = rows.filter(row => row.operation === 'search').pop();
+      expect(controlRow).toBeDefined();
+      expect(controlRow!.status).toBe('success');
+    });
+  }, 30_000);
+
+  test('C4: agent-scope token CAN call request_tools (agentCallable carve-out) but NOT get_page', async () => {
+    const agent = await registerThrowawayClient(`e2e-c4-agent-${Date.now()}`, 'agent');
+    const agentToken = await mintFor(agent.id, agent.secret, 'agent');
+
+    // Carve-out (allowed control): request_tools is agentCallable, so an
+    // agent-only token gets the catalog instead of a scope deny.
+    const catalogRes = await mcpToolResult(agentToken, 'tools/call', {
+      name: 'request_tools',
+      arguments: {},
+    });
+    expect(catalogRes.isError).not.toBe(true);
+    const catalog = JSON.parse(catalogRes.content[0].text);
+    expect(Array.isArray(catalog.catalog)).toBe(true);
+    expect(catalog.total_tools).toBeGreaterThan(0);
+
+    // Denied: get_page (scope 'read', not agentCallable) — agent does NOT
+    // imply read (v0.38 D13: agent is a sibling scope).
+    const denied = await mcpToolResult(agentToken, 'tools/call', {
+      name: 'get_page',
+      arguments: { slug: 'e2e-c4-agent-denied' },
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.parse(denied.content[0].text)).toEqual({
+      error: 'insufficient_scope',
+      message: "Operation get_page requires 'read' scope",
+      your_scopes: ['agent'],
+    });
+
+    await withSql(async (sql) => {
+      const rows = await pollLogRows(sql, agent.id, r =>
+        r.some(row => row.operation === 'request_tools') && r.some(row => row.operation === 'get_page'));
+      expect(rows.find(row => row.operation === 'request_tools')!.status).toBe('success');
+      const deniedRow = rows.find(row => row.operation === 'get_page')!;
+      expect(deniedRow.status).toBe('denied_after_list');
+      expect(deniedRow.error_message).toBe("insufficient_scope: requires 'read'");
+    });
+  }, 30_000);
+
+  test('C4: tools/list is scope-filtered — read token excludes write/admin tools; write token sees put_page (control)', async () => {
+    const { id, secret } = await ensureC45Client();
+    const readToken = await mintFor(id, secret, 'read');
+    const writeToken = await mintFor(id, secret, 'read write');
+
+    const readList = await mcpToolResult(readToken, 'tools/list');
+    const readNames: string[] = readList.tools.map((t: any) => t.name);
+    expect(readNames).toContain('search');
+    expect(readNames).toContain('get_page');
+    expect(readNames).not.toContain('put_page');   // write-scoped
+    expect(readNames).not.toContain('submit_job'); // admin-scoped
+
+    // Control (anti-vacuity): the same client with write scope DOES see
+    // put_page — the exclusion above is the filter, not a missing tool.
+    const writeList = await mcpToolResult(writeToken, 'tools/list');
+    const writeNames: string[] = writeList.tools.map((t: any) => t.name);
+    expect(writeNames).toContain('put_page');
+    expect(writeNames).not.toContain('submit_job'); // write does not imply admin
+    expect(writeNames.length).toBeGreaterThan(readNames.length);
+  }, 15_000);
+
+  // =========================================================================
+  // C5: request-log row shapes — success_with_warnings + tool_count
+  // =========================================================================
+
+  test("C5: warn-mode unknown param — successful call logs status='success_with_warnings'; clean call logs 'success' (control)", async () => {
+    const { id, secret } = await ensureC45Client();
+    const token = await mintFor(id, secret, 'read');
+
+    // WP3 amendment 13: under mcp.strict_params 'warn' (the default — this
+    // server sets no override), an unknown argument on a successful call
+    // surfaces on _meta.warnings, and requestLogStatusForResult flips the
+    // row to 'success_with_warnings'.
+    const warned = await mcpToolResult(token, 'tools/call', {
+      name: 'search',
+      arguments: { query: 'e2e-c5-warn', limit: 1, bogus_unknown_param: 'x' },
+    });
+    expect(warned.isError).not.toBe(true);
+    const warnings = warned._meta?.warnings;
+    expect(Array.isArray(warnings)).toBe(true);
+    expect(warnings.some((w: any) => w.code === 'unknown_param' && w.param === 'bogus_unknown_param')).toBe(true);
+    // The model-visible warn notice rides as an extra content block (D8).
+    expect(warned.content.some((c: any) => typeof c.text === 'string'
+      && c.text.includes('unknown parameter "bogus_unknown_param"'))).toBe(true);
+
+    // Control (anti-vacuity): same op with only declared params.
+    const clean = await mcpToolResult(token, 'tools/call', {
+      name: 'search',
+      arguments: { query: 'e2e-c5-clean', limit: 1 },
+    });
+    expect(clean.isError).not.toBe(true);
+
+    await withSql(async (sql) => {
+      const rows = await pollLogRows(sql, id, r =>
+        r.some(row => row.operation === 'search' && row.status === 'success_with_warnings'));
+      expect(rows.some(row => row.operation === 'search' && row.status === 'success_with_warnings')).toBe(true);
+      // The clean sibling stays plain 'success' — the warn status is
+      // attributable to the unknown key, not to search generally.
+      expect(rows.some(row => row.operation === 'search' && row.status === 'success')).toBe(true);
+    });
+  }, 30_000);
+
+  test("C5: tools/list writes a row whose params->>'tool_count' matches the returned list size", async () => {
+    const { id, secret } = await ensureC45Client();
+    const token = await mintFor(id, secret, 'read');
+
+    const before = await withSql(async (sql) => {
+      const [row] = await sql`
+        SELECT count(*)::int AS n FROM mcp_request_log
+        WHERE token_name = ${id} AND operation = 'tools/list'
+      `;
+      return Number(row.n);
+    });
+
+    const list = await mcpToolResult(token, 'tools/list');
+    expect(Array.isArray(list.tools)).toBe(true);
+    expect(list.tools.length).toBeGreaterThan(0);
+
+    await withSql(async (sql) => {
+      const rows = await pollLogRows(sql, id, r =>
+        r.filter(row => row.operation === 'tools/list').length > before);
+      const listRows = rows.filter(row => row.operation === 'tools/list');
+      expect(listRows.length).toBeGreaterThan(before);
+      const latest = listRows[listRows.length - 1];
+      expect(latest.status).toBe('success');
+      // params->>'tool_count' is populated and equals the list this token got.
+      expect(latest.tool_count).toBe(String(list.tools.length));
+      expect(Number(latest.tool_count)).toBeGreaterThan(0);
+    });
+  }, 30_000);
+
+  // =========================================================================
+  // C6: adminAuthRateLimiter covers /admin/login + /admin/api/issue-magic-link
+  // =========================================================================
+  //
+  // The limiter (serve-http.ts adminAuthRateLimiter: windowMs 60s, max 10,
+  // shared bucket per IP across /admin/login, /admin/api/issue-magic-link,
+  // and /admin/auth/:token) previously guarded only the magic-link redeem
+  // route, leaving the two POST credential surfaces unmetered.
+  //
+  // BUDGET NOTE: the bucket is shared across the whole suite run. Existing
+  // tests consume up to 6 limited requests; the non-exhaustion C6 test below
+  // consumes 4 more (worst case exactly at max=10 if everything lands in one
+  // 60s window — max requests are still allowed, max+1 is the first 429).
+  // The exhaustion test MUST stay the last test in this file: it deliberately
+  // drains the bucket, so any admin-route request after it would 429.
+
+  test('C6: wrong admin credentials get 401 with no session artifacts; correct credentials still succeed (control)', async () => {
+    // (a) Wrong token on /admin/login → 401 and NO gbrain_admin cookie.
+    const badLogin = await fetch(`${BASE}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'definitely-not-the-bootstrap-token' }),
+    });
+    expect(badLogin.status).toBe(401);
+    expect(badLogin.headers.get('set-cookie') || '').not.toContain('gbrain_admin=');
+    expect(((await badLogin.json()) as any).error).toBe('Invalid token. Check your terminal output.');
+
+    // (a) Wrong bearer on /admin/api/issue-magic-link → 401, no URL minted.
+    const badLink = await fetch(`${BASE}/admin/api/issue-magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer definitely-not-the-bootstrap-token' },
+      body: '{}',
+    });
+    expect(badLink.status).toBe(401);
+    const badLinkBody = await badLink.json() as any;
+    expect(badLinkBody.url).toBeUndefined();
+    expect(badLinkBody.error).toBe('Invalid bootstrap token');
+
+    // (c) HAPPY PATH controls — a correct token below the limit keeps its
+    // normal success (the regression the limiter could introduce).
+    const cookie = await adminCookie(); // asserts 200 + gbrain_admin cookie
+    expect(cookie).toContain('gbrain_admin=');
+
+    const issue = await fetch(`${BASE}/admin/api/issue-magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_BOOTSTRAP_TOKEN}` },
+      body: '{}',
+    });
+    expect(issue.status).toBe(200);
+    expect(((await issue.json()) as any).url).toContain('/admin/auth/');
+  }, 15_000);
+
+  // MUST REMAIN THE LAST TEST IN THIS FILE — drains the shared admin-auth
+  // rate-limit bucket (see budget note above).
+  test('C6: exceeding the admin-auth rate limit returns 429 with Retry-After', async () => {
+    // adminAuthRateLimiter: max 10 per 60s window. Drive wrong-token logins
+    // until the limiter trips. Prior tests may have consumed part of the
+    // bucket (shared per-IP), so the 429 can arrive early; 23 attempts
+    // guarantees crossing max+1 even if a fixed-window reset lands mid-loop.
+    let limited: Response | null = null;
+    const preLimitStatuses: number[] = [];
+    for (let i = 0; i < 23; i++) {
+      const res = await fetch(`${BASE}/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: 'wrong-token-for-rate-limit' }),
+      });
+      if (res.status === 429) { limited = res; break; }
+      preLimitStatuses.push(res.status);
+      await res.text(); // drain body
+    }
+
+    expect(limited).not.toBeNull();
+    // Every request below the limit stayed a normal 401 (the limiter meters,
+    // it does not reject early).
+    for (const s of preLimitStatuses) expect(s).toBe(401);
+
+    // Retry-After (seconds until the window resets, capped by the 60s window).
+    const retryAfter = limited!.headers.get('retry-after');
+    expect(retryAfter).toBeTruthy();
+    const retrySecs = Number(retryAfter);
+    expect(Number.isFinite(retrySecs)).toBe(true);
+    expect(retrySecs).toBeGreaterThan(0);
+    expect(retrySecs).toBeLessThanOrEqual(60);
+
+    // standardHeaders: true → draft RateLimit headers carry the max (10).
+    expect(limited!.headers.get('ratelimit-limit')).toBe('10');
+
+    // Body is the limiter's configured JSON envelope (object message →
+    // express-rate-limit serializes it as JSON, matching the /admin routes).
+    const limitedBody = JSON.parse(await limited!.text()) as { error: string; message: string };
+    expect(limitedBody.error).toBe('rate_limited');
+    expect(limitedBody.message).toContain('Too many admin auth attempts');
+  }, 60_000);
 });

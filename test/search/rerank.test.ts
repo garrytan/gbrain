@@ -11,7 +11,15 @@
  *  - rerankerFn test seam used over gateway.rerank
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { __setSunsetClockForTests } from '../../src/core/ai/gateway.ts';
+
+// Pin a pre-sunset clock: the auth-audit test below reaches the REAL
+// gateway.rerank with zerank-2; past ZEROENTROPY_SUNSET_DATE the short-circuit
+// would fire before the missing-key check and flip the audited reason from
+// 'auth' to 'sunset_short_circuit' — a deterministic wall-clock time bomb.
+beforeEach(() => __setSunsetClockForTests(() => new Date('2026-09-01T00:00:00Z')));
+afterEach(() => __setSunsetClockForTests(null));
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';

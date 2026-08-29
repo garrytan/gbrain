@@ -34,12 +34,17 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'openai:text-embedding-3-small': { pricePerMTok: 0.02 },
   // Legacy OpenAI ada (still common in older brains)
   'openai:text-embedding-ada-002': { pricePerMTok: 0.10 },
-  // Voyage (https://docs.voyageai.com/docs/pricing, verified 2026-08-15)
+  // Voyage (https://docs.voyageai.com/docs/pricing, verified 2026-08-21)
   'voyage:voyage-4-large':         { pricePerMTok: 0.12 },
   'voyage:voyage-4':               { pricePerMTok: 0.06 },
   'voyage:voyage-4-lite':          { pricePerMTok: 0.02 },
   'voyage:voyage-code-4':          { pricePerMTok: 0.12 },
-  // Voyage rerankers (same pricing page, verified 2026-08-15). Same
+  // Domain + multimodal models (current-models section; multimodal rate is
+  // per 1M TEXT tokens — image pixel-token pricing is out of scope here).
+  'voyage:voyage-finance-2':       { pricePerMTok: 0.12 },
+  'voyage:voyage-law-2':           { pricePerMTok: 0.12 },
+  'voyage:voyage-multimodal-3':    { pricePerMTok: 0.12 },
+  // Voyage rerankers (same pricing page, verified 2026-08-21). Same
   // budget-tracker rerank-kind fallback rationale as the zerank-2 row below.
   'voyage:rerank-2.5':             { pricePerMTok: 0.05 },
   'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
@@ -49,8 +54,14 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // hosted API; no entry means lookupEmbeddingPrice returns `unknown` and the
   // caller prints "estimate unavailable" instead of a wrong number.
   // Legacy Voyage models (same page, "older models" section — no free tokens):
+  // #4344: voyage-3.5 / voyage-3.5-lite are in the hosted recipe list but had
+  // no rows, so upgrade cost estimates showed "unavailable" for their users.
+  'voyage:voyage-3.5':             { pricePerMTok: 0.06 },
+  'voyage:voyage-3.5-lite':        { pricePerMTok: 0.02 },
   'voyage:voyage-3-large':         { pricePerMTok: 0.18 },
   'voyage:voyage-3':               { pricePerMTok: 0.06 },
+  'voyage:voyage-3-lite':          { pricePerMTok: 0.02 },
+  'voyage:voyage-code-3':          { pricePerMTok: 0.18 },
   // ZeroEntropy (https://www.zeroentropy.dev/pricing, verified 2026-07-28)
   'zeroentropyai:zembed-1':        { pricePerMTok: 0.05 },
   // ZeroEntropy reranker (docs/ai-providers/zeroentropy.md — $0.025/1M tokens).
@@ -70,6 +81,18 @@ export type PriceLookupResult =
   | { kind: 'unknown'; provider: string; model: string };
 
 /**
+ * Provider aliases resolved on a lookup miss (#4032). Azure deployments of
+ * OpenAI embedding models bill at the same per-token rates as OpenAI-hosted,
+ * so `azure-openai:<model>` falls back to the `openai:<model>` row. An alias
+ * (not duplicated rows) so new openai entries never drift from their Azure
+ * twins. A model with no twin in the alias target stays `unknown` — fail
+ * closed rather than fabricate a rate.
+ */
+const EMBEDDING_PROVIDER_ALIASES: Record<string, string> = {
+  'azure-openai': 'openai',
+};
+
+/**
  * Resolve a model string into a price-per-1M-tokens. Accepts both
  * `provider:model` and bare `model` forms (bare assumes openai).
  */
@@ -82,6 +105,24 @@ export function lookupEmbeddingPrice(modelString: string): PriceLookupResult {
   const key = `${provider}:${model}`;
   const hit = EMBEDDING_PRICING[key];
   if (hit) return { kind: 'known', pricePerMTok: hit.pricePerMTok, key };
+  const alias = EMBEDDING_PROVIDER_ALIASES[provider];
+  if (alias) {
+    const aliasKey = `${alias}:${model}`;
+    const aliasHit = EMBEDDING_PRICING[aliasKey];
+    if (aliasHit) return { kind: 'known', pricePerMTok: aliasHit.pricePerMTok, key: aliasKey };
+  }
+  // #2504 — nested gateway ids: router providers wrap the upstream vendor in
+  // the model segment ('openrouter:openai/text-embedding-3-large'). On a
+  // miss, re-key on the nested vendor prefix and retry (provider aliases
+  // included via the recursion) — routers bill the upstream vendor's
+  // per-token rate, so the vendor row is the honest estimate. No nested
+  // match → still `unknown` (fail closed, never fabricate). Bounded: each
+  // recursion strips one '/segment'.
+  const slash = model.indexOf('/');
+  if (slash > 0 && slash < model.length - 1) {
+    const nested = lookupEmbeddingPrice(`${model.slice(0, slash)}:${model.slice(slash + 1)}`);
+    if (nested.kind === 'known') return nested;
+  }
   return { kind: 'unknown', provider, model };
 }
 

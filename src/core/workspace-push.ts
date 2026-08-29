@@ -59,6 +59,7 @@ import { execFileSync } from 'child_process';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, detectDefaultBranch, divergenceSafePull } from './git-remote.ts';
 import { loadConfigFileOnly } from './config.ts';
 import { ensureGbrainHome } from './gbrain-home.ts';
+import { invalidateBackupStatus, loadBackupStatus } from './backup/status-file.ts';
 import {
   githubOwnerRepoString,
   readCachedPrivateVerdict,
@@ -498,7 +499,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function aheadCount(root: string, branch: string): number | undefined {
+/** Commits ahead of origin/<branch> (undefined when git can't answer).
+ * Exported for the backup-coverage probe (src/core/backup/coverage.ts). */
+export function aheadCount(root: string, branch: string): number | undefined {
   const out = tryGit(root, ['rev-list', '--count', `origin/${branch}..HEAD`], { timeoutMs: 15_000 });
   if (out === null) return undefined;
   const n = parseInt(out, 10);
@@ -538,6 +541,21 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
       ...(r.ahead !== undefined ? { ahead: r.ahead } : {}),
       repoRoot: root,
     });
+    // Fix-path invalidation: a successful push changes the backup-coverage
+    // answer (workspace failing→ok, unpushed→pushed) — but ONLY when the
+    // cached verdict carried something a push can fix. The routine healthy
+    // stop-push must not delete an ok cache every session (that would defeat
+    // the monthly compute throttle for the healthiest cohort).
+    if (r.ok) {
+      try {
+        const s = loadBackupStatus();
+        if (s && (s.overall === 'warn' || s.totals.failing > 0 || s.totals.unpushed > 0)) {
+          invalidateBackupStatus();
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
     return r;
   };
 

@@ -39,7 +39,7 @@ import {
   VOLUNTEER_DEFAULT_MIN_CONFIDENCE,
 } from '../core/context/volunteer.ts';
 import type { WindowTurn } from '../core/context/entity-salience.ts';
-import { DEFAULT_WINDOW_TURNS, windowTurnCount } from '../core/context/reflex.ts';
+import { DEFAULT_WINDOW_TURNS, windowTurnCount, lexicalArmsEnabled } from '../core/context/reflex.ts';
 import { loadConfig } from '../core/config.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from '../core/context/volunteer-events.ts';
 
@@ -161,6 +161,7 @@ export async function runWatch(engine: BrainEngine, args: string[], deps: WatchI
           // Session dedupe: skipped inside the core BEFORE the gate + cap
           // (O(1) per pointer) so a recurring slug can't starve new pages.
           excludeSlugs: pushedSlugs,
+          lexicalArms: lexicalArmsEnabled(loadConfig()),
         });
       } catch {
         continue; // fail-open per turn: a transient DB error never kills the stream

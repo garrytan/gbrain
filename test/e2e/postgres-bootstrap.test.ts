@@ -130,6 +130,53 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
     expect(idx).toHaveLength(2);
   }, 60_000);
 
+  test('pre-v143 dream_verdicts shape (#4657 wedge class) converges on REAL Postgres', async () => {
+    // #4657: blob CREATE INDEX dream_verdicts_expires_idx references
+    // expires_at, added only by migration v143 — every Postgres brain at
+    // schema v30-v142 wedged on connect. Rewind schema AND version to the
+    // wedged cohort's state, seed a row so v143's judged_at-derived backfill
+    // is exercised, then assert full initSchema convergence.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS dream_verdicts_expires_idx;
+      ALTER TABLE dream_verdicts DROP COLUMN IF EXISTS expires_at;
+      DELETE FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl';
+      INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, judged_at)
+        VALUES ('/tmp/i4657.jsonl', 'i4657hash', true, now() - interval '10 days');
+    `);
+    await engine.setConfig('version', '142');
+
+    await engine.initSchema();
+
+    expect(await engine.getConfig('version')).toBe(String(LATEST_VERSION));
+    // Column converged: NOT NULL with the 30-day default restored by v143.
+    const col = await conn`
+      SELECT is_nullable, column_default FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'dream_verdicts' AND column_name = 'expires_at'
+    `;
+    expect(col).toHaveLength(1);
+    expect(col[0].is_nullable).toBe('NO');
+    expect(String(col[0].column_default)).toContain('30 days');
+    // Pre-TTL row backfilled from judged_at, not stamped with a fresh 30 days.
+    const row = await conn`
+      SELECT (expires_at = judged_at + interval '30 days') AS backfilled
+      FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl'
+    `;
+    expect(row).toHaveLength(1);
+    expect(row[0].backfilled).toBe(true);
+    // Index restored.
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'dream_verdicts' AND indexname = 'dream_verdicts_expires_idx'
+    `;
+    expect(idx).toHaveLength(1);
+    // Clean up the seeded row so it doesn't leak into other suites sharing
+    // the DATABASE_URL database (its expires_at sits ~20 days in the future).
+    await conn.unsafe(`DELETE FROM dream_verdicts WHERE file_path = '/tmp/i4657.jsonl'`);
+  }, 60_000);
+
   test('pre-v7 minion_jobs shape (scanner-sweep wedge class) converges on REAL Postgres', async () => {
     await engine.initSchema();
     const conn = (engine as any).sql;
@@ -155,6 +202,102 @@ describe.skipIf(skip)('PostgresEngine forward-reference bootstrap (E2E)', () => 
         AND indexname IN ('idx_minion_jobs_timeout', 'uniq_minion_jobs_idempotency')
     `;
     expect(idx).toHaveLength(2);
+  }, 60_000);
+
+  test('pre-v136 minion_jobs private-queue shape (dream-inline lifecycle) converges on REAL Postgres', async () => {
+    // v0.46.25 (#4332): the private-queue owner/lease columns are migration-
+    // added AND referenced by the blob partial indexes — the same wedge class
+    // as v121 and pre-v7 above. Strip all three columns + both indexes, then
+    // assert the bootstrap → SCHEMA_SQL replay re-adds every piece.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_recovery;
+      DROP INDEX IF EXISTS idx_minion_jobs_private_queue_owner;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_job_id;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_lease_until;
+    `);
+
+    await engine.initSchema();
+
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'minion_jobs'
+        AND column_name IN ('private_queue_owner_job_id', 'private_queue_owner_token', 'private_queue_lease_until')
+    `;
+    expect(cols).toHaveLength(3);
+    const idx = await conn`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE tablename = 'minion_jobs'
+        AND indexname IN ('idx_minion_jobs_private_queue_recovery', 'idx_minion_jobs_private_queue_owner')
+    `;
+    expect(idx).toHaveLength(2);
+    // The recovery index must come back PARTIAL — the dream-inline predicate
+    // is what keeps the startup recovery scan off the general job table.
+    const recovery = idx.find(
+      (r: { indexname: string; indexdef: string }) => r.indexname === 'idx_minion_jobs_private_queue_recovery',
+    );
+    expect(recovery?.indexdef).toContain('dream-inline-');
+  }, 60_000);
+
+  test('token-only-missing minion_jobs is repaired by the pq_token probe on REAL Postgres (749a7dcb)', async () => {
+    // Partial-upgrade shape: ONLY private_queue_owner_token is missing.
+    // Neither blob index references the token, so SCHEMA_SQL replay cannot
+    // crash on it, and the ledger is already at LATEST so runMigrations won't
+    // re-run v136 — the ONLY repair path is the minion_jobs_pq_token_exists
+    // probe (749a7dcb) triggering the bootstrap's three-column ALTER block.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      ALTER TABLE minion_jobs DROP COLUMN IF EXISTS private_queue_owner_token;
+    `);
+
+    await engine.initSchema();
+
+    const cols = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'minion_jobs'
+        AND column_name = 'private_queue_owner_token'
+    `;
+    expect(cols).toHaveLength(1);
+  }, 60_000);
+
+  test('standalone db.initSchema straddles an old-shaped brain via the shared bootstrap (#4477)', async () => {
+    // src/core/db.ts's module-level initSchema (used by test/e2e/helpers.ts
+    // and legacy callers) replays SCHEMA_SQL directly. Pre-fix it ran NO
+    // forward-reference bootstrap, so a brain whose pages table predates a
+    // blob-indexed column (here: deleted_at ← pages_deleted_at_purge_idx)
+    // wedged on the blob's CREATE INDEX. It now shares
+    // applyPostgresForwardReferenceBootstrap with PostgresEngine.initSchema.
+    await engine.initSchema();
+    const conn = (engine as any).sql;
+    await conn.unsafe(`
+      DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at CASCADE;
+    `);
+
+    // The engine connected in module-singleton style (PostgresEngine.connect
+    // delegates to db.connect), so db.initSchema() runs on the SAME pool —
+    // exactly how test/e2e/helpers.ts drives it. Do NOT db.disconnect()
+    // here: that would tear down the shared singleton under the engine.
+    const db = await import('../../src/core/db.ts');
+    // The path under test: bootstrap → SCHEMA_SQL, no engine.initSchema.
+    await db.initSchema();
+
+    const col = await conn`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'pages' AND column_name = 'deleted_at'
+    `;
+    expect(col).toHaveLength(1);
+    const idx = await conn`
+      SELECT indexname FROM pg_indexes
+      WHERE tablename = 'pages' AND indexname = 'pages_deleted_at_purge_idx'
+    `;
+    expect(idx).toHaveLength(1);
   }, 60_000);
 
   // Migration v120 — schema-lint hardening (#1647 / #171). Postgres-only

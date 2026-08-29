@@ -11,6 +11,6 @@
     { "src": "skills/retrieval-reflex/SKILL.md", "target": "skills/retrieval-reflex/SKILL.md", "mode": "0644" }
   ],
   "resolver_rows_to_append": [
-    "retrieval-reflex | a named person/company/project/place becomes the subject; a brain-page pointer appears in context; \"who is\", \"what do we know about\", \"tell me about\"; about to assert a non-trivial detail about a named entity"
+    "retrieval-reflex | a named person/company/project/place becomes the subject mid-conversation; a brain-page pointer appears in context; about to assert a non-trivial detail about a named entity from memory (explicit lookup questions route to the query skill)"
   ]
 }

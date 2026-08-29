@@ -44,6 +44,8 @@ interface ApplyMigrationsArgs {
   forceAll?: boolean;
   /** v0.30.1 (D6 / X3): bypass verify-hook drift detection on a single run. */
   skipVerify?: boolean;
+  /** #4364: exit 1 when the DB pre-flight probe fails instead of proceeding filesystem-only. */
+  requireDb: boolean;
   help: boolean;
 }
 
@@ -72,6 +74,7 @@ function parseArgs(args: string[]): ApplyMigrationsArgs {
     forceSchema: has('--force-schema'),
     forceAll: has('--force-all') || has('--force'),
     skipVerify: has('--skip-verify'),
+    requireDb: has('--require-db'),
     help: has('--help') || has('-h'),
   };
 }
@@ -102,6 +105,9 @@ Usage:
                                          non-idempotent migrations (D6 escape hatch).
 
 Flags:
+  --require-db                           Exit 1 when the database is unreachable
+                                         instead of continuing with the
+                                         filesystem-only migration plan.
   --mode <always|pain_triggered|off>     Set minion_mode without prompting.
   --host-dir <path>                      Include this directory in host-file walk
                                          (default scope: \$HOME/.claude + \$HOME/.openclaw).
@@ -171,8 +177,29 @@ function buildPlan(idx: CompletedIndex, installed: string, filterVersion?: strin
   return plan;
 }
 
-function printList(plan: Plan, installed: string): void {
-  console.log(`Installed gbrain version: ${installed}\n`);
+/**
+ * #4364: pre-flight DB probe outcome. Surfaced on --list/--dry-run so an
+ * unreachable database is distinguishable from a clean one — both used to
+ * print the identical all-pending plan at exit 0.
+ */
+type DbProbeOutcome =
+  | { status: 'connected'; schemaVer: number; latest: number }
+  | { status: 'unreachable'; reason: string }
+  | { status: 'skipped'; reason: string };
+
+function formatDbProbeLine(probe: DbProbeOutcome): string {
+  if (probe.status === 'connected') {
+    return `Database: connected, schema v${probe.schemaVer} (latest ${probe.latest})`;
+  }
+  if (probe.status === 'unreachable') {
+    return `Database: UNREACHABLE (${probe.reason})`;
+  }
+  return `Database: not probed (${probe.reason})`;
+}
+
+function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
+  console.log(`Installed gbrain version: ${installed}`);
+  console.log(`${formatDbProbeLine(dbProbe)}\n`);
   console.log('  Status   Version   Headline');
   console.log('  -------  --------  -----------------------------------------');
   const rows: Array<{ status: string; m: Migration }> = [
@@ -197,8 +224,9 @@ function printList(plan: Plan, installed: string): void {
   }
 }
 
-function printDryRun(plan: Plan, installed: string): void {
+function printDryRun(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void {
   console.log(`Dry run — installed gbrain version: ${installed}`);
+  console.log(formatDbProbeLine(dbProbe));
   console.log('');
   if (plan.applied.length) {
     console.log('Already applied:');
@@ -364,6 +392,7 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
   // --yes/--non-interactive we apply them here; otherwise we warn and make
   // sure the run does NOT report "All migrations up to date" with exit 0.
   let schemaBehind = false;
+  let dbProbe: DbProbeOutcome = { status: 'skipped', reason: 'no probe attempted' };
   try {
     const { LATEST_VERSION } = await import('../core/migrate.ts');
     const { loadConfig: lc, toEngineConfig } = await import('../core/config.ts');
@@ -378,11 +407,14 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
       // schema lifecycle internally on PGLite (phase A routes in-process),
       // so the warning here adds no information for PGLite users.
       const skipPreflight = cfg.engine === 'pglite';
-      if (!skipPreflight) {
+      if (skipPreflight) {
+        dbProbe = { status: 'skipped', reason: 'pglite manages schema in-process' };
+      } else {
         const eng = await createEngine(toEngineConfig(cfg));
         await eng.connect(toEngineConfig(cfg));
         const verStr = await eng.getConfig('version');
         const schemaVer = parseInt(verStr || '1', 10);
+        dbProbe = { status: 'connected', schemaVer, latest: LATEST_VERSION };
         const { runMigrations } = await import('../core/migrate.ts');
         schemaBehind = await resolveSchemaBehind({
           schemaVer,
@@ -395,9 +427,17 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
         await eng.disconnect();
       }
     }
-  } catch {
-    // Non-fatal: if DB is unreachable, orchestrator migrations can still
-    // run their filesystem-only phases.
+  } catch (err) {
+    // Non-fatal by default: if DB is unreachable, orchestrator migrations can
+    // still run their filesystem-only phases. #4364: keep the (redacted)
+    // reason so --list/--dry-run say UNREACHABLE and --require-db fails hard —
+    // connect errors are exactly what users paste into issues and CI logs.
+    const { redactUrlsInText } = await import('../core/url-redact.ts');
+    const { redactConnectionInfo } = await import('../core/audit/redact-connection-info.ts');
+    dbProbe = {
+      status: 'unreachable',
+      reason: redactConnectionInfo(redactUrlsInText(err instanceof Error ? err.message : String(err))),
+    };
   }
 
   const completed = loadCompletedMigrations();
@@ -422,8 +462,16 @@ export async function runApplyMigrations(args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if (cli.list) { printList(plan, installed); process.exit(0); }
-  if (cli.dryRun) { printDryRun(plan, installed); process.exit(0); }
+  // #4364: --require-db turns an unreachable DB into a hard failure instead
+  // of a filesystem-only plan that renders identically to a clean database.
+  const listExit = cli.requireDb && dbProbe.status === 'unreachable' ? 1 : 0;
+  if (cli.list) { printList(plan, installed, dbProbe); process.exit(listExit); }
+  if (cli.dryRun) { printDryRun(plan, installed, dbProbe); process.exit(listExit); }
+  if (cli.requireDb && dbProbe.status === 'unreachable') {
+    console.error(formatDbProbeLine(dbProbe));
+    console.error('--require-db: database is unreachable; aborting before orchestrators run.');
+    process.exit(1);
+  }
 
   const toRun: Migration[] = [...plan.partial, ...plan.pending];
   if (toRun.length === 0) {
@@ -526,4 +574,5 @@ export const __testing = {
   indexCompleted,
   statusForVersion,
   resolveSchemaBehind,
+  formatDbProbeLine,
 };

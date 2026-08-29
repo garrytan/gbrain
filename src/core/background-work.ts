@@ -18,25 +18,76 @@
  * exit points (op-dispatch success finally, op-dispatch error catch, CLI_ONLY
  * finally) without repeating the sink list at each.
  *
- *   register (at module import) ─┐
- *     last-retrieved (order 1)   │
- *     facts          (order 0)   ├─► Map<name, drainer>
- *     search-cache   (order 2)   │
- *     eval-capture   (order 3)   ┘
- *                                      │  CLI exit
- *                                      ▼
- *   drainAllBackgroundWorkForCliExit ──► sort by (order, name)
- *                                          for each: await drain(timeoutMs)
- *                                                    if unfinished>0 && abort:
- *                                                       await abort()   ◄─ facts shutdown()
- *                                      ▼
- *                                  engine.disconnect()  (caller)
+ *   register (at module import) ──┐
+ *     facts            (order 0)  │
+ *     last-retrieved   (order 1)  │
+ *     search-cache     (order 2)  ├─► Map<name, drainer>
+ *     eval-capture     (order 3)  │
+ *     volunteer-events (order 4)  │
+ *     search-telemetry (order 5)  ┘   (#4143 — was the unregistered 5th sink)
+ *                                      │  CLI exit                │ engine.disconnect() (#4143)
+ *                                      ▼                          ▼
+ *   drainAllBackgroundWorkForCliExit   drainBackgroundWorkBeforeDisconnect
+ *      mode 'exit', abort allowed         mode 'disconnect', NO abort
+ *              └───────────► sort by (order, name) ◄───────────┘
+ *                              for each: await drain(timeoutMs, mode)
+ *                                        if unfinished>0 && abort && allowAbort:
+ *                                           await abort()   ◄─ facts shutdown()
  *
  * Registration MUST live in the enqueue-owning module (so "module not imported
  * ⇒ no work enqueued ⇒ nothing to drain" holds). The Map is keyed by name so a
  * re-import / test mock REPLACES rather than duplicating (an array would
  * double-register).
  */
+
+/**
+ * Which exit point is draining (#4143). 'exit' = CLI teardown, engine still
+ * live afterward until the caller disconnects — sinks may flush residual
+ * buffers. 'disconnect' = an engine is mid-disconnect (its handle may already
+ * be nulled) — sinks must only await IN-FLIGHT work settling and must not
+ * start new writes (a lossy buffer stays lossy here by design).
+ *
+ * NOTE: this module stays a zero-import leaf ON PURPOSE — both engines import
+ * it statically (check-engine-dynamic-import files), so any import added here
+ * risks a cycle. The warn below is a local once-per-process Set, not
+ * utils.warnOncePerProcess, for exactly that reason.
+ */
+export type BackgroundWorkDrainMode = 'exit' | 'disconnect';
+
+/**
+ * Shared teardown budgets (#4284). This module is the natural home: it is the
+ * zero-import leaf that every teardown participant (both engines,
+ * cli-force-exit, process-watchdog) already imports, so budget numbers defined
+ * here cannot drift between the components that must agree on them.
+ */
+
+/**
+ * setTimeout delay ceiling: Node/Bun overflow-clamp anything above 2^31−1 to
+ * ~1ms (TimeoutOverflowWarning), so an oversized delay must be clamped to
+ * mean "longer bound", never an instant spurious fire.
+ */
+export const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
+/** Per-sink bound for one drain pass (the `runDrainers` default below). */
+export const SINK_DRAIN_TIMEOUT_MS = 2000;
+
+/**
+ * #4143/#4284 — the in-loop bound for PGlite.close() inside disconnect().
+ * Read per call (not module load) so tests and incident responders can set
+ * GBRAIN_PGLITE_CLOSE_TIMEOUT_MS without subprocess gymnastics; floor 1s,
+ * ceiling 2^31−1. Lives here (not in the engine) so cli-force-exit's
+ * computed teardown deadline budgets the SAME bound the engine will actually
+ * honor — a hardcoded copy drifted the moment the bound became tunable.
+ * HONEST SCOPE lives at the close site in pglite-engine.ts: this bound
+ * catches a close that still YIELDS; a wedged loop needs the out-of-band
+ * watchdog.
+ */
+export function pgliteCloseTimeoutMs(): number {
+  return Math.min(
+    MAX_TIMER_DELAY_MS,
+    Math.max(1000, Number(process.env.GBRAIN_PGLITE_CLOSE_TIMEOUT_MS ?? '') || 5000),
+  );
+}
 
 export interface BackgroundWorkDrainer {
   /** Stable identity; also the Map key (idempotent registration). */
@@ -47,8 +98,13 @@ export interface BackgroundWorkDrainer {
    * last-retrieved / search-cache drains. Ties break by name for determinism.
    */
   order: number;
-  /** Resolve when in-flight work settles OR the bound elapses; report leftovers. */
-  drain(timeoutMs: number): Promise<{ unfinished: number }>;
+  /**
+   * Resolve when in-flight work settles OR the bound elapses; report leftovers.
+   * `mode` (#4143) tells the sink whether residual buffers may flush ('exit',
+   * engine still live) or only in-flight work may be awaited ('disconnect').
+   * Pre-#4143 drainers that ignore the parameter keep their exact behavior.
+   */
+  drain(timeoutMs: number, mode: BackgroundWorkDrainMode): Promise<{ unfinished: number }>;
   /**
    * Optional hard-stop for stragglers (facts-queue: `shutdown()`). AWAITED by
    * the registry so the aborted job's DB write settles against a live engine
@@ -101,18 +157,53 @@ export function __listDrainerNamesForTest(): string[] {
  * the subsequent disconnect.
  */
 export async function drainAllBackgroundWorkForCliExit(opts?: { timeoutMs?: number }): Promise<void> {
-  const timeoutMs = opts?.timeoutMs ?? 2000;
+  await runDrainers(opts?.timeoutMs ?? SINK_DRAIN_TIMEOUT_MS, { allowAbort: true, mode: 'exit' });
+}
+
+/**
+ * ENGINE-DISCONNECT drain (#4143). Called by BOTH engines' `disconnect()` so
+ * an in-flight fire-and-forget statement settles before the underlying handle
+ * closes — PGLite's `close()` deadlocks PERMANENTLY (close's promise AND the
+ * in-flight query's promise never settle) when a statement is in flight.
+ * Unlike the CLI-exit drain this NEVER calls `abort()` (a permanent
+ * process-level state change, wrong for a long-lived `gbrain serve` that
+ * disconnects one engine) and passes mode 'disconnect' so sinks skip residual
+ * buffer flushes (new writes would fail against the already-nulled handle
+ * anyway — that failing fast is intended, not a bug).
+ *
+ * Best-effort and non-throwing; O(~0) when every sink's fast path is empty,
+ * which is the ordinary case for the hundreds of test `afterEach(disconnect)`
+ * hooks.
+ */
+export async function drainBackgroundWorkBeforeDisconnect(opts?: { timeoutMs?: number }): Promise<void> {
+  await runDrainers(opts?.timeoutMs ?? SINK_DRAIN_TIMEOUT_MS, { allowAbort: false, mode: 'disconnect' });
+}
+
+const warnedOnce = new Set<string>();
+
+async function runDrainers(
+  timeoutMs: number,
+  opts: { allowAbort: boolean; mode: BackgroundWorkDrainMode },
+): Promise<void> {
   const ordered = [...drainers.values()].sort(
     (a, b) => a.order - b.order || a.name.localeCompare(b.name),
   );
   for (const d of ordered) {
     try {
-      const { unfinished } = await d.drain(timeoutMs);
-      if (unfinished > 0 && d.abort) {
+      const { unfinished } = await d.drain(timeoutMs, opts.mode);
+      if (unfinished > 0 && d.abort && opts.allowAbort) {
         // codex #9: AWAIT — the facts:absorb job writes its absorb-log to the
         // DB on settle; the abort must finish against a live engine before the
         // caller disconnects.
         await d.abort();
+      } else if (unfinished > 0 && !opts.allowAbort) {
+        // #4143: a silent partial drain at disconnect is the invisible-failure
+        // class this registry exists to kill — say it once per sink.
+        const key = `drain-unfinished:${d.name}`;
+        if (!warnedOnce.has(key)) {
+          warnedOnce.add(key);
+          console.error(`[background-work] sink '${d.name}' still had ${unfinished} unfinished item(s) after the ${timeoutMs}ms disconnect drain`);
+        }
       }
     } catch {
       /* best-effort; never block disconnect on one sink's failure */

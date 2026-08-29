@@ -18,6 +18,16 @@
  * double-encode shape. It is heuristic by design (whole-span correlation); the
  * real backstop is the DATABASE_URL-gated e2e parity test. Keep both.
  *
+ * D3 extension: it ALSO flags UNCAST positional binds ($N with no cast at all)
+ * into known-JSONB columns fed by JSON.stringify. Postgres resolves an uncast
+ * param's type from its target column (Describe returns jsonb), so the driver
+ * re-serializes the already-stringified value — the same double-encode as
+ * `$N::jsonb`, with no cast token to grep for (the propose-takes
+ * dedup_against_fence_rows shape). Detection maps columns to binds via
+ * `INSERT INTO t (cols...) VALUES (...)` position and `col = $N` assignment,
+ * then verifies JSON.stringify feeds THAT param when the params argument is an
+ * array literal (falls back to whole-span correlation otherwise).
+ *
  * Allowed forms (NOT flagged):
  *   - `$N::text::jsonb` + JSON.stringify  (the fix: binds as text, cast parses it)
  *   - `$N::text[]`                        (the unnest path — arrays bind fine)
@@ -74,6 +84,97 @@ function stripComments(s) {
   return s.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
+// JSONB columns declared in src/core/migrate.ts that are written through the
+// positional raw path. An uncast `$N` bound to one of these resolves to a
+// jsonb-typed param server-side and double-encodes a JSON.stringify'd string
+// exactly like `$N::jsonb` does. Keep in sync with migrate.ts when a new
+// JSONB column gains a positional write site. Deliberately excludes
+// short/ambiguous names (`config`, `data`, `meta`, `value_json`, ...) that
+// also exist as non-JSONB columns or JS identifiers — those stay covered by
+// the cast-form check + the e2e parity tests.
+const KNOWN_JSONB_COLUMNS = [
+  'dedup_against_fence_rows',
+  'domain_scorecards',
+  'edge_metadata',
+  'dim_scores',
+  'source_tier_breakdown',
+  'standing_entities',
+  'surfaced_slugs',
+  'receipt_json',
+  'report_json',
+  'response_json',
+  'completed_keys',
+];
+
+/** Split a balanced span on top-level commas, respecting (), [], {}, strings,
+ *  template literals, and comments. Mirrors findSpan's mode machine. */
+function splitTopLevel(s) {
+  const parts = [];
+  let depth = 0;
+  let mode = 'code';
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const n = s[i + 1];
+    if (mode === 'line') { if (c === '\n') mode = 'code'; continue; }
+    if (mode === 'block') { if (c === '*' && n === '/') { mode = 'code'; i++; } continue; }
+    if (mode === 'sq') { if (c === '\\') { i++; continue; } if (c === "'") mode = 'code'; continue; }
+    if (mode === 'dq') { if (c === '\\') { i++; continue; } if (c === '"') mode = 'code'; continue; }
+    if (mode === 'tpl') { if (c === '\\') { i++; continue; } if (c === '`') mode = 'code'; continue; }
+    if (c === '/' && n === '/') { mode = 'line'; i++; continue; }
+    if (c === '/' && n === '*') { mode = 'block'; i++; continue; }
+    if (c === "'") { mode = 'sq'; continue; }
+    if (c === '"') { mode = 'dq'; continue; }
+    if (c === '`') { mode = 'tpl'; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (c === ',' && depth === 0) { parts.push(s.slice(start, i)); start = i + 1; }
+  }
+  parts.push(s.slice(start));
+  return parts;
+}
+
+/** Uncast `$N` binds into known-JSONB columns inside a call span.
+ *  Returns [{ col, n }]. Two shapes: `col = $N` (UPDATE SET / WHERE) and
+ *  positional mapping through `INSERT INTO t (cols...) VALUES (vals...)`. */
+function findUncastJsonbColumnBinds(span) {
+  const found = [];
+  for (const col of KNOWN_JSONB_COLUMNS) {
+    const re = new RegExp('\\b' + col + '\\s*=\\s*\\$(\\d+)(?!\\s*::)', 'gi');
+    let m;
+    while ((m = re.exec(span))) found.push({ col, n: Number(m[1]) });
+  }
+  const insRe = /INSERT\s+INTO\s+\S+\s*\(([^)]*)\)\s*VALUES\s*\(/gi;
+  let mi;
+  while ((mi = insRe.exec(span))) {
+    const cols = mi[1].split(',').map((c) => c.trim().toLowerCase());
+    const [vs, ve] = findSpan(span, insRe.lastIndex - 1);
+    const values = splitTopLevel(span.slice(vs, ve)).map((v) => v.trim());
+    for (let i = 0; i < cols.length && i < values.length; i++) {
+      if (!KNOWN_JSONB_COLUMNS.includes(cols[i])) continue;
+      const bare = values[i].match(/^\$(\d+)$/);
+      if (bare) found.push({ col: cols[i], n: Number(bare[1]) });
+    }
+  }
+  return found;
+}
+
+/** Best-effort: the text of the Nth (1-based) positional param when the call's
+ *  params argument is an array literal. Returns null when it isn't (variable
+ *  reference, spread, ...) — caller falls back to whole-span correlation. */
+function nthParamText(span, n) {
+  const args = splitTopLevel(span);
+  for (let a = 1; a < args.length; a++) {
+    const arg = args[a].trim();
+    if (!arg.startsWith('[')) continue;
+    const close = arg.lastIndexOf(']');
+    if (close === -1) return null;
+    const elems = splitTopLevel(arg.slice(1, close));
+    return elems[n - 1] ?? null;
+  }
+  return null;
+}
+
 const violations = [];
 
 function scanFile(file) {
@@ -87,6 +188,8 @@ function scanFile(file) {
     const span = src.slice(s, e);
     if (/jsonb-guard-ok/.test(span)) continue;
     if (!/JSON\.stringify\s*\(/.test(stripComments(span))) continue;
+    const line = src.slice(0, s).split('\n').length;
+
     // A positional `$N::jsonb` that is NOT `$N::text::jsonb`.
     const jsonbRe = /\$\d+\s*::\s*jsonb\b/g;
     let j;
@@ -97,11 +200,25 @@ function scanFile(file) {
       badText = j[0].replace(/\s+/g, '');
       break;
     }
-    if (!badText) continue;
-    const line = src.slice(0, s).split('\n').length;
-    violations.push(
-      `${file}:${line}  ${method}(...) binds JSON.stringify into ${badText} — use $N::text::jsonb or pass a raw object (executeRawJsonb / sql.json)`,
-    );
+    if (badText) {
+      violations.push(
+        `${file}:${line}  ${method}(...) binds JSON.stringify into ${badText} — use $N::text::jsonb or pass a raw object (executeRawJsonb / sql.json)`,
+      );
+      continue;
+    }
+
+    // D3 extension: uncast `$N` into a known-JSONB column. Postgres describes
+    // the param as jsonb from the target column, so the same double-encode
+    // fires with no `::jsonb` token in the SQL.
+    for (const bind of findUncastJsonbColumnBinds(span)) {
+      const nth = nthParamText(span, bind.n);
+      const feeds = nth === null ? true : /JSON\.stringify\s*\(/.test(stripComments(nth));
+      if (!feeds) continue;
+      violations.push(
+        `${file}:${line}  ${method}(...) binds JSON.stringify into uncast $${bind.n} targeting JSONB column '${bind.col}' — the param resolves to jsonb server-side and double-encodes; use $${bind.n}::text::jsonb or pass a raw object (executeRawJsonb / sql.json)`,
+      );
+      break;
+    }
   }
 }
 

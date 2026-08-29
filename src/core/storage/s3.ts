@@ -16,8 +16,16 @@ export class S3Storage implements StorageBackend {
   private client: S3Client;
   private bucket: string;
 
-  constructor(config: StorageConfig) {
+  constructor(config: StorageConfig, client?: S3Client) {
     this.bucket = config.bucket;
+
+    // Test seam: an injected client (stub or preconfigured S3Client) is used
+    // as-is — no construction, no credential validation.
+    if (client) {
+      this.client = client;
+      return;
+    }
+
     const region = config.region || 'us-east-1';
 
     if (!config.accessKeyId || !config.secretAccessKey) {

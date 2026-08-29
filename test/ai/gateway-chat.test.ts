@@ -34,7 +34,7 @@ import { listRecipes, getRecipe } from '../../src/core/ai/recipes/index.ts';
 import type { Recipe } from '../../src/core/ai/types.ts';
 
 describe('chat touchpoint — recipe registry', () => {
-  test('all six chat-capable providers ship a chat touchpoint with supports_subagent_loop', () => {
+  test('all hosted tool-loop providers ship a chat touchpoint with supports_subagent_loop', () => {
     const expected = ['anthropic', 'openai', 'google', 'deepseek', 'groq', 'together'];
     for (const id of expected) {
       const r = getRecipe(id);
@@ -45,27 +45,56 @@ describe('chat touchpoint — recipe registry', () => {
     }
   });
 
-  test('only Anthropic and model-family-gated OpenRouter claim supports_prompt_cache', () => {
+  test('the set of recipes declaring supports_prompt_cache is the expected one', () => {
+    // The flag answers "does this provider cache prompts at all" — what
+    // capabilities.ts reads to decide whether the subagent loop runs hot.
+    // Explicit client-side markers (Anthropic's cache_control), automatic
+    // server-side prefix caching (OpenAI, DeepSeek), and a local server that
+    // always caches (llama-server) all count.
+    //
+    // This pins the CURRENT declarations, not a claim that every other
+    // provider is cache-less: some recipes here still declare false while
+    // their vendor does cache (moonshot). Correcting those needs per-model
+    // predicates rather than a boolean, so they are tracked separately —
+    // when one is fixed, add it here.
+    // Per-model predicate where caching depends on the model generation or the
+    // routed family — OpenRouter by routed model family (openai/* +
+    // anthropic/claude-*), Google by Gemini version (implicit caching is
+    // 2.5+), OpenAI by the gpt-4o/o-series generation; a plain boolean where
+    // it is a property of the whole provider. Anything else must declare no
+    // caching.
+    const PREDICATE = new Set(['openai', 'openrouter', 'google']);
+    const ALWAYS_CACHES = new Set(['anthropic', 'deepseek', 'llama-server']);
     for (const r of listRecipes()) {
       if (!r.touchpoints.chat) continue;
-      if (r.id === 'anthropic') {
-        expect(r.touchpoints.chat.supports_prompt_cache).toBe(true);
-      } else if (r.id === 'openrouter') {
-        // Family-scoped predicate (openai/* + anthropic/claude-*), never a
-        // blanket true — see recipe-openrouter.test.ts for the model matrix.
-        expect(typeof r.touchpoints.chat.supports_prompt_cache).toBe('function');
+      const flag = r.touchpoints.chat.supports_prompt_cache;
+      if (PREDICATE.has(r.id)) {
+        expect(typeof flag, `${r.id} should gate caching per model`).toBe('function');
+      } else if (ALWAYS_CACHES.has(r.id)) {
+        expect(flag, `${r.id} should declare caching`).toBe(true);
       } else {
-        expect(r.touchpoints.chat.supports_prompt_cache ?? false).toBe(false);
+        expect(flag ?? false, `${r.id} should not declare caching`).toBe(false);
       }
     }
   });
 
-  test('embedding-only providers (voyage, ollama) do NOT declare chat', () => {
+  test('Voyage remains embedding-only', () => {
     expect(getRecipe('voyage')!.touchpoints.chat).toBeUndefined();
-    expect(getRecipe('ollama')!.touchpoints.chat).toBeUndefined();
+  });
+
+  test('Ollama declares local chat without subagent tool-loop support', () => {
+    const chat = getRecipe('ollama')!.touchpoints.chat;
+    expect(chat).toBeDefined();
+    expect(chat!.models).toContain('qwen2.5-coder:14b');
+    expect(chat!.supports_tools).toBe(false);
+    expect(chat!.supports_subagent_loop).toBe(false);
+    expect(chat!.supports_prompt_cache).toBe(false);
+    expect(chat!.cost_per_1m_input_usd).toBe(0);
+    expect(chat!.cost_per_1m_output_usd).toBe(0);
   });
 
   test('openai-compat chat recipes have base_url_default', () => {
+    expect(getRecipe('ollama')!.base_url_default).toBe('http://localhost:11434/v1');
     expect(getRecipe('deepseek')!.base_url_default).toBe('https://api.deepseek.com/v1');
     expect(getRecipe('groq')!.base_url_default).toBe('https://api.groq.com/openai/v1');
     expect(getRecipe('together')!.base_url_default).toBe('https://api.together.xyz/v1');
@@ -162,17 +191,16 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint accepts chat for chat-capable native + openai-compat providers', () => {
     expect(() => assertTouchpoint(getRecipe('anthropic')!, 'chat', 'claude-opus-4-7')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('openai')!, 'chat', 'gpt-5.2')).not.toThrow();
-    expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.0-flash')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('google')!, 'chat', 'gemini-2.5-flash')).not.toThrow();
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-v4-flash')).not.toThrow();
     // Legacy id retired by DeepSeek 2026-07-24 (#1255): still passes local
     // validation (openai-compat tier), rejection surfaces at the provider.
     expect(() => assertTouchpoint(getRecipe('deepseek')!, 'chat', 'deepseek-chat')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'qwen2.5-coder:14b')).not.toThrow();
   });
 
   test('assertTouchpoint rejects chat on embedding-only providers with a fix hint', () => {
     expect(() => assertTouchpoint(getRecipe('voyage')!, 'chat', 'voyage-3'))
-      .toThrow(AIConfigError);
-    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'nomic-embed-text'))
       .toThrow(AIConfigError);
   });
 
@@ -190,6 +218,7 @@ describe('chat touchpoint — model resolver + aliases (Codex F-OV-5)', () => {
   test('assertTouchpoint accepts arbitrary model on openai-compat tier', () => {
     // openai-compat lets users pass models not declared in the recipe (provider may host more)
     expect(() => assertTouchpoint(getRecipe('groq')!, 'chat', 'some-future-model')).not.toThrow();
+    expect(() => assertTouchpoint(getRecipe('ollama')!, 'chat', 'locally-installed-model')).not.toThrow();
   });
 });
 
@@ -357,6 +386,41 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     expect(providerOptions).toBeUndefined();
   });
 
+  test('call-scoped providerOptions merge last without dropping configured siblings', async () => {
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'deepseek:deepseek-v4-flash',
+      provider_chat_options: {
+        deepseek: { temperature: 0.2 },
+      },
+      env: { DEEPSEEK_API_KEY: 'fake' },
+    }, {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      deepseek: { temperature: 0.2, thinking: { type: 'disabled' } },
+    });
+  });
+
+  test('call-scoped providerOptions win over configured options on key conflict', async () => {
+    // The call site pins behavior it depends on (e.g. the triage judge
+    // disabling DeepSeek thinking); config-level provider_chat_options must
+    // not silently override it.
+    const providerOptions = await captureProviderOptions({
+      chat_model: 'deepseek:deepseek-v4-flash',
+      provider_chat_options: {
+        deepseek: { thinking: { type: 'enabled' } },
+      },
+      env: { DEEPSEEK_API_KEY: 'fake' },
+    }, {
+      providerOptions: { deepseek: { thinking: { type: 'disabled' } } },
+    });
+
+    expect(providerOptions).toEqual({
+      deepseek: { thinking: { type: 'disabled' } },
+    });
+  });
+
   test('anthropic cacheControl survives provider_chat_options merging', async () => {
     // gbrain#2490: this call-level cacheControl is real (not a no-op) —
     // @ai-sdk/anthropic serializes it as the Anthropic API's documented
@@ -380,5 +444,172 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
         thinking: { type: 'disabled' },
       },
     });
+  });
+});
+
+describe('chat touchpoint — per-part providerMetadata round trip (#4201)', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  const SIG = { google: { thoughtSignature: 'opaque-turn1-signature' } };
+
+  test('chat() captures part providerMetadata onto ChatBlocks (inbound half)', async () => {
+    __setGenerateTextTransportForTests(async () => ({
+      content: [
+        { type: 'text', text: 'calling a tool', providerMetadata: SIG },
+        { type: 'tool-call', toolCallId: 'g1', toolName: 'search', input: { q: 'x' }, providerMetadata: SIG },
+      ],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    }) as any);
+    configureGateway({
+      chat_model: 'google:gemini-3-pro-preview',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+    const result = await chat({
+      model: 'google:gemini-3-pro-preview',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const toolCall = result.blocks.find(b => b.type === 'tool-call') as any;
+    expect(toolCall.providerMetadata).toEqual(SIG);
+    const text = result.blocks.find(b => b.type === 'text') as any;
+    expect(text.providerMetadata).toEqual(SIG);
+  });
+
+  test('next-turn request echoes the signature as providerOptions (outbound half)', async () => {
+    let capturedMessages: any[] | undefined;
+    __setGenerateTextTransportForTests(async (args: any) => {
+      capturedMessages = args.messages;
+      return {
+        content: [{ type: 'text', text: 'done' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: 'google:gemini-3-pro-preview',
+      env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+    });
+    // Turn-2 request: the transcript contains turn 1's tool-call block WITH
+    // the captured metadata (exactly what toolLoop pushes into messages) plus
+    // the tool-result user turn.
+    await chat({
+      model: 'google:gemini-3-pro-preview',
+      messages: [
+        { role: 'user', content: 'hello' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'g1', toolName: 'search', input: { q: 'x' }, providerMetadata: SIG }],
+        },
+        {
+          role: 'user',
+          content: [{ type: 'tool-result', toolCallId: 'g1', toolName: 'search', output: { hits: 1 } }],
+        },
+      ],
+    });
+    expect(capturedMessages).toBeDefined();
+    const assistant = (capturedMessages as any[]).find(m => m.role === 'assistant');
+    expect(assistant.content[0].providerOptions).toEqual(SIG);
+  });
+});
+
+// OpenAI's Responses API requires every `function_call` item in a replayed
+// transcript to be paired with the `reasoning` item that produced it, or the
+// NEXT turn 400s: "Item '<fc_id>' of type 'function_call' was provided
+// without its required 'reasoning' item: '<rs_id>'." Reproduced live against
+// openai:gpt-5.6-luna in a 2-turn tool-calling conversation: turn 1 captured
+// zero reasoning blocks (chat() silently dropped the `reasoning` part) and
+// turn 2 failed with exactly that message; after this fix turn 1 captures
+// the reasoning block and turn 2 completes. This suite covers the inbound
+// capture half with the SAME #4201 providerMetadata channel `text`/`tool-call`
+// already use — see gateway-model-messages.test.ts for the outbound echo half.
+describe('chat touchpoint — reasoning-item round trip (OpenAI Responses API)', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  const REASONING_SIG = { openai: { itemId: 'rs_abc123', reasoningEncryptedContent: 'opaque-blob' } };
+
+  test('chat() captures a reasoning part into a ChatBlock (inbound half)', async () => {
+    __setGenerateTextTransportForTests(async () => ({
+      content: [
+        { type: 'reasoning', text: 'weighing today vs. the forecast...', providerMetadata: REASONING_SIG },
+        { type: 'tool-call', toolCallId: 'c1', toolName: 'get_forecast', input: { city: 'Tokyo' } },
+      ],
+      finishReason: 'tool-calls',
+      usage: { inputTokens: 5, outputTokens: 5 },
+    }) as any);
+    configureGateway({ chat_model: 'openai:gpt-5.6-luna', env: { OPENAI_API_KEY: 'fake' } });
+    const result = await chat({
+      model: 'openai:gpt-5.6-luna',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const reasoning = result.blocks.find(b => b.type === 'reasoning') as any;
+    expect(reasoning).toBeDefined();
+    expect(reasoning.text).toBe('weighing today vs. the forecast...');
+    expect(reasoning.providerMetadata).toEqual(REASONING_SIG);
+    // Never leaks into the final answer text (that's the model's actual reply, not its thinking).
+    expect(result.text).toBe('');
+  });
+
+  test('a reasoning part with a non-string text field does not poison the call', async () => {
+    __setGenerateTextTransportForTests(async () => ({
+      content: [
+        { type: 'reasoning', text: null },
+        { type: 'text', text: 'ok' },
+      ],
+      finishReason: 'stop',
+      usage: { inputTokens: 1, outputTokens: 1 },
+    }) as any);
+    configureGateway({ chat_model: 'openai:gpt-5.6-luna', env: { OPENAI_API_KEY: 'fake' } });
+    const result = await chat({
+      model: 'openai:gpt-5.6-luna',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const reasoning = result.blocks.find(b => b.type === 'reasoning') as any;
+    expect(reasoning.text).toBe('');
+    expect(result.text).toBe('ok');
+  });
+});
+
+describe('chat — typed provider error status carried to the top level', () => {
+  beforeEach(() => {
+    resetGateway();
+    __setGenerateTextTransportForTests(null);
+  });
+
+  test('claude-cli 429 envelope error keeps apiErrorStatus readable on the normalized error', async () => {
+    // normalizeAIError wraps provider errors (here in AITransientError); the
+    // status a caller branches on must survive as a top-level property, not
+    // only inside `cause`.
+    const { ClaudeCliProcessError } = await import('../../src/core/ai/providers/claude-cli-language-model.ts');
+    const { AITransientError } = await import('../../src/core/ai/errors.ts');
+    __setGenerateTextTransportForTests(async () => {
+      throw new ClaudeCliProcessError(
+        'claude-cli API error 429: monthly spend limit reached',
+        { apiErrorStatus: 429, exitCode: 1 },
+      );
+    });
+    configureGateway({ chat_model: 'claude-cli:claude-sonnet-4-6', env: {} });
+
+    let caught: unknown;
+    try {
+      await chat({
+        model: 'claude-cli:claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(AITransientError);
+    const err = caught as InstanceType<typeof AITransientError> & { apiErrorStatus?: number };
+    expect(err.message).toContain('claude-cli API error 429');
+    expect(err.apiErrorStatus).toBe(429);
+    // The original typed error stays reachable as the cause.
+    expect(err.cause).toBeInstanceOf(ClaudeCliProcessError);
   });
 });

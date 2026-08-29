@@ -9,12 +9,34 @@
  *   - 4-strategy parse fallback for malformed JSON
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import {
   cosineSimilarity,
   classifyAgainstCandidates,
 } from '../src/core/facts/classify.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import type { FactRow } from '../src/core/engine.ts';
+
+/**
+ * Two tests below pin the NO-CHAT-PROVIDER branch (classifier unavailable →
+ * cosine fallback). They used to just assume it: legacy-embedding-preload
+ * snapshots `env: { ...process.env }` into the gateway, so any provider key
+ * that reaches the snapshot makes `isAvailable('chat')` true and the tests
+ * take the LLM classifier path — real billable calls from a unit test.
+ * provider-keys-preload now strips ambient keys before the snapshot, but
+ * that is an environmental guarantee; pin the precondition in-file with an
+ * explicitly empty gateway env (the override mechanism the legacy preload
+ * documents). resetGateway() restores the baseline for later files in the
+ * shard (#3554 makes it re-apply the legacy config, not unconfigure).
+ */
+beforeAll(() => {
+  configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+});
+
+afterAll(() => {
+  resetGateway();
+});
 
 function makeFact(overrides: Partial<FactRow> & { id: number }): FactRow {
   return {
@@ -94,8 +116,8 @@ describe('classifyAgainstCandidates', () => {
       { fact: 'new', kind: 'fact', embedding: a },
       candidates,
     );
-    // Without API key in test env, isAvailable('chat') is false → straight to
-    // cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
+    // Gateway configured with env:{} above → isAvailable('chat') is false →
+    // straight to cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
     expect(result.decision).toBe('duplicate');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
   });
@@ -106,9 +128,41 @@ describe('classifyAgainstCandidates', () => {
       { fact: 'new', kind: 'fact', embedding: null },
       candidates,
     );
-    // Without API key in test env, isAvailable('chat') is false → cosine fallback path.
-    // newFact has no embedding so cosine fallback can't compute → independent.
+    // Gateway configured with env:{} above → isAvailable('chat') is false →
+    // cosine fallback path. newFact has no embedding so cosine fallback can't
+    // compute → independent.
     expect(result.decision).toBe('independent');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
+  });
+});
+
+describe('classify gate — key-aware, engine-free (CX10)', () => {
+  test('unservable classifier model degrades to cosine fallback, never throws', async () => {
+    const { withEnv } = await import('./helpers/with-env.ts');
+    // Deterministic gate: clear any gateway/transport state a sibling file in
+    // this shard's process left behind — the test must exercise the
+    // unavailability gate, not a leftover stub or a network failure.
+    const { resetGateway, __setChatTransportForTests } = await import('../src/core/ai/gateway.ts');
+    resetGateway();
+    __setChatTransportForTests(null);
+    await withEnv({
+      ANTHROPIC_API_KEY: undefined,
+      OPENAI_API_KEY: undefined,
+      GBRAIN_MODEL: undefined,
+      GBRAIN_HOME: '/nonexistent-gbrain-home-classify-test',
+    }, async () => {
+      const existing = makeFact({ id: 1, embedding: vec(1, 0, 0) });
+      // Keyless env → resolveTierDefault('utility') yields the Anthropic
+      // default whose key is absent → gate fails (or, if a sibling test file
+      // left a transport stub, the call itself fails) → cosine fallback at
+      // ≥0.92 → duplicate. Either path must land on cosine_fallback.
+      const r = await classifyAgainstCandidates(
+        { fact: 'x', kind: 'fact', embedding: vec(0.93, Math.sqrt(1 - 0.93 * 0.93), 0) },
+        [existing],
+      );
+      expect(r.reason).toBe('cosine_fallback');
+      expect(r.decision).toBe('duplicate');
+      if (r.decision === 'duplicate') expect(r.matched_id).toBe(1);
+    });
   });
 });

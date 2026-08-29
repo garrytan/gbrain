@@ -16,6 +16,7 @@ set -a
 set +a
 
 LOG="${GBRAIN_SMOKE_LOG:-/tmp/gbrain-smoke-test.log}"
+WORKER_PID_FILE="${GBRAIN_SMOKE_WORKER_PID_FILE:-/tmp/gbrain-worker.pid}"
 FAILURES=0
 FIXES=0
 TOTAL=0
@@ -45,7 +46,7 @@ done
 
 # Find bun
 BUN_PATH=""
-for bp in "/root/.bun/bin/bun" "/data/.bun/bin/bun" "$(which bun 2>/dev/null)"; do
+for bp in "${GBRAIN_BUN_PATH:-}" "/root/.bun/bin/bun" "/data/.bun/bin/bun" "$(which bun 2>/dev/null)"; do
   [ -n "$bp" ] && [ -x "$bp" ] && BUN_PATH="$bp" && break
 done
 
@@ -92,35 +93,67 @@ else
 fi
 
 # ── 3. GBrain database ────────────────────────────────────
-if [ -n "$DB_URL" ] && [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
-  DOCTOR_OUT=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 20 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor 2>&1)
-  if echo "$DOCTOR_OUT" | grep -q "Health score\|brain_score\|Health Check"; then
-    SCORE=$(echo "$DOCTOR_OUT" | grep -oP 'Health score: \K[0-9]+' || echo '?')
-    pass "GBrain database (health score: $SCORE/100)"
+# db-availability loop: the old check grepped human doctor output for
+# "Health Check", which a FAILED connection also prints — it could not fail
+# on a broken DB and had no fix arm. Now: engine identity first (engine-free,
+# works with the DB down), then branch on doctor --json's connection check,
+# with `gbrain db-repair --yes` as the auto-fix arm.
+if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
+  ENGINE_JSON=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" engine status --json 2>/dev/null)
+  # #4182: BSD grep (macOS) has no -P; keep this shipped smoke test POSIX-portable.
+  ENGINE_KIND=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"effective_engine": *"\([a-z]*\)".*/\1/p' | head -1)
+  ENGINE_SRC=$(printf '%s\n' "$ENGINE_JSON" | sed -n 's/.*"db_url_source": *"\([^"]*\)".*/\1/p' | head -1)
+  [ -n "$ENGINE_KIND" ] && echo "  engine: $ENGINE_KIND (${ENGINE_SRC:-no url})"
+  if [ -z "$DB_URL" ] && [ "$ENGINE_KIND" != "pglite" ]; then
+    fail "GBrain database — no DATABASE_URL or GBRAIN_DATABASE_URL (and the engine is not pglite)"
   else
-    fail "GBrain database — doctor returned no health data"
+    run_doctor_json() { DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 30 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor --json 2>/dev/null; }
+    DOCTOR_JSON=$(run_doctor_json)
+    CONN_STATUS=$(printf '%s\n' "$DOCTOR_JSON" | sed -n 's/.*"name": *"connection", *"status": *"\([a-z]*\)".*/\1/p' | head -1)
+    if [ "$CONN_STATUS" = "ok" ]; then
+      SCORE=$(printf '%s\n' "$DOCTOR_JSON" | sed -n 's/.*"health_score": *\([0-9]*\).*/\1/p' | head -1)
+      pass "GBrain database (connection ok, health score: ${SCORE:-?}/100)"
+    else
+      # Auto-fix: engine-free access repair, then re-test (never fix without
+      # confirming broken — the doctor run above IS the confirmation).
+      # 240s: the docker conn_refused arm's readiness poll alone can run
+      # ~165s worst-case; a 60s cap would SIGTERM the repair mid-poll and
+      # report failure while the container it just started is still warming.
+      DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 240 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" db-repair --yes >> "$LOG" 2>&1
+      DOCTOR_JSON=$(run_doctor_json)
+      CONN_STATUS=$(printf '%s\n' "$DOCTOR_JSON" | sed -n 's/.*"name": *"connection", *"status": *"\([a-z]*\)".*/\1/p' | head -1)
+      if [ "$CONN_STATUS" = "ok" ]; then
+        fixed "GBrain database access repaired (gbrain db-repair --yes)"
+        pass "GBrain database (connection ok after repair)"
+      else
+        fail "GBrain database — connection ${CONN_STATUS:-unknown} (run: gbrain db-repair for the recipe)"
+      fi
+    fi
   fi
 else
-  [ -z "$DB_URL" ] && fail "GBrain database — no DATABASE_URL or GBRAIN_DATABASE_URL"
-  [ -z "$GBRAIN_DIR" ] && skip "GBrain database — gbrain not found"
+  skip "GBrain database — gbrain not found"
 fi
 
 # ── 4. GBrain worker process ──────────────────────────────
 if [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ] && [ -n "$DB_URL" ]; then
-  if [ -f /tmp/gbrain-worker.pid ] && kill -0 "$(cat /tmp/gbrain-worker.pid)" 2>/dev/null; then
-    pass "GBrain worker (PID: $(cat /tmp/gbrain-worker.pid))"
+  SUPERVISOR_RUNNING=0
+  LEGACY_WORKER_RUNNING=0
+  if DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" \
+      timeout 15 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" jobs supervisor status --json >/dev/null 2>&1; then
+    SUPERVISOR_RUNNING=1
+  fi
+  if [ -f "$WORKER_PID_FILE" ] && kill -0 "$(cat "$WORKER_PID_FILE")" 2>/dev/null; then
+    LEGACY_WORKER_RUNNING=1
+  fi
+
+  if [ "$SUPERVISOR_RUNNING" -eq 1 ] && [ "$LEGACY_WORKER_RUNNING" -eq 1 ]; then
+    fail "GBrain worker — duplicate supervisor + legacy worker PID $(cat "$WORKER_PID_FILE"); stop the legacy worker after verifying ownership"
+  elif [ "$SUPERVISOR_RUNNING" -eq 1 ]; then
+    pass "GBrain worker (supervisor-managed)"
+  elif [ "$LEGACY_WORKER_RUNNING" -eq 1 ]; then
+    pass "GBrain worker (PID: $(cat "$WORKER_PID_FILE"))"
   else
-    # Auto-fix: start worker
-    DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" GBRAIN_ALLOW_SHELL_JOBS=1 \
-      nohup "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" jobs work --concurrency 2 > /tmp/gbrain-worker.log 2>&1 &
-    echo $! > /tmp/gbrain-worker.pid
-    sleep 2
-    if kill -0 "$(cat /tmp/gbrain-worker.pid)" 2>/dev/null; then
-      fixed "GBrain worker started"
-      pass "GBrain worker (PID: $(cat /tmp/gbrain-worker.pid))"
-    else
-      fail "GBrain worker — failed to start (check /tmp/gbrain-worker.log)"
-    fi
+    fail "GBrain worker — no live supervisor or legacy worker; start explicitly with: gbrain jobs supervisor start --detach"
   fi
 else
   skip "GBrain worker — prerequisites missing"

@@ -66,7 +66,9 @@ export interface EvalReport {
  *     hallucinated structure where there was none).
  *   - Positive fixture: matched_pattern_id MUST equal expected pattern
  *     id, AND recall MUST be >= the floor (default 0.9), AND
- *     participants_recall MUST be 1.0 (every expected speaker shows).
+ *     participants_recall MUST be 1.0 (every expected speaker shows),
+ *     AND the parse MUST NOT report unrecognized_headings (#4136 —
+ *     a folded heading mis-attributes words without hurting recall).
  */
 export function scoreFixture(
   fixture: ConversationFixture,
@@ -127,6 +129,17 @@ export function scoreFixture(
       passed = false;
       reasons.push(
         `participants_recall ${participants_recall.toFixed(2)} < 1.0`,
+      );
+    }
+    // #4136 follow-up: a heading-anchored parse that FOLDED a
+    // heading-shaped label into another speaker's turn reports it in
+    // unrecognized_headings. Recall + participants_recall stay perfect
+    // in that failure mode (no message is lost, only mis-attributed),
+    // so a positive fixture must fail on the diagnostic itself.
+    if ((result.unrecognized_headings?.length ?? 0) > 0) {
+      passed = false;
+      reasons.push(
+        `unrecognized_headings: ${result.unrecognized_headings!.join(', ')} (heading-shaped labels folded into another speaker's turn)`,
       );
     }
   }

@@ -261,12 +261,20 @@ export function buildVectorCastFragment(resolved: ResolvedColumn): {
   col: string;
   castSql: string;
 } {
-  const col = quoteIdentifier(resolved.name);
-  const castSql =
-    resolved.type === 'halfvec'
-      ? `$1::halfvec(${resolved.dimensions})`
-      : `$1::vector`;
-  return { col, castSql };
+  return { col: quoteIdentifier(resolved.name), castSql: `$1${vectorCastSuffix(resolved)}` };
+}
+
+/**
+ * Cast suffix for a resolved column WITHOUT the positional placeholder —
+ * `'::vector'` or `'::halfvec(<dims>)'`. The write path (upsertChunks)
+ * allocates placeholders dynamically (`$${paramIdx++}${suffix}`) so it
+ * can't use buildVectorCastFragment's $1-pinned form; both share this so
+ * the read-side and write-side casts can't drift.
+ */
+export function vectorCastSuffix(resolved: ResolvedColumn): string {
+  return resolved.type === 'halfvec'
+    ? `::halfvec(${resolved.dimensions})`
+    : `::vector`;
 }
 
 // ---- Registry --------------------------------------------------------
@@ -579,4 +587,121 @@ export function normalizeEngineColumn(
     'embedding_image',
     '<custom name via resolveEmbeddingColumn at hybrid/op boundary>',
   ]);
+}
+
+/**
+ * Write-side resolver (#1262). Resolves the ACTIVE write target for
+ * upsertChunks text embeddings from the raw DB-plane config rows
+ * (`search_embedding_column` + `embedding_columns`) — the same registry
+ * keys the read side merges in loadConfigWithEngine. Engines call this
+ * with the two row values they read themselves (the #3461 config-table
+ * precedent) so a brain whose registry routes to e.g. a 1024d Voyage
+ * column writes there instead of failing every upsert with a dimension
+ * mismatch against the legacy column.
+ *
+ * Semantics, in order:
+ *   - No `search_embedding_column` row AND no `embedding` override in the
+ *     registry → the legacy `embedding`::vector descriptor, byte-for-byte
+ *     what normalizeEngineColumn(undefined) returns. Pre-registry brains
+ *     see zero behavior change and no registry/gateway work.
+ *   - `embedding_image` → legacy fallback. Image vectors travel in the
+ *     dedicated embedding_image INSERT column; routing TEXT writes there
+ *     would duplicate the column in the upsert's column list.
+ *   - Otherwise → resolveEmbeddingColumn over the parsed registry: the
+ *     exact chain + validation + loud EmbeddingColumnNotRegisteredError
+ *     the read side uses. A misroute should fail with the paste-ready
+ *     hint, not a confusing "expected N dimensions" from pgvector.
+ *
+ * Malformed `embedding_columns` JSON is ignored (same forgiving parse as
+ * loadConfigWithEngine) so a bad row can't brick default-column writes.
+ * File-plane-only registry config (rare; `gbrain config set` writes the
+ * DB plane) is covered by the caller-boundary `opts.embeddingColumn`
+ * override on upsertChunks — engines never read the file plane (D11).
+ */
+export function resolveWriteColumnFromConfigRows(rows: {
+  searchEmbeddingColumn?: string | null;
+  embeddingColumnsJson?: string | null;
+}): ResolvedColumn {
+  const name =
+    typeof rows.searchEmbeddingColumn === 'string' && rows.searchEmbeddingColumn.length > 0
+      ? rows.searchEmbeddingColumn
+      : DEFAULT_COLUMN_NAME;
+
+  let registry: Record<string, EmbeddingColumnConfig> | undefined;
+  if (typeof rows.embeddingColumnsJson === 'string' && rows.embeddingColumnsJson.length > 0) {
+    try {
+      const parsed = JSON.parse(rows.embeddingColumnsJson);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        registry = parsed as Record<string, EmbeddingColumnConfig>;
+      }
+    } catch {
+      // Malformed JSON — ignore, mirroring loadConfigWithEngine.
+    }
+  }
+
+  if (
+    name === 'embedding_image' ||
+    (name === DEFAULT_COLUMN_NAME && !(registry && Object.hasOwn(registry, DEFAULT_COLUMN_NAME)))
+  ) {
+    return normalizeEngineColumn(undefined);
+  }
+
+  const cfg: GBrainConfig = { engine: 'pglite' } as GBrainConfig;
+  cfg.search_embedding_column = name;
+  if (registry) cfg.embedding_columns = registry;
+  return resolveEmbeddingColumn(undefined, cfg);
+}
+
+/**
+ * Minimal raw-query surface both engines (and engine-pure helpers holding a
+ * `Pick<BrainEngine, 'executeRaw'>`) satisfy. Structural so this module
+ * never imports engine.ts (cycle-free — engines import THIS module).
+ */
+export interface RawQueryEngine {
+  executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+}
+
+/**
+ * Registry read/write unification (S2, follow-up to #1262). #1262 routed
+ * upsertChunks' text-embedding WRITE through the DB-plane registry rows, but
+ * every stale/invalidate/health selector still keyed on the literal
+ * `cc.embedding` — on a registry-routed brain the legacy column stays NULL
+ * forever, so stale selectors re-embed everything on every pass while
+ * coverage reads 0%. This helper is the ONE place that resolves the ACTIVE
+ * column from the brain's own config table (the exact rows + resolution
+ * _upsertChunksOnce uses), so the write plane and the stale/invalidate/
+ * health plane can never key on different columns again.
+ *
+ * Failure posture:
+ *   - Config table unreadable (pre-v36 brain mid-migration) → legacy
+ *     `embedding` descriptor, mirroring the #1262 write-side catch.
+ *   - Unregistered/invalid `search_embedding_column` → throws the loud
+ *     paste-ready resolver error by default (destructive invalidation must
+ *     not guess a column); pass `fallbackToLegacy: true` on read-only/
+ *     diagnostic paths (health, coverage, stale counts) that must keep
+ *     working on a misconfigured brain.
+ */
+export async function resolveActiveEmbeddingColumnFromEngine(
+  engine: RawQueryEngine,
+  opts?: { fallbackToLegacy?: boolean },
+): Promise<ResolvedColumn> {
+  let searchEmbeddingColumn: string | null = null;
+  let embeddingColumnsJson: string | null = null;
+  try {
+    const rows = await engine.executeRaw<{ key: string; value: string }>(
+      `SELECT key, value FROM config WHERE key IN ('search_embedding_column', 'embedding_columns')`,
+    );
+    for (const r of rows) {
+      if (r.key === 'search_embedding_column') searchEmbeddingColumn = r.value;
+      else if (r.key === 'embedding_columns') embeddingColumnsJson = r.value;
+    }
+  } catch {
+    // config table unreadable — legacy column via the resolver default.
+  }
+  try {
+    return resolveWriteColumnFromConfigRows({ searchEmbeddingColumn, embeddingColumnsJson });
+  } catch (err) {
+    if (opts?.fallbackToLegacy) return normalizeEngineColumn(undefined);
+    throw err;
+  }
 }

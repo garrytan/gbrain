@@ -78,10 +78,15 @@ export function patternStatementTemplate(s: PatternStatementSlots): string {
 
 /** E7 nudge template — stderr line on sync after a take is committed. */
 export function nudgeTemplate(s: NudgeSlots): string {
+  // #3697: this used to advertise `gbrain takes nudge --hush <pattern>`, a
+  // subcommand that does not exist. The 14-day quiet period is automatic —
+  // fireNudge logs to take_nudge_log and the cooldown probe suppresses
+  // repeats per (take_id, pattern) — so say that instead of naming a
+  // command that exits "Unknown subcommand".
   return (
     `[gbrain] You just committed a ${s.domain} take at conviction ${s.conviction.toFixed(2)}. ` +
     `Recent record on similar calls: ${s.nRecentMisses} of ${s.nRecentTotal} missed. ` +
-    `Hush this pattern for 14 days: gbrain takes nudge --hush ${s.hushPattern}`
+    `This nudge auto-quiets for pattern '${s.hushPattern}' for 14 days.`
   );
 }
 

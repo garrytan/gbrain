@@ -36,14 +36,29 @@ describe('dedupResults', () => {
     expect(aChunks.length).toBeLessThanOrEqual(2);
   });
 
-  test('removes text-similar chunks', () => {
+  test('removes text-similar chunks WITHIN a page (v0.46.15 #3983 scope)', () => {
+    const base = 'the quick brown fox jumps over the lazy dog while seventeen other animals watch from a nearby grassy hill in silence';
     const results = [
-      makeResult({ slug: 'a', score: 0.9, chunk_text: 'the quick brown fox jumps over the lazy dog' }),
-      makeResult({ slug: 'b', score: 0.8, chunk_text: 'the quick brown fox jumps over the lazy cat' }),
+      makeResult({ slug: 'a', chunk_id: 1, score: 0.9, chunk_text: `${base} today` }),
+      makeResult({ slug: 'a', chunk_id: 2, score: 0.8, chunk_text: `${base} now` }),
     ];
     const deduped = dedupResults(results);
-    // These share high Jaccard similarity, one should be removed
-    expect(deduped.length).toBeLessThanOrEqual(2);
+    // Same page, near-identical text → intra-page collapse still fires.
+    expect(deduped.filter(r => r.slug === 'a').length).toBe(1);
+  });
+
+  test('REGRESSION (#3983): near-duplicate text on DIFFERENT pages never deletes a page', () => {
+    // Near-duplicate-record corpus: two deal memos sharing boilerplate.
+    // The unscoped Jaccard drop silently deleted the second PAGE from the
+    // result set — distinct pages are distinct answers.
+    const results = [
+      makeResult({ slug: 'deals/acme-seed', page_id: 1, score: 0.9, chunk_text: 'standard deal memo boilerplate terms valuation notes intro' }),
+      makeResult({ slug: 'deals/widget-series-a', page_id: 2, score: 0.85, chunk_text: 'standard deal memo boilerplate terms valuation notes summary' }),
+    ];
+    const deduped = dedupResults(results);
+    const pages = new Set(deduped.map(r => r.slug));
+    expect(pages.has('deals/acme-seed')).toBe(true);
+    expect(pages.has('deals/widget-series-a')).toBe(true);
   });
 
   test('enforces type diversity when mixed types present', () => {
@@ -62,6 +77,38 @@ describe('dedupResults', () => {
     // With diversity enforcement, person shouldn't completely dominate
     expect(personCount).toBeGreaterThan(0);
     expect(conceptCount).toBeGreaterThan(0);
+  });
+
+  test('nightly-7 regression: preserves all three distinct note sessions', () => {
+    const results = [
+      makeResult({
+        slug: 'chat/nightly-7-s1',
+        page_id: 1,
+        score: 0.8381,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/payments in January',
+      }),
+      makeResult({
+        slug: 'chat/nightly-7-s3',
+        page_id: 3,
+        score: 0.8280,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/reporting in June',
+      }),
+      makeResult({
+        slug: 'chat/nightly-7-s2',
+        page_id: 2,
+        score: 0.8213,
+        type: 'note',
+        chunk_text: 'alice-example launched widget-co/identity in March',
+      }),
+    ];
+
+    expect(dedupResults(results).map(result => result.slug)).toEqual([
+      'chat/nightly-7-s1',
+      'chat/nightly-7-s3',
+      'chat/nightly-7-s2',
+    ]);
   });
 });
 

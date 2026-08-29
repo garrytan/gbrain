@@ -149,7 +149,7 @@ const run_skillopt: Operation = {
     // every derived path is contained by construction. Applies to all callers.
     const skillNameRaw = (p.skill_name as string) ?? '';
     if (!/^[a-z0-9][a-z0-9-]*$/.test(skillNameRaw)) {
-      throw new OperationError(`run_skillopt: skill_name must be kebab-case (matching ^[a-z0-9][a-z0-9-]*$); got '${skillNameRaw}'`, 'invalid_params');
+      throw new OperationError('invalid_params', `run_skillopt: skill_name must be kebab-case (matching ^[a-z0-9][a-z0-9-]*$); got '${skillNameRaw}'`);
     }
     if (ctx.remote !== false) {
       // Remote: enforce per-skill allowlist read from config.
@@ -163,7 +163,7 @@ const run_skillopt: Operation = {
       } catch { /* fall through to deny */ }
       const skillName = (p.skill_name as string) ?? '';
       if (!allowed.includes(skillName)) {
-        throw new OperationError(`run_skillopt: skill '${skillName}' is not in skillopt.allowed_skills allowlist (default deny-all for remote callers)`, 'permission_denied');
+        throw new OperationError('permission_denied', `run_skillopt: skill '${skillName}' is not in skillopt.allowed_skills allowlist (default deny-all for remote callers)`);
       }
     }
     const { runSkillOpt } = await import('../skillopt/orchestrator.ts');
@@ -172,7 +172,7 @@ const run_skillopt: Operation = {
     const detected = autoDetectSkillsDirReadOnly(process.cwd());
     const skillsDir = detected.dir;
     if (!skillsDir) {
-      throw new OperationError('run_skillopt: skills directory not found', 'config_error');
+      throw new OperationError('config_error', 'run_skillopt: skills directory not found');
     }
     const optimizerModel = await resolveModel(ctx.engine, { tier: 'deep', fallback: 'anthropic:claude-opus-4-7' });
     const targetModel = await resolveModel(ctx.engine, { tier: 'subagent', fallback: 'anthropic:claude-sonnet-4-6' });
@@ -205,7 +205,7 @@ const run_skillopt: Operation = {
           catch { /* parent also missing; fall back to resolved form */ }
         }
         if (real !== rootReal && !real.startsWith(rootReal + nodePath.sep)) {
-          throw new OperationError(`run_skillopt: ${label} must resolve within the skills directory for remote callers`, 'permission_denied');
+          throw new OperationError('permission_denied', `run_skillopt: ${label} must resolve within the skills directory for remote callers`);
         }
       };
       confine('benchmark_path', p.benchmark_path as string | undefined);

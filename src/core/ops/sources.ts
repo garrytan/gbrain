@@ -8,6 +8,7 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
+import { sourceScopeOpts } from './context.ts';
 
 // --- v0.28: whoami + sources management ---
 
@@ -163,9 +164,23 @@ const sources_list: Operation = {
   scope: 'read',
   handler: async (ctx, p) => {
     const { listSources } = await import('../sources-ops.ts');
+    // #4433: row-filter the listing to the caller's source scope — a client
+    // whose scope excludes a source must not learn that source's id, name,
+    // or page_count. Wave-L posture (maintainer decision, supersedes the
+    // wave-g "scalar callers keep the full listing" carve-out): EVERY
+    // untrusted caller (anything not strictly remote === false) is confined
+    // through the canonical sourceScopeOpts ladder, matching the rest of
+    // the read-op surface — federated grant > scalar bound source >
+    // fail-closed '__all__' (the sentinel passes through as a literal that
+    // matches no real source id, so it yields an empty listing rather than
+    // the whole registry). Trusted local CLI keeps the full operator view.
+    const scope = ctx.remote === false ? {} : sourceScopeOpts(ctx);
+    const allowedSourceIds =
+      scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : undefined);
     return {
       sources: await listSources(ctx.engine, {
         includeArchived: (p.include_archived as boolean) === true,
+        ...(allowedSourceIds !== undefined ? { allowedSourceIds } : {}),
       }),
     };
   },
@@ -218,6 +233,19 @@ const sources_status: Operation = {
   },
   scope: 'read',
   handler: async (ctx, p) => {
+    // Source isolation, mirroring sources_list's #4433 wave-L posture
+    // exactly (the maintainer decision that superseded the wave-g "scalar
+    // callers keep the full listing" carve-out): EVERY untrusted caller
+    // (anything not strictly remote === false) is confined through the
+    // canonical sourceScopeOpts ladder — federated grant > scalar bound
+    // source. Trusted local CLI keeps the full operator view. Out-of-scope
+    // ids answer not_found, indistinguishable from a nonexistent source
+    // (anti-enumeration), matching get_agent_job's shape.
+    const scope = ctx.remote === false ? {} : sourceScopeOpts(ctx);
+    const allowed = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
+    if (allowed && !allowed.includes(p.id as string)) {
+      throw new OperationError('not_found', `Unknown source: ${p.id}`);
+    }
     const { getSourceStatus } = await import('../sources-ops.ts');
     return getSourceStatus(ctx.engine, p.id as string);
   },

@@ -28,12 +28,27 @@
  * request (`{ok:true, block:null}`, no echo) and the client degrades to a
  * typed { degraded: 'stale_serve' } instead of trusting the empty block.
  *
+ *   sync_start / sync_status / sync_abort (secret-gated, protocol:2):
+ *     serve-delegated sync — a `gbrain sync` CLI that finds a live serve
+ *     holding the PGLite lock delegates the run through these kinds instead
+ *     of failing on LiveServeLockError. Wire shapes + option validation live
+ *     in sync-ipc.ts; execution lives in serve-sync-runner.ts. Start+poll
+ *     (never a held-open connection): every request stays one line / one
+ *     response, and an old serve answers `unknown_kind:sync_start` so the
+ *     client degrades to the documented stop-the-serve refusal.
+ *
+ *   sweep_start / sweep_status (secret-gated, protocol:2) — #677:
+ *     serve-delegated maintenance sweep, the same start+poll shape as the
+ *     sync kinds (no abort — a sweep is a bounded run). Wire shapes in
+ *     sweep-ipc.ts; execution in serve-sweep-runner.ts; CLI half in
+ *     commands/sweep-delegate.ts.
+ *
  * Local-only (unix socket in a 0700 dir on the brain's data dir, socket mode
  * 0600 set before readiness is announced) — no network surface.
  */
 
 import net from 'node:net';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   existsSync,
   unlinkSync,
@@ -44,10 +59,25 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { configDir } from '../config.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import type { WindowTurn } from './entity-salience.ts';
 import type { PointerBlock } from './retrieval-reflex.ts';
 import type { TurnContextResult } from './turn-context.ts';
+import type {
+  SyncAbortRequest,
+  SyncAbortResponse,
+  SyncStartRequest,
+  SyncStartResponse,
+  SyncStatusRequest,
+  SyncStatusResponse,
+} from './sync-ipc.ts';
+import type {
+  SweepStartRequest,
+  SweepStartResponse,
+  SweepStatusRequest,
+  SweepStatusResponse,
+} from './sweep-ipc.ts';
 
 const SOCK_NAME = '.gbrain-resolve.sock';
 const SECRET_NAME = '.gbrain-ipc-secret';
@@ -69,6 +99,21 @@ export const CONTEXT_PACK_CLIENT_TIMEOUT_MS = 1000;
 /** Assembler deadline. Backstop = +200; client 1000 leaves a real transport
  * margin (adversarial review: 800+200 == client timeout was zero margin). */
 export const CONTEXT_PACK_SERVER_BUDGET_MS = 600;
+/**
+ * Delegated-sync kinds are O(1) in-memory registrations/reads — no assembly
+ * work, so no server-side budget race. start is a touch wider: its handler
+ * validates options and registers the job before answering, and a serve loop
+ * mid-import can sit on a long WASM statement before dispatching.
+ */
+export const SYNC_START_CLIENT_TIMEOUT_MS = 1500;
+export const SYNC_STATUS_CLIENT_TIMEOUT_MS = 1000;
+export const SYNC_ABORT_CLIENT_TIMEOUT_MS = 1000;
+/**
+ * Delegated-sweep kinds (#677) — same O(1) register/read shape as the sync
+ * kinds, same budgets.
+ */
+export const SWEEP_START_CLIENT_TIMEOUT_MS = 1500;
+export const SWEEP_STATUS_CLIENT_TIMEOUT_MS = 1000;
 const MAX_MSG_BYTES = 256 * 1024;
 
 /** Marker the client returns when no server is reachable (vs. a real null result). */
@@ -90,6 +135,11 @@ export interface ResolveRequest {
   sourceId?: string;
   /** v0.43 (#2095, codex D7): suppression mode — 'slug-only' under windowing. */
   suppression?: 'slug-and-title' | 'slug-only';
+  /**
+   * v0.46.15: lexical-arms kill switch. Either side may disable: a client
+   * `false` wins; otherwise the server applies its own file-config gate.
+   */
+  lexicalArms?: boolean;
 }
 
 export interface TurnContextRequest {
@@ -148,9 +198,31 @@ export interface ContextPackRequest {
   trigger?: string;
   /** PreCompact banking mode: persist entities, skip assembly. */
   bankOnly?: boolean;
+  /**
+   * Cathedral 5 (additive, bankOnly companion): BASENAME of a corpus segment
+   * this hook just banked — serve schedules a prompt checkpoint harvest of it
+   * (fire-and-forget; the ack never waits on the LLM). Version-skew tolerant
+   * BY DESIGN: an old serve destructures known fields and ignores this one
+   * (today's behavior); the sweep backstop still extracts the segment.
+   */
+  flushCorpusFile?: string;
+  /**
+   * Cathedral 5 (additive, read-only): return the session's checkpoint
+   * manifest links — no assembly, no cursor advance, no banking. Used by the
+   * OpenClaw assemble poll.
+   */
+  manifestOnly?: boolean;
 }
 
-export type IpcRequest = ResolveRequest | TurnContextRequest | ContextPackRequest;
+export type IpcRequest =
+  | ResolveRequest
+  | TurnContextRequest
+  | ContextPackRequest
+  | SyncStartRequest
+  | SyncStatusRequest
+  | SyncAbortRequest
+  | SweepStartRequest
+  | SweepStatusRequest;
 
 export interface ResolveResponse {
   ok: boolean;
@@ -180,11 +252,22 @@ export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | nul
 export type TurnContextHandler = (req: TurnContextRequest) => Promise<TurnContextResult | null>;
 export type ContextPackHandler = (req: ContextPackRequest) => Promise<TurnContextResult | null>;
 
+export type SyncStartIpcHandler = (req: SyncStartRequest) => SyncStartResponse | Promise<SyncStartResponse>;
+export type SyncStatusIpcHandler = (req: SyncStatusRequest) => SyncStatusResponse | Promise<SyncStatusResponse>;
+export type SyncAbortIpcHandler = (req: SyncAbortRequest) => SyncAbortResponse | Promise<SyncAbortResponse>;
+export type SweepStartIpcHandler = (req: SweepStartRequest) => SweepStartResponse | Promise<SweepStartResponse>;
+export type SweepStatusIpcHandler = (req: SweepStatusRequest) => SweepStatusResponse | Promise<SweepStatusResponse>;
+
 /** Handler MAP replacing the single closure [ENG-3]. */
 export interface IpcHandlers {
   resolve: ResolveHandler;
   turn_context?: TurnContextHandler;
   context_pack?: ContextPackHandler;
+  sync_start?: SyncStartIpcHandler;
+  sync_status?: SyncStatusIpcHandler;
+  sync_abort?: SyncAbortIpcHandler;
+  sweep_start?: SweepStartIpcHandler;
+  sweep_status?: SweepStatusIpcHandler;
 }
 
 export interface IpcServerOpts {
@@ -225,6 +308,94 @@ export function resolveSocketPath(dataDir: string): string {
   return join(dataDir, SOCK_NAME);
 }
 
+// -- Engine-uniform paths (#4245, TODOS "engine-uniform IPC listener") --
+
+/**
+ * IPC home for brains with no data dir: `~/.gbrain/run` (GBRAIN_HOME
+ * honored via configDir). Created 0700 by the server bind / secret
+ * provision paths — never world-visible.
+ */
+export function ipcRunDir(): string {
+  return join(configDir(), 'run');
+}
+
+/** First 12 hex chars of sha256(value) — path key that never embeds the URL's credentials. */
+function hash12(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 12);
+}
+
+/** Minimal config slice the engine-uniform path resolvers key on (loadConfig's shape). */
+export interface IpcPathConfig {
+  engine?: 'postgres' | 'pglite';
+  database_path?: string;
+  database_url?: string;
+}
+
+/**
+ * Canonical socket path for a brain CONFIG (engine-uniform, #4245).
+ * PGLite keeps the data-dir socket (wire location unchanged — old serves
+ * and hooks keep pairing); Postgres gets
+ * `~/.gbrain/run/resolve-<hash12(database_url)>.sock` so two brains on one
+ * machine never share a socket. Returns null when the config carries no
+ * keying material (no config at all, thin-client remote, or a postgres
+ * config with no URL) — callers degrade, never guess.
+ *
+ * Engine is checked FIRST: a postgres config carrying a LEFTOVER
+ * database_path must not key off the path — there is no PGLite brain (and
+ * no serve) behind it (v0.45.7 gate, preserved).
+ *
+ * Multi-serve note: on Postgres several serves for the SAME database_url
+ * share this path; the newest bind wins (same last-serve-wins posture as
+ * the PGLite socket after a stale-socket cleanup). Bound-source rejection
+ * [CX2-10] still applies per request.
+ */
+export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined): string | null {
+  if (!cfg) return null;
+  if (cfg.engine === 'pglite' && cfg.database_path) return resolveSocketPath(cfg.database_path);
+  if (cfg.engine === 'postgres' && cfg.database_url) {
+    return join(ipcRunDir(), `resolve-${hash12(cfg.database_url)}.sock`);
+  }
+  return null;
+}
+
+/**
+ * Canonical shared-secret path for a brain config — same engine-uniform
+ * keying as resolveSocketPathForConfig (data dir on PGLite, hash12-keyed
+ * run-dir file on Postgres). Null = no keying material.
+ */
+export function ipcSecretPathForConfig(cfg: IpcPathConfig | null | undefined): string | null {
+  if (!cfg) return null;
+  if (cfg.engine === 'pglite' && cfg.database_path) return ipcSecretPath(cfg.database_path);
+  if (cfg.engine === 'postgres' && cfg.database_url) {
+    return join(ipcRunDir(), `secret-${hash12(cfg.database_url)}`);
+  }
+  return null;
+}
+
+/**
+ * Server-side (engine-uniform): ensure the secret at the config-keyed path.
+ * Null = no keying material (caller starts no listener); throws only when
+ * the file can neither be read nor created (turn_context disabled, never
+ * "skip auth" — same contract as ensureIpcSecret).
+ */
+export function ensureIpcSecretForConfig(cfg: IpcPathConfig | null | undefined): string | null {
+  const p = ipcSecretPathForConfig(cfg);
+  if (!p) return null;
+  return ensureIpcSecretAtPath(p);
+}
+
+/** Client-side (engine-uniform): read the config-keyed secret; null when absent. */
+export function readIpcSecretForConfig(cfg: IpcPathConfig | null | undefined): string | null {
+  const p = ipcSecretPathForConfig(cfg);
+  if (!p) return null;
+  try {
+    const s = readFileSync(p, 'utf8').trim();
+    return s || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Shared secret [S3#6] ──────────────────────────────────────────────────
 
 /** Canonical shared-secret file path for a PGLite data dir. */
@@ -239,7 +410,11 @@ export function ipcSecretPath(dataDir: string): string {
  * "turn_context disabled", never as "skip auth").
  */
 export function ensureIpcSecret(dataDir: string): string {
-  const p = ipcSecretPath(dataDir);
+  return ensureIpcSecretAtPath(ipcSecretPath(dataDir));
+}
+
+/** Path-keyed body shared by the data-dir and config-keyed secret provisioners. */
+function ensureIpcSecretAtPath(p: string): string {
   try {
     const existing = readFileSync(p, 'utf8').trim();
     if (existing) {
@@ -402,13 +577,111 @@ export async function requestContextPack(
   return resp as ContextPackResponse;
 }
 
+// ── Delegated-sync clients ────────────────────────────────────────────────
+
+/** Client-facing shapes (kind/protocol filled in by the helpers). */
+export type SyncStartClientRequest = Omit<SyncStartRequest, 'kind' | 'protocol'>;
+export type SyncStatusClientRequest = Omit<SyncStatusRequest, 'kind' | 'protocol'>;
+export type SyncAbortClientRequest = Omit<SyncAbortRequest, 'kind' | 'protocol'>;
+
+export type SyncStartIpcResult = SyncStartResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SyncStatusIpcResult = SyncStatusResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SyncAbortIpcResult = SyncAbortResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+
+/**
+ * Delegated-sync clients: same fail-soft ladder as requestTurnContext —
+ * transport trouble → IPC_UNAVAILABLE; a response without the protocol echo
+ * (a pre-delegation serve answered `unknown_kind:*` or treated the line as a
+ * resolve request) → { degraded: 'stale_serve' }; otherwise the server's
+ * typed response, INCLUDING ok:false rejections ('busy', 'unauthorized',
+ * 'unknown_job', …) that the sync CLI turns into remediation text. Never throw.
+ */
+export async function requestSyncStart(
+  socketPath: string,
+  req: SyncStartClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncStartIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_start', protocol: 2, ...req } satisfies SyncStartRequest);
+  return syncRoundTrip<SyncStartResponse>(socketPath, line, opts.timeoutMs ?? SYNC_START_CLIENT_TIMEOUT_MS);
+}
+
+export async function requestSyncStatus(
+  socketPath: string,
+  req: SyncStatusClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncStatusIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_status', protocol: 2, ...req } satisfies SyncStatusRequest);
+  return syncRoundTrip<SyncStatusResponse>(socketPath, line, opts.timeoutMs ?? SYNC_STATUS_CLIENT_TIMEOUT_MS);
+}
+
+export async function requestSyncAbort(
+  socketPath: string,
+  req: SyncAbortClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SyncAbortIpcResult> {
+  const line = JSON.stringify({ kind: 'sync_abort', protocol: 2, ...req } satisfies SyncAbortRequest);
+  return syncRoundTrip<SyncAbortResponse>(socketPath, line, opts.timeoutMs ?? SYNC_ABORT_CLIENT_TIMEOUT_MS);
+}
+
+// ── Delegated-sweep clients (#677) — same fail-soft ladder as sync ─────────
+
+export type SweepStartClientRequest = Omit<SweepStartRequest, 'kind' | 'protocol'>;
+export type SweepStatusClientRequest = Omit<SweepStatusRequest, 'kind' | 'protocol'>;
+
+export type SweepStartIpcResult = SweepStartResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+export type SweepStatusIpcResult = SweepStatusResponse | TurnContextStaleServe | typeof IPC_UNAVAILABLE;
+
+export async function requestSweepStart(
+  socketPath: string,
+  req: SweepStartClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SweepStartIpcResult> {
+  const line = JSON.stringify({ kind: 'sweep_start', protocol: 2, ...req } satisfies SweepStartRequest);
+  return syncRoundTrip<SweepStartResponse>(socketPath, line, opts.timeoutMs ?? SWEEP_START_CLIENT_TIMEOUT_MS);
+}
+
+export async function requestSweepStatus(
+  socketPath: string,
+  req: SweepStatusClientRequest,
+  opts: { timeoutMs?: number } = {},
+): Promise<SweepStatusIpcResult> {
+  const line = JSON.stringify({ kind: 'sweep_status', protocol: 2, ...req } satisfies SweepStatusRequest);
+  return syncRoundTrip<SweepStatusResponse>(socketPath, line, opts.timeoutMs ?? SWEEP_STATUS_CLIENT_TIMEOUT_MS);
+}
+
+async function syncRoundTrip<Resp extends { ok: boolean; protocol: 2 }>(
+  socketPath: string,
+  line: string,
+  timeoutMs: number,
+): Promise<Resp | TurnContextStaleServe | typeof IPC_UNAVAILABLE> {
+  if (Buffer.byteLength(line, 'utf8') + 1 > MAX_MSG_BYTES) return IPC_UNAVAILABLE;
+  const resp = await roundTrip(socketPath, line, timeoutMs);
+  if (resp === IPC_UNAVAILABLE) return IPC_UNAVAILABLE;
+  if (!resp || typeof resp !== 'object') return IPC_UNAVAILABLE;
+  if ((resp as { protocol?: unknown }).protocol !== 2) return { degraded: 'stale_serve' };
+  return resp as Resp;
+}
+
 /** One request line out, one response line back. Fail-soft to IPC_UNAVAILABLE. */
 function roundTrip(
   socketPath: string,
   requestLine: string,
   timeoutMs: number,
 ): Promise<unknown | typeof IPC_UNAVAILABLE> {
-  if (!existsSync(socketPath)) return Promise.resolve(IPC_UNAVAILABLE);
+  // POSIX fast-path only: a Unix domain socket is a real filesystem entry, so
+  // existsSync() lets the common "no server running" case skip a syscall.
+  // On win32, net.createServer()/createConnection() silently translate a
+  // plain path into \\.\pipe\<name> — no file is ever created on disk, so
+  // existsSync() is always false here even while a live server is listening
+  // and a real connection would succeed. Gating on it on Windows made every
+  // IPC call fail closed unconditionally (verified: a listen()+connect()
+  // round trip against the same plain path succeeds on Bun 1.3.14 / Windows
+  // 11, while existsSync() on that path returns false throughout). Skip the
+  // pre-check there and let the connection-level error/timeout handlers
+  // below do the real "no server" detection.
+  if (process.platform !== 'win32' && !existsSync(socketPath)) {
+    return Promise.resolve(IPC_UNAVAILABLE);
+  }
   return new Promise((resolve) => {
     let settled = false;
     let buf = '';
@@ -541,6 +814,26 @@ export async function startResolveIpcServer(
             resp = JSON.stringify(
               await handleContextPack(parsed as ContextPackRequest, handlers, opts),
             );
+          } else if (kind === 'sync_start') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncStartRequest, handlers.sync_start, opts),
+            );
+          } else if (kind === 'sync_status') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncStatusRequest, handlers.sync_status, opts),
+            );
+          } else if (kind === 'sync_abort') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SyncAbortRequest, handlers.sync_abort, opts),
+            );
+          } else if (kind === 'sweep_start') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SweepStartRequest, handlers.sweep_start, opts),
+            );
+          } else if (kind === 'sweep_status') {
+            resp = JSON.stringify(
+              await handleSyncKind(parsed as SweepStatusRequest, handlers.sweep_status, opts),
+            );
           } else {
             resp = JSON.stringify({ ok: false, error: `unknown_kind:${String(kind)}` });
           }
@@ -651,6 +944,29 @@ async function handleContextPack(
       block: result,
       ...(result?.degradedReason ? { degradedReason: result.degradedReason } : {}),
     };
+  } catch (e) {
+    return { ok: false, protocol: 2, error: (e as Error).message };
+  }
+}
+
+/**
+ * Shared auth ladder for the delegated-sync kinds — same fail-closed posture
+ * as turn_context (handler absent → unsupported_kind; protocol mismatch →
+ * unsupported_protocol; missing/wrong secret → unauthorized). No budget race:
+ * the handlers are O(1) in-memory operations in serve-sync-runner.ts.
+ */
+async function handleSyncKind<Req extends { protocol: number; secret: string }, Resp extends { ok: boolean; protocol: 2 }>(
+  req: Req,
+  handler: ((req: Req) => Resp | Promise<Resp>) | undefined,
+  opts: IpcServerOpts,
+): Promise<Resp | { ok: false; protocol: 2; error: string }> {
+  if (!handler) return { ok: false, protocol: 2, error: 'unsupported_kind' };
+  if (req.protocol !== 2) return { ok: false, protocol: 2, error: 'unsupported_protocol' };
+  if (!opts.secret || !secretMatches(req.secret, opts.secret)) {
+    return { ok: false, protocol: 2, error: 'unauthorized' };
+  }
+  try {
+    return await handler(req);
   } catch (e) {
     return { ok: false, protocol: 2, error: (e as Error).message };
   }

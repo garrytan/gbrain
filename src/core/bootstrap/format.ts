@@ -131,6 +131,13 @@ export interface InstallReceipt {
   created_paths: string[];
   /** Host registrations bootstrap performed (for marker-keyed removal). */
   registrations: Array<{ host: 'claude-code' | 'codex' | 'opencode'; scope: string; detail?: string }>;
+  /**
+   * Private-repo URL, recorded by `bootstrap repo` ONLY after a successful
+   * push (repo.ts recordRepoInReceipt). Optional: absent until the repo phase
+   * completes. Typed here so consumers (bootstrap/status.ts, backup/coverage)
+   * stop re-declaring it as an inline cast.
+   */
+  repo_url?: string;
 }
 
 export function receiptPath(gbrainHomeDir: string): string {

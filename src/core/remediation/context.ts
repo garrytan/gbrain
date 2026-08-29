@@ -54,7 +54,7 @@ export async function loadRecommendationContext(
   // fileCfg loads synchronously, so the resolveKey closure is sync.
   const { loadConfigFileOnly } = await import('../config.ts');
   const fileCfg = loadConfigFileOnly();
-  const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG } = await import(
+  const { embeddingProviderConfigured, HOSTED_EMBED_KEY_CONFIG, chatApiKeyConfigured } = await import(
     '../brain-score-recommendations.ts'
   );
   const embeddingConfigured = embeddingProviderConfigured(embeddingModel, (envVar) => {
@@ -84,7 +84,9 @@ export async function loadRecommendationContext(
     embeddingModel,
     embeddingDimensions,
     embeddingProviderConfigured: embeddingConfigured,
-    hasChatApiKey: !!(process.env.ANTHROPIC_API_KEY || fileCfg?.anthropic_api_key),
+    // #3944: shared env+file-plane probe (same helper as autopilot's
+    // dispatch loop, so the two planners can never disagree on this).
+    hasChatApiKey: chatApiKeyConfigured(fileCfg),
     nullSignatureCohort,
   };
 }

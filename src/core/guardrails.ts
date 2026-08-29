@@ -82,7 +82,14 @@ const providers = new Map<string, GuardrailProvider>();
 export function registerGuardrailProvider(provider: GuardrailProvider): void {
   if (!provider || typeof provider.classify !== 'function' || !provider.id) return;
   providers.set(provider.id, provider);
+  // #3688 residual: the env loader counts registration EVENTS, not map
+  // growth — a same-id replacement (explicitly supported above) keeps
+  // providers.size constant and a size delta would misread it as zero.
+  registrationEvents++;
 }
+
+/** Monotonic count of accepted registerGuardrailProvider calls (see above). */
+let registrationEvents = 0;
 
 /** Remove a previously-registered provider. Returns true if one was removed. */
 export function unregisterGuardrailProvider(id: string): boolean {
@@ -111,6 +118,97 @@ export function hasGuardrails(): boolean {
  * cost is bounded by each provider's own timeout discipline; GBrain does not
  * impose one here so providers can tune per-deployment latency budgets.
  */
+/**
+ * Thrown by {@link loadGuardrailProvidersFromEnv} when GBRAIN_GUARDRAILS_MODULE
+ * is SET but unusable. Deliberately fail-CLOSED (unlike the classify path,
+ * which fails open): an operator who configured a guardrail module expects a
+ * firewall to be standing — silently running without it would defeat the
+ * point. Callers (cli.ts) abort the process on this error.
+ */
+export class GuardrailLoadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GuardrailLoadError';
+  }
+}
+
+export interface GuardrailEnvLoadResult {
+  /** Providers registered by this call (0 when the env var is unset). */
+  loaded: number;
+  /** The module specifier that was loaded, or null when unset. */
+  modulePath: string | null;
+}
+
+/**
+ * #3688 — the operator wiring path. Loads guardrail providers from the module
+ * named by `GBRAIN_GUARDRAILS_MODULE` (an absolute/relative file path or a
+ * bare package specifier). Accepted module shapes, all additive:
+ *
+ *   - `export default provider` (a single {@link GuardrailProvider})
+ *   - `export default [providerA, providerB]`
+ *   - `export const guardrailProviders = [...]`
+ *   - `export function register(registerGuardrailProvider) { ... }` (sync or async)
+ *
+ * Unset env var → no-op (the OSS distribution stays inert). Set-but-broken —
+ * import failure, or a module that registers zero providers — throws
+ * {@link GuardrailLoadError} (fail-closed; see class doc).
+ */
+export async function loadGuardrailProvidersFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): Promise<GuardrailEnvLoadResult> {
+  const spec = env.GBRAIN_GUARDRAILS_MODULE?.trim();
+  if (!spec) return { loaded: 0, modulePath: null };
+
+  // File paths import via file:// URL so relative specs resolve against the
+  // operator's cwd, not against this module's location.
+  let target = spec;
+  if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('~')) {
+    const { resolve } = await import('node:path');
+    const { pathToFileURL } = await import('node:url');
+    const { homedir } = await import('node:os');
+    const expanded = spec.startsWith('~') ? spec.replace(/^~/, homedir()) : spec;
+    target = pathToFileURL(resolve(expanded)).href;
+  }
+
+  // #3688 residual: snapshot BEFORE the import, not after. A module that
+  // registers its providers as a top-level side effect (calling
+  // registerGuardrailProvider at import time) does so DURING the import —
+  // an after-import baseline counted those registrations as zero and the
+  // fail-closed zero-provider check below then rejected a module whose
+  // guardrails were in fact registered and active. Counting EVENTS (not
+  // providers.size) also keeps a same-id replacement — supported by
+  // registerGuardrailProvider — from reading as zero.
+  const before = registrationEvents;
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(target)) as Record<string, unknown>;
+  } catch (err) {
+    throw new GuardrailLoadError(
+      `GBRAIN_GUARDRAILS_MODULE=${spec} failed to load: ${(err as Error)?.message ?? String(err)}`,
+    );
+  }
+  const candidates: unknown[] = [];
+  if (Array.isArray(mod.default)) candidates.push(...mod.default);
+  else if (mod.default) candidates.push(mod.default);
+  if (Array.isArray(mod.guardrailProviders)) candidates.push(...(mod.guardrailProviders as unknown[]));
+  for (const c of candidates) {
+    registerGuardrailProvider(c as GuardrailProvider);
+  }
+  if (typeof mod.register === 'function') {
+    await (mod.register as (r: typeof registerGuardrailProvider) => unknown)(registerGuardrailProvider);
+  }
+
+  const loaded = registrationEvents - before;
+  if (loaded <= 0) {
+    throw new GuardrailLoadError(
+      `GBRAIN_GUARDRAILS_MODULE=${spec} loaded but registered no guardrail provider ` +
+      `(expected a default-exported provider, a provider array, a guardrailProviders ` +
+      `export, or a register() function).`,
+    );
+  }
+  return { loaded, modulePath: spec };
+}
+
 export async function runGuardrails(input: GuardrailInput): Promise<void> {
   if (providers.size === 0) return;
   const content = typeof input.content === 'string' ? input.content : '';

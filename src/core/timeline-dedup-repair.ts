@@ -17,9 +17,17 @@
  */
 
 import type { BrainEngine } from './engine.ts';
+import { parseTimelineEntries, findTimelineSourceDelimiter } from './link-extraction.ts';
 
 const INDEX_NAME = 'idx_timeline_dedup';
-const EXPECTED_COLUMNS = ['page_id', 'date', 'summary', 'source'];
+// #3737: the dedup tuple keys md5(summary) — the raw summary overflowed the
+// btree v4 row cap (~2704 bytes) on long/incompressible summaries and aborted
+// every timeline insert for that page. Both engines' insert sites infer
+// ON CONFLICT (page_id, date, md5(summary), source) against this shape, so
+// the self-heal MUST expect (and rebuild to) the md5 form — an
+// EXPECTED_COLUMNS of the raw shape would make this repair revert migration
+// v138 on every migrate pass.
+const EXPECTED_COLUMNS = ['page_id', 'date', 'md5(summary)', 'source'];
 
 export interface TimelineDedupStatus {
   /** The timeline_entries table exists (nothing to repair if not). */
@@ -32,15 +40,39 @@ export interface TimelineDedupStatus {
   needsRepair: boolean;
 }
 
-/** Parse the column list out of a pg_indexes `indexdef` string. */
-function parseIndexColumns(indexdef: string): string[] {
-  const open = indexdef.lastIndexOf('(');
+/**
+ * Parse the column list out of a pg_indexes `indexdef` string.
+ *
+ * #3737: the column list is the span from the FIRST `(` (the list opener
+ * after `USING btree`) to the LAST `)`. The previous `lastIndexOf('(')`
+ * pointed INSIDE an expression column — `... (page_id, date, md5(summary),
+ * source)` parsed as `['summary']` — so the shape check misread a healthy
+ * md5-keyed index as drifted and rebuilt it on every migrate pass. The
+ * split is paren-depth-aware so `md5(summary)` (or any future expression
+ * with internal commas) stays one entry.
+ */
+export function parseIndexColumns(indexdef: string): string[] {
+  const open = indexdef.indexOf('(');
   const close = indexdef.lastIndexOf(')');
   if (open < 0 || close < 0 || close < open) return [];
-  return indexdef
-    .slice(open + 1, close)
-    .split(',')
-    .map(c => c.trim().split(/\s+/)[0]) // drop any "col DESC"/opclass suffix
+  const list = indexdef.slice(open + 1, close);
+  const cols: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of list) {
+    if (ch === '(') { depth++; cur += ch; }
+    else if (ch === ')') { depth--; cur += ch; }
+    else if (ch === ',' && depth === 0) { cols.push(cur); cur = ''; }
+    else cur += ch;
+  }
+  cols.push(cur);
+  return cols
+    .map(c => {
+      const t = c.trim();
+      // Drop any "col DESC"/opclass suffix — but only for plain columns;
+      // an expression entry (contains '(') is kept whole.
+      return t.includes('(') ? t : t.split(/\s+/)[0];
+    })
     .filter(Boolean);
 }
 
@@ -74,10 +106,12 @@ export interface TimelineDedupRepairResult {
 }
 
 /**
- * Heal the index if it's missing the v102 4-column shape. Dedupes FIRST —
- * the loose 3-column index let rows differing only by `source` coexist, and
- * `CREATE UNIQUE INDEX` would throw on those collisions otherwise. Keeps the
- * earliest row (min ctid) of each 4-tuple group.
+ * Heal the index if it's missing the canonical shape (v138: (page_id, date,
+ * md5(summary), source)). Dedupes FIRST — the loose 3-column index let rows
+ * differing only by `source` coexist, and `CREATE UNIQUE INDEX` would throw
+ * on those collisions otherwise. Keeps the earliest row (min id) of each
+ * 4-tuple group (raw-summary grouping is equivalent to md5 grouping —
+ * md5-equal ⟺ summary-equal modulo negligible collisions).
  */
 export async function repairTimelineDedupIndex(engine: BrainEngine): Promise<TimelineDedupRepairResult> {
   const status = await checkTimelineDedupIndex(engine);
@@ -112,9 +146,145 @@ export async function repairTimelineDedupIndex(engine: BrainEngine): Promise<Tim
   const collapsedDuplicates = parseInt(del[0]?.n ?? '0', 10);
 
   await engine.executeRaw(`DROP INDEX IF EXISTS ${INDEX_NAME}`);
+  // #3737: rebuild to the md5-keyed shape (matches migration v138 + both
+  // engines' ON CONFLICT inference) — rebuilding the raw-summary shape here
+  // would revert the btree-overflow fix on the next migrate pass.
   await engine.executeRaw(
     `CREATE UNIQUE INDEX IF NOT EXISTS ${INDEX_NAME}
-       ON timeline_entries(page_id, date, summary, source)`,
+       ON timeline_entries(page_id, date, md5(summary), source)`,
   );
   return { repaired: true, before: status.columns, collapsedDuplicates, reason: 'rebuilt' };
+}
+
+// ─── #3957 — legacy-row (source='') shape repair ─────────────────────────
+
+export interface LegacyTimelineRepairResult {
+  /** Pages that carried at least one legacy (source='') row. */
+  pagesScanned: number;
+  /** Legacy rows rewritten in place to the split (source, summary) shape. */
+  rowsRewritten: number;
+  /** Legacy rows deleted because a new-shape duplicate already existed. */
+  rowsDeleted: number;
+  /** Legacy rows left untouched (no matching bullet in current content). */
+  rowsSkipped: number;
+}
+
+/**
+ * #3957 one-time repair: rewrite legacy DB-path timeline rows to the split
+ * (source, summary) shape the post-#3957 parser emits.
+ *
+ * Pre-#3957, `parseTimelineEntries` (the DB extract / put_page auto-timeline
+ * path) emitted no `source` — rows landed with the column default `''` and
+ * the UNSPLIT bullet rest as `summary` (`'meeting — Discussed X'`). The
+ * parser now splits pipe bullets into (source='meeting', summary=
+ * 'Discussed X') and labels the rest 'markdown', so the
+ * (page_id, date, md5(summary), source) dedup index can never collapse a
+ * re-extraction onto a legacy row — every re-extract would DUPLICATE it.
+ *
+ * The rewrite is CONTENT-ANCHORED, not a blind string split: for each page
+ * carrying legacy rows we re-parse its current content with the NEW parser
+ * and rewrite a legacy row ONLY when it provably corresponds to a candidate
+ * the next re-extract will emit — either verbatim (dash bullets, no-delimiter
+ * pipe bullets, citation rows: same summary, new source label) or via the
+ * shared link-aware `Source — Summary` split (pipe bullets). A blind split
+ * would corrupt dash-bullet rows whose text contains an interior ` - `.
+ * Legacy rows with no matching candidate (content edited/deleted since) are
+ * left as-is: a re-extract won't re-emit them, so they can't duplicate.
+ *
+ * Idempotent (rewritten rows no longer match `source = ''`); same SQL text on
+ * both engines. When the new-shape row ALREADY exists (a re-extract duplicated
+ * before this repair ran), the legacy row is deleted instead of rewritten.
+ */
+export async function repairLegacyTimelineSourceRows(
+  engine: BrainEngine,
+): Promise<LegacyTimelineRepairResult> {
+  const result: LegacyTimelineRepairResult = {
+    pagesScanned: 0, rowsRewritten: 0, rowsDeleted: 0, rowsSkipped: 0,
+  };
+  const tbl = await engine.executeRaw<{ reg: string | null }>(
+    `SELECT to_regclass('timeline_entries')::text AS reg`,
+  );
+  if (!tbl[0]?.reg) return result;
+
+  // Soft-deleted pages are skipped: their rows are never re-extracted, so
+  // they cannot duplicate — and their content is not authoritative.
+  const pageIds = await engine.executeRaw<{ page_id: number }>(
+    `SELECT DISTINCT te.page_id
+       FROM timeline_entries te
+       JOIN pages p ON p.id = te.page_id AND p.deleted_at IS NULL
+      WHERE te.source = ''`,
+  );
+  if (pageIds.length === 0) return result;
+
+  const PAGE_BATCH = 100;
+  for (let i = 0; i < pageIds.length; i += PAGE_BATCH) {
+    const ids = pageIds.slice(i, i + PAGE_BATCH).map(r => Number(r.page_id));
+    const pages = await engine.executeRaw<{
+      id: number; compiled_truth: string | null; timeline: string | null;
+    }>(
+      `SELECT id, compiled_truth, timeline FROM pages WHERE id = ANY($1::int[])`,
+      [ids],
+    );
+    for (const page of pages) {
+      result.pagesScanned++;
+      // Same content assembly as the DB extract paths (extractStaleFromDB /
+      // extractTimelineFromDB): body + timeline column.
+      const fullContent = `${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`;
+      const byDate = new Map<string, Array<{ source: string; summary: string }>>();
+      for (const c of parseTimelineEntries(fullContent)) {
+        const list = byDate.get(c.date) ?? [];
+        list.push({ source: c.source ?? '', summary: c.summary });
+        byDate.set(c.date, list);
+      }
+      const legacyRows = await engine.executeRaw<{
+        id: number; date: string; summary: string;
+      }>(
+        `SELECT id, to_char(date, 'YYYY-MM-DD') AS date, summary
+           FROM timeline_entries WHERE page_id = $1 AND source = ''
+          ORDER BY id`,
+        [page.id],
+      );
+      for (const row of legacyRows) {
+        const candidates = byDate.get(row.date) ?? [];
+        let target: { source: string; summary: string } | null = null;
+        // 1. Verbatim: the new parser emits the same summary under a real
+        //    source label (dash bullets → 'markdown', citations → label).
+        target = candidates.find(c => c.source !== '' && c.summary === row.summary) ?? null;
+        // 2. Split: the legacy summary is the UNSPLIT `Source — Summary`
+        //    text of a pipe bullet; the shared delimiter finder must yield
+        //    exactly the candidate's (source, summary) pair.
+        if (!target) {
+          const at = findTimelineSourceDelimiter(row.summary);
+          if (at >= 0) {
+            const pre = row.summary.slice(0, at).trim();
+            const post = row.summary.slice(at + 1).trim();
+            target = candidates.find(c => c.source === pre && c.summary === post) ?? null;
+          }
+        }
+        if (!target) { result.rowsSkipped++; continue; }
+        // A new-shape duplicate may already exist (re-extract ran before this
+        // repair): drop the legacy row instead of colliding with the unique
+        // (page_id, date, md5(summary), source) index on UPDATE.
+        const del = await engine.executeRaw<{ id: number }>(
+          `DELETE FROM timeline_entries t
+            WHERE t.id = $1
+              AND EXISTS (
+                SELECT 1 FROM timeline_entries x
+                 WHERE x.page_id = t.page_id AND x.date = t.date
+                   AND md5(x.summary) = md5($2) AND x.source = $3 AND x.id <> t.id
+              )
+            RETURNING t.id`,
+          [row.id, target.summary, target.source],
+        );
+        if (del.length > 0) { result.rowsDeleted++; continue; }
+        await engine.executeRaw(
+          `UPDATE timeline_entries SET source = $2, summary = $3
+            WHERE id = $1 AND source = ''`,
+          [row.id, target.source, target.summary],
+        );
+        result.rowsRewritten++;
+      }
+    }
+  }
+  return result;
 }

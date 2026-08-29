@@ -46,9 +46,40 @@ export interface RollupUpsertInput {
   eval_fail_delta?: number;
   eval_pass_delta?: number;
   round_completed_delta?: number;
+  /** #4482: EXPECTED-limit stop (per-source budget / walltime cap working as
+   * designed — partial progress banked, more on the next run). Orthogonal to
+   * halt_delta so doctor's failure rate can exclude self-imposed capacity
+   * limits. Column added by migration v141. */
+  expected_limit_delta?: number;
   /** Increment rollup_write_failures inside the table (used by the
    * self-healing path that records its own write failures forensically). */
   failure_delta?: number;
+}
+
+/**
+ * #4482: shared classification of how an extract run stopped, so every
+ * extractor records the same three-way split instead of hand-folding its
+ * flags into one `halted` boolean:
+ *   - error (provider/auth/global abort, per-page failures) → halt_delta=1 —
+ *     the failure-oriented signal doctor warns on, unchanged from today;
+ *   - expected cap only (budget/deadline, no error) → expected_limit_delta=1
+ *     — a capacity signal, observable but NOT a failure;
+ *   - clean completion → round_completed_delta=1.
+ * An error present alongside a cap counts as an error (the cap didn't cause
+ * the failed work).
+ */
+export function classifyRunStop(stop: {
+  budget_exhausted?: boolean;
+  deadline_hit?: boolean;
+  error?: boolean;
+}): { round_completed_delta: number; halt_delta: number; expected_limit_delta: number } {
+  if (stop.error === true) {
+    return { round_completed_delta: 0, halt_delta: 1, expected_limit_delta: 0 };
+  }
+  if (stop.budget_exhausted === true || stop.deadline_hit === true) {
+    return { round_completed_delta: 0, halt_delta: 0, expected_limit_delta: 1 };
+  }
+  return { round_completed_delta: 1, halt_delta: 0, expected_limit_delta: 0 };
 }
 
 function today(): string {
@@ -77,6 +108,7 @@ export async function upsertExtractRollup(
   const evalFails = input.eval_fail_delta ?? 0;
   const evalPasses = input.eval_pass_delta ?? 0;
   const completed = input.round_completed_delta ?? 0;
+  const expectedLimits = input.expected_limit_delta ?? 0;
   const failures = input.failure_delta ?? 0;
 
   try {
@@ -84,22 +116,50 @@ export async function upsertExtractRollup(
       `INSERT INTO extract_rollup_7d (
          kind, source_id, day,
          cost_usd, halt_count, eval_fail_count, eval_pass_count,
-         round_completed_count, rollup_write_failures, updated_at
+         round_completed_count, expected_limit_count, rollup_write_failures, updated_at
        )
-       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, now())
        ON CONFLICT (kind, source_id, day) DO UPDATE SET
          cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
          halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
          eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
          eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
          round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
+         expected_limit_count   = extract_rollup_7d.expected_limit_count   + EXCLUDED.expected_limit_count,
          rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
          updated_at             = now()`,
-      [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, failures],
+      [input.kind, input.source_id, day, cost, halts, evalFails, evalPasses, completed, expectedLimits, failures],
     );
     return { ok: true };
   } catch (err) {
     const msg = (err as Error).message || String(err);
+    // #4482 back-compat: a brain that hasn't applied migration v141 yet has
+    // no expected_limit_count column. Rather than losing the WHOLE rollup
+    // write (best-effort would swallow it), retry the pre-v141 statement —
+    // the cap stop degrades to the old conflated halt accounting until the
+    // migration runs.
+    if (/expected_limit_count/i.test(msg)) {
+      try {
+        await engine.executeRaw(
+          `INSERT INTO extract_rollup_7d (
+             kind, source_id, day,
+             cost_usd, halt_count, eval_fail_count, eval_pass_count,
+             round_completed_count, rollup_write_failures, updated_at
+           )
+           VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, now())
+           ON CONFLICT (kind, source_id, day) DO UPDATE SET
+             cost_usd               = extract_rollup_7d.cost_usd               + EXCLUDED.cost_usd,
+             halt_count             = extract_rollup_7d.halt_count             + EXCLUDED.halt_count,
+             eval_fail_count        = extract_rollup_7d.eval_fail_count        + EXCLUDED.eval_fail_count,
+             eval_pass_count        = extract_rollup_7d.eval_pass_count        + EXCLUDED.eval_pass_count,
+             round_completed_count  = extract_rollup_7d.round_completed_count  + EXCLUDED.round_completed_count,
+             rollup_write_failures  = extract_rollup_7d.rollup_write_failures  + EXCLUDED.rollup_write_failures,
+             updated_at             = now()`,
+          [input.kind, input.source_id, day, cost, halts + expectedLimits, evalFails, evalPasses, completed, failures],
+        );
+        return { ok: true };
+      } catch { /* fall through to the normal failure record */ }
+    }
     // Don't spam: log once per process per (kind, day) error class.
     rollupErrorLogOnce(input.kind, day, msg);
     return { ok: false, error: msg };

@@ -9,7 +9,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { looksConceptShaped, conceptNudge } from '../src/core/search/query-intent.ts';
+import { looksConceptShaped, conceptNudge, classifyQueryIntent, intentToDetail } from '../src/core/search/query-intent.ts';
 
 describe('#2416 — looksConceptShaped: concept/landscape queries → true', () => {
   const CONCEPT_SHAPED = [
@@ -84,5 +84,45 @@ describe('#2416 — conceptNudge message', () => {
     const msg = conceptNudge(long)!;
     expect(msg).toContain('...');
     expect(msg.length).toBeLessThan(320);
+  });
+});
+
+describe('v0.46.15 — classifyQueryIntent concept-guard branches (Cat 13)', () => {
+  test('mid-sentence capital blocks concept: "What is Stripe Atlas?" → entity', () => {
+    // Sentence-initial capitalization alone does not block; a proper noun
+    // AFTER the first token is v1-conservative evidence of an entity lookup.
+    expect(classifyQueryIntent('What is Stripe Atlas?')).toBe('entity');
+  });
+
+  test('definitional paraphrase without proper nouns → concept', () => {
+    expect(classifyQueryIntent('What is the ownership economy?')).toBe('concept');
+    expect(classifyQueryIntent('What are embeddings used for in retrieval?')).toBe('concept');
+  });
+
+  test('<3-word guard: bare two-word phrase never classifies concept', () => {
+    expect(classifyQueryIntent('ownership economy')).toBe('general');
+  });
+
+  test("intentToDetail('concept') → undefined (concept never narrows detail)", () => {
+    expect(intentToDetail('concept')).toBeUndefined();
+  });
+});
+
+describe('v0.46.15 ship-review F5 — lowercase NAMES keep the entity tilt', () => {
+  // The identity wave's own premise is that users type names lowercase; the
+  // definitional concept cue must not cannibalize those lookups.
+  test('status-verb queries about an entity are NOT concept', () => {
+    expect(classifyQueryIntent('what is saoirse working on')).toBe('entity');
+    expect(classifyQueryIntent('what is alice up to these days')).toBe('entity');
+  });
+
+  test('single-word lowercase subject is NOT concept (undecidable → entity)', () => {
+    expect(classifyQueryIntent('what do i know about galewright')).toBe('entity');
+    expect(classifyQueryIntent('what is kubernetes')).not.toBe('concept');
+  });
+
+  test('multi-word lowercase noun-phrase subjects stay concept', () => {
+    expect(classifyQueryIntent('what do i know about founder liquidity')).toBe('concept');
+    expect(classifyQueryIntent('what is the compounding advantage idea')).toBe('concept');
   });
 });

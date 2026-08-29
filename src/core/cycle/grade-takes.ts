@@ -20,23 +20,26 @@
  *   flag because relaxing after data accumulates silently shifts which
  *   historical resolutions count as auto-applied.
  *
- * Evidence retrieval status (v0.36.1.0 ship state):
- *   The default evidence retriever returns an "evidence-retrieval not yet
- *   wired" placeholder. Most verdicts produced by the stub-judge against
- *   the stub-evidence will be 'unresolvable'. Real retrieval (hybrid search
- *   over pages newer than the take's since_date, optionally augmented by a
- *   gateway web-search recipe in v0.37+) lands as a follow-up. The phase
- *   ships now so the wiring is real and the cache table accumulates
- *   verdicts even if early ones are conservative; operators get the
- *   end-to-end loop running ahead of the tuned-prompt arrival.
+ * Evidence retrieval (#2811):
+ *   The default evidence retriever runs a real hybrid search on the take's
+ *   claim (expansion off, source-scoped, the take's own page excluded) and
+ *   formats the hits via the pure `formatEvidenceBlock` — each item carries
+ *   its slug + effective_date and is annotated relative to the take's
+ *   since_date (evidence dated BEFORE the claim is context, not outcome).
+ *   Items clamp at ~500 chars; the whole block caps at 4k. Zero hits and
+ *   retrieval failures fall back to explicit notes steering the judge to
+ *   'unresolvable' rather than fabricating.
  *
  * Test seam: opts.judge + opts.evidenceRetriever are injected so the
  * phase runs hermetically in unit tests.
  */
 
 import { createHash } from 'node:crypto';
-import { BaseCyclePhase, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { BaseCyclePhase, effectivePhaseDeadlineMs, type ScopedReadOpts, type BasePhaseOpts } from './base-phase.ts';
+import { hybridSearch } from '../search/hybrid.ts';
+import type { SearchResult } from '../types.ts';
 import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { splitProviderModelId } from '../model-id.ts';
 import { GBrainError } from '../types.ts';
 import type { OperationContext } from '../operations.ts';
@@ -48,9 +51,9 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * stay valid (composite cache key includes prompt_version); new runs re-spend
  * LLM tokens.
  */
-export const GRADE_TAKES_PROMPT_VERSION = 'v0.36.1.0-stub';
+export const GRADE_TAKES_PROMPT_VERSION = 'hybrid-evidence-v1';
 
-export const GRADE_TAKE_PROMPT = `[v0.36.1.0-stub] You are grading a single forecasting take. The author
+export const GRADE_TAKE_PROMPT = `[hybrid-evidence-v1] You are grading a single forecasting take. The author
 made this claim on the given date. Based on the evidence provided, did the
 claim turn out to be:
 - correct        (the world plays out as predicted)
@@ -177,6 +180,8 @@ export function aggregateEnsemble(
 export type EvidenceRetrieverFn = (take: Take, scope: ScopedReadOpts) => Promise<string>;
 
 export interface GradeTakesOpts extends BasePhaseOpts {
+  /** Override the phase wall-clock deadline (tests). Default: 30 min, clamped to the job deadline (gbrain#4168). */
+  deadlineMs?: number;
   /** Minimum age in months before a take is eligible for grading. Default 6. */
   minAgeMonths?: number;
   /** Limit takes processed in this cycle. Default 50. */
@@ -220,7 +225,7 @@ export interface GradeTakesOpts extends BasePhaseOpts {
   /**
    * E2 ensemble judges. When useEnsemble=true and the single-model verdict
    * is borderline, all three judges are called in parallel via Promise.allSettled.
-   * Defaults to [openai:gpt-5.2, anthropic:claude-sonnet-4-6, google:gemini-2.0-flash]
+   * Defaults to [openai:gpt-5.2, anthropic:claude-sonnet-4-6, google:gemini-2.5-flash]
    * via defaultJudge with model-string overrides. Tests inject deterministic
    * judges.
    */
@@ -247,11 +252,25 @@ export interface GradeTakesResult {
   auto_applied: number;
   too_recent: number;
   budget_exhausted: boolean;
+  /**
+   * Set when the take loop broke on a whole-run LLM failure (#3044):
+   * auth/billing on the first hit, rate_limit after RATE_LIMIT_HALT_STREAK
+   * consecutive hits — from the single-model judge OR a rejected ensemble
+   * judge. The phase reports 'warn' ('fail' when NO judge call succeeded)
+   * so the condition can't hide behind a green summary.
+   */
+  aborted_global_error?: GlobalLlmErrorClass;
+  /** Single-model judge calls that returned (cache hits don't count). */
+  judge_calls_succeeded: number;
+  /** Single-model judge calls that threw (global or per-take alike). */
+  judge_calls_failed: number;
   warnings: string[];
   /** E2 ensemble (T5): count of takes where the ensemble tiebreaker fired. */
   ensemble_invoked: number;
   /** E2 ensemble (T5): count of takes where ensemble produced 3/3 unanimous. */
   ensemble_unanimous: number;
+  /** gbrain#4168: true when the phase deadline fired mid-loop (partial result). */
+  deadline_hit: boolean;
 }
 
 /**
@@ -292,27 +311,114 @@ export function parseJudgeOutput(raw: string): JudgeVerdict | null {
   return { verdict, confidence, reasoning };
 }
 
+/** #2811 — evidence retrieval knobs. */
+export const EVIDENCE_SEARCH_LIMIT = 8;
+export const EVIDENCE_ITEM_CLAMP_CHARS = 500;
+export const EVIDENCE_BLOCK_CAP_CHARS = 4000;
+
+/** The narrow slice of a SearchResult the evidence formatter reads. */
+export type EvidenceHit = Pick<SearchResult, 'slug' | 'title' | 'chunk_text' | 'effective_date'>;
+
 /**
- * Default evidence retriever — v0.36.1.0 ship-state placeholder. Real
- * retrieval lands in v0.37+ via hybrid search over pages newer than the
- * take's since_date. Documented limitation per CDX-8 + D17.
+ * #2811 — pure evidence-block formatter (unit-testable, no engine).
+ *
+ * Each hit renders as one item carrying its slug + effective_date, annotated
+ * relative to the take's since_date: evidence dated BEFORE the claim can only
+ * be context (it cannot prove an outcome), evidence dated on/after can. Items
+ * clamp at EVIDENCE_ITEM_CLAMP_CHARS; the whole block caps at
+ * EVIDENCE_BLOCK_CAP_CHARS. Zero hits produce an explicit no-evidence note
+ * that steers the judge toward 'unresolvable'.
  */
-export async function defaultEvidenceRetriever(take: Take, _scope: ScopedReadOpts): Promise<string> {
-  return `[evidence retrieval not yet wired — v0.36.1.0 ship-state]
-Take claim text (the only "evidence" available pre-T-retrieval-impl):
-  ${take.claim}
-Made on: ${take.since_date ?? 'unknown'}
-`;
+export function formatEvidenceBlock(take: Take, hits: EvidenceHit[]): string {
+  const sinceDate = take.since_date ?? 'unknown';
+  if (hits.length === 0) {
+    return (
+      `No evidence found in the brain for this claim (hybrid search returned zero results).\n` +
+      `The claim was made on: ${sinceDate}. With nothing in the brain mentioning the ` +
+      `subject, grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
+  const lines: string[] = [];
+  for (const h of hits) {
+    const itemDate = h.effective_date ? String(h.effective_date).slice(0, 10) : null;
+    let recency = '';
+    if (itemDate && take.since_date) {
+      // Lexicographic compare works for ISO prefixes (YYYY-MM vs YYYY-MM-DD:
+      // compare on the shorter's length so a same-month hit counts as after).
+      const cmpLen = Math.min(itemDate.length, take.since_date.length);
+      recency = itemDate.slice(0, cmpLen) >= take.since_date.slice(0, cmpLen)
+        ? ' (dated after the claim)'
+        : ' (dated BEFORE the claim — context only, not outcome evidence)';
+    }
+    const text = (h.chunk_text ?? '').replace(/\s+/g, ' ').trim().slice(0, EVIDENCE_ITEM_CLAMP_CHARS);
+    if (!text) continue;
+    lines.push(`- [${h.slug} • ${itemDate ?? 'undated'}]${recency}\n  ${text}`);
+  }
+  if (lines.length === 0) {
+    return (
+      `No usable evidence text found in the brain for this claim.\n` +
+      `The claim was made on: ${sinceDate}. Grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
+  let block = lines.join('\n');
+  if (block.length > EVIDENCE_BLOCK_CAP_CHARS) {
+    block = block.slice(0, EVIDENCE_BLOCK_CAP_CHARS) + '\n[evidence truncated]';
+  }
+  return block;
+}
+
+/**
+ * Default evidence retriever (#2811) — real hybrid search on the take's
+ * claim text: expansion off (deterministic, no extra LLM spend), source
+ * scope threaded (federated array beats scalar per sourceScopeOpts), and
+ * the take's OWN page excluded (its body restates the claim — feeding it
+ * back in would let the judge grade a claim against itself). Fail-open:
+ * a retrieval error degrades to a claim-only note steering the judge to
+ * 'unresolvable' rather than aborting the phase.
+ *
+ * Takes the engine explicitly; process() binds it so the injected-seam
+ * type (EvidenceRetrieverFn) is unchanged.
+ */
+export async function defaultEvidenceRetriever(
+  engine: BrainEngine,
+  take: Take,
+  scope: ScopedReadOpts,
+): Promise<string> {
+  try {
+    const hits = await hybridSearch(engine, take.claim, {
+      limit: EVIDENCE_SEARCH_LIMIT,
+      expansion: false,
+      ...(scope.sourceIds && scope.sourceIds.length > 0
+        ? { sourceIds: scope.sourceIds }
+        : scope.sourceId
+          ? { sourceId: scope.sourceId }
+          : {}),
+      ...(take.page_slug ? { exclude_slugs: [take.page_slug] } : {}),
+    });
+    // Belt-and-suspenders on top of exclude_slugs.
+    const filtered = hits.filter((h) => h.slug !== take.page_slug);
+    return formatEvidenceBlock(take, filtered);
+  } catch (err) {
+    return (
+      `[evidence retrieval failed: ${(err as Error).message}]\n` +
+      `Claim: ${take.claim}\n` +
+      `Made on: ${take.since_date ?? 'unknown'}\n` +
+      `With no retrievable evidence, grade 'unresolvable' — do not fabricate an outcome.`
+    );
+  }
 }
 
 /**
  * Production judge — calls gateway.chat with the GRADE_TAKE_PROMPT.
+ * chatFn is injectable so tests can drive the parse path without the gateway
+ * (mock.module is banned outside *.serial.test.ts); only cycle.ts and tests
+ * import this module, and both use the default.
  */
 export async function defaultJudge(input: {
   take: Take;
   evidence: string;
   modelHint?: string;
-}): Promise<JudgeVerdict> {
+}, chatFn: typeof gatewayChat = gatewayChat): Promise<JudgeVerdict> {
   const prompt = GRADE_TAKE_PROMPT
     .replace('{CLAIM}', input.take.claim)
     .replace('{KIND}', input.take.kind)
@@ -321,21 +427,19 @@ export async function defaultJudge(input: {
     .replace('{WEIGHT}', String(input.take.weight))
     .replace('{EVIDENCE_BLOCK}', input.evidence);
 
-  const result = await gatewayChat({
+  const result = await chatFn({
     messages: [{ role: 'user', content: prompt }],
     ...(input.modelHint ? { model: input.modelHint } : {}),
     maxTokens: 600,
   });
   const parsed = parseJudgeOutput(result.text);
   if (!parsed) {
-    // Failed parse — treat as unresolvable at low confidence so the row
-    // still lands in the cache (operator sees the LLM's parse failure
-    // surfaced via warnings) rather than disappearing silently.
-    return {
-      verdict: 'unresolvable',
-      confidence: 0.0,
-      reasoning: 'judge_output_parse_failed',
-    };
+    // Throw, don't mint a verdict: a synthetic 'unresolvable' row would be
+    // cached under the deterministic evidence signature and skipped forever,
+    // indistinguishable from a genuine evidence-based verdict (#3910). The
+    // per-take catch turns this into a warning and retries next cycle — the
+    // same policy the loop already applies to thrown judge errors.
+    throw new Error(`judge output parse failed: unparseable judge response (${result.text.length} chars)`);
   }
   return parsed;
 }
@@ -368,6 +472,14 @@ function verdictToResolution(verdict: JudgeVerdict, resolvedByLabel: string): Ta
   };
 }
 
+/**
+ * Hard wall-clock deadline for the grade_takes phase (gbrain#4168). Same
+ * clean-partial-exit contract as propose_takes: judge calls have long tails,
+ * and without a phase deadline the worker's job timeout killed the phase
+ * mid-write instead of letting it bank completed verdicts.
+ */
+const GRADE_TAKES_PHASE_DEADLINE_MS = 30 * 60 * 1000;
+
 class GradeTakesPhase extends BaseCyclePhase {
   readonly name = 'grade_takes' as CyclePhase;
   protected readonly budgetUsdKey = 'cycle.grade_takes.budget_usd';
@@ -389,7 +501,11 @@ class GradeTakesPhase extends BaseCyclePhase {
     opts: GradeTakesOpts,
   ): Promise<{ summary: string; details: Record<string, unknown>; status?: PhaseStatus }> {
     const judge = opts.judge ?? defaultJudge;
-    const evidenceRetriever = opts.evidenceRetriever ?? defaultEvidenceRetriever;
+    // #2811: bind the engine here so the injected-seam type stays
+    // (take, scope) => Promise<string>.
+    const evidenceRetriever: EvidenceRetrieverFn =
+      opts.evidenceRetriever ??
+      ((take: Take, takeScope: ScopedReadOpts) => defaultEvidenceRetriever(engine, take, takeScope));
     const promptVersion = opts.promptVersion ?? GRADE_TAKES_PROMPT_VERSION;
     const minAgeMonths = opts.minAgeMonths ?? 6;
     const takeLimit = opts.takeLimit ?? 50;
@@ -423,10 +539,39 @@ class GradeTakesPhase extends BaseCyclePhase {
       auto_applied: 0,
       too_recent: 0,
       budget_exhausted: false,
+      judge_calls_succeeded: 0,
+      judge_calls_failed: 0,
       warnings: [],
       ensemble_invoked: 0,
       ensemble_unanimous: 0,
+      deadline_hit: false,
     };
+
+    // gbrain#4168: relative phase deadline clamped to the job's absolute
+    // deadline minus the reserve — same clean partial-exit contract as
+    // propose_takes (break, bank verdicts already written, report).
+    const phaseStartMs = Date.now();
+    const deadlineMs = effectivePhaseDeadlineMs(
+      opts.deadlineMs ?? GRADE_TAKES_PHASE_DEADLINE_MS,
+      opts.deadlineAtMs,
+      phaseStartMs,
+    );
+    if (deadlineMs <= 0) {
+      // Job budget already inside the reserve — exit before ANY judge call.
+      result.warnings.push('phase skipped: job deadline already inside the reserve window');
+      result.deadline_hit = true;
+      return {
+        summary: 'grade_takes: skipped — job deadline inside the reserve window',
+        details: { ...result, prompt_version: promptVersion, auto_resolve: autoResolve, auto_resolve_threshold: autoResolveThreshold },
+        status: 'warn',
+      };
+    }
+
+    // #3044 — shared halt policy over single-model judge AND ensemble
+    // rejections (rate limits counted at most once per take via
+    // rateLimitedThisTake). A take that completes without one resets the
+    // streak; auth/billing halt on the first hit.
+    const llmHalt = createGlobalLlmHaltTracker();
 
     // Load unresolved active takes, oldest-first.
     const takes = await engine.listTakes({
@@ -442,6 +587,19 @@ class GradeTakesPhase extends BaseCyclePhase {
 
     const now = new Date();
     for (const take of takes) {
+      // Phase deadline check (gbrain#4168). Break, not throw: verdicts
+      // already cached stay banked, and the phase reports partial cleanly
+      // before the worker's kill switch fires.
+      const elapsedMs = Date.now() - phaseStartMs;
+      if (elapsedMs > deadlineMs) {
+        result.warnings.push(
+          `phase deadline hit at take ${result.takes_scanned}/${takes.length} ` +
+          `after ${(elapsedMs / 1000).toFixed(0)}s (cap ${(deadlineMs / 1000).toFixed(0)}s); partial completion`,
+        );
+        result.deadline_hit = true;
+        break;
+      }
+
       result.takes_scanned += 1;
       this.tick(opts);
 
@@ -466,10 +624,14 @@ class GradeTakesPhase extends BaseCyclePhase {
         continue;
       }
 
-      // Budget pre-check.
+      // Budget pre-check. #2811: the input estimate is size-derived — real
+      // evidence blocks vary from a one-line no-evidence note to the 4k cap,
+      // and the old fixed 1200 underestimated a full block by ~2x.
       const budget = this.checkBudget({
         modelId: judgeModelId,
-        estimatedInputTokens: 1200,
+        estimatedInputTokens: Math.ceil(
+          (GRADE_TAKE_PROMPT.length + take.claim.length + evidence.length) / 4,
+        ),
         maxOutputTokens: 400,
       });
       if (!budget.allowed) {
@@ -480,15 +642,31 @@ class GradeTakesPhase extends BaseCyclePhase {
         break;
       }
 
-      // Call the single-model judge. Errors on a single take log warning + continue.
+      // Call the single-model judge. Per-take errors log a warning and
+      // continue — UNLESS they classify as a whole-run condition (#3044):
+      // auth/billing halts on the first hit; a bare rate_limit halts only
+      // after RATE_LIMIT_HALT_STREAK consecutive hits.
+      let rateLimitedThisTake = false;
       let verdict: JudgeVerdict;
       try {
         verdict = await judge({ take, evidence, modelHint: judgeModelFull });
       } catch (err) {
+        result.judge_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
-        result.warnings.push(`judge failed on take ${take.id}: ${msg}`);
+        const detail = `judge failed on take ${take.id}: ${msg}`;
+        const decision = llmHalt.observe(err);
+        if (decision !== 'continue') {
+          result.aborted_global_error = haltedClassOf(decision)!;
+          result.warnings.push(
+            `aborting phase at take ${result.takes_scanned}/${takes.length}: ` +
+            `${llmHalt.note()} (${detail})`,
+          );
+          break;
+        }
+        result.warnings.push(detail);
         continue;
       }
+      result.judge_calls_succeeded += 1;
 
       // T5 — ensemble tiebreaker for borderline single-model verdicts.
       let recordedJudgeModelId = judgeModelId;
@@ -504,6 +682,41 @@ class GradeTakesPhase extends BaseCyclePhase {
         const ensembleResults = await Promise.allSettled(
           opts.ensembleJudges.map(j => j.fn({ take, evidence, modelHint: j.modelId })),
         );
+
+        // #3044: Promise.allSettled flattens judge rejections into null
+        // verdicts below, so a whole-run condition (revoked key, exhausted
+        // spend limit) inside an ensemble judge would vanish into a
+        // "(failed)" note in the reasoning string. Classify each rejection
+        // with the same two-tier policy as the single-model path:
+        // auth/billing halts immediately; rate_limit (counted at most once
+        // per take) feeds the consecutive-streak counter.
+        let ensembleHaltClass: GlobalLlmErrorClass | null = null;
+        let ensembleHaltDetail = '';
+        for (let i = 0; i < ensembleResults.length; i++) {
+          const res = ensembleResults[i];
+          if (!res || res.status !== 'rejected') continue;
+          const decision = llmHalt.observe(res.reason, { countRateLimit: !rateLimitedThisTake });
+          if (llmHalt.lastClass() === null) continue;
+          if (llmHalt.lastClass() === 'rate_limit') rateLimitedThisTake = true;
+          const judgeId = opts.ensembleJudges[i]?.modelId ?? 'unknown';
+          const rmsg = res.reason instanceof Error ? res.reason.message : String(res.reason);
+          const detail = `ensemble judge ${judgeId} failed on take ${take.id}: ${rmsg}`;
+          if (decision !== 'continue') {
+            ensembleHaltClass = haltedClassOf(decision);
+            ensembleHaltDetail = detail;
+            break;
+          }
+          result.warnings.push(detail);
+        }
+        if (ensembleHaltClass) {
+          result.aborted_global_error = ensembleHaltClass;
+          result.warnings.push(
+            `aborting phase at take ${result.takes_scanned}/${takes.length}: ` +
+            `${llmHalt.note()} (${ensembleHaltDetail})`,
+          );
+          break;
+        }
+
         const collected: Array<{ modelId: string; verdict: JudgeVerdict | null }> = opts.ensembleJudges.map((j, i) => {
           const res = ensembleResults[i];
           if (res && res.status === 'fulfilled') return { modelId: j.modelId, verdict: res.value };
@@ -604,25 +817,54 @@ class GradeTakesPhase extends BaseCyclePhase {
         }
       }
 
+      // #3044: a take that completed without any rate_limit-classified LLM
+      // failure breaks the consecutive streak. (Cache hits / too-recent
+      // takes `continue` before the judge call and neither extend nor
+      // reset it.)
+      if (!rateLimitedThisTake) llmHalt.reset();
+
       // Tally is silent — the caller surfaces it via the GradeTakesResult.
       void recordedVerdict;
     }
 
     if (opts.reporter) opts.reporter.finish();
 
+    // Status folds warnings in (the extract_facts precedent from #1928): a
+    // run with swallowed per-take failures must not read as a clean 'ok'.
+    // Severity split (#3044): a global halt with ZERO successful judge calls
+    // means the whole LLM lane is down — phase 'fail' (deriveStatus turns
+    // one failed phase into a 'partial' cycle; the autopilot handler
+    // deliberately does not throw on partial). A halt after some successes
+    // is a partial run → 'warn'.
+    const warningCount = result.warnings.length;
+    // A deadline-hit run halted mid-list the same way a budget-exhausted one
+    // does (matches the propose_takes #4168 posture) — folded into `halted`
+    // so both the details field and the status derivation see it.
+    const halted =
+      result.budget_exhausted ||
+      result.deadline_hit === true ||
+      result.aborted_global_error !== undefined;
+    const phaseFailed =
+      result.aborted_global_error !== undefined && result.judge_calls_succeeded === 0;
     const summary =
       `grade_takes: scanned ${result.takes_scanned} takes ` +
       `(${result.too_recent} too recent, ${result.cache_hits} cached, ` +
-      `${result.verdicts_written} new verdicts, ${result.auto_applied} auto-applied)`;
+      `${result.verdicts_written} new verdicts, ${result.auto_applied} auto-applied)` +
+      (result.deadline_hit ? ' [deadline hit — partial]' : '') +
+      (result.aborted_global_error
+        ? `; aborted on ${result.aborted_global_error} error after ${result.takes_scanned} take(s)`
+        : '') +
+      (warningCount > 0 ? ` (${warningCount} warning(s))` : '');
     return {
       summary,
       details: {
         ...result,
+        halted,
         prompt_version: promptVersion,
         auto_resolve: autoResolve,
         auto_resolve_threshold: autoResolveThreshold,
       },
-      status: result.budget_exhausted ? 'warn' : 'ok',
+      status: phaseFailed ? 'fail' : halted || warningCount > 0 ? 'warn' : 'ok',
     };
   }
 }

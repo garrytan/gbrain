@@ -35,6 +35,7 @@ import {
   resolveAlias,
   type ModelTier,
 } from '../core/model-config.ts';
+import { resolveExtractAtomsModelWithSource } from '../core/cycle/extract-atoms.ts';
 import { maybeAttachVersionSuffixHint } from '../core/ai/base-url-probe.ts';
 import type { AIGatewayConfig } from '../core/ai/types.ts';
 
@@ -52,6 +53,19 @@ interface PerTaskModelRoute {
    * resolution so the dashboard reports the ACTUAL spending route.
    */
   overrideKey?: string;
+  /**
+   * A caller whose runtime resolution DOESN'T go through resolveModel()'s
+   * fuller chain (models.tier.<tier> / models.default / env var) — only
+   * `key`'s own DB config, then a tier-default fallback. Reporting via the
+   * generic chain here would show a resolved value that can diverge from
+   * what the caller actually uses in partially-configured installs, so this
+   * calls the caller's own resolver instead. The resolver returns model AND
+   * attribution from the same call so the reported `source` — rendered as
+   * `config: <key>` or `tier.<tier> (caller-specific)` to make the narrower
+   * chain visible rather than implying full resolveModel() coverage — can
+   * never disagree with the resolved value.
+   */
+  narrowResolver?: (engine: BrainEngine) => Promise<{ model: string; source: 'config' | 'tier_default' }>;
 }
 
 const PER_TASK_KEYS: PerTaskModelRoute[] = [
@@ -64,6 +78,12 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     overrideKey: 'models.dream.triage',
   },
   { key: 'models.dream.patterns',           tier: 'reasoning', description: 'Pattern discovery (cross-take themes)' },
+  {
+    key: 'models.dream.extract_atoms',
+    tier: 'utility',
+    description: 'Atom extraction from transcripts/pages (extract_atoms phase)',
+    narrowResolver: resolveExtractAtomsModelWithSource,
+  },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
@@ -141,7 +161,19 @@ async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
 
   const per_task: ModelsReport['per_task'] = [];
   for (const route of PER_TASK_KEYS) {
-    const { key, tier, description, deprecatedConfigKey, envVar, overrideKey } = route;
+    const { key, tier, description, deprecatedConfigKey, envVar, overrideKey, narrowResolver } = route;
+    // A caller with its own narrower resolution (doesn't honor models.tier.*
+    // / models.default / env var) reports via that exact resolver, not the
+    // generic resolveModel() chain — see PerTaskModelRoute.narrowResolver.
+    if (narrowResolver) {
+      // ONE resolver call feeds both the resolved model and the attribution,
+      // so the label can never disagree with what `resolved` actually
+      // reflects (previously a separate getConfig truthiness re-check).
+      const { model: resolved, source: narrowSource } = await narrowResolver(engine);
+      const source = narrowSource === 'config' ? `config: ${key}` : `tier.${tier} (caller-specific)`;
+      per_task.push({ key, tier, resolved, source, description });
+      continue;
+    }
     // Explicit pre-read override (loadSynthConfig 2A parity): when set, it IS
     // the effective spending route and must be reported as such.
     const overrideValue = overrideKey ? await engine.getConfig(overrideKey) : null;
@@ -578,18 +610,54 @@ export async function probeEmbeddingReachability(deps: ProbeDeps = {}): Promise<
   }
 }
 
+/**
+ * Resolve the chat/expansion probe timeout: the recipe's declared
+ * `touchpoints.<kind>.default_timeout_ms` when set, else the probe's
+ * historical flat 5000ms.
+ *
+ * Pre-fix `probeModel` hardcoded 5000ms for every provider. That's fine for
+ * a plain network round-trip, but `claude-cli:` dispatches through a
+ * `claude -p (print mode)` subprocess (CLI cold start + user-level CLAUDE.md load),
+ * which routinely takes 5-6s even when healthy — so the probe aborted on
+ * every run and reported 'unknown — claude-cli adapter aborted', not
+ * because the model was actually unreachable. Mirrors the reranker probe's
+ * recipe-default fallback (`resolveLiveRerankerTimeoutMs` / mode.ts), but
+ * simpler: unlike `search.reranker.timeout_ms`, there's no config-key
+ * override for chat/expansion timeouts, so the chain is just per-call
+ * default (5000) unless the recipe overrides it.
+ */
+/** Historical flat probe timeout — right for fast HTTP providers; recipes override via default_timeout_ms. */
+const DEFAULT_PROBE_TIMEOUT_MS = 5000;
+
+export async function resolveChatProbeTimeoutMs(modelStr: string, touchpoint: 'chat' | 'expansion'): Promise<number> {
+  try {
+    const { resolveRecipe } = await import('../core/ai/model-resolver.ts');
+    const { recipe } = resolveRecipe(modelStr);
+    return recipe.touchpoints[touchpoint]?.default_timeout_ms ?? DEFAULT_PROBE_TIMEOUT_MS;
+  } catch {
+    return DEFAULT_PROBE_TIMEOUT_MS;
+  }
+}
+
 export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansion', deps: ProbeDeps = {}): Promise<ProbeResult> {
   const start = Date.now();
+  const probeTimeoutMs = await resolveChatProbeTimeoutMs(modelStr, touchpoint);
   try {
     const chat = deps.chat ?? (await import('../core/ai/gateway.ts')).chat;
-    // Use AbortController so the 5s timeout doesn't hang on a stuck network.
+    // Use AbortController so the resolved timeout doesn't hang on a stuck network.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(new Error('probe timed out after 5s')), 5000);
+    const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
       await chat({
         model: modelStr,
         messages: [{ role: 'user', content: '.' }],
-        maxTokens: 1,
+        // OpenAI rejects max_output_tokens below 16 ("Invalid
+        // 'max_output_tokens': integer below minimum value. Expected a value
+        // >= 16, but got 1 instead."), so a probe of 1 fails for EVERY
+        // OpenAI-family chat model regardless of whether it is reachable —
+        // which is precisely what this check exists to tell apart. 16 is the
+        // documented floor; the probe still costs at most 16 output tokens.
+        maxTokens: 16,
         abortSignal: controller.signal,
       });
       return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };

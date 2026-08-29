@@ -20,7 +20,7 @@
  * repair does not help — `gbrain reinit-pglite` is the rebuild path.
  */
 
-import { createInterface } from 'readline';
+import { promptYesNo } from '../core/confirm-prompt.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { acquireLock, releaseLock, LiveServeLockError, msSinceLastReap } from '../core/pglite-lock.ts';
 import {
@@ -98,23 +98,6 @@ function emitError(jsonOutput: boolean, code: string, message: string): void {
   } else {
     console.error(`Error (${code}): ${message}`);
   }
-}
-
-async function promptYesNo(question: string): Promise<boolean> {
-  // W0 fix-wave (Tier-1 #15): non-interactive stdin (CI, pipes, spawned
-  // agents) must resolve to the safe default instead of hanging forever —
-  // this prompt had no TTY guard and no close/EOF handler, so a piped or
-  // closed stdin parked the process permanently.
-  if (!process.stdin.isTTY) return false;
-  // Prompt on stderr: stdout stays clean for --json payloads.
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  return new Promise((resolve) => {
-    rl.on('close', () => resolve(false)); // EOF (^D) = decline, never hang
-    rl.question(`${question} [y/N] `, (answer) => {
-      rl.close();
-      resolve(/^y(es)?$/i.test(answer.trim()));
-    });
-  });
 }
 
 export async function runPgliteRepair(args: string[]): Promise<number> {
@@ -223,7 +206,9 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
     console.error(`About to reset the WAL of ${dataDir} in place.`);
     console.error('Data files are preserved; un-checkpointed transactions may be lost.');
     console.error('The current pg_wal + pg_control are kept in a sibling backup directory.');
-    const confirmed = await promptYesNo('Repair now?');
+    // Prompt on stderr (not the confirm-prompt default of stdout): stdout
+    // stays clean for --json payloads.
+    const confirmed = await promptYesNo('Repair now? [y/N] ', { output: process.stderr });
     if (!confirmed) {
       if (opts.jsonOutput) {
         console.log(JSON.stringify({ status: 'aborted', reason: 'user_declined' }));

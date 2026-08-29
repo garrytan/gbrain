@@ -98,6 +98,16 @@ export async function getRecentSalience(deps: PgliteSalienceDeps, opts: Salience
     const excludeBriefings = !(slugPrefix && slugPrefix.startsWith('briefings'))
       ? `AND p.slug NOT LIKE 'briefings/%'`
       : '';
+    // Source scope: array wins over scalar (canonical precedence). Parity with
+    // postgres-engine.getRecentSalience() and listEnrichCandidates().
+    let sourceCondition = '';
+    if (opts.sourceIds && opts.sourceIds.length > 0) {
+      params.push(opts.sourceIds);
+      sourceCondition = `AND p.source_id = ANY($${params.length}::text[])`;
+    } else if (opts.sourceId) {
+      params.push(opts.sourceId);
+      sourceCondition = `AND p.source_id = $${params.length}`;
+    }
     params.push(limit);
     const limitParam = `$${params.length}`;
 
@@ -133,6 +143,7 @@ export async function getRecentSalience(deps: PgliteSalienceDeps, opts: Salience
         WHERE GREATEST(p.updated_at, COALESCE(p.salience_touched_at, p.updated_at)) >= $1::timestamptz
           ${prefixCondition}
           ${excludeBriefings}
+          ${sourceCondition}
         GROUP BY p.id
         ORDER BY score DESC
         LIMIT ${limitParam}`,
@@ -234,6 +245,23 @@ export async function findAnomalies(deps: PgliteSalienceDeps, opts: AnomaliesOpt
     const sinceEnd = new Date(sinceDate.getTime() + 86400000);
     const baselineStart = new Date(sinceDate.getTime() - lookbackDays * 86400000);
 
+    // Source scope (array wins over scalar). Bound as $3 in EVERY cohort query
+    // below so today's counts and the baseline share one scope — otherwise the
+    // anomaly math would compare a scoped today against an unscoped baseline.
+    // Every query's params are [$1 date, $2 date, ...sourceParam].
+    const sourceClause =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? `AND p.source_id = ANY($3::text[])`
+        : opts.sourceId
+          ? `AND p.source_id = $3`
+          : '';
+    const sourceParam: unknown[] =
+      opts.sourceIds && opts.sourceIds.length > 0
+        ? [opts.sourceIds]
+        : opts.sourceId
+          ? [opts.sourceId]
+          : [];
+
     const tagBaselineRes = await deps.db.query(
       `WITH days AS (
          SELECT day::date FROM generate_series(
@@ -242,20 +270,20 @@ export async function findAnomalies(deps: PgliteSalienceDeps, opts: AnomaliesOpt
        ),
        cohort_keys AS (
          SELECT DISTINCT t.tag FROM tags t JOIN pages p ON p.id = t.page_id
-          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
        ),
        touched AS (
          SELECT t.tag,
                 date_trunc('day', p.updated_at)::date AS day,
                 COUNT(DISTINCT p.id) AS cnt
            FROM tags t JOIN pages p ON p.id = t.page_id
-          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
           GROUP BY 1, 2
        )
        SELECT cd.tag AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
          FROM cohort_keys cd CROSS JOIN days d
          LEFT JOIN touched t ON t.tag = cd.tag AND t.day = d.day`,
-      [baselineStart.toISOString(), sinceDate.toISOString()]
+      [baselineStart.toISOString(), sinceDate.toISOString(), ...sourceParam]
     );
 
     const typeBaselineRes = await deps.db.query(
@@ -266,20 +294,20 @@ export async function findAnomalies(deps: PgliteSalienceDeps, opts: AnomaliesOpt
        ),
        cohort_keys AS (
          SELECT DISTINCT p.type FROM pages p
-          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
        ),
        touched AS (
          SELECT p.type,
                 date_trunc('day', p.updated_at)::date AS day,
                 COUNT(DISTINCT p.id) AS cnt
            FROM pages p
-          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+          WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
           GROUP BY 1, 2
        )
        SELECT cd.type AS cohort_value, d.day::text AS day, COALESCE(t.cnt, 0)::int AS count
          FROM cohort_keys cd CROSS JOIN days d
          LEFT JOIN touched t ON t.type = cd.type AND t.day = d.day`,
-      [baselineStart.toISOString(), sinceDate.toISOString()]
+      [baselineStart.toISOString(), sinceDate.toISOString(), ...sourceParam]
     );
 
     const tagTodayRes = await deps.db.query(
@@ -287,9 +315,9 @@ export async function findAnomalies(deps: PgliteSalienceDeps, opts: AnomaliesOpt
               COUNT(DISTINCT p.id)::int AS count,
               array_agg(DISTINCT p.slug) AS slugs
          FROM tags t JOIN pages p ON p.id = t.page_id
-        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
         GROUP BY 1`,
-      [sinceIso, sinceEnd.toISOString()]
+      [sinceIso, sinceEnd.toISOString(), ...sourceParam]
     );
 
     const typeTodayRes = await deps.db.query(
@@ -297,9 +325,9 @@ export async function findAnomalies(deps: PgliteSalienceDeps, opts: AnomaliesOpt
               COUNT(DISTINCT p.id)::int AS count,
               array_agg(DISTINCT p.slug) AS slugs
          FROM pages p
-        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz
+        WHERE p.updated_at >= $1::timestamptz AND p.updated_at < $2::timestamptz ${sourceClause}
         GROUP BY 1`,
-      [sinceIso, sinceEnd.toISOString()]
+      [sinceIso, sinceEnd.toISOString(), ...sourceParam]
     );
 
     const baseline = [

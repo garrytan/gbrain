@@ -79,6 +79,24 @@ anchor in a prose page into a conversation. Candidate anchor lines that fail the
 full regex still lower the score. Other patterns continue to use all non-blank
 lines in their density score.
 
+If the anchor grammar is a plausible label in ordinary prose about the same
+subject (rather than distinctive like a bold name plus a valid timestamp),
+also set `score_continuations_min_distinct_speakers` to require that many
+DISTINCT captured speaker values before candidate-only scoring activates. This
+closes a narrower false-positive class than `score_full_body`: without it, a
+page that merely repeats one role's anchor label — or opens with a single
+anchor — gets the same density-exclusion immunity a genuine multi-party
+exchange gets, no matter how much surrounding prose exists.
+
+Distinct-speaker count alone still lets one genuine multi-party anchor group
+(all required roles present) through when it is merely embedded somewhere
+inside an otherwise unrelated long document. Also set
+`score_continuations_max_preamble_lines` to additionally require the FIRST
+fully-matching anchor line to land at or before that index in the scored
+lines. A short title or heading before the transcript starts still qualifies;
+an anchor group appearing well past the bound falls back to the ordinary
+flat-density score instead.
+
 Use `score_full_body: true` for a broad grammar that also occurs in ordinary
 prose. For example, `**Label:** text` can be either a transcript line or a bold
 label in meeting notes. Narrow formats with a timestamp and a distinctive

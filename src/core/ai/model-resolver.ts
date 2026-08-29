@@ -77,6 +77,17 @@ export function resolveRecipe(modelId: string): { parsed: ParsedModelId; recipe:
   return { parsed, recipe };
 }
 
+/**
+ * Resolve the declared chat context window for a provider-qualified model.
+ * Model-specific recipe metadata wins over the provider-wide default.
+ * Returns undefined when the provider has no chat context declaration.
+ */
+export function resolveChatContextTokens(modelId: string): number | undefined {
+  const { parsed, recipe } = resolveRecipe(modelId);
+  const chat = recipe.touchpoints.chat;
+  return chat?.model_context_tokens?.[parsed.modelId] ?? chat?.max_context_tokens;
+}
+
 type KnownTouchpointKey = 'embedding' | 'expansion' | 'chat' | 'reranker';
 
 function getTouchpoint(recipe: Recipe, touchpoint: TouchpointKind): EmbeddingTouchpoint | ExpansionTouchpoint | ChatTouchpoint | RerankerTouchpoint | undefined {
@@ -109,7 +120,7 @@ export function assertTouchpoint(
       `Provider "${recipe.id}" does not support touchpoint "${touchpoint}".`,
       touchpoint === 'embedding' && recipe.id === 'anthropic'
         ? 'Anthropic has no embedding model. Use openai or google for embeddings.'
-        : touchpoint === 'chat' && (recipe.id === 'voyage' || recipe.id === 'ollama')
+        : touchpoint === 'chat' && recipe.id === 'voyage'
           ? `${recipe.name} is configured here only for embeddings. Use openai/anthropic/google/deepseek/groq/together for chat.`
           : undefined,
     );
@@ -147,7 +158,18 @@ export function embeddingDimsForModel(
   // (openrouter nested) are left intact — they're the model id.
   const colon = modelId.indexOf(':');
   const bare = colon === -1 ? modelId : modelId.slice(colon + 1);
-  const declared = tp.model_dims?.[bare];
+  // #4123: fold BOTH sides — configured ids arrive cased (`ollama:Qwen3-Embed-8B`)
+  // and user-editable recipe model_dims tables can carry cased keys too.
+  // Exact match first (zero behavior change for today's all-lowercase
+  // tables), then a case-insensitive scan. Without this, a cased id fell
+  // through to default_dims and `gbrain init` built a wrong-width column.
+  let declared = tp.model_dims?.[bare];
+  if (typeof declared !== 'number' && tp.model_dims) {
+    const bareFolded = bare.toLowerCase();
+    for (const [k, v] of Object.entries(tp.model_dims)) {
+      if (k.toLowerCase() === bareFolded) { declared = v; break; }
+    }
+  }
   if (typeof declared === 'number' && declared > 0) return declared;
   return tp.default_dims ?? 0;
 }

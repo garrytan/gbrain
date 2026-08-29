@@ -16,14 +16,20 @@
  *     this platform — report it as foreign so the caller SKIPS the stat
  *     instead of inventing a path that will never exist.
  *
- * Kept in its own module (not doctor.ts) so the pure tests don't pull the
- * 7k-line doctor dep graph, and so open PRs rewriting the image_assets block
- * (e.g. a `resolveImageAssetPath` helper) can adopt it with a one-line call.
+ * The drive-shape detection, wsl.conf parse, and mechanical translation live
+ * in `src/core/wsl-paths.ts` (shared with the hook transcript confinement,
+ * #4522); this module keeps the doctor-facing policy and re-exports the
+ * helpers its tests and callers always imported.
  */
-import { readFileSync } from 'node:fs';
 import { join, posix, win32 } from 'node:path';
+import {
+  WINDOWS_DRIVE_PATH_RE,
+  detectWslMountRoot,
+  parseWslAutomountRoot,
+  translateWindowsPath,
+} from '../core/wsl-paths.ts';
 
-const WINDOWS_DRIVE_RE = /^([A-Za-z]):[\\/](.*)$/;
+export { detectWslMountRoot, parseWslAutomountRoot };
 
 export interface AssetPathResolution {
   /** Absolute path to stat, or null when the path is unresolvable here. */
@@ -44,14 +50,10 @@ export function resolveAssetPath(
   opts: { platform?: NodeJS.Platform; wslMountRoot?: string | null } = {},
 ): AssetPathResolution {
   const platform = opts.platform ?? process.platform;
-  if (platform !== 'win32') {
-    const m = WINDOWS_DRIVE_RE.exec(storagePath);
-    if (m) {
-      const root = opts.wslMountRoot !== undefined ? opts.wslMountRoot : detectWslMountRoot();
-      if (root === null) return { abs: null, foreign: true };
-      const abs = `${root.replace(/\/+$/, '')}/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`;
-      return { abs, foreign: false };
-    }
+  if (platform !== 'win32' && WINDOWS_DRIVE_PATH_RE.test(storagePath)) {
+    const root = opts.wslMountRoot !== undefined ? opts.wslMountRoot : detectWslMountRoot();
+    if (root === null) return { abs: null, foreign: true };
+    return { abs: translateWindowsPath(storagePath, root), foreign: false };
   }
   // Platform-appropriate absoluteness (not the host's) so injected-platform
   // tests behave identically everywhere; in production platform === host.
@@ -63,46 +65,14 @@ export function resolveAssetPath(
 }
 
 /**
- * Extract the `[automount] root` value from /etc/wsl.conf content.
- * Defaults to `/mnt` (WSL's own default) when absent/unparseable.
+ * Resolve an image asset against the source that owns the files row. The
+ * global sync.repo_path is only a legacy fallback for rows without source root
+ * metadata.
  */
-export function parseWslAutomountRoot(conf: string): string {
-  let inAutomount = false;
-  for (const raw of conf.split(/\r?\n/)) {
-    const line = raw.replace(/[#;].*$/, '').trim();
-    if (line.startsWith('[')) {
-      inAutomount = /^\[automount\]$/i.test(line);
-      continue;
-    }
-    if (!inAutomount) continue;
-    const m = /^root\s*=\s*"?([^"]+?)"?\s*$/.exec(line);
-    if (m) return m[1];
-  }
-  return '/mnt';
-}
-
-let cachedWslMountRoot: string | null | undefined;
-
-/**
- * Detect the WSL Windows-drive automount root. Returns null when not running
- * under WSL (including macOS and plain Linux). Memoized per process.
- */
-export function detectWslMountRoot(): string | null {
-  if (cachedWslMountRoot === undefined) cachedWslMountRoot = computeWslMountRoot();
-  return cachedWslMountRoot;
-}
-
-function computeWslMountRoot(): string | null {
-  if (process.platform !== 'linux') return null;
-  try {
-    // The standard WSL tell: kernel version string names Microsoft.
-    if (!/microsoft/i.test(readFileSync('/proc/version', 'utf8'))) return null;
-  } catch {
-    return null;
-  }
-  try {
-    return parseWslAutomountRoot(readFileSync('/etc/wsl.conf', 'utf8'));
-  } catch {
-    return '/mnt'; // WSL default when wsl.conf is absent.
-  }
+export function resolveImageAssetPath(
+  storagePath: string,
+  sourceLocalPath: string | null,
+  fallbackRepoRoot: string,
+): AssetPathResolution {
+  return resolveAssetPath(storagePath, sourceLocalPath ?? fallbackRepoRoot);
 }

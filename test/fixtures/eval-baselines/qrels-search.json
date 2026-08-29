@@ -85,6 +85,20 @@
       "embedding_dim": 11,
       "relevant_slugs": ["originals/founder-mode-example", "concepts/founder-mode-example"],
       "first_relevant_slug": "originals/founder-mode-example"
+    },
+    {
+      "query_id": "q13-concept-paraphrase",
+      "query": "what is the compounding advantage idea",
+      "embedding_dim": 12,
+      "relevant_slugs": ["concepts/compounding-advantage-example", "notes/compounding-mentions-example"],
+      "first_relevant_slug": "concepts/compounding-advantage-example"
+    },
+    {
+      "query_id": "q14-concept-knowabout",
+      "query": "what do i know about founder liquidity",
+      "embedding_dim": 13,
+      "relevant_slugs": ["concepts/founder-liquidity-example", "notes/liquidity-mentions-example"],
+      "first_relevant_slug": "concepts/founder-liquidity-example"
     }
   ]
 }

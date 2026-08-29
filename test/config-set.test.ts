@@ -90,6 +90,18 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('doctor.suppress_provider_sunset');
   });
 
+  test('contains the working-tree sync toggle (untracked-gap fix)', () => {
+    // The drift NOTE + stderr warning both tell users to run
+    // `gbrain config set sync.include_working_tree true`; the key must be
+    // known or the remedy itself is rejected without --force.
+    expect(KNOWN_CONFIG_KEYS).toContain('sync.include_working_tree');
+  });
+
+  test('contains the local extract-atoms knobs', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.extract_atoms.page_discovery_budget');
+    expect(KNOWN_CONFIG_KEYS).toContain('cycle.extract_atoms.max_source_chars');
+  });
+
   test('registers only the live conversation-parser fallback key', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('conversation_parser.llm_fallback_enabled');
     expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('conversation_parser.');
@@ -356,6 +368,73 @@ describe('#2753 — the doctor-proposed gateway-loop command is accepted by `con
     expect(errs.join('\n')).not.toContain('Nothing in gbrain reads this');
     expect(setCalls).toEqual([['agent.use_gateway_loop', 'true']]);
     expect(logs.join('\n')).toContain('Set agent.use_gateway_loop = true');
+  });
+});
+
+describe('#3748 — budget.* rejection routes to the live spend controls', () => {
+  function setStubEngine(): { engine: BrainEngine; setCalls: Array<[string, string]> } {
+    const setCalls: Array<[string, string]> = [];
+    const engine = {
+      getConfig: async () => null,
+      setConfig: async (key: string, value: string) => { setCalls.push([key, value]); },
+    } as unknown as BrainEngine;
+    return { engine, setCalls };
+  }
+
+  async function runConfigCapture(
+    engine: BrainEngine,
+    args: string[],
+  ): Promise<{ logs: string[]; errs: string[]; exit: number | null }> {
+    const logs: string[] = [];
+    const errs: string[] = [];
+    let exit: number | null = null;
+    const logSpy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+    const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')); });
+    const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      exit = code ?? 0;
+      throw new Error(`EXIT:${code}`);
+    }) as never);
+    try {
+      await runConfig(engine, args);
+    } catch (e) {
+      if (!(e as Error).message.startsWith('EXIT:')) throw e;
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
+    return { logs, errs, exit };
+  }
+
+  // Old release notes documented `budget.daily_cap_usd` as a hard spend wall,
+  // but the key was never registered and has NO readers. The rejection must
+  // name the control that actually exists (spend.posture + the spend-controls
+  // guide) instead of leaving the operator to --force a cap that caps nothing.
+  test('budget.daily_cap_usd is rejected AND the error names spend.posture + the guide', async () => {
+    const { engine, setCalls } = setStubEngine();
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'budget.daily_cap_usd', '10']);
+    expect(exit).toBe(1);
+    const err = errs.join('\n');
+    expect(err).toContain('Unknown config key "budget.daily_cap_usd"');
+    expect(err).toContain('spend.posture');
+    expect(err).toContain('docs/operations/spend-controls.md');
+    expect(setCalls).toEqual([]);
+  });
+
+  test('--force still writes but warns that budget.* is not a spend cap', async () => {
+    const { engine, setCalls } = setStubEngine();
+    const { errs, exit } = await runConfigCapture(engine, ['set', 'budget.daily_cap_usd', '10', '--force']);
+    expect(exit).toBeNull();
+    const err = errs.join('\n');
+    expect(err).toContain('Nothing in gbrain reads this');
+    expect(err).toContain('NOT a spend cap');
+    expect(err).toContain('spend.posture');
+    expect(setCalls).toEqual([['budget.daily_cap_usd', '10']]);
+  });
+
+  test('budget.* stays unregistered — no readerless key gets blessed', () => {
+    expect(KNOWN_CONFIG_KEYS.some(k => k === 'budget' || k.startsWith('budget.'))).toBe(false);
+    expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('budget.');
   });
 });
 

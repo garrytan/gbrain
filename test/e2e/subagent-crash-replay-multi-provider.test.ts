@@ -131,18 +131,14 @@ const PROVIDER_MATRIX: ProviderShape[] = [
       providerId: 'google',
     },
   },
-  {
-    providerId: 'openrouter',
-    modelId: 'openrouter:anthropic/claude-sonnet-4-6',
-    finalResponse: {
-      text: 'openrouter resumed: proxied claude response',
-      blocks: [{ type: 'text', text: 'openrouter resumed: proxied claude response' }] as ChatBlock[],
-      stopReason: 'end',
-      usage: { input_tokens: 50, output_tokens: 7, cache_read_tokens: 0, cache_creation_tokens: 0 },
-      model: 'openrouter:anthropic/claude-sonnet-4-6',
-      providerId: 'openrouter',
-    },
-  },
+  // #4478: openrouter left the replay matrix when its recipe declared the
+  // subagent loop unsupported — the handler's capability gate refuses those
+  // jobs BEFORE the replay path, so they can never reach reconciliation.
+  // #4514 then carved out Anthropic-via-OR (`openrouter:anthropic/…`), which
+  // shares Anthropic's tool-call envelope; its allowed-path replay coverage
+  // lives in test/e2e/openrouter-anthropic-subagent-replay.live.test.ts and
+  // test/e2e/subagent-gateway-path.test.ts, not here. Non-Anthropic OR
+  // families stay refused — pinned by the dedicated describe below.
   {
     providerId: 'deepseek',
     modelId: 'deepseek:deepseek-chat',
@@ -345,6 +341,37 @@ describe('SIGKILL crash-replay reconciliation across provider matrix (v0.38 LOAD
       expect(result.result).toBe(provider.finalResponse.text);
       expect(result.stop_reason).toBe('end_turn');
     });
+  });
+
+  describe('openrouter non-Anthropic route: refused by the supports_subagent_loop gate before replay (#4478/#4514)', () => {
+    // The enforcement's own regression coverage: a crashed openrouter job on
+    // a NON-Anthropic route must NOT resume through the replay path — the
+    // capability gate throws the typed no_subagent_loop rejection first, and
+    // the prior tool row is never re-executed. (#4514 allows only
+    // `openrouter:anthropic/…` on the loop; every other OR family keeps this
+    // refusal until it gets its own live abort/retry evidence.) Covers both
+    // persisted shapes so a future shape-specific bypass can't sneak past
+    // the gate.
+    const OPENROUTER_MODEL = 'openrouter:google/gemini-3-flash-preview';
+
+    for (const shape of ['v2', 'v1'] as const) {
+      it(`typed no_subagent_loop rejection instead of replay (${shape} shape)`, async () => {
+        __setChatTransportForTests(async () => {
+          throw new Error('transport must not be reached for a loop-refused provider');
+        });
+
+        const executions: Array<{ name: string; input: unknown }> = [];
+        const tools = makeStubTools(executions);
+        const handler = buildHandler(tools);
+
+        const { jobId } = await seedCrashedState(`find foo (openrouter ${shape})`, shape);
+        const ctx = await makeCrashedCtx(jobId, `find foo (openrouter ${shape})`, OPENROUTER_MODEL);
+
+        await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop: false/);
+        // The refusal fires BEFORE reconciliation/dispatch: nothing re-executes.
+        expect(executions.length).toBe(0);
+      });
+    }
   });
 
   describe('non-idempotent tool with pending status (unrecoverable error)', () => {

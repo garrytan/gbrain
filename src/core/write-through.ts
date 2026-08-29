@@ -25,8 +25,8 @@ import { existsSync, statSync, mkdirSync, writeFileSync, renameSync, unlinkSync,
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
-import { serializePageToMarkdown, resolvePageFilePath } from './markdown.ts';
-import { isWriteTargetContained } from './path-confine.ts';
+import { serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
+import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
   type PushLogOutcome,
@@ -66,6 +66,11 @@ export interface WriteThroughResult {
   lastPushStatus?: PushLogOutcome;
   /**
    * Non-error reasons the file was not written:
+   *   - disabled_by_config: `sync.write_through` is set to an off value
+   *     ('false'/'0'/'off'/'no', case-insensitive) — the brain is DB-only by
+   *     operator choice (e.g. the host repo is a shared working tree where
+   *     stray root-level `.md` artifacts are unwanted). Checked before any FS
+   *     or DB work.
    *   - no_repo_configured: the resolved target (source `local_path` or, for a
    *     sole-source brain, `sync.repo_path`) is unset (DB-only by design).
    *   - repo_not_found: target set but missing / not a directory.
@@ -81,7 +86,7 @@ export interface WriteThroughResult {
    *     differently-cased entry that the FS folds onto this page's file, so
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
-  skipped?: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -103,7 +108,7 @@ export interface WritePageThroughOpts {
  * still re-checked by `isWriteTargetContained` after the join; this is the
  * cheap structural filter in front of it.
  */
-function sanitizeRecordedSourcePath(raw: string | null | undefined): string | null {
+export function sanitizeRecordedSourcePath(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim();
   if (!value || value.includes('\0')) return null;
@@ -126,7 +131,7 @@ function sanitizeRecordedSourcePath(raw: string | null | undefined): string | nu
  * Returns null for anything not a contained `.md` file so the caller falls back
  * to the slug path.
  */
-function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot: string): string | null {
+export function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot: string): string | null {
   if (!sourceUri || !sourceUri.startsWith('file://')) return null;
   let abs = sourceUri.slice('file://'.length);
   if (!abs) return null;
@@ -146,6 +151,204 @@ function recordedPathFromFileUri(sourceUri: string | null | undefined, pageRoot:
 }
 
 /**
+ * Off-value predicate for `sync.write_through`. Mirrors the falsy-config
+ * convention in minions/admission.ts (`isOffValue`): an operator typing
+ * 'FALSE', '0', 'Off', or 'no' means OFF — an opt-out that only matches the
+ * exact lowercase 'false' silently stays ON.
+ */
+function isOffValue(v: string): boolean {
+  const t = v.trim().toLowerCase();
+  return t === 'false' || t === '0' || t === 'off' || t === 'no';
+}
+
+// ~30s per-engine cache: writePageThrough and the facts fence lane run once
+// per page in bulk loops (sync, embed catch-up, dream cycle); a config SELECT
+// per page for a value that changes at human speed is pure overhead.
+type WriteThroughCacheEntry = { at: number; disabled: boolean };
+let writeThroughCache = new WeakMap<BrainEngine, WriteThroughCacheEntry>();
+const WRITE_THROUGH_CACHE_MS = 30_000;
+
+/** Test seam: drop the cache so config changes are visible immediately. */
+export function _resetWriteThroughCacheForTest(): void {
+  writeThroughCache = new WeakMap();
+}
+
+/**
+ * True when `sync.write_through` is set to an off value — the operator chose
+ * a DB-only brain (no `.md` artifacts, no fence files, no write-through
+ * commits). Fail-open to enabled: a config read error must never silently
+ * turn the disk sink off. Shared by writePageThrough and the facts fence
+ * lane (fence-write.ts) so both disk sinks honor one flag.
+ */
+export async function isWriteThroughDisabled(engine: BrainEngine): Promise<boolean> {
+  const cached = writeThroughCache.get(engine);
+  if (cached && Date.now() - cached.at < WRITE_THROUGH_CACHE_MS) return cached.disabled;
+  let disabled = false;
+  try {
+    const v = await engine.getConfig('sync.write_through');
+    disabled = v != null && isOffValue(v);
+  } catch {
+    disabled = false;
+  }
+  writeThroughCache.set(engine, { at: Date.now(), disabled });
+  return disabled;
+}
+
+/** Resolved disk target for a page's canonical markdown artifact. */
+export type PageWriteTarget =
+  | {
+      ok: true;
+      filePath: string;
+      writeRoot: string;
+      /**
+       * `filePath` expressed in the file scanner's `pages.source_path`
+       * convention (#774: git-root-relative when the scan root sits inside a
+       * git repo, scan-root-relative otherwise; forward slashes). What
+       * writePageThrough binds onto a source_path=NULL row after the file
+       * materializes (#4247).
+       */
+      sourcePathToBind: string;
+    }
+  | { ok: false; skipped: 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'path_escapes_source_root' };
+
+/**
+ * Scanner-convention `pages.source_path` for a file under `scanRoot` (the
+ * root a sync of this source walks). Mirrors sync's #774 rule — a scan root
+ * INSIDE a git repo records GIT-ROOT-relative paths (scoped sync), a git-root
+ * or non-git root records root-relative — and must stay the exact inverse of
+ * `resolveSourceLocalFilePath` (markdown.ts): delete-reconcile keys on this
+ * form, so a local_path-relative bind for a subdirectory-scoped source would
+ * read as stale and sweep the page while its file is still on disk.
+ */
+function scannerSourcePath(scanRoot: string, filePath: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- scanRoot is the operator-written sources.local_path / sync.repo_path config root; canonicalizing it here mints no fs read/write path
+  const absRoot = resolve(scanRoot);
+  let cursor = absRoot;
+  while (true) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- cursor only walks UP (dirname) from the operator-config root joined with the literal '.git' segment; existsSync boolean probe, no content ever read or served
+    if (existsSync(join(cursor, '.git'))) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- filePath was proven inside writeRoot by isWriteTargetContained before the sole call site (resolvePageWriteTarget); output is an in-memory source_path string, not an fs operand
+      return relative(cursor, resolve(filePath)).replaceAll('\\', '/');
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- same: containment-checked filePath relative to the operator-config root, string minting only
+  return relative(absRoot, resolve(filePath)).replaceAll('\\', '/');
+}
+
+/**
+ * Compute the ONE file a (source, slug) pair lives in on disk.
+ *
+ * #2018: pick the disk target so a page is NEVER written into a different
+ * source's working tree. Two legitimate topologies, plus the leak guard:
+ *   1. The assigned source has its OWN `local_path` (a separate working
+ *      tree) → map its recorded Git-root-relative source_path into that
+ *      tree, including when local_path scopes a repo subdirectory.
+ *   2. No per-source `local_path` → nest under the host repo
+ *      (`sync.repo_path`): default at the root, non-default under
+ *      `.sources/<id>/` (the established multi-source layout).
+ *   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
+ *      `local_path`, nesting this page there would pollute that sibling's
+ *      git repo (the reported bug). Skip instead.
+ *
+ * Prefer the page's recorded `source_path` — the ACTUAL file this row was
+ * imported from — over a slug-derived name. Deriving `<slug>.md` mints a
+ * SECOND file beside the original whenever the on-disk name isn't the slug,
+ * which is the common case for a human-authored vault: `Library/People/
+ * Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
+ * dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
+ * row, and the newer content in whichever the caller didn't expect.
+ *
+ * It also desyncs `gbrain sync`, which keys delete-reconcile on
+ * `source_path` (see collectMissingSourcePaths): the twin is invisible to
+ * reconcile, so deleting the ORIGINAL file deletes the page even though a
+ * file for it is still on disk.
+ *
+ * A NULL `source_path` means the page was born via put/capture and has no
+ * file of record yet — the slug-derived path stays correct for those.
+ *
+ * Shared by `writePageThrough` AND the facts fence writer (#4204): the fence
+ * appends to the page's file, so both writers MUST compute the identical
+ * path or the fence lands in a file sync never reads back and the next
+ * extract_facts reconcile deletes the fence-owned DB rows.
+ */
+export async function resolvePageWriteTarget(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+): Promise<PageWriteTarget> {
+  let filePath: string;
+  let writeRoot: string;
+  let scanRoot: string;
+  const srcRows = await engine.executeRaw<{ local_path: string | null }>(
+    `SELECT local_path FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  // gbrain#2955: heal an msys-style local_path (`/c/Users/x`, recorded by a
+  // Git Bash `sources add --path` on Windows) before it is joined — raw, it
+  // resolves to a phantom `C:\c\Users\x` and every write silently misses the
+  // real vault. Identity on POSIX and for already-native paths.
+  const rawLocalPath = srcRows[0]?.local_path ?? null;
+  const sourceLocalPath = rawLocalPath ? msysToNativePath(rawLocalPath) : null;
+
+  const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
+    `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+    [sourceId, slug],
+  );
+  const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
+  const recordedUri = pathRows[0]?.source_uri ?? null;
+
+  if (sourceLocalPath) {
+    if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+      return { ok: false, skipped: 'repo_not_found' };
+    }
+    filePath = recordedPath
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
+      ? resolveSourceLocalFilePath(sourceLocalPath, recordedPath) ?? join(sourceLocalPath, `${slug}.md`)
+      : join(sourceLocalPath, recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`); // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- result passes isWriteTargetContained before any write (#4204/#4289 guard)
+    writeRoot = sourceLocalPath;
+    scanRoot = sourceLocalPath;
+  } else {
+    const repoPath = await engine.getConfig('sync.repo_path');
+    if (!repoPath) {
+      return { ok: false, skipped: 'no_repo_configured' };
+    }
+    if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+      return { ok: false, skipped: 'repo_not_found' };
+    }
+    // Leak guard: refuse to write into a path that is some OTHER source's
+    // own working tree (#2018).
+    const collide = await engine.executeRaw<{ one: number }>(
+      `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
+      [sourceId, repoPath],
+    );
+    if (collide.length > 0) {
+      return { ok: false, skipped: 'source_repo_belongs_to_other_source' };
+    }
+    const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
+    const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
+    filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
+    writeRoot = repoPath;
+    // pageRoot, not repoPath: a later `sources add --path <pageRoot>` scan
+    // walks pageRoot, so the bind must speak that scan's convention.
+    scanRoot = pageRoot;
+  }
+
+  // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
+  // stays within the source's working tree before any mkdir/write. validateSlug
+  // already rejects `..`/backslash/control/%2e in the slug at write time, so
+  // this guards a pre-existing hostile row or a symlinked intermediate dir
+  // under the source tree from escaping to an arbitrary filesystem location.
+  if (!isWriteTargetContained(filePath, writeRoot)) {
+    return { ok: false, skipped: 'path_escapes_source_root' };
+  }
+
+  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
+}
+
+/**
  * Render the DB row for `slug` to markdown and atomically write it under
  * `sync.repo_path`. Never throws — failures are reported via the result's
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
@@ -158,87 +361,19 @@ export async function writePageThrough(
 ): Promise<WriteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
-    // #2018: pick the disk target so a page is NEVER written into a different
-    // source's working tree. Two legitimate topologies, plus the leak guard:
-    //   1. The assigned source has its OWN `local_path` (a separate working
-    //      tree) → write at that tree's root (matches how `scanOneSource` reads
-    //      it back; never nested under `.sources/`).
-    //   2. No per-source `local_path` → nest under the host repo
-    //      (`sync.repo_path`): default at the root, non-default under
-    //      `.sources/<id>/` (the established multi-source layout).
-    //   3. LEAK GUARD: if `sync.repo_path` is literally ANOTHER source's own
-    //      `local_path`, nesting this page there would pollute that sibling's
-    //      git repo (the reported bug). Skip instead.
-    let filePath: string;
-    let writeRoot: string;
-    const srcRows = await engine.executeRaw<{ local_path: string | null }>(
-      `SELECT local_path FROM sources WHERE id = $1`,
-      [sourceId],
-    );
-    const sourceLocalPath = srcRows[0]?.local_path ?? null;
-
-    // Prefer the page's recorded `source_path` — the ACTUAL file this row was
-    // imported from — over a slug-derived name. Deriving `<slug>.md` mints a
-    // SECOND file beside the original whenever the on-disk name isn't the slug,
-    // which is the common case for a human-authored vault: `Library/People/
-    // Steve Jobs.md` has slug `library/people/steve-jobs`, so a later put_page
-    // dropped a lowercase `steve-jobs.md` twin next to it. Two artifacts, one
-    // row, and the newer content in whichever the caller didn't expect.
-    //
-    // It also desyncs `gbrain sync`, which keys delete-reconcile on
-    // `source_path` (see collectMissingSourcePaths): the twin is invisible to
-    // reconcile, so deleting the ORIGINAL file deletes the page even though a
-    // file for it is still on disk.
-    //
-    // A NULL `source_path` means the page was born via put/capture and has no
-    // file of record yet — the slug-derived path stays correct for those.
-    const pathRows = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-      `SELECT source_path, source_uri FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [sourceId, slug],
-    );
-    const recordedPath = sanitizeRecordedSourcePath(pathRows[0]?.source_path);
-    const recordedUri = pathRows[0]?.source_uri ?? null;
-
-    if (sourceLocalPath) {
-      if (!existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
-        return { written: false, skipped: 'repo_not_found' };
-      }
-      filePath = join(
-        sourceLocalPath,
-        recordedPath ?? recordedPathFromFileUri(recordedUri, sourceLocalPath) ?? `${slug}.md`,
-      );
-      writeRoot = sourceLocalPath;
-    } else {
-      const repoPath = await engine.getConfig('sync.repo_path');
-      if (!repoPath) {
-        return { written: false, skipped: 'no_repo_configured' };
-      }
-      if (!existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
-        return { written: false, skipped: 'repo_not_found' };
-      }
-      // Leak guard: refuse to write into a path that is some OTHER source's
-      // own working tree (#2018).
-      const collide = await engine.executeRaw<{ one: number }>(
-        `SELECT 1 AS one FROM sources WHERE id <> $1 AND local_path = $2 LIMIT 1`,
-        [sourceId, repoPath],
-      );
-      if (collide.length > 0) {
-        return { written: false, skipped: 'source_repo_belongs_to_other_source' };
-      }
-      const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
-      const knownPath = recordedPath ?? recordedPathFromFileUri(recordedUri, pageRoot);
-      filePath = knownPath ? join(pageRoot, knownPath) : resolvePageFilePath(repoPath, slug, sourceId);
-      writeRoot = repoPath;
+    // Opt-out flag: `sync.write_through=false` (or '0'/'off'/'no', any case)
+    // makes every page write DB-only, for brains whose host repo is a shared
+    // working tree where per-page `.md` artifacts are unwanted. Unset or any
+    // other value keeps the default. Memoized per engine (~30s TTL) so bulk
+    // loops don't pay one config SELECT per page.
+    if (await isWriteThroughDisabled(engine)) {
+      return { written: false, skipped: 'disabled_by_config' };
     }
-
-    // Defense-in-depth (#1647-slug / codex #6): confirm the computed file path
-    // stays within the source's working tree before any mkdir/write. validateSlug
-    // already rejects `..`/backslash/control/%2e in the slug at write time, so
-    // this guards a pre-existing hostile row or a symlinked intermediate dir
-    // under the source tree from escaping to an arbitrary filesystem location.
-    if (!isWriteTargetContained(filePath, writeRoot)) {
-      return { written: false, skipped: 'path_escapes_source_root' };
+    const target = await resolvePageWriteTarget(engine, slug, sourceId);
+    if (!target.ok) {
+      return { written: false, skipped: target.skipped };
     }
+    const { filePath, writeRoot, sourcePathToBind } = target;
 
     const writtenPage = await engine.getPage(slug, { sourceId });
     if (!writtenPage) {
@@ -297,6 +432,26 @@ export async function writePageThrough(
       throw writeErr;
     }
 
+    // #4247: a page born via put/capture/reverse-write keeps source_path=NULL
+    // forever — mtime-watermark incremental sync never rescans an untouched
+    // file — so bind the just-materialized file of record now. NULL-guarded so
+    // a scanner-recorded path is never rewritten; best-effort because row and
+    // file are already durable and a full sync can still heal the bookkeeping.
+    try {
+      await engine.executeRaw(
+        `UPDATE pages
+            SET source_path = $1
+          WHERE source_id = $2
+            AND slug = $3
+            AND deleted_at IS NULL
+            AND source_path IS NULL`,
+        [sourcePathToBind, sourceId, slug],
+      );
+    } catch (bindErr) {
+      const msg = bindErr instanceof Error ? bindErr.message : String(bindErr);
+      opts.logger?.warn(`[write-through] wrote ${slug} but could not bind source_path: ${msg}`);
+    }
+
     // #2426: on a durability-hardened repo (user ran `gbrain sources harden`),
     // commit the artifact so it reaches git — pre-fix, write-through content
     // stayed uncommitted forever: never pushed, `last_sync_at` frozen, and
@@ -325,5 +480,75 @@ export async function writePageThrough(
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
     return { written: false, error: msg };
+  }
+}
+
+export interface DeleteThroughResult {
+  /** True when an artifact existed and was unlinked. */
+  removed: boolean;
+  /** The path that was removed (or would have been). */
+  path?: string;
+  /**
+   * Non-error reasons nothing was removed. Shares the target-resolution skip
+   * vocabulary (kept in lockstep via the Extract), plus:
+   *   - disabled_by_config: the operator opted the brain out of the disk sink.
+   *   - file_not_present: the page had no artifact on disk (DB-only page, or
+   *     already removed by hand) — a clean no-op, not a failure.
+   */
+  skipped?: 'disabled_by_config' | 'file_not_present' | Extract<PageWriteTarget, { ok: false }>['skipped'];
+  /** Set when the unlink itself threw (EACCES, EPERM, read-only mount). */
+  error?: string;
+}
+
+/**
+ * Remove the on-disk markdown artifact for `slug` — the delete-side counterpart
+ * to `writePageThrough` (#4022).
+ *
+ * Why this exists: `put_page`/capture write BOTH sinks (DB row + `.md` file),
+ * but `delete_page` used to touch only the DB. The orphaned file then outlived
+ * the page, and on any repo whose brain is committed on a timer (a `snapshot`
+ * cron, `sources harden`'s post-commit push) the deleted page's artifact gets
+ * committed back into git *after* deletion — so the page reappears on the next
+ * `gbrain sync`, silently resurrecting content the user deleted.
+ *
+ * Deliberately mirrors `writePageThrough`'s contract: never throws, reports via
+ * `skipped`/`error`, and resolves its target through the shared
+ * `resolvePageWriteTarget` so the two planes cannot disagree about which file
+ * backs a page. The DB row remains the durable sink — a failure here leaves a
+ * stale file that the next `gbrain sync` reconciles, never a lost row.
+ *
+ * `opts.target`: resolvePageWriteTarget reads the recorded `source_path` from
+ * ACTIVE rows only, so the delete_page op resolves the target BEFORE
+ * `softDeletePage` stamps `deleted_at` and passes it here. Resolving after the
+ * stamp would miss the recorded path, fall back to the slug-derived twin, and
+ * report a clean `file_not_present` no-op while the REAL artifact stayed on
+ * disk — the very silent-no-op class this helper exists to close.
+ */
+export async function deletePageThrough(
+  engine: BrainEngine,
+  slug: string,
+  opts: { sourceId?: string; logger?: WriteThroughLogger; target?: PageWriteTarget } = {},
+): Promise<DeleteThroughResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  try {
+    // `sync.write_through=false` means the operator opted this brain out of
+    // the disk sink entirely — never unlink files gbrain does not own.
+    if (await isWriteThroughDisabled(engine)) {
+      return { removed: false, skipped: 'disabled_by_config' };
+    }
+    const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
+    if (!target.ok) return { removed: false, skipped: target.skipped };
+    const { filePath } = target;
+
+    if (!existsSync(filePath)) {
+      return { removed: false, path: filePath, skipped: 'file_not_present' };
+    }
+
+    unlinkSync(filePath);
+    return { removed: true, path: filePath };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);
+    return { removed: false, error: msg };
   }
 }

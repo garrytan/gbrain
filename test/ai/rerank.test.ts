@@ -29,7 +29,16 @@ import {
   rerank,
   RerankError,
   __setRerankTransportForTests,
+  __setSunsetClockForTests,
 } from '../../src/core/ai/gateway.ts';
+
+// Pin a pre-sunset clock: this suite exercises zerank through the transport,
+// and past ZEROENTROPY_SUNSET_DATE (2026-09-04) the real clock would make
+// gateway.rerank short-circuit before the transport — turning every test
+// here into a deterministic wall-clock time bomb.
+const BEFORE_SUNSET = new Date('2026-09-01T00:00:00Z');
+beforeEach(() => __setSunsetClockForTests(() => BEFORE_SUNSET));
+afterEach(() => __setSunsetClockForTests(null));
 
 function configureZE(model: string = 'zeroentropyai:zerank-2'): void {
   configureGateway({

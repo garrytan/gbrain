@@ -19,7 +19,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
+import { gitExec } from './helpers/git-exec.ts';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -30,9 +30,9 @@ let engine: PGLiteEngine;
 let repoPath: string;
 
 function gitInit(repo: string): void {
-  execSync('git init', { cwd: repo, stdio: 'pipe' });
-  execSync('git config user.email "t@t.t"', { cwd: repo, stdio: 'pipe' });
-  execSync('git config user.name "T"', { cwd: repo, stdio: 'pipe' });
+  gitExec('git init', repo);
+  gitExec('git config user.email "t@t.t"', repo);
+  gitExec('git config user.name "T"', repo);
 }
 
 describe('listEverCommittedPaths (#2426)', () => {
@@ -42,8 +42,8 @@ describe('listEverCommittedPaths (#2426)', () => {
       gitInit(repo);
       writeFileSync(join(repo, 'kept.md'), 'kept\n');
       writeFileSync(join(repo, 'gone.md'), 'gone\n');
-      execSync('git add -A && git commit -m add', { cwd: repo, stdio: 'pipe' });
-      execSync('git rm -q gone.md && git commit -m rm', { cwd: repo, stdio: 'pipe' });
+      gitExec('git add -A && git commit -m add', repo);
+      gitExec('git rm -q gone.md && git commit -m rm', repo);
 
       const set = listEverCommittedPaths(repo);
       expect(set).not.toBeNull();
@@ -85,7 +85,7 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     writeFileSync(join(repoPath, 'topics/gone.md'), [
       '---', 'type: concept', 'title: Gone', '---', '', 'will be git-rm-ed',
     ].join('\n'));
-    execSync('git add -A && git commit -m initial', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git add -A && git commit -m initial', repoPath);
   });
 
   afterEach(() => {
@@ -119,7 +119,7 @@ describe('#2426 — full-sync reconcile keeps never-committed (DB-only) pages', 
     );
 
     // A genuine deletion: topics/gone.md removed via git.
-    execSync('git rm -q topics/gone.md && git commit -m "rm gone"', { cwd: repoPath, stdio: 'pipe' });
+    gitExec('git rm -q topics/gone.md && git commit -m "rm gone"', repoPath);
     await engine.setConfig('sync.repo_path', repoPath);
 
     // Full sync #2 runs the delete-reconcile.

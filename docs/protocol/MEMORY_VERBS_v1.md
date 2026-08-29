@@ -177,9 +177,12 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
 
 One known person/company/project card. NEVER errors on a miss.
 
-Resolution (frozen precedence): alias > exact title > slug/slug-suffix; ties
-break on most-recently-touched. Multi-hit ⇒ best match's card + runners-up in
-`suggestions`. Miss ⇒ `found: false` + keyword near-misses with
+Resolution (frozen precedence): alias > exact slug > exact title > slug-suffix.
+When multiple pages share an exact title, canonical entity types (`person`,
+`company`, `organization`, `entity`) outrank note/conversation containers;
+most-recently-touched breaks ties within the same match shape. A non-entity
+exact-title page remains a valid fallback. Multi-hit ⇒ best match's card +
+runners-up in `suggestions`. Miss ⇒ `found: false` + keyword near-misses with
 `create_safety` hints.
 
 Response: `{ protocol_version, found, latency_ms, card?, suggestions? }`.
@@ -191,6 +194,28 @@ backlink_count, active_fact_count }`.
   facts stripped); remote callers never see private facts in the card.
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
+
+#### entity open_threads loop backing (v0.47, additive)
+
+On brains running the open-loop engine, `open_threads` entries may
+additionally be DERIVED from `open_loops` rows (they rank ahead of raw
+commitment facts under the same cap; a loop-projected fact is never
+duplicated as a second entry). This is the sanctioned implementation-defined
+derivation of the frozen surface: such entries keep `kind: 'commitment'`
+(the frozen enum is unchanged) even for unanswered-thread and
+pending-decision loops — the ADDITIVE-FOREVER optional fields disambiguate:
+
+- `direction` — `owed_by_me` / `owed_to_me` (commitments), `my_turn`
+  (unanswered inbound: the owner owes a reply), `their_turn` (unanswered
+  outbound: the owner is waiting on them).
+- `due` — ISO due date when known, else null.
+- `counterparty` — the person slug the loop groups under.
+- `status` — loop status (always `open` on cards).
+- `loop_id` — the open_loops row id (`loops_close` takes it).
+
+All five are absent on threads not backed by a loop row and on pre-v0.47
+servers; a server that omits them still certifies. Same propagation to the
+per-entity cards and top-level `open_threads` of `context_pack`.
 - `edges`: top ~10 typed edges, mentions excluded, out-edges first.
 - The p99 < 100ms promise is op-layer latency (transport excluded), CI-gated
   on a 20K-page corpus. 200K validation recipe below.
@@ -220,15 +245,15 @@ pre-v0.45.x servers; a server that omits them still certifies):
   `extractive_fallback` (the LLM compose step failed but retrieval succeeded —
   `answer` is an extractive digest quoting ONLY retrieved pages, `sources`
   cite the digested pages). The remaining enum values (`empty_answer`,
-  `not_json`, `no_llm`, `model_unusable`, `llm_error`) name compose-failure
-  states a non-verb `think` surface may report; the verb converts them to the
-  fallback or a typed error and never emits them itself.
+  `not_json`, `output_truncated`, `no_llm`, `model_unusable`, `llm_error`)
+  name compose-failure states a non-verb `think` surface may report; the verb
+  converts them to the fallback or a typed error and never emits them itself.
 - `pages_gathered` / `takes_gathered` — retrieval counts behind the answer.
 - `warnings` — machine-stable pipeline warning codes (e.g.
-  `LLM_OUTPUT_NOT_JSON`, `SYNTHESIS_EMPTY_ANSWER`, `LLM_CALL_FAILED: <class>`
-  where `<class>` is one of the closed set `timeout` | `rate_limited` |
-  `network` | `provider_error` — raw provider detail never rides the wire,
-  `MODEL_NOT_USABLE:<reason>`).
+  `LLM_OUTPUT_NOT_JSON`, `LLM_OUTPUT_TRUNCATED`, `SYNTHESIS_EMPTY_ANSWER`,
+  `LLM_CALL_FAILED: <class>` where `<class>` is one of the closed set
+  `timeout` | `rate_limited` | `network` | `provider_error` — raw provider
+  detail never rides the wire, `MODEL_NOT_USABLE:<reason>`).
 
 Precedence (frozen): compose failure + NON-EMPTY gather ⇒
 `extractive_fallback` — the digest is composed exclusively from gathered
@@ -239,7 +264,9 @@ call time (429 / timeout / 5xx / network) are caught into `llm_error` and
 follow the same precedence. No LLM configured stays the `unavailable`
 configure-and-retry error regardless of gather — an extractive digest would
 mask the misconfiguration forever. Refusals parse as `not_json` (coarse on
-purpose, no dedicated status).
+purpose, no dedicated status); a `max_tokens`-cut envelope parses as
+`output_truncated` (warning `LLM_OUTPUT_TRUNCATED`) so a too-small output
+budget is distinguishable from malformed model output.
 
 ### forget(id, reason?) — write
 

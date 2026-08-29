@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { GBrainError, type EngineConfig } from './types.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
+import { SCHEMA_SQL } from './schema-embedded.generated.ts';
+import { applyPostgresForwardReferenceBootstrap } from './postgres-engine/forward-reference-bootstrap.ts';
 import type { BrainEngine } from './engine.ts';
 import { verifySchema } from './schema-verify.ts';
 import { isRetryableConnError } from './retry-matcher.ts';
@@ -360,6 +361,13 @@ export async function initSchema(): Promise<void> {
   // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — schema replay mutates the whole database, not one source.
   await conn`SELECT pg_advisory_lock(42)`;
   try {
+    // #4477: run the same forward-reference bootstrap as
+    // PostgresEngine.initSchema BEFORE replaying the schema blob. Without
+    // it, an older brain whose tables predate the blob's forward-referenced
+    // columns (e.g. pages.deleted_at ← pages_deleted_at_purge_idx) wedges
+    // on the blob's CREATE INDEX. Idempotent single-probe no-op on fresh
+    // installs and modern brains.
+    await applyPostgresForwardReferenceBootstrap(conn);
     await conn.unsafe(SCHEMA_SQL);
   } finally {
     await conn`SELECT pg_advisory_unlock(42)`;

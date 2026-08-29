@@ -10,13 +10,13 @@ import { describe, test, expect } from 'bun:test';
 import { chunkCodeText, detectCodeLanguage, CHUNKER_VERSION } from '../../src/core/chunkers/code.ts';
 
 describe('CHUNKER_VERSION', () => {
-  test('v0.20.0 Cathedral II Layer 12 bumped to 4', () => {
-    expect(CHUNKER_VERSION).toBe(4);
+  test('#4511 definition-preserving merge guard bumped to 6', () => {
+    expect(CHUNKER_VERSION).toBe(6);
   });
 });
 
 describe('detectCodeLanguage', () => {
-  test('recognizes all 30 supported extensions', () => {
+  test('recognizes supported extensions', () => {
     const cases: Record<string, string> = {
       'foo.ts': 'typescript', 'foo.tsx': 'tsx', 'foo.mts': 'typescript', 'foo.cts': 'typescript',
       'foo.js': 'javascript', 'foo.jsx': 'javascript', 'foo.mjs': 'javascript', 'foo.cjs': 'javascript',
@@ -28,7 +28,7 @@ describe('detectCodeLanguage', () => {
       'foo.scala': 'scala', 'foo.lua': 'lua', 'foo.ex': 'elixir',
       'foo.elm': 'elm', 'foo.ml': 'ocaml', 'foo.dart': 'dart',
       'foo.zig': 'zig', 'foo.sol': 'solidity', 'foo.sh': 'bash',
-      'foo.css': 'css', 'foo.html': 'html', 'foo.vue': 'vue',
+      'foo.css': 'css', 'foo.html': 'html', 'foo.astro': 'html', 'foo.svelte': 'html', 'foo.vue': 'vue',
       'foo.json': 'json', 'foo.yaml': 'yaml', 'foo.toml': 'toml',
       // v0.41 D2 wave: SQL via DerekStride/tree-sitter-sql.
       'foo.sql': 'sql', 'migrations/001_init.sql': 'sql',
@@ -272,6 +272,97 @@ def pet_the_dog():
     const allLanguages = result.map(c => c.metadata.language);
     for (const lang of allLanguages) expect(lang).toBe('python');
   });
+
+  // #3821: decorated fns/classes parse as decorated_definition wrappers.
+  // Pre-fix they matched neither TOP_LEVEL_TYPES nor NESTED_EMIT_CONFIG, so
+  // decorated code emitted ZERO chunks — the text vanished from the index.
+  test('decorated top-level function emits a chunk with decorator text (#3821)', async () => {
+    // Bodies are deliberately large enough (>15% of the 300-token target) to
+    // stay independent under small-sibling merging (and no tiny leading
+    // import — a sub-threshold first chunk greedily merges its followers).
+    const src = `@functools.cache
+def decorated_fn(x):
+    """Cached doubler with validation, logging and a deliberately verbose body.
+
+    This docstring plus the statements below keep the chunk above the
+    small-sibling merge threshold so the symbol survives as its own chunk.
+    """
+    if not isinstance(x, int):
+        raise TypeError("decorated_fn expects an int, got " + type(x).__name__)
+    doubled = x * 2
+    print("decorated_fn doubling", x, "->", doubled)
+    return doubled
+
+def plain_one():
+    """Plain function with enough body text to avoid the sibling merge pass.
+
+    Returns the integer one after a redundant computation for padding.
+    """
+    value = 1
+    for _ in range(3):
+        value = value * 1
+    return value
+`;
+    const result = await chunkCodeText(src, 'decorated.py');
+    const dec = result.find(c => c.metadata.symbolName === 'decorated_fn');
+    expect(dec).toBeDefined();
+    expect(dec!.metadata.symbolType).toBe('function');
+    // Outer range keeps the decorator line in the chunk body.
+    expect(dec!.text).toContain('@functools.cache');
+    expect(dec!.text).toContain('def decorated_fn');
+  });
+
+  test('decorated class emits scope header + methods, decorated methods included (#3821)', async () => {
+    const src = `@dataclass
+class Config:
+    name: str = "x"
+
+    def plain_method(self):
+        return self.name
+
+    @property
+    def decorated_method(self):
+        return self.name.upper()
+`;
+    const result = await chunkCodeText(src, 'config.py');
+    const cls = result.find(c => c.metadata.symbolName === 'Config' && c.metadata.symbolType === 'class');
+    expect(cls).toBeDefined();
+    // Scope header carries the decorator AND the class declaration line.
+    expect(cls!.text).toContain('@dataclass');
+    expect(cls!.text).toContain('class Config:');
+
+    const plain = result.find(c => c.metadata.symbolName === 'plain_method');
+    expect(plain).toBeDefined();
+    expect(plain!.metadata.parentSymbolPath).toEqual(['Config']);
+    expect(plain!.metadata.symbolType).toBe('function');
+
+    const decorated = result.find(c => c.metadata.symbolName === 'decorated_method');
+    expect(decorated).toBeDefined();
+    expect(decorated!.metadata.parentSymbolPath).toEqual(['Config']);
+    expect(decorated!.metadata.symbolType).toBe('function');
+    expect(decorated!.text).toContain('@property');
+  });
+
+  test('no python source text is silently dropped when decorators are present (#3821)', async () => {
+    const src = `@functools.cache
+def decorated_fn(x):
+    return x * 2
+
+@dataclass
+class Config:
+    def plain_method(self):
+        return 1
+
+def plain_one():
+    return 1
+`;
+    const result = await chunkCodeText(src, 'coverage.py');
+    const names = result.map(c => c.metadata.symbolName);
+    expect(names).toContain('decorated_fn');
+    expect(names).toContain('Config');
+    expect(names).toContain('plain_method');
+    expect(names).toContain('plain_one');
+  });
 });
 
 describe('chunkCodeText — Rust', () => {
@@ -422,5 +513,132 @@ describe('chunkCodeText — empty input', () => {
   test('empty source returns empty array', async () => {
     expect(await chunkCodeText('', 'foo.ts')).toEqual([]);
     expect(await chunkCodeText('   \n  ', 'foo.ts')).toEqual([]);
+  });
+});
+
+describe('chunkCodeText — C# file-scoped namespace (#3601)', () => {
+  test('indexes the class body inside a file-scoped namespace', async () => {
+    const source = `using System;
+namespace Demo;
+
+public class OrderService
+{
+    public decimal ComputeRefund(decimal amount) => amount * 0.9m;
+}
+`;
+
+    const result = await chunkCodeText(source, 'OrderService.cs');
+    const text = result.map(chunk => chunk.text).join('\n');
+
+    expect(text).toContain('OrderService');
+    expect(text).toContain('ComputeRefund');
+  });
+});
+
+// #3602 — C# nested-chunk emission. Namespace (block + file-scoped) and
+// class are parents; methods, constructors, and properties emit their own
+// chunks with the full parent path. Bodies are `declaration_list`, which
+// the shared BODY_NODE_TYPES set must descend into.
+describe('chunkCodeText — C# nested emission (#3602)', () => {
+  const BLOCK_NS = `using System;
+
+namespace Demo
+{
+    public class OrderService
+    {
+        public OrderService(decimal rate)
+        {
+            Rate = rate;
+        }
+
+        public decimal ComputeRefund(decimal amount)
+        {
+            var validated = Validate(amount);
+            return validated * Rate;
+        }
+
+        public decimal Validate(decimal amount)
+        {
+            if (amount < 0) throw new ArgumentException("negative");
+            return amount;
+        }
+
+        public decimal Rate { get; set; }
+    }
+}
+`;
+
+  test('block namespace: methods emit with [namespace, class] parent path', async () => {
+    const result = await chunkCodeText(BLOCK_NS, 'OrderService.cs');
+    const byName = new Map(result.map(c => [c.metadata.symbolName, c.metadata]));
+    expect(byName.get('ComputeRefund')?.parentSymbolPath).toEqual(['Demo', 'OrderService']);
+    expect(byName.get('Validate')?.parentSymbolPath).toEqual(['Demo', 'OrderService']);
+    // The class scope-header chunk (constructor shares the name, so match on type).
+    const classChunk = result.find(c => c.metadata.symbolName === 'OrderService' && c.metadata.symbolType === 'class');
+    expect(classChunk?.metadata.parentSymbolPath).toEqual(['Demo']);
+  });
+
+  test('block namespace: property + constructor emit as nested chunks', async () => {
+    const result = await chunkCodeText(BLOCK_NS, 'OrderService.cs');
+    const names = result.map(c => c.metadata.symbolName);
+    expect(names).toContain('Rate');
+    const ctor = result.find(c => c.metadata.symbolType.includes('constructor'));
+    expect(ctor).toBeDefined();
+    expect(ctor!.metadata.parentSymbolPath).toEqual(['Demo', 'OrderService']);
+  });
+
+  test('file-scoped namespace: methods emit with full parent path (#3601 interplay)', async () => {
+    const source = `using System;
+namespace Demo;
+
+public class OrderService
+{
+    public decimal ComputeRefund(decimal amount)
+    {
+        var validated = Validate(amount);
+        return validated * 0.9m;
+    }
+
+    public decimal Validate(decimal amount)
+    {
+        if (amount < 0) throw new ArgumentException("negative");
+        return amount;
+    }
+}
+`;
+    const result = await chunkCodeText(source, 'OrderService.cs');
+    const byName = new Map(result.map(c => [c.metadata.symbolName, c.metadata]));
+    expect(byName.get('ComputeRefund')?.parentSymbolPath).toEqual(['Demo', 'OrderService']);
+    expect(byName.get('ComputeRefund')?.symbolNameQualified).toBe('Demo.OrderService.ComputeRefund');
+  });
+});
+
+// #3602 cross-language guard: `declaration_list` joined the shared
+// BODY_NODE_TYPES set. Rust impl/trait bodies are also declaration_list —
+// before this fix, nested emission for `impl` emitted ONLY the scope-header
+// chunk and silently dropped every method chunk. Pin the fixed behavior.
+describe('chunkCodeText — Rust impl methods emit as nested chunks (#3602 regression)', () => {
+  test('impl methods carry parentSymbolPath = [TypeName]', async () => {
+    const doc = 'Documentation line long enough to keep this method above the merge threshold in the chunker output. ';
+    const src = `impl Server {
+    /// ${doc.repeat(3)}
+    pub fn alpha(&self) -> i64 {
+        let a = self.total; let b = self.count; if b == 0 { return 0; }
+        let average = a / b; average + self.beta()
+    }
+
+    /// ${doc.repeat(3)}
+    pub fn beta(&self) -> i64 {
+        let bias = 2; let scale = 3; bias * scale
+    }
+}
+`;
+    const result = await chunkCodeText(src, 's.rs');
+    const byName = new Map(result.map(c => [c.metadata.symbolName, c.metadata]));
+    expect(byName.get('alpha')?.parentSymbolPath).toEqual(['Server']);
+    expect(byName.get('beta')?.parentSymbolPath).toEqual(['Server']);
+    // The impl scope-header chunk still ships.
+    const scope = result.find(c => c.metadata.symbolType === 'impl item');
+    expect(scope).toBeDefined();
   });
 });

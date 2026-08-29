@@ -2,64 +2,47 @@ import { describe, test, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { isSensitiveConfigKey, redactConfigValue } from '../src/commands/config.ts';
 
-// redactUrl is not exported, so we test it by reading the source and
-// reimplementing the regex to verify the pattern, then test via CLI
+// URL redaction is single-homed in src/core/url-redact.ts (redactPgUrl —
+// drops the whole userinfo, handles BOTH postgres:// and postgresql://);
+// config.ts routes through it via redactConfigValue. The old local redactUrl
+// duplicate (postgresql://-only) is gone by design.
 
-// Extract the redactUrl regex pattern from source
 const configSource = readFileSync(
   new URL('../src/commands/config.ts', import.meta.url),
   'utf-8',
 );
 
-// Reimplemented from source for unit testing
-function redactUrl(url: string): string {
-  return url.replace(
-    /(postgresql:\/\/[^:]+:)([^@]+)(@)/,
-    '$1***$3',
-  );
-}
+describe('redactConfigValue URL redaction (single-homed via redactPgUrl)', () => {
+  test('redacts password in postgresql:// URL (whole userinfo collapses)', () => {
+    const out = redactConfigValue('database_url', 'postgresql://user:secretpass@host:5432/dbname');
+    expect(out).not.toContain('secretpass');
+    expect(out).toContain('***@host:5432/dbname');
+  });
 
-describe('redactUrl', () => {
-  test('redacts password in postgresql:// URL', () => {
-    const url = 'postgresql://user:secretpass@host:5432/dbname';
-    expect(redactUrl(url)).toBe('postgresql://user:***@host:5432/dbname');
+  test('redacts postgres:// scheme too (the old local regex missed it)', () => {
+    const out = redactConfigValue('database_url', 'postgres://user:secretpass@host:5432/dbname');
+    expect(out).not.toContain('secretpass');
+    expect(out).toContain('***@');
   });
 
   test('redacts complex passwords with special chars', () => {
-    const url = 'postgresql://postgres:p@ss!w0rd#123@db.supabase.co:5432/postgres';
-    // The regex is greedy on [^@]+ so it captures up to the LAST @
-    const result = redactUrl(url);
-    expect(result).not.toContain('p@ss');
-    expect(result).toContain('***');
+    const out = redactConfigValue('database_url', 'postgresql://postgres:p@ss!w0rd#123@db.supabase.co:5432/postgres');
+    expect(out).not.toContain('p@ss');
+    expect(out).toContain('***');
   });
 
-  test('returns non-postgresql URLs unchanged', () => {
-    const url = 'https://example.com/api';
-    expect(redactUrl(url)).toBe(url);
-  });
-
-  test('returns plain strings unchanged', () => {
-    expect(redactUrl('hello')).toBe('hello');
-  });
-
-  test('handles URL without password', () => {
-    const url = 'postgresql://user@host:5432/dbname';
-    // No colon after user means regex doesn't match
-    expect(redactUrl(url)).toBe(url);
-  });
-
-  test('handles empty string', () => {
-    expect(redactUrl('')).toBe('');
+  test('non-URL, non-sensitive values pass through unchanged', () => {
+    expect(redactConfigValue('search.mode', 'hello')).toBe('hello');
+    expect(redactConfigValue('search.mode', '')).toBe('');
+    expect(redactConfigValue('some_url', 'https://example.com/api')).toBe('https://example.com/api');
   });
 });
 
 describe('config source correctness', () => {
-  test('redactUrl function exists in config.ts', () => {
-    expect(configSource).toContain('function redactUrl');
-  });
-
-  test('redactUrl uses the correct regex pattern', () => {
-    expect(configSource).toContain('postgresql:\\/\\/');
+  test('the local redactUrl duplicate stays deleted (redaction is single-homed)', () => {
+    expect(configSource).not.toContain('function redactUrl');
+    expect(configSource).toContain("from '../core/url-redact.ts'");
+    expect(configSource).toContain('redactPgUrl');
   });
 });
 
@@ -99,8 +82,9 @@ describe('redactConfigValue (v0.36.x #892 — set output regression)', () => {
   });
 
   test('redacts postgresql URL passwords regardless of key', () => {
-    expect(redactConfigValue('database_url', 'postgresql://u:secret@h:5432/d'))
-      .toBe('postgresql://u:***@h:5432/d');
+    const out = redactConfigValue('database_url', 'postgresql://u:secret@h:5432/d');
+    expect(out).not.toContain('secret');
+    expect(out).toBe('postgresql://***@h:5432/d');
   });
 
   test('non-sensitive values pass through unchanged', () => {

@@ -53,6 +53,17 @@ export interface ChunkOptions {
   chunkSize?: number;    // target words per chunk (default 300)
   chunkOverlap?: number; // overlap words (default 50)
   maxChars?: number;     // hard cap on any chunk's char length (default 6000)
+  /**
+   * #4530: hard cap on any chunk's ESTIMATED embedding tokens (default
+   * DEFAULT_MAX_CHUNK_TOKENS). Callers on strict per-input embedding models
+   * (e.g. nvidia/nv-embedqa-e5-v5's 512) thread
+   * resolveMaxChunkTokens() (src/core/embedding-input-limit.ts) so oversize
+   * text is SPLIT to fit — never truncated, never left permanently
+   * unembeddable. Chunk boundaries are unchanged for callers that don't pass
+   * it (or whose model has no declared limit), so MARKDOWN_CHUNKER_VERSION
+   * does not bump.
+   */
+  maxTokens?: number;
 }
 
 export interface TextChunk {
@@ -78,6 +89,12 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
   const chunkOverlap = opts?.chunkOverlap || 50;
   const maxChars = opts?.maxChars || 6000;
+  // #4530: per-call token budget, clamped to the historical default so a
+  // misconfigured larger value can't emit chunks the rest of the pipeline
+  // (tsvector limits, context assembly) was never sized for.
+  const maxTokens = opts?.maxTokens && opts.maxTokens > 0
+    ? Math.min(opts.maxTokens, DEFAULT_MAX_CHUNK_TOKENS)
+    : DEFAULT_MAX_CHUNK_TOKENS;
 
   if (!text || text.trim().length === 0) return [];
 
@@ -95,7 +112,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const wordCount = countWords(stripped);
   if (wordCount <= chunkSize) {
     // Single-chunk path: still apply the maxChars cap.
-    const capped = capByChars(stripped.trim(), maxChars);
+    const capped = capByChars(stripped.trim(), maxChars, maxTokens);
     return capped.map((t, i) => ({ text: t, index: i }));
   }
 
@@ -108,7 +125,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // exceed 8192 OpenAI embedding tokens at any word count).
   const capped: string[] = [];
   for (const chunk of withOverlap) {
-    capped.push(...capByChars(chunk.trim(), maxChars));
+    capped.push(...capByChars(chunk.trim(), maxChars, maxTokens));
   }
   return capped.map((t, i) => ({ text: t, index: i }));
 }
@@ -139,19 +156,24 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
  * safe" note rested on maxChars=6000 and stride=5500 both being even;
  * deriving the window from density retired that guarantee.)
  */
-function capByChars(text: string, maxChars: number, knownEst?: number): string[] {
+function capByChars(
+  text: string,
+  maxChars: number,
+  maxTokens: number = DEFAULT_MAX_CHUNK_TOKENS,
+  knownEst?: number,
+): string[] {
   if (text.length === 0) return [];
   const est = knownEst ?? probeEmbedTokens(text);
-  const window = est <= DEFAULT_MAX_CHUNK_TOKENS
+  const window = est <= maxTokens
     ? maxChars
-    : Math.max(1, Math.min(maxChars, Math.floor((text.length * DEFAULT_MAX_CHUNK_TOKENS) / est)));
+    : Math.max(1, Math.min(maxChars, Math.floor((text.length * maxTokens) / est)));
   if (text.length <= window) {
     // Emitting the text whole is the one path that skips the per-slice
     // re-check below, so a PROBED estimate has to be confirmed exactly first:
     // a sparse ASCII head can under-read a dense CJK tail.
     if (knownEst !== undefined || text.length <= DENSITY_PROBE_CHARS) return [text];
     const exact = estimateEmbedTokens(text);
-    return exact <= DEFAULT_MAX_CHUNK_TOKENS ? [text] : capByChars(text, maxChars, exact);
+    return exact <= maxTokens ? [text] : capByChars(text, maxChars, maxTokens, exact);
   }
   // The stride keeps its nominal window-minus-overlap value. Evening the
   // windows out (as the header-budget hard split does) is WRONG here: that
@@ -169,11 +191,11 @@ function capByChars(text: string, maxChars: number, knownEst?: number): string[]
     const slice = text.slice(i, end).trim();
     if (slice.length > 0) {
       const sliceEst = estimateEmbedTokens(slice);
-      if (sliceEst > DEFAULT_MAX_CHUNK_TOKENS) {
+      if (sliceEst > maxTokens) {
         // Denser than the text average — re-derive locally, reusing the exact
         // figure just measured (it also guarantees window < slice.length, so
         // the recursion strictly shrinks).
-        out.push(...capByChars(slice, maxChars, sliceEst));
+        out.push(...capByChars(slice, maxChars, maxTokens, sliceEst));
       } else {
         out.push(slice);
       }

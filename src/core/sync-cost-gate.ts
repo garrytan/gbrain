@@ -5,7 +5,7 @@
  */
 import { readFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { createInterface } from 'readline';
+import { promptYesNo } from './confirm-prompt.ts';
 import type { BrainEngine } from './engine.ts';
 import { collectSyncableFiles } from '../commands/import.ts';
 import { isSyncable } from './sync.ts';
@@ -33,6 +33,10 @@ import {
 } from './embedding.ts';
 import { estimateCostFromChars } from './embedding-pricing.ts';
 import { SPEND_CAP_CONFIG_KEY } from './embed-backfill-submit.ts';
+import {
+  embedBackfillManualDrainCommand,
+  type EmbedBackfillWorkerSurface,
+} from './minions/embed-backfill-admission.ts';
 import { git, hasOriginRemote, isDetachedHead, unique } from './sync-git.ts';
 
 /**
@@ -314,18 +318,6 @@ async function resolveBackfillCapUsd(engine: BrainEngine): Promise<number> {
   }
 }
 
-/** Interactive [y/N] prompt. Resolves false on non-y answers or EOF. */
-async function promptYesNo(question: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes');
-    });
-    rl.on('close', () => resolve(false));
-  });
-}
-
 // v0.42.42.0 (#2139): paste-ready knobs appended to every gate message so the
 // spend-control surface is discoverable at the moment of need (humans + agents),
 // not only after reading source. Closes the issue's "takes archaeology" complaint.
@@ -349,6 +341,7 @@ function labelEstimate(inline: InlineEstimate): string {
 }
 
 type CostGateSource = {
+  sourceId?: string;
   local_path: string | null;
   config: Record<string, unknown>;
   last_commit: string | null;
@@ -366,11 +359,23 @@ interface CostGateContext {
   includeGitignored?: boolean;
   /** Message prefix ('sync --all' | 'sync'). */
   label: string;
+  /** Public queue capability resolved at the command boundary. */
+  workerSurface: EmbedBackfillWorkerSurface;
+  /** Submission policy; distinct from whether the runtime has a worker. */
+  autoSubmitEnabled: boolean;
 }
 
 type CostGateOutcome =
   | { action: 'proceed'; autoDeferEmbeds: boolean }
   | { action: 'stop' };
+
+type ManualDrainReason = 'no_worker_surface' | 'auto_submit_disabled';
+
+function manualDrainCommands(sources: CostGateSource[]): string[] {
+  return unique(
+    sources.map((source) => embedBackfillManualDrainCommand(source.sourceId ?? 'default')),
+  );
+}
 
 /**
  * v0.42.42.0 (#2139): the inline-embed cost gate, shared by BOTH `sync --all`
@@ -395,6 +400,10 @@ export async function runInlineCostGate(
   ctx: CostGateContext,
 ): Promise<CostGateOutcome> {
   const { sources, mode, dryRun, jsonOut, yesFlag, full, label } = ctx;
+  const manualDrainReason: ManualDrainReason | undefined =
+    ctx.workerSurface.status === 'no_worker_surface'
+      ? 'no_worker_surface'
+      : ctx.autoSubmitEnabled ? undefined : 'auto_submit_disabled';
 
   // Stale backlog: cheap single SQL; fail-open to 0 so a transient DB hiccup
   // never blocks the sync. Signature-aware (model/dims swap surfaces here).
@@ -433,6 +442,41 @@ export async function runInlineCostGate(
       `Current backlog ~${staleChars.toLocaleString()} chars (~$${staleCostUsd.toFixed(2)} on ` +
       `${embeddingModelName}) across ${sources.length} source(s); ` +
       `${queuedBackfills} backfill job(s) queued.`;
+    if (manualDrainReason) {
+      const commands = manualDrainCommands(sources);
+      const refusal = manualDrainReason === 'no_worker_surface'
+        ? 'no persistent worker surface is available'
+        : 'automatic backfill submission is disabled by --no-auto-embed';
+      const manualMsg =
+        `${label}: embedding will not run inline and ${refusal}. ` +
+        `Manual drain required: ${commands.map((command) => `\`${command}\``).join(', ')}.`;
+      if (dryRun) {
+        if (jsonOut) {
+          console.log(JSON.stringify({
+            status: 'dry_run', mode, gate: 'dry_run', delivery: 'manual',
+            reason: manualDrainReason, workerSurface: ctx.workerSurface.status,
+            staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd),
+            floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName,
+            manualCommands: commands,
+          }));
+        } else {
+          console.log(manualMsg);
+          console.log('--dry-run: exit without syncing.');
+        }
+        return { action: 'stop' };
+      }
+      if (jsonOut) {
+        console.log(JSON.stringify({
+          status: 'manual_drain_required', mode, gate: 'manual_drain_required',
+          reason: manualDrainReason, workerSurface: ctx.workerSurface.status, staleChars, staleCostUsd,
+          capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd),
+          model: embeddingModelName, manualCommands: commands,
+        }));
+      } else {
+        console.log(manualMsg);
+      }
+      return { action: 'proceed', autoDeferEmbeds: false };
+    }
     if (dryRun) {
       if (jsonOut) {
         console.log(JSON.stringify({ status: 'dry_run', mode, gate: 'dry_run', staleChars, staleCostUsd, capUsd: formatUsdLimit(capUsd), floorUsd: formatUsdLimit(floorUsd), queuedBackfills, model: embeddingModelName }));
@@ -517,8 +561,34 @@ export async function runInlineCostGate(
       }
       return { action: 'proceed', autoDeferEmbeds: false };
     }
-    // Non-TTY or --json: AUTO-DEFER embeds to capped backfill jobs. NEVER exit 2
-    // (the wedged-cron fix). Format splits on the explicit --json flag only.
+    // Non-TTY or --json: defer without wedging. Use the background queue only
+    // when it has a drainable worker surface; otherwise report the exact
+    // manual command and never imply that a job was or will be queued.
+    if (manualDrainReason) {
+      const commands = manualDrainCommands(sources);
+      if (jsonOut) {
+        console.log(JSON.stringify({
+          status: 'manual_drain_required', mode, gate: 'manual_drain_required',
+          reason: manualDrainReason, workerSurface: ctx.workerSurface.status, newTokens: inline.tokens,
+          estimateKind: inline.estimateKind, costUsd,
+          floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName,
+          manualCommands: commands, hint: SPEND_HINT,
+        }));
+      } else {
+        const refusal = manualDrainReason === 'no_worker_surface'
+          ? 'no persistent worker surface is available'
+          : 'automatic backfill submission is disabled by --no-auto-embed';
+        console.log(
+          `${previewMsg} Exceeds floor $${formatUsdLimit(floorUsd)} in a non-interactive ` +
+          `session — importing now without embeddings because ${refusal}. Manual drain required: ` +
+          `${commands.map((command) => `\`${command}\``).join(', ')}. ` +
+          `Pass --yes to embed inline.\n${SPEND_HINT}`,
+        );
+      }
+      return { action: 'proceed', autoDeferEmbeds: true };
+    }
+
+    // Worker-backed AUTO-DEFER. NEVER exit 2 (the wedged-cron fix).
     if (jsonOut) {
       console.log(JSON.stringify({ status: 'auto_deferred', mode, gate: 'auto_deferred_embeds', newTokens: inline.tokens, estimateKind: inline.estimateKind, costUsd, floorUsd: formatUsdLimit(floorUsd), model: embeddingModelName, hint: SPEND_HINT }));
     } else {

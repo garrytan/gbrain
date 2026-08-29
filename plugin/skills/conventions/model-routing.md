@@ -15,22 +15,40 @@ Four tiers:
 | `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
 | `reasoning` | default chat, synthesis, generation | `claude-sonnet-4-6` | gateway chat, dream synthesize, patterns, facts extraction |
 | `deep` | slow, expensive reasoning | `claude-opus-4-7` | `gbrain think`, auto-think, cross-modal eval slot B |
-| `subagent` | Anthropic-only multi-turn tool loop | `claude-sonnet-4-6` | `gbrain agent run` |
+| `subagent` | multi-turn tool loop (capability-gated) | `claude-sonnet-4-6` | `gbrain agent run` |
+
+The Default column shows the Anthropic defaults — used when
+`ANTHROPIC_API_KEY` is present (Anthropic wins when both keys exist) and kept
+as the keyless floor. **Tier defaults are key-aware (v0.46.21+):** when
+`OPENAI_API_KEY` is the only chat key, every tier resolves to OpenAI instead —
+the newest usable models discovered from your own account (`GET /v1/models`,
+priced-only, 24h cache at `<configDir>/model-cache.json`,
+`GBRAIN_MODEL_DISCOVERY=off` kill switch), with the openai recipe's ranked
+chat list as the offline floor. OpenAI defaults are never pinned to a model
+id that can go stale.
 
 Override priority (highest first):
 
 1. CLI flag (`--model opus`)
 2. Per-task config (`gbrain config set models.dream.synthesize opus`)
 3. Deprecated per-task config (stderr-warns once, then honored)
-4. **Global default** (`gbrain config set models.default opus`) — single hammer
-5. **Tier override** (`gbrain config set models.tier.reasoning opus`)
+4. **Tier override** (`gbrain config set models.tier.reasoning opus`) —
+   tier-specific beats the generic default (#3873)
+5. **Global default** (`gbrain config set models.default opus`) — single hammer
 6. Env var (`GBRAIN_MODEL=opus`)
-7. Tier default (the table above)
+7. Key-aware tier default (the table above; provider chosen by which keys exist)
 8. Hardcoded caller fallback
 
 One exception: the dream triage judge pre-reads `models.dream.triage` first —
 when that key is set, it wins over this entire chain (`gbrain models` reports
 it as the effective route).
+
+File-plane pins are a separate seam: the gateway's boot/reconnect fallback
+(and the capability report) resolve the effective chat model as `GBRAIN_MODEL`
+env > servable `chat_model` pin in `~/.gbrain/config.json` (honored only while
+its provider's key is present; an unservable pin warns once and falls through)
+> key-aware tier default. `gbrain init` no longer persists auto-detected chat
+pins (v0.46.21+) — only a pin you set yourself survives reconnect.
 
 Power-user recipes:
 
@@ -54,12 +72,16 @@ gbrain models                    # print current routing table
 gbrain models doctor             # 1-token probe to each configured model
 ```
 
-**Subagent tier exists because the loop is Anthropic-only.** The handler
-uses Messages API + prompt caching on system + tools. Setting
-`models.default = openai:gpt-5.5` silently breaks the loop, so we isolate
-`tier.subagent`. Three enforcement layers: submit-time guard in
-`MinionQueue.add`, tier-resolution fallback in `resolveModel`, doctor
-`subagent_provider` check.
+**Subagent tier is isolated because the tool loop has real capability
+requirements.** Since v0.38 the loop is provider-agnostic and gated by
+capability, not provider: a model without tool calling (or an unrecognized
+provider) is refused and falls back to `TIER_DEFAULTS.subagent` with a warn; a
+tool-capable provider without prompt caching (e.g. OpenAI) runs the loop hot
+with a once-per-model cost warn. Setting `models.default = openai:gpt-5.5` no
+longer silently breaks the loop — it runs, at higher per-turn cost. Three
+enforcement layers: submit-time guard in `MinionQueue.add`,
+`enforceSubagentCapable` in `resolveModel`, doctor `subagent_capability`
+check.
 
 When adding a new LLM call, route through `resolveModel()` with a tier —
 never hardcode a model string. The v0.31.6 chat default

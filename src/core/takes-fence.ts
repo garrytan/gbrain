@@ -241,7 +241,21 @@ export function parseTakesFence(body: string): ParseResult {
   const endIdx   = body.indexOf(TAKES_FENCE_END, beginIdx + TAKES_FENCE_BEGIN.length);
   const warnings: string[] = [];
 
-  if (beginIdx === -1 && endIdx === -1) return { takes: [], warnings };
+  if (beginIdx === -1 && endIdx === -1) {
+    // #3769: the canonical markers use the THREE-dash comment form
+    // (`<!--- gbrain:takes:begin -->`). A body that mentions the marker text
+    // without the exact form — most commonly the standard two-dash
+    // `<!-- gbrain:takes:begin -->` an author or agent writes from memory —
+    // is a fence the author MEANT to write. Flag it instead of silently
+    // parsing zero takes.
+    if (body.includes('gbrain:takes:begin')) {
+      warnings.push(
+        'TAKES_FENCE_NEAR_MISS: found "gbrain:takes:begin" but not the exact ' +
+        `marker "${TAKES_FENCE_BEGIN}" — use the three-dash comment form`,
+      );
+    }
+    return { takes: [], warnings };
+  }
   if (beginIdx === -1 || endIdx === -1) {
     warnings.push('TAKES_FENCE_UNBALANCED: missing begin or end marker');
     return { takes: [], warnings };

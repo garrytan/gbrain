@@ -43,4 +43,24 @@ describe('chronicle_backfill op', () => {
     const jobs = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM minion_jobs WHERE name='chronicle_extract'`);
     expect(Number(jobs[0].n)).toBe(2);
   });
+
+  test('unscoped backfill enqueues each page under its own source', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('other-src', 'other-src') ON CONFLICT (id) DO NOTHING`);
+    await engine.putPage('meetings/default-src', { type: 'meeting', title: 'default', compiled_truth: LONG });
+    await engine.putPage('meetings/other-src', { type: 'meeting', title: 'other', compiled_truth: LONG }, { sourceId: 'other-src' });
+    const ctx = { engine, remote: false } as unknown as OperationContext;
+
+    const r = await operationsByName.chronicle_backfill.handler(ctx, {}) as { eligible: number; enqueued: number; errors: unknown[] };
+
+    expect(r.eligible).toBe(2);
+    expect(r.enqueued).toBe(2);
+    expect(r.errors).toHaveLength(0);
+    const jobs = await engine.executeRaw<{ data: { slug: string; sourceId: string } }>(
+      `SELECT data FROM minion_jobs WHERE name='chronicle_extract' ORDER BY data->>'slug'`
+    );
+    expect(jobs.map((j) => j.data)).toEqual([
+      { slug: 'meetings/default-src', sourceId: 'default' },
+      { slug: 'meetings/other-src', sourceId: 'other-src' },
+    ]);
+  });
 });

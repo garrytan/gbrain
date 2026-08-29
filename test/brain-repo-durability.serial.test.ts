@@ -172,6 +172,27 @@ describe('hardenBrainRepo', () => {
     expect(existsSync(join(work, 'scripts', 'brain-commit-push.sh'))).toBe(false);
   });
 
+  test('dry-run does not fetch or pull from origin', async () => {
+    const secondClone = mkdtempSync(join(root, 'pusher-'));
+    execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, secondClone], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'config', 'user.email', 't@t.t'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'config', 'user.name', 'tester'], { stdio: 'ignore' });
+    writeFileSync(join(secondClone, 'upstream.md'), 'new upstream content\n');
+    execFileSync('git', ['-C', secondClone, 'add', 'upstream.md'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', secondClone, 'commit', '-qm', 'advance origin'], { stdio: 'ignore' });
+    execFileSync('git', ['-c', 'protocol.file.allow=always', '-C', secondClone, 'push', '-q', 'origin', 'main'], { stdio: 'ignore' });
+
+    const headBefore = git(work, 'rev-parse', 'HEAD');
+    const trackingBefore = git(work, 'rev-parse', 'refs/remotes/origin/main');
+    const report = await harden({ dryRun: true });
+
+    expect(git(work, 'rev-parse', 'HEAD')).toBe(headBefore);
+    expect(existsSync(join(work, 'upstream.md'))).toBe(false);
+    expect(git(work, 'rev-parse', 'refs/remotes/origin/main')).toBe(trackingBefore);
+    expect(existsSync(join(work, '.git', 'FETCH_HEAD'))).toBe(false);
+    expect(report.steps.find(step => step.step === 'pull')?.status).toBe('skipped');
+  });
+
   test('dry-run does not chmod an already-current helper (#3736)', async () => {
     await harden(); // real run installs scripts/brain-commit-push.sh at 0o755
     const helperPath = join(work, 'scripts', 'brain-commit-push.sh');

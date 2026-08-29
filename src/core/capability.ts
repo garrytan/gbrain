@@ -31,13 +31,15 @@ import { RECIPES } from './ai/recipes/index.ts';
 import type { Recipe } from './ai/types.ts';
 import { DEFAULT_EMBEDDING_MODEL } from './ai/defaults.ts';
 
-/**
- * Fallback chat model when config doesn't pin one. Mirrors
- * DEFAULT_CHAT_MODEL in src/core/ai/gateway.ts (module-private there;
- * duplicated here so this probe stays light — it must not load every
- * provider SDK just to name a default).
- */
-const FALLBACK_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
+// Extraction probes the SAME effective-model resolution the gateway's
+// reconfigure fallback uses (resolveEffectiveChatModel) — runtime routing and
+// this report cannot diverge by construction. Known accepted limitation:
+// DB-plane overrides (`models.default`, `facts.extraction_model`) are
+// invisible to this engine-less probe; the runtime gate in facts/extract.ts
+// and the engine-aware pre-enqueue gate in facts/backstop.ts are the
+// backstops.
+import { resolveEffectiveChatModel } from './model-config.ts';
+import { mergedProviderEnv } from './ai/provider-env.ts';
 
 export interface TouchpointCapability {
   available: boolean;
@@ -64,34 +66,10 @@ export interface DetectCapabilitiesOpts {
   env?: Record<string, string | undefined>;
 }
 
-/**
- * Fold file-plane API keys into env names the recipes read. SAME mapping as
- * `buildGatewayConfig` (src/core/ai/build-gateway-config.ts) — that module
- * is canonical; keep the two in sync when adding a provider key seam.
- */
-function mergedEnv(
-  cfg: GBrainConfig | null,
-  env: Record<string, string | undefined>,
-): Record<string, string> {
-  const fromConfig: Record<string, string> = {};
-  if (cfg?.openai_api_key) fromConfig.OPENAI_API_KEY = cfg.openai_api_key;
-  if (cfg?.anthropic_api_key) fromConfig.ANTHROPIC_API_KEY = cfg.anthropic_api_key;
-  if (cfg?.zeroentropy_api_key) fromConfig.ZEROENTROPY_API_KEY = cfg.zeroentropy_api_key;
-  if (cfg?.openrouter_api_key) fromConfig.OPENROUTER_API_KEY = cfg.openrouter_api_key;
-  if (cfg?.voyage_api_key) fromConfig.VOYAGE_API_KEY = cfg.voyage_api_key;
-  if (cfg?.dashscope_api_key) fromConfig.DASHSCOPE_API_KEY = cfg.dashscope_api_key;
-  if (cfg?.google_api_key) fromConfig.GOOGLE_GENERATIVE_AI_API_KEY = cfg.google_api_key;
-  // env wins for keys carrying a real value; '' and undefined dropped (#1249).
-  const envReal = Object.fromEntries(
-    Object.entries(env).filter(([, v]) => v !== undefined && v !== ''),
-  ) as Record<string, string>;
-  const merged = { ...fromConfig, ...envReal };
-  // GEMINI_API_KEY alias (google recipe reads GOOGLE_GENERATIVE_AI_API_KEY).
-  if (!envReal.GOOGLE_GENERATIVE_AI_API_KEY && envReal.GEMINI_API_KEY) {
-    merged.GOOGLE_GENERATIVE_AI_API_KEY = envReal.GEMINI_API_KEY;
-  }
-  return merged;
-}
+// The provider-key/env fold lives in src/core/ai/provider-env.ts
+// (mergedProviderEnv) — one canonical mapping shared with buildGatewayConfig
+// and the key-aware model resolution. This probe additionally sees the Azure
+// endpoint/deployment fields the old local copy omitted.
 
 /** `envReady` twin (src/commands/providers.ts:52) — auth-env readiness only. */
 function recipeReady(recipe: Recipe, env: Record<string, string>): boolean {
@@ -130,15 +108,20 @@ export function detectCapabilities(opts: DetectCapabilitiesOpts = {}): Capabilit
       cfg = null; // unreadable config = fresh-install posture, not a crash
     }
   }
-  const env = mergedEnv(cfg, opts.env ?? process.env);
+  const rawEnv = opts.env ?? process.env;
+  const env = mergedProviderEnv(cfg, rawEnv);
 
   const embeddings = probeTouchpoint(
     cfg?.embedding_model ?? DEFAULT_EMBEDDING_MODEL,
     'embedding',
     env,
   );
+  // Probe the model extraction will ACTUALLY use: GBRAIN_MODEL > servable
+  // file pin > key-aware tier default — the same shared resolution the
+  // gateway's reconfigure fallback applies (so a stale unservable pin
+  // degrades identically here and at runtime).
   const extraction = probeTouchpoint(
-    cfg?.chat_model ?? FALLBACK_CHAT_MODEL,
+    resolveEffectiveChatModel(cfg, rawEnv).model,
     'chat',
     env,
   );
@@ -171,8 +154,9 @@ export function renderCapabilityReport(caps: CapabilityReport): string {
   );
   if (caps.mode === 'keyless') {
     lines.push(
-      'keyless mode: keyword search, agent-authored memory; add ONE key to unlock ' +
-      'embeddings + auto-extraction (see `gbrain providers list` for env-ready options).',
+      'keyless mode: keyword search, agent-authored memory; one optional key upgrades ' +
+      'capabilities — OpenAI: semantic search + auto-extraction; Voyage: semantic search; ' +
+      'Anthropic: auto-extraction (see `gbrain providers list` for env-ready options).',
     );
   }
   return lines.join('\n');

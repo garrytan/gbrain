@@ -13,9 +13,17 @@
 // 100+-case eval suite. v0.42 ships the classifier + CLI; autopilot stays
 // blocked until eval coverage catches up.
 
+import { existsSync } from 'node:fs';
 import type { BrainEngine } from './engine.ts';
-import type { TakeBatchInput, TakeKind } from './engine.ts';
+import type { TakeKind } from './engine.ts';
 import { chat, getChatModel, isAvailable } from './ai/gateway.ts';
+import {
+  appendTakesToPageMdFirst,
+  isSafeFenceCellText,
+  resolveTakesRepoDir,
+  resolveTakesWritePath,
+  TakesWriteError,
+} from './takes-write.ts';
 
 export const ALLOWED_PAGE_TYPES = [
   'concept', 'atom', 'lore', 'briefing', 'writing', 'originals',
@@ -68,6 +76,15 @@ export interface ExtractTakesFromPagesResult {
   consent_gate_blocked: boolean;
   /** True if chat gateway is unavailable (no LLM call possible). */
   llm_unavailable: boolean;
+  /**
+   * #4473 — pages the md-first writer refused (takes are markdown-canonical;
+   * a page with no locatable .md file is skipped BEFORE the LLM call, never
+   * written DB-only). Skipped pages hold no takes, so future runs rescan them.
+   */
+  pages_skipped: number;
+  skipped: Array<{ slug: string; reason: string }>;
+  /** Count of pages whose md write landed but whose DB mirror warned (reconcile heals). */
+  mirror_warnings: number;
 }
 
 interface PageRow {
@@ -111,6 +128,7 @@ export async function extractTakesFromPages(
   engine: BrainEngine,
   opts: ExtractTakesFromPagesOpts,
 ): Promise<ExtractTakesFromPagesResult> {
+  const emptyTail = { pages_skipped: 0, skipped: [], mirror_warnings: 0 };
   // A12 consent gate: refuse without bootstrap_enabled even on manual call.
   if (!opts.bootstrapEnabled) {
     return {
@@ -118,6 +136,7 @@ export async function extractTakesFromPages(
       claims_extracted: 0,
       consent_gate_blocked: true,
       llm_unavailable: false,
+      ...emptyTail,
     };
   }
 
@@ -127,6 +146,7 @@ export async function extractTakesFromPages(
       claims_extracted: 0,
       consent_gate_blocked: false,
       llm_unavailable: true,
+      ...emptyTail,
     };
   }
 
@@ -162,27 +182,41 @@ export async function extractTakesFromPages(
 
   let pagesScanned = 0;
   let claimsExtracted = 0;
-  const batch: TakeBatchInput[] = [];
+  let pagesSkipped = 0;
+  let mirrorWarnings = 0;
+  const skipped: Array<{ slug: string; reason: string }> = [];
+  // #4473: takes are markdown-canonical (takes-write.ts contract), so the
+  // bootstrap routes every write through the fence writer instead of minting
+  // DB-only rows the next reconcile/extract would clobber.
+  const repoDir = await resolveTakesRepoDir(engine);
 
-  async function flush() {
-    if (batch.length === 0) return;
-    if (!dryRun) {
-      try {
-        claimsExtracted += await engine.addTakesBatch(batch);
-      } catch {
-        // batch error — drop and continue with subsequent pages
-      }
-    } else {
-      claimsExtracted += batch.length;
-    }
-    batch.length = 0;
-  }
+  const skipPage = (slug: string, reason: string) => {
+    pagesSkipped++;
+    skipped.push({ slug, reason });
+  };
 
   for (const page of pages) {
     pagesScanned++;
     opts.onProgress?.(pagesScanned, pages.length, claimsExtracted);
 
     if (!page.compiled_truth || page.compiled_truth.length < 200) continue;
+
+    // #4473: locate the page's markdown home BEFORE the LLM call — a page the
+    // fence writer would refuse must not burn classifier budget (skipped pages
+    // hold no takes, so every future run would re-classify them).
+    if (!dryRun) {
+      let locatable = false;
+      try {
+        const { path } = await resolveTakesWritePath(engine, repoDir, page.slug, page.source_id);
+        locatable = existsSync(path);
+      } catch {
+        locatable = false; // mirror_unavailable (no repo dir + no source local_path)
+      }
+      if (!locatable) {
+        skipPage(page.slug, 'mirror_unavailable');
+        continue;
+      }
+    }
 
     // Truncate to keep per-page cost bounded (~20K chars → ~5K input tokens).
     const text = page.compiled_truth.slice(0, 20_000);
@@ -213,31 +247,49 @@ export async function extractTakesFromPages(
     const claims = parseClaimsJson(response.text);
     if (claims.length === 0) continue;
 
-    // Assign row_num starting from 1 per page. We don't query existing
-    // takes for the page — collisions on (page_id, row_num) are an existing
-    // bug class addresses by extract-conversation-facts; takes-bootstrap
-    // inherits the same posture: writes start at row_num=1 and the engine's
-    // unique constraint surfaces duplicates as failures (caller re-runs).
-    for (let i = 0; i < claims.length; i++) {
-      const c = claims[i];
-      batch.push({
-        page_id: page.id,
-        row_num: i + 1,
-        claim: c.claim,
-        kind: c.kind,
-        holder,
-        weight: c.weight,
-        source: 'cli:takes-bootstrap-from-pages',
-      });
+    if (dryRun) {
+      claimsExtracted += claims.length;
+      continue;
     }
-    if (batch.length >= 200) await flush();
+
+    // #4473: md-first write through the fence pipeline (row numbers derive
+    // from the fence — max existing + 1 — so the historical row_num=1
+    // collision posture is gone). LLM output is pre-filtered against the
+    // fence-cell guards so one garbled claim drops alone instead of sinking
+    // the page's other claims.
+    const safeClaims = claims.filter((c) => isSafeFenceCellText(c.claim));
+    if (safeClaims.length === 0) continue;
+    try {
+      const { rowNums, mirror } = await appendTakesToPageMdFirst(
+        { engine, slug: page.slug, brainDir: repoDir, sourceId: page.source_id },
+        safeClaims.map((c) => ({
+          claim: c.claim,
+          kind: c.kind,
+          holder,
+          weight: c.weight,
+          source: 'cli:takes-bootstrap-from-pages',
+        })),
+      );
+      claimsExtracted += rowNums.length;
+      if (mirror.mirror_warning) mirrorWarnings++;
+    } catch (err) {
+      if (err instanceof TakesWriteError) {
+        // Skip + count (mirror_unavailable race, fence_unparsed, page_locked,
+        // invalid_input) — never fall back to a DB-only write.
+        skipPage(page.slug, err.code);
+        continue;
+      }
+      throw err;
+    }
   }
 
-  await flush();
   return {
     pages_scanned: pagesScanned,
     claims_extracted: claimsExtracted,
     consent_gate_blocked: false,
     llm_unavailable: false,
+    pages_skipped: pagesSkipped,
+    skipped,
+    mirror_warnings: mirrorWarnings,
   };
 }

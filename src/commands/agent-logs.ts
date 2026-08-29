@@ -113,6 +113,8 @@ function formatAudit(e: SubagentAuditEvent): string {
   }
   // heartbeat
   const parts = [`[${e.event}]`, `turn=${e.turn_idx}`];
+  if (e.mode) parts.push(`mode=${e.mode}`);
+  if (e.reason) parts.push(`reason=${e.reason}`);
   if (e.tool_name) parts.push(`tool=${e.tool_name}`);
   if (e.ms_elapsed != null) parts.push(`${e.ms_elapsed}ms`);
   if (e.tokens) {

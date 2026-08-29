@@ -153,6 +153,33 @@ describe('v0.34 W3 — code_callers source scoping', () => {
   });
 });
 
+describe('#4011 — graph ops re-route to the code-bearing federated source', () => {
+  test('unqualified code_callers on a code-less seed source finds callers in the sole code-bearing federated source', async () => {
+    // Vault+code brain: the caller's scalar scope ('default') holds no code;
+    // the graph lives entirely in 'code-src'. Pre-#4011 the traversal stayed
+    // on 'default' and readiness honestly reported not_built — masking a
+    // fully built graph that code_def / code_refs could already see.
+    await registerSource(engine, 'default');
+    await registerSource(engine, 'code-src');
+    const defPage = await insertCodePage(engine, 'code-src', 'src/foo.ts');
+    const callerPage = await insertCodePage(engine, 'code-src', 'src/caller.ts');
+    await insertChunk(engine, defPage, 0, 'parseMarkdown', 'function');
+    const callerChunk = await insertChunk(engine, callerPage, 0, 'callerInCode', 'function');
+    await insertUnresolvedEdge(engine, callerChunk, 'callerInCode', 'parseMarkdown', 'code-src');
+    const ctx = {
+      ...makeCtx(engine, 'default'),
+      remote: true,
+      localFederatedSourceIds: ['default', 'code-src'],
+    };
+    const result = (await operationsByName.code_callers!.handler(ctx, { symbol: 'parseMarkdown' })) as {
+      count: number; status: string; callers: Array<{ from_symbol_qualified: string }>;
+    };
+    expect(result.status).not.toBe('not_built');
+    expect(result.count).toBe(1);
+    expect(result.callers[0]!.from_symbol_qualified).toBe('callerInCode');
+  });
+});
+
 describe('v0.34 W3 — code_def finds definition sites', () => {
   test('returns a definition for a seeded function symbol', async () => {
     await seedDefSite(engine);

@@ -34,6 +34,25 @@ describe('correctness-gate: per-query iteration + aggregate math', () => {
     expect(result.summary.queries_errored).toBe(0);
   });
 
+  test('duplicate chunks count once in page-level recall and retrieved_count', async () => {
+    const qrels = makeQrels([
+      {
+        query_id: 'q-duplicate',
+        query: 'x',
+        relevant: [{ source_id: 'default', slug: 'a' }],
+      },
+    ]);
+    const result = await runCorrectnessGate(fakeEngine, qrels, {
+      k: 2,
+      searchFn: async () => [
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'a' },
+      ],
+    });
+    expect(result.per_query[0].recall_at_k).toBe(1);
+    expect(result.per_query[0].retrieved_count).toBe(1);
+  });
+
   test('per-query throw → errored=true; query NOT counted in aggregates; gate flagged', async () => {
     // Finding 2D: a query throw flips verdict to fail. The orchestrator records
     // the throw as a per-query failure; the caller (eval-gate.ts) treats
@@ -82,6 +101,67 @@ describe('correctness-gate: per-query iteration + aggregate math', () => {
     });
     expect(result.summary.mean_recall_at_k).toBe(0.5); // 1 of 2 relevant
     expect(result.summary.first_relevant_hit_rate).toBe(1); // top-1 was 'a' which is relevant
+  });
+
+  test('duplicate chunk-level hits from relevant pages cannot inflate recall above 1', async () => {
+    const qrels = makeQrels([
+      {
+        query_id: 'q-duplicate-chunks',
+        query: 'x',
+        relevant: [
+          { source_id: 'default', slug: 'a' },
+          { source_id: 'default', slug: 'b' },
+          { source_id: 'default', slug: 'c' },
+          { source_id: 'default', slug: 'd' },
+        ],
+      },
+    ]);
+    const result = await runCorrectnessGate(fakeEngine, qrels, {
+      k: 10,
+      // Seven relevant chunk hits used to score 7 / 4 = 1.75 even though
+      // they represent only two distinct pages.
+      searchFn: async () => [
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'a' },
+        { source_id: 'default', slug: 'b' },
+        { source_id: 'default', slug: 'b' },
+        { source_id: 'default', slug: 'b' },
+      ],
+    });
+
+    expect(result.per_query[0]?.recall_at_k).toBe(0.5);
+    expect(result.per_query[0]?.recall_at_k).toBeLessThanOrEqual(1);
+    expect(result.per_query[0]?.retrieved_count).toBe(2);
+    expect(result.summary.mean_recall_at_k).toBe(0.5);
+  });
+
+  test('distinct relevant pages retain correct recall, including the same slug in different sources', async () => {
+    const qrels = makeQrels([
+      {
+        query_id: 'q-distinct-pages',
+        query: 'x',
+        relevant: [
+          { source_id: 'source-a', slug: 'shared' },
+          { source_id: 'source-b', slug: 'shared' },
+          { source_id: 'source-a', slug: 'unique-a' },
+          { source_id: 'source-b', slug: 'unique-b' },
+        ],
+      },
+    ]);
+    const result = await runCorrectnessGate(fakeEngine, qrels, {
+      k: 10,
+      searchFn: async () => [
+        { source_id: 'source-a', slug: 'shared' },
+        { source_id: 'source-b', slug: 'shared' },
+        { source_id: 'source-a', slug: 'unique-a' },
+      ],
+    });
+
+    expect(result.per_query[0]?.recall_at_k).toBe(0.75);
+    expect(result.per_query[0]?.retrieved_count).toBe(3);
+    expect(result.summary.mean_recall_at_k).toBe(0.75);
   });
 
   test('empty retrieved list → recall=0 / first_relevant=0 / expected_top1=0', async () => {

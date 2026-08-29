@@ -1,4 +1,4 @@
-<!-- gbrain-runbook-stamp: 0.46.13.0 -->
+<!-- gbrain-runbook-stamp: 0.47.6.0 -->
 <!-- This stamp must equal the VERSION file at every release; CI enforces it
      (scripts/check-bootstrap-tag.sh). `gbrain bootstrap status` compares it to
      the installed binary and warns on skew. -->
@@ -89,15 +89,30 @@ registration only with `--mcp-even-if-plugin`.
    `gh auth login -h github.com -p https -w` (you run it; they click Authorize).
    Then `gbrain bootstrap status` — it is idempotent and resume-aware; after any
    partial failure, re-run it and continue where it points.
-2. **Engine.** `gbrain init --pglite` (2 seconds, no server). Search mode is
+2. **Engine.** Two lanes; default to the first:
+   - **PGLite (default):** `gbrain init --pglite` (2 seconds, no server). This is
+     the lane that keeps the per-turn hook context injection working — the hook
+     IPC listener is PGLite-only today.
+   - **Postgres-first (harness installs):** `gbrain init --prefer-postgres` walks
+     a 5-rung ladder (env URL → Supabase token discovery → local Postgres →
+     `--allow-docker` → PGLite floor) for installs that want concurrent
+     connections or multi-machine access. Tradeoff, stated plainly: a Postgres
+     brain gets MCP tools every session plus the pull protocol, but gives up the
+     per-turn hook lane until the engine-uniform listener lands (the degradation
+     matrix in `docs/guides/bootstrap.md` carries the row; INSTALL_FOR_AGENTS.md
+     "Engine preference for harness installs" carries the ladder detail).
+
+   Search mode is
    auto-selected silently (conservative when keyless, tokenmax with an
    expansion key) and printed with an `[AGENT]` cost matrix — surface that
    matrix to the human and confirm before running high-volume queries (see
    INSTALL_FOR_AGENTS.md Step 3.5); they can change it any time with
    `gbrain search modes`. The one thing to raise here is the OPTIONAL provider
    key — with no key you run keyless: keyword search plus memory you author
-   yourself through the write tools; everything works, one key upgrades search to
-   semantic and enables automatic fact extraction. Never pressure for a key. If the
+   yourself through the write tools; everything works. One key upgrades
+   capabilities per provider: OpenAI unlocks semantic search + automatic fact
+   extraction; Voyage unlocks semantic search; Anthropic unlocks automatic fact
+   extraction. Never pressure for a key. If the
    human provides one, pass it to the CLI prompt — it goes to the 0600 config file,
    never into the interview answers, never into chat logs you keep.
 3. **Interview.** `gbrain bootstrap interview --init`, then ask the questions from

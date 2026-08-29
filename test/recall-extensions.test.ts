@@ -16,7 +16,7 @@
  * mocked-MCP-client surface, not the PGLite engine.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -25,6 +25,7 @@ import {
   writeCursor,
   _cursorPathForTests,
 } from '../src/core/recall-cursor-state.ts';
+import { runRecall } from '../src/commands/recall.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -300,5 +301,73 @@ describe('briefing skill invocation surface', () => {
 
     // After supersession, count should reflect only the surviving b.
     expect(await engine.countUnconsolidatedFacts('default')).toBe(1);
+  });
+});
+
+describe('post-review fix: --since-last-run cursor compares creation time, not event time', () => {
+  // The cursor is written from `tStart` — the PRIOR run's wall-clock start
+  // (creation-time semantics). A fact inserted AFTER the cursor but whose
+  // valid_from is backdated (e.g. a delayed extraction from an older
+  // conversation) must still surface on the next `--since-last-run` tick:
+  // the row was genuinely NEW to the brain, even though the event it
+  // describes happened earlier. Comparing the cursor against event time
+  // instead would drop it — permanently, since the cursor advances past it
+  // regardless.
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = '';
+
+  afterEach(() => {
+    process.stdout.write = origWrite;
+  });
+
+  test('a fact created after the cursor but backdated (old valid_from) still surfaces', async () => {
+    const tmpHome = makeTmpHome();
+    mkdirSync(tmpHome, { recursive: true });
+    await withEnv({ GBRAIN_HOME: tmpHome }, async () => {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      writeCursor('default', oneHourAgo, 'briefing');
+
+      // Inserted NOW (created_at is after the cursor); valid_from is 2 days
+      // ago — a backdated event. Cursor semantics must key on created_at.
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      await engine.insertFact(
+        { fact: 'delayed extraction of an old conversation', kind: 'fact', entity_slug: 'e/backdated', source: 'unit', valid_from: twoDaysAgo },
+        { source_id: 'default' },
+      );
+
+      captured = '';
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        captured += chunk.toString();
+        return true;
+      }) as typeof process.stdout.write;
+      await runRecall(engine, ['--since-last-run', '--json']);
+      process.stdout.write = origWrite;
+
+      const payload = JSON.parse(captured);
+      expect(payload.facts.some((f: { fact: string }) => f.fact === 'delayed extraction of an old conversation')).toBe(true);
+    });
+  });
+
+  test('an explicit --since window still uses event time (unaffected by the cursor fix)', async () => {
+    // Same shape, but via --since instead of --since-last-run: the fact's
+    // OWN valid_from is inside the window even though it was inserted well
+    // before the window's cutoff — this only passes because --since keeps
+    // eventTime semantics.
+    const eventWithinWindow = new Date(Date.now() - 30 * 60 * 1000); // 30m ago
+    await engine.insertFact(
+      { fact: 'event-time-scoped fact', kind: 'fact', entity_slug: 'e/eventtime', source: 'unit', valid_from: eventWithinWindow },
+      { source_id: 'default' },
+    );
+
+    captured = '';
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      captured += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    await runRecall(engine, ['--since', '1h', '--json']);
+    process.stdout.write = origWrite;
+
+    const payload = JSON.parse(captured);
+    expect(payload.facts.some((f: { fact: string }) => f.fact === 'event-time-scoped fact')).toBe(true);
   });
 });

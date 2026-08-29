@@ -212,41 +212,54 @@ describe('applyBacklinkBoost (v0.10.1)', () => {
   });
 
   test('positive backlinks boost score by formula (1 + 0.05 * log(1 + count))', () => {
-    const results: SearchResult[] = [makeResult({ slug: 'popular', score: 1.0 })];
-    applyBacklinkBoost(results, new Map([['popular', 10]]));
+    const results: SearchResult[] = [makeResult({ slug: 'popular', page_id: 1, score: 1.0 })];
+    applyBacklinkBoost(results, new Map([[1, 10]]));
     // 1.0 * (1 + 0.05 * log(11)) ≈ 1.0 * 1.1199
     const expected = 1.0 * (1 + 0.05 * Math.log(11));
     expect(results[0].score).toBeCloseTo(expected, 4);
   });
 
   test('higher count = larger boost (log scaling)', () => {
-    const a: SearchResult[] = [makeResult({ slug: 'a', score: 1.0 })];
-    const b: SearchResult[] = [makeResult({ slug: 'b', score: 1.0 })];
-    applyBacklinkBoost(a, new Map([['a', 1]]));
-    applyBacklinkBoost(b, new Map([['b', 100]]));
+    const a: SearchResult[] = [makeResult({ slug: 'a', page_id: 1, score: 1.0 })];
+    const b: SearchResult[] = [makeResult({ slug: 'b', page_id: 2, score: 1.0 })];
+    applyBacklinkBoost(a, new Map([[1, 1]]));
+    applyBacklinkBoost(b, new Map([[2, 100]]));
     expect(b[0].score).toBeGreaterThan(a[0].score);
   });
 
   test('mutates results in place (no return value)', () => {
-    const results: SearchResult[] = [makeResult({ slug: 'x', score: 1.0 })];
-    const ret = applyBacklinkBoost(results, new Map([['x', 5]]));
+    const results: SearchResult[] = [makeResult({ slug: 'x', page_id: 1, score: 1.0 })];
+    const ret = applyBacklinkBoost(results, new Map([[1, 5]]));
     expect(ret).toBeUndefined();
     expect(results[0].score).toBeGreaterThan(1.0);
   });
 
-  test('slug not in counts map: no boost', () => {
-    const results: SearchResult[] = [makeResult({ slug: 'unknown', score: 0.5 })];
-    applyBacklinkBoost(results, new Map([['other', 100]]));
+  test('page_id not in counts map: no boost', () => {
+    const results: SearchResult[] = [makeResult({ slug: 'unknown', page_id: 1, score: 0.5 })];
+    applyBacklinkBoost(results, new Map([[999, 100]]));
     expect(results[0].score).toBe(0.5);
+  });
+
+  test('#4380: counts keyed by page_id — namesake slugs across sources do not share boosts', () => {
+    // Two sources each hold a page with the SAME slug; only page 11 has
+    // backlinks. The slug-keyed map used pre-#4380 stamped the summed
+    // factor onto BOTH results; page_id keying keeps them independent.
+    const linked = makeResult({ slug: 'tools/claude', page_id: 11, score: 1.0, source_id: 'a' });
+    const unlinked = makeResult({ slug: 'tools/claude', page_id: 22, score: 1.0, source_id: 'b' });
+    applyBacklinkBoost([linked, unlinked], new Map([[11, 4]]));
+    expect(linked.score).toBeGreaterThan(1.0);
+    expect(linked.backlink_boost).toBeGreaterThan(1.0);
+    expect(unlinked.score).toBe(1.0);
+    expect(unlinked.backlink_boost).toBeUndefined();
   });
 
   test('multiple results with mixed counts: each scored independently', () => {
     const results: SearchResult[] = [
-      makeResult({ slug: 'a', score: 1.0 }),
-      makeResult({ slug: 'b', score: 1.0 }),
-      makeResult({ slug: 'c', score: 1.0 }),
+      makeResult({ slug: 'a', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'b', page_id: 2, score: 1.0 }),
+      makeResult({ slug: 'c', page_id: 3, score: 1.0 }),
     ];
-    applyBacklinkBoost(results, new Map([['a', 0], ['b', 5], ['c', 50]]));
+    applyBacklinkBoost(results, new Map([[1, 0], [2, 5], [3, 50]]));
     expect(results[0].score).toBe(1.0);
     expect(results[1].score).toBeGreaterThan(1.0);
     expect(results[2].score).toBeGreaterThan(results[1].score);
@@ -335,10 +348,10 @@ describe('computeFloorThreshold', () => {
 describe('applyBacklinkBoost — floor gate', () => {
   test('floorThreshold undefined preserves prior behavior bit-for-bit', () => {
     const results: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0 }),
-      makeResult({ slug: 'weak', score: 0.3 }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'weak', page_id: 2, score: 0.3 }),
     ];
-    applyBacklinkBoost(results, new Map([['top', 10], ['weak', 10]]));
+    applyBacklinkBoost(results, new Map([[1, 10], [2, 10]]));
     const factor = 1 + 0.05 * Math.log(11);
     expect(results[0].score).toBeCloseTo(1.0 * factor, 6);
     expect(results[1].score).toBeCloseTo(0.3 * factor, 6);
@@ -346,10 +359,10 @@ describe('applyBacklinkBoost — floor gate', () => {
 
   test('weak result below threshold gets no boost', () => {
     const results: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0 }),
-      makeResult({ slug: 'weak', score: 0.3 }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'weak', page_id: 2, score: 0.3 }),
     ];
-    applyBacklinkBoost(results, new Map([['top', 10], ['weak', 10]]), 0.85);
+    applyBacklinkBoost(results, new Map([[1, 10], [2, 10]]), 0.85);
     const factor = 1 + 0.05 * Math.log(11);
     expect(results[0].score).toBeCloseTo(1.0 * factor, 6);
     expect(results[1].score).toBe(0.3); // gated out
@@ -357,20 +370,20 @@ describe('applyBacklinkBoost — floor gate', () => {
 
   test('borderline result at exactly threshold is eligible', () => {
     const results: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0 }),
-      makeResult({ slug: 'edge', score: 0.85 }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'edge', page_id: 2, score: 0.85 }),
     ];
-    applyBacklinkBoost(results, new Map([['top', 10], ['edge', 10]]), 0.85);
+    applyBacklinkBoost(results, new Map([[1, 10], [2, 10]]), 0.85);
     const factor = 1 + 0.05 * Math.log(11);
     expect(results[1].score).toBeCloseTo(0.85 * factor, 6);
   });
 
   test('regression scenario: 1000-backlink weak result cannot leapfrog strong primary', () => {
     const withGate: SearchResult[] = [
-      makeResult({ slug: 'strong-primary', score: 1.0 }),
-      makeResult({ slug: 'weak-with-signal', score: 0.5 }),
+      makeResult({ slug: 'strong-primary', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'weak-with-signal', page_id: 2, score: 0.5 }),
     ];
-    applyBacklinkBoost(withGate, new Map([['weak-with-signal', 1000]]), 0.85);
+    applyBacklinkBoost(withGate, new Map([[2, 1000]]), 0.85);
     withGate.sort((a, b) => b.score - a.score);
     expect(withGate[0].slug).toBe('strong-primary');
     expect(withGate[1].slug).toBe('weak-with-signal');
@@ -382,10 +395,10 @@ describe('applyBacklinkBoost — floor gate', () => {
     // otherwise let NaN rows BYPASS the gate and receive boosts. NaN scores
     // are skipped entirely.
     const results: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0 }),
-      makeResult({ slug: 'nan', score: NaN }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0 }),
+      makeResult({ slug: 'nan', page_id: 2, score: NaN }),
     ];
-    applyBacklinkBoost(results, new Map([['top', 10], ['nan', 10]]), 0.85);
+    applyBacklinkBoost(results, new Map([[1, 10], [2, 10]]), 0.85);
     expect(results[1].score).toBeNaN(); // unchanged
   });
 
@@ -470,7 +483,7 @@ describe('applyRecencyBoost — floor gate (T6 IRON RULE)', () => {
 describe('runPostFusionStages — single-baseline composition (D6/T2)', () => {
   // Build a minimal engine stub that returns predictable boost inputs.
   function makeStubEngine(opts: {
-    backlinks?: Map<string, number>;
+    backlinks?: Map<number, number>;
     salience?: Map<string, number>;
     dates?: Map<string, Date>;
   }): { getBacklinkCounts: any; getSalienceScores: any; getEffectiveDates: any } {
@@ -487,13 +500,13 @@ describe('runPostFusionStages — single-baseline composition (D6/T2)', () => {
     // gates both stages — a result eligible for backlink is also eligible
     // for salience (and vice versa), regardless of stage order.
     const engine = makeStubEngine({
-      backlinks: new Map([['top', 100], ['weak', 100]]),
+      backlinks: new Map([[1, 100], [2, 100]]),
       salience: new Map([['default::top', 10], ['default::weak', 10]]),
     });
 
     const resultsA: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0, source_id: undefined }),
-      makeResult({ slug: 'weak', score: 0.3, source_id: undefined }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0, source_id: undefined }),
+      makeResult({ slug: 'weak', page_id: 2, score: 0.3, source_id: undefined }),
     ];
     const optsA: PostFusionOpts = {
       applyBacklinks: true,
@@ -505,8 +518,8 @@ describe('runPostFusionStages — single-baseline composition (D6/T2)', () => {
 
     // Run again with only salience enabled — same threshold should apply.
     const resultsB: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0, source_id: undefined }),
-      makeResult({ slug: 'weak', score: 0.3, source_id: undefined }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0, source_id: undefined }),
+      makeResult({ slug: 'weak', page_id: 2, score: 0.3, source_id: undefined }),
     ];
     const optsB: PostFusionOpts = {
       applyBacklinks: false,
@@ -525,11 +538,11 @@ describe('runPostFusionStages — single-baseline composition (D6/T2)', () => {
 
   test('floorRatio undefined: bit-for-bit prior behavior (no gate, weak gets boosted)', async () => {
     const engine = makeStubEngine({
-      backlinks: new Map([['weak', 1000]]),
+      backlinks: new Map([[2, 1000]]),
     });
     const results: SearchResult[] = [
-      makeResult({ slug: 'top', score: 1.0, source_id: undefined }),
-      makeResult({ slug: 'weak', score: 0.3, source_id: undefined }),
+      makeResult({ slug: 'top', page_id: 1, score: 1.0, source_id: undefined }),
+      makeResult({ slug: 'weak', page_id: 2, score: 0.3, source_id: undefined }),
     ];
     const opts: PostFusionOpts = {
       applyBacklinks: true,

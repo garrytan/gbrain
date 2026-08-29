@@ -155,6 +155,16 @@ Resolution order (most explicit wins):
 `eval.scrub_pii: false` to preserve raw query text (only if you control
 the brain's distribution).
 
-`gbrain config set eval.capture false` does **not** work — that
-command writes the DB-plane config, and the MCP server reads the
-file-plane. Edit the JSON directly or use the env var.
+`gbrain config set eval.capture <true|false>` applies to **CLI commands**
+(`gbrain query`, `gbrain recall`, …): the CLI merges the DB plane into the
+operation context it hands the capture gate.
+
+It does **not** yet apply to the **MCP server, `gbrain call`, or background
+subagents** — those build their context from the file plane only, so a
+DB-plane value is stored, echoed back by `gbrain config get`, and ignored.
+For those, edit `~/.gbrain/config.json` directly or export
+`GBRAIN_CONTRIBUTOR_MODE=1` in the service environment.
+
+Only the exact strings `true` and `false` are recognised on the DB plane.
+Anything else (`TRUE`, `1`, `yes`, a typo) is treated as unset and the
+default applies — it does not silently mean "false".

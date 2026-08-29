@@ -19,6 +19,7 @@ import {
 } from '../core/brain-repo-durability.ts';
 import { divergenceSafePull, detectDefaultBranch, isInsideGitRepo } from '../core/git-remote.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { invalidateBackupStatus } from '../core/backup/status-file.ts';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
@@ -42,7 +43,16 @@ function configHost(config: unknown): string | null {
 
 async function loadSourceRows(engine: BrainEngine, id: string | undefined, all: boolean): Promise<SourceRow[]> {
   if (all) {
-    return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+    // #3880: `--all` skips archived sources (v34 legacy fallback, house
+    // style per pickSoleNonDefaultSource). Explicit <id> below stays
+    // deliberate (recovery ops may target archived rows).
+    try {
+      return await engine.executeRaw<SourceRow>(
+        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE ORDER BY id`,
+      );
+    } catch {
+      return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL ORDER BY id`);
+    }
   }
   if (!id) throw new Error('Usage: gbrain sources harden <id|--all> [--pat-file <p>] [--branch <b>] [--no-cron] [--no-verify] [--dry-run] [--json]');
   return engine.executeRaw<SourceRow>(`SELECT id, local_path, config FROM sources WHERE id = $1`, [id]);
@@ -98,6 +108,10 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   if (json) console.log(JSON.stringify({ reports }, null, 2));
+
+  // Fix-path invalidation: hardening changes the backup-coverage answer for
+  // every touched repo — drop the cached verdict so the next check re-probes.
+  if (reports.length > 0) invalidateBackupStatus();
 
   // Non-zero exit if any source needs attention, so cron/automation notices.
   // Route through setCliExitVerdict — a raw process.exitCode write is zeroed by

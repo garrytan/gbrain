@@ -66,11 +66,13 @@ describe('host-specs [ENG-7]', () => {
     }
     expect(TARGETS[CLAUDE_CODE_SPEC_ID].status).toBe('verified');
     expect(TARGETS[CLAUDE_CODE_SPEC_ID].references.join(' ')).toContain('code.claude.com');
-    // Verified against codex-cli 0.147.0 (#4043: serde field scan + live
-    // inline bearer_token wiring); the fired CX2-17 revisit is recorded
+    // Verified against codex-cli 0.147.0 (#4043: serde field scan) and
+    // 0.149.1 (#4574: inline bearer_token rejected at config load — the
+    // writer emits http_headers); the fired CX2-17 revisit is recorded
     // where the format lives, and 'TOML' stays the load-bearing word.
     expect(TARGETS[CODEX_SPEC_ID].status).toBe('verified');
     expect(TARGETS[CODEX_SPEC_ID].note).toContain('TOML');
+    expect(TARGETS[CODEX_SPEC_ID].note).toContain('http_headers');
   });
 });
 
