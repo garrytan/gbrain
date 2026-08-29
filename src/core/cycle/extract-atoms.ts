@@ -214,6 +214,106 @@ interface ExtractedAtom {
 /** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
 const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
+/**
+ * Fold typography and collapse whitespace, recording the ORIGINAL index of each
+ * emitted character.
+ *
+ * The map is what makes provenance real: matching has to tolerate a curly quote
+ * or a line wrap (the model returns one line; the page is wrapped markdown), but
+ * the offsets we persist must point into the ORIGINAL text or they are useless
+ * for later verification.
+ */
+function foldWithMap(s: string): { norm: string; map: number[] } {
+  const FOLD: Record<string, string> = {
+    '’': "'", '‘': "'", '“': '"', '”': '"',
+    '—': '-', '–': '-', '…': '...', ' ': ' ',
+  };
+  let norm = '';
+  const map: number[] = [];
+  let inSpace = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (/\s/.test(ch)) {
+      if (!inSpace && norm.length > 0) { norm += ' '; map.push(i); }
+      inSpace = true;
+      continue;
+    }
+    inSpace = false;
+    for (const c of (FOLD[ch] ?? ch.toLowerCase())) { norm += c; map.push(i); }
+  }
+  while (norm.endsWith(' ')) { norm = norm.slice(0, -1); map.pop(); }
+  return { norm, map };
+}
+
+/**
+ * Locate a model-returned quote inside the text it was extracted from.
+ *
+ * This is the provenance step, and it exists because the alternative — matching
+ * a stored quote back to its source LATER — is not solvable. A passage and its
+ * negation ("would not improve" vs "would improve") are ~99% similar, so no
+ * after-the-fact matcher can tell which one an atom came from, and picking wrong
+ * writes a reversed claim into the brain.
+ *
+ * At extraction there is no such ambiguity: we know exactly which text was sent
+ * to the model, so the question collapses from "which passage did it mean?" to
+ * "is this string in the text we just handed it?" — a fact rather than a guess.
+ *
+ * Returns ORIGINAL-text offsets, or null when the model paraphrased instead of
+ * quoting.
+ */
+export function locateQuote(
+  content: string, quote: string,
+): { start: number; end: number } | null {
+  if (!quote || !content) return null;
+
+  // Everything is decided in FOLDED space, including uniqueness. Short-circuiting
+  // on an exact match and checking uniqueness only among exact matches lets a
+  // typographic twin elsewhere ('“go now”' vs '"go now"') go unseen, and the
+  // offset can then name the wrong passage. Folded space is where twins are
+  // visible, so that is where ambiguity must be judged.
+  const c = foldWithMap(content);
+  const q = foldWithMap(quote);
+  if (!q.norm) return null;
+  // Enumerate every folded hit, then keep only those that survive the boundary
+  // check, THEN judge ambiguity. Order matters: rejecting on raw hit-count first
+  // lets an INVALID partial-character match veto a genuinely unique valid one —
+  // "No. First. No… not ever" has two folded hits for "No." but only the first
+  // is a real character-aligned quotation.
+  //
+  // Boundary check is a round-trip: folding is lossy and one-to-many (… -> ...),
+  // so a hit can land part-way through a single original character. Re-folding
+  // the slice we would store and requiring equality with the folded quote
+  // rejects exactly those.
+  const valid: Array<{ start: number; end: number }> = [];
+  const MAX_CANDIDATES = 8; // pathological input shouldn't scan a whole book
+  let at = c.norm.indexOf(q.norm);
+  let seen = 0;
+  while (at !== -1 && seen < MAX_CANDIDATES) {
+    seen++;
+    const start = c.map[at]!;
+    const end = c.map[at + q.norm.length - 1]! + 1;
+    if (foldWithMap(content.slice(start, end)).norm === q.norm
+        && !valid.some(v => v.start === start && v.end === end)) {
+      valid.push({ start, end });
+    }
+    // Step by one, not by length: overlapping hits are still distinct passages
+    // for ambiguity purposes.
+    at = c.norm.indexOf(q.norm, at + 1);
+  }
+
+  // Cap exhausted with hits still pending: the scan was truncated, so uniqueness
+  // is UNPROVEN and must fail closed. Otherwise a run of invalid partial matches
+  // could push a second valid span past the cap and the first would be certified
+  // unique when it is not.
+  if (at !== -1) return null;
+
+  // Exactly one surviving passage, or we cannot say which the atom used — and
+  // two candidates may differ in their ORIGINAL characters, so the text we
+  // persist could differ from what the model quoted. Drop it rather than guess.
+  if (valid.length !== 1) return null;
+  return valid[0]!;
+}
+
 const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
 An atom is a single-source, self-contained idea that could become a tweet,
@@ -775,6 +875,12 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    // Bind the cut ONCE. This is the exact text the model receives, and quote
+    // provenance is resolved against THIS rather than the full item, so a quote
+    // can only verify against text the model actually saw.
+    // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare .slice()
+    // can split a surrogate pair at the boundary).
+    const promptContent = truncateUtf8(item.content, maxInputChars);
     try {
       const result = await chat({
         model: extractModel,
@@ -782,9 +888,7 @@ export async function runPhaseExtractAtoms(
         messages: [
           {
             role: 'user',
-            // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare
-            // .slice() can split a surrogate pair at the boundary).
-            content: `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
+            content: `Source: ${originLabel}\n\n---\n\n${promptContent}`,
           },
         ],
         maxTokens: maxOutputTokens,
@@ -868,6 +972,29 @@ export async function runPhaseExtractAtoms(
             item.kind === 'transcript'
               ? { source_path: item.filePath }
               : { source_slug: item.slug };
+          // Pin the quote to its origin, or don't claim one. When located we
+          // store the ORIGINAL characters rather than the model's rendering, so
+          // the stored quote is verbatim by construction and typographic drift
+          // cannot accumulate. When not located the model paraphrased: drop the
+          // quote rather than store an unverifiable one. An atom without a
+          // quotation is honest; an atom with a fabricated one is not, and the
+          // body/lesson/concepts remain useful either way.
+          //
+          // Search ONLY what the model actually received. The prompt is capped
+          // at maxInputChars, so searching the whole item would let a
+          // hallucinated quote that happens to appear beyond the cap be stamped
+          // as verified provenance. Offsets stay valid against the full item
+          // because the cut is a prefix.
+          const loc = locateQuote(promptContent, atom.source_quote ?? '');
+          const quoteFields = atom.source_quote
+            ? (loc
+                ? {
+                    source_quote: promptContent.slice(loc.start, loc.end),
+                    source_quote_offset: [loc.start, loc.end],
+                    source_quote_verified: true,
+                  }
+                : { quote_unverified: 'model paraphrased; not present in source' })
+            : {};
           // Serialize to markdown and import via the canonical pipeline so
           // the atom is chunked (+ embedded when a provider is configured).
           // engine.putPage is a bare page-row upsert that never chunks, so
@@ -885,7 +1012,7 @@ export async function runPhaseExtractAtoms(
               ...originFrontmatter,
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
-              ...(atom.source_quote && { source_quote: atom.source_quote }),
+              ...quoteFields,
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
