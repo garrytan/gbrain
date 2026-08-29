@@ -258,6 +258,12 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
       extra_literals: operator_literals,
+      // Same resolution as import: lint and import disagreeing about which
+      // patterns are live would make lint report a page as junk that import
+      // is configured to let through.
+      disabled_patterns: Array.isArray(cs.disabled_patterns)
+        ? (cs.disabled_patterns as string[])
+        : undefined,
     });
     // Rule: huge-page fires for both oversize_warn (over warn threshold)
     // AND oversize_block (over block threshold). Operator sees the same

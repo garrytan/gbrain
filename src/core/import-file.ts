@@ -510,6 +510,12 @@ export async function importFromContent(
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
       extra_literals,
+      // `content_sanity.disabled_patterns`: turn off individual built-in
+      // junk patterns without reaching for the kill-switch, which would also
+      // disable the size gates.
+      disabled_patterns: Array.isArray(cs.disabled_patterns)
+        ? (cs.disabled_patterns as string[])
+        : undefined,
     });
 
     if (sanityDisabled) {

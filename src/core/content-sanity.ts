@@ -357,6 +357,25 @@ export function assessContentSanity(opts: {
    *  `~/.gbrain/junk-substrings.txt` via `src/core/content-sanity-literals.ts`.
    *  Empty array (default) means built-ins only. */
   extra_literals?: ReadonlyArray<OperatorLiteral>;
+  /** Built-in junk patterns to skip, by `name`. Resolved by the caller from
+   *  `content_sanity.disabled_patterns`.
+   *
+   *  Why one pattern rather than the kill-switch: the patterns are aimed at
+   *  scraped web content, and a brain built from mail, chat or transcripts
+   *  holds none of it — but it does hold people *writing about* the things
+   *  the patterns name. `access_denied` is `/^\s*access denied\b/im`, so a
+   *  page that quotes "Access Denied when I open the staging dashboard" at the start of
+   *  a line is hidden from search, and the comment on the error-title pattern
+   *  already anticipates the shape ("a thoughtful page ABOUT 404 errors won't
+   *  trip") — it is the line-anchored body match that reaches further than
+   *  the title one. Today the only escape is `content_sanity.disabled: true`,
+   *  which also turns off the size gates; those are load-bearing (they are
+   *  what catches a page past `bytes_block` before it silently stops being
+   *  searchable), so an operator who needs one pattern off has to give up
+   *  the rest. Unknown names are ignored rather than rejected: the built-in
+   *  set changes between releases and a config that names a retired pattern
+   *  should not fail an import. */
+  disabled_patterns?: ReadonlyArray<string>;
 }): ContentSanityResult {
   const bytes_warn = opts.bytes_warn ?? DEFAULT_BYTES_WARN;
   const bytes_block = opts.bytes_block ?? DEFAULT_BYTES_BLOCK;
@@ -382,8 +401,10 @@ export function assessContentSanity(opts: {
   const title = String(opts.title ?? '');
   const titleLower = title.toLowerCase();
 
+  const disabledPatterns = new Set(opts.disabled_patterns ?? []);
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
+    if (disabledPatterns.has(p.name)) continue;
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {
