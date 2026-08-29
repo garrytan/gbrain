@@ -230,12 +230,12 @@ const TRAVERSE_DEPTH_CAP = 10;
 
 const traverse_graph: Operation = {
   name: 'traverse_graph',
-  description: 'Traverse link graph from a page. With link_type/direction, returns edges (GraphPath[]) instead of nodes.',
+  description: 'Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]); trusted local no-filter callers keep the legacy node shape.',
   params: {
     slug: { type: 'string', required: true, description: "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param." },
     depth: { type: 'number', description: `Max traversal depth (default 5, capped at ${TRAVERSE_DEPTH_CAP})` },
     link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
-    direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Traversal direction (default out)' },
+    direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Traversal direction. Defaults to both for remote callers; trusted local no-filter callers keep legacy outgoing-node output.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
@@ -245,7 +245,8 @@ const traverse_graph: Operation = {
     }
     const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
-    const direction = p.direction as 'in' | 'out' | 'both' | undefined;
+    const requestedDirection = p.direction as 'in' | 'out' | 'both' | undefined;
+    const direction = requestedDirection ?? (ctx.remote !== false ? 'both' : undefined);
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope so graph
     // walks stay within the auth'd client's accessible sources. Pre-fix,
     // traverseGraph / traversePaths happily followed edges into pages from
@@ -260,9 +261,11 @@ const traverse_graph: Operation = {
       const startHidden = await findPrivateOnlySlugs(ctx.engine, [slug], scope, { includeDeleted: true });
       if (startHidden.has(slug)) return [];
     }
-    // Backward compat: when neither link_type nor direction is provided, return
-    // the legacy GraphNode[] shape. Once either is set, switch to GraphPath[].
-    if (linkType === undefined && direction === undefined) {
+    // Backward compat: trusted local no-filter callers keep the legacy
+    // GraphNode[] shape used by `gbrain graph`. Remote MCP callers need the
+    // natural no-filter invocation to surface inbound-only typed edges too, so
+    // they default to `direction=both` and return explicit GraphPath[] edges.
+    if (linkType === undefined && requestedDirection === undefined && ctx.remote === false) {
       const nodes = await ctx.engine.traverseGraph(slug, depth, scope);
       if (!excludePrivate) return nodes;
       const hidden = await findPrivateOnlySlugs(
