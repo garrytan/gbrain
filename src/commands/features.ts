@@ -47,7 +47,7 @@ interface FeatureScanResult {
 export const RECIPE_META = [
   { id: 'email-to-brain', name: 'Email to Brain', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
   { id: 'calendar-to-brain', name: 'Calendar Sync', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
-  { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN'] },
+  { id: 'x-to-brain', name: 'X/Twitter to Brain', secrets: ['X_API_BEARER_TOKEN', 'XQUIK_API_KEY'] },
   { id: 'twilio-voice-brain', name: 'Voice to Brain', secrets: ['TWILIO_AUTH_TOKEN'] },
   { id: 'meeting-sync', name: 'Meeting Sync', secrets: ['CIRCLEBACK_TOKEN'] },
   { id: 'credential-gateway', name: 'Credential Gateway', secrets: ['CLAWVISOR_AGENT_TOKEN', 'GOOGLE_CLIENT_ID'] },
