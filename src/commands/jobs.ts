@@ -2276,7 +2276,7 @@ export async function registerBuiltinHandlers(
   // the core level and returned as `result.budget_exhausted: true` (NOT
   // a job failure) so the user can resume with a higher cap.
   registerBuiltinJob(worker, engine, 'extract-conversation-facts', async (job) => {
-    const { runExtractConversationFactsCore } = await import('./extract-conversation-facts.ts');
+    const { runExtractConversationFactsCore, validateModelFlag } = await import('./extract-conversation-facts.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId) {
       // Multi-source iteration not supported in the Minion-handler path;
@@ -2291,6 +2291,14 @@ export async function registerBuiltinHandlers(
           (t): t is AllowedType => (ALLOWED_TYPES as readonly string[]).includes(t),
         )
       : undefined;
+    // The CLI gates --model before enqueueing; a job submitted through the
+    // API carries whatever the submitter sent, so gate it here as well
+    // before any page is claimed.
+    const model = typeof job.data.model === 'string' ? job.data.model : undefined;
+    if (model && !job.data.dryRun) {
+      const problem = validateModelFlag(model);
+      if (problem) throw new Error(problem);
+    }
     const result = await runExtractConversationFactsCore(engine, {
       sourceId,
       types,
@@ -2307,6 +2315,8 @@ export async function registerBuiltinHandlers(
       // `gbrain extract-conversation-facts --background --workers 20`
       // works end-to-end.
       workers: typeof job.data.workers === 'number' ? job.data.workers : undefined,
+      // Round-trip --model the same way; buildJobParams sends it.
+      model,
     });
     return result;
   });

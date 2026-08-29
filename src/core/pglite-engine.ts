@@ -2014,6 +2014,8 @@ export class PGLiteEngine implements BrainEngine {
       params.push(filters.updatedAfterKeyset.slug);
       const slugIdx = params.length;
       where.push(
+        // Exact only with a microsecond cursor (`Page.updated_at_iso`); see
+        // the Postgres engine.
         `(p.updated_at > $${tsIdx}::timestamptz OR (p.updated_at = $${tsIdx}::timestamptz AND p.slug > $${slugIdx}))`,
       );
     } else if (filters?.updated_after) {
@@ -2062,7 +2064,7 @@ export class PGLiteEngine implements BrainEngine {
     const orderBy = PAGE_SORT_SQL[sortKey];
 
     const { rows } = await this.db.query(
-      `SELECT p.* FROM pages p ${tagJoin} ${whereSql}
+      `SELECT p.*, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p ${tagJoin} ${whereSql}
        ORDER BY ${orderBy} ${limitSql}`,
       params
     );

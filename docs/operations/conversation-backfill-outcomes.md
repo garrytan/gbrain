@@ -69,14 +69,17 @@ extraction. Doctor and extraction therefore agree after sidecar-only edits.
 
 Bulk extraction follows this sequence:
 
-1. Enumerate candidate pages in bounded batches.
-2. Filter candidates with matching v2 outcomes.
-3. Apply `--limit` to the remaining pages that actually need work.
-4. Acquire the source-and-slug advisory lock.
-5. Re-fetch the page under that lock.
-6. Recompute and recheck the snapshot-bound outcome.
-7. Prepare one immutable parser snapshot and process it.
-8. Re-fetch and recompute the snapshot before writing an outcome.
+1. Enumerate candidate pages with keyset pagination, oldest `updated_at`
+   first, in bounded reads.
+2. Skip out-of-scope email pages (digest pages, single inbound messages) before
+   any outcome lookup. They receive no outcome row.
+3. Filter candidates with matching v2 outcomes.
+4. Apply `--limit` to the remaining pages that actually need work.
+5. Acquire the source-and-slug advisory lock.
+6. Re-fetch the page under that lock.
+7. Recompute and recheck the snapshot-bound outcome.
+8. Prepare one immutable parser snapshot and process it.
+9. Re-fetch and recompute the snapshot before writing an outcome.
 
 The pre-lock check avoids parser, filesystem, and model work for ordinary
 completed pages. The under-lock refetch prevents a stale enumeration object
@@ -87,7 +90,8 @@ An edit can occur after the final comparison and before marker insertion. That
 is still safe because the marker contains the old version token. Future
 selection compares the token, not marker creation time, and reopens the page.
 
-Single-page `--slug` runs use the same under-lock path.
+Single-page `--slug` runs use the same under-lock path and the same
+out-of-scope email rule.
 
 ## Strict extraction success
 
@@ -128,10 +132,17 @@ A non-extractable marker is written only when all of the following are true:
 - cleanup of prior command-owned rows succeeded; and
 - the input snapshot was still current immediately before cleanup and write.
 
+For `email` pages, a thread is eligible only when the brain owner sent a
+message or two distinct senders wrote. A thread below that bar is audited as
+non-extractable however many messages it has.
+
 A `no_match` result stays unfinished so a new parser pattern, optional fallback,
 or corrected input can recover it. Oversize pages, disappeared pages, lock
 contention, dry runs, aborts, cleanup errors, provider failures, extraction
 failures, insertion failures, and outcome-write failures also stay unfinished.
+An `email` page that parsed fewer messages than it has message headings is
+declined without an outcome row (counted in `pages_skipped_unrecognized_speaker`)
+and retries on every run until the parser accepts the heading shape.
 
 Cleanup errors are never interpreted as "zero rows deleted." Propagating them
 prevents a fresh non-extractable marker from coexisting with stale extracted
@@ -164,6 +175,10 @@ pending page rather than consuming the limit on the completed page.
 outcomes observed during selection. Model-bearing page work does not exceed the
 limit.
 
+Enumeration walks each type oldest `updated_at` first and restarts from the
+oldest page on every run, because the keyset cursor is not persisted. `--limit N`
+therefore processes the N oldest-updated pages that need work.
+
 ## `--force`
 
 `--force` bypasses durable outcome selection and clears the page checkpoint.
@@ -177,7 +192,15 @@ The result exposes separate counters:
 - `pages_skipped_completed`
 - `pages_skipped_non_extractable`
 - `pages_marked_non_extractable`
+- `pages_skipped_out_of_scope_email`
+- `email_messages_dropped_automated`
+- `entity_slugs_canonicalized`
 - `pages_failed`
+
+Out-of-scope pages of type `email` never receive an outcome row, so the
+protocol reports them as unfinished and `gbrain doctor` counts them in the
+backlog. `email-digest` pages are skipped the same way but fall outside the
+doctor's type list, so they appear in neither count.
 
 The CLI aggregates these across sources. The autopilot backfill phase includes
 them in phase details. `gbrain doctor` reports `completed`,
@@ -190,6 +213,16 @@ gbrain extract-conversation-facts --source-id default --limit 10 --workers 1 --m
 gbrain extract-conversation-facts --source-id default --limit 10 --workers 1 --max-cost-usd 0.25 --yes
 gbrain doctor
 ```
+
+Add `--model <provider:model>` to pin the extractor model for one run. The id
+must be servable by the chat gateway and present in the pricing table, or the
+command exits before it claims a page (dry runs skip this check). Email pages drop messages from automated
+senders before segmenting; extend the built-in denylist by setting
+`facts.email_automated_senders` to a JSON array of lowercase strings. An
+entry with `@` (`@relay.example`) matches the sender address exactly or as a
+suffix; any other entry (`noreply`) matches as a substring of the address, or
+of the lowercased display name when no address parses. Entries are never
+compiled into regular expressions.
 
 On the second run, unchanged pages should move through durable skip counters.
 Edit one page or raw transcript sidecar and rerun; that page should process

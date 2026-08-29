@@ -96,6 +96,14 @@ export interface Page {
   created_at: Date;
   updated_at: Date;
   /**
+   * `updated_at` at the column's microsecond precision, as an ISO string
+   * (`2026-08-10T12:00:00.000123Z`). Projected by `listPages` so keyset
+   * callers can resume from the exact row (`updatedAfterKeyset.updatedAt`);
+   * a JS Date holds milliseconds only and would re-select every row in the
+   * last row's millisecond. Absent on paths that do not project it.
+   */
+  updated_at_iso?: string;
+  /**
    * v0.26.5: when present, the page is soft-deleted. Hidden from search and
    * from `getPage` / `listPages` by default; surface via `include_deleted: true`.
    * The autopilot purge phase hard-deletes rows where `deleted_at < now() - 72h`.
@@ -309,6 +317,7 @@ export interface PageFilters {
    * cursor so a >limit same-timestamp cluster pages cleanly instead of
    * livelocking. `slug` empty ⇒ start of the `ts` bucket.
    */
+  /** Resume after this row. `updatedAt` should be the row's `updated_at_iso` (column precision); a millisecond-rounded value re-selects same-millisecond rows. */
   updatedAfterKeyset?: { updatedAt: string; slug: string };
   /**
    * Prefix-match filter on slug. Implemented as `WHERE slug LIKE prefix || '%'`
@@ -382,6 +391,8 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // cluster of pages sharing one updated_at (bulk syncs stamp identical
   // now() across a transaction). Without the tiebreaker, rows at the same
   // timestamp order arbitrarily and a >limit tie cluster is unpageable.
+  // The cursor must carry the column's microsecond precision to be exact:
+  // resume from `Page.updated_at_iso`, never from a JS Date.
   updated_asc:  'p.updated_at ASC, p.slug ASC',
   created_desc: 'p.created_at DESC',
   slug:         'p.slug ASC',

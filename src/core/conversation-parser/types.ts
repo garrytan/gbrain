@@ -40,6 +40,12 @@ export interface MatchedMessage {
    *  formats when no frontmatter date is available. */
   timestamp: string;
   text: string;
+  /**
+   * Message direction when the pattern captures it (`direction_group`).
+   * Email-thread pages mark each message `(sent)` by the brain owner or
+   * `(received)`; callers use it to keep an owner-sent single message.
+   */
+  direction?: 'sent' | 'received';
 }
 
 /**
@@ -86,6 +92,13 @@ export interface ParseResult {
    *  decline (the parser stays purely descriptive). Undefined when empty so
    *  healthy-page JSON output is byte-identical. */
   unrecognized_headings?: string[];
+  /**
+   * Anchor lines whose date could not be parsed (rfc2822 zone words the
+   * engine rejects, malformed digits). Each one still opens a message,
+   * anchored on the page's fallback date, so its body is never folded into
+   * the previous speaker. Absent when zero.
+   */
+  date_fallback_count?: number;
 }
 
 /**
@@ -128,6 +141,11 @@ export interface CaptureMap {
   hour_group?: number;
   minute_group?: number;
   ampm_group?: number;
+  /**
+   * Optional capture whose value is `sent` or `received`. Surfaces as
+   * `MatchedMessage.direction`; any other value is ignored.
+   */
+  direction_group?: number;
 }
 
 /**
@@ -260,6 +278,15 @@ export interface ParseConversationOpts {
   diagnostic?: boolean;
   /** When true, skip LLM polish even if config enables it. */
   noPolish?: boolean;
+  /**
+   * Apply this pattern id first, without scoring. Callers that know the
+   * page format (the email collector's thread pages) use it so a page with
+   * a single anchored heading is not rejected by the density scorer. Falls
+   * through to normal scoring when the id is unknown or the forced pattern
+   * yields no messages. The forced path returns before LLM polish and the
+   * LLM fallback, so neither runs for a forced page.
+   */
+  forcePatternId?: string;
   /** When true, skip LLM fallback even if config enables it. */
   noFallback?: boolean;
   /** Caller-supplied patterns to add (e.g. user simple_pattern compiled). */

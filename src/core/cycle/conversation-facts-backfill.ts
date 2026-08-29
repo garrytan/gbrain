@@ -220,6 +220,9 @@ export async function runPhaseConversationFactsBackfill(
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
+    pages_skipped_out_of_scope_email: 0,
+    email_messages_dropped_automated: 0,
+    entity_slugs_canonicalized: 0,
     pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     pages_llm_fallback: 0,
@@ -367,6 +370,9 @@ export async function runPhaseConversationFactsBackfill(
     pages_skipped_completed: 0,
     pages_skipped_non_extractable: 0,
     pages_marked_non_extractable: 0,
+    pages_skipped_out_of_scope_email: 0,
+    email_messages_dropped_automated: 0,
+    entity_slugs_canonicalized: 0,
     pages_skipped_unrecognized_speaker: 0,
     pages_failed: 0,
     facts_inserted: 0,
@@ -381,6 +387,9 @@ export async function runPhaseConversationFactsBackfill(
     totals.pages_skipped_completed += r.pages_skipped_completed;
     totals.pages_skipped_non_extractable += r.pages_skipped_non_extractable;
     totals.pages_marked_non_extractable += r.pages_marked_non_extractable;
+    totals.pages_skipped_out_of_scope_email += r.pages_skipped_out_of_scope_email;
+    totals.email_messages_dropped_automated += r.email_messages_dropped_automated;
+    totals.entity_slugs_canonicalized += r.entity_slugs_canonicalized;
     totals.pages_skipped_unrecognized_speaker += r.pages_skipped_unrecognized_speaker;
     totals.pages_failed += r.pages_failed;
     totals.facts_inserted += r.facts_inserted;
@@ -407,6 +416,9 @@ export async function runPhaseConversationFactsBackfill(
       pages_skipped_completed: totals.pages_skipped_completed,
       pages_skipped_non_extractable: totals.pages_skipped_non_extractable,
       pages_marked_non_extractable: totals.pages_marked_non_extractable,
+      pages_skipped_out_of_scope_email: totals.pages_skipped_out_of_scope_email,
+      email_messages_dropped_automated: totals.email_messages_dropped_automated,
+      entity_slugs_canonicalized: totals.entity_slugs_canonicalized,
       pages_skipped_unrecognized_speaker: totals.pages_skipped_unrecognized_speaker,
       pages_failed: totals.pages_failed,
       facts_inserted: totals.facts_inserted,

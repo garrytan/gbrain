@@ -10,8 +10,9 @@ adding or changing a format.
 `parseConversation` uses this sequence:
 
 1. Resolve the page date and timezone context.
-2. Score every enabled built-in and user pattern against the first ten
-   non-blank lines.
+2. When the caller passes `forcePatternId`, apply that pattern to the raw body
+   and return its messages without scoring (see below). Otherwise score every
+   enabled built-in and user pattern against the first ten non-blank lines.
 3. Re-score the full body when the head score is inconclusive, or when a broad
    pattern explicitly requires full-body scoring.
 4. Reject the winner when its acceptance score is below the false-positive
@@ -64,6 +65,38 @@ line.
 Tests for a multi-line format should assert the complete message text, including
 newlines. A message-count assertion alone will not detect lost bullets or a
 continuation attached to the wrong speaker.
+
+### Inline RFC-2822 dates, direction, and forced patterns
+
+A pattern can capture a whole RFC-2822 date in one group (`time_format:
+'rfc2822'`, `date_source: 'inline'`, `timezone_policy: 'inline_utc'`). The
+orchestrator passes it to `Date.parse`, so numeric offsets such as `+0100`
+convert to true UTC. When the engine rejects a zone word (`CET`, `BST`), the
+parser retries with the word replaced by `+0000` so the wall-clock time
+survives. An anchor whose date still fails opens a message on the page's
+fallback date and increments `ParseResult.date_fallback_count`; it is never
+folded into the previous speaker's body, because that misattributes text
+silently.
+
+A pattern may also declare `captures.direction_group`. When the capture reads
+`sent` or `received`, the message carries `MatchedMessage.direction`, which
+lets a caller keep a single message the brain owner sent.
+
+`ParseConversationOpts.forcePatternId` applies one named pattern before
+scoring. Use it when the caller knows the page format: a long single-message
+page has one anchor among many lines and fails the density scorer otherwise.
+The forced path skips LLM polish and the LLM fallback, and falls through to
+normal scoring when the pattern is unknown or finds nothing.
+
+`email-thread-heading` uses all three. It matches email thread pages that
+write one `## Name &lt;addr&gt; — Thu, 18 Jun 2026 07:46:32 +0000 (sent)`
+heading per message with the body on the following lines; the sender stays
+verbatim so `extract-conversation-facts` can split name and address, and only
+lines that end in the direction marker are anchor candidates, so `## Section`
+headings inside a forwarded newsletter never inflate the score. The native
+google source kind (`src/core/google/google-render.ts`) renders each message as
+`## From · YYYY-MM-DD HH:MM` (a leading `→ ` marks sent mail) with no
+`(sent|received)` marker, so this pattern does not match its thread pages.
 
 ### Scoring and false positives
 
