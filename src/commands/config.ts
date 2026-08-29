@@ -91,10 +91,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
     }
-    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min' || key === 'self_upgrade.mode' || key === 'self_upgrade.quiet_hours') {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
-      const [top, leaf] = key.split('.') as ['push' | 'hooks', string];
+      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'self_upgrade', string];
       const branch = cfg?.[top] as Record<string, unknown> | undefined;
       if (cfg && branch && leaf in branch) {
         delete branch[leaf];
@@ -156,7 +156,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // `sources push` child) via loadConfigFileOnly, which never sees the DB
     // plane — and the DB plane is unreadable anyway while a `gbrain serve`
     // holds the single-writer lock. Route them to ~/.gbrain/config.json.
-    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min') {
+    if (key === 'push.allow_unverified_remote' || key === 'hooks.stop_push_debounce_min' || key === 'self_upgrade.mode' || key === 'self_upgrade.quiet_hours') {
       const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
       const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
       if (key === 'push.allow_unverified_remote') {
@@ -171,7 +171,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
               'gbrain config set push.allow_unverified_remote false',
           );
         }
-      } else {
+      } else if (key === 'hooks.stop_push_debounce_min') {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n < 0) {
           console.error(`[config] ${key} must be an integer >= 0 (minutes; 0 = push every turn)`);
@@ -180,6 +180,30 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         cfg.hooks = { ...(cfg.hooks ?? {}), stop_push_debounce_min: n };
         saveConfig(cfg);
         console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+      } else if (key === 'self_upgrade.mode') {
+        if (!['auto', 'notify', 'off'].includes(value)) {
+          console.error(`[config] ${key} must be auto, notify, or off`);
+          process.exit(1);
+        }
+        cfg.self_upgrade = { ...(cfg.self_upgrade ?? {}), mode: value as 'auto' | 'notify' | 'off' };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${value} (file plane: ~/.gbrain/config.json)`);
+      } else {
+        let quietHours: { start: number; end: number; tz: string };
+        try {
+          quietHours = JSON.parse(value);
+        } catch {
+          console.error(`[config] ${key} must be JSON with start, end, and tz`);
+          process.exit(1);
+          return;
+        }
+        if (!Number.isInteger(quietHours.start) || !Number.isInteger(quietHours.end) || typeof quietHours.tz !== 'string') {
+          console.error(`[config] ${key} must be JSON with integer start/end and string tz`);
+          process.exit(1);
+        }
+        cfg.self_upgrade = { ...(cfg.self_upgrade ?? {}), quiet_hours: quietHours };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${JSON.stringify(quietHours)} (file plane: ~/.gbrain/config.json)`);
       }
       return;
     }

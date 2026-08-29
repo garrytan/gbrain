@@ -68,4 +68,23 @@ describe('config set — file-plane bootstrap hook-lane keys [D18]', () => {
       expect(cfg.hooks?.stop_push_debounce_min).toBe(0);
     });
   });
+
+  test('self_upgrade settings land on the file plane used by startup checks', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-upgrade-'));
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      const modeOut = await captureLog(() => runConfig(noEngine, ['set', 'self_upgrade.mode', 'auto']));
+      const hoursOut = await captureLog(() => runConfig(noEngine, ['set', 'self_upgrade.quiet_hours', '{"start":23,"end":8,"tz":"US/Pacific"}']));
+      expect(modeOut).toContain('file plane');
+      expect(hoursOut).toContain('file plane');
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { self_upgrade?: { mode?: string; quiet_hours?: unknown } };
+      expect(cfg.self_upgrade).toEqual({
+        mode: 'auto',
+        quiet_hours: { start: 23, end: 8, tz: 'US/Pacific' },
+      });
+      await captureLog(() => runConfig(noEngine, ['unset', 'self_upgrade.quiet_hours']));
+      const updated = JSON.parse(readFileSync(cfgPath, 'utf8')) as { self_upgrade?: { mode?: string; quiet_hours?: unknown } };
+      expect(updated.self_upgrade).toEqual({ mode: 'auto' });
+    });
+  });
 });
