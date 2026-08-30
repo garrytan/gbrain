@@ -174,6 +174,13 @@ interface GoogleSyncSummary {
   embedded: number;
   pagesAffected: string[];
   threadsSeen: number;
+  /**
+   * Why each in-window thread was or was not sent to the extractor, keyed by
+   * the machine reason from loopExtractionEligibility. Counts only — no
+   * addresses, subjects or body text — so a sweep can be audited for
+   * over-filtering without leaking mail content into logs.
+   */
+  extractEligibility: Record<string, number>;
   failedFiles: number;
 }
 
@@ -457,7 +464,16 @@ async function processThread(
   const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
   const windowMs = LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000;
   if (newestMs > 0 && Date.now() - newestMs <= windowMs) {
-    deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    // Structural eligibility, not "everything recent": bulk mail the owner
+    // never joined would otherwise both pay for model calls AND crowd real
+    // threads out of the sweep.
+    const { loopExtractionEligibility } = await import('./loops-extract.ts');
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry));
+    summary.extractEligibility[verdict.reason] =
+      (summary.extractEligibility[verdict.reason] ?? 0) + 1;
+    if (verdict.eligible) {
+      deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    }
   }
   return thread;
 }
@@ -880,6 +896,7 @@ export async function runGoogleSync(
     embedded: 0,
     pagesAffected: [],
     threadsSeen: 0,
+    extractEligibility: {},
     failedFiles: 0,
   };
   const countedSlugs = new Set<string>();

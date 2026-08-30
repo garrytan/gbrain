@@ -23,12 +23,91 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
-import { sha8 } from './google-render.ts';
+import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
+import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 export const LOOPS_EXTRACT_MAX_PER_SWEEP = 50;
 /** Only threads whose newest message is within this window get extracted. */
 export const LOOPS_EXTRACT_WINDOW_DAYS = 30;
+
+/** Gmail categories that are bulk by construction. */
+const BULK_CATEGORY_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'];
+
+export interface ExtractEligibility {
+  eligible: boolean;
+  /** Stable machine reason — safe to count and log, carries no message text. */
+  reason:
+    | 'owner_participated'
+    | 'human_correspondence'
+    | 'spam_or_trash'
+    | 'no_substantive_messages'
+    | 'bulk_category'
+    | 'list_mail';
+}
+
+/**
+ * Should this thread be sent to the extractor at all?
+ *
+ * Before this gate every rendered page under the recency window became a
+ * candidate, which was wrong in both directions at once: newsletters and
+ * promotions were paying for model calls, and because the sweep then kept
+ * only the newest N, real threads were pushed out by that same bulk mail.
+ *
+ * The rules are structural — Gmail labels and message shape — and deliberately
+ * contain no sender, domain, subject or body matching, so no vendor list has
+ * to be maintained and nobody's mail is special-cased.
+ *
+ * The load-bearing rule is `owner_participated`: a thread carrying ANY message
+ * from the account owner stays eligible whatever its labels say, because the
+ * owner's own outbound message is exactly where their commitment lives. That
+ * is what makes "I'll send this by Friday", written in reply to a bulk-labelled
+ * thread, still reachable.
+ *
+ * CATEGORY_UPDATES is deliberately NOT excluded: invoices, contracts and
+ * document requests land there, and they carry real obligations.
+ */
+export function loopExtractionEligibility(
+  thread: GmailThreadData,
+  myAddresses: Set<string> = new Set(),
+): ExtractEligibility {
+  const messages = thread.messages;
+  if (messages.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
+
+  const labels = new Set<string>();
+  for (const m of messages) for (const l of m.labelIds) labels.add(l);
+
+  // Deleted or spam mail is never an obligation, whoever wrote it.
+  if (labels.has('SPAM') || labels.has('TRASH')) {
+    return { eligible: false, reason: 'spam_or_trash' };
+  }
+
+  // The owner's own message is where their promise is. This beats every
+  // exclusion below — replying to a newsletter makes the thread real.
+  const ownerWrote = (m: GmailMessageMeta): boolean =>
+    m.labelIds.includes('SENT') || myAddresses.has(m.fromAddress);
+  if (messages.some(ownerWrote)) return { eligible: true, reason: 'owner_participated' };
+
+  // Machine mail carries no commitments: pure noise senders, and Calendar's
+  // invitation/response notices (which come FROM a real colleague, so the
+  // sender check alone cannot see them).
+  const substantive = messages.filter(
+    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
+  );
+  if (substantive.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
+
+  // Bulk by Gmail's own classification, and the owner never joined in.
+  if (BULK_CATEGORY_LABELS.some((l) => labels.has(l))) {
+    return { eligible: false, reason: 'bulk_category' };
+  }
+
+  // Bulk by RFC 2369, and the owner never joined in.
+  if (substantive.every((m) => m.listUnsubscribe)) {
+    return { eligible: false, reason: 'list_mail' };
+  }
+
+  return { eligible: true, reason: 'human_correspondence' };
+}
 
 export async function isLoopsExtractionEnabled(engine: BrainEngine): Promise<boolean> {
   try {
