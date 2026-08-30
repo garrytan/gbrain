@@ -441,6 +441,19 @@ async function sweepCalendar(
 
 const BACKFILL_BATCH_THREADS = 25;
 
+export function googleLoopsBackfillDays(
+  envValue = process.env.GBRAIN_GOOGLE_LOOPS_BACKFILL_DAYS,
+): number | undefined {
+  if (envValue === undefined || envValue.trim() === '') return undefined;
+  const days = Number(envValue);
+  if (!Number.isInteger(days) || days < 1 || days > LOOPS_EXTRACT_WINDOW_DAYS) {
+    throw new Error(
+      `GBRAIN_GOOGLE_LOOPS_BACKFILL_DAYS must be an integer from 1 to ${LOOPS_EXTRACT_WINDOW_DAYS}`,
+    );
+  }
+  return days;
+}
+
 async function processThread(
   deps: GoogleSyncDeps,
   gmail: GmailClient,
@@ -741,6 +754,49 @@ async function sweepGmail(
   return failed === 0;
 }
 
+/**
+ * Explicit recent-window catch-up for the LLM open-loop lane.
+ *
+ * Gmail's normal steady-state path is historyId-based, so already-imported
+ * threads never re-candidate merely because the extractor was fixed or first
+ * enabled. This bounded operator opt-in reuses processThread verbatim: the
+ * canonical page import, deterministic loop detector, structural eligibility,
+ * and revision-keyed MinionQueue remain the only pipeline. No cursor or second
+ * watermark is written; an interrupted run is safely repeatable.
+ */
+async function sweepGmailLoopsBackfill(
+  deps: GoogleSyncDeps,
+  gmail: GmailClient,
+  days: number,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+  progressTick: (note: string) => void,
+): Promise<boolean> {
+  const afterSec = Math.floor((Date.now() - days * 86_400_000) / 1000);
+  const ids = await gmail.listMessageIds(`after:${afterSec}`, {
+    ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
+  });
+  const threadIds = [...new Set(ids.map((m) => m.threadId))];
+  deps.log(`[google] loops backfill: scanning ${threadIds.length} thread(s) from the last ${days} day(s)`);
+
+  let failed = 0;
+  for (const tid of threadIds) {
+    if (deps.opts.signal?.aborted) return false;
+    try {
+      await processThread(deps, gmail, tid, activePack, summary, countedSlugs);
+      progressTick(`loops backfill thread ${tid}`);
+    } catch (e) {
+      if (e instanceof GoogleCursorExpiredError && e.status === 404) continue;
+      failed++;
+      summary.failedFiles++;
+      summary.status = 'partial';
+      deps.log(`[google] loops backfill thread ${tid} failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return failed === 0;
+}
+
 // ── Full reconcile (deletes) ─────────────────────────────────────────────────
 
 async function reconcileGmailDeletes(
@@ -938,6 +994,7 @@ export async function runGoogleSync(
   const activeServices = grantedScopes.length > 0 ? grantedServices : cfg.services;
 
   const state = readGoogleState(cfg.dir);
+  const loopsBackfillDays = googleLoopsBackfillDays();
   const firstRun = !state.gmail_backfill_done && state.gmail_history_id === null;
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('sync.google_materialize');
@@ -982,6 +1039,17 @@ export async function runGoogleSync(
         // they exit through normal returns, not throws, and stamping
         // last_sync_at over them would blind the staleness gate (H1).
         gmailSweepOk = await sweepGmail(deps, gmail, state, activePack, summary, countedSlugs, tick);
+        if (gmailSweepOk && loopsBackfillDays !== undefined) {
+          gmailSweepOk = await sweepGmailLoopsBackfill(
+            deps,
+            gmail,
+            loopsBackfillDays,
+            activePack,
+            summary,
+            countedSlugs,
+            tick,
+          );
+        }
         if (opts.full) await reconcileGmailDeletes(deps, gmail, summary);
       } catch (e) {
         serviceErrors.push(`gmail: ${e instanceof Error ? e.message : String(e)}`);

@@ -92,9 +92,20 @@ is the backlog and the worker's concurrency is the rate limit. Jobs are keyed
 by page revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an
 unchanged thread is a no-op and that key is the only dedupe in play.
 
-*Known limitation:* extraction still covers only the trailing 30 days, and
-there is no stock opt-in to extract older mail — a thread that fell outside
-the window before this ran is not revisited unless it changes.
+### One-time recent catch-up
+
+When extraction is first enabled or fixed after Gmail was already imported,
+re-candidate the trailing window through the same pipeline without resetting
+the Gmail history cursor:
+
+```bash
+GBRAIN_GOOGLE_LOOPS_BACKFILL_DAYS=30 gbrain sync --source <google-source> --no-embed --no-extract
+```
+
+The value must be 1–30. This is a process-local operator opt-in, not stored
+configuration: it creates no cursor, watermark, service, or second pipeline.
+It reuses the canonical page import, eligibility gate, and revision-keyed job
+dedupe, so an interrupted or repeated run is safe.
 
 ## The surfaces
 

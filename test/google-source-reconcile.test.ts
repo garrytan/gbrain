@@ -34,6 +34,7 @@ import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
 import { LOOPS_EXTRACT_MAX_PER_SWEEP } from '../src/core/google/loops-extract.ts';
 import {
+  googleLoopsBackfillDays,
   googleStateFile,
   parseGoogleSourceConfig,
   readGoogleState,
@@ -680,6 +681,65 @@ describe('syncToken 410 recovery', () => {
 // ── loops_extract enqueue completeness ───────────────────────────────────────
 
 describe('loops_extract enqueue completeness', () => {
+  test('recent catch-up env is bounded to the extractor window', () => {
+    expect(googleLoopsBackfillDays(undefined)).toBeUndefined();
+    expect(googleLoopsBackfillDays('')).toBeUndefined();
+    expect(googleLoopsBackfillDays('30')).toBe(30);
+    for (const invalid of ['0', '31', '1.5', 'nope']) {
+      expect(() => googleLoopsBackfillDays(invalid)).toThrow(/must be an integer from 1 to 30/);
+    }
+  });
+
+  test('explicit recent catch-up reuses eligibility + revision idempotency without resetting Gmail state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-loops-backfill-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18ff330000000001', '17ee330000000001', hoursAgoMs(2), {
+        headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Human catch-up' },
+        body: 'I will send the draft tomorrow.',
+      }),
+      gmsg('18ff330000000002', '17ee330000000002', hoursAgoMs(3), {
+        headers: {
+          From: 'Newsletter <news@example.com>',
+          To: 'a@example.com',
+          Subject: 'Bulk catch-up',
+          'List-Unsubscribe': '<https://example.com/u>',
+        },
+        labelIds: ['CATEGORY_PROMOTIONS'],
+        body: 'Bulk update.',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      writeBackfilledState(dir); // normal delta is empty; only the opt-in can see these threads
+      await withHome(async () => {
+        const before = readGoogleState(dir);
+        await withEnv({ GBRAIN_GOOGLE_LOOPS_BACKFILL_DAYS: '30' }, () =>
+          capturedStderr(() => sweep(dir, fx, vault)),
+        );
+        const afterFirst = await engine.executeRaw<{ data: unknown }>(
+          `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(afterFirst).toHaveLength(1);
+        expect(JSON.stringify(afterFirst[0].data)).toContain('human-catch-up');
+
+        await withEnv({ GBRAIN_GOOGLE_LOOPS_BACKFILL_DAYS: '30' }, () =>
+          capturedStderr(() => sweep(dir, fx, vault)),
+        );
+        const afterSecond = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(Number(afterSecond[0].n)).toBe(1);
+        const after = readGoogleState(dir);
+        expect(after.gmail_backfill_done).toBe(true);
+        expect(after.gmail_history_id).toBe(before.gmail_history_id);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} eligible threads → EVERY one is queued exactly once`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cap-'));
     const fx = emptyFx();
