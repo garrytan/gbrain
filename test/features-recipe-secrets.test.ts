@@ -104,7 +104,8 @@ describe('configured-detection semantics (drives real scanFeatures)', () => {
   // withEnv (rule R1: no direct process.env mutation), so leftover env can't leak in.
   const CLEARED: Record<string, undefined> = {
     CLAWVISOR_AGENT_TOKEN: undefined, GOOGLE_CLIENT_ID: undefined, X_API_BEARER_TOKEN: undefined,
-    TWILIO_AUTH_TOKEN: undefined, CIRCLEBACK_TOKEN: undefined, NGROK_AUTHTOKEN: undefined,
+    XQUIK_API_KEY: undefined, TWILIO_AUTH_TOKEN: undefined, CIRCLEBACK_TOKEN: undefined,
+    NGROK_AUTHTOKEN: undefined,
   };
 
   const noIntegrations = async () =>
@@ -134,10 +135,20 @@ describe('configured-detection semantics (drives real scanFeatures)', () => {
     });
   });
 
+  test('an Xquik key satisfies the X-to-Brain alternative', async () => {
+    await withEnv({
+      ...CLEARED,
+      CLAWVISOR_AGENT_TOKEN: 'x', XQUIK_API_KEY: 'xq_test',
+      TWILIO_AUTH_TOKEN: 'x', CIRCLEBACK_TOKEN: 'x', NGROK_AUTHTOKEN: 'x',
+    }, async () => {
+      expect(await noIntegrations()).toBeUndefined();
+    });
+  });
+
   test('a single ClawVisor token configures every alternative-auth recipe', async () => {
     // The recommended Option-A path: one ClawVisor token, no Google OAuth. All three
-    // any_of recipes must count as configured, so only the four single-path recipes
-    // remain unconfigured.
+    // any_of recipes must count as configured, so X-to-Brain and the three
+    // single-path recipes remain unconfigured.
     await withEnv({ ...CLEARED, CLAWVISOR_AGENT_TOKEN: 'x' }, async () => {
       const rec = await noIntegrations();
       expect(rec).toBeDefined();

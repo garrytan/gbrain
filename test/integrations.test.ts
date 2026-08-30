@@ -271,7 +271,7 @@ describe('twilio-voice-brain recipe', () => {
 });
 
 describe('x-to-brain recipe', () => {
-  test('health check works with an app-only bearer token (#2343)', () => {
+  test('health checks support X API and Xquik credentials', () => {
     const { readFileSync } = require('fs');
     const content = readFileSync(
       new URL('../recipes/x-to-brain.md', import.meta.url),
@@ -279,9 +279,12 @@ describe('x-to-brain recipe', () => {
     );
     const recipe = parseRecipe(content, 'x-to-brain.md');
     expect(recipe).not.toBeNull();
-    const httpChecks = recipe!.frontmatter.health_checks
-      .filter((c: any) => typeof c === 'object' && c.type === 'http');
-    expect(httpChecks.length).toBeGreaterThan(0);
+    const providerCheck = recipe!.frontmatter.health_checks.find(
+      (c: any) => typeof c === 'object' && c.type === 'any_of'
+    ) as any;
+    expect(providerCheck).toBeDefined();
+    const httpChecks = providerCheck.checks.filter((c: any) => c.type === 'http');
+    expect(httpChecks).toHaveLength(2);
     const secretNames = new Set(recipe!.frontmatter.secrets.map((s: any) => s.name));
     for (const check of httpChecks as any[]) {
       // /users/me requires user-context OAuth; the recipe only collects an
@@ -289,13 +292,22 @@ describe('x-to-brain recipe', () => {
       expect(check.url).not.toContain('/users/me');
       // Every $VAR the check expands must be declared in secrets, or the
       // installer never prompts for it and the check fails for everyone.
-      const vars = [check.url, check.auth_token, check.auth_user, check.auth_pass]
+      const vars = [
+        check.url,
+        check.auth_token,
+        check.auth_user,
+        check.auth_pass,
+        ...Object.values(check.headers ?? {}),
+      ]
         .filter((v: unknown): v is string => typeof v === 'string')
         .flatMap((v: string) => v.match(/\$[A-Z_][A-Z0-9_]*/g) ?? [])
         .map((v: string) => v.slice(1));
       expect(vars.length).toBeGreaterThan(0);
       for (const name of vars) expect(secretNames.has(name)).toBe(true);
     }
+    expect(httpChecks[0].auth_token).toBe('$X_API_BEARER_TOKEN');
+    expect(httpChecks[1].url).toBe('https://xquik.com/api/v1/x/users/$X_HANDLE');
+    expect(httpChecks[1].headers['x-api-key']).toBe('$XQUIK_API_KEY');
   });
 });
 
