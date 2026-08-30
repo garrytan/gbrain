@@ -70,7 +70,8 @@ describe('extractors route through the ladder', () => {
   });
 
   test('atoms extractor parses a think-wrapped array instead of halting', () => {
-    const raw = '<think>I could emit [ "draft" ]</think>[{"claim":"Water is wet","kind":"fact"}]';
+    const raw = '<think>I could emit [ "draft" ]</think>' +
+      '[{"title":"Water is wet","atom_type":"insight","body":"Water is wet"}]';
     const outcome = parseAtomsOutcome(raw);
     expect(outcome.ok).toBe(true);
   });
