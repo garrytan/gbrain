@@ -476,8 +476,14 @@ describe('runLoopsExtract', () => {
     expect(links[0].to_slug).toBe(PERSON_SLUG);
   });
 
-  test('idempotency: extracting the same page twice does not duplicate loops', async () => {
-    chatImpl = async () => ({ text: cleanJson(), stopReason: 'end' });
+  test('idempotency: model paraphrasing with the same verbatim quote does not duplicate loops', async () => {
+    const paraphrased = JSON.parse(cleanJson()) as {
+      commitments: Array<{ text: string }>;
+      decisions_pending: Array<{ text: string }>;
+    };
+    paraphrased.commitments[0].text = 'Send the widget-co presentation to Alice';
+    paraphrased.decisions_pending[0].text = 'Choose the kickoff week';
+    chatImpl = async () => ({ text: JSON.stringify(paraphrased), stopReason: 'end' });
     const before = await countLoops();
     const firstIds = (
       await engine.executeRaw<{ id: number }>(

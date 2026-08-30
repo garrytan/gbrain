@@ -373,7 +373,7 @@ async function loadExistingCandidates(
   messageDate: string,
 ): Promise<ExistingLoopCandidate[]> {
   const subject = normalizedSubject(title);
-  if (!sender || !subject) return [];
+  if (!subject) return [];
   const parsedDate = new Date(messageDate);
   const anchor = Number.isFinite(parsedDate.getTime()) ? parsedDate : new Date();
   const cutoff = new Date(anchor.getTime() - LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000).toISOString();
@@ -386,14 +386,15 @@ async function loadExistingCandidates(
       WHERE l.source_id = $1
         AND l.status = 'open'
         AND l.detector = 'llm_extract'
-        AND COALESCE(l.thread_id, '') <> $2
-        AND l.last_activity_at >= $3::timestamptz
+        AND l.last_activity_at >= $2::timestamptz
       ORDER BY l.last_activity_at DESC, l.id DESC
       LIMIT 100`,
-    [sourceId, threadId, cutoff],
+    [sourceId, cutoff],
   );
   return rows
     .filter((row) => {
+      if (typeof row.thread_id === 'string' && row.thread_id === threadId) return true;
+      if (!sender) return false;
       const candidateFm = parseJsonObject(row.frontmatter);
       const candidateSender =
         typeof candidateFm.from === 'string' ? bareAddress(candidateFm.from) : '';
@@ -558,6 +559,17 @@ export async function runLoopsExtract(
   const loopIds: number[] = [];
   const candidatesById = new Map(existingCandidates.map((candidate) => [candidate.id, candidate]));
   const matchedCandidateIds = new Set<number>();
+  const sameQuoteCandidate = (loopType: LoopType, quote: string): ExistingLoopCandidate | undefined => {
+    if (!quote) return undefined;
+    const normalizedQuote = wsNorm(quote);
+    return existingCandidates.find(
+      (candidate) =>
+        candidate.loopType === loopType &&
+        candidate.threadId === threadId &&
+        !matchedCandidateIds.has(candidate.id) &&
+        candidate.evidence.some((item) => wsNorm(item.quote ?? '') === normalizedQuote),
+    );
+  };
 
   for (const c of extraction.commitments) {
     const loopType: LoopType =
@@ -565,7 +577,9 @@ export async function runLoopsExtract(
     const counterpartyRef = c.counterparty_name || c.counterparty_email || null;
     const sameAs = c.same_as_loop_id === null ? undefined : candidatesById.get(c.same_as_loop_id);
     const matched =
-      sameAs?.loopType === loopType && !matchedCandidateIds.has(sameAs.id) ? sameAs : undefined;
+      sameAs?.loopType === loopType && !matchedCandidateIds.has(sameAs.id)
+        ? sameAs
+        : sameQuoteCandidate(loopType, c.quote);
     if (matched) matchedCandidateIds.add(matched.id);
     const incomingIsNewest =
       !matched || new Date(messageDate).getTime() >= new Date(matched.lastActivityAt).getTime();
@@ -660,7 +674,7 @@ export async function runLoopsExtract(
     const matched =
       sameAs?.loopType === 'decision_pending' && !matchedCandidateIds.has(sameAs.id)
         ? sameAs
-        : undefined;
+        : sameQuoteCandidate('decision_pending', d.quote);
     if (matched) matchedCandidateIds.add(matched.id);
     const incomingIsNewest =
       !matched || new Date(messageDate).getTime() >= new Date(matched.lastActivityAt).getTime();
