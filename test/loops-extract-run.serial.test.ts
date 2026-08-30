@@ -468,3 +468,150 @@ describe('runLoopsExtract', () => {
     for (const e of edges) expect(e.context).not.toContain('compliance checklist by Tuesday');
   });
 });
+
+// ── Two commitments in one owner message ─────────────────────────────────────
+
+describe('multiple commitments from a single message', () => {
+  // Regression for the real-world shape this pipeline previously flattened:
+  // one reply from the account owner containing two INDEPENDENT promises.
+  // The dedup key folds the commitment text, so two different promises in the
+  // same thread must land as two distinct rows — collapsing them to one, or
+  // duplicating them on re-run, are both failures.
+  //
+  // Fully anonymised: no real correspondent, subject or wording.
+  const MULTI_SLUG = 'emails/2026/08/2026-08-14-two-promises-aaaabbbb.md';
+  const MULTI_THREAD = 'thread-aaaabbbb';
+  const PROMISE_A = 'Follow up after vacation on the introductions';
+  const PROMISE_B = 'Discuss the report with the team and come back with feedback';
+  const QUOTE_A = 'I will follow up after my vacation on those introductions.';
+  const QUOTE_B = 'I will discuss the report with my team and come back with feedback.';
+
+  async function seedThread(): Promise<void> {
+    await engine.putPage(
+      MULTI_SLUG,
+      {
+        type: 'email',
+        title: 'Lunch follow up',
+        compiled_truth:
+          'From: peer@example.com\n\nGreat to meet.\n\n' +
+          `Me: ${QUOTE_A} ${QUOTE_B}\n`,
+        frontmatter: { thread_id: MULTI_THREAD, date: '2026-08-14T10:00:00Z' },
+        effective_date: new Date('2026-08-14T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+  }
+
+  const twoOwedByMe = (): string =>
+    JSON.stringify({
+      commitments: [
+        {
+          direction: 'owed_by_me',
+          text: PROMISE_A,
+          counterparty_name: '',
+          counterparty_email: 'peer@example.com',
+          due_iso: null,
+          quote: QUOTE_A,
+        },
+        {
+          direction: 'owed_by_me',
+          text: PROMISE_B,
+          counterparty_name: '',
+          counterparty_email: 'peer@example.com',
+          due_iso: null,
+          quote: QUOTE_B,
+        },
+      ],
+      decisions_pending: [],
+    });
+
+  async function loopsFor(slug: string): Promise<Array<{ id: number; loop_type: string; summary: string; status: string }>> {
+    return await engine.executeRaw(
+      `SELECT id, loop_type, summary, status FROM open_loops
+        WHERE source_id = $1 AND page_slug = $2 ORDER BY id`,
+      [SRC, slug],
+    );
+  }
+
+  test('one owner reply with two promises → exactly two commitment_owed_by_me', async () => {
+    await seedThread();
+    chatImpl = async () => ({ text: twoOwedByMe(), stopReason: 'end' });
+    const r = await runLoopsExtract(engine, { slug: MULTI_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    expect(r.commitments).toBe(2);
+
+    const rows = await loopsFor(MULTI_SLUG);
+    expect(rows).toHaveLength(2);
+    // Both are commitments owed BY the owner — never reply loops. The
+    // deterministic detector's types must not leak into this projection.
+    expect(rows.every((x) => x.loop_type === 'commitment_owed_by_me')).toBe(true);
+    expect(rows.some((x) => x.loop_type === 'unanswered_inbound')).toBe(false);
+    expect(rows.some((x) => x.loop_type === 'unanswered_outbound')).toBe(false);
+    // Two DISTINCT obligations, not one row and not the same text twice.
+    expect(new Set(rows.map((x) => x.summary)).size).toBe(2);
+    expect(rows.map((x) => x.summary).sort()).toEqual([PROMISE_A, PROMISE_B].sort());
+  });
+
+  test('re-running the same extraction creates no duplicates', async () => {
+    chatImpl = async () => ({ text: twoOwedByMe(), stopReason: 'end' });
+    await runLoopsExtract(engine, { slug: MULTI_SLUG, sourceId: SRC });
+    const rows = await loopsFor(MULTI_SLUG);
+    expect(rows).toHaveLength(2);
+  });
+
+  test('later evidence closes only the matching commitment', async () => {
+    const { closeOpenLoop } = await import('../src/core/loops/loops-store.ts');
+    const before = await loopsFor(MULTI_SLUG);
+    const target = before.find((x) => x.summary === PROMISE_A)!;
+    await closeOpenLoop(engine, SRC, target.id, 'done', 'test');
+
+    const after = await loopsFor(MULTI_SLUG);
+    const closed = after.filter((x) => x.status === 'done');
+    const open = after.filter((x) => x.status === 'open');
+    expect(closed).toHaveLength(1);
+    expect(closed[0].summary).toBe(PROMISE_A);
+    // The sibling promise is untouched — one obligation being met says
+    // nothing about the other.
+    expect(open).toHaveLength(1);
+    expect(open[0].summary).toBe(PROMISE_B);
+  });
+
+  test('a promise made BY the counterparty lands as commitment_owed_to_me', async () => {
+    const OTHER_SLUG = 'emails/2026/08/2026-08-15-their-promise-ccccdddd.md';
+    const THEIR_QUOTE = 'I will send over the signed copy next week.';
+    await engine.putPage(
+      OTHER_SLUG,
+      {
+        type: 'email',
+        title: 'Their promise',
+        compiled_truth: `From: peer@example.com\n\n${THEIR_QUOTE}\n`,
+        frontmatter: { thread_id: 'thread-ccccdddd', date: '2026-08-15T10:00:00Z' },
+        effective_date: new Date('2026-08-15T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_to_me',
+            text: 'Send the signed copy next week',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: THEIR_QUOTE,
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    const r = await runLoopsExtract(engine, { slug: OTHER_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    const rows = await loopsFor(OTHER_SLUG);
+    expect(rows).toHaveLength(1);
+    // The direction is the whole point: this is THEIR obligation, and it must
+    // not be filed as one of mine, nor as a reply loop.
+    expect(rows[0].loop_type).toBe('commitment_owed_to_me');
+  });
+});
