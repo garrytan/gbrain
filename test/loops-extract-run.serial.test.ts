@@ -231,7 +231,9 @@ describe('runLoopsExtract', () => {
     // first-person promise in an outbound reply is not mistaken for quoted
     // inbound prose or silently omitted.
     expect(lastChatReq?.messages?.[0]?.content).toContain('account_email="owner@example.com"');
-    expect(lastChatReq?.system).toContain('Inspect EVERY outer message authored by account_email');
+    expect(lastChatReq?.system).toContain('The "→" marker is authoritative');
+    expect(lastChatReq?.system).toContain('different owner alias');
+    expect(lastChatReq?.system).toContain('Inspect EVERY owner-authored outer message');
     expect(lastChatReq?.system).toContain('quoted replies inside the body do not change');
 
     // Projection 2 — the open_loops rows.
