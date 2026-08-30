@@ -63,7 +63,7 @@ function okChatResult(text: string): ChatResult {
  *  same shape the real budget-tracker throws mid-loop once the cap is hit. */
 function chatExhaustingAfter(n: number, text = '[]'): (o: ChatOpts) => Promise<ChatResult> {
   let calls = 0;
-  return async (_o: ChatOpts) => {
+  return async (o: ChatOpts) => {
     calls++;
     if (calls > n) {
       throw new BudgetExhausted('budget cap exceeded', {
@@ -73,7 +73,13 @@ function chatExhaustingAfter(n: number, text = '[]'): (o: ChatOpts) => Promise<C
         modelId: 'anthropic:claude-haiku-4-5',
       });
     }
-    return okChatResult(text);
+    let grounded = text;
+    try {
+      const parsed = JSON.parse(text) as Array<Record<string, unknown>>;
+      const source = String(o.messages[0]?.content ?? '').split('\n\n---\n\n')[1] ?? '';
+      grounded = JSON.stringify(parsed.map(atom => ({ ...atom, source_quote: atom.source_quote ?? source.slice(0, 200) })));
+    } catch { /* preserve malformed fixture */ }
+    return okChatResult(grounded);
   };
 }
 
@@ -177,7 +183,7 @@ describe('extract_atoms work-list interleave (budget-starvation regression)', ()
   // corpus that would have starved it pre-fix, and asserts the backlog
   // count goes 1 -> 0 across the call.
   test('a real DB page backlog count drops to 0 even with a starving transcript corpus', async () => {
-    const BODY = 'x'.repeat(600); // >= MIN_PAGE_CHARS_FOR_EXTRACTION (500)
+    const BODY = `unique real page. ${'x'.repeat(600)}`; // >= MIN_PAGE_CHARS_FOR_EXTRACTION (500)
     await engine.putPage('article/real-page', {
       type: 'article',
       title: 'real-page',

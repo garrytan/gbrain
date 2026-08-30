@@ -116,8 +116,8 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
 
   test('extracts atoms from transcript via stub chat', async () => {
     const chat = stubChat(`[
-      {"title":"Renders vs physical proof","atom_type":"insight","body":"Enterprise buyers want tangible prototypes."},
-      {"title":"Founder lesson","atom_type":"anecdote","body":"Story about a founder."}
+      {"title":"Renders vs physical proof","atom_type":"insight","body":"Enterprise buyers want tangible prototypes.","source_quote":"content"},
+      {"title":"Founder lesson","atom_type":"anecdote","body":"Story about a founder.","source_quote":"content"}
     ]`);
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/fake/meeting.txt', content: 'content', contentHash: 'abc123def' }],
@@ -136,7 +136,7 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
   });
 
   test('dry-run counts but does NOT write', async () => {
-    const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b"}]`);
+    const chat = stubChat(`[{"title":"x","atom_type":"insight","body":"b","source_quote":"c"}]`);
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/x.txt', content: 'c', contentHash: 'h' }],
       _pages: [],
@@ -151,13 +151,63 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
     expect(rows[0].count).toBe(0);
   });
 
+  test('production path persists only source-mapped atoms and filtered concepts', async () => {
+    const source = 'The **“boring”** path — ship it.';
+    const chat = stubChat(JSON.stringify([
+      {
+        title: 'Mapped', atom_type: 'insight', body: 'Grounded body.',
+        source_quote: 'The "boring" path - ship it.',
+        concepts: ['shipping-discipline', 'Not-Trusted', 'shipping-discipline'],
+      },
+      { title: 'Unsupported', atom_type: 'insight', body: 'No.', source_quote: 'Invented advice.' },
+      { title: 'Overlength', atom_type: 'insight', body: 'No.', source_quote: 'x'.repeat(201) },
+    ]));
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/guard.txt', content: source, contentHash: 'guard-hash' }],
+      _pages: [],
+      _chat: chat,
+    });
+
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect(result.details?.source_guard_rejections).toMatchObject({
+      unsupported_source_quote: 1,
+      source_quote_overlength: 1,
+    });
+    const rows = await engine.executeRaw<{ source_quote: string; concepts: unknown }>(
+      `SELECT frontmatter->>'source_quote' AS source_quote, frontmatter->'concepts' AS concepts
+         FROM pages WHERE type = 'atom'`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].source_quote).toBe(source);
+    expect(typeof rows[0].concepts === 'string' ? JSON.parse(rows[0].concepts) : rows[0].concepts)
+      .toEqual(['shipping-discipline']);
+  });
+
+  test('source guard rejects quotes outside the exact model-visible input slice', async () => {
+    await engine.setConfig('cycle.extract_atoms.max_input_chars', '1000');
+    const hiddenQuote = 'Only beyond the model-visible cap.';
+    const source = `${'a'.repeat(1000)}${hiddenQuote}`;
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/capped.txt', content: source, contentHash: 'capped-hash' }],
+      _pages: [],
+      _chat: stubChat(JSON.stringify([
+        { title: 'Hidden', atom_type: 'insight', body: 'Body.', source_quote: hiddenQuote },
+      ])),
+      dryRun: true,
+    });
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.source_guard_rejections).toMatchObject({
+      unsupported_source_quote: 1,
+    });
+  });
+
   test('failures tracked per-transcript without halting', async () => {
     let callCount = 0;
     const chat = async (_o: ChatOpts) => {
       callCount++;
       if (callCount === 1) throw new Error('rate limit');
       return {
-        text: `[{"title":"t","atom_type":"insight","body":"b"}]`,
+        text: `[{"title":"t","atom_type":"insight","body":"b","source_quote":"b"}]`,
         blocks: [],
         stopReason: 'end' as const,
         usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
@@ -209,7 +259,7 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
   // pages_total, pages_skipped_budget, duplicates_skipped) exist but
   // are zeros. Closes the "transcript path silently regresses" risk.
   test('legacy transcript-only fields unchanged when _pages:[] (regression guard)', async () => {
-    const chat = stubChat(`[{"title":"r","atom_type":"insight","body":"b"}]`);
+    const chat = stubChat(`[{"title":"r","atom_type":"insight","body":"b","source_quote":"c"}]`);
     const result = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/regression.txt', content: 'c', contentHash: 'rH' }],
       _pages: [],
@@ -671,8 +721,8 @@ describe('runPhaseSynthesizeConcepts — global-error halt (#3044)', () => {
 describe('#2123: extractor stamps concepts → synthesize_concepts consumes via real DB path', () => {
   test('end-to-end: atoms with shared label materialize a concept page', async () => {
     const chat = stubChat(`[
-      {"title":"Cert warning on guest wifi","atom_type":"insight","body":"Portal redirects to an IP-based HTTPS URL.","concepts":["captive-portal"]},
-      {"title":"iPhone portal popup is flaky","atom_type":"critique","body":"CNA probe behavior differs across iOS versions.","concepts":["captive-portal"]}
+      {"title":"Cert warning on guest wifi","atom_type":"insight","body":"Portal redirects to an IP-based HTTPS URL.","source_quote":"content","concepts":["captive-portal"]},
+      {"title":"iPhone portal popup is flaky","atom_type":"critique","body":"CNA probe behavior differs across iOS versions.","source_quote":"content","concepts":["captive-portal"]}
     ]`);
     const extract = await runPhaseExtractAtoms(engine, {
       _transcripts: [{ filePath: '/fake/notes.txt', content: 'content', contentHash: 'cc2123' }],

@@ -167,7 +167,7 @@ describe('extracted atoms reach content_chunks (PGLite round-trip)', () => {
   test('runPhaseExtractAtoms writes content_chunks rows for atom pages', async () => {
     {
       const chat = async (_o: ChatOpts): Promise<ChatResult> => ({
-        text: `[{"title":"Chunked atom","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders."}]`,
+        text: `[{"title":"Chunked atom","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders.","source_quote":"transcript content"}]`,
         blocks: [{ type: 'text', text: '' }],
         stopReason: 'end',
         usage: { input_tokens: 500, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },

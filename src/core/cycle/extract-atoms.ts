@@ -216,7 +216,7 @@ interface ExtractedAtom {
 /** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
 const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
+export const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
 An atom is a single-source, self-contained idea that could become a tweet,
 quote, or short essay angle. Each atom must:
@@ -224,7 +224,7 @@ quote, or short essay angle. Each atom must:
   - Have a clear point (not just descriptive)
   - Be specific (not a generic platitude)
 
-Output a JSON array of atoms (1-3 per transcript, never more than 3).
+Output a JSON array of atoms (0-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
 source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
 (1-3 topic labels), virality_score (0-100), emotional_register (one of:
@@ -237,7 +237,189 @@ concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
 entity or brand names. Use the same label for the same topic across atoms;
 prefer a label you already used over coining a near-synonym.
 
+SOURCE-FIDELITY AND RETENTION RULES:
+- Return [] when there is no safe, durable content nugget; abstention is correct and preferred over forced extraction.
+- A private personal disclosure made so an assistant can remember or accommodate it is profile context, not a publishable content nugget. Do not create atoms solely from private fears, health information, relationships, finances, credentials, or similarly sensitive personal facts, even when the user asked the assistant to remember them.
+- On mixed transcripts, extract only impersonal, generally useful claims. Never include private profile facts in any atom field.
+- Concepts must be generic topic categories only. Never use a person, company, product, model, project, profile, tool, or other proper name in a concept label.
+- Every claim in every retained atom must be explicitly stated by or logically entailed by the visible source. Do not invent generalized advice, psychological interpretation, motivation, causal claims, or recommendations.
+- Do not convert tentative language into certainty or promote superseded proposals as final decisions.
+- source_quote must be one exact contiguous source substring of at most 200 characters with no ellipses, stitching, or paraphrase.
+- Before answering, first decide whether the source is atom-worthy and safe. If not, output exactly [].
+
 Output ONLY the JSON array, no prose.`;
+
+const SOURCE_QUOTE_MAX_CHARS = 200;
+const CONCEPT_LABEL_MAX_CHARS = 64;
+
+type SourceQuoteRejection =
+  | 'missing_source_quote'
+  | 'source_quote_overlength'
+  | 'unsupported_source_quote'
+  | 'ambiguous_source_quote'
+  | 'source_span_overlength';
+
+export type SourceQuoteValidation =
+  | { ok: true; sourceQuote: string }
+  | { ok: false; reason: SourceQuoteRejection };
+
+interface NormalizedSource {
+  text: string;
+  starts: number[];
+  ends: number[];
+}
+
+const TYPOGRAPHY_EQUIVALENTS: Readonly<Record<string, string>> = {
+  '“': '"',
+  '”': '"',
+  '‘': "'",
+  '’': "'",
+  '–': '-',
+  '—': '-',
+  '−': '-',
+  '\u00a0': ' ',
+};
+
+function normalizeQuoteText(input: string, withMap: boolean): NormalizedSource {
+  let text = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let pendingWhitespace: { start: number; end: number } | null = null;
+
+  const append = (value: string, start: number, end: number): void => {
+    text += value;
+    if (!withMap) return;
+    for (let j = 0; j < value.length; j++) {
+      starts.push(start);
+      ends.push(end);
+    }
+  };
+
+  const markdownDelimiters = matchedMarkdownDelimiterIndexes(input);
+  for (let i = 0; i < input.length;) {
+    const char = String.fromCodePoint(input.codePointAt(i)!);
+    const end = i + char.length;
+    if (/\s/u.test(char)) {
+      pendingWhitespace = pendingWhitespace
+        ? { start: pendingWhitespace.start, end }
+        : { start: i, end };
+      i = end;
+      continue;
+    }
+    // Remove only balanced, boundary-shaped Markdown delimiters. A bare `*`
+    // may be semantic source text (for example 2*3=6) and must never vanish.
+    if (markdownDelimiters.has(i)) {
+      i = end;
+      continue;
+    }
+    if (pendingWhitespace && text.length > 0) {
+      append(' ', pendingWhitespace.start, pendingWhitespace.end);
+    }
+    pendingWhitespace = null;
+    append(TYPOGRAPHY_EQUIVALENTS[char] ?? char, i, end);
+    i = end;
+  }
+  return { text, starts, ends };
+}
+
+function matchedMarkdownDelimiterIndexes(input: string): Set<number> {
+  const indexes = new Set<number>();
+  const markPairs = (pattern: RegExp): void => {
+    const tokens = [...input.matchAll(pattern)]
+      .filter(match => match.index !== undefined && !indexes.has(match.index));
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      const open = tokens[i];
+      const close = tokens[i + 1];
+      const openAt = open.index!;
+      const closeAt = close.index!;
+      const before = input[openAt - 1];
+      const after = input[closeAt + close[0].length];
+      const inside = input.slice(openAt + open[0].length, closeAt);
+      if (
+        !inside.trim()
+        || /^\s|\s$/u.test(inside)
+        || (before !== undefined && /[\p{L}\p{N}]/u.test(before))
+        || (after !== undefined && /[\p{L}\p{N}]/u.test(after))
+      ) continue;
+      for (let j = 0; j < open[0].length; j++) {
+        indexes.add(openAt + j);
+        indexes.add(closeAt + j);
+      }
+    }
+  };
+  markPairs(/(?<!\*)\*{3}(?!\*)/g);
+  markPairs(/(?<!\*)\*{2}(?!\*)/g);
+  markPairs(/`+/g);
+  return indexes;
+}
+
+/**
+ * Fail-closed quote boundary. Formatting/typography normalization is allowed
+ * only when it identifies exactly one contiguous source span; the persisted
+ * value is always that byte-for-byte original span, never model text.
+ */
+export function mapTrustedSourceQuote(source: string, proposed: unknown): SourceQuoteValidation {
+  if (typeof proposed !== 'string' || proposed.length === 0) {
+    return { ok: false, reason: 'missing_source_quote' };
+  }
+  if (proposed.length > SOURCE_QUOTE_MAX_CHARS) {
+    return { ok: false, reason: 'source_quote_overlength' };
+  }
+
+  const normalizedNeedle = normalizeQuoteText(proposed, false).text;
+  if (!normalizedNeedle) return { ok: false, reason: 'unsupported_source_quote' };
+  const normalizedSource = normalizeQuoteText(source, true);
+  const matches: number[] = [];
+  for (let from = 0;;) {
+    const index = normalizedSource.text.indexOf(normalizedNeedle, from);
+    if (index === -1) break;
+    matches.push(index);
+    from = index + 1;
+    if (matches.length > 1) return { ok: false, reason: 'ambiguous_source_quote' };
+  }
+  if (matches.length === 0) return { ok: false, reason: 'unsupported_source_quote' };
+
+  const normalizedStart = matches[0];
+  const normalizedEnd = normalizedStart + normalizedNeedle.length - 1;
+  const sourceStart = normalizedSource.starts[normalizedStart];
+  const sourceEnd = normalizedSource.ends[normalizedEnd];
+  if (sourceStart === undefined || sourceEnd === undefined) {
+    return { ok: false, reason: 'unsupported_source_quote' };
+  }
+  const sourceQuote = source.slice(sourceStart, sourceEnd);
+  if (sourceQuote.length > SOURCE_QUOTE_MAX_CHARS) {
+    return { ok: false, reason: 'source_span_overlength' };
+  }
+  return { ok: true, sourceQuote };
+}
+
+/** Strictly filter model-provided labels; never repair or synthesize labels. */
+export function filterConceptLabels(value: unknown, source?: string): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const labels: string[] = [];
+  for (const candidate of value) {
+    if (
+      typeof candidate !== 'string'
+      || candidate.length > CONCEPT_LABEL_MAX_CHARS
+      || !CONCEPT_LABEL_RE.test(candidate)
+      || (source !== undefined && sourceContainsProperNameLabel(source, candidate))
+      || labels.includes(candidate)
+    ) continue;
+    labels.push(candidate);
+    if (labels.length === 3) break;
+  }
+  return labels.length > 0 ? labels : undefined;
+}
+
+function sourceContainsProperNameLabel(source: string, label: string): boolean {
+  const words = label.split('-').map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])(${words.join('(?:[-_\\s]+)')})(?=$|[^\\p{L}\\p{N}])`, 'giu');
+  for (const match of source.matchAll(pattern)) {
+    const sourceForm = match[2];
+    if (sourceForm !== sourceForm.toLocaleLowerCase()) return true;
+  }
+  return false;
+}
 
 interface DiscoveredPage {
   slug: string;
@@ -748,6 +930,13 @@ export async function runPhaseExtractAtoms(
 
   // ── gbrain#4148 helpers ────────────────────────────────────────────
   let malformedOutputs = 0;
+  const sourceGuardRejections: Record<SourceQuoteRejection, number> = {
+    missing_source_quote: 0,
+    source_quote_overlength: 0,
+    unsupported_source_quote: 0,
+    ambiguous_source_quote: 0,
+    source_span_overlength: 0,
+  };
   const tombstonedForFailures: string[] = [];
   // #3044 adoption: shared halt policy — auth/billing halt on the first hit,
   // a rate_limit streak halts after 3 consecutive failures, a successful
@@ -809,6 +998,9 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    // The trust boundary is the exact text shown to the model, not unseen
+    // source content beyond the configured input cap.
+    const visibleContent = truncateUtf8(item.content, maxInputChars);
     try {
       const result = await chat({
         model: extractModel,
@@ -818,7 +1010,7 @@ export async function runPhaseExtractAtoms(
             role: 'user',
             // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare
             // .slice() can split a surrogate pair at the boundary).
-            content: `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
+            content: `Source: ${originLabel}\n\n---\n\n${visibleContent}`,
           },
         ],
         maxTokens: maxOutputTokens,
@@ -857,7 +1049,36 @@ export async function runPhaseExtractAtoms(
         }
         continue;
       }
-      const atoms = parseOutcome.atoms;
+      const atoms: ExtractedAtom[] = [];
+      const itemGuardRejections: SourceQuoteRejection[] = [];
+      for (const atom of parseOutcome.atoms) {
+        const trustedQuote = mapTrustedSourceQuote(visibleContent, atom.source_quote);
+        if (!trustedQuote.ok) {
+          sourceGuardRejections[trustedQuote.reason]++;
+          itemGuardRejections.push(trustedQuote.reason);
+          continue;
+        }
+        atoms.push({
+          ...atom,
+          source_quote: trustedQuote.sourceQuote,
+          concepts: filterConceptLabels(atom.concepts, visibleContent),
+        });
+      }
+      if (parseOutcome.atoms.length > 0 && atoms.length === 0) {
+        hardFailureCount++;
+        const failCount = await recordPageFailureCount(item);
+        const rejected = [...new Set(itemGuardRejections)].join(', ');
+        failures.push({
+          source: originLabel,
+          error: `untrusted atom output rejected by source guard (${rejected})` +
+            (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
+        });
+        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
+          await stampAtomsScanHash(item);
+          tombstonedForFailures.push(item.slug);
+        }
+        continue;
+      }
       if (atoms.length === 0) {
         // #2144: tombstone zero-yield pages so they stop being rediscovered.
         // Idempotency is keyed on atom rows — a page that yields no atoms
@@ -1095,6 +1316,7 @@ export async function runPhaseExtractAtoms(
       failures,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       malformed_outputs: malformedOutputs,
+      source_guard_rejections: sourceGuardRejections,
       tombstoned_for_failures: tombstonedForFailures,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
@@ -1162,7 +1384,12 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   }
 
   if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
-  return { ok: true, atoms: atomsFromParsedArray(parsed) };
+  if (parsed.length > 3) return { ok: false, reason: 'JSON array exceeds 3 atoms' };
+  const atoms = atomsFromParsedArray(parsed);
+  if (parsed.length > 0 && atoms.length === 0) {
+    return { ok: false, reason: 'JSON array contains no valid atoms' };
+  }
+  return { ok: true, atoms };
 }
 
 /**
@@ -1192,13 +1419,7 @@ function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
       body,
       source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
       lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
-      concepts: (() => {
-        if (!Array.isArray(obj.concepts)) return undefined;
-        const labels = obj.concepts
-          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
-          .slice(0, 3);
-        return labels.length > 0 ? labels : undefined;
-      })(),
+      concepts: filterConceptLabels(obj.concepts),
       virality_score:
         typeof obj.virality_score === 'number' &&
         obj.virality_score >= 0 &&

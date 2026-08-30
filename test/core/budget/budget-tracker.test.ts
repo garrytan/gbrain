@@ -205,6 +205,24 @@ describe('BudgetTracker.reserve', () => {
     ]);
   });
 
+  test('codex-cli chat reserve and record stay at $0 marginal USD under a cap', () => {
+    const t = new BudgetTracker({ maxCostUsd: 0.000001, label: 'test', auditPath });
+    expect(() => t.reserve({
+      modelId: 'codex-cli:gpt-5.6-sol',
+      estimatedInputTokens: 1_000_000,
+      maxOutputTokens: 1_000_000,
+      kind: 'chat',
+    })).not.toThrow();
+    expect(() => t.record({
+      modelId: 'codex-cli:gpt-5.6-sol',
+      inputTokens: 1_000_000,
+      outputTokens: 1_000_000,
+      kind: 'chat',
+    })).not.toThrow();
+    expect(t.totalSpent).toBe(0);
+    expect(t.snapshot().callsRecorded).toBe(1);
+  });
+
   test('no cap + unknown pricing: warns once per process, no throw', () => {
     const t = new BudgetTracker({ label: 'test', auditPath });
     expect(() =>

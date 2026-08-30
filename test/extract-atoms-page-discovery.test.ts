@@ -41,14 +41,30 @@ beforeEach(async () => {
 });
 
 function stubChat(text: string): (o: ChatOpts) => Promise<ChatResult> {
-  return async (_o: ChatOpts) => ({
-    text,
-    blocks: [{ type: 'text', text }],
-    stopReason: 'end',
-    usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
-    model: 'anthropic:claude-haiku-4-5',
-    providerId: 'anthropic',
-  });
+  return async (o: ChatOpts) => {
+    const grounded = groundAtomJson(text, o);
+    return {
+      text: grounded,
+      blocks: [{ type: 'text', text: grounded }],
+      stopReason: 'end',
+      usage: { input_tokens: 100, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-4-5',
+      providerId: 'anthropic',
+    };
+  };
+}
+
+function groundAtomJson(text: string, o: ChatOpts): string {
+  try {
+    const parsed = JSON.parse(text) as Array<Record<string, unknown>>;
+    const source = String(o.messages[0]?.content ?? '').split('\n\n---\n\n')[1] ?? '';
+    return JSON.stringify(parsed.map(atom => ({
+      ...atom,
+      source_quote: atom.source_quote ?? source.slice(0, 200),
+    })));
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -58,9 +74,9 @@ function stubChat(text: string): (o: ChatOpts) => Promise<ChatResult> {
  */
 function stubChatUnique(): (o: ChatOpts) => Promise<ChatResult> {
   let counter = 0;
-  return async (_o: ChatOpts) => {
+  return async (o: ChatOpts) => {
     counter++;
-    const text = `[{"title":"unique-atom-${counter}","atom_type":"insight","body":"b${counter}"}]`;
+    const text = groundAtomJson(`[{"title":"unique-atom-${counter}","atom_type":"insight","body":"b${counter}"}]`, o);
     return {
       text,
       blocks: [{ type: 'text', text }],
@@ -72,7 +88,7 @@ function stubChatUnique(): (o: ChatOpts) => Promise<ChatResult> {
   };
 }
 
-const LONG_CONTENT = 'a'.repeat(800); // > MIN_PAGE_CHARS_FOR_EXTRACTION (500)
+const LONG_CONTENT = `unique extractable source. ${'a'.repeat(800)}`; // > MIN_PAGE_CHARS_FOR_EXTRACTION (500)
 
 async function seedPage(opts: {
   slug: string;
@@ -322,7 +338,7 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     });
 
     const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-atoms-corpus-'));
-    writeFileSync(join(corpusDir, '2026-07-28-global.txt'), 'global transcript '.repeat(180));
+    writeFileSync(join(corpusDir, '2026-07-28-global.txt'), `unique global transcript. ${'global transcript '.repeat(180)}`);
     let chatCalls = 0;
     const chat = async (opts: ChatOpts): Promise<ChatResult> => {
       chatCalls++;
@@ -368,7 +384,7 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
   test('production transcript discovery remains enabled for the default source', async () => {
     const corpusDir = mkdtempSync(join(tmpdir(), 'gbrain-extract-atoms-default-corpus-'));
     const transcriptPath = join(corpusDir, '2026-07-28-global.txt');
-    writeFileSync(transcriptPath, 'global transcript '.repeat(180));
+    writeFileSync(transcriptPath, `unique global transcript. ${'global transcript '.repeat(180)}`);
 
     try {
       const result = await runPhaseExtractAtoms(engine, {
@@ -594,13 +610,14 @@ describe('local extract-atoms config knobs', () => {
   test('page_discovery_budget caps discovery; max_source_chars truncates the prompt slice', async () => {
     await engine.setConfig('cycle.extract_atoms.page_discovery_budget', '1');
     await engine.setConfig('cycle.extract_atoms.max_source_chars', '600');
-    await seedPage({ slug: 'note/knob-1', type: 'note', compiled_truth: 'z'.repeat(2000) });
-    await seedPage({ slug: 'note/knob-2', type: 'note', compiled_truth: 'z'.repeat(2000) });
+    const knobBody = `unique knob source. ${'z'.repeat(2000)}`;
+    await seedPage({ slug: 'note/knob-1', type: 'note', compiled_truth: knobBody });
+    await seedPage({ slug: 'note/knob-2', type: 'note', compiled_truth: knobBody });
 
     const captured: string[] = [];
     const capturingChat = async (o: ChatOpts): Promise<ChatResult> => {
       captured.push(String(o.messages[0]?.content ?? ''));
-      const text = '[{"title":"knob-atom","atom_type":"insight","body":"b"}]';
+      const text = groundAtomJson('[{"title":"knob-atom","atom_type":"insight","body":"b"}]', o);
       return {
         text,
         blocks: [{ type: 'text', text }],
@@ -623,7 +640,7 @@ describe('local extract-atoms config knobs', () => {
     // Payload after the "Source: ...\n\n---\n\n" preamble is sliced to the
     // configured max_source_chars (default would have been 50_000 → 2000 z's).
     const body = captured[0].split('\n\n---\n\n')[1] ?? '';
-    expect(body).toBe('z'.repeat(600));
+    expect(body).toBe(knobBody.slice(0, 600));
   }, 30_000);
 });
 

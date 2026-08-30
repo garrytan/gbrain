@@ -23,11 +23,16 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { resolveChatProbeTimeoutMs } from '../src/commands/models.ts';
+import { probeModel, resolveChatProbeTimeoutMs } from '../src/commands/models.ts';
 
 describe('resolveChatProbeTimeoutMs', () => {
   test('claude-cli chat touchpoint resolves to its declared 30s override', async () => {
     const ms = await resolveChatProbeTimeoutMs('claude-cli:claude-sonnet-5', 'chat');
+    expect(ms).toBe(30_000);
+  });
+
+  test('codex-cli chat touchpoint resolves to its declared 30s override', async () => {
+    const ms = await resolveChatProbeTimeoutMs('codex-cli:gpt-5.6-sol', 'chat');
     expect(ms).toBe(30_000);
   });
 
@@ -49,5 +54,28 @@ describe('resolveChatProbeTimeoutMs', () => {
   test('an unresolvable model string degrades to 5000ms instead of throwing', async () => {
     const ms = await resolveChatProbeTimeoutMs('not-a-real-provider:nope', 'chat');
     expect(ms).toBe(5000);
+  });
+
+  test('codex-cli probe allows enough output for post-call token enforcement', async () => {
+    let maxTokens: number | undefined;
+    const result = await probeModel('codex-cli:gpt-5.6-sol', 'chat', {
+      chat: async (opts) => {
+        maxTokens = opts.maxTokens;
+        return { text: 'ok' } as any;
+      },
+    });
+    expect(result.status).toBe('ok');
+    expect(maxTokens).toBe(128);
+  });
+
+  test('network-provider probes retain the OpenAI-compatible 16-token floor', async () => {
+    let maxTokens: number | undefined;
+    await probeModel('anthropic:claude-sonnet-4-6', 'chat', {
+      chat: async (opts) => {
+        maxTokens = opts.maxTokens;
+        return { text: 'ok' } as any;
+      },
+    });
+    expect(maxTokens).toBe(16);
   });
 });

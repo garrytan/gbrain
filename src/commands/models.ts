@@ -644,6 +644,10 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
   const probeTimeoutMs = await resolveChatProbeTimeoutMs(modelStr, touchpoint);
   try {
     const chat = deps.chat ?? (await import('../core/ai/gateway.ts')).chat;
+    // CLI adapters cannot enforce a tiny token cap before the subprocess call;
+    // give them enough room to produce a minimal structured answer, then let
+    // the adapter's post-call usage check enforce the requested bound.
+    const probeMaxTokens = modelStr.split(':', 1)[0].endsWith('-cli') ? 128 : 16;
     // Use AbortController so the resolved timeout doesn't hang on a stuck network.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
@@ -657,7 +661,7 @@ export async function probeModel(modelStr: string, touchpoint: 'chat' | 'expansi
         // OpenAI-family chat model regardless of whether it is reachable —
         // which is precisely what this check exists to tell apart. 16 is the
         // documented floor; the probe still costs at most 16 output tokens.
-        maxTokens: 16,
+        maxTokens: probeMaxTokens,
         abortSignal: controller.signal,
       });
       return { model: modelStr, touchpoint, status: 'ok', message: 'reachable', elapsed_ms: Date.now() - start };

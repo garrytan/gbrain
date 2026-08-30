@@ -29,8 +29,8 @@ afterAll(async () => {
   if (engine) await engine.disconnect();
 }, 60_000);
 
-const stubChat = (title: string) => async (_o: ChatOpts): Promise<ChatResult> => ({
-  text: `[{"title":"${title}","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders."}]`,
+const stubChat = (title: string) => async (o: ChatOpts): Promise<ChatResult> => ({
+  text: `[{"title":"${title}","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders.","source_quote":${JSON.stringify(String(o.messages[0]?.content ?? '').split('\n\n---\n\n')[1] ?? '')}}]`,
   blocks: [{ type: 'text', text: '' }],
   stopReason: 'end',
   usage: { input_tokens: 500, output_tokens: 200, cache_read_tokens: 0, cache_creation_tokens: 0 },

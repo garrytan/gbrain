@@ -53,7 +53,7 @@ function okChatResult(text: string): ChatResult {
 
 const HASH_A = 'a'.repeat(16);
 const ATOM_JSON = JSON.stringify([
-  { title: 'A durable insight', atom_type: 'insight', body: 'The insight body prose.' },
+  { title: 'A durable insight', atom_type: 'insight', body: 'The insight body prose.', source_quote: 'prose' },
 ]);
 
 async function seedPage(slug: string): Promise<void> {

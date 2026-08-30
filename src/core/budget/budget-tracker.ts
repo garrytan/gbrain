@@ -256,15 +256,19 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
   'llama-server',
 ]);
 
+/** Subscription-backed CLI chat providers with no marginal token charge. */
+const ZERO_MARGINAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
+  'codex-cli',
+]);
+
 /**
  * Look up `modelId` in the chat or embedding pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
  * Strategy:
- *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
- *     are bare claude-* ids), then the canonical paid-cloud chat table
- *     for provider-prefixed OpenAI/Google/DeepSeek/Together ids, then the
- *     explicit zero-cost local provider set.
+ *   - Chat: recognize explicit zero-marginal subscription providers, then try
+ *     the bare model id in ANTHROPIC_PRICING (legacy keys are bare claude-*),
+ *     then the canonical paid-cloud chat table, then zero-cost local inference.
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
@@ -294,9 +298,12 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // (the form `--judge-model` and OpenRouter recipes emit) hit the pricing
   // table. Pre-fix, slash-form silently no_pricing-failed `--max-cost` on
   // brainstorm/lsd.
+  const { provider: providerId, model: modelTail } = splitProviderModelId(modelId);
+  if (kind === 'chat' && providerId && ZERO_MARGINAL_CHAT_PROVIDERS.has(providerId)) {
+    return { input: 0, output: 0 };
+  }
   const bare = ANTHROPIC_PRICING[modelId];
   if (bare) return bare;
-  const { provider: providerId, model: modelTail } = splitProviderModelId(modelId);
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
