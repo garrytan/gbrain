@@ -264,7 +264,11 @@ export async function runLoopsExtract(
 
   // Injection hardening: same sanitation the facts extractor applies.
   const { INJECTION_PATTERNS } = await import('../think/sanitize.ts');
-  let content = (page.compiled_truth ?? '').slice(0, 12_000);
+  // Open-loop extraction is recency-sensitive: the newest outer messages can
+  // fulfil an older promise or add a fresh one. Keeping the oldest 12k silently
+  // hid the latest reply on long threads. Bound the same payload size, but keep
+  // the tail so the newest evidence is always visible to the judge.
+  let content = (page.compiled_truth ?? '').slice(-12_000);
   for (const p of INJECTION_PATTERNS) content = content.replace(p.rx, p.replacement);
   const accountEmail = typeof fm.account === 'string' ? fm.account.toLowerCase() : '';
 
