@@ -52,6 +52,7 @@ describeE2E('http-transport E2E (real Postgres)', () => {
   let validToken: string;
   let revokedToken: string;
   let validTokenName: string;
+  let oauthOnlyToken: string;
 
   beforeAll(async () => {
     await setupDB();
@@ -68,6 +69,22 @@ describeE2E('http-transport E2E (real Postgres)', () => {
     await conn.unsafe(
       'INSERT INTO access_tokens (name, token_hash, revoked_at) VALUES ($1, $2, now())',
       ['e2e-revoked-' + randomBytes(4).toString('hex'), hashToken(revokedToken)],
+    );
+    // A real, unexpired OAuth access token belongs only to the modern OAuth
+    // transport. The legacy bearer server must not authenticate it merely
+    // because it has a valid oauth_tokens row.
+    oauthOnlyToken = 'gbrain_at_wrong_transport_' + randomBytes(16).toString('hex');
+    const oauthClientId = 'gbrain_cl_wrong_transport_' + randomBytes(8).toString('hex');
+    await conn.unsafe(
+      `INSERT INTO oauth_clients
+         (client_id, client_name, scope, source_id, federated_read)
+       VALUES ($1, $2, $3, 'default', ARRAY['default']::text[])`,
+      [oauthClientId, 'e2e-wrong-transport', 'retract'],
+    );
+    await conn.unsafe(
+      `INSERT INTO oauth_tokens (token_hash, token_type, client_id, scopes, expires_at)
+       VALUES ($1, 'access', $2, ARRAY['retract']::text[], $3)`,
+      [hashToken(oauthOnlyToken), oauthClientId, Math.floor(Date.now() / 1000) + 3600],
     );
 
     srv = await startServer();
@@ -125,6 +142,16 @@ describeE2E('http-transport E2E (real Postgres)', () => {
       body: rpc('tools/list'),
     });
     expect(r.status).toBe(401);
+  });
+
+  test('4b. valid OAuth retract token is rejected on the legacy bearer transport', async () => {
+    const r = await fetch(`http://localhost:${srv.port}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${oauthOnlyToken}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/list'),
+    });
+    expect(r.status).toBe(401);
+    expect((await r.json() as { error: string }).error).toBe('invalid_token');
   });
 
   test('5. last_used_at debounce: two consecutive valid calls → only one UPDATE within 60s', async () => {

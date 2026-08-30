@@ -240,11 +240,11 @@ describeE2E('sources-remote-mcp E2E (gstack /setup-gbrain Path 4)', () => {
     expect(result.client_id).toBe(clientId);
   });
 
-  test('OAuth /.well-known advertises all 5 scopes', async () => {
+  test('OAuth /.well-known advertises the canonical management and narrow scopes', async () => {
     const r = await fetch(`${BASE}/.well-known/oauth-authorization-server`);
     const meta = await r.json() as any;
     expect(meta.scopes_supported).toEqual(
-      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
+      expect.arrayContaining(['admin', 'read', 'readback', 'retract', 'sources_admin', 'users_admin', 'write']),
     );
   });
 

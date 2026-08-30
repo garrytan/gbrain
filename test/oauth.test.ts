@@ -809,14 +809,16 @@ describe('operation scope annotations', () => {
     for (const op of operations) {
       expect(op.scope, `${op.name} missing scope`).toBeDefined();
       // v0.28 added sources_admin and users_admin to the union.
-      // v0.38 added 'agent' for submit_agent (D13).
+      // Narrow opt-in capabilities remain part of the canonical union even
+      // though they are not implied by the management hierarchy.
       expect([
         'read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent',
+        'readback', 'retract',
       ]).toContain(op.scope);
     }
   });
 
-  test('mutating operations are write/admin/sources_admin/users_admin/agent scoped', () => {
+  test('mutating operations use a canonical mutation capability', () => {
     const { operations } = require('../src/core/operations.ts');
     for (const op of operations) {
       if (op.mutating) {
@@ -824,8 +826,9 @@ describe('operation scope annotations', () => {
         // sources, not pages); read scope is the only thing too narrow for
         // any mutating op. v0.38: 'agent' is a mutating-axis scope for
         // submit_agent (creates jobs, spends money, but contained by bindings).
+        // retract is the dedicated modern-OAuth page-deletion capability.
         expect(
-          ['write', 'admin', 'sources_admin', 'users_admin', 'agent'],
+          ['write', 'admin', 'sources_admin', 'users_admin', 'agent', 'retract'],
           `${op.name} is mutating but not a write-axis scope`,
         ).toContain(op.scope);
       }
@@ -1172,7 +1175,7 @@ describe('v0.28 ALLOWED_SCOPES allowlist', () => {
   });
 
   test('registerClientManual accepts every canonical scope', async () => {
-    for (const scope of ['read', 'write', 'admin', 'sources_admin', 'users_admin']) {
+    for (const scope of ['read', 'write', 'admin', 'sources_admin', 'users_admin', 'agent', 'readback', 'retract']) {
       const { clientId } = await provider.registerClientManual(
         `accept-${scope}`, ['client_credentials'], scope,
       );

@@ -86,6 +86,7 @@ describe('operations contract — every op has scope + correct mutability shape'
       'sources_admin',
       'users_admin',
       'agent',
+      'retract',
     ]);
     for (const op of operations) {
       if (op.mutating === true) {
@@ -106,6 +107,7 @@ describe('operations contract — every op has scope + correct mutability shape'
       'users_admin',
       'agent',
       'readback',
+      'retract',
     ]);
     for (const op of operations) {
       expect(
@@ -150,6 +152,17 @@ describe('mcpOperations filter — transport-owned ops stay on their intended HT
       expect(operationAvailableOnTransport(op, 'local-cli')).toBe(false);
       expect(operationAvailableOnTransport(op, undefined)).toBe(false);
     }
+  });
+
+  test('delete_page stays available on compatibility transports; OAuth alone enforces retract', () => {
+    const op = operations.find(candidate => candidate.name === 'delete_page');
+    expect(op).toBeDefined();
+    expect(op!.scope).toBe('retract');
+    expect(op!.oauthHttpOnly).not.toBe(true);
+    expect(operationAvailableOnTransport(op!, 'oauth-http')).toBe(true);
+    expect(operationAvailableOnTransport(op!, 'legacy-http')).toBe(true);
+    expect(operationAvailableOnTransport(op!, 'stdio')).toBe(true);
+    expect(operationAvailableOnTransport(op!, 'local-cli')).toBe(true);
   });
 
   test('known historically-sensitive localOnly ops stay filtered', () => {
@@ -197,6 +210,19 @@ describe('hasScope — read-only token cannot satisfy write or admin scopes', ()
   test('write scope satisfies write AND read', () => {
     expect(hasScope(['write'], 'write')).toBe(true);
     expect(hasScope(['write'], 'read')).toBe(true);
+  });
+
+  test('delete_page is retract-owned while put_page and peek_page stay isolated', () => {
+    const lookup = new Map(operations.map(op => [op.name, op] as const));
+    expect(lookup.get('delete_page')?.scope).toBe('retract');
+    expect(lookup.get('put_page')?.scope).toBe('write');
+    expect(lookup.get('peek_page')?.scope).toBe('readback');
+
+    expect(hasScope(['write'], lookup.get('delete_page')!.scope!)).toBe(false);
+    expect(hasScope(['retract'], lookup.get('delete_page')!.scope!)).toBe(true);
+    expect(hasScope(['retract'], lookup.get('put_page')!.scope!)).toBe(false);
+    expect(hasScope(['retract'], 'read')).toBe(false);
+    expect(hasScope(['retract'], lookup.get('peek_page')!.scope!)).toBe(false);
   });
 
   test('admin scope satisfies admin, write, AND read (umbrella implies)', () => {

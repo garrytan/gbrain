@@ -9,6 +9,7 @@ import {
   parseScopeString,
   type Scope,
 } from '../src/core/scope.ts';
+import { ALLOWED_SCOPES_LIST as ADMIN_ALLOWED_SCOPES_LIST } from '../admin/src/lib/scope-constants.ts';
 
 // ---------------------------------------------------------------------------
 // Hierarchy table — admin → legacy management axis, write → read, siblings exact
@@ -79,6 +80,22 @@ describe('hasScope — readback is an opt-in sibling capability', () => {
   });
 });
 
+describe('hasScope — retract is an opt-in sibling capability', () => {
+  test('retract self-implies only', () => {
+    expect(hasScope(['retract'], 'retract')).toBe(true);
+    expect(hasScope(['retract'], 'read')).toBe(false);
+    expect(hasScope(['retract'], 'write')).toBe(false);
+    expect(hasScope(['retract'], 'readback')).toBe(false);
+    expect(hasScope(['retract'], 'admin')).toBe(false);
+  });
+  test('admin/read/write/readback do NOT imply retract', () => {
+    expect(hasScope(['admin'], 'retract')).toBe(false);
+    expect(hasScope(['write'], 'retract')).toBe(false);
+    expect(hasScope(['read'], 'retract')).toBe(false);
+    expect(hasScope(['readback'], 'retract')).toBe(false);
+  });
+});
+
 describe('hasScope — empty + unknown granted', () => {
   test('empty granted set returns false', () => {
     expect(hasScope([], 'read')).toBe(false);
@@ -142,8 +159,8 @@ describe('F3 refresh-token subset semantics under hasScope', () => {
 // ---------------------------------------------------------------------------
 
 describe('ALLOWED_SCOPES — exact list pinned', () => {
-  test('contains the 7 canonical scopes (readback is explicit opt-in)', () => {
-    expect(ALLOWED_SCOPES.size).toBe(7);
+  test('contains the 8 canonical scopes (readback/retract are explicit opt-ins)', () => {
+    expect(ALLOWED_SCOPES.size).toBe(8);
     expect(ALLOWED_SCOPES.has('read')).toBe(true);
     expect(ALLOWED_SCOPES.has('write')).toBe(true);
     expect(ALLOWED_SCOPES.has('admin')).toBe(true);
@@ -151,6 +168,7 @@ describe('ALLOWED_SCOPES — exact list pinned', () => {
     expect(ALLOWED_SCOPES.has('users_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('agent')).toBe(true);
     expect(ALLOWED_SCOPES.has('readback')).toBe(true);
+    expect(ALLOWED_SCOPES.has('retract')).toBe(true);
   });
   test('list is sorted alphabetically (deterministic for wire/drift check)', () => {
     expect([...ALLOWED_SCOPES_LIST]).toEqual([
@@ -158,10 +176,14 @@ describe('ALLOWED_SCOPES — exact list pinned', () => {
       'agent',
       'read',
       'readback',
+      'retract',
       'sources_admin',
       'users_admin',
       'write',
     ]);
+  });
+  test('admin SPA mirror has the exact canonical wire inventory', () => {
+    expect([...ADMIN_ALLOWED_SCOPES_LIST]).toEqual([...ALLOWED_SCOPES_LIST]);
   });
 });
 

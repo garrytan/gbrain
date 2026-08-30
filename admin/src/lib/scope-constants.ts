@@ -10,16 +10,19 @@
  * or `bun run verify` will reject the change.
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback' | 'retract';
 
 // MIRROR OF src/core/scope.ts ALLOWED_SCOPES_LIST — keep alphabetically sorted.
 // v0.38: 'agent' added for the submit_agent remote-MCP op (sibling to admin,
 // NOT implied — existing admin clients must re-register to opt in).
+// 'readback' and 'retract' are likewise exact siblings: neither admin nor
+// write silently gains diagnostic readback or destructive retraction.
 export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = [
   'admin',
   'agent',
   'read',
   'readback',
+  'retract',
   'sources_admin',
   'users_admin',
   'write',

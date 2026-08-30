@@ -18,13 +18,13 @@
  *                                │      ▲
  *                                └──────┘
  *
- *   Exact opt-in siblings (not implied by admin): agent, readback
+ *   Exact opt-in siblings (not implied by admin): agent, readback, retract
  *
  * sources_admin and users_admin are siblings (different axes — sources-mgmt
  * vs user-account-mgmt — neither implies the other).
  */
 
-export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback';
+export type Scope = 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback' | 'retract';
 
 export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'read',
@@ -34,6 +34,7 @@ export const ALLOWED_SCOPES: ReadonlySet<Scope> = new Set<Scope>([
   'users_admin',
   'agent',
   'readback',
+  'retract',
 ]);
 
 /**
@@ -45,6 +46,7 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
   'agent',
   'read',
   'readback',
+  'retract',
   'sources_admin',
   'users_admin',
   'write',
@@ -56,10 +58,12 @@ export const ALLOWED_SCOPES_LIST: ReadonlyArray<Scope> = Object.freeze([
  * write, and read), but not the explicit opt-in siblings below.
  * `write` implies `read`. The two `*_admin` siblings only imply themselves.
  *
- * `agent` and `readback` are SIBLINGS, not implied by admin. A super-admin
- * token still needs to be re-registered to opt into either narrow capability.
+ * `agent`, `readback`, and `retract` are SIBLINGS, not implied by admin. A
+ * super-admin token still needs to be re-registered to opt into any narrow
+ * capability.
  * This prevents existing admin clients from silently gaining agent dispatch
- * or telemetry-free compiled-page readback capability on upgrade.
+ * telemetry-free compiled-page readback, or destructive retraction capability
+ * on upgrade.
  */
 const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   admin: new Set(['admin', 'sources_admin', 'users_admin', 'write', 'read']),
@@ -69,6 +73,7 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
   read: new Set(['read']),
   agent: new Set(['agent']),
   readback: new Set(['readback']),
+  retract: new Set(['retract']),
 };
 
 /**
@@ -78,7 +83,7 @@ const IMPLIES: Record<Scope, ReadonlySet<Scope>> = {
  * - sources_admin in granted → true for {sources_admin}
  * - users_admin in granted → true for {users_admin}
  * - read in granted → true for {read}
- * - agent/readback in granted → true only for that exact sibling capability
+ * - agent/readback/retract in granted → true only for that exact sibling capability
  *
  * Unknown scopes in `granted` are ignored (forward-compat — pre-allowlist
  * tokens with bogus scopes don't crash hasScope; they just don't satisfy).

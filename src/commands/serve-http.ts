@@ -1946,8 +1946,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
       // Scope enforcement (v0.28: hasScope replaces exact-string-match so
       // write satisfies read and the admin/read-write management axis resolves
-      // through one hierarchy. Narrow opt-in siblings such as agent/readback
-      // remain exact. Plain string includes() here would drift from both.)
+      // through one hierarchy. Narrow opt-in siblings such as
+      // agent/readback/retract remain exact. Plain string includes() here
+      // would drift from both.)
       const requiredScope = op.scope || 'read';
       if (!hasScope(authInfo.scopes, requiredScope)) {
         // v0.28.10: persist scope-rejected attempts. Same operator-visibility

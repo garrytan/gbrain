@@ -921,13 +921,14 @@ export interface Operation {
    * Capability scope required to invoke this op over an authenticated
    * transport. v0.28 added `sources_admin` (manage federated sources) and
    * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
-   * `write` implies `read`; `agent` and `readback` are explicit opt-in
-   * siblings, and the two `*_admin` scopes remain separate management axes.
+   * `write` implies `read`; `agent`, `readback`, and `retract` are explicit
+   * opt-in siblings, and the two `*_admin` scopes remain separate management
+   * axes. `retract` owns modern OAuth page deletion without granting writes.
    *
    * Local CLI callers (ctx.remote === false) bypass scope enforcement
    * because the trust boundary there is the OS, not OAuth scopes.
    */
-  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback';
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback' | 'retract';
   localOnly?: boolean;
   /**
    * Expose this operation only through the authenticated OAuth Streamable HTTP
@@ -1774,12 +1775,16 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
-  description: 'Soft-delete a page. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed.',
+  description: 'Soft-delete a page. Modern OAuth HTTP requires the dedicated retract scope; write alone cannot delete. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed.',
   params: {
     slug: { type: 'string', required: true },
   },
   mutating: true,
-  scope: 'write',
+  // Modern OAuth HTTP deliberately breaks the old write=>delete coupling:
+  // retraction is a narrow, exact sibling capability. Local CLI, stdio, and
+  // legacy bearer HTTP preserve their existing trust/compatibility behavior
+  // because only the modern OAuth owner enforces Operation.scope.
+  scope: 'retract',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     enforceClientSlugFence(ctx, slug, 'delete_page');

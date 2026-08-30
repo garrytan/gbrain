@@ -57,7 +57,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // get the subset they ask for — adding admin to the client's allowed
     // ceiling does not auto-grant it to every minted token.
     const regOutput = execSync(
-      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin readback"',
+      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin readback retract"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
@@ -242,21 +242,28 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(meta.scopes_supported).toContain('read');
     expect(meta.scopes_supported).toContain('write');
     expect(meta.scopes_supported).toContain('admin');
+    expect(meta.scopes_supported).toContain('retract');
   });
 
   // T2 (eng-review): scopes_supported advertises the full ALLOWED_SCOPES_LIST
   // so MCP clients (Claude Desktop, ChatGPT, Perplexity) can discover the
-  // v0.28 sources_admin and users_admin scopes via standard discovery.
+  // every canonical scope, including narrow opt-in capabilities, via standard
+  // discovery.
   // Pre-v0.28 the list was hardcoded to ['read','write','admin'] in
   // serve-http.ts:195 and this assertion would have failed.
-  test('OAuth metadata advertises all 5 v0.28 scopes (sources_admin + users_admin)', async () => {
+  test('OAuth metadata advertises the exact canonical scope inventory', async () => {
     const res = await fetch(`${BASE}/.well-known/oauth-authorization-server`);
     const meta = await res.json() as any;
-    expect(meta.scopes_supported).toContain('sources_admin');
-    expect(meta.scopes_supported).toContain('users_admin');
-    expect(meta.scopes_supported).toEqual(
-      expect.arrayContaining(['admin', 'read', 'sources_admin', 'users_admin', 'write']),
-    );
+    expect(meta.scopes_supported).toEqual([
+      'admin',
+      'agent',
+      'read',
+      'readback',
+      'retract',
+      'sources_admin',
+      'users_admin',
+      'write',
+    ]);
   });
 
   // =========================================================================
@@ -353,6 +360,99 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // Should be rejected via scope check (403 or JSON-RPC error with scope message)
     expect(res.status === 403 || body.includes('scope') || body.includes('Insufficient')).toBe(true);
   }, 15_000);
+
+  test('retract is delete-only, source-bound, and revoked tokens fail closed', async () => {
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    const slug = `e2e-retract-scope-${process.pid}`;
+    const revokedSlug = `${slug}-revoked`;
+    const forbiddenPutSlug = `${slug}-forbidden-put`;
+    const otherSource = `e2e-retract-other-${process.pid}`;
+
+    try {
+      await sql`DELETE FROM pages WHERE slug IN (${slug}, ${revokedSlug}, ${forbiddenPutSlug})`;
+      await sql`DELETE FROM sources WHERE id = ${otherSource}`;
+      await sql`INSERT INTO sources (id, name, config) VALUES (${otherSource}, ${otherSource}, ${sql.json({ federated: false })})`;
+
+      const writer = await mintToken('write');
+      for (const pageSlug of [slug, revokedSlug]) {
+        const put = await mcpCall(writer.access_token, 'tools/call', {
+          name: 'put_page',
+          arguments: { slug: pageSlug, content: `---\ntitle: ${pageSlug}\n---\nactive` },
+        });
+        expect(await put.text()).not.toContain('"isError":true');
+      }
+
+      // Seed the same slug in a second source. The OAuth client is bound to
+      // default, so its retract must never cross the source boundary.
+      await sql`
+        INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter)
+        VALUES (${otherSource}, ${slug}, 'note', 'other-source twin', 'other source remains active', '', ${sql.json({})})
+      `;
+
+      const writeDelete = await mcpCall(writer.access_token, 'tools/call', {
+        name: 'delete_page',
+        arguments: { slug },
+      });
+      expect(await writeDelete.text()).toContain('insufficient_scope');
+
+      const retract = await mintToken('retract');
+      const discovered = await mcpCall(retract.access_token, 'tools/list');
+      expect(await discovered.text()).toContain('delete_page');
+
+      const hostileCalls = [
+        { name: 'put_page', arguments: { slug: forbiddenPutSlug, content: 'forbidden' } },
+        { name: 'get_page', arguments: { slug } },
+        { name: 'peek_page', arguments: { source_id: 'default', slug } },
+      ];
+      for (const hostile of hostileCalls) {
+        const rejected = await mcpCall(retract.access_token, 'tools/call', hostile);
+        expect(await rejected.text(), `${hostile.name} must reject retract-only token`).toContain('insufficient_scope');
+      }
+
+      const deleted = await mcpCall(retract.access_token, 'tools/call', {
+        name: 'delete_page',
+        arguments: { slug },
+      });
+      const deletedBody = await deleted.text();
+      expect(deletedBody).toContain('soft_deleted');
+      expect(deletedBody).not.toContain('insufficient_scope');
+
+      const sourceRows = await sql<{ source_id: string; deleted: boolean }[]>`
+        SELECT source_id, deleted_at IS NOT NULL AS deleted
+        FROM pages
+        WHERE slug = ${slug}
+        ORDER BY source_id
+      `;
+      expect(sourceRows.map(row => ({ source_id: row.source_id, deleted: row.deleted }))).toEqual([
+        { source_id: 'default', deleted: true },
+        { source_id: otherSource, deleted: false },
+      ]);
+
+      const revoke = await fetch(`${BASE}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `token=${encodeURIComponent(retract.access_token)}&client_id=${clientId}&client_secret=${clientSecret}`,
+      });
+      expect(revoke.status).toBe(200);
+
+      const revokedDelete = await mcpCall(retract.access_token, 'tools/call', {
+        name: 'delete_page',
+        arguments: { slug: revokedSlug },
+      });
+      expect(revokedDelete.status).toBe(401);
+      const [revokedPage] = await sql<{ deleted: boolean }[]>`
+        SELECT deleted_at IS NOT NULL AS deleted
+        FROM pages
+        WHERE source_id = 'default' AND slug = ${revokedSlug}
+      `;
+      expect(revokedPage?.deleted).toBe(false);
+    } finally {
+      await sql`DELETE FROM pages WHERE slug IN (${slug}, ${revokedSlug}, ${forbiddenPutSlug})`;
+      await sql`DELETE FROM sources WHERE id = ${otherSource}`;
+      await sql.end({ timeout: 5 });
+    }
+  }, 30_000);
 
   test('write-scoped token can call read operations', async () => {
     const { access_token } = await mintToken('read write');
