@@ -22,9 +22,9 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
+import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
 import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
-import type { GmailMessageMeta, GmailThreadData } from './types.ts';
+import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /**
@@ -258,6 +258,19 @@ export async function runLoopsExtract(
   const fm = (page.frontmatter ?? {}) as Record<string, unknown>;
   const threadId =
     payload.threadId ?? (typeof fm.thread_id === 'string' ? fm.thread_id : payload.slug);
+
+  // `loops mute` is one policy surface for both detectors. Previously it only
+  // guarded deterministic opens, so the LLM lane could recreate a commitment
+  // or decision for a sender/thread the operator had explicitly suppressed.
+  // Check before provider availability and before any model/facts/edge write.
+  const suppressions = await loadSuppressions(engine, payload.sourceId);
+  const lastSender = typeof fm.from === 'string' ? bareAddress(fm.from) : '';
+  if (
+    suppressions.threads.has(threadId.toLowerCase()) ||
+    (lastSender !== '' && suppressions.senders.has(lastSender))
+  ) {
+    return { ...empty, reason: 'suppressed' };
+  }
 
   const { isAvailable, chat } = await import('../ai/gateway.ts');
   if (!isAvailable('chat')) return { ...empty, reason: 'llm_unavailable' };

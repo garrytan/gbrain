@@ -33,6 +33,10 @@ self-threads, and muted senders/threads never open loops. Sent-mail
 ingestion is what makes "unanswered" honest — your own replies are the
 negative filter.
 
+Sender/thread suppressions are shared by both detectors: a mute prevents
+both deterministic reply loops and LLM-extracted commitments/decisions, while
+leaving the underlying email page searchable.
+
 **Google Calendar system mail is excluded structurally.** `Invitation:`,
 `Updated invitation:`, `Accepted:`, `Declined:`, `Tentative:` and
 `Canceled event:` notices are sent by Calendar ON BEHALF OF a human, so they

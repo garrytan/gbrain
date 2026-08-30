@@ -56,7 +56,9 @@ const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts')
 
 const SRC = 'g1';
 const EMAIL_SLUG = 'emails/2026/08/2026-08-20-test-thread-abcd1234.md';
+const SUPPRESSED_SLUG = 'emails/2026/08/2026-08-20-suppressed-thread-efab5678.md';
 const THREAD_ID = 'thread-abcd1234';
+const SUPPRESSED_THREAD_ID = 'thread-efab5678';
 const PERSON_SLUG = 'people/alice-example';
 
 let engine: InstanceType<typeof PGLiteEngine>;
@@ -119,6 +121,22 @@ beforeAll(async () => {
     { type: 'person', title: 'Alice Example', compiled_truth: 'A synthetic person page.' },
     { sourceId: SRC },
   );
+  await engine.putPage(
+    SUPPRESSED_SLUG,
+    {
+      type: 'email',
+      title: 'A suppressed synthetic sender',
+      compiled_truth: 'A machine notification that must not reach the model.',
+      frontmatter: {
+        thread_id: SUPPRESSED_THREAD_ID,
+        date: '2026-08-20T11:00:00Z',
+        account: 'owner@example.com',
+        from: 'Example Robot <robot@example.com>',
+      },
+      effective_date: new Date('2026-08-20T11:00:00Z'),
+    },
+    { sourceId: SRC },
+  );
   await engine.executeRaw(
     `INSERT INTO page_aliases (source_id, alias_norm, slug) VALUES ($1, $2, $3)
      ON CONFLICT DO NOTHING`,
@@ -170,6 +188,36 @@ describe('runLoopsExtract', () => {
     const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: 'default' });
     expect(r.status).toBe('skipped');
     expect(r.reason).toBe('page_missing');
+  });
+
+  test('sender and thread suppressions skip the LLM lane before any model call', async () => {
+    const before = chatCalls;
+    await engine.executeRaw(
+      `INSERT INTO loop_suppressions (source_id, kind, value) VALUES ($1, 'sender', $2)`,
+      [SRC, 'robot@example.com'],
+    );
+    try {
+      const bySender = await runLoopsExtract(engine, { slug: SUPPRESSED_SLUG, sourceId: SRC });
+      expect(bySender.reason).toBe('suppressed');
+      expect(chatCalls).toBe(before);
+
+      await engine.executeRaw(
+        `DELETE FROM loop_suppressions WHERE source_id = $1 AND kind = 'sender' AND value = $2`,
+        [SRC, 'robot@example.com'],
+      );
+      await engine.executeRaw(
+        `INSERT INTO loop_suppressions (source_id, kind, value) VALUES ($1, 'thread', $2)`,
+        [SRC, SUPPRESSED_THREAD_ID],
+      );
+      const byThread = await runLoopsExtract(engine, { slug: SUPPRESSED_SLUG, sourceId: SRC });
+      expect(byThread.reason).toBe('suppressed');
+      expect(chatCalls).toBe(before);
+    } finally {
+      await engine.executeRaw(
+        `DELETE FROM loop_suppressions WHERE source_id = $1 AND value IN ($2, $3)`,
+        [SRC, 'robot@example.com', SUPPRESSED_THREAD_ID],
+      );
+    }
   });
 
   test('gateway unavailable → skipped llm_unavailable', async () => {
