@@ -221,7 +221,7 @@ describe('CLI dispatch integration', () => {
     expect(exitCode).toBe(0);
   });
 
-  test('--tools-json outputs valid JSON with operations', async () => {
+  test('--tools-json outputs valid JSON with local operations only', async () => {
     const proc = Bun.spawn(['bun', 'run', 'src/cli.ts', '--tools-json'], {
       cwd: repoRoot,
       stdout: 'pipe',
@@ -235,5 +235,6 @@ describe('CLI dispatch integration', () => {
     expect(tools[0]).toHaveProperty('name');
     expect(tools[0]).toHaveProperty('description');
     expect(tools[0]).toHaveProperty('parameters');
+    expect(tools.map((tool: { name: string }) => tool.name)).not.toContain('peek_page');
   });
 });

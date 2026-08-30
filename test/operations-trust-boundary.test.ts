@@ -38,6 +38,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
 import { hasScope } from '../src/core/scope.ts';
+import { operationAvailableOnTransport } from '../src/mcp/dispatch.ts';
 
 let engine: PGLiteEngine;
 
@@ -104,6 +105,7 @@ describe('operations contract — every op has scope + correct mutability shape'
       'sources_admin',
       'users_admin',
       'agent',
+      'readback',
     ]);
     for (const op of operations) {
       expect(
@@ -114,15 +116,18 @@ describe('operations contract — every op has scope + correct mutability shape'
   });
 });
 
-describe('mcpOperations filter — localOnly ops are excluded from the HTTP-exposed surface', () => {
+describe('mcpOperations filter — transport-owned ops stay on their intended HTTP surface', () => {
   // This filter is what serve-http.ts uses to build the tools/list response:
-  //   const mcpOperations = operations.filter(op => !op.localOnly);
+  //   operations.filter(op => !op.localOnly &&
+  //     operationAvailableOnTransport(op, 'oauth-http'))
   // A localOnly op that leaks into mcpOperations is exposed via HTTP MCP
-  // and bypasses the trust boundary. Pin the filter contract here so a
-  // regression surfaces as a structural test failure.
+  // and bypasses the trust boundary. The transport predicate additionally
+  // keeps narrowly-owned ops off stdio, legacy bearer HTTP, and local CLI.
 
   test('the canonical filter excludes every localOnly op', () => {
-    const mcpOps = operations.filter(op => !op.localOnly);
+    const mcpOps = operations.filter(
+      op => !op.localOnly && operationAvailableOnTransport(op, 'oauth-http'),
+    );
     const mcpNames = new Set(mcpOps.map(op => op.name));
     const localOnlyOps = operations.filter(op => op.localOnly === true);
 
@@ -132,6 +137,18 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
         mcpNames.has(op.name),
         `localOnly op "${op.name}" leaked into the HTTP MCP surface`,
       ).toBe(false);
+    }
+  });
+
+  test('OAuth-HTTP-only ops stay visible there and hidden everywhere else', () => {
+    const oauthOnlyOps = operations.filter(op => op.oauthHttpOnly === true);
+    expect(oauthOnlyOps.map(op => op.name)).toContain('peek_page');
+    for (const op of oauthOnlyOps) {
+      expect(operationAvailableOnTransport(op, 'oauth-http')).toBe(true);
+      expect(operationAvailableOnTransport(op, 'legacy-http')).toBe(false);
+      expect(operationAvailableOnTransport(op, 'stdio')).toBe(false);
+      expect(operationAvailableOnTransport(op, 'local-cli')).toBe(false);
+      expect(operationAvailableOnTransport(op, undefined)).toBe(false);
     }
   });
 

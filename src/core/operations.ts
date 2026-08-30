@@ -5,10 +5,11 @@
 
 import { lstatSync, realpathSync } from 'fs';
 import { resolve, relative, sep } from 'path';
+import { createHash as createHashSync } from 'crypto';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { GBrainConfig } from './config.ts';
-import type { PageType } from './types.ts';
+import type { PagePeekResponse, PageType } from './types.ts';
 import { importFromContent } from './import-file.ts';
 import { writePageThrough } from './write-through.ts';
 import { hybridSearch, hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from './search/hybrid.ts';
@@ -29,6 +30,7 @@ import { stampEvidence } from './search/evidence.ts';
 import type { SearchResult } from './types.ts';
 import { CJK_SLUG_CHARS, PAGE_SLUG_SEG } from './cjk.ts';
 import { ALL_SOURCES } from './source-id.ts';
+import { hasScope } from './scope.ts';
 import * as db from './db.ts';
 import { VERSION } from '../version.ts';
 import {
@@ -539,7 +541,7 @@ export interface OperationContext {
    * transport bug forgot to thread ctx.auth". Trust decisions MUST NOT key
    * off this field — only `ctx.remote === false` grants trust.
    */
-  transport?: 'stdio';
+  transport?: 'stdio' | 'legacy-http' | 'oauth-http';
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -919,14 +921,25 @@ export interface Operation {
    * Capability scope required to invoke this op over an authenticated
    * transport. v0.28 added `sources_admin` (manage federated sources) and
    * `users_admin` (reserved). The hierarchy lives in src/core/scope.ts —
-   * `admin` implies all, `write` implies `read`, the two `*_admin` scopes
-   * are siblings (different axes; neither implies the other).
+   * `write` implies `read`; `agent` and `readback` are explicit opt-in
+   * siblings, and the two `*_admin` scopes remain separate management axes.
    *
    * Local CLI callers (ctx.remote === false) bypass scope enforcement
    * because the trust boundary there is the OS, not OAuth scopes.
    */
-  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin';
+  scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent' | 'readback';
   localOnly?: boolean;
+  /**
+   * Expose this operation only through the authenticated OAuth Streamable HTTP
+   * transport. Shared dispatch rejects guessed calls from stdio, legacy bearer
+   * HTTP, and the trusted local `gbrain call` compatibility path.
+   */
+  oauthHttpOnly?: boolean;
+  /**
+   * Suppress best-effort MCP request-log, admin SSE, and response `_meta`
+   * telemetry for operations whose contract promises a non-recording read.
+   */
+  suppressTelemetry?: boolean;
   cliHints?: {
     name?: string;
     /**
@@ -1044,6 +1057,118 @@ const get_page: Operation = {
   },
   scope: 'read',
   cliHints: { name: 'get', positional: ['slug'] },
+};
+
+const peek_page: Operation = {
+  name: 'peek_page',
+  description: 'Authenticated HTTP-only exact page readback for retrieval diagnostics. Requires source_id + slug and the dedicated readback scope. Returns privacy-filtered compiled truth, persisted flags, and metadata-only chunk retrievability from one engine snapshot. It never records retrieval access or MCP telemetry.',
+  params: {
+    source_id: { type: 'string', required: true, description: 'Exact granted source id. Federated or fuzzy lookup is not supported.' },
+    slug: { type: 'string', required: true, description: 'Exact page slug. Fuzzy lookup is not supported.' },
+    include_deleted: { type: 'boolean', description: 'Include an exact soft-deleted row (default: false).' },
+  },
+  scope: 'readback',
+  oauthHttpOnly: true,
+  suppressTelemetry: true,
+  handler: async (ctx, p) => {
+    // Defense in depth: serve-http performs scope checks before dispatch, but
+    // the operation itself also refuses direct/programmatic calls that did not
+    // traverse the authenticated OAuth HTTP owner.
+    if (ctx.remote !== true || ctx.transport !== 'oauth-http' || !ctx.auth) {
+      throw new OperationError(
+        'permission_denied',
+        'peek_page is available only through authenticated OAuth HTTP.',
+      );
+    }
+    if (!hasScope(ctx.auth.scopes, 'readback')) {
+      throw new OperationError(
+        'insufficient_scope',
+        "peek_page requires the dedicated 'readback' scope.",
+      );
+    }
+
+    const sourceId = p.source_id as string;
+    const slug = p.slug as string;
+    if (!sourceId.trim() || sourceId === ALL_SOURCES) {
+      throw new OperationError('invalid_params', 'peek_page requires one exact source_id; federated and __all__ reads are not supported.');
+    }
+    if (!slug.trim()) {
+      throw new OperationError('invalid_params', 'peek_page requires a non-empty exact slug.');
+    }
+
+    // The scalar source_id and federated-read entries are independent grants;
+    // treat their union as the exact readback boundary. Never fall back to the
+    // operation context's default source when the authenticated row is truly
+    // unbound.
+    const grantedSources = new Set([
+      ...(ctx.auth.sourceId ? [ctx.auth.sourceId] : []),
+      ...(ctx.auth.allowedSources ?? []),
+    ]);
+    if (!grantedSources.has(sourceId)) {
+      throw new OperationError(
+        'permission_denied',
+        `source '${sourceId}' is outside your granted sources`,
+        'Request a readback grant bound to this source.',
+      );
+    }
+
+    const snapshot = await ctx.engine.peekPage(sourceId, slug, {
+      includeDeleted: p.include_deleted === true,
+    });
+    if (!snapshot) {
+      throw new OperationError(
+        'page_not_found',
+        `Page not found: ${sourceId}/${slug}`,
+        p.include_deleted === true
+          ? 'Check the exact source_id and slug.'
+          : 'The page may be soft-deleted; pass include_deleted: true to verify.',
+      );
+    }
+
+    const chunks = snapshot.chunks;
+    const body = stripFactsFence(
+      stripTakesFence(snapshot.compiled_truth),
+      { keepVisibility: ['world'] },
+    );
+    const deleted = snapshot.deleted_at !== null;
+    const indexedChunks = chunks.filter(
+      (chunk) => chunk.keyword_indexed || chunk.vector_indexed,
+    ).length;
+    const retrievable = !deleted
+      && !snapshot.quarantined
+      && !snapshot.embed_skipped
+      && indexedChunks > 0;
+    const response: PagePeekResponse = {
+      schema: 'gbrain_page_peek/v1',
+      schema_version: 'gbrain_page_peek/v1',
+      status: 'ok',
+      source_id: snapshot.source_id,
+      slug: snapshot.slug,
+      body,
+      body_sha256: createHashSync('sha256').update(body).digest('hex'),
+      compiled_truth: body,
+      frontmatter: snapshot.frontmatter,
+      content_hash: snapshot.content_hash,
+      deleted,
+      deleted_at: snapshot.deleted_at,
+      quarantined: snapshot.quarantined,
+      quarantine: snapshot.quarantine,
+      embed_skipped: snapshot.embed_skipped,
+      embed_skip: snapshot.embed_skip,
+      retrievable,
+      readback_mode: 'non_mutating_page_readback/v1',
+      retrievability: {
+        chunk_count: chunks.length,
+        indexed_chunks: indexedChunks,
+        keyword_indexed_chunks: chunks.filter((chunk) => chunk.keyword_indexed).length,
+        vector_indexed_chunks: chunks.filter((chunk) => chunk.vector_indexed).length,
+        chunks,
+      },
+      access_recorded: false,
+    };
+    return response;
+  },
+  // Deliberately no cliHints: no direct CLI command is registered.
 };
 
 const put_page: Operation = {
@@ -6136,7 +6261,7 @@ const extraction_review: Operation = {
 
 export const operations: Operation[] = [
   // Page CRUD
-  get_page, put_page, delete_page, list_pages,
+  get_page, peek_page, put_page, delete_page, list_pages,
   // v0.26.5 destructive-guard ops (page-level soft-delete + recovery + admin purge)
   restore_page, purge_deleted_pages,
   // Search

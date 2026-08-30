@@ -5,7 +5,12 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { dispatchToolCall, validateParams, buildOperationContext } from './dispatch.ts';
+import {
+  dispatchToolCall,
+  validateParams,
+  buildOperationContext,
+  operationAvailableOnTransport,
+} from './dispatch.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import {
@@ -24,8 +29,9 @@ export async function startMcpServer(engine: BrainEngine) {
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a
   // filtered OPERATIONS subset instead of duplicating this shape.
+  const stdioOperations = operations.filter((op) => operationAvailableOnTransport(op, 'stdio'));
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolDefs(operations),
+    tools: buildToolDefs(stdioOperations),
   }));
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
@@ -152,7 +158,7 @@ export async function handleToolCall(
   opts?: { sourceId?: string },
 ): Promise<unknown> {
   const op = operations.find(o => o.name === tool);
-  if (!op) throw new Error(`Unknown tool: ${tool}`);
+  if (!op || !operationAvailableOnTransport(op, 'local-cli')) throw new Error(`Unknown tool: ${tool}`);
 
   const validationError = validateParams(op, params);
   if (validationError) throw new Error(validationError);

@@ -177,6 +177,87 @@ export interface Page {
   corpus_generation?: string | null;
 }
 
+/**
+ * Metadata-only view of one persisted chunk for the authenticated page
+ * readback surface. Deliberately excludes chunk_text and every embedding
+ * column: callers can determine whether a chunk is retrievable without
+ * receiving a second copy of page content or raw vector material.
+ */
+export interface PagePeekChunkRetrievability {
+  chunk_index: number;
+  chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset';
+  modality: 'text' | 'image';
+  model: string;
+  token_count: number | null;
+  embedded_at: Date | null;
+  keyword_indexed: boolean;
+  vector_indexed: boolean;
+}
+
+/**
+ * Engine-owned, point-in-time page snapshot used by `peek_page`.
+ *
+ * This is intentionally narrower than Page: it contains only the compiled
+ * body and persisted state needed to verify retrieval readiness. Engines
+ * populate it from one source_id + slug query inside a transaction. Privacy
+ * filtering of compiled_truth happens at the authenticated operation boundary,
+ * after the snapshot has been acquired.
+ */
+export interface PagePeekSnapshot {
+  source_id: string;
+  slug: string;
+  compiled_truth: string;
+  frontmatter: Record<string, unknown>;
+  content_hash: string | null;
+  deleted_at: Date | null;
+  quarantined: boolean;
+  quarantine: unknown | null;
+  embed_skipped: boolean;
+  embed_skip: unknown | null;
+  chunks: PagePeekChunkRetrievability[];
+}
+
+/** Stable authenticated HTTP response contract for `peek_page`. */
+export interface PagePeekResponse {
+  /** Canonical schema field consumed by governed readback adapters. */
+  schema: 'gbrain_page_peek/v1';
+  /** Backward-compatible schema spelling retained for existing callers. */
+  schema_version: 'gbrain_page_peek/v1';
+  status: 'ok';
+  source_id: string;
+  slug: string;
+  /** Privacy-filtered compiled page body. */
+  body: string;
+  /** SHA-256 of `body`, after privacy filtering. */
+  body_sha256: string;
+  /** Backward-compatible body spelling retained for existing callers. */
+  compiled_truth: string;
+  frontmatter: Record<string, unknown>;
+  content_hash: string | null;
+  deleted: boolean;
+  deleted_at: Date | null;
+  quarantined: boolean;
+  quarantine: unknown | null;
+  embed_skipped: boolean;
+  embed_skip: unknown | null;
+  /**
+   * Strict operational policy verdict. True only for an active page that is
+   * neither quarantined nor embed-skipped and has at least one indexed chunk.
+   */
+  retrievable: boolean;
+  readback_mode: 'non_mutating_page_readback/v1';
+  retrievability: {
+    chunk_count: number;
+    /** Unique chunks with either keyword or vector indexing. */
+    indexed_chunks: number;
+    keyword_indexed_chunks: number;
+    vector_indexed_chunks: number;
+    chunks: PagePeekChunkRetrievability[];
+  };
+  /** `peek_page` never updates retrieval access signals or telemetry rows. */
+  access_recorded: false;
+}
+
 export type EffectiveDateSource =
   | 'event_date'
   | 'date'

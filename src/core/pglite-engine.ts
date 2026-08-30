@@ -16,7 +16,12 @@ import type {
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
-import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import {
+  MAX_SEARCH_LIMIT,
+  PAGE_PEEK_SNAPSHOT_SQL,
+  clampSearchLimit,
+  pagePeekSnapshotFromRows,
+} from './engine.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
 // exception because its local try/catch preserves a soft fallback.
@@ -48,7 +53,7 @@ import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { acquireLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { getFtsLanguage } from './fts-language.ts';
 import type {
-  Page, PageInput, PageFilters, PageType,
+  Page, PageInput, PageFilters, PageType, PagePeekSnapshot,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
@@ -1015,6 +1020,24 @@ export class PGLiteEngine implements BrainEngine {
     );
     if (rows.length === 0) return null;
     return rowToPage(rows[0] as Record<string, unknown>);
+  }
+
+  async peekPage(
+    sourceId: string,
+    slug: string,
+    opts?: { includeDeleted?: boolean },
+  ): Promise<PagePeekSnapshot | null> {
+    // PGLite owns one backing connection, but an explicit transaction still
+    // makes the diagnostic's snapshot boundary durable and matches Postgres.
+    // PAGE_PEEK_SNAPSHOT_SQL is one statement and selects no chunk text or
+    // vector values.
+    return await this.db.transaction(async (tx) => {
+      const { rows } = await tx.query(
+        PAGE_PEEK_SNAPSHOT_SQL,
+        [sourceId, slug, opts?.includeDeleted === true],
+      );
+      return pagePeekSnapshotFromRows(rows as Record<string, unknown>[]);
+    });
   }
 
   /**

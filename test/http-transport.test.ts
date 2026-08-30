@@ -340,6 +340,32 @@ describe('http-transport: tools/call dispatch', () => {
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0].text).toContain('Unknown tool');
   });
+
+  test('9c. legacy bearer HTTP cannot discover or invoke peek_page and records no guessed-call audit', async () => {
+    const listed = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/list'),
+    });
+    const listedBody = await listed.json();
+    expect(listedBody.result.tools.map((tool: { name: string }) => tool.name)).not.toContain('peek_page');
+
+    const beforeAuditCount = srv.engine.audit.length;
+    const guessed = await fetch(`${srv.url}/mcp`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${TOK}`, 'Content-Type': 'application/json' },
+      body: rpc('tools/call', {
+        name: 'peek_page',
+        arguments: { source_id: 'default', slug: 'wiki/exact' },
+      }),
+    });
+    expect(guessed.status).toBe(200);
+    const guessedBody = await guessed.json();
+    expect(guessedBody.result.isError).toBe(true);
+    expect(JSON.parse(guessedBody.result.content[0].text).error).toBe('unknown_tool');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(srv.engine.audit.length).toBe(beforeAuditCount);
+  });
 });
 
 // --------------------------------------------------------------------------

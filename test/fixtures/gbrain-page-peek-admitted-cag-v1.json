@@ -1,0 +1,18 @@
+{
+  "consumer_contract": "Agent/services/rlm-runtime/gateway/knowledge_federation.py::_gbrain_active_state",
+  "schema": "gbrain_page_peek/v1",
+  "status": "ok",
+  "source_id": "rlm-runtime",
+  "slug": "reference-knowledge/ref-operational",
+  "body": "# Operationally retrievable",
+  "compiled_truth": "# Operationally retrievable",
+  "frontmatter": {},
+  "body_sha256": "b43b0db633f34c67b1649cb4d6ad910b5caee8877d6b33997fba1c400e94f51b",
+  "deleted": false,
+  "deleted_at": null,
+  "retrievable": true,
+  "quarantined": false,
+  "embed_skipped": false,
+  "readback_mode": "non_mutating_page_readback/v1",
+  "access_recorded": false
+}

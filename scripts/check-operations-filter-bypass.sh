@@ -3,10 +3,11 @@
 # surface. Lives alongside check-jsonb-pattern.sh / check-progress-to-stdout.sh
 # in the bun run verify chain.
 #
-# Background: serve-http.ts builds the HTTP MCP tools/list response from
-# `operations.filter(op => !op.localOnly)`. That filter is the only thing
-# keeping localOnly ops (sync_brain, file_upload, file_list, file_url —
-# any admin op the user EXPLICITLY marked as CLI-only) off the wire.
+# Background: serve-http.ts builds the HTTP MCP tools/list response from a
+# filter that combines `!op.localOnly` with the shared transport-availability
+# predicate. The first condition keeps CLI-only ops off the wire; the second
+# allows deliberately OAuth-HTTP-only ops without exposing them through stdio,
+# legacy bearer HTTP, or the local compatibility dispatcher.
 #
 # If a future HTTP-exposing module imports `operations` from
 # core/operations.ts WITHOUT applying the filter, the localOnly contract
@@ -48,8 +49,8 @@ ALLOWED=(
   "src/commands/capture.ts"                     # local CLI tool; not network-exposed
   "src/commands/enrich.ts"                       # local CLI tool; calls put_page handler with remote=false, not network-exposed
   "src/commands/book-mirror.ts"                 # local CLI tool; not network-exposed
-  "src/commands/tools-json.ts"                  # gbrain --tools-json introspection; full op list IS the purpose
-  "src/commands/serve-http.ts"                  # MUST APPLY .filter(op => !op.localOnly) — verified by grep below
+  "src/commands/tools-json.ts"                  # local CLI introspection; MUST filter OAuth-HTTP-only ops
+  "src/commands/serve-http.ts"                  # MUST APPLY localOnly + OAuth transport filters — verified below
 )
 
 # Pattern: any import that brings the `operations` VALUE in from core/operations.ts.
@@ -93,16 +94,32 @@ while IFS= read -r file; do
   fi
 done <<< "$FOUND_FILES"
 
-# Check 2: serve-http.ts MUST contain the canonical filter expression near
-# its operations import. Without the filter, the entire HTTP MCP surface
-# leaks localOnly ops.
+# Check 2: serve-http.ts MUST construct mcpOperations with BOTH the localOnly
+# exclusion and the shared OAuth-transport predicate. Each token is checked
+# separately because the repository formatter intentionally lays the filter
+# across multiple lines.
 SERVE_HTTP="src/commands/serve-http.ts"
 if [ -f "$SERVE_HTTP" ]; then
-  if ! grep -qE 'operations\.filter\(\s*op\s*=>\s*!op\.localOnly\s*\)' "$SERVE_HTTP"; then
+  if ! grep -qE 'const mcpOperations = operations\.filter\(' "$SERVE_HTTP" ||
+     ! grep -qE '!op\.localOnly' "$SERVE_HTTP" ||
+     ! grep -qE "operationAvailableOnTransport\(op, 'oauth-http'\)" "$SERVE_HTTP"; then
     echo "FAIL: $SERVE_HTTP no longer contains the canonical"
-    echo "      operations.filter(op => !op.localOnly) expression. The HTTP MCP"
-    echo "      surface depends on this filter to enforce localOnly. Restore"
-    echo "      the filter or refactor the trust boundary explicitly."
+    echo "      localOnly + OAuth transport filter. The HTTP MCP surface depends"
+    echo "      on both conditions. Restore the filter or refactor the trust"
+    echo "      boundary explicitly."
+    FAIL=1
+  fi
+fi
+
+# Check 3: CLI introspection is itself an exposure surface. It must use the
+# shared local-cli predicate so authenticated OAuth-only operations are not
+# advertised by `gbrain --tools-json`.
+TOOLS_JSON="src/commands/tools-json.ts"
+if [ -f "$TOOLS_JSON" ]; then
+  if ! grep -qE "operationAvailableOnTransport\(op, 'local-cli'\)" "$TOOLS_JSON"; then
+    echo "FAIL: $TOOLS_JSON no longer filters operations through the canonical"
+    echo "      local-cli transport predicate. OAuth-HTTP-only operations must"
+    echo "      not be discoverable through gbrain --tools-json."
     FAIL=1
   fi
 fi

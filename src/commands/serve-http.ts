@@ -30,7 +30,12 @@ import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider, validateTokenEndpointAuthMethod } from '../core/oauth-provider.ts';
 import type { SqlQuery } from '../core/oauth-provider.ts';
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
-import { summarizeMcpParams, dispatchToolCall } from '../mcp/dispatch.ts';
+import {
+  summarizeMcpParams,
+  dispatchToolCall,
+  operationAvailableOnTransport,
+  suppressOperationTelemetry,
+} from '../mcp/dispatch.ts';
 import { paramDefToSchema } from '../mcp/tool-defs.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
@@ -1839,7 +1844,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // MCP tool calls (bearer auth + scope enforcement)
   // ---------------------------------------------------------------------------
-  const mcpOperations = operations.filter(op => !op.localOnly);
+  const mcpOperations = operations.filter(
+    (op) => !op.localOnly && operationAvailableOnTransport(op, 'oauth-http'),
+  );
 
   // v0.36.x #1076: MCP Streamable HTTP spec — GET /mcp opens an optional SSE
   // backchannel for server-initiated messages. gbrain's transport is stateless
@@ -1935,35 +1942,38 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return { content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_operation', message: `Unknown: ${name}` }) }], isError: true };
       }
 
+      const suppressTelemetry = suppressOperationTelemetry(op);
+
       // Scope enforcement (v0.28: hasScope replaces exact-string-match so
-      // admin tokens satisfy any scope, write satisfies read, and the new
-      // sources_admin / users_admin scopes resolve through the same
-      // hierarchy. Plain string includes() at this site would have made
-      // sources_admin tokens look like they couldn't even read.)
+      // write satisfies read and the admin/read-write management axis resolves
+      // through one hierarchy. Narrow opt-in siblings such as agent/readback
+      // remain exact. Plain string includes() here would drift from both.)
       const requiredScope = op.scope || 'read';
       if (!hasScope(authInfo.scopes, requiredScope)) {
         // v0.28.10: persist scope-rejected attempts. Same operator-visibility
         // motivation as the unknown-op path — and it makes the v0.26.3
         // persistence regression test reliable across both rejection paths.
         const latency = Date.now() - startTime;
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', `insufficient_scope: requires '${requiredScope}'`],
-            [null],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'error',
-          error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
-          timestamp: new Date().toISOString(),
-        });
+        if (!suppressTelemetry) {
+          try {
+            await executeRawJsonb(
+              engine,
+              `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+              [authInfo.clientId, agentName, name, latency, 'error', `insufficient_scope: requires '${requiredScope}'`],
+              [null],
+            );
+          } catch { /* best effort */ }
+          broadcastEvent({
+            agent: agentName,
+            operation: name,
+            scopes: authInfo.scopes.join(','),
+            latency_ms: latency,
+            status: 'error',
+            error: { code: 'insufficient_scope', message: `requires '${requiredScope}'` },
+            timestamp: new Date().toISOString(),
+          });
+        }
         return {
           content: [{
             type: 'text',
@@ -2019,9 +2029,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       try {
         toolResult = await dispatchToolCall(engine, name, params as Record<string, unknown> | undefined, {
           remote: true,
+          transport: 'oauth-http',
           takesHoldersAllowList: tokenAllowList,
           sourceId: tokenSourceId,
-          metaHook: getBrainHotMemoryMeta,
+          ...(!suppressTelemetry ? { metaHook: getBrainHotMemoryMeta } : {}),
           // v0.31 follow-up fix: thread auth so the whoami op (and any
           // future scope-aware handlers) can introspect the caller. The
           // original D12/eE1 refactor moved dispatch into dispatchToolCall
@@ -2042,25 +2053,27 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         // real object, not a JSON-encoded string.
         const latency = Date.now() - startTime;
         const errorPayload = serializeError(e);
-        try {
-          await executeRawJsonb(
-            engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', errorPayload.message],
-            [logParamsObj],
-          );
-        } catch { /* best effort */ }
-        broadcastEvent({
-          agent: agentName,
-          operation: name,
-          params: broadcastParams,
-          scopes: authInfo.scopes.join(','),
-          latency_ms: latency,
-          status: 'error',
-          error: errorPayload,
-          timestamp: new Date().toISOString(),
-        });
+        if (!suppressTelemetry) {
+          try {
+            await executeRawJsonb(
+              engine,
+              `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+              [authInfo.clientId, agentName, name, latency, 'error', errorPayload.message],
+              [logParamsObj],
+            );
+          } catch { /* best effort */ }
+          broadcastEvent({
+            agent: agentName,
+            operation: name,
+            params: broadcastParams,
+            scopes: authInfo.scopes.join(','),
+            latency_ms: latency,
+            status: 'error',
+            error: errorPayload,
+            timestamp: new Date().toISOString(),
+          });
+        }
         return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
       }
 
@@ -2074,12 +2087,37 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           const parsed = JSON.parse(toolResult.content[0]?.text ?? '{}');
           errMsg = parsed.error?.message ?? parsed.message ?? errMsg;
         } catch { /* ignore */ }
+        if (!suppressTelemetry) {
+          try {
+            await executeRawJsonb(
+              engine,
+              `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+              [authInfo.clientId, agentName, name, latency, 'error', errMsg],
+              [logParamsObj],
+            );
+          } catch { /* best effort */ }
+          broadcastEvent({
+            agent: agentName,
+            operation: name,
+            params: broadcastParams,
+            scopes: authInfo.scopes.join(','),
+            latency_ms: latency,
+            status: 'error',
+            error: { code: 'op_error', message: errMsg },
+            timestamp: new Date().toISOString(),
+          });
+        }
+        return toolResult;
+      }
+
+      if (!suppressTelemetry) {
         try {
           await executeRawJsonb(
             engine,
-            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-            [authInfo.clientId, agentName, name, latency, 'error', errMsg],
+            `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+            [authInfo.clientId, agentName, name, latency, 'success'],
             [logParamsObj],
           );
         } catch { /* best effort */ }
@@ -2089,31 +2127,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           params: broadcastParams,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
-          status: 'error',
-          error: { code: 'op_error', message: errMsg },
+          status: 'success',
           timestamp: new Date().toISOString(),
         });
-        return toolResult;
       }
-
-      try {
-        await executeRawJsonb(
-          engine,
-          `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-          [authInfo.clientId, agentName, name, latency, 'success'],
-          [logParamsObj],
-        );
-      } catch { /* best effort */ }
-      broadcastEvent({
-        agent: agentName,
-        operation: name,
-        params: broadcastParams,
-        scopes: authInfo.scopes.join(','),
-        latency_ms: latency,
-        status: 'success',
-        timestamp: new Date().toISOString(),
-      });
       return toolResult;
     });
 

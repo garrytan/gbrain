@@ -11,10 +11,10 @@ import {
 } from '../src/core/scope.ts';
 
 // ---------------------------------------------------------------------------
-// Hierarchy table — admin → all, write → read, sibling non-implication
+// Hierarchy table — admin → legacy management axis, write → read, siblings exact
 // ---------------------------------------------------------------------------
 
-describe('hasScope — admin implies all (escape hatch)', () => {
+describe('hasScope — admin implies the legacy management/read-write axis', () => {
   const all: Scope[] = ['read', 'write', 'admin', 'sources_admin', 'users_admin'];
   for (const required of all) {
     test(`admin → ${required}`, () => {
@@ -63,6 +63,19 @@ describe('hasScope — read scope', () => {
   });
   test('read does NOT imply write', () => {
     expect(hasScope(['read'], 'write')).toBe(false);
+  });
+});
+
+describe('hasScope — readback is an opt-in sibling capability', () => {
+  test('readback self-implies only', () => {
+    expect(hasScope(['readback'], 'readback')).toBe(true);
+    expect(hasScope(['readback'], 'read')).toBe(false);
+    expect(hasScope(['readback'], 'write')).toBe(false);
+  });
+  test('admin/read/write do NOT imply readback', () => {
+    expect(hasScope(['admin'], 'readback')).toBe(false);
+    expect(hasScope(['write'], 'readback')).toBe(false);
+    expect(hasScope(['read'], 'readback')).toBe(false);
   });
 });
 
@@ -129,20 +142,22 @@ describe('F3 refresh-token subset semantics under hasScope', () => {
 // ---------------------------------------------------------------------------
 
 describe('ALLOWED_SCOPES — exact list pinned', () => {
-  test('contains the 6 canonical scopes (v0.38: agent added)', () => {
-    expect(ALLOWED_SCOPES.size).toBe(6);
+  test('contains the 7 canonical scopes (readback is explicit opt-in)', () => {
+    expect(ALLOWED_SCOPES.size).toBe(7);
     expect(ALLOWED_SCOPES.has('read')).toBe(true);
     expect(ALLOWED_SCOPES.has('write')).toBe(true);
     expect(ALLOWED_SCOPES.has('admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('sources_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('users_admin')).toBe(true);
     expect(ALLOWED_SCOPES.has('agent')).toBe(true);
+    expect(ALLOWED_SCOPES.has('readback')).toBe(true);
   });
   test('list is sorted alphabetically (deterministic for wire/drift check)', () => {
     expect([...ALLOWED_SCOPES_LIST]).toEqual([
       'admin',
       'agent',
       'read',
+      'readback',
       'sources_admin',
       'users_admin',
       'write',

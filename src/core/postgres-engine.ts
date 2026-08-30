@@ -40,7 +40,12 @@ import { logBatchRetry as auditLogBatchRetry, logBatchExhausted as auditLogBatch
 import type {
   DomainBankSampleOpts, CorpusSampleOpts, DomainBankRow,
 } from './types.ts';
-import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
+import {
+  MAX_SEARCH_LIMIT,
+  PAGE_PEEK_SNAPSHOT_SQL,
+  clampSearchLimit,
+  pagePeekSnapshotFromRows,
+} from './engine.ts';
 import { deriveResolutionTuple, finalizeScorecard } from './takes-resolution.ts';
 import { normalizeWeightForStorage } from './takes-fence.ts';
 import { executeRawJsonb } from './sql-query.ts';
@@ -59,7 +64,7 @@ import {
 import { getFtsLanguage } from './fts-language.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import type {
-  Page, PageInput, PageFilters, PageType,
+  Page, PageInput, PageFilters, PageType, PagePeekSnapshot,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
@@ -1065,6 +1070,25 @@ export class PostgresEngine implements BrainEngine {
       if (rows.length === 0) return null;
       return rowToPage(rows[0]);
     });
+  }
+
+  async peekPage(
+    sourceId: string,
+    slug: string,
+    opts?: { includeDeleted?: boolean },
+  ): Promise<PagePeekSnapshot | null> {
+    // Always take the transaction path even when optional RLS scope binding is
+    // disabled. The shared query itself is a single statement snapshot; the
+    // explicit read transaction also gives this diagnostic a dedicated,
+    // source-bound lifecycle and prevents future multi-statement expansion
+    // from silently losing snapshot ownership.
+    return await this.withScopedReadTransaction(undefined, sourceId, async (tx) => {
+      const rows = await tx.unsafe(
+        PAGE_PEEK_SNAPSHOT_SQL,
+        [sourceId, slug, opts?.includeDeleted === true] as Parameters<typeof tx.unsafe>[1],
+      );
+      return pagePeekSnapshotFromRows(rows as unknown as Record<string, unknown>[]);
+    }, { alwaysTransaction: true });
   }
 
   /**

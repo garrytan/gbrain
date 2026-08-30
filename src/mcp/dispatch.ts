@@ -85,6 +85,21 @@ export interface DispatchOpts {
   auth?: AuthInfo;
 }
 
+export type OperationTransport = NonNullable<OperationContext['transport']> | 'local-cli';
+
+/** Fail-closed transport visibility for narrowly exposed operations. */
+export function operationAvailableOnTransport(
+  op: Operation,
+  transport: OperationTransport | undefined,
+): boolean {
+  return op.oauthHttpOnly !== true || transport === 'oauth-http';
+}
+
+/** Single predicate used by dispatch and HTTP telemetry owners. */
+export function suppressOperationTelemetry(op: Operation): boolean {
+  return op.suppressTelemetry === true;
+}
+
 /**
  * Build a privacy-safe summary of MCP request params for logging + the admin
  * SSE feed.
@@ -253,6 +268,16 @@ export async function dispatchToolCall(
     };
   }
 
+  // OAuth-HTTP-only operations must remain undiscoverable when a caller
+  // guesses their name on stdio, legacy bearer HTTP, local CLI, or a direct
+  // programmatic dispatch that forgot to identify its transport.
+  if (!operationAvailableOnTransport(op, opts.transport)) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'unknown_tool', message: `Unknown tool: ${name}` }, null, 2) }],
+      isError: true,
+    };
+  }
+
   const safeParams = params || {};
   const validationError = validateParams(op, safeParams);
   if (validationError) {
@@ -291,7 +316,7 @@ export async function dispatchToolCall(
     // The hook is wrapped in its own try/catch — any DB blip / cache miss /
     // helper crash degrades to no `_meta` rather than flipping the whole
     // tool call to error.
-    if (opts.metaHook) {
+    if (opts.metaHook && !suppressOperationTelemetry(op)) {
       try {
         const meta = await opts.metaHook(name, ctx);
         if (meta && Object.keys(meta).length > 0) out._meta = meta;

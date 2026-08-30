@@ -15,6 +15,8 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { createHash } from 'crypto';
 import { hasDatabase } from './helpers.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
+import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../../src/core/takes-fence.ts';
 
 const skip = !hasDatabase();
 const describeE2E = skip ? describe.skip : describe;
@@ -55,7 +57,7 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     // get the subset they ask for — adding admin to the client's allowed
     // ceiling does not auto-grant it to every minted token.
     const regOutput = execSync(
-      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin"',
+      'bun run src/cli.ts auth register-client e2e-oauth-test --grant-types client_credentials --scopes "read write admin readback"',
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } }
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);
@@ -366,6 +368,101 @@ describeE2E('serve-http OAuth 2.1 E2E (v0.26.1 + v0.26.2 + v0.26.3)', () => {
     expect(body).not.toContain('invalid_token');
     expect(body).not.toContain('insufficient_scope');
   }, 15_000);
+
+  test('peek_page is exact OAuth readback with privacy filtering and no telemetry mutation', async () => {
+    const postgres = (await import('postgres')).default;
+    const sql = postgres(process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL || '', { prepare: false });
+    const slug = `e2e-peek-page-${process.pid}`;
+
+    try {
+      await sql`DELETE FROM pages WHERE source_id = 'default' AND slug = ${slug}`;
+
+      const writer = await mintToken('read write');
+      const content = `---
+title: OAuth peek fixture
+---
+# Public body
+
+${TAKES_FENCE_BEGIN}
+| # | claim | kind | who | weight | since | source |
+|---|-------|------|-----|--------|-------|--------|
+| 1 | E2E_PRIVATE_TAKE | take | test | 0.9 | 2026-08-29 | fixture |
+${TAKES_FENCE_END}
+
+${FACTS_FENCE_BEGIN}
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | E2E_PRIVATE_FACT | fact | 1.0 | private | high | 2026-08-29 |  | fixture |  |
+| 2 | E2E_WORLD_FACT | fact | 1.0 | world | high | 2026-08-29 |  | fixture |  |
+${FACTS_FENCE_END}
+`;
+      const put = await mcpCall(writer.access_token, 'tools/call', {
+        name: 'put_page',
+        arguments: { slug, content },
+      });
+      expect(put.status).not.toBe(401);
+      expect(await put.text()).not.toContain('"isError":true');
+
+      const readback = await mintToken('readback');
+      const list = await mcpCall(readback.access_token, 'tools/list');
+      expect(await list.text()).toContain('peek_page');
+
+      const beforeLog = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM mcp_request_log
+        WHERE operation = 'peek_page'
+      `;
+      const beforePage = await sql<{ last_retrieved_at: Date | null }[]>`
+        SELECT last_retrieved_at
+        FROM pages
+        WHERE source_id = 'default' AND slug = ${slug}
+      `;
+
+      const peek = await mcpCall(readback.access_token, 'tools/call', {
+        name: 'peek_page',
+        arguments: { source_id: 'default', slug },
+      });
+      expect(peek.status).not.toBe(401);
+      expect(peek.status).not.toBe(403);
+      const body = await peek.text();
+      expect(body).toContain('gbrain_page_peek/v1');
+      expect(body).toContain('E2E_WORLD_FACT');
+      expect(body).not.toContain('E2E_PRIVATE_FACT');
+      expect(body).not.toContain('E2E_PRIVATE_TAKE');
+      expect(body).not.toContain('last_retrieved_at');
+      expect(body).not.toContain('brain_hot_memory');
+
+      const afterLog = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM mcp_request_log
+        WHERE operation = 'peek_page'
+      `;
+      const afterPage = await sql<{ last_retrieved_at: Date | null }[]>`
+        SELECT last_retrieved_at
+        FROM pages
+        WHERE source_id = 'default' AND slug = ${slug}
+      `;
+      expect(Number(afterLog[0]?.count)).toBe(Number(beforeLog[0]?.count));
+      expect(afterPage[0]?.last_retrieved_at ?? null).toEqual(beforePage[0]?.last_retrieved_at ?? null);
+
+      const adminOnly = await mintToken('admin');
+      const rejected = await mcpCall(adminOnly.access_token, 'tools/call', {
+        name: 'peek_page',
+        arguments: { source_id: 'default', slug },
+      });
+      expect(await rejected.text()).toContain('insufficient_scope');
+
+      const afterRejectedLog = await sql<{ count: number }[]>`
+        SELECT COUNT(*)::int AS count
+        FROM mcp_request_log
+        WHERE operation = 'peek_page'
+      `;
+      expect(Number(afterRejectedLog[0]?.count)).toBe(Number(beforeLog[0]?.count));
+    } finally {
+      await sql`DELETE FROM pages WHERE source_id = 'default' AND slug = ${slug}`;
+      await sql.end({ timeout: 5 });
+    }
+  }, 30_000);
 
   // =========================================================================
   // Health endpoint (no auth required) — v0.28.10 made /health liveness-only;

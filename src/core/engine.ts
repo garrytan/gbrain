@@ -1,5 +1,5 @@
 import type {
-  Page, PageInput, PageFilters, GetPageOpts,
+  Page, PageInput, PageFilters, GetPageOpts, PagePeekSnapshot,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath, RelationalFanoutRow, RelationalFanoutOpts,
@@ -21,6 +21,8 @@ import type {
   AdjacencyRow,
   EnrichCandidatesOpts, EnrichCandidate,
 } from './types.ts';
+import { EMBED_SKIP_KEY, isEmbedSkipped } from './embed-skip.ts';
+import { QUARANTINE_KEY, isQuarantined } from './quarantine.ts';
 
 /**
  * v0.27.1: file row for binary-asset metadata. Mirrors the `files` table
@@ -656,6 +658,100 @@ export function clampSearchLimit(limit: number | undefined, defaultLimit = 20, c
   return Math.min(Math.floor(limit), cap);
 }
 
+/**
+ * Shared Postgres/PGLite projection for the exact page readback snapshot.
+ *
+ * One statement gives the page row and all chunk retrievability metadata a
+ * single MVCC statement snapshot. It intentionally never selects chunk_text,
+ * embedding, embedding_image, or embedding_multimodal values; only NULL checks
+ * leave the database. Both engines execute this same SQL inside a transaction.
+ */
+export const PAGE_PEEK_SNAPSHOT_SQL = `
+  SELECT
+    p.source_id,
+    p.slug,
+    p.compiled_truth,
+    p.frontmatter,
+    p.content_hash,
+    p.deleted_at,
+    cc.chunk_index,
+    cc.chunk_source,
+    cc.modality,
+    cc.model,
+    cc.token_count,
+    cc.embedded_at,
+    (cc.modality = 'text' AND cc.search_vector IS NOT NULL) AS keyword_indexed,
+    CASE
+      WHEN cc.modality = 'image'
+        THEN cc.embedding_image IS NOT NULL OR cc.embedding_multimodal IS NOT NULL
+      ELSE cc.embedding IS NOT NULL OR cc.embedding_multimodal IS NOT NULL
+    END AS vector_indexed
+  FROM pages p
+  LEFT JOIN content_chunks cc ON cc.page_id = p.id
+  WHERE p.source_id = $1
+    AND p.slug = $2
+    AND ($3::boolean OR p.deleted_at IS NULL)
+  ORDER BY cc.chunk_index ASC NULLS LAST, cc.id ASC NULLS LAST
+`;
+
+function pagePeekDate(value: unknown): Date | null {
+  if (value == null) return null;
+  return value instanceof Date ? value : new Date(String(value));
+}
+
+function pagePeekFrontmatter(value: unknown): Record<string, unknown> {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error('Invalid peek_page frontmatter: expected a JSON object.');
+    }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Invalid peek_page frontmatter: expected a JSON object.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Map the shared flat SQL projection into the engine snapshot contract. */
+export function pagePeekSnapshotFromRows(
+  rows: readonly Record<string, unknown>[],
+): PagePeekSnapshot | null {
+  const first = rows[0];
+  if (!first) return null;
+
+  const frontmatter = pagePeekFrontmatter(first.frontmatter);
+  const quarantine = frontmatter[QUARANTINE_KEY] ?? null;
+  const embedSkip = frontmatter[EMBED_SKIP_KEY] ?? null;
+  const chunks = rows
+    .filter((row) => row.chunk_index != null)
+    .map((row) => ({
+      chunk_index: Number(row.chunk_index),
+      chunk_source: row.chunk_source as 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset',
+      modality: row.modality === 'image' ? 'image' as const : 'text' as const,
+      model: typeof row.model === 'string' ? row.model : '',
+      token_count: row.token_count == null ? null : Number(row.token_count),
+      embedded_at: pagePeekDate(row.embedded_at),
+      keyword_indexed: row.keyword_indexed === true,
+      vector_indexed: row.vector_indexed === true,
+    }));
+
+  return {
+    source_id: String(first.source_id),
+    slug: String(first.slug),
+    compiled_truth: typeof first.compiled_truth === 'string' ? first.compiled_truth : '',
+    frontmatter,
+    content_hash: typeof first.content_hash === 'string' ? first.content_hash : null,
+    deleted_at: pagePeekDate(first.deleted_at),
+    quarantined: isQuarantined(frontmatter),
+    quarantine,
+    embed_skipped: isEmbedSkipped(frontmatter),
+    embed_skip: embedSkip,
+    chunks,
+  };
+}
+
 export interface BrainEngine {
   /** Discriminator: lets migrations and other consumers branch on engine kind without instanceof + dynamic imports. */
   readonly kind: 'postgres' | 'pglite';
@@ -690,6 +786,13 @@ export interface BrainEngine {
    * by `restore_page` flow, and by operator diagnostics.
    */
   getPage(slug: string, opts?: GetPageOpts): Promise<Page | null>;
+  /**
+   * Authenticated readback primitive: exact source_id + slug only, with an
+   * optional soft-deleted-row opt-in. Implementations must return the page and
+   * chunk retrievability metadata from one transactional snapshot and must not
+   * update last_retrieved_at or any other access/telemetry state.
+   */
+  peekPage(sourceId: string, slug: string, opts?: { includeDeleted?: boolean }): Promise<PagePeekSnapshot | null>;
   /**
    * Insert or update a page. When `opts.sourceId` is omitted, the row is
    * written under the schema DEFAULT ('default'). When provided, `source_id`
