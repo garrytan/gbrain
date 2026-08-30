@@ -123,6 +123,7 @@ export async function upsertOpenLoop(
        counterparty_email = COALESCE(EXCLUDED.counterparty_email, open_loops.counterparty_email),
        summary = EXCLUDED.summary,
        evidence = EXCLUDED.evidence,
+       thread_id = COALESCE(EXCLUDED.thread_id, open_loops.thread_id),
        page_slug = COALESCE(EXCLUDED.page_slug, open_loops.page_slug),
        due_at = COALESCE(EXCLUDED.due_at, open_loops.due_at),
        confidence = EXCLUDED.confidence,
