@@ -830,6 +830,13 @@ describe('#3374 — transient network retry branch', () => {
     expect(isTransientNetworkEmbedError(new Error('socket hang up'))).toBe(true);
     expect(isTransientNetworkEmbedError(new Error('fetch failed'))).toBe(true);
     expect(isTransientNetworkEmbedError(new Error('request timed out'))).toBe(true);
+    // Bun's DNS resolver uses DNS_ETIMEOUT as its code and ETIMEOUT (without
+    // the D in ETIMEDOUT) in getaddrinfo messages.
+    expect(isTransientNetworkEmbedError(new Error('getaddrinfo ETIMEOUT api.voyageai.com'))).toBe(true);
+    expect(isTransientNetworkEmbedError({ code: 'ETIMEOUT' })).toBe(true);
+    expect(isTransientNetworkEmbedError({ code: 'DNS_ETIMEOUT' })).toBe(true);
+    expect(isTransientNetworkEmbedError({ cause: { code: 'DNS_ETIMEOUT' } })).toBe(true);
+    expect(isTransientNetworkEmbedError(new Error('DNS_ETIMEOUT'))).toBe(true);
     // NOT transient: plain 500, permanent 4xx, caller aborts.
     expect(isTransientNetworkEmbedError(new Error('500 internal server error'))).toBe(false);
     expect(isTransientNetworkEmbedError(new Error('400 invalid input'))).toBe(false);
@@ -859,6 +866,23 @@ describe('#3374 — transient network retry branch', () => {
       if (calls === 1) {
         const err = new Error('socket hang up');
         (err as any).code = 'ECONNRESET';
+        throw err;
+      }
+      return [new Float32Array(1536)];
+    };
+    const result = await embedBatchWithBackoff(['x']);
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(1);
+  }, 10_000);
+
+  test('Bun DNS ETIMEOUT retries then succeeds', async () => {
+    const { embedBatchWithBackoff } = await import('../src/commands/embed.ts');
+    let calls = 0;
+    embedBatchBehavior = async () => {
+      calls++;
+      if (calls === 1) {
+        const err = new Error('getaddrinfo ETIMEOUT api.voyageai.com');
+        (err as any).code = 'DNS_ETIMEOUT';
         throw err;
       }
       return [new Float32Array(1536)];

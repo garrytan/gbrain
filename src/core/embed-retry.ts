@@ -283,7 +283,8 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
 
 /**
  * #3374 — transient NETWORK failures: socket timeouts, connection resets,
- * DNS blips. Structured detection first (error `code` / TimeoutError name
+ * DNS blips (including Bun's `DNS_ETIMEOUT` code and `ETIMEOUT` getaddrinfo
+ * message). Structured detection first (error `code` / TimeoutError name
  * through the cause chain, matching statusFromCause's walk), message-match
  * fallback for wrappers that strip the code. Deliberately does NOT match
  * caller-initiated aborts: the retry loop re-checks `signal.aborted` BEFORE
@@ -292,7 +293,7 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
  * @internal exported for unit tests.
  */
 export function isTransientNetworkEmbedError(e: unknown): boolean {
-  const TRANSIENT_CODES = /^(ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
+  const TRANSIENT_CODES = /^(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
   let cur: unknown = e;
   for (let depth = 0; depth < 5 && cur !== undefined && cur !== null; depth++) {
     const obj = cur as { code?: unknown; name?: unknown; cause?: unknown };
@@ -301,5 +302,5 @@ export function isTransientNetworkEmbedError(e: unknown): boolean {
     cur = obj.cause;
   }
   const msg = e instanceof Error ? e.message : String(e);
-  return /\b(ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|EAI_AGAIN)\b|socket hang up|fetch failed|connect(ion)? timeout|connection (reset|closed)|network (error|timeout)|request timed out|timed out/i.test(msg);
+  return /\b(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|EAI_AGAIN)\b|socket hang up|fetch failed|connect(ion)? timeout|connection (reset|closed)|network (error|timeout)|request timed out|timed out/i.test(msg);
 }
