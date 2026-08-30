@@ -293,7 +293,7 @@ const OP_AREAS: Record<string, string> = {
   entity_identity_link: 'entities', entity_identity_unlink: 'entities',
   entity_identity_list: 'entities',
   // v0.47 open-loop engine (google source kind)
-  open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops',
+  open_loops: 'loops', loops_close: 'loops', loops_mute: 'loops', loops_unmute: 'loops',
   // insight / signal reads
   get_recent_salience: 'insights', find_anomalies: 'insights',
   find_contradictions: 'insights', find_experts: 'insights',

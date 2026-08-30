@@ -27,6 +27,8 @@ import {
   _resetCliExitVerdictForTests,
 } from '../src/core/cli-force-exit.ts';
 import {
+  addSuppression,
+  listOpenLoops,
   loadSuppressions,
   upsertOpenLoop,
   type OpenLoopUpsert,
@@ -362,6 +364,55 @@ describe('runLoops', () => {
     expect(r.exitCalled).toBe(2);
   });
 
+  test('unmute removes the row the mute wrote, matching case-insensitively', async () => {
+    await captured(() => runLoops(engine, ['mute', 'sender', 'Bob@Example.com']));
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender', 'BOB@example.COM']));
+    expect(r.out).toContain('Unmuted sender BOB@example.COM');
+    expect(r.verdict).toBe(0);
+    expect((await loadSuppressions(engine, 'default')).senders.has('bob@example.com')).toBe(false);
+  });
+
+  test('a repeated unmute is a no-op that still exits 0', async () => {
+    await captured(() => runLoops(engine, ['mute', 'sender', 'bob@example.com']));
+    const first = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    const second = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    expect(first.out).toContain('Unmuted');
+    expect(second.out).toContain('had no suppression');
+    // The idempotency contract: a retried unmute must not look like a failure.
+    expect(second.verdict).toBe(0);
+  });
+
+  test('unmute --json envelope reports ok:true with removed true then false', async () => {
+    await captured(() => runLoops(engine, ['mute', 'thread', '18C2F4A9B3D21E07']));
+    const hit = await captured(() => runLoops(engine, ['unmute', 'thread', '18C2F4A9B3D21E07', '--json']));
+    const a = JSON.parse(hit.out) as { ok: boolean; status: string; removed: boolean; value: string };
+    expect(a.ok).toBe(true);
+    expect(a.status).toBe('unmuted');
+    expect(a.removed).toBe(true);
+    expect(a.value).toBe('18c2f4a9b3d21e07');
+    const miss = await captured(() => runLoops(engine, ['unmute', 'thread', '18C2F4A9B3D21E07', '--json']));
+    const b = JSON.parse(miss.out) as { ok: boolean; status: string; removed: boolean };
+    expect(b.ok).toBe(true);
+    expect(b.status).toBe('not_muted');
+    expect(b.removed).toBe(false);
+  });
+
+  test('unmute leaves existing loops exactly as they were', async () => {
+    await upsertOpenLoop(engine, loop({ counterpartyEmail: 'bob@example.com' }));
+    await addSuppression(engine, 'default', 'sender', 'bob@example.com');
+    const before = await listOpenLoops(engine, { sourceIds: ['default'], status: 'open' });
+    await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    const after = await listOpenLoops(engine, { sourceIds: ['default'], status: 'open' });
+    expect(after.length).toBe(before.length);
+    expect(after[0].id).toBe(before[0].id);
+    expect(after[0].status).toBe('open');
+  });
+
+  test('unmute without kind/value hard-exits with usage code 2', async () => {
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender']));
+    expect(r.exitCalled).toBe(2);
+  });
+
   test('--help paths answer without touching loops', async () => {
     const w = await captured(() => runWaiting(engine, ['--help']));
     expect(w.out).toContain('gbrain waiting');
@@ -369,6 +420,7 @@ describe('runLoops', () => {
     const l = await captured(() => runLoops(engine, ['--help']));
     expect(l.out).toContain('gbrain loops');
     expect(l.out).toContain('mute');
+    expect(l.out).toContain('unmute');
     expect(w.verdict).toBe(0);
     expect(l.verdict).toBe(0);
   });

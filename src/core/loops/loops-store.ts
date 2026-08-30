@@ -273,6 +273,34 @@ export async function addSuppression(
   );
 }
 
+/**
+ * Remove one exact suppression row (`gbrain loops unmute`).
+ *
+ * The symmetric counterpart to addSuppression, and deliberately narrow: it
+ * matches the SAME (source_id, kind, value) triple the insert wrote, with the
+ * same lower-casing, so an unmute can never remove a sibling source's row or a
+ * different kind. Returns the number of rows removed — 0 is the ordinary
+ * "already not muted" answer, not an error, which keeps a repeated unmute
+ * idempotent for callers that retry.
+ *
+ * Suppressions only gate NEW loop creation (see loop-detect), so removing one
+ * changes future detection only; it never reopens or mutates existing loops.
+ */
+export async function removeSuppression(
+  engine: BrainEngine,
+  sourceId: string,
+  kind: 'sender' | 'thread',
+  value: string,
+): Promise<number> {
+  const rows = await engine.executeRaw<{ value: string }>(
+    `DELETE FROM loop_suppressions
+      WHERE source_id = $1 AND kind = $2 AND value = $3
+      RETURNING value`,
+    [sourceId, kind, value.toLowerCase()],
+  );
+  return rows.length;
+}
+
 export interface SuppressionSet {
   senders: Set<string>;
   threads: Set<string>;

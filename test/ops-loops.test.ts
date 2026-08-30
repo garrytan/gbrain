@@ -52,6 +52,7 @@ beforeEach(async () => {
 const openLoopsOp = loopsOperations.find((o) => o.name === 'open_loops')!;
 const loopsCloseOp = loopsOperations.find((o) => o.name === 'loops_close')!;
 const loopsMuteOp = loopsOperations.find((o) => o.name === 'loops_mute')!;
+const loopsUnmuteOp = loopsOperations.find((o) => o.name === 'loops_unmute')!;
 
 function ctx(over: Partial<OperationContext> = {}): OperationContext {
   return {
@@ -102,6 +103,9 @@ describe('registration', () => {
     expect(operationsByName['loops_close'].mutating).toBe(true);
     expect(operationsByName['loops_mute']).toBeDefined();
     expect(operationsByName['loops_mute'].scope).toBe('write');
+    expect(operationsByName['loops_unmute']).toBeDefined();
+    expect(operationsByName['loops_unmute'].scope).toBe('write');
+    expect(operationsByName['loops_unmute'].mutating).toBe(true);
   });
 });
 
@@ -749,5 +753,83 @@ describe('loops_mute', () => {
       { kind: 'sender', value: 'bob@example.com' },
     )) as { muted: boolean };
     expect(ok.muted).toBe(true);
+  });
+});
+
+describe('loops_unmute', () => {
+  test('removes the row loops_mute wrote and reports removed:true', async () => {
+    await loopsMuteOp.handler(ctx(), { kind: 'sender', value: 'Bob@Example.com' });
+    const res = (await loopsUnmuteOp.handler(ctx(), {
+      kind: 'sender',
+      value: 'BOB@example.COM',
+    })) as { removed: boolean; value: string; source_id: string };
+    expect(res.removed).toBe(true);
+    expect(res.value).toBe('bob@example.com');
+    expect(res.source_id).toBe('g1');
+    expect((await loadSuppressions(engine, 'g1')).senders.size).toBe(0);
+  });
+
+  test('a second unmute reports removed:false with a reason, and does not throw', async () => {
+    await loopsMuteOp.handler(ctx(), { kind: 'sender', value: 'bob@example.com' });
+    await loopsUnmuteOp.handler(ctx(), { kind: 'sender', value: 'bob@example.com' });
+    const res = (await loopsUnmuteOp.handler(ctx(), {
+      kind: 'sender',
+      value: 'bob@example.com',
+    })) as { removed: boolean; reason?: string };
+    expect(res.removed).toBe(false);
+    expect(res.reason).toContain('no matching suppression');
+  });
+
+  test('dry_run returns the action without removing', async () => {
+    await loopsMuteOp.handler(ctx(), { kind: 'sender', value: 'bob@example.com' });
+    const res = (await loopsUnmuteOp.handler(ctx({ dryRun: true }), {
+      kind: 'sender',
+      value: 'bob@example.com',
+    })) as { dry_run: boolean; action: string };
+    expect(res.dry_run).toBe(true);
+    expect(res.action).toBe('loops_unmute');
+    expect((await loadSuppressions(engine, 'g1')).senders.has('bob@example.com')).toBe(true);
+  });
+
+  test('kind is exact: unmuting a sender leaves the same value muted as a thread', async () => {
+    await loopsMuteOp.handler(ctx(), { kind: 'sender', value: 'shared-value' });
+    await loopsMuteOp.handler(ctx(), { kind: 'thread', value: 'shared-value' });
+    await loopsUnmuteOp.handler(ctx(), { kind: 'sender', value: 'shared-value' });
+    const set = await loadSuppressions(engine, 'g1');
+    expect(set.senders.has('shared-value')).toBe(false);
+    expect(set.threads.has('shared-value')).toBe(true);
+  });
+
+  test('remote caller cannot unmute outside its granted scope (throws)', async () => {
+    await loopsMuteOp.handler(ctx(), { kind: 'sender', value: 'bob@example.com' });
+    await expect(
+      loopsUnmuteOp.handler(
+        ctx({
+          remote: true,
+          auth: { token: 't', clientId: 'c', scopes: ['write'], allowedSources: ['other-src'] },
+        }),
+        { kind: 'sender', value: 'bob@example.com' },
+      ),
+    ).rejects.toThrow(/permission_denied|outside the caller's scope/);
+    expect((await loadSuppressions(engine, 'g1')).senders.has('bob@example.com')).toBe(true);
+  });
+
+  test('REGRESSION: scalar-scoped remote caller cannot unmute a DIFFERENT source via p.source_id', async () => {
+    // Mirrors the loops_mute guard: lifting another source's suppression is
+    // just as much a targeted write as planting one — it re-opens the noise
+    // channel that source's owner deliberately silenced.
+    // This file's fixture seeds only g1; the sibling source is local to this test.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('g2', 'g2', '{"kind":"google"}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await loopsMuteOp.handler(ctx({ sourceId: 'g2' }), { kind: 'sender', value: 'bob@example.com' });
+    await expect(
+      loopsUnmuteOp.handler(
+        ctx({ remote: true, sourceId: 'g1' }),
+        { kind: 'sender', value: 'bob@example.com', source_id: 'g2' },
+      ),
+    ).rejects.toThrow(/permission_denied|outside the caller's scope/);
+    expect((await loadSuppressions(engine, 'g2')).senders.has('bob@example.com')).toBe(true);
   });
 });
