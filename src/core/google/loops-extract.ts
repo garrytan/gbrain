@@ -16,7 +16,7 @@
  *   - injection-hardened: INJECTION_PATTERNS sanitation + <thread> DATA wrap
  *   - ALL-or-nothing parse barrier: a malformed batch writes NOTHING
  *   - kill switch: config loops.extraction_enabled (default ON for google
- *     sources), enqueue-side cap LOOPS_EXTRACT_MAX_PER_SWEEP
+ *     sources); eligibility gate in front of the queue, no enqueue cap
  *   - spend honesty: runs on trickle + a bounded recent window; the
  *     historical backfill is never extracted unless opted in
  */
@@ -27,6 +27,11 @@ import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
+/**
+ * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
+ * queued and the worker's concurrency sets the rate. Kept as the documented
+ * in-flight batch expectation.
+ */
 export const LOOPS_EXTRACT_MAX_PER_SWEEP = 50;
 /** Only threads whose newest message is within this window get extracted. */
 export const LOOPS_EXTRACT_WINDOW_DAYS = 30;

@@ -482,30 +482,38 @@ async function processThread(
 async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
   if (deps.extractCandidates.length === 0) return;
   try {
-    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_MAX_PER_SWEEP } = await import('./loops-extract.ts');
+    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) return;
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
-    // Newest first: the freshest threads carry the most actionable loops.
-    const picked = [...deps.extractCandidates]
-      .sort((a, b) => b.newestMs - a.newestMs)
-      .slice(0, LOOPS_EXTRACT_MAX_PER_SWEEP);
-    const dropped = deps.extractCandidates.length - picked.length;
-    if (dropped > 0) {
-      deps.log(`[google] loops_extract cap: enqueuing ${picked.length}, deferring ${dropped} (they re-candidate on next touch)`);
-    }
-    for (const c of picked) {
+    // EVERY eligible candidate is enqueued. The queue is the backlog; the
+    // worker's concurrency is the rate limit.
+    //
+    // This used to keep only the newest LOOPS_EXTRACT_MAX_PER_SWEEP and log
+    // the rest as "deferring … (they re-candidate on next touch)". That was
+    // silent data loss, not deferral: a thread only re-candidates when the
+    // thread CHANGES, so a dropped thread that nobody writes to again was
+    // never extracted at all. `maxWaiting` was a second, subtler leak — it is
+    // evaluated AFTER the idempotency-key lookup, so a brand-new key could be
+    // coalesced onto some unrelated thread's waiting job and return a row its
+    // own payload was never registered against.
+    //
+    // Newest first only orders the enqueue, so the freshest threads reach the
+    // worker first; nothing is dropped for being older.
+    const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
+    for (const c of ordered) {
       await queue.add(
         LOOPS_EXTRACT_JOB,
         { slug: c.slug, sourceId: deps.sourceId, threadId: c.threadId },
         {
           priority: 5,
-          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op.
+          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op,
+          // and this is now the ONLY dedupe mechanism in play.
           idempotency_key: `loops:${deps.sourceId}:${c.slug}:${c.newestMs}`,
-          maxWaiting: LOOPS_EXTRACT_MAX_PER_SWEEP * 2,
         },
       );
     }
+    deps.log(`[google] loops_extract: enqueued ${ordered.length} eligible thread(s)`);
   } catch (e) {
     deps.log(`[google] loops_extract enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
   }
