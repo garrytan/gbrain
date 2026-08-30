@@ -157,24 +157,33 @@ describe('add_link op — provenance + managed-built-in guard (OV4A)', () => {
 
   test('threads custom provenance through to the row', async () => {
     const op = operationsByName['add_link'];
-    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'cites', link_source: 'citation-graph' });
+    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'works_at', link_source: 'citation-graph' });
     const links = await engine.getLinks('lsrc-a');
-    expect(links.some(l => (l as any).to_slug === 'lsrc-b' && (l as any).link_source === 'citation-graph' && (l as any).link_type === 'cites')).toBe(true);
+    expect(links.some(l => (l as any).to_slug === 'lsrc-b' && (l as any).link_source === 'citation-graph' && (l as any).link_type === 'works_at')).toBe(true);
   });
 
   test("omitted link_source defaults to 'manual' (not 'markdown')", async () => {
     const op = operationsByName['add_link'];
-    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'default-prov' });
+    await op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'attended' });
     const links = await engine.getLinks('lsrc-a');
-    const row = links.find(l => (l as any).link_type === 'default-prov');
+    const row = links.find(l => (l as any).link_type === 'attended');
     expect((row as any)?.link_source).toBe('manual');
+  });
+
+  test('rejects undeclared link_type before inserting the row', async () => {
+    const op = operationsByName['add_link'];
+    await expect(
+      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'definitely_not_a_verb' }),
+    ).rejects.toMatchObject({ code: 'invalid_params' });
+    const links = await engine.getLinks('lsrc-a');
+    expect(links.some(l => (l as any).link_type === 'definitely_not_a_verb')).toBe(false);
   });
 
   for (const managed of MANAGED_LINK_SOURCES) {
     test(`rejects managed built-in '${managed}'`, async () => {
       const op = operationsByName['add_link'];
       await expect(
-        op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'g', link_source: managed }),
+        op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'mentions', link_source: managed }),
       ).rejects.toThrow(/reconciliation-managed/);
     });
   }
@@ -182,7 +191,7 @@ describe('add_link op — provenance + managed-built-in guard (OV4A)', () => {
   test("'manual' is allowed (not in the managed set)", async () => {
     const op = operationsByName['add_link'];
     await expect(
-      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'man', link_source: 'manual' }),
+      op.handler(makeCtx(), { from: 'lsrc-a', to: 'lsrc-b', link_type: 'related_to', link_source: 'manual' }),
     ).resolves.toMatchObject({ status: 'ok' });
   });
 });

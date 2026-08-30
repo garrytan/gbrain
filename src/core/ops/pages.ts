@@ -24,6 +24,12 @@ import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
+import {
+  loadActivePackForWriteVocabulary,
+  packDeclaresPageType,
+  undeclaredPageTypeMessage,
+  undeclaredPageTypeSuggestion,
+} from '../schema-pack/write-vocabulary.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
@@ -1383,6 +1389,7 @@ const capture: Operation = {
   cliHints: { name: 'capture', hidden: true },
   handler: async (ctx, p) => {
     const {
+      captureTypeFromContent,
       detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter,
       defaultSlug,
     } = await import('../capture-content.ts');
@@ -1398,7 +1405,25 @@ const capture: Operation = {
     if (normalized.length === 0) {
       throw new OperationError('invalid_params', 'Refusing to capture empty content.');
     }
-    const type = typeof p.type === 'string' && p.type.length > 0 ? p.type : 'note';
+    let type: string;
+    const explicitType = typeof p.type === 'string' && p.type.length > 0 ? p.type : undefined;
+    try {
+      type = captureTypeFromContent(content, explicitType ? { type: explicitType } : {});
+    } catch (e) {
+      throw new OperationError(
+        'invalid_params',
+        e instanceof Error ? e.message : String(e),
+        'Pass a string page type, or remove the type field to use the default note type.',
+      );
+    }
+    const activePack = await loadActivePackForWriteVocabulary(ctx);
+    if (activePack && !packDeclaresPageType(activePack, type)) {
+      throw new OperationError(
+        'invalid_params',
+        undeclaredPageTypeMessage(type, activePack, 'capture'),
+        undeclaredPageTypeSuggestion(activePack),
+      );
+    }
     let slug = typeof p.slug === 'string' && p.slug.length > 0 ? p.slug : undefined;
     if (slug) {
       // Defense-in-depth on the caller-supplied slug (matches the takes ops);
@@ -1424,7 +1449,7 @@ const capture: Operation = {
     // Remote MCP captures record `capture-mcp` provenance; local CLI callers
     // (ctx.remote === false) keep the neutral 'capture-cli' default.
     const capturedVia = ctx.remote !== false ? 'capture-mcp' : undefined;
-    const fullContent = mergeCaptureFrontmatter(content, { type, capturedVia });
+    const fullContent = mergeCaptureFrontmatter(content, { ...(explicitType ? { type: explicitType } : {}), capturedVia });
     if (ctx.dryRun) return { dry_run: true, action: 'capture', slug };
     // Delegate with the SAME ctx (the runCapture local-path precedent) —
     // put_page enforces the slug fence, validates the slug, dedupes, and

@@ -47,8 +47,15 @@ import {
   detectBinarySignature,
   normalizeForHash,
   deriveTitle,
+  captureTypeFromContent,
   mergeCaptureFrontmatter,
 } from '../core/capture-content.ts';
+import {
+  loadActivePackForWriteVocabulary,
+  packDeclaresPageType,
+  undeclaredPageTypeMessage,
+  undeclaredPageTypeSuggestion,
+} from '../core/schema-pack/write-vocabulary.ts';
 
 export { detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter } from '../core/capture-content.ts';
 
@@ -349,6 +356,26 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     }
   }
 
+  let captureType: string;
+  try {
+    captureType = captureTypeFromContent(rawBody, parsed);
+  } catch (e) {
+    console.error(`gbrain capture: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+  if (!isThinClient(cfg) && engine) {
+    const activePack = await loadActivePackForWriteVocabulary({
+      engine,
+      remote: false,
+      sourceId: resolvedSourceId,
+    });
+    if (activePack && !packDeclaresPageType(activePack, captureType)) {
+      console.error(`gbrain capture: ${undeclaredPageTypeMessage(captureType, activePack, 'capture')}`);
+      console.error(`  ${undeclaredPageTypeSuggestion(activePack)}`);
+      process.exit(1);
+    }
+  }
+
   // CV8 (CLI side): content_hash for the RECEIPT comes from the normalized
   // rawBody, NOT the assembled fullContent which contains a timestamp.
   // The daemon's 24h LRU dedup keys on this hash; identical captures must
@@ -502,6 +529,7 @@ export const __testing = {
   buildContent,
   mergeCaptureFrontmatter,
   deriveTitle,
+  captureTypeFromContent,
   parseArgs,
   detectBinaryNullByte,
   detectBinarySignature,

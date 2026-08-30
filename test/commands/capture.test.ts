@@ -45,6 +45,7 @@ beforeEach(async () => {
   brainDir = path.join(tmpRoot, 'brain');
   fs.mkdirSync(brainDir, { recursive: true });
   await engine.setConfig('sync.repo_path', brainDir);
+  await engine.setConfig('schema_pack', 'gbrain-base');
 });
 
 describe('capture — defaultSlug helper', () => {
@@ -213,6 +214,33 @@ describe('capture — local install integration', () => {
     const page = await engine.getPage('inbox/from-file');
     expect(page).not.toBeNull();
     expect(page?.compiled_truth).toContain('body content here');
+  });
+
+  test('--file rejects an undeclared frontmatter type before writing', async () => {
+    const file = path.join(tmpRoot, 'bad-type.md');
+    fs.writeFileSync(file, '---\ntype: definitely_not_a_type\n---\n\nbody content here');
+    const errCaptured: string[] = [];
+    const origErr = console.error;
+    const origExit = process.exit;
+    let exitCode: number | undefined;
+    console.error = (...args: unknown[]) => errCaptured.push(args.map(String).join(' '));
+    (process.exit as unknown as (code?: number) => never) = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error('__EXIT__');
+    });
+    try {
+      await runCapture(engine, ['--file', file, '--slug', 'inbox/bad-frontmatter-type', '--quiet']);
+      throw new Error('expected capture to exit');
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== '__EXIT__') throw e;
+    } finally {
+      console.error = origErr;
+      process.exit = origExit;
+    }
+    expect(exitCode).toBe(1);
+    expect(errCaptured.join('\n')).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(await engine.getPage('inbox/bad-frontmatter-type')).toBeNull();
+    expect(fs.existsSync(path.join(brainDir, 'inbox/bad-frontmatter-type.md'))).toBe(false);
   });
 
   test('--json emits structured output', async () => {

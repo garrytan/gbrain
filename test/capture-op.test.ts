@@ -59,6 +59,29 @@ describe('capture op', () => {
     expect(body.slug).toMatch(/^life\/diary\/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
   });
 
+  test('rejects an undeclared explicit page type before writing', async () => {
+    const slug = 'inbox/capture-bad-explicit-type';
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: 'This should not be written.',
+      slug,
+      type: 'definitely_not_a_type',
+    }, { ...STDIO }));
+    expect(body.error).toBe('invalid_params');
+    expect(body.message).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(await engine.getPage(slug)).toBeNull();
+  });
+
+  test('rejects an undeclared frontmatter page type before writing', async () => {
+    const slug = 'inbox/capture-bad-frontmatter-type';
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: '---\ntype: definitely_not_a_type\n---\n\nThis should not be written.',
+      slug,
+    }, { ...STDIO }));
+    expect(body.error).toBe('invalid_params');
+    expect(body.message).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(await engine.getPage(slug)).toBeNull();
+  });
+
   test('NUL byte and empty content are refused with named errors', async () => {
     const nul = parsed(await dispatchToolCall(engine, 'capture', { content: 'ab\u0000cd' }, { ...STDIO }));
     expect(nul.error).toBe('invalid_params');

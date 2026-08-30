@@ -196,6 +196,28 @@ export function buildEventBlock(opts: CaptureFrontmatterOpts): Record<string, un
   return Object.keys(block).length ? block : undefined;
 }
 
+export function captureTypeFromContent(rawBody: string, opts: CaptureFrontmatterOpts): string {
+  const trimmedStart = rawBody.replace(/^﻿/, '');
+  if (!/^---\r?\n/.test(trimmedStart)) {
+    return opts.type ?? 'note';
+  }
+
+  let parsed: matter.GrayMatterFile<string>;
+  try {
+    parsed = matter(rawBody);
+  } catch (e) {
+    throw new Error(
+      `malformed frontmatter in capture input: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  const userFm = (parsed.data ?? {}) as Record<string, unknown>;
+  const type = opts.type ?? userFm.type ?? 'note';
+  if (typeof type !== 'string' || type.length === 0) {
+    throw new Error('capture type must be a non-empty string');
+  }
+  return type;
+}
+
 /**
  * v0.39.3.0 (BUG-1): merge capture's auto-stamped fields with any existing
  * frontmatter in `rawBody`, rather than always prepending a second

@@ -7,7 +7,7 @@
  * '../operations.ts' here (cycle).
  */
 
-import type { Operation } from './contract.ts';
+import { OperationError, type Operation } from './contract.ts';
 import {
   enforceClientSlugFence,
   linkReadScopeOpts,
@@ -21,6 +21,12 @@ import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 import { findPrivateOnlySlugs, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { Link } from '../types.ts';
+import {
+  loadActivePackForWriteVocabulary,
+  packDeclaresLinkType,
+  undeclaredLinkTypeMessage,
+  undeclaredLinkTypeSuggestion,
+} from '../schema-pack/write-vocabulary.ts';
 
 /**
  * #4352 remediation shared by get_links / get_backlinks: when the caller is
@@ -81,6 +87,17 @@ const add_link: Operation = {
     // (and renders on) the from page; linking TO a page outside the
     // binding is a reference, not a mutation of the target.
     enforceClientSlugFence(ctx, p.from as string, 'add_link');
+    const linkType = typeof p.link_type === 'string' ? p.link_type : '';
+    if (linkType.length > 0) {
+      const activePack = await loadActivePackForWriteVocabulary(ctx);
+      if (activePack && !packDeclaresLinkType(activePack, linkType)) {
+        throw new OperationError(
+          'invalid_params',
+          undeclaredLinkTypeMessage(linkType, activePack, 'add_link'),
+          undeclaredLinkTypeSuggestion(activePack),
+        );
+      }
+    }
     if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
@@ -104,7 +121,7 @@ const add_link: Operation = {
     try {
       await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
         p.from as string, p.to as string,
-        (p.context as string) || '', (p.link_type as string) || '',
+        (p.context as string) || '', linkType,
         linkSource, undefined, undefined,
         linkOpts,
       );
