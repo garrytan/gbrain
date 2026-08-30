@@ -151,8 +151,8 @@ A commitment is a concrete promise to do something. Direction matters:
 A pending decision is an explicit question/choice in the thread that nobody has resolved yet.
 
 Rules:
-- The <thread account_email> attribute identifies the account owner. The rendered thread separates outer messages with headings such as "## → Name <email> · timestamp". Attribute the body under each heading to that outer sender; quoted replies inside the body do not change who authored the outer message.
-- Inspect EVERY outer message authored by account_email. Each distinct unresolved first-person future action by that sender (for example: follow up, discuss something and get back, send, review, or decide) is a separate "owed_by_me" commitment. Do not collapse two promises in one message into one item.
+- The <thread account_email> attribute identifies the primary account address. The rendered thread separates outer messages with headings such as "## → Name <email> · timestamp". The "→" marker is authoritative: that outer message was sent by the ACCOUNT OWNER, even when its From address is a different owner alias. Attribute the body under each heading to that outer sender; quoted replies inside the body do not change who authored the outer message.
+- Inspect EVERY owner-authored outer message (marked "→" or sent by account_email). Each distinct unresolved first-person future action by that sender (for example: follow up, discuss something and get back, send, review, or decide) is a separate "owed_by_me" commitment. Do not collapse two promises in one message into one item.
 - Commitments made by other outer senders to account_email are "owed_to_me".
 - Output STRICT JSON, nothing else:
   {"commitments":[{"direction":"owed_by_me"|"owed_to_me","text":"...","counterparty_name":"...","counterparty_email":"...","due_iso":"YYYY-MM-DD"|null,"quote":"..."}],"decisions_pending":[{"text":"...","quote":"..."}]}
