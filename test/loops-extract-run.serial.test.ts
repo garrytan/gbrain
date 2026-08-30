@@ -491,7 +491,7 @@ describe('multiple commitments from a single message', () => {
       MULTI_SLUG,
       {
         type: 'email',
-        title: 'Lunch follow up',
+        title: 'Follow up',
         compiled_truth:
           'From: peer@example.com\n\nGreat to meet.\n\n' +
           `Me: ${QUOTE_A} ${QUOTE_B}\n`,

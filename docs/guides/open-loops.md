@@ -64,6 +64,38 @@ malformed model response writes nothing), 50 threads/sweep cap, only the
 last 30 days of mail (the deep backfill is never extracted), kill switch
 `gbrain config set loops.extraction_enabled false`.
 
+**Which threads reach the extractor.** A structural eligibility gate runs
+first (`loopExtractionEligibility`), so bulk mail neither pays for model
+calls nor crowds real correspondence out of the sweep:
+
+| shape | eligible |
+|---|---|
+| `SPAM` / `TRASH` | no — whoever wrote them |
+| any message the account owner wrote (`SENT` label or a known owner address) | **yes, overriding every rule below** |
+| pure noise senders / pure calendar notices | no |
+| `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` | no, unless the owner joined in |
+| `List-Unsubscribe` bulk | no, unless the owner joined in |
+| `CATEGORY_UPDATES` | **yes** — invoices, contracts and document requests live there |
+| ordinary human correspondence | yes |
+
+The owner-participated rule is the load-bearing one: your own outbound
+message is exactly where your commitment lives, so "I'll send this by Friday"
+written in reply to a bulk-labelled thread stays reachable. Every rule is
+structural — Gmail labels, `List-Unsubscribe`, calendar part, who wrote the
+message — with no sender, domain, subject or body matching, so there is no
+vendor list to maintain. The sweep summary carries per-reason counts
+(`extractEligibility`) so a run can be audited for over-filtering without
+mail content reaching the logs.
+
+**Every eligible thread is queued.** There is no enqueue cap: the MinionQueue
+is the backlog and the worker's concurrency is the rate limit. Jobs are keyed
+by page revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an
+unchanged thread is a no-op and that key is the only dedupe in play.
+
+*Known limitation:* extraction still covers only the trailing 30 days, and
+there is no stock opt-in to extract older mail — a thread that fell outside
+the window before this ran is not revisited unless it changes.
+
 ## The surfaces
 
 ```bash
