@@ -26,6 +26,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import {
+  closeOpenLoop,
   loadSuppressions,
   upsertOpenLoop,
   type LoopEvidence,
@@ -36,7 +37,7 @@ import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './type
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /** Bump only when already-imported threads must be judged again after a semantic fix. */
-export const LOOPS_EXTRACT_KEY_REVISION = 2;
+export const LOOPS_EXTRACT_KEY_REVISION = 3;
 /**
  * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
  * queued (up to the generous safety ceiling below) and the worker's
@@ -161,6 +162,8 @@ Rules:
 - The <thread account_email> attribute identifies the primary account address. The rendered thread separates outer messages with headings such as "## → Name <email> · timestamp". The "→" marker is authoritative: that outer message was sent by the ACCOUNT OWNER, even when its From address is a different owner alias. Attribute the body under each heading to that outer sender; quoted replies inside the body do not change who authored the outer message.
 - Inspect EVERY owner-authored outer message (marked "→" or sent by account_email). Each distinct unresolved first-person future action by that sender (for example: follow up, discuss something and get back, send, review, or decide) is a separate "owed_by_me" commitment. Do not collapse two promises in one message into one item.
 - Commitments made by other outer senders to account_email are "owed_to_me".
+- A pending decision exists only when the ACCOUNT OWNER personally must choose before another party can proceed. Do not create decisions from unsolicited sales, marketing, recruiting, PR, event, or investor-program pitches merely because they ask the owner to join, review, schedule, or choose.
+- Do not create a decision for an FYI/update or for work whose next step is explicitly owned by another participant or the team. If a later message shows that the choice was made, the request was withdrawn, its deadline passed, or another owner took it, omit it.
 - The optional <existing_open_loops> block contains bounded OPEN candidates from OTHER email threads with the same sender and normalized subject. For every extracted item, set "same_as_loop_id" to a candidate id only when it is the exact same still-unresolved obligation or decision repeated or paraphrased in this thread. Related work, successive steps, and two distinct promises in one message are NOT the same item. When uncertain, use null.
 - Output STRICT JSON, nothing else:
   {"commitments":[{"direction":"owed_by_me"|"owed_to_me","text":"...","counterparty_name":"...","counterparty_email":"...","due_iso":"YYYY-MM-DD"|null,"quote":"...","same_as_loop_id":123|null}],"decisions_pending":[{"text":"...","quote":"...","same_as_loop_id":123|null}]}
@@ -314,6 +317,7 @@ interface ExistingLoopCandidate {
   threadId: string | null;
   pageSlug: string | null;
   dueAt: string | null;
+  factId: number | null;
   lastActivityAt: string;
 }
 
@@ -379,7 +383,7 @@ async function loadExistingCandidates(
   const cutoff = new Date(anchor.getTime() - LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000).toISOString();
   const rows = await engine.executeRaw<Record<string, unknown>>(
     `SELECT l.id, l.dedup_key, l.loop_type, l.summary, l.evidence,
-            l.thread_id, l.page_slug, l.due_at, l.last_activity_at,
+            l.thread_id, l.page_slug, l.due_at, l.fact_id, l.last_activity_at,
             p.title, p.frontmatter
        FROM open_loops l
        JOIN pages p ON p.source_id = l.source_id AND p.slug = l.page_slug
@@ -415,6 +419,7 @@ async function loadExistingCandidates(
           : typeof row.due_at === 'string'
             ? row.due_at
             : null,
+      factId: row.fact_id === null || row.fact_id === undefined ? null : Number(row.fact_id),
       lastActivityAt:
         row.last_activity_at instanceof Date
           ? row.last_activity_at.toISOString()
@@ -698,6 +703,32 @@ export async function runLoopsExtract(
       lastActivityAt: messageDate,
     });
     loopIds.push(id);
+  }
+
+  // The current page is the complete latest state of this Gmail thread. If a
+  // previously extracted item from THIS thread is no longer returned, later
+  // evidence resolved, expired, withdrew, or reassigned it. Close only those
+  // same-thread rows; cross-thread candidates are context for deduplication and
+  // must never be closed by absence here.
+  for (const candidate of existingCandidates) {
+    if (candidate.threadId !== threadId || matchedCandidateIds.has(candidate.id)) continue;
+    const closed = await closeOpenLoop(
+      engine,
+      payload.sourceId,
+      candidate.id,
+      'done',
+      'llm_reconciled',
+    );
+    if (closed?.fact_id !== null && closed?.fact_id !== undefined) {
+      try {
+        await engine.executeRaw(
+          `UPDATE facts SET expired_at = now() WHERE id = $1 AND expired_at IS NULL`,
+          [closed.fact_id],
+        );
+      } catch {
+        /* loop reconciliation is canonical; facts projection is best-effort */
+      }
+    }
   }
 
   return {

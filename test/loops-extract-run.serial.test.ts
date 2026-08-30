@@ -429,6 +429,9 @@ describe('runLoopsExtract', () => {
     expect(lastChatReq?.system).toContain('different owner alias');
     expect(lastChatReq?.system).toContain('Inspect EVERY owner-authored outer message');
     expect(lastChatReq?.system).toContain('quoted replies inside the body do not change');
+    expect(lastChatReq?.system).toContain('ACCOUNT OWNER personally must choose');
+    expect(lastChatReq?.system).toContain('unsolicited sales, marketing, recruiting, PR');
+    expect(lastChatReq?.system).toContain('owned by another participant or the team');
 
     // Projection 2 — the open_loops rows.
     const loops = await engine.executeRaw<Record<string, unknown>>(
@@ -496,6 +499,32 @@ describe('runLoopsExtract', () => {
     expect(r.status).toBe('extracted');
     expect(await countLoops()).toBe(before); // dedup keys collide → upsert, no new rows
     expect(r.loop_ids.sort((a, b) => a - b)).toEqual(firstIds); // same rows, same ids
+  });
+
+  test('a later clean extraction closes stale items from this thread only', async () => {
+    const before = await engine.executeRaw<{ id: number; status: string }>(
+      `SELECT id, status FROM open_loops
+        WHERE source_id = $1 AND thread_id = $2 AND status = 'open'`,
+      [SRC, THREAD_ID],
+    );
+    expect(before.length).toBe(2);
+
+    chatImpl = async () => ({
+      text: '{"commitments":[],"decisions_pending":[]}',
+      stopReason: 'end',
+    });
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    expect(r.loop_ids).toEqual([]);
+
+    const after = await engine.executeRaw<{ status: string; closed_by: string }>(
+      `SELECT status, closed_by FROM open_loops
+        WHERE source_id = $1 AND thread_id = $2 ORDER BY id`,
+      [SRC, THREAD_ID],
+    );
+    expect(after).toHaveLength(2);
+    expect(after.every((row) => row.status === 'done')).toBe(true);
+    expect(after.every((row) => row.closed_by === 'llm_reconciled')).toBe(true);
   });
 
   test('prompt hardening: newest 12k is retained and sanitized; stale head is dropped', async () => {
