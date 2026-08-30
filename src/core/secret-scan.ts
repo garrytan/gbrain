@@ -113,6 +113,22 @@ export const PEM_BLOCK_RE =
 // Opt-in: `secret|token|password|api key`-shaped assignment whose value has
 // high Shannon entropy. Keyword-anchored (compiled inline below so the group
 // layout matches the core patterns: group 1 = anchor, group 2 = value).
+//
+// The left boundary is [^A-Za-z0-9] rather than the core patterns'
+// [^A-Za-z0-9_]: `_` has to read as a SEPARATOR here, or `api_access_token`
+// and `SMTP_PASSWORD` cannot match their own keyword. The core patterns keep
+// `_` as a word character on purpose (a vendor prefix inside a longer
+// identifier must not fire); this rule is keyword-anchored, so the same
+// reasoning inverts. The keyword is also allowed trailing identifier
+// segments before the assignment, or `AWS_SECRET_ACCESS_KEY=` cannot match:
+// the keyword `SECRET` is not adjacent to the `=`, `_ACCESS_KEY` is. The
+// entropy gate still decides, so a wider anchor costs nothing on prose.
+//
+// The value floor is 12, not 20. A 16-character SMTP password sat under the
+// old floor and stayed plaintext in the receipt on disk even once the keyword
+// matched — the value length was doing gating the entropy check is there to
+// do. Real passwords are frequently 12-16 characters; secrets that long with
+// 3.5 bits/char of entropy are not prose.
 const HIGH_ENTROPY_MIN_BITS_PER_CHAR = 3.5;
 
 function compilePatterns(opts: ScanOpts): CompiledPattern[] {
@@ -127,7 +143,7 @@ function compilePatterns(opts: ScanOpts): CompiledPattern[] {
     out.push({
       name: 'high_entropy_assignment',
       re: new RegExp(
-        `((?:^|[^A-Za-z0-9_])(?:secret|token|passwd|password|api[_-]?key|apikey)["']?\\s*[:=]\\s*["']?)([A-Za-z0-9+/_=-]{20,})`,
+        `((?:^|[^A-Za-z0-9])(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]*["']?\\s*[:=]\\s*["']?)([A-Za-z0-9+/_=-]{12,})`,
         'gi',
       ),
       entropyGated: true,

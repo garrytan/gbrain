@@ -402,6 +402,31 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Rerankers**: Voyage `rerank-2.5` hosted (the new-install default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; still the fallback for brains that never set `search.reranker.model`), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential vault + gateway**: `gbrain creds` manages OAuth and API credentials in a local vault ([`recipes/credential-gateway.md`](recipes/credential-gateway.md)); agent-side vault-aware secret distribution: [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
+- **Memorable (procedural memory)**: optional, off by default. Turns a finished session's tool-call trace into a replayable *procedure* stored in **your own** brain database. See the section below, and [`docs/memorable-agents.md`](docs/memorable-agents.md) for the agent-facing detail.
+
+### Memorable — procedures from your sessions (optional)
+
+[Memorable](https://www.memorable.sh) adds a procedural-memory layer on top of your brain: when a session ends, its real tool calls (what ran, with what arguments, and whether each call succeeded) are converted into an ordered, replayable procedure — steps, trigger signature, preconditions, postconditions — and stored as pages in a dedicated source **inside your existing brain database**. Next time a similar task comes up, the agent recalls the procedure instead of re-exploring from scratch.
+
+How it fits gbrain's model:
+
+- **Bring-your-own-cloud, unchanged.** Procedures are ordinary pages in a dedicated non-federated `memorable` source in the same PGLite/Postgres brain you already run. Memorable's service never connects to your database — the write always happens on your side, through gbrain's own `put_page`. Only *nodes* are stored; raw traces are not kept long-term.
+- **Recall is free; only writing costs.** Looking up a stored procedure is a local read (exact + lexical match first; a semantic arm uses your own configured embedding provider). The one paid step — converting a trace into a procedure — fires only at session-end, and only when you've opted in.
+- **Per-session isolation.** Procedures are keyed by session id under your own brain and source — there is no shared graph across users, by design.
+- **Per-harness capture.** Claude Code sessions are captured via the existing session-end hook (the corpus-ready receipt carries the real tool calls + outcomes). Other harnesses each need their own adapter — or any agent can hand its trace directly to the Memorable CLI as plain JSON (`memorable ingest trace.json`).
+- **The store prunes itself, and you can prune it too.** Re-recording a task refreshes its stored revision when the steps are identical, and keeps a genuinely different approach beside it as a new revision, so a worse attempt never overwrites a working one. Recall surfaces whichever revision the evidence favours. `memorable list` shows what is stored and how often each revision actually helped; `memorable prune` removes one, or sweeps ones whose files no longer exist (`--stale`) or revisions that were measured and lost (`--superseded`). Pruning works even with consent set to deny — a store you cannot empty is not one you can trust.
+- **On/off is explicit and sticky.** `memorable enable | disable | forget` sets a fail-closed consent flag stored on the source row itself; anything other than an explicit opt-in refuses writes. The gbrain-side relay is additionally gated behind `integrations.memorable.enabled` in your gbrain config (default: absent = off) and the `GBRAIN_MEMORABLE=0` kill switch (`false`, `off` and `no` work too).
+
+Install and connect — the whole of it:
+
+```sh
+npm i -g memorable-cli                    # the CLI, published on npm
+memorable init gbrain && memorable enable  # or plain `memorable init` if you don't run gbrain
+gbrain config set integrations.memorable.enabled true   # opt the session-end relay in
+```
+
+The CLI ([npmjs.com/package/memorable-cli](https://www.npmjs.com/package/memorable-cli)) resolves your existing gbrain connection automatically — same config file, same env vars; there is nothing new to authenticate against your database, no account to create, and **no embedding model to configure** (your gbrain's provider is reused if you have one; otherwise the extraction API embeds server-side). Consent starts OFF. The receipt shape, the gbrain-side gate, troubleshooting and exactly what leaves the machine are documented in [`docs/memorable-agents.md`](docs/memorable-agents.md).
+
 
 ## Architecture
 

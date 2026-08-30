@@ -294,3 +294,43 @@ describe('glob dialect (shared with the push deny-list)', () => {
     expect(pathAllowlisted('x (1).md', ['x (1).md'])).toBe(true);
   });
 });
+
+describe('high-entropy assignment reaches compound credential keys', () => {
+  const HI = 'Ab3xK9mQ2pR7sT1vW4yZ8bC5dE6f';
+  // `\b`-style boundaries cannot match inside `api_access_token`, and a
+  // keyword-adjacent anchor cannot match `AWS_SECRET_ACCESS_KEY` at all —
+  // `SECRET` is not the segment touching the `=`. Both shapes leaked to an
+  // external API before this rule was widened AND enabled at the call site.
+  for (const [name, input] of [
+    ['underscore-separated keyword', `api_access_token: ${HI}`],
+    ['screaming snake case', `SMTP_PASSWORD=${HI}`],
+    ['keyword with trailing segments', `AWS_SECRET_ACCESS_KEY=${HI}`],
+  ] as const) {
+    test(name, () => {
+      expect(scanText(input, { highEntropy: true }).map((f) => f.pattern)).toEqual(['high_entropy_assignment']);
+    });
+  }
+
+  /** Known limitation, asserted so it stays visible rather than being
+   * rediscovered. The left boundary requires the keyword to START at a
+   * non-alphanumeric, so a camelCase compound (`apiAccessToken`) is out of
+   * reach here. Dropping the boundary would let the keyword fire mid-word in
+   * ordinary prose, and this pattern is shared with gbrain's corpus scanning.
+   * The consumer's own scrub normalises separators and DOES cover this shape,
+   * and it is the last pass before anything leaves the machine. */
+  test('camelCase compounds are NOT covered by this rule', () => {
+    expect(scanText(`apiAccessToken=${HI}`, { highEntropy: true })).toEqual([]);
+  });
+
+  // The rule runs over tool-call arguments, which ARE the recall signal.
+  test('leaves paths, commands and hashes alone', () => {
+    for (const s of [
+      'src/core/context/hook-heartbeat.ts',
+      'cd ~/Documents/GitHub/memorable-gbrain && bun test',
+      'commit 3e365f5f1a2b4c8d9e0f1a2b3c4d5e6f70819293',
+      'export NODE_OPTIONS=--max-old-space-size=8192',
+    ]) {
+      expect(scanText(s, { highEntropy: true })).toEqual([]);
+    }
+  });
+});

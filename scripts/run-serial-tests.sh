@@ -314,7 +314,7 @@ i=0
 for f in "${ordered_files[@]}"; do
   [ -f "$LOG_DIR/$i.dur" ] && echo "$(cat "$LOG_DIR/$i.dur") $f"
   i=$((i + 1))
-done | sort -rn | head -10 | sed 's/^/  /'
+done | sort -rn | awk 'NR<=10' | sed 's/^/  /'
 
 total_epoch=$(( $(date +%s) - start_epoch ))
 if [ "$fail_count" -gt 0 ]; then

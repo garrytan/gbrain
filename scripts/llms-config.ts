@@ -302,6 +302,13 @@ export const SECTIONS: DocSection[] = [
         path: "docs/architecture/infra-layer.md",
         includeInFull: false,
       },
+      {
+        title: "docs/memorable-agents.md",
+        description:
+          "Optional Memorable procedural-memory integration: the session-end receipt, the config gate and kill switch, the consent model, and exactly what leaves the machine.",
+        path: "docs/memorable-agents.md",
+        includeInFull: false,
+      },
     ],
   },
 ];

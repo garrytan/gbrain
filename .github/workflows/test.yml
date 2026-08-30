@@ -177,7 +177,13 @@ jobs:
     needs: cache-check
     if: needs.cache-check.outputs.hit != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25, not 15: on smaller runners the memory clamp in
+    # scripts/run-serial-tests.sh sizes the pool to 1, and the fully
+    # sequential suite runs 12-13 minutes — a slow runner then hits a 15m
+    # cap with every test passing (observed: canceled at exactly 15:00
+    # with zero failures). On 4-core runners pool=4 finishes in ~3m and
+    # the extra headroom is never used.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2

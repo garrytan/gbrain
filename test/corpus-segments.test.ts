@@ -272,3 +272,29 @@ describe('pre-landing review pins', () => {
     expect(parsed!.turns.slice(b).map((x) => x.text)).toEqual(['tail-a', 'tail-b']);
   });
 });
+
+describe('decideCorpusMode reports where the written span begins', () => {
+  /** Anything else derived from the transcript — tool calls, hashes — must
+   * use the same origin as the corpus, or the receipt describes two spans. */
+  test('full and full_fallback modes start at zero', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-start-'));
+    try {
+      const turns = [{ role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }] as never;
+      const d = await decideCorpusMode(dir, 'sess', turns, []);
+      expect(d.mode).toBe('full');
+      expect(d.startTurnIndex).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('an uncovered boundary falls back to full, still from zero', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-start-'));
+    try {
+      const turns = [{ role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }] as never;
+      const d = await decideCorpusMode(dir, 'sess', turns, [1]);
+      expect(d.mode).toBe('full_fallback');
+      expect(d.startTurnIndex).toBe(0);
+      // the whole window is written, so nothing may be filtered out of it
+      expect(d.turns.length).toBe(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});

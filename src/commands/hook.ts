@@ -70,7 +70,9 @@ import {
   decideCorpusMode,
   gcCorpusArtifacts,
   HARVEST_RECEIPT_SUFFIX,
+  segmentHash,
 } from '../core/context/corpus-segments.ts';
+import { appendSessionReceipt, priorRelayFailure, resolveMemorableBin } from '../core/context/hook-heartbeat.ts';
 import {
   heartbeatPath,
   hookStatusPath,
@@ -1558,12 +1560,31 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           // [S3#2] Secret-scan AT WRITE TIME. Scanner absent → still write
           // (the corpus is 0700-local), but say so in the heartbeat.
           let text = toCorpusText(corpusTurns);
+          // ONE gate for the whole Memorable integration, checked before any
+          // of it does anything: the receipt is not written, tool calls are
+          // not collected, and nothing is spawned unless the operator has
+          // explicitly opted in. Off (the default) means gbrain behaves
+          // exactly as it does today. Any of 0/false/off/no kills the relay.
+          const memorableAllowed =
+            !/^(0|false|off|no)$/i.test(process.env.GBRAIN_MEMORABLE ?? '') &&
+            cfg?.integrations?.memorable?.enabled === true;
+          // Tool name + args for the SAME SPAN the corpus covers, through the
+          // same secret-scan pass. In remainder mode the corpus is the
+          // post-boundary tail while these were the whole parsed window.
+          let toolCallsJson = '[]';
           try {
             const scan = await import('../core/secret-scan.ts');
             const redacted = scan.redactFindings(text);
             text = redacted.text;
             // COUNT only — the findings themselves never land in telemetry [S3#7].
             redactionsN = redacted.redactions.length;
+            if (memorableAllowed) {
+              // highEntropy ON here only: these args are the one artifact that
+              // leaves the machine, and without it only vendor-prefixed keys
+              // redact — two live credentials reached the API through that gap.
+              toolCallsJson = scan.redactFindings(JSON.stringify(parsed.toolCalls.filter(
+                (_c, i) => (parsed.toolCallTurnIndexes[i] ?? 0) >= decided.startTurnIndex)), { highEntropy: true }).text;
+            }
           } catch {
             degrade('scan_unavailable');
           }
@@ -1578,6 +1599,46 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           const tmpCorpus = `${corpusFile}.tmp-${process.pid}`;
           writeFileSync(tmpCorpus, text, { mode: 0o600 });
           renameSync(tmpCorpus, corpusFile);
+          // Additive signal for a local third-party consumer (never gbrain
+          // itself): the corpus file above is done, hashed post-redaction so
+          // the hash can never fingerprint pre-scrub content. See
+          // hook-heartbeat.ts's session-receipts section.
+          const recorded = memorableAllowed && await appendSessionReceipt({
+            session_id: sessionId,
+            harness: io.harness ?? 'claude-code',
+            corpus_path: corpusFile,
+            content_hash: segmentHash(text),
+            turn_count: turnsN,
+            workspace_root: ws ?? process.cwd(),
+            tool_calls_json: toolCallsJson,
+            secret_scan_ok: redactionsN !== undefined,
+          });
+          // Optional Memorable relay — OFF unless config carries the literal
+          // `integrations.memorable.enabled: true` (fail-closed), with a
+          // GBRAIN_MEMORABLE=0 kill switch. Fire-and-forget detached spawn of
+          // the locally-installed `memorable` CLI (same pattern as
+          // spawnDetachedPush): the child reads THIS receipt and does its own
+          // consent/toggle checks; gbrain never blocks on it, never fails on
+          // it, and sends nothing off-machine itself.
+          try {
+            // `recorded`: an identical resumed session writes no receipt.
+            if (recorded) {
+              // gbrain verified the binary existed, never that it WORKED.
+              const priorFail = await priorRelayFailure(); if (priorFail) degrade(priorFail);
+              // Enabled-but-not-installed is named, not spawned into an ENOENT.
+              const bin = resolveMemorableBin();
+              if (!bin) degrade('memorable_cli_missing');
+              else {
+                const child = spawn(bin, ['record', '--session', sessionId], { detached: true, stdio: 'ignore' });
+                // ENOENT still arrives as an async 'error' event; without this
+                // handler an uncaught one kills the session-end hook.
+                child.on('error', () => { /* best-effort by contract */ });
+                child.unref();
+              }
+            }
+          } catch {
+            /* spawn refused — the relay is best-effort and never fails the hook */
+          }
           try {
             rmSync(corpusFile + CORPUS_INGESTED_SUFFIX, { force: true });
           } catch {

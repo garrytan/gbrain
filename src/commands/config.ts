@@ -48,6 +48,7 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'hooks.stop_push_debounce_min',
   'backup.check_enabled',
   'backup.check_interval_days',
+  'integrations.memorable.enabled',
 ]);
 
 export const FILE_PLANE_API_KEYS: readonly string[] = [
@@ -213,8 +214,16 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
-      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup', string];
-      const branch = cfg?.[top] as Record<string, unknown> | undefined;
+      // Walks the whole dotted path, not two segments. `unset` used to
+      // destructure [top, leaf], so `integrations.memorable.enabled` deleted
+      // nothing, fell through to the DB plane, and left the file flag live —
+      // an integration you had just turned off stayed on.
+      const parts = key.split('.');
+      const leaf = parts.pop() as string;
+      let branch = cfg as unknown as Record<string, unknown> | undefined;
+      for (const seg of parts) {
+        branch = branch?.[seg] as Record<string, unknown> | undefined;
+      }
       if (cfg && branch && leaf in branch) {
         delete branch[leaf];
         saveConfig(cfg);
@@ -321,7 +330,21 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
       const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
-      if (key === 'push.allow_unverified_remote') {
+      if (key === 'integrations.memorable.enabled') {
+        // Same file-plane rule as the other hook-lane keys: the session-end
+        // relay gate is read by engine-free hook children via loadConfig.
+        const on = isConfigTruthy(value);
+        cfg.integrations = { ...(cfg.integrations ?? {}), memorable: { ...(cfg.integrations?.memorable ?? {}), enabled: on } };
+        saveConfig(cfg);
+        console.log(`Set ${key} = ${on} (file plane: ~/.gbrain/config.json)`);
+        if (on) {
+          console.log(
+            'Session-end traces will now be offered to a locally-installed `memorable` CLI ' +
+              '(best-effort, nothing sent off-machine by gbrain itself). ' +
+              'Turn off: gbrain config set integrations.memorable.enabled false',
+          );
+        }
+      } else if (key === 'push.allow_unverified_remote') {
         const on = isConfigTruthy(value);
         cfg.push = { ...(cfg.push ?? {}), allow_unverified_remote: on };
         saveConfig(cfg);

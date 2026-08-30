@@ -337,19 +337,24 @@ export async function decideCorpusMode(
   sessionId: string,
   turns: WindowTurn[],
   boundaryTurnIndexes: number[],
-): Promise<{ mode: 'full' | 'full_fallback' | 'remainder' | 'skip_covered'; turns: WindowTurn[] }> {
-  if (!boundaryTurnIndexes.length) return { mode: 'full', turns };
+): Promise<{ mode: 'full' | 'full_fallback' | 'remainder' | 'skip_covered'; turns: WindowTurn[]; startTurnIndex: number }> {
+  if (!boundaryTurnIndexes.length) return { mode: 'full', turns, startTurnIndex: 0 };
   try {
     if (await coverageComplete(dir, sessionId, turns, boundaryTurnIndexes)) {
       const remainder = splitByBoundaries(turns, boundaryTurnIndexes).remainder;
+      // splitByBoundaries takes the remainder from the LAST boundary, so that
+      // index is where the written span begins. Callers that derive anything
+      // else from the transcript (tool calls, hashes) must use the same
+      // origin, or their artifacts describe a different span than the corpus.
+      const startTurnIndex = boundaryTurnIndexes[boundaryTurnIndexes.length - 1] ?? 0;
       return remainder.length === 0
-        ? { mode: 'skip_covered', turns: remainder }
-        : { mode: 'remainder', turns: remainder };
+        ? { mode: 'skip_covered', turns: remainder, startTurnIndex }
+        : { mode: 'remainder', turns: remainder, startTurnIndex };
     }
   } catch {
     /* fall through to full_fallback */
   }
-  return { mode: 'full_fallback', turns };
+  return { mode: 'full_fallback', turns, startTurnIndex: 0 };
 }
 
 /**

@@ -34,6 +34,14 @@ export interface GBrainConfig {
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
+  /**
+   * Third-party integration gates, file-plane (read by engine-free hook
+   * children). `integrations.memorable.enabled` gates the optional
+   * session-end relay to a locally-installed `memorable` CLI — absent or
+   * anything other than literal `true` means OFF (fail-closed). See
+   * hook.ts's session-end handler.
+   */
+  integrations?: { memorable?: { enabled?: boolean } };
   /** Monthly backup-coverage check (src/core/backup/). File-plane: read by
    * engine-free render sites (hook children, the cli.ts startup rail). */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
@@ -1164,6 +1172,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  // Integration gates (file-plane, hook-lane)
+  'integrations.memorable.enabled',
   // MEMORY_VERBS v1 (Cathedral 1)
   'mcp_surface',
   'protocol_installed_at',
