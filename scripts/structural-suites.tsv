@@ -112,7 +112,7 @@ test/doctor.test.ts	v0.40.4 — graph_signals_coverage check	7	doctor-source-hel
 test/doctor.test.ts	v0.41.27.0 — sync_freshness git short-circuit	9	doctor-source-helper
 test/doctor.test.ts	v0.41.32.0 — commit-relative staleness	5	doctor-source-helper
 test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1	doctor-source-helper
-test/dream-cli-flags.test.ts	--drain wiring	4	readFileSync
+test/dream-cli-flags.test.ts	--drain wiring	5	readFileSync
 test/dream-cli-flags.test.ts	--once wiring (issue #2860)	5	readFileSync
 test/dream-cli-flags.test.ts	--source / --source-id wiring (v0.41.13)	9	readFileSync
 test/dream-cli-flags.test.ts	dream CLI flag wiring	9	readFileSync

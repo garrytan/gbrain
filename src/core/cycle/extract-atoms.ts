@@ -780,6 +780,13 @@ export async function runPhaseExtractAtoms(
     | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
     | { kind: 'page'; slug: string; content: string; contentHash: string };
 
+  // Failure output is operator-facing JSON. Page slugs are already the stable
+  // database locator; transcript paths can expose private directory names, so
+  // identify those by a deterministic path hash instead of the raw path.
+  const failureSourceFor = (item: WorkItem): string => item.kind === 'page'
+    ? item.slug
+    : `transcript:${createHash('sha256').update(item.filePath).digest('hex').slice(0, 12)}`;
+
   const seenHashes = new Set<string>();
   const transcriptItems: WorkItem[] = [];
   for (const t of transcriptsLive) {
@@ -831,7 +838,7 @@ export async function runPhaseExtractAtoms(
   let pagesProcessed = 0;
   let transcriptsSkipped = 0;
   let pagesSkipped = 0;
-  const failures: Array<{ source: string; error: string }> = [];
+  const failures: Array<{ source: string; reason: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   let budgetExhausted = false;
   // #3813: key-aware tier default, not a hardcoded Anthropic model — an
@@ -998,6 +1005,7 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    const failureSource = failureSourceFor(item);
     // The trust boundary is the exact text shown to the model, not unseen
     // source content beyond the configured input cap.
     const visibleContent = truncateUtf8(item.content, maxInputChars);
@@ -1034,7 +1042,8 @@ export async function runPhaseExtractAtoms(
         hardFailureCount++;
         const failCount = await recordPageFailureCount(item);
         failures.push({
-          source: originLabel,
+          source: failureSource,
+          reason: `malformed_model_output:${parseOutcome.reason.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').toLowerCase()}`,
           error: `malformed model output: ${parseOutcome.reason}` +
             (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
         });
@@ -1069,7 +1078,8 @@ export async function runPhaseExtractAtoms(
         const failCount = await recordPageFailureCount(item);
         const rejected = [...new Set(itemGuardRejections)].join(', ');
         failures.push({
-          source: originLabel,
+          source: failureSource,
+          reason: `source_guard:${rejected.replaceAll(' ', '')}`,
           error: `untrusted atom output rejected by source guard (${rejected})` +
             (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
         });
@@ -1225,7 +1235,8 @@ export async function runPhaseExtractAtoms(
         abortedGlobalError = haltedClassOf(decision);
         if (abortedGlobalError !== 'rate_limit') hardFailureCount++;
         failures.push({
-          source: originLabel,
+          source: failureSource,
+          reason: `global_llm_${abortedGlobalError}`,
           error: `aborting phase: ${llmHalt.note()} (${message})`,
         });
         break;
@@ -1237,7 +1248,10 @@ export async function runPhaseExtractAtoms(
         hardFailureCount++;
       }
       failures.push({
-        source: originLabel,
+        source: failureSource,
+        reason: transient
+          ? (llmHalt.lastClass() === 'rate_limit' ? 'transient_rate_limit' : 'transient_provider_error')
+          : 'item_error',
         error: transient ? `${message} [transient — retried next run]` : message,
       });
     }

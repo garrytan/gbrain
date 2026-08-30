@@ -7,9 +7,8 @@
  * only `stopped: no_progress` — a run that failed on every item looked
  * identical to "nothing eligible".
  *
- * Post-fix: runBatch carries failureCount + firstError, the pure loop
- * accumulates them into result.failure_count / result.last_error, and both
- * ride the --json payload verbatim.
+ * Post-fix: runBatch carries failureCount plus content-free typed failures;
+ * the pure loop accumulates them into result.failure_count / result.last_error.
  */
 
 import { describe, it, expect } from 'bun:test';
@@ -30,15 +29,26 @@ describe('extract_atoms drain error surfacing (#4539)', () => {
         runBatch: async () => {
           batch++;
           return batch === 1
-            ? { extracted: 1, skipped: 0, failureCount: 2, firstError: 'pages/a: malformed model output' }
-            : { extracted: 0, skipped: 0, providerFailure: true, failureCount: 3, firstError: 'pages/b: 429 rate limit' };
+            ? {
+              extracted: 1,
+              skipped: 0,
+              failureCount: 2,
+              failures: [{ source: 'pages/a', reason: 'malformed_model_output:no_json_array' }],
+            }
+            : {
+              extracted: 0,
+              skipped: 0,
+              providerFailure: true,
+              failureCount: 3,
+              failures: [{ source: 'pages/b', reason: 'global_llm_rate_limit' }],
+            };
         },
         now: () => 0,
       },
       { windowMs: 1_000_000 },
     );
     expect(result.failure_count).toBe(5);
-    expect(result.last_error).toBe('pages/b: 429 rate limit');
+    expect(result.last_error).toBe('pages/b: global_llm_rate_limit');
     expect(result.status).toBe('provider_failure');
   });
 
@@ -66,13 +76,18 @@ describe('extract_atoms drain error surfacing (#4539)', () => {
         countRemaining: async () => 5,
         // Partial-failure shape: some items skipped-as-failures, no atoms —
         // the loop stops no_progress, and pre-fix the reason was invisible.
-        runBatch: async () => ({ extracted: 0, skipped: 0, failureCount: 5, firstError: 'pages/x: provider 400' }),
+        runBatch: async () => ({
+          extracted: 0,
+          skipped: 0,
+          failureCount: 5,
+          failures: [{ source: 'pages/x', reason: 'item_error' }],
+        }),
         now: () => 0,
       },
       { windowMs: 1_000_000 },
     );
     expect(result.stopped).toBe('no_progress');
     expect(result.failure_count).toBe(5);
-    expect(result.last_error).toBe('pages/x: provider 400');
+    expect(result.last_error).toBe('pages/x: item_error');
   });
 });

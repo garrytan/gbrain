@@ -124,7 +124,9 @@ describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
       _chat: async (_o: ChatOpts) => okChatResult('no json in sight'),
     });
     expect(result.details.malformed_outputs).toBe(1);
-    expect((result.details.failures as Array<{ error: string }>)[0].error).toContain('malformed model output');
+    const failure = (result.details.failures as Array<{ reason: string; error: string }>)[0];
+    expect(failure.reason).toBe('malformed_model_output:no_json_array_in_response');
+    expect(failure.error).toContain('malformed model output');
     expect(result.details.pages_processed).toBe(0);
     const fm = await frontmatterOf('note/m1');
     expect(fm.atoms_scan_hash).toBeUndefined(); // the pre-fix bug: this was stamped
@@ -179,11 +181,27 @@ describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
       _pages: [{ slug: 'note/t1', content: 'prose', contentHash: HASH_A }],
       _chat: async (_o: ChatOpts) => { throw new Error('fetch failed: 503 upstream timeout'); },
     });
-    const failures = result.details.failures as Array<{ error: string }>;
+    const failures = result.details.failures as Array<{ reason: string; error: string }>;
+    expect(failures[0].reason).toBe('transient_provider_error');
     expect(failures[0].error).toContain('[transient — retried next run]');
     const fm = await frontmatterOf('note/t1');
     expect(fm.atoms_fail_count).toBeUndefined();
     expect(fm.atoms_scan_hash).toBeUndefined();
+  });
+
+  test('transcript failures use a stable hashed locator, never the private file path', async () => {
+    const privatePath = '/Users/alice/private/sessions/meeting.txt';
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [{ filePath: privatePath, content: 'transcript prose', contentHash: HASH_A }],
+      _pages: [],
+      _chat: async (_o: ChatOpts) => { throw new Error('fetch failed: 503 upstream timeout'); },
+    });
+    const failure = (result.details.failures as Array<{ source: string; reason: string }>)[0];
+    expect(failure.source).toMatch(/^transcript:[0-9a-f]{12}$/);
+    expect(failure.source).not.toContain('/Users/');
+    expect(failure.source).not.toContain('meeting.txt');
+    expect(failure.reason).toBe('transient_provider_error');
   });
 });
 
@@ -212,8 +230,9 @@ describe('runPhaseExtractAtoms — global-error halt (#3044)', () => {
     expect(calls).toBe(1); // page 2 never called the LLM
     expect(result.details.aborted_global_error).toBe('auth');
     expect(result.status).toBe('warn');
-    const failures = result.details.failures as Array<{ error: string }>;
+    const failures = result.details.failures as Array<{ reason: string; error: string }>;
     expect(failures).toHaveLength(1);
+    expect(failures[0].reason).toBe('global_llm_auth');
     expect(failures[0].error).toContain('whole-run condition');
     // The global outage did not pre-charge the tombstone counter.
     for (const slug of ['note/g1', 'note/g2']) {
@@ -237,8 +256,13 @@ describe('runPhaseExtractAtoms — global-error halt (#3044)', () => {
     });
     expect(calls).toBe(3); // page 4 never called the LLM
     expect(result.details.aborted_global_error).toBe('rate_limit');
-    const failures = result.details.failures as Array<{ error: string }>;
+    const failures = result.details.failures as Array<{ reason: string; error: string }>;
     expect(failures).toHaveLength(3); // 2 transient warnings + 1 abort entry
+    expect(failures.map((failure) => failure.reason)).toEqual([
+      'transient_rate_limit',
+      'transient_rate_limit',
+      'global_llm_rate_limit',
+    ]);
     expect(failures[2].error).toContain('3 consecutive rate_limit errors');
     for (const slug of ['note/r1', 'note/r2', 'note/r3', 'note/r4']) {
       expect((await frontmatterOf(slug)).atoms_fail_count).toBeUndefined();

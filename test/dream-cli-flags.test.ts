@@ -136,6 +136,13 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('EXIT_DRAIN_INCOMPLETE');
       expect(dreamSrc).toContain('cycle_already_running');
     });
+
+    test('routes AI SDK warnings to stderr while emitting drain JSON', () => {
+      expect(dreamSrc).toContain('const previousWarningLogger = globalThis.AI_SDK_LOG_WARNINGS');
+      expect(dreamSrc).toContain('globalThis.AI_SDK_LOG_WARNINGS = ({ warnings, provider, model }) =>');
+      expect(dreamSrc).toContain('process.stderr.write(`[ai-sdk] ${provider}/${model}: ${warning.type}\\n`)');
+      expect(dreamSrc).toContain('globalThis.AI_SDK_LOG_WARNINGS = previousWarningLogger');
+    });
   });
 
   // issue #2860 — --once one-shot phase-enabled-gate bypass (structural).

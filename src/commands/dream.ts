@@ -603,7 +603,7 @@ async function runDrain(
   if (opts.dryRun) {
     const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
     if (opts.json) {
-      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, last_error: null }, null, 2));
+      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
     } else {
       console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
     }
@@ -615,6 +615,17 @@ async function runDrain(
   }
 
   let result;
+  const previousWarningLogger = globalThis.AI_SDK_LOG_WARNINGS;
+  if (opts.json) {
+    // AI SDK v6 writes a one-time informational banner with console.info,
+    // which is stdout under Bun and corrupts this command's JSON contract.
+    // Keep the diagnostics, but route their closed warning metadata to stderr.
+    globalThis.AI_SDK_LOG_WARNINGS = ({ warnings, provider, model }) => {
+      for (const warning of warnings) {
+        process.stderr.write(`[ai-sdk] ${provider}/${model}: ${warning.type}\n`);
+      }
+    };
+  }
   try {
     // DECISION 5A: the lock/batch/count wiring lives in the shared helper so
     // the CLI path, the Minion handler, and autopilot's auto-drain can't drift.
@@ -636,6 +647,8 @@ async function runDrain(
       process.exit(EXIT_DRAIN_INCOMPLETE);
     }
     throw e;
+  } finally {
+    if (opts.json) globalThis.AI_SDK_LOG_WARNINGS = previousWarningLogger;
   }
 
   // #4539: surface WHY the drain underperformed. Pre-fix the phase's

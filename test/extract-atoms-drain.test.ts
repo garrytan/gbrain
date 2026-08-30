@@ -12,6 +12,7 @@ import { describe, it, expect } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  extractAtomsDrainBatchFromPhaseDetails,
   runExtractAtomsDrain,
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
@@ -41,6 +42,112 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(result.batches).toBe(3);
     expect(result.extracted).toBe(3);
     expect(batches).toBe(3);
+    expect(result.failures).toEqual([]);
+    expect(result.failure_count).toBe(0);
+    expect(result.omitted_failure_count).toBe(0);
+    expect(result.last_error).toBeNull();
+  });
+
+  it('preserves mixed per-item failures from the same batch with their source locators', async () => {
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([3, 0, 0]),
+        runBatch: async () => ({
+          extracted: 1,
+          skipped: 0,
+          failureCount: 2,
+          firstError: 'pages/alpha: request timed out',
+          failures: [
+            { source: 'pages/alpha', reason: 'transient_provider_error' },
+            {
+              source: 'pages/beta',
+              reason: 'malformed_model_output:json_array_exceeds_3_atoms',
+            },
+          ],
+        }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+
+    expect(result.failures).toEqual([
+      { batch: 1, source: 'pages/alpha', reason: 'transient_provider_error' },
+      {
+        batch: 1,
+        source: 'pages/beta',
+        reason: 'malformed_model_output:json_array_exceeds_3_atoms',
+      },
+    ]);
+    expect(result.failure_count).toBe(2);
+    expect(result.omitted_failure_count).toBe(0);
+    expect(result.last_error).toBe('pages/alpha: transient_provider_error');
+  });
+
+  it('preserves failures across batches with one-based batch context', async () => {
+    let batch = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([2, 1, 0, 0]),
+        runBatch: async () => {
+          batch++;
+          return {
+            extracted: 1,
+            skipped: 0,
+            failureCount: 1,
+            firstError: `pages/${batch}: failure ${batch}`,
+            failures: [{ source: `pages/${batch}`, reason: `failure_${batch}` }],
+          };
+        },
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+
+    expect(result.failures).toEqual([
+      { batch: 1, source: 'pages/1', reason: 'failure_1' },
+      { batch: 2, source: 'pages/2', reason: 'failure_2' },
+    ]);
+    expect(result.failure_count).toBe(2);
+    expect(result.omitted_failure_count).toBe(0);
+    expect(result.last_error).toBe('pages/2: failure_2');
+  });
+
+  it('caps failure records and excludes arbitrary payloads from bounded output', async () => {
+    const privatePayload = 'MODEL RESPONSE: confidential source page sentence';
+    const secretLocator = 'pages/postgresql://admin:secret@private.example/brain';
+    const failures = Array.from({ length: 30 }, (_, i) => ({
+      source: i === 0 ? `${secretLocator}/${'x'.repeat(5000)}` : `pages/${i}`,
+      reason: i === 0 ? privatePayload : `failure_${i}`,
+      error: privatePayload,
+    }));
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: seq([30, 0, 0]),
+        runBatch: async () => ({
+          extracted: 1,
+          skipped: 0,
+          failureCount: failures.length,
+          firstError: `${failures[0].source}: ${failures[0].error}`,
+          failures,
+        }),
+        now: () => 0,
+      },
+      { windowMs: 1_000_000 },
+    );
+
+    expect(result.failures).toHaveLength(25);
+    expect(result.failure_count).toBe(30);
+    expect(result.omitted_failure_count).toBe(5);
+    expect(result.failure_count).toBe(result.failures.length + result.omitted_failure_count);
+    expect(result.failures[0].source.length).toBeLessThanOrEqual(256);
+    expect(result.failures[0].source).not.toContain('postgresql://');
+    expect(result.failures[0].source).not.toContain('secret');
+    expect(result.failures[0].reason).toBe('unknown_failure');
+    expect(JSON.stringify(result)).not.toContain(privatePayload);
+    expect(result.last_error).not.toContain(privatePayload);
   });
 
   it('stops at the wallclock window with remaining > 0', async () => {
@@ -91,7 +198,17 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
         countRemaining: async () => 5,
         runBatch: async () => {
           batches++;
-          return { extracted: 0, skipped: 0, providerFailure: true };
+          return {
+            extracted: 0,
+            skipped: 0,
+            providerFailure: true,
+            failureCount: 1,
+            firstError: 'pages/rejected: untrusted atom output rejected by source guard',
+            failures: [{
+              source: 'pages/rejected',
+              reason: 'source_guard:ambiguous_source_quote',
+            }],
+          };
         },
         now: () => 0,
       },
@@ -101,6 +218,13 @@ describe('runExtractAtomsDrain (issue #1678)', () => {
     expect(result.stopped).toBe('provider_failure');
     expect(batches).toBe(1);
     expect(result.remaining).toBe(5);
+    expect(result.failures).toEqual([{
+      batch: 1,
+      source: 'pages/rejected',
+      reason: 'source_guard:ambiguous_source_quote',
+    }]);
+    expect(result.failure_count).toBe(1);
+    expect(result.omitted_failure_count).toBe(0);
   });
 
   // issue #3218 (codex P2) — a final recount of 0 must NOT overwrite
@@ -190,18 +314,32 @@ describe('shared wiring helper holds the cycle lock (5A)', () => {
     expect(src).toContain('withRefreshingLock(engine, lockId');
   });
 
-  // issue #3218 — the wiring's `runBatch` must derive `providerFailure` from
-  // the SAME per-item counts pinned by
-  // `extract-atoms-synthesize-concepts.test.ts`'s "all items fail" case
-  // (failures.length > 0 && transcripts_processed + pages_processed === 0),
-  // not from `r.status` (which collapses partial and total failure into the
-  // same 'warn' value — the exact discard the issue reports).
-  it('runBatch derives providerFailure from failures.length + zero processed items, not r.status', () => {
-    const runBatchBlock = src.slice(src.indexOf('runBatch: async () => {'));
-    expect(runBatchBlock).toContain('d.failures');
-    expect(runBatchBlock).toContain('transcripts_processed');
-    expect(runBatchBlock).toContain('pages_processed');
-    expect(runBatchBlock).toContain('providerFailure: failures.length > 0 && itemsSucceeded === 0');
+  // issue #3218/#4730 — behaviorally pin the production adapter rather than
+  // matching its source text. Raw `error` payloads must not cross the seam.
+  it('adapts typed phase failures and derives providerFailure from zero processed items', () => {
+    const batch = extractAtomsDrainBatchFromPhaseDetails({
+      atoms_extracted: 0,
+      duplicates_skipped: 2,
+      transcripts_processed: 0,
+      pages_processed: 0,
+      failures: [
+        { source: 'pages/a', reason: 'source_guard:missing_source_quote', error: 'private payload' },
+        { source: 'pages/b', reason: 'transient_provider_error', error: 'provider response' },
+      ],
+    });
+    expect(batch).toEqual({
+      extracted: 0,
+      skipped: 2,
+      providerFailure: true,
+      failureCount: 2,
+      failures: [
+        { source: 'pages/a', reason: 'source_guard:missing_source_quote' },
+        { source: 'pages/b', reason: 'transient_provider_error' },
+      ],
+      firstError: 'pages/a: source_guard:missing_source_quote',
+    });
+    expect(JSON.stringify(batch)).not.toContain('private payload');
+    expect(JSON.stringify(batch)).not.toContain('provider response');
   });
 });
 
