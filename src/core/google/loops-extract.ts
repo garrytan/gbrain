@@ -151,6 +151,9 @@ A commitment is a concrete promise to do something. Direction matters:
 A pending decision is an explicit question/choice in the thread that nobody has resolved yet.
 
 Rules:
+- The <thread account_email> attribute identifies the account owner. The rendered thread separates outer messages with headings such as "## → Name <email> · timestamp". Attribute the body under each heading to that outer sender; quoted replies inside the body do not change who authored the outer message.
+- Inspect EVERY outer message authored by account_email. Each distinct unresolved first-person future action by that sender (for example: follow up, discuss something and get back, send, review, or decide) is a separate "owed_by_me" commitment. Do not collapse two promises in one message into one item.
+- Commitments made by other outer senders to account_email are "owed_to_me".
 - Output STRICT JSON, nothing else:
   {"commitments":[{"direction":"owed_by_me"|"owed_to_me","text":"...","counterparty_name":"...","counterparty_email":"...","due_iso":"YYYY-MM-DD"|null,"quote":"..."}],"decisions_pending":[{"text":"...","quote":"..."}]}
 - "quote" is a VERBATIM sentence from the thread (max 200 chars) proving the item. Never paraphrase the quote.
@@ -341,6 +344,7 @@ export async function runLoopsExtract(
   // the tail so the newest evidence is always visible to the judge.
   let content = (page.compiled_truth ?? '').slice(-12_000);
   for (const p of INJECTION_PATTERNS) content = content.replace(p.rx, p.replacement);
+  const accountEmail = typeof fm.account === 'string' ? fm.account.toLowerCase() : '';
 
   let text: string;
   try {
@@ -349,7 +353,7 @@ export async function runLoopsExtract(
       messages: [
         {
           role: 'user',
-          content: `<thread subject=${JSON.stringify(page.title ?? '')} account_owner="me">\n${content}\n</thread>\n\nExtract the open loops.`,
+          content: `<thread subject=${JSON.stringify(page.title ?? '')} account_owner="me" account_email=${JSON.stringify(accountEmail)}>\n${content}\n</thread>\n\nExtract the open loops.`,
         },
       ],
       maxTokens: 2000,

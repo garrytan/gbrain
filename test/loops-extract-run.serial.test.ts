@@ -107,7 +107,11 @@ beforeAll(async () => {
         'From: alice@example.com\n\nHi — following up on the deck.\n\n' +
         'Me: I will send you the deck by Friday.\n' +
         'Alice: Great. Which week works for the kickoff?\n',
-      frontmatter: { thread_id: THREAD_ID, date: '2026-08-20T10:00:00Z' },
+      frontmatter: {
+        thread_id: THREAD_ID,
+        date: '2026-08-20T10:00:00Z',
+        account: 'owner@example.com',
+      },
       effective_date: new Date('2026-08-20T10:00:00Z'),
     },
     { sourceId: SRC },
@@ -415,6 +419,14 @@ describe('runLoopsExtract', () => {
     expect(r.commitments).toBe(1);
     expect(r.decisions).toBe(1);
     expect(r.loop_ids.length).toBe(2);
+
+    // The real Gmail renderer identifies the owner through frontmatter.account
+    // and outer-message headings. The judge must receive both pieces so a
+    // first-person promise in an outbound reply is not mistaken for quoted
+    // inbound prose or silently omitted.
+    expect(lastChatReq?.messages?.[0]?.content).toContain('account_email="owner@example.com"');
+    expect(lastChatReq?.system).toContain('Inspect EVERY outer message authored by account_email');
+    expect(lastChatReq?.system).toContain('quoted replies inside the body do not change');
 
     // Projection 2 — the open_loops rows.
     const loops = await engine.executeRaw<Record<string, unknown>>(
