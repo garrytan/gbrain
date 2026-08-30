@@ -29,6 +29,7 @@ import {
 } from './search/embedding-column.ts';
 import { type DbPacer, createNoopPacer, observed } from './db-pacer.ts';
 import { AbortError } from './abort-check.ts';
+import { clampEmbedConcurrency } from './embedding.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -283,7 +284,7 @@ export async function embedStaleForSource(
   opts: EmbedStaleOpts = {},
 ): Promise<EmbedStaleResult> {
   const batchSize = opts.batchSize ?? 2000;
-  const concurrency = opts.concurrency ?? 20;
+  const concurrency = clampEmbedConcurrency(opts.concurrency ?? 20);
   const signal = opts.signal;
   const embedFn = opts.embedFn ?? ((texts, fnOpts) =>
     embedBatchWithBackoff(texts, { abortSignal: fnOpts.abortSignal }));
