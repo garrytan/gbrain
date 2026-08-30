@@ -1052,7 +1052,7 @@ export async function runPhaseLint(brainDir: string, dryRun: boolean, engine?: B
     // competing module-style engine that nulls the shared db singleton
     // mid-cycle (which broke every phase after lint with a misleading
     // "connect() has not been called").
-    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined, signal });
+    const result = await runLintCore({ target: brainDir, fix: true, dryRun, engine: engine ?? undefined, signal, durabilityRoot: brainDir });
     const issues = result.total_issues ?? 0;
     const fixed = result.total_fixed ?? 0;
     const remaining = Math.max(0, issues - fixed);
