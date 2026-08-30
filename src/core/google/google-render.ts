@@ -34,6 +34,52 @@ export function isNoiseSender(fromAddress: string): boolean {
   return NOISE_SENDER_SUBSTRINGS.some((p) => f.includes(p));
 }
 
+/**
+ * Google Calendar system mail — the invitation/response/cancellation notices
+ * Calendar sends ON BEHALF OF a human organiser or attendee.
+ *
+ * Why this needs its own predicate: the mail arrives FROM the colleague's real
+ * address, so neither isNoiseSender nor `loops mute sender` can exclude it —
+ * muting the address would also silence that person's genuine email. In a
+ * measured audit these notices were 72 of 237 open loops (30%), every one of
+ * them a "reply owed" that no human ever expected an answer to.
+ *
+ * PRIMARY signal is structural: `calendarMethod` is non-null when the message
+ * carries a `text/calendar` part or an `.ics` attachment, which Calendar
+ * attaches to all of these and which ordinary human mail never has.
+ *
+ * The subject prefix is a deliberate FALLBACK, reached only when no MIME
+ * information was captured for the message. It is anchored to the start of the
+ * subject and refuses anything carrying a Re:/Fwd: prefix, so a human forward
+ * that happens to begin "Invitation: ..." still opens a loop.
+ */
+const CALENDAR_SUBJECT_PREFIXES = [
+  // en
+  'invitation:', 'updated invitation:', 'invitation with note:',
+  'updated invitation with note:', 'accepted:', 'declined:', 'tentative:',
+  'canceled event:', 'cancelled event:', 'notification:',
+  // ru
+  'приглашение:', 'обновлённое приглашение:', 'обновленное приглашение:',
+  'принято:', 'отклонено:', 'под вопросом:', 'отменено:', 'отмена мероприятия:',
+  // es / fr / de — the locales Calendar localises these headers into
+  'invitación:', 'invitación actualizada:', 'aceptada:', 'rechazada:',
+  'invitation mise à jour:', 'acceptée:', 'refusée:',
+  'einladung:', 'aktualisierte einladung:', 'zugesagt:', 'abgesagt:',
+];
+
+const REPLY_OR_FORWARD_PREFIX = /^\s*((re|fwd?|aw|sv|vs)\s*:\s*)+/i;
+
+export function isCalendarSystemMail(
+  msg: { calendarMethod?: string | null; subject?: string },
+): boolean {
+  if (msg.calendarMethod !== null && msg.calendarMethod !== undefined) return true;
+  const subject = (msg.subject ?? '').trim();
+  // A human reply/forward is never Calendar system mail, whatever it is titled.
+  if (REPLY_OR_FORWARD_PREFIX.test(subject)) return false;
+  const lowered = subject.toLowerCase();
+  return CALENDAR_SUBJECT_PREFIXES.some((p) => lowered.startsWith(p));
+}
+
 const SIGNATURE_PATTERNS = [
   /docusign/i,
   /dropbox sign/i,
