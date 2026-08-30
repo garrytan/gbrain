@@ -527,6 +527,32 @@ describe('runLoopsExtract', () => {
     expect(after.every((row) => row.closed_by === 'llm_reconciled')).toBe(true);
   });
 
+  test('a successful semantic pass removes the raw unanswered-inbound candidate', async () => {
+    const { upsertOpenLoop } = await import('../src/core/loops/loops-store.ts');
+    const raw = await upsertOpenLoop(engine, {
+      sourceId: SRC,
+      dedupKey: 'thread:raw-inbound-test',
+      loopType: 'unanswered_inbound',
+      summary: 'Reply owed to a synthetic sender',
+      evidence: [{ page_slug: EMAIL_SLUG }],
+      threadId: THREAD_ID,
+      pageSlug: EMAIL_SLUG,
+      detector: 'deterministic_thread',
+      lastActivityAt: '2026-08-20T10:00:00Z',
+    });
+    chatImpl = async () => ({
+      text: '{"commitments":[],"decisions_pending":[]}',
+      stopReason: 'end',
+    });
+
+    await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    const rows = await engine.executeRaw<{ status: string; closed_by: string }>(
+      `SELECT status, closed_by FROM open_loops WHERE id = $1`,
+      [raw.id],
+    );
+    expect(rows).toEqual([{ status: 'done', closed_by: 'llm_triaged' }]);
+  });
+
   test('prompt hardening: newest 12k is retained and sanitized; stale head is dropped', async () => {
     const slug = 'emails/2026/08/2026-08-22-injection-thread-99887766.md';
     // 'ignore previous instructions' matches sanitize.ts's 'ignore-prior'

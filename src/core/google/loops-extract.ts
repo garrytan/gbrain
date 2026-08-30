@@ -27,6 +27,7 @@
 import type { BrainEngine } from '../engine.ts';
 import {
   closeOpenLoop,
+  closeThreadLoops,
   loadSuppressions,
   upsertOpenLoop,
   type LoopEvidence,
@@ -37,7 +38,7 @@ import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './type
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /** Bump only when already-imported threads must be judged again after a semantic fix. */
-export const LOOPS_EXTRACT_KEY_REVISION = 3;
+export const LOOPS_EXTRACT_KEY_REVISION = 4;
 /**
  * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
  * queued (up to the generous safety ceiling below) and the worker's
@@ -453,10 +454,9 @@ export async function runLoopsExtract(
   // extraction by CC'ing a known-muted address. Pages rendered before
   // `senders` existed fall back to fm.from alone.
   const suppressions = await loadSuppressions(engine, payload.sourceId);
+  const lastSender = typeof fm.from === 'string' ? bareAddress(fm.from) : '';
   const senderAddresses = new Set<string>();
-  if (typeof fm.from === 'string' && fm.from.trim() !== '') {
-    senderAddresses.add(bareAddress(fm.from));
-  }
+  if (lastSender) senderAddresses.add(lastSender);
   if (Array.isArray(fm.senders)) {
     for (const s of fm.senders) {
       if (typeof s === 'string' && s.trim() !== '') senderAddresses.add(bareAddress(s));
@@ -730,6 +730,20 @@ export async function runLoopsExtract(
       }
     }
   }
+
+  // `deterministic_thread` is intentionally a cheap, recall-first candidate
+  // detector. Once the semantic judge has successfully read the complete
+  // thread, its precise commitment/decision rows replace that raw inbound
+  // candidate — or replace it with nothing for cold outreach, FYI, resolved,
+  // or other-owned work. Never do this on refusal/parse/provider failure: in
+  // those paths we return/throw above and preserve the safety-net candidate.
+  await closeThreadLoops(
+    engine,
+    payload.sourceId,
+    threadId,
+    'llm_triaged',
+    ['unanswered_inbound'],
+  );
 
   return {
     status: 'extracted',
