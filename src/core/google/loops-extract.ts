@@ -35,6 +35,8 @@ import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
+/** Bump only when already-imported threads must be judged again after a semantic fix. */
+export const LOOPS_EXTRACT_KEY_REVISION = 2;
 /**
  * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
  * queued (up to the generous safety ceiling below) and the worker's

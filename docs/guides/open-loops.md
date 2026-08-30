@@ -120,9 +120,11 @@ without mail content reaching the logs.
 **Every eligible thread is queued** (newest first — ordering only, nothing is
 dropped for being older). The MinionQueue is the backlog and the worker's
 concurrency is the rate limit; the old tight per-sweep cap silently lost
-threads (a thread only re-candidates when it changes). Jobs are keyed by page
-revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
-thread is a no-op and that key is the only dedupe in play. A generous safety
+threads (a thread only re-candidates when it changes). Jobs are keyed by
+extractor revision plus page revision
+(`loops:r<N>:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
+thread is a no-op while a semantic extractor fix can deliberately re-judge
+the bounded window once. A generous safety
 ceiling (500/sweep) remains purely as a spend backstop for pathological
 sweeps; when it binds, the log names the drop honestly. Semantic cross-thread
 dedupe happens only inside the extractor as described above.
