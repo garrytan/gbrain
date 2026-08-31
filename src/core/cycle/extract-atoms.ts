@@ -13,11 +13,14 @@
 //      the page — see the write site below and #2163.
 //
 // Idempotency (per-atom, via deterministic slug):
-//   Each atom's slug is `atoms/<source-date>/<stem>-<title-hash>` — built from
-//   the SOURCE date (the transcript's own date / the page slug), NOT the run
-//   date, plus a 6-char hash of the title. Re-extracting the same atom resolves
-//   to the SAME slug, so the import upserts in place instead of minting a
-//   duplicate. This closes three bugs in one scheme:
+//   Page-derived atoms use
+//   `atoms/<source-date>/<full-source-slug>/<stem>-<title-hash>`; keeping the
+//   canonical source slug verbatim makes identity injective across source-page
+//   locators even if every shortened/hash-derived component collides.
+//   Transcript atoms retain `atoms/<source-date>/<stem>-<title-hash>`. The date
+//   comes from the SOURCE, not the run date. Re-extracting the same atom
+//   resolves to the SAME slug, so the import upserts in place instead of
+//   minting a duplicate. This preserves three earlier fixes:
 //     - PR #1414's page-side re-extraction.
 //     - The cross-day transcript duplicate: append-only transcripts grow daily,
 //       so a run-date prefix (`atoms/<today>/…`) used to re-mint the same atom
@@ -66,6 +69,7 @@ import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
+import { validateSlug } from '../utils.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -897,11 +901,21 @@ export async function runPhaseExtractAtoms(
         const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
-          const slug = atomSlug(atom.title, srcRef);
+          const slug = atomSlug(
+            atom.title,
+            srcRef,
+            item.kind === 'page' ? item.slug : undefined,
+          );
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
               : { source_slug: item.slug };
+          if (item.kind === 'page') {
+            await assertAtomImportBinding(engine, slug, sourceId, {
+              source_slug: item.slug,
+              source_hash: hash16,
+            });
+          }
           // Serialize to markdown and import via the canonical pipeline so
           // the atom is chunked (+ embedded when a provider is configured).
           // engine.putPage is a bare page-row upsert that never chunks, so
@@ -1240,16 +1254,56 @@ function sourceDate(ref: string): string {
 }
 
 /**
- * Deterministic per-atom slug: `atoms/<source-date>/<stem>-<title-hash>`.
+ * Deterministic per-atom slug. Page-derived atoms retain the complete source
+ * slug as an injective path component:
+ * `atoms/<source-date>/<source-page-slug>/<stem>-<title-hash>`. Transcript
+ * atoms keep the legacy `atoms/<source-date>/<stem>-<title-hash>` shape.
  * - Date comes from the SOURCE, not the run date, so re-extracting an
  *   append-only transcript on a later day yields the SAME slug → putPage
  *   upserts instead of minting a cross-day duplicate.
+ * - The full canonical page slug is not shortened, slugified, or hashed.
+ *   Distinct source-page locators therefore cannot alias even when their date,
+ *   title stem, and title hash are all identical.
  * - The 6-char title hash keeps two distinct atoms whose titles share the
  *   first 60 chars on separate slugs, so a deterministic slug never silently
  *   clobbers a *different* atom. Hash is over the title only (not body) so an
  *   LLM rewording the body on re-extraction still upserts rather than dupes.
  */
-function atomSlug(title: string, srcRef: string): string {
+function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): string {
   const hash = createHash('sha256').update(title).digest('hex').slice(0, 6);
-  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
+  const sourcePath = sourcePageSlug ? `${validateSlug(sourcePageSlug)}/` : '';
+  return `atoms/${sourceDate(srcRef)}/${sourcePath}${atomSlugStem(title)}-${hash}`;
+}
+
+type AtomSourceBinding = { source_slug: string; source_hash: string };
+
+/**
+ * Refuse to reuse a deterministic atom slug for a different source binding.
+ * The canonical importer is an upsert, so without this precondition a slug
+ * collision silently replaces the prior atom before the completion receipt
+ * flips its provisional hash. Both the final hash and this run's provisional
+ * form are valid retry states; every other locator/hash combination is a
+ * conflict and must leave the existing row untouched.
+ */
+async function assertAtomImportBinding(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+  expected: AtomSourceBinding,
+): Promise<void> {
+  const existing = await engine.getPage(slug, { sourceId });
+  if (!existing) return;
+
+  const frontmatter = existing.frontmatter as Record<string, unknown>;
+  const locatorMatches =
+    existing.type === 'atom' && frontmatter.source_slug === expected.source_slug;
+  const storedHash = frontmatter.source_hash;
+  const hashMatches =
+    storedHash === expected.source_hash || storedHash === `pending:${expected.source_hash}`;
+  if (locatorMatches && hashMatches) return;
+
+  throw new Error(
+    `atom identity conflict for ${slug}: existing atom has a different source binding; ` +
+    'refusing to overwrite it',
+  );
 }
