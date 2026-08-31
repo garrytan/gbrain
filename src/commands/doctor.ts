@@ -1672,6 +1672,32 @@ export async function buildChecks(
     // unparseable config.json lands here and skips, same fail-open posture).
   }
 
+  // 3a-bis. default_source_local_path. The `default` source is the implicit
+  // write-through target for any unscoped `gbrain put`/`gbrain capture` call.
+  // A null local_path on that row is invisible to every other check here —
+  // the multi-source-drift check below explicitly excludes `default` from
+  // its own local_path filtering (it looks for content misrouted INTO
+  // default, not default's own config) — so a brain can run with
+  // `default.local_path: null` indefinitely with doctor reporting clean.
+  // Reported incident: exactly this, undetected for months, during which
+  // unscoped writes silently misrouted into another source's repo.
+  if (engine !== null) try {
+    const { assessDefaultSourcePath } = await import('../core/default-source-path-check.ts');
+    const [defaultSource] = await engine!.executeRaw<{ id: string; local_path: string | null }>(
+      `SELECT id, local_path FROM sources WHERE id = 'default'`,
+    );
+    const assessment = assessDefaultSourcePath(defaultSource);
+    if (assessment.status !== 'skip') {
+      checks.push({
+        name: 'default_source_local_path',
+        status: assessment.status,
+        message: assessment.message,
+      });
+    }
+  } catch {
+    // Best-effort. A broken sources table should not stop doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface

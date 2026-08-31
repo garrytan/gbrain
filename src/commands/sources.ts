@@ -896,6 +896,54 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   }
 }
 
+// Non-destructive local_path repair (reported incident: `default`'s
+// local_path sat at NULL for months with no way to fix it short of a raw SQL
+// UPDATE, causing unscoped `gbrain put`/`gbrain capture` calls to misroute
+// writes into an unrelated source's repo). Mirrors runSetCrMode's shape:
+// loud-rejection on a missing source (never a silent 0-row UPDATE), prints
+// the prior value before changing it so the change is visible/reversible,
+// and never deletes or archives anything — purely a pointer repair.
+async function runSetPath(engine: BrainEngine, args: string[]): Promise<void> {
+  const id = args[0];
+  const path = args[1];
+
+  if (!id || !path) {
+    console.error('Usage: gbrain sources set-path <id> <path>');
+    console.error('  Sets the source\'s local_path — the on-disk directory gbrain treats as');
+    console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
+    console.error('  updates the pointer, never touches files on disk.');
+    process.exit(2);
+  }
+
+  const existing = await engine.executeRaw<{ id: string; local_path: string | null }>(
+    `SELECT id, local_path FROM sources WHERE id = $1 LIMIT 1`,
+    [id],
+  );
+  if (existing.length === 0) {
+    console.error(`Error: source "${id}" not found.`);
+    console.error(`  Run 'gbrain sources list' to see registered sources.`);
+    process.exit(4);
+  }
+
+  const priorPath = existing[0]!.local_path;
+
+  if (!existsSync(path)) {
+    console.error(`Error: path does not exist on disk: ${path}`);
+    console.error('  This command only repairs the DB pointer — it never creates directories.');
+    console.error('  Create the directory first, then re-run.');
+    process.exit(5);
+  }
+
+  await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [path, id]);
+
+  if (priorPath) {
+    console.log(`Updated source "${id}" local_path: ${priorPath} -> ${path}`);
+  } else {
+    console.log(`Set source "${id}" local_path (was NULL) -> ${path}`);
+  }
+  console.log('Run `gbrain doctor` to confirm the change resolves any related warning.');
+}
+
 async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
   if (!id) {
@@ -1822,6 +1870,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'tracked-branch': return runTrackedBranch(engine, rest);
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
+    case 'set-path':    return runSetPath(engine, rest);
     case 'audit':      return runAudit(engine, rest);
     // v0.46 github-source demo (offline, privacy-clean fixtures)
     case 'demo':       { const { runSourcesDemo } = await import('./sources-demo.ts'); return runSourcesDemo(engine, rest); }
@@ -1885,6 +1934,12 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
+  set-path <id> <path>             Repair a source's local_path pointer.
+                                    Non-destructive: only updates the DB
+                                    column, never touches files on disk.
+                                    Rejects a missing source or a path that
+                                    doesn't exist. See gbrain doctor's
+                                    default_source_local_path check.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.
