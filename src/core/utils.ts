@@ -71,6 +71,18 @@ export const HASH_EPHEMERAL_FRONTMATTER_KEYS: readonly string[] = [
   QUARANTINE_KEY,
   CONTENT_FLAG_KEY,
   EMBED_SKIP_KEY,
+  // Same bug class as captured_at (v0.39.3.0 CV8) and the gate markers
+  // (v0.42 #1699): extract-atoms.ts:768 stamps `atoms_scan_hash` INTO the
+  // frontmatter, so without this the marker changes content_hash on the next
+  // import. Atom eligibility is `atoms_scan_hash <> substring(content_hash,1,16)`
+  // (extract-atoms.ts:289), so a page scanned once is eligible again after the
+  // very next export->sync, forever. Measured on BTree 2026-08-30: all 24
+  // ever-scanned pages were eligible again, and three drains in one day
+  // re-mined the SAME 23 sources into ~9 LLM-paraphrased near-duplicate atoms
+  // each (205 of 208 atoms that day). content_hash_duplicates cannot see them
+  // because the wording differs. The marker is re-derived deterministically
+  // from the body, so dropping it from the hash is safe.
+  'atoms_scan_hash',
 ];
 
 /**
