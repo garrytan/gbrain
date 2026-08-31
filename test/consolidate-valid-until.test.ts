@@ -254,6 +254,169 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     expect(facts.length).toBe(4);
   });
 
+  test('semantic upsert: a re-extracted claim with a newer valid_from reuses the take', async () => {
+    await seedPage('cdx4-idempo-3');
+    const day1 = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-idempo-3',
+        text: 'stable claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r1 = await runPhaseConsolidate(engine, {});
+    expect(r1.details.takes_written).toBe(1);
+    const firstTake = await engine.executeRaw<{ id: number; since_date: string }>(
+      `SELECT id, since_date::text FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(firstTake.length).toBe(1);
+
+    // Simulate the next cycle's extract_facts: it hard-deletes and re-inserts
+    // the page's facts. The claim text is unchanged, but the new rows carry a
+    // fresh valid_from (an LLM extraction that defaults valid_from to now()),
+    // so MIN(valid_from) — and therefore since_date — lands on a later day.
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-idempo-3'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-idempo-3',
+        text: 'stable claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.facts_consolidated).toBe(4);
+    expect(r2.details.takes_written).toBe(0);
+
+    const countAfter2 = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(parseInt(countAfter2[0].n, 10)).toBe(1); // STILL 1 — no duplicate
+
+    // The take keeps its identity: same row, same since_date as first promotion.
+    const afterTake = await engine.executeRaw<{ id: number; since_date: string }>(
+      `SELECT id, since_date::text FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(afterTake[0]).toEqual(firstTake[0]);
+  });
+
+  test('semantic upsert: a human-authored take with the same claim is not hijacked', async () => {
+    const pageId = await seedPage('cdx4-foreign');
+    await engine.executeRaw(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, source, active)
+       VALUES ($1, 1, 'shared claim', 'bet', 'garry', 'human:garry', TRUE)`,
+      [pageId],
+    );
+    const day1 = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-foreign',
+        text: 'shared claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.takes_written).toBe(1);
+
+    const rows = await engine.executeRaw<{ id: number; kind: string; holder: string; source: string }>(
+      `SELECT id, kind, holder, source FROM takes WHERE page_id = $1 ORDER BY id`,
+      [pageId],
+    );
+    // The bet keeps its provenance; consolidate appends its own take instead
+    // of adopting a row it did not author.
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toMatchObject({ kind: 'bet', holder: 'garry', source: 'human:garry' });
+    expect(rows[1]).toMatchObject({ kind: 'fact', holder: 'self' });
+  });
+
+  test('semantic upsert: a superseded take is not resurrected as a new active row', async () => {
+    const pageId = await seedPage('cdx4-supersede');
+    const day1 = new Date(Date.now() - 96 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-supersede',
+        text: 'retired claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+    await runPhaseConsolidate(engine, {});
+
+    // The user retires the take.
+    await engine.executeRaw(
+      `UPDATE takes SET active = FALSE, superseded_by = 999 WHERE page_id = $1`,
+      [pageId],
+    );
+
+    // Next cycle re-extracts the same claim with a fresher valid_from.
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-supersede'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-supersede',
+        text: 'retired claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+
+    const rows = await engine.executeRaw<{ active: boolean; claim: string }>(
+      `SELECT active, claim FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].active).toBe(false); // retirement survives the dream cycle
+  });
+
+  test('semantic upsert: a resolved take is reused but never mutated', async () => {
+    const pageId = await seedPage('cdx4-resolved');
+    const day1 = new Date(Date.now() - 96 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-resolved',
+        text: 'resolved claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+    await runPhaseConsolidate(engine, {});
+    await engine.executeRaw(
+      `UPDATE takes SET resolved_at = now(), source = 'frozen' WHERE page_id = $1`,
+      [pageId],
+    );
+    const before = await engine.executeRaw<{ id: number; source: string; updated_at: Date }>(
+      `SELECT id, source, updated_at FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-resolved'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-resolved',
+        text: 'resolved claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+
+    const after = await engine.executeRaw<{ id: number; source: string; updated_at: Date }>(
+      `SELECT id, source, updated_at FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    expect(after.length).toBe(1);
+    expect(after[0].source).toBe(before[0].source);
+    expect(new Date(after[0].updated_at).getTime()).toBe(new Date(before[0].updated_at).getTime());
+
+    // Facts still consolidate into it — reuse without mutation.
+    const facts = await engine.executeRaw<{ consolidated_into: number }>(
+      `SELECT consolidated_into FROM facts WHERE entity_slug = 'cdx4-resolved' AND consolidated_into IS NOT NULL`,
+    );
+    expect(facts.length).toBe(4);
+    expect(facts[0].consolidated_into).toBe(before[0].id);
+  });
+
   test('valid_until idempotency: second run leaves valid_until unchanged (no diff)', async () => {
     await seedPage('cdx4-idempo-2');
     const t1 = new Date('2026-01-15T00:00:00Z');
