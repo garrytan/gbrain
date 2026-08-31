@@ -32,7 +32,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from '../mcp/instructions.ts';
+import { resolveMcpInstructions } from '../mcp/instructions.ts';
 import {
   GBrainOAuthProvider,
   validateTokenEndpointAuthMethod,
@@ -790,6 +790,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // than silently binding loopback only.
   const bind = options.bind ?? '127.0.0.1';
   const config = loadConfig() || { engine: 'pglite' as const };
+  const mcpInstructions = resolveMcpInstructions(config);
 
   if (logFullParams) {
     console.error(
@@ -2343,7 +2344,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
       { name: 'gbrain', version: VERSION },
-      { capabilities: { tools: {} }, instructions: GBRAIN_MCP_INSTRUCTIONS },
+      { capabilities: { tools: {} }, instructions: mcpInstructions },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       // WP1 honest catalog: the advertised list is exactly what THIS token

@@ -28,7 +28,7 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
+import { resolveMcpInstructions } from './instructions.ts';
 import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -206,6 +206,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   const fileConfig = loadConfig();
   const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
   const tools = buildToolDefs(surfacedOps, { strictParams });
+  const mcpInstructions = resolveMcpInstructions(fileConfig);
 
   /**
    * v0.41.3 (T6): single consolidated CORS header builder. Pre-fix there were
@@ -424,7 +425,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               protocolVersion: '2025-03-26',
               serverInfo: { name: 'gbrain', version: VERSION },
               capabilities: { tools: {} },
-              instructions: GBRAIN_MCP_INSTRUCTIONS,
+              instructions: mcpInstructions,
             },
             jsonrpc: '2.0',
             id,
