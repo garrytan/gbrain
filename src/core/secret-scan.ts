@@ -90,6 +90,11 @@ const CORE_PATTERNS: ReadonlyArray<{ name: string; source: string }> = [
   { name: 'github_token', source: 'gh[pousr]_[A-Za-z0-9]{36,}' },
   { name: 'slack', source: 'xox[baprs]-[A-Za-z0-9-]{10,}' },
   { name: 'aws_access_key', source: 'AKIA[0-9A-Z]{16}' },
+  // gbrain's own bearer token: `auth create` mints 'gbrain_' + 32 random bytes
+  // hex (commands/auth.ts). Without this entry the scanner redacts every
+  // vendor's keys but ships its own live token — MCP client tooling prints it
+  // verbatim into session logs, and transcript ingest carries it into pages.
+  { name: 'gbrain_token', source: 'gbrain_[0-9a-f]{64}' },
   // NOTE: private_key_pem is NOT here — a PEM key spans multiple lines and the
   // per-line scanner below cannot see the base64 body. It is matched over the
   // WHOLE text by PEM_BLOCK_RE (see scanPemBlocks) so redaction covers the

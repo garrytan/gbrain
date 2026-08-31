@@ -29,6 +29,7 @@ const GHO = 'gho_' + 'B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9';
 const GH_PAT = 'github_pat_' + '11AAAAAAA0aaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbb';
 const SLACK = 'xoxb-' + '123456789012-abcdefABCDEF';
 const AWS = 'AKIA' + 'IOSFODNN7EXAMPLE';
+const GBRAIN = 'gbrain_' + '0123456789abcdef'.repeat(4);
 const PEM = '-----BEGIN RSA PRIVATE KEY-----';
 
 let tmp: string | null = null;
@@ -76,6 +77,11 @@ describe('scanText — pattern classes', () => {
     }
   });
 
+  test("gbrain's own bearer token (auth create shape) fires as gbrain_token", () => {
+    const findings = scanText(`claude mcp list printed: Authorization: Bearer ${GBRAIN}`);
+    expect(findings.map((f) => f.pattern)).toEqual(['gbrain_token']);
+  });
+
   test('a Voyage key (pa-…, PROVIDER_KEY_SHAPES shape) fires as voyage', () => {
     const findings = scanText(`voyage_api_key: ${VOYAGE}`);
     expect(findings.map((f) => f.pattern)).toEqual(['voyage']);
@@ -96,6 +102,8 @@ describe('scanText — pattern classes', () => {
       'task-management-systems-for-founders-and-agents',
       'xoxo love, the changelog',                            // not xox[baprs]-
       'AKIAXX',                                              // too short
+      `gbrain_${'ab'.repeat(16)} is a 32-hex config id`,     // token body is 64 hex
+      'the gbrain_token pattern name itself',                // identifier, no hex body
       '-----BEGIN CERTIFICATE-----',                         // not a private key
     ].join('\n');
     expect(scanText(text)).toEqual([]);
