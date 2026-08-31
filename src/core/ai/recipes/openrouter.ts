@@ -47,6 +47,11 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
   return modelId.trim().toLowerCase().startsWith('anthropic/claude-');
 }
 
+/** Native DeepSeek v4 thinks by default; OpenRouter DeepSeek hosts do too. */
+export function openrouterThinkingByDefault(modelId: string): boolean {
+  return modelId.trim().toLowerCase().startsWith('deepseek/');
+}
+
 /**
  * OpenRouter Anthropic routes share Anthropic's tool-call envelope (and the
  * gateway loop already keys replay on gbrain_tool_use_id, not the raw
@@ -252,6 +257,9 @@ export const openrouter: Recipe = {
       // Family-scoped: OpenAI routes cache automatically; Anthropic routes
       // cache via the compat fetch shim's cache_control rewrite.
       supports_prompt_cache: openrouterSupportsPromptCache,
+      // DeepSeek v4 via OpenRouter thinks by default (same as native
+      // deepseek:). Other OR families stay default-off.
+      thinking_by_default: openrouterThinkingByDefault,
       // No max_context_tokens: catalog spans 128K to 1M+; a single recipe-wide
       // value is either unsafe for smaller models or wasteful for larger ones.
       // Let upstream errors surface per-model.

@@ -1770,7 +1770,9 @@ export function makeJudgeClient(verdictModel: string): JudgeClient | null {
         // the openai-compatible adapter spreads providerOptions[recipe.id]
         // into the wire body, where `thinking` is DeepSeek's documented knob.
         ...(v.parsed.providerId === 'deepseek'
-          ? { providerOptions: { deepseek: { thinking: { type: 'disabled' } } } }
+          || (v.parsed.providerId === 'openrouter'
+            && v.parsed.modelId.trim().toLowerCase().startsWith('deepseek/'))
+          ? { providerOptions: { [v.parsed.providerId]: { thinking: { type: 'disabled' } } } }
           : {}),
         // #4077: a cancelled cycle tears down the in-flight judge call too.
         abortSignal: options?.signal,
