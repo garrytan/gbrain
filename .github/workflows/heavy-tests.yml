@@ -210,7 +210,7 @@ jobs:
       HERMES_VERSION: "0.20.0"
       HERMES_GIT_TAG: "v2026.8.3"
       HERMES_GIT_COMMIT: "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
-      HERMES_INSTALL_SHA256: "868ed3a91e0fabbff6d7418b3ede82bf4833652ec4e77196a42852fb35a9e5b9"
+      HERMES_INSTALL_SHA256: "2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c"
       GBRAIN_REAL_HERMES_E2E: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -251,7 +251,13 @@ jobs:
             exit 1
           fi
           for attempt in 1 2 3; do
-            if timeout 600 bash hermes-install.sh --skip-setup --non-interactive --branch "$HERMES_GIT_TAG" --commit "$HERMES_GIT_COMMIT"; then
+            # --skip-browser --skip-computer-use: neither is needed by the
+            # door, and the computer-use sub-installer pipes an UNPINNED
+            # third-party script from raw.githubusercontent.com to bash — the
+            # one part of the install the sha256 + tag/commit pins don't
+            # cover. Skipping removes that surface entirely (review record in
+            # docs/mcp/HERMES-CLI-PIN.md).
+            if timeout 600 bash hermes-install.sh --skip-setup --non-interactive --skip-browser --skip-computer-use --branch "$HERMES_GIT_TAG" --commit "$HERMES_GIT_COMMIT"; then
               # The branch/commit flags above are ASSERTED here, not trusted:
               # a shell installer that silently ignores unknown flags would
               # clone upstream main into a runner that later holds secrets.
@@ -271,6 +277,7 @@ jobs:
           exit 1
 
       - name: Preconditions (binary, secret, version pin)
+        id: paidgate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -278,19 +285,38 @@ jobs:
             echo "::error::hermes did not resolve on PATH after install" >&2
             exit 1
           fi
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is empty — fork PRs get no secrets from GitHub, and this labeled job cannot run without them" >&2
-            exit 1
-          fi
           version_output=$(hermes --version)
           echo "$version_output"
-          # Observed shape: `Hermes Agent v0.20.0 (2026.8.3)`.
+          # Observed shape: `Hermes Agent v0.20.0 (2026.8.3)`. Checked BEFORE
+          # the secret gate so version drift is caught even on secretless PRs.
           if ! printf '%s' "$version_output" | grep -qF "v$HERMES_VERSION"; then
             echo "::error::hermes version drift — expected v$HERMES_VERSION in: $version_output" >&2
             exit 1
           fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            # Split posture: schedule/dispatch stay LOUD-FAIL — the owner is
+            # the audience there and owns the secret. A pull_request run's
+            # audience is a PR author who cannot fix repo secrets (fork PRs
+            # never receive them at all), and a permanently-red check trains
+            # reviewers to ignore this door — so on PRs the missing paid leg
+            # is a VISIBLE SKIP (warning + job summary), never a silent green.
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              echo "paid=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::hermes door PAID LEG SKIPPED — ANTHROPIC_API_KEY secret is empty (owner-only fix: gh secret set ANTHROPIC_API_KEY). Installer digest + payload + version pins verified; no hermes turn ran." >&2
+              {
+                echo "## Hermes door: paid leg skipped"
+                echo "ANTHROPIC_API_KEY secret is empty — installer digest, payload, and version pins verified, but no hermes turn ran."
+                echo "The nightly schedule stays loud-fail until the owner sets the secret."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::ANTHROPIC_API_KEY secret is empty — this scheduled/dispatched run cannot cover the hermes door without it (owner-only fix: gh secret set ANTHROPIC_API_KEY)" >&2
+            exit 1
+          fi
+          echo "paid=true" >> "$GITHUB_OUTPUT"
 
       - name: Configure hermes (auth + model pin)
+        if: steps.paidgate.outputs.paid == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -304,6 +330,7 @@ jobs:
           hermes doctor || true
 
       - name: Run hermes door tests
+        if: steps.paidgate.outputs.paid == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -693,8 +720,11 @@ jobs:
           tail -40 claude-plugin-door.txt
           if [ "$EXIT" -ne 0 ]; then exit "$EXIT"; fi
           pass_count=$(grep -Eo '[0-9]+ pass' claude-plugin-door.txt | tail -1 | grep -Eo '^[0-9]+' || true)
-          if [ "${pass_count:-0}" -ne 1 ]; then
-            echo "::error::claude plugin door expected exactly 1 passing INSTALL test, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
+          # 2 = validate+install + the persona-variant install added by
+          # v0.46.18.0 (#4251) — that commit grew the VALIDATE describe without
+          # re-pinning here, which is what turned the nightly red.
+          if [ "${pass_count:-0}" -ne 2 ]; then
+            echo "::error::claude plugin door expected exactly 2 passing INSTALL tests, summary shows '${pass_count:-none}' — refusing to go green (re-pin deliberately when tests are added)" >&2
             exit 1
           fi
 
@@ -832,18 +862,38 @@ jobs:
           fi
 
       - name: Preconditions (secret present)
+        id: paidgate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY secret is empty — the keyless tier above already ran (its coverage, including the SMOKE, is banked); the paid anthropic leg needs the secret hermes-door already consumes. Fork PRs get no secrets from GitHub." >&2
+            # Keyless coverage (incl. the SMOKE) is already banked above.
+            # Split posture: on pull_request the missing paid leg is a
+            # VISIBLE SKIP (fork PRs never receive secrets, and branch-PR
+            # authors cannot fix repo secrets either — a permanently-red
+            # check just trains reviewers to ignore this door); the nightly
+            # schedule + dispatch stay loud-fail so the owner sees red until
+            # the secret exists.
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              echo "paid=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::opencode door PAID LEG SKIPPED — ANTHROPIC_API_KEY secret is empty (owner-only fix: gh secret set ANTHROPIC_API_KEY). Keyless tier (5 tests incl. the SMOKE) is banked above." >&2
+              {
+                echo "## opencode door: paid anthropic leg skipped"
+                echo "Keyless tier (5 tests, SMOKE included) passed; the paid leg needs the ANTHROPIC_API_KEY secret."
+                echo "The nightly schedule stays loud-fail until the owner sets the secret."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::ANTHROPIC_API_KEY secret is empty — the keyless tier above already ran (its coverage, including the SMOKE, is banked); the paid anthropic leg needs the secret hermes-door already consumes (owner-only fix: gh secret set ANTHROPIC_API_KEY)." >&2
             exit 1
           fi
+          echo "paid=true" >> "$GITHUB_OUTPUT"
 
       # Full run (paid anthropic leg included). The T5 models-gate inside the
       # suite is the named bad-pin tripwire: it validates the pinned model id
       # against the AUTHED `opencode models` list BEFORE any spend.
       - name: Run opencode door tests (full — paid anthropic leg included)
+        if: steps.paidgate.outputs.paid == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |

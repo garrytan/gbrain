@@ -71,6 +71,7 @@ import {
   type HarnessTarget,
 } from './format.ts';
 import { atomicWriteTextFile } from './atomic-write.ts';
+import { removeCodexHooks, writeCodexHooks } from './codex-hooks.ts';
 import {
   removeCodexHttpServerBlock,
   writeCodexHttpServerBlock,
@@ -1075,11 +1076,27 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       confirm(t);
       d.log(
         `Codex wired: [mcp_servers.${flags.name}] with inline bearer token in ${t.path} (0600). ` +
-          'Codex has a hook system as of 0.147.0, but gbrain does not wire codex hooks yet — ' +
-          'per-turn context on codex is MCP tools + the pull protocol. ' +
+          'Per-turn context on codex is MCP tools + the pull protocol. ' +
           '[X9] If codex cannot see the server, some builds gate HTTP MCP behind ' +
           'experimental_use_rmcp_client = true in the same config — add it above the managed block.',
       );
+      // Codex SessionEnd capture (v1: session-end only): user-global
+      // hooks.json + its config.toml trust entry via the ONE writer
+      // (codex-hooks.ts) — idempotent, so a workspace-lane bootstrap and this
+      // harness lane converge on the same entry. No GBRAIN_SOURCE in the
+      // command (machine-global file; session-end resolves from the payload).
+      if (!flags.noHooks) {
+        const hooksBin = flags.gbrainBin ?? d.gbrainBin;
+        if (!hooksBin) {
+          d.logError('codex hooks skipped: cannot resolve an absolute gbrain binary path — pass --gbrain-bin <abs path>.');
+        } else {
+          // Paths derive from THIS TARGET's config.toml (CODEX_HOME-resolved
+          // upstream, test-injectable) — never the ambient global default.
+          const hr = writeCodexHooks({ gbrainBin: hooksBin, configPath: t.path!, hooksPath: join(dirname(t.path!), 'hooks.json') });
+          if (hr.ok) d.log(`Codex SessionEnd hook wired: ${hr.hooksPath} + trust entry in ${hr.configPath}.`);
+          else for (const note of hr.notes) d.logError(note);
+        }
+      }
     } catch (e) {
       failTarget(t, e instanceof Error ? e.message : String(e));
     }
@@ -1509,6 +1526,9 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
             ? `Codex managed block removed from ${codexPath}.`
             : `no managed block in ${codexPath} — counted as removed.`,
         );
+        const hr = removeCodexHooks({ configPath: codexPath, hooksPath: join(dirname(codexPath), 'hooks.json') });
+        if (hr.removed) d.log(`Codex SessionEnd hook + trust entry removed (${hr.hooksPath}).`);
+        for (const note of hr.notes) d.logError(note);
       } else if (t.host === 'opencode') {
         const ocPath = t.path ?? d.opencodeConfig;
         // [C8] Ownership before removal: an entry now at a DIFFERENT url is

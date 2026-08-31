@@ -13,89 +13,91 @@
  * having the facts table, then crashed on the post-condition check
  * three lines later. Restored here to `v < 45` (table-existence
  * precondition); column shape is enforced by migration v46 alone.
+ *
+ * Lifecycle: one shared PGLite engine (beforeAll, in-memory) replaces the
+ * prior fresh-engine-per-test boot. phaseASchema takes the engine argument
+ * directly and never calls loadConfig(), so no GBRAIN_HOME / config.json
+ * fixture is required; the engine override stays set as the orchestrator-path
+ * backstop. resetPgliteState truncates `config`, wiping the `version` stamp
+ * initSchema wrote — the DB-backed describe's beforeEach re-stamps it to
+ * LATEST_VERSION so each test starts at the post-initSchema state. The two
+ * engine-free short-circuit tests run hook-less (no reset).
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 
-import { createEngine } from '../src/core/engine-factory.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { LATEST_VERSION } from '../src/core/migrate.ts';
 import { __testing, __setTestEngineOverride } from '../src/commands/migrations/v0_31_0.ts';
-import { runMigrationsUpTo } from './e2e/helpers.ts';
-import type { BrainEngine } from '../src/core/engine.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 describe('v0.31.0 orchestrator — phaseASchema gate', () => {
-  let tmp: string;
-  let oldGbrainHome: string | undefined;
-  let engine: BrainEngine;
+  let engine: PGLiteEngine;
 
-  beforeEach(async () => {
-    oldGbrainHome = process.env.GBRAIN_HOME;
-    tmp = mkdtempSync(join(tmpdir(), 'gbrain-v0310-gate-'));
-    process.env.GBRAIN_HOME = tmp;
-
-    const gbrainHome = join(tmp, '.gbrain');
-    const dbPath = join(tmp, 'brain-db');
-    mkdirSync(gbrainHome, { recursive: true });
-    writeFileSync(
-      join(gbrainHome, 'config.json'),
-      JSON.stringify({ engine: 'pglite', database_path: dbPath }, null, 2) + '\n',
-    );
-
-    engine = await createEngine({ engine: 'pglite', database_path: dbPath });
-    await engine.connect({ engine: 'pglite', database_path: dbPath });
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
     await engine.initSchema();
     __setTestEngineOverride(engine);
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     __setTestEngineOverride(null);
     await engine.disconnect();
-    if (oldGbrainHome === undefined) delete process.env.GBRAIN_HOME;
-    else process.env.GBRAIN_HOME = oldGbrainHome;
-    rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('schema_version < 45 fails with operator-facing message naming v45 + recovery command', async () => {
-    // Roll the version backwards to simulate a brain stuck at pre-v45.
-    await engine.setConfig('version', '40');
+  describe('DB-backed', () => {
+    beforeEach(async () => {
+      await resetPgliteState(engine);
+      // resetPgliteState truncates `config`; restore the `version` stamp
+      // initSchema left (getConfig('version') must read LATEST, not null).
+      await engine.setConfig('version', String(LATEST_VERSION));
+    });
 
-    const result = await __testing.phaseASchema(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+    test('schema_version < 45 fails with operator-facing message naming v45 + recovery command', async () => {
+      // Roll the version backwards to simulate a brain stuck at pre-v45.
+      await engine.setConfig('version', '40');
 
-    expect(result.name).toBe('schema');
-    expect(result.status).toBe('failed');
-    expect(result.detail).toContain('version >= 45');
-    expect(result.detail).toContain('apply-migrations');
-    // Negative: must NOT mention 'v40' as the gate version (the prior bug).
-    expect(result.detail).not.toContain('version >= 40');
-    // Negative: must NOT carry the misleading "+ notability" claim from
-    // the prior gate text — column shape is enforced by v46, not gated here.
-    expect(result.detail).not.toContain('notability');
+      const result = await __testing.phaseASchema(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+
+      expect(result.name).toBe('schema');
+      expect(result.status).toBe('failed');
+      expect(result.detail).toContain('version >= 45');
+      expect(result.detail).toContain('apply-migrations');
+      // Negative: must NOT mention 'v40' as the gate version (the prior bug).
+      expect(result.detail).not.toContain('version >= 40');
+      // Negative: must NOT carry the misleading "+ notability" claim from
+      // the prior gate text — column shape is enforced by v46, not gated here.
+      expect(result.detail).not.toContain('notability');
+    });
+
+    test('schema_version >= 45 with facts table present → status complete', async () => {
+      // Brain is at LATEST: initSchema (beforeAll) applied every migration —
+      // v45 + v46 landed and the facts table exists — and the beforeEach
+      // re-stamped `version` to LATEST_VERSION. The prior
+      // runMigrationsUpTo(engine, LATEST_VERSION) was a provable no-op after
+      // initSchema (current = LATEST → pending = []); deleted.
+      const result = await __testing.phaseASchema(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+
+      expect(result.status).toBe('complete');
+      expect(result.detail).toContain('facts table present');
+    });
   });
 
-  test('schema_version >= 45 with facts table present → status complete', async () => {
-    // Advance the brain to LATEST so v45 + v46 land and the facts table exists.
-    const { LATEST_VERSION } = await import('../src/core/migrate.ts');
-    await runMigrationsUpTo(engine as never, LATEST_VERSION);
+  // Short-circuits return before any DB read — no per-test reset needed.
+  describe('engine-free short-circuits', () => {
+    test('dryRun short-circuits before any DB read', async () => {
+      const result = await __testing.phaseASchema(engine, { yes: true, dryRun: true, noAutopilotInstall: true });
 
-    const result = await __testing.phaseASchema(engine, { yes: true, dryRun: false, noAutopilotInstall: true });
+      expect(result.status).toBe('skipped');
+      expect(result.detail).toBe('dry-run');
+    });
 
-    expect(result.status).toBe('complete');
-    expect(result.detail).toContain('facts table present');
-  });
+    test('null engine short-circuits with no_brain_configured', async () => {
+      const result = await __testing.phaseASchema(null, { yes: true, dryRun: false, noAutopilotInstall: true });
 
-  test('dryRun short-circuits before any DB read', async () => {
-    const result = await __testing.phaseASchema(engine, { yes: true, dryRun: true, noAutopilotInstall: true });
-
-    expect(result.status).toBe('skipped');
-    expect(result.detail).toBe('dry-run');
-  });
-
-  test('null engine short-circuits with no_brain_configured', async () => {
-    const result = await __testing.phaseASchema(null, { yes: true, dryRun: false, noAutopilotInstall: true });
-
-    expect(result.status).toBe('skipped');
-    expect(result.detail).toBe('no_brain_configured');
+      expect(result.status).toBe('skipped');
+      expect(result.detail).toBe('no_brain_configured');
+    });
   });
 });

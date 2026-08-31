@@ -52,6 +52,7 @@ const KIND_ICON: Record<FactKind, string> = {
   commitment: '🤝',
   belief: '💭',
   fact: '📌',
+  idea: '💡',
 };
 
 interface ParsedFlags {

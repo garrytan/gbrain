@@ -19,7 +19,6 @@ test/e2e/bootstrap-lifecycle.serial.test.ts
 test/e2e/bootstrap-magic-moment.serial.test.ts
 test/e2e/bootstrap-persistence.serial.test.ts
 test/e2e/bootstrap-real-claude.serial.test.ts
-test/e2e/bootstrap-real-codex.serial.test.ts
 test/e2e/brainstorm-resume.test.ts
 test/e2e/cache-gate-pglite.test.ts
 test/e2e/capture-generation-regression.test.ts

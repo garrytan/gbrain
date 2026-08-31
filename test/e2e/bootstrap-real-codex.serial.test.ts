@@ -8,8 +8,10 @@
  *      ~/.codex/config.toml). Asserts the registration landed (real `codex mcp
  *      get gbrain` + the temp config.toml carry our server + GBRAIN_SOURCE),
  *      `gbrain bootstrap verify` exits 0, and the rendered AGENTS.md carries the
- *      Gate-3 brain-first pull protocol — Codex's ONLY per-turn mechanism (it
- *      hooks are not wired by gbrain yet).
+ *      Gate-3 brain-first pull protocol — Codex's ONLY per-turn mechanism
+ *      (gbrain wires SessionEnd capture only; per-turn stays pull). Also
+ *      asserts the trust-gated hooks.json + config.toml pair landed in the
+ *      hermetic CODEX_HOME.
  *
  *   2. SMOKE — a live `codex exec` turn. gbrain is registered as a Codex stdio
  *      MCP server (`bun run <repo>/src/cli.ts serve --surface full`) pinned to a
@@ -254,7 +256,12 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
     const codexHost = mkdtempSync(join(tmpdir(), 'gb-rc-codex-'));
     const shimDir = mkdtempSync(join(tmpdir(), 'gb-rc-bin-'));
     const savedHome = process.env.GBRAIN_HOME;
+    const savedCodexHome = process.env.CODEX_HOME;
     try {
+      // The in-process hooks writer resolves CODEX_HOME || ~/.codex — pin it
+      // to the hermetic host dir so the trust-gated pair lands (and is
+      // asserted) there, never in the runner's real ~/.codex.
+      process.env.CODEX_HOME = join(codexHost, '.codex');
       // A fresh git workspace (the cwd the human pasted into) with a brain/ dir.
       execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: ws });
       execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: ws });
@@ -321,8 +328,12 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
         }),
       );
       expect(hooksCode).toBe(0);
-      // Codex has no hooks — the pull protocol is the per-turn seam, stated plainly.
-      expect(hooksOut).toContain('gbrain does not wire Codex hooks yet');
+      // SessionEnd capture is wired (trust-gated pair); per-turn stays pull.
+      expect(hooksOut).toContain('codex SessionEnd hook installed');
+      expect(hooksOut).toContain('per-turn context on codex stays the AGENTS.md pull protocol');
+      const hooksJson = readFileSync(join(codexHost, '.codex', 'hooks.json'), 'utf8');
+      expect(hooksJson).toContain('hook session-end --harness codex');
+      expect(hooksJson).not.toContain('GBRAIN_SOURCE'); // machine-global file: runtime payload resolution only
 
       // Real `codex mcp get gbrain` shows our server (env values are masked in
       // the human view, so the source binding is asserted on config.toml below).
@@ -338,6 +349,9 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
       expect(toml).toContain('[mcp_servers.gbrain]');
       expect(toml).toContain(gbrainBin);
       expect(toml).toContain('GBRAIN_SOURCE = "workspace"');
+      // The hooks trust entry — without it codex silently never runs the hook.
+      expect(toml).toContain('gbrain:codex-hooks-trust');
+      expect(toml).toMatch(/trusted_hash = "sha256:[0-9a-f]{64}"/);
 
       // (e) verify → exit 0 (keyless PGLite; no repo/hooks for the codex path).
       const { result: verifyCode, out: verifyOut } = await captureStdout(() =>
@@ -351,6 +365,8 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
     } finally {
       if (savedHome === undefined) delete process.env.GBRAIN_HOME;
       else process.env.GBRAIN_HOME = savedHome;
+      if (savedCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = savedCodexHome;
       for (const d of [gbHome, ws, codexHost, shimDir]) {
         try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
       }

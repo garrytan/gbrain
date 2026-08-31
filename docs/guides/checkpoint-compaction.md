@@ -84,7 +84,7 @@ makes this the exception path.
   manifest. No hooks, no recipe.
 - **Codex / opencode** — not wired in this release. The pull protocol
   (`gbrain context-pack` after compaction, per `docs/guides/ambient-recall.md`)
-  is the supported path; a native codex hook lane is a filed follow-up.
+  is the supported path; codex now has a native SessionEnd capture lane (trust-gated hooks.json entry, `gbrain bootstrap hooks --harness codex`) — per-turn/compaction context on codex stays the pull protocol.
 
 ## Operational runbook — reason vocabulary
 

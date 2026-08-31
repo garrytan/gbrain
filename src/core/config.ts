@@ -34,6 +34,18 @@ export interface GBrainConfig {
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
+  /**
+   * Third-party integration gates, file-plane (read by engine-free hook
+   * children). `integrations.memorable.enabled` gates the optional
+   * session-end relay to a locally-installed `memorable` CLI — absent or
+   * anything other than literal `true` means OFF (fail-closed). The boolean
+   * alone is NOT sufficient: the gate also requires the gbrain-authored
+   * consent stamp (`~/.gbrain/integrations/hooks/memorable-consent.json`,
+   * written only by `gbrain config set`'s disclosure flow — deliberately
+   * outside this file, which the external CLI rewrites). See
+   * memorableGateAllowed in core/context/hook-heartbeat.ts.
+   */
+  integrations?: { memorable?: { enabled?: boolean } };
   /** Monthly backup-coverage check (src/core/backup/). File-plane: read by
    * engine-free render sites (hook children, the cli.ts startup rail). */
   backup?: { check_enabled?: boolean | string; check_interval_days?: number | string };
@@ -1164,6 +1176,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'chat_model',
   'chat_fallback_chain',
   'provider_base_urls',
+  // Integration gates (file-plane, hook-lane)
+  'integrations.memorable.enabled',
   // MEMORY_VERBS v1 (Cathedral 1)
   'mcp_surface',
   'protocol_installed_at',
@@ -1297,11 +1311,15 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // and inline-drain concurrency (default 1; clamped [1,8]; PGLite forced 1).
   'dream.synthesize.mode',
   'dream.synthesize.link_manifest',
+  'dream.synthesize.quote_verify',
   'dream.synthesize.inline_concurrency',
   // #4152 triage knobs. The triage model's preferred key is
   // `models.dream.triage` (models.* prefix, registered via the models.dream.*
   // family); these tune the gate + sampling + pass budget.
   'dream.triage.threshold',
+  'dream.triage.rescue_floor',
+  'dream.triage.rescue_min_segments',
+  'dream.triage.rescue_content_types',
   'dream.triage.max_chars',
   'dream.triage.max_tokens',
   'dream.triage.max_ms',

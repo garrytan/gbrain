@@ -959,6 +959,63 @@ export function createGBrainContextEngine(ctx: {
     memo.settled = false;
     memoSet(sessionId, memo);
 
+    // Memorable receipt (additive, opt-in, memorableGateAllowed-gated): the
+    // segment above is SPOOLED, i.e. durable, so the receipt describes real
+    // banked work. OpenClaw has no session end — capture is per-compaction by
+    // design (documented as compaction-only coverage; the post-last-compaction
+    // tail is never captured). One receipt per distinct window hash; a retried
+    // identical compaction dedups on content_hash inside the helper. The
+    // whole block is fail-open for the checkpoint: any refusal in here can
+    // never change the checkpoint's status. cfg was loaded fresh THIS call,
+    // so `gbrain config set …enabled false` applies on the next compaction
+    // without a gateway restart (GBRAIN_MEMORABLE, an env, needs one).
+    // This lane NEVER compacts the receipts file — the hook lane is the ONE
+    // compactor of session-receipts.jsonl
+    // (same single-rewriter rule as the relay-file trim: two processes doing
+    // read-filter-rename can drop each other's receipts; an append racing a
+    // rename loses at most its own line, the accepted class). It also skips
+    // the block entirely once the host's compact() deadline has fired:
+    // everything below (tail read, PATH walk, spawn) is work delaying the
+    // banked return.
+    try {
+      const hb = await import('./context/hook-heartbeat.ts');
+      if (!deadlineHit() && (await hb.memorableGateAllowed(cfg)).allowed) {
+        // Entropy parity with the hook lane [red-team]: the segment file was
+        // vendor-scanned only — its rendering feeds the Cathedral-5 ledger
+        // hash and cannot change — but the relay child derives its egress
+        // task line from that text. Re-scan with highEntropy and REFUSE the
+        // relay when it finds anything the vendor pass missed (fail-closed;
+        // the next compaction window re-evaluates).
+        const scan = await import('./secret-scan.ts');
+        if (scan.redactFindings(rendered.text, { highEntropy: true }).redactions.length > 0) {
+          throw new Error('entropy_hit'); // caught below — receipt+relay skipped, checkpoint unaffected
+        }
+        // Same span rule as the hook lane: windowTurns is a suffix of
+        // tail.turns, so calls are filtered to the window's origin.
+        const startTurnIndex = tail.turns.length - windowTurns.length;
+        const toolCallsJson = await hb.redactedToolCallsJson(tail.toolCalls, tail.toolCallTurnIndexes, startTurnIndex);
+        await hb.recordAndRelayReceipt({
+          session_id: sessionId,
+          harness: 'openclaw',
+          corpus_path: `${dir}/${segs.segmentFileName(sessionId, w.hash)}`,
+          content_hash: w.hash,
+          turn_count: windowTurns.length,
+          workspace_root: workspaceDir,
+          // Structurally true here: renderSegmentText returned non-null above
+          // (scan_unavailable already skipped this whole path), and
+          // redactedToolCallsJson throws into this catch on scanner failure —
+          // an unscanned payload can never reach the receipt on this lane.
+          tool_calls_json: toolCallsJson,
+          secret_scan_ok: true,
+          // trimRelayFile here too: an openclaw-ONLY host has no session-end
+          // hook lane, and without a trimmer the child-appended relay file
+          // grows forever behind the bounded tail read. Concurrent trims from
+          // both lanes converge (newest-keeping, tmp+rename); the residual
+          // loss window stays the single in-flight append.
+        }, { skipReceiptsCompaction: true, trimRelayFile: true }); // hook lane stays the ONE receipts compactor
+      }
+    } catch { /* receipt is additive — never fails the checkpoint */ }
+
     // Segment is spooled (durable); a deadline from here on degrades to
     // 'banked' — the sweep backstop extracts it later.
     if (deadlineHit()) return { status: 'banked', reason: 'deadline' };

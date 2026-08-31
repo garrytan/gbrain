@@ -112,11 +112,10 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  // resetPgliteState re-seeds the default source row (tests that rely on the
+  // v0.17 row get it from there; a second ON CONFLICT DO NOTHING insert here
+  // was always a no-op).
   await resetPgliteState(engine);
-  // Make sure the default source exists for tests that rely on the v0.17 row.
-  await engine.executeRaw(
-    `INSERT INTO sources (id, name, local_path, config) VALUES ('default', 'default', NULL, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
-  );
   // Reset GBRAIN_HOME fixtures between tests
   rmSync(GBRAIN_HOME, { recursive: true, force: true });
   mkdirSync(GBRAIN_HOME, { recursive: true });

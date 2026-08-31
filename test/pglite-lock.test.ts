@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { acquireLock, releaseLock, type LockHandle } from '../src/core/pglite-lock';
+import { acquireLock, releaseLock, peekLock, type LockHandle } from '../src/core/pglite-lock';
 
 const TEST_DIR = join(tmpdir(), 'gbrain-lock-test-' + process.pid);
 
@@ -366,6 +366,95 @@ describe('pglite-lock reap classification (WAL-repair wave)', () => {
       rmSync(parent, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe('pglite-lock peekLock (pure read, no side effects)', () => {
+  beforeEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+    mkdirSync(TEST_DIR, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  });
+
+  test('no lock dir → not held, and never creates one', () => {
+    const result = peekLock(TEST_DIR);
+    expect(result.held).toBe(false);
+    expect(existsSync(join(TEST_DIR, '.gbrain-lock'))).toBe(false);
+  });
+
+  test('a lock file that parses but has no usable pid reads as HELD (unprovable ≠ free, #2348)', () => {
+    // Erring the other way corrupted catalogs: a holder whose liveness cannot
+    // be proven must be treated as alive. This branch currently rides on
+    // isProcessAlive's invalid-pid handling — pinned here so a future cleanup
+    // of that function cannot silently flip peekLock to not-held.
+    const lockDir = join(TEST_DIR, '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, 'lock'), JSON.stringify({ acquired_at: 123, command: 'gbrain serve', subcommand: 'serve' }));
+    const result = peekLock(TEST_DIR);
+    expect(result.held).toBe(true);
+    expect(result.pid).toBeUndefined();
+  });
+
+  test('live holder, serve subcommand → held, isServe true, pid reported', async () => {
+    const lock = await acquireLock(TEST_DIR);
+    try {
+      const lockPath = join(TEST_DIR, '.gbrain-lock', 'lock');
+      const raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      writeFileSync(lockPath, JSON.stringify({ ...raw, subcommand: 'serve' }));
+
+      const result = peekLock(TEST_DIR);
+      expect(result.held).toBe(true);
+      expect(result.isServe).toBe(true);
+      expect(result.pid).toBe(process.pid);
+    } finally {
+      await releaseLock(lock);
+    }
+  });
+
+  test('live holder, non-serve subcommand → held, isServe false', async () => {
+    const lock = await acquireLock(TEST_DIR);
+    try {
+      const result = peekLock(TEST_DIR);
+      expect(result.held).toBe(true);
+      expect(result.isServe).toBe(false);
+    } finally {
+      await releaseLock(lock);
+    }
+  });
+
+  test('dead-pid holder → not held', () => {
+    const lockDir = join(TEST_DIR, '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    // PID 999999 is essentially guaranteed not to be a live process.
+    writeFileSync(
+      join(lockDir, 'lock'),
+      JSON.stringify({ pid: 999999, acquired_at: Date.now(), command: 'gbrain serve', subcommand: 'serve' }),
+    );
+    const result = peekLock(TEST_DIR);
+    expect(result.held).toBe(false);
+  });
+
+  test('corrupt lock file → not held (falls through to a real connect attempt)', () => {
+    const lockDir = join(TEST_DIR, '.gbrain-lock');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(join(lockDir, 'lock'), 'not json{{{');
+    const result = peekLock(TEST_DIR);
+    expect(result.held).toBe(false);
+  });
+
+  test('never throws LiveServeLockError, unlike acquireLock', async () => {
+    const lock = await acquireLock(TEST_DIR);
+    try {
+      const lockPath = join(TEST_DIR, '.gbrain-lock', 'lock');
+      const raw = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      writeFileSync(lockPath, JSON.stringify({ ...raw, subcommand: 'serve' }));
+      expect(() => peekLock(TEST_DIR)).not.toThrow();
+    } finally {
+      await releaseLock(lock);
+    }
+  });
 });
 
 describe('pglite-lock PID-reuse detection', () => {

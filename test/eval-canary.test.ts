@@ -12,7 +12,10 @@
  *      queryEmbedFn seam produce identical metrics.
  *   5. Check mode writes nothing to tracked files (git status unchanged).
  *
- * Fully hermetic: no API keys, no network, no DATABASE_URL.
+ * Fully hermetic: no API keys, no network, no DATABASE_URL. The PGLite
+ * engine is scoped to the one describe that needs it (the queryEmbedFn-seam
+ * determinism test) so the pure-function and subprocess tests don't pay
+ * engine init/reset.
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -29,26 +32,6 @@ import { hybridSearch } from '../src/core/search/hybrid.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const QRELS_PATH = join(ROOT, 'test', 'fixtures', 'eval-baselines', 'qrels-search.json');
-
-// ---------------------------------------------------------------------------
-// Canonical PGLite block (CLAUDE.md R3+R4)
-// ---------------------------------------------------------------------------
-
-let engine: PGLiteEngine;
-
-beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
-  await engine.initSchema();
-});
-
-afterAll(async () => {
-  await engine.disconnect();
-});
-
-beforeEach(async () => {
-  await resetPgliteState(engine);
-});
 
 // ---------------------------------------------------------------------------
 // 1. basisEmbedding
@@ -114,6 +97,25 @@ describe('buildQrelsQueryEmbedFn', () => {
 // ---------------------------------------------------------------------------
 
 describe('correctness gate through the queryEmbedFn seam', () => {
+  // Canonical PGLite block (CLAUDE.md R3+R4), scoped to this describe: the
+  // seam test is the ONLY engine consumer in the file — the pure-function
+  // and subprocess describes must not pay PGLite init/reset.
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
+  beforeEach(async () => {
+    await resetPgliteState(engine);
+  });
+
   test('two in-process runs produce identical metrics, at/above the default floors', async () => {
     const raw = readFileSync(QRELS_PATH, 'utf-8');
     await seedCanaryCorpus(engine, parseLegacyQrels(raw));

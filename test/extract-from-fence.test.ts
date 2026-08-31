@@ -103,8 +103,8 @@ describe('extractFactsFromFenceText — happy path mapping', () => {
     expect(out[1].context).toBeNull();
   });
 
-  test('all five FactKind values pass through', () => {
-    const kinds = ['event', 'preference', 'commitment', 'belief', 'fact'] as const;
+  test('all six FactKind values pass through', () => {
+    const kinds = ['event', 'preference', 'commitment', 'belief', 'fact', 'idea'] as const;
     const facts = kinds.map((k, i) => baseFact({ rowNum: i + 1, kind: k }));
     const out = extractFactsFromFenceText(facts, 'people/alice', 'default', { nowOverride: FROZEN_TODAY });
     expect(out.map(r => r.kind)).toEqual([...kinds]);

@@ -98,8 +98,8 @@ describe('parseFactsFence — canonical happy path', () => {
     });
   });
 
-  test('all five kinds parse', () => {
-    const kinds: FactKind[] = ['event', 'preference', 'commitment', 'belief', 'fact'];
+  test('all six kinds parse', () => {
+    const kinds: FactKind[] = ['event', 'preference', 'commitment', 'belief', 'fact', 'idea'];
     const body = wrapFenceBody(
       kinds.map((k, i) =>
         `| ${i + 1} | claim${i} | ${k} | 1.0 | world | medium | 2026-01-01 |  | src |  |`,

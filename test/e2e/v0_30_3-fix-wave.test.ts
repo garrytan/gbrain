@@ -28,6 +28,10 @@ import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
 
+// Cold-path opt-out: the rewind-to-v38 → re-initSchema → LATEST arc needs its
+// seeding initSchema to be a genuine cold build, not a snapshot restore.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 describe('v0.30.3 wave — pre-v39/v40/v41 forward-reference bootstrap (#741)', () => {
   test('pre-v39 brain (missing modality + embedding_image) re-runs initSchema cleanly', async () => {
     const engine = new PGLiteEngine();

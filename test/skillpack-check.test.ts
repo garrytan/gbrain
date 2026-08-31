@@ -9,62 +9,67 @@
  *   - --quiet → no stdout, same exit code.
  *   - --help → prints usage, exits 0.
  *
- * Subprocess invocation against temp $HOME so each test sees clean fixture
- * state. DATABASE_URL / GBRAIN_DATABASE_URL stripped so the report runs
- * filesystem-only (the checks we care about live there).
+ * Subprocess invocation via runCliBatch against two fixture $HOMEs (healthy
+ * and half-migrated), spawned once in beforeAll; tests assert on the cached
+ * results. Sharing a home within a batch is safe: skillpack-check is
+ * read-only against $HOME (doctor --fast reads filesystem state;
+ * apply-migrations --list early-returns when no brain is configured).
+ * DATABASE_URL / GBRAIN_DATABASE_URL are stripped by the helper so the
+ * report runs filesystem-only (the checks we care about live there).
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync } from 'child_process';
+import { runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
 import { __testing } from '../src/commands/skillpack-check.ts';
 
-const CLI = join(__dirname, '..', 'src', 'cli.ts');
+let healthyHome: string;
+let brokenHome: string;
 
-let tmp: string;
-let origHome: string | undefined;
+// Cached batch results — spawned once in beforeAll, asserted per-test.
+let healthy: CliResult; // skillpack-check           (healthy home)
+let healthyQuiet: CliResult; // skillpack-check --quiet   (healthy home)
+let help: CliResult; // skillpack-check --help    (healthy home)
+let broken: CliResult; // skillpack-check           (half-migrated home)
+let brokenQuiet: CliResult; // skillpack-check --quiet   (half-migrated home)
 
-function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  // Both HOME and GBRAIN_HOME must point at the fixture dir: config/path
-  // resolution prefers GBRAIN_HOME (which the test preload sets to its own
-  // scratch), so HOME alone leaves the child reading the wrong .gbrain.
-  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
-  delete env.DATABASE_URL;
-  delete env.GBRAIN_DATABASE_URL;
-  try {
-    const stdout = execFileSync('bun', ['run', CLI, ...args], {
-      env: env as Record<string, string>,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err: any) {
-    return {
-      exitCode: err.status ?? 1,
-      stdout: err.stdout?.toString?.() ?? '',
-      stderr: err.stderr?.toString?.() ?? '',
-    };
+beforeAll(async () => {
+  healthyHome = mkdtempSync(join(tmpdir(), 'gbrain-skillpack-check-test-'));
+  brokenHome = mkdtempSync(join(tmpdir(), 'gbrain-skillpack-check-test-'));
+
+  // Half-migrated fixture: a partial record in completed.jsonl trips the
+  // minions_migration doctor check → apply-migrations action.
+  const migrationsDir = join(brokenHome, '.gbrain', 'migrations');
+  mkdirSync(migrationsDir, { recursive: true });
+  writeFileSync(
+    join(migrationsDir, 'completed.jsonl'),
+    JSON.stringify({ version: '0.11.0', status: 'partial' }) + '\n',
+  );
+
+  // Two sequential batches at the default width 2 — each run spawns doctor +
+  // apply-migrations grandchildren, so machine-wide CLI children stay bounded.
+  [healthy, healthyQuiet, help] = await runCliBatch(
+    [['skillpack-check'], ['skillpack-check', '--quiet'], ['skillpack-check', '--help']],
+    { home: healthyHome },
+  );
+  [broken, brokenQuiet] = await runCliBatch(
+    [['skillpack-check'], ['skillpack-check', '--quiet']],
+    { home: brokenHome },
+  );
+}, 120_000);
+
+afterAll(() => {
+  for (const dir of [healthyHome, brokenHome]) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
-}
-
-beforeEach(() => {
-  origHome = process.env.HOME;
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-skillpack-check-test-'));
-});
-
-afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
-  try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
 describe('gbrain skillpack-check', () => {
   test('healthy fresh install → exit 0, healthy:true, empty actions', () => {
-    const result = run(['skillpack-check']);
-    expect(result.exitCode).toBe(0);
-    const report = JSON.parse(result.stdout);
+    expect(healthy.exitCode).toBe(0);
+    const report = JSON.parse(healthy.stdout);
     expect(report.healthy).toBe(true);
     expect(report.actions).toEqual([]);
     expect(report.summary).toBe('gbrain skillpack healthy');
@@ -73,16 +78,8 @@ describe('gbrain skillpack-check', () => {
   });
 
   test('half-migrated (partial completed.jsonl) → exit 1, apply-migrations in actions', () => {
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(
-      join(migrationsDir, 'completed.jsonl'),
-      JSON.stringify({ version: '0.11.0', status: 'partial' }) + '\n',
-    );
-
-    const result = run(['skillpack-check']);
-    expect(result.exitCode).toBe(1);
-    const report = JSON.parse(result.stdout);
+    expect(broken.exitCode).toBe(1);
+    const report = JSON.parse(broken.stdout);
     expect(report.healthy).toBe(false);
     expect(report.actions).toContain('gbrain apply-migrations --yes');
     expect(report.summary).toContain('gbrain apply-migrations --yes');
@@ -96,42 +93,27 @@ describe('gbrain skillpack-check', () => {
 
   test('--quiet → no stdout, same exit code', () => {
     // Healthy path quiet
-    const healthy = run(['skillpack-check', '--quiet']);
-    expect(healthy.exitCode).toBe(0);
-    expect(healthy.stdout).toBe('');
+    expect(healthyQuiet.exitCode).toBe(0);
+    expect(healthyQuiet.stdout).toBe('');
 
-    // Broken path quiet — need new tmp with fixture
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(
-      join(migrationsDir, 'completed.jsonl'),
-      JSON.stringify({ version: '0.11.0', status: 'partial' }) + '\n',
-    );
-    const broken = run(['skillpack-check', '--quiet']);
-    expect(broken.exitCode).toBe(1);
-    expect(broken.stdout).toBe('');
+    // Broken path quiet — the half-migrated fixture home
+    expect(brokenQuiet.exitCode).toBe(1);
+    expect(brokenQuiet.stdout).toBe('');
   });
 
   test('--help → exit 0, prints usage', () => {
-    const result = run(['skillpack-check', '--help']);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('skillpack-check');
-    expect(result.stdout).toContain('healthy');
-    expect(result.stdout).toContain('Exit codes');
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain('skillpack-check');
+    expect(help.stdout).toContain('healthy');
+    expect(help.stdout).toContain('Exit codes');
   });
 
   test('summary includes top action when multiple present', () => {
     // Partial record creates apply-migrations action + the migrations count
     // action. Summary should reference the first (highest-priority) action.
-    const migrationsDir = join(tmp, '.gbrain', 'migrations');
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(
-      join(migrationsDir, 'completed.jsonl'),
-      JSON.stringify({ version: '0.11.0', status: 'partial' }) + '\n',
-    );
-    const result = run(['skillpack-check']);
-    expect(result.exitCode).toBe(1);
-    const report = JSON.parse(result.stdout);
+    // Identical fixture + argv as the half-migrated test → shares its run.
+    expect(broken.exitCode).toBe(1);
+    const report = JSON.parse(broken.stdout);
     expect(report.summary).toMatch(/\d+ action\(s\)/);
     expect(report.summary).toContain(report.actions[0]);
   });

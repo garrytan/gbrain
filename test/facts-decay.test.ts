@@ -26,7 +26,7 @@ const MS_PER_DAY = 86_400_000;
 
 describe('HALFLIFE_DAYS table', () => {
   test('every FactKind has a halflife', () => {
-    const kinds: FactKind[] = ['event', 'preference', 'commitment', 'belief', 'fact'];
+    const kinds: FactKind[] = ['event', 'preference', 'commitment', 'belief', 'fact', 'idea'];
     for (const k of kinds) {
       expect(HALFLIFE_DAYS[k]).toBeDefined();
       expect(HALFLIFE_DAYS[k]).toBeGreaterThan(0);
@@ -39,6 +39,7 @@ describe('HALFLIFE_DAYS table', () => {
     expect(HALFLIFE_DAYS.preference).toBe(90);
     expect(HALFLIFE_DAYS.belief).toBe(365);
     expect(HALFLIFE_DAYS.fact).toBe(365);
+    expect(HALFLIFE_DAYS.idea).toBe(365);
   });
 });
 

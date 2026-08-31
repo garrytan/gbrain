@@ -27,6 +27,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../src/core/bootstrap/atomic-write.ts';
+import { permsEnforced } from './helpers/fs-perms.ts';
 
 let dir: string;
 beforeEach(() => {
@@ -123,7 +124,9 @@ describe('atomicWriteTextFile — failure hygiene (no tmp litter)', () => {
     expect(lstatSync(target).isDirectory()).toBe(true); // target untouched
   });
 
-  test('a failing write in a read-only dir throws without leaving litter behind', () => {
+  // skipIf: asserts a write MUST fail on a 0555 dir — unrunnable on hosts
+  // that don't enforce permission bits (FUSE/overlay sandboxes, root).
+  test.skipIf(!permsEnforced())('a failing write in a read-only dir throws without leaving litter behind', () => {
     if (process.getuid?.() === 0) return; // root ignores modes
     const ro = join(dir, 'ro');
     mkdirSync(ro, { recursive: true });

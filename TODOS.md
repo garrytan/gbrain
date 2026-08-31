@@ -1,5 +1,75 @@
 # TODOS
 
+## Eval write-path fix wave follow-ups (filed 2026-08-31; the five CEO-review-deferred items — wave receipt: gbrain-evals Cat 35 bracketing runs, pre-wave baseline dream 70.2% / quote fidelity 54.2% / emission 16/20 at aa820c7f)
+
+- [ ] **P3 — E2: chunk-boundary overlap window in splitTranscriptByBudget.**
+  **What:** carry ~5% tail overlap between adjacent transcript chunks so salient
+  units straddling a boundary aren't structurally invisible to either child.
+  **Why:** each chunk's prompt says "do not assume continuity"; a unit split
+  across the cut is lost to both. **Blocked on:** post-wave Cat 35 receipts
+  showing transcripts actually chunk (`details.synthesis.jobs` >
+  `transcripts_processed`) — don't pay the determinism-test churn
+  (test/e2e/dream-synthesize-chunking byte-stability) before the receipts say
+  it matters. **Where:** src/core/cycle/synthesize.ts splitTranscriptByBudget.
+- [ ] **P3 — E3: borderline-band second-pass triage call (#4152 escalation).**
+  **What:** when the scalar score lands in [rescue_floor, threshold) and the
+  verified-segment rescue does NOT fire, spend one extra focused judge call
+  scoring the PEAK passage alone; max(scores) gates. **Why:** the rescue only
+  fires when the first judge surfaced verifiable segments; telemetry
+  (`triage.rescue_checked` high with `rescue_fired` low across cycles) would
+  mean buried signal is still slipping. **Blocked on:** exactly that telemetry
+  — the wave's live calibration showed rubric v2 alone lifts the class, so
+  don't add spend until production distributions disagree. **Where:**
+  runTriagePass processOne + triage-rescue.ts.
+- [ ] **P2 — E4: wire-or-delete the three undispatchable eval scaffolds.**
+  **What:** src/commands/eval-markdown-greenfield.ts, eval-extract-atoms.ts,
+  eval-schema-authoring.ts are registered nowhere in eval.ts/cli.ts dispatch;
+  the first two return ok:true with status not_yet_implemented — the exact
+  dishonest-envelope class #4198 fixed for synthesize-concepts. **Why:** an
+  eval surface that reports ok for work it never ran corrodes trust in every
+  other receipt. **How:** either add dispatch + honest not_implemented
+  envelopes (ok:false, nonzero exit) or delete the files + their scaffold test.
+- [ ] **P2 — E5: adaptive-return config plane + KNOBS_HASH fold (its own wave).**
+  **What:** (a) the four search.adaptive_return* keys are a DB-config no-op
+  (not in KNOWN_CONFIG_KEYS; config-db-merge folds only cycle.*; GBrainConfig
+  has no search block) — register + fold or move onto the ModeBundle ladder
+  like autocut; (b) fold gate params into knobsHash (append-only,
+  KNOBS_HASH_VERSION bump) so adaptive-on calls cache (today gate-on ==
+  cache-cold, hybrid.ts skipCache); (c) widen AdaptiveQueryIntent with
+  'concept' (drop the hybrid.ts:2141 coercion). **Why:** prerequisite for the
+  cross-surface ablation + any default flip (TODOS v0.41.33.0 section).
+- [ ] **P3 — E8: quote-verify coverage is partial on the agentic fallback path.**
+  **What:** the verify pass scopes to pages whose slug carries the transcript's
+  hash6 (`ref.slug.includes('-' + hash6)`), but that suffix is enforced
+  fail-closed only in ONESHOT mode (subagent-oneshot.ts `oneshot_slug_suffix`
+  check). An agentic-fallback child that drops the suffix creates a page the
+  verify pass skips and mislabels `skipped_preexisting` — coverage is silently
+  thinnest on the path most likely to produce sloppy output. **How:** enforce
+  the suffix server-side in the subagent put_page tool for agentic children
+  too, or at minimum split a `skipped_unbound_new_page` counter with a stderr
+  warn so the gap is observable. **From:** eval fix wave red-team review.
+- [ ] **P3 — E9: no retrofit path for unverified dream pages.**
+  **What:** quote verify only covers the CURRENT run's writtenRefs. A crash or
+  abort between child completion and the verify pass strands pages with
+  unrepaired quotes forever — and the TRIAGE_VERSION 2 bump widens the window
+  (a transcript whose children completed under v1 may re-judge below the gate
+  under v2 and never re-enter the fan-out). **How:** an operator command
+  (`gbrain dream verify --recheck`) over `frontmatter->>'dream_generated'`
+  pages matched to transcripts by raw_source/hash6, or a per-page verified
+  marker in the provenance stamp so a later cycle can find and repair them
+  regardless of the gate's current verdict. **From:** eval fix wave red-team
+  review.
+- [ ] **P3 — E7: LLM grounding judge on dream pages (TRUSTMEM-style).**
+  **What:** an opt-in verify pass that judges every dream-page claim against
+  its source transcript (coverage/preservation/faithfulness), beyond the
+  mechanical quote/numeric checks the wave shipped. **Why:** the wave's
+  synthesize-verify.ts repairs QUOTES mechanically at $0; ungrounded
+  non-quote claims (hallucination ~14%) need semantics. Field context:
+  2026 write-path research (TRUSTMEM, arXiv 2606.25161) validates
+  verify-at-write. **Costs:** per-page LLM spend on every nightly cycle —
+  needs spend.posture gates + a config default OFF. **Where:** extend the
+  synthesize-verify pass; reuse normalizeForGrounding + the receipt fields.
+
 ## Fix-wave follow-ups (filed 2026-08-29, follow-up from the v0.47.x fix wave)
 
 - [ ] **P1 — #4599 root-cause instrumentation loop.** **What:** the embed
@@ -1730,15 +1800,68 @@ review-deferred, not fix-now). Grouped by component.
 
 ### Test infra (master-owned)
 
-- [ ] **P1 — test/extract-atoms-chunk-embed.test.ts flakes under parallel
-  shards.** **What:** deflake the extract-atoms chunk-embed suite when run in
-  parallel shards. **Why:** it fails under shard parallelism but passes alone
-  — a shard-ordering trap for every future branch. **Context:** failure
-  signature: extraction returns status 'warn' with ALL transcripts skipped
-  (0 processed) → count assertions fail; env-coupling suspected — the same
-  withEnv class fixed in token-budget.test.ts this wave. Pre-existing on
-  master; owned there, not by any feature branch. **Effort:** small.
-  **Priority:** P1.
+- [ ] **P1 — Test-infra pass Ships 2+3: serial burn-down, e2e lane moves + CI
+  sharding, weights re-mine.** **What:** the approved test-infra plan
+  (`~/.claude/plans/system-instruction-you-are-working-sprightly-bee.md`, Ship 1
+  landed as the v0.47.7.0 wave) deliberately split into 3 ships for regression
+  attribution. Remaining: Phase 4 serial-lane burn-down (38 rename-safe
+  no-marker files + ~75 env-only `withEnv()` conversions — candidate lists with
+  per-file justifications were computed and banked in the Ship-1 session;
+  recompute mechanically: no `mock.module`, no R1 env mutation, no
+  launchTty/process.exitCode/port/timing rationale in the header), Phase 5
+  moving the ~52 PGLite-only `test/e2e/` files into the unit matrix (behavioral
+  move criterion: direct PGLite ctor + no e2e/helpers import + no
+  hasDatabase/DATABASE_URL gate + header read; lockstep: e2e-test-map rows,
+  e2e-unmapped-baseline shrink, classify-tests, seeded weights) + 4-way
+  `SHARD=N/M` matrix for `selected-e2e`/`coverage-full-e2e` with one postgres
+  service per matrix job, and Phase 6 `mine-shard-weights` re-mine (381 files
+  unweighted; add a `weights:mine` package script + documented cadence) then
+  matrix 10→12. Graduated batch gates: 5×-green first batch per class, 2×+CI
+  after. **Why:** the remaining ~half of the measured win: serial lane 220→~130
+  files, e2e 60-min worst-case lane → ~15-25 min, honest weights. **Effort:** L
+  (spread over 2 ships).
+- [ ] **P2 — Phase-2 tail: seven minimal-test targets the v0.47.7.0 wave
+  didn't reach.** **What:** same rewrite classes, unattempted: (1)
+  `test/destructive-guard.test.ts:39` + (2)
+  `test/schema-bootstrap-coverage.test.ts:48` file-level snapshot opt-outs →
+  scoped `withColdPglite` (audit which tests genuinely need cold boots — the
+  bootstrap.test.ts attempt showed version-rewind arcs DO need them; a
+  snapshot-restored engine does not replay migrations after a rewind); (3)
+  `test/migrate.test.ts` 14-engine + (4) `test/sync.test.ts` 4-engine
+  consolidation to shared beforeAll engines + resets (sync also has 39 git
+  execSync sites → `test/helpers/git-fixture.ts`, and a 1100ms sleep →
+  `waitFor`); (5) `test/doctor-pglite-scratch-probe.test.ts` route 3 of 4 real
+  scratch boots through its own `probeFn` seam (:238-298 proves it); (6)
+  `test/apply-migrations-list-db-state` and (7) `test/process-watchdog`
+  .test/.serial pair merges where assertions overlap. **Why:** ~15-25s more off
+  the unit lane using helpers that now exist (`with-snapshot`, `git-fixture`,
+  `wait-for`); several also burn down `scripts/check-test-isolation.allowlist`
+  rows. **Effort:** S-M.
+- [ ] **P3 — serial-pool-overlaps-parallel-shards.** **What:** run the serial
+  pool concurrently with the parallel shards in `run-unit-parallel.sh` instead
+  of after the barrier. **Why deferred:** the OOM-rescue verdict pipeline
+  assumes shard aggregation ran first (`EXTERNAL_KILL_ANY` gates serial rescue
+  eligibility), and both runners independently claim the full memory budget —
+  a restructure, not a tweak; post-burn-down the serial tail is small anyway.
+- [ ] **P3 — e2e tier2/jsonb-parity decoupling.** **What:** `tier2` waits on
+  `jsonb-parity` (the token-spend gate) — up to 15 min of serialization; inline
+  a fast pre-flight instead. Preserve the hard-fail-on-missing-DATABASE_URL
+  property. **Effort:** S.
+
+- [x] **P1 — test/extract-atoms-chunk-embed.test.ts flakes under parallel
+  shards.** DONE (test-infra perf wave): root cause was NOT live-env coupling
+  but the gateway singleton's captured env SNAPSHOT — the preload configures
+  with `env: {...process.env}`, so a shard-neighbor's provider key (e.g.
+  `test/claw-test-cli.test.ts`'s `oai-must-not-leak`) baked into the gateway
+  survives the neighbor's own env restore, flips `isAvailable('embedding')`
+  true, the atom import fires a real embed inside withBudgetTracker,
+  `reserve()` throws BudgetExhausted(no_pricing), and every work item skips →
+  status 'warn' / 0 processed (the signature verbatim). Fix: keyless
+  `configureGateway({env:{}})` pin in the PGLite describe's beforeAll +
+  `resetGateway()` in afterAll + a self-asserting
+  `expect(isAvailable('embedding')).toBe(false)` hermeticity pin — same
+  pattern as test/ambient-recall.test.ts (which also gained the missing
+  `resetGateway()` cleanup in the same change).
 
 ### Hygiene dedupe batch (single entry — take together)
 
@@ -2677,13 +2800,16 @@ Filed from the #1981 ship (v0.42.39.0). Deliberately scoped OUT — the v1 extra
 is deterministic + precision-biased. See plan + GSTACK REVIEW REPORT at
 `~/.claude/plans/system-instruction-you-are-working-wild-yeti.md`.
 
-- [ ] **P3 — broaden entity detection beyond proper-case ASCII.** The extractor
-  (`src/core/context/entity-salience.ts`) misses lowercase names and many non-Latin
-  scripts; these need an LLM pass or script-aware heuristics. **Why:** higher recall
-  on the read side. **Where:** `entity-salience.ts`. *(Partially done by the #2095
-  wave: `extractCandidatesFromWindow` now covers assistant-introduced entities and
-  pronoun follow-ups whose antecedent was NAMED in the rolling window; true pronoun
-  coreference for never-named antecedents remains with the LLM-pass idea.)*
+- [ ] **P3 — broaden entity detection beyond the current passes.** MOSTLY DONE by
+  later waves — the remaining gaps are narrower than this entry's original claim
+  (updated by the eval fix wave, 2026-08-31): lowercase Latin names now emit as WEAK
+  candidates resolved via the alias arm (v0.46.15, kta 0.150→0.0000 in
+  `evals/brainbench/baselines/main.json`), CJK names via weak n-grams (#3746).
+  STILL OPEN: lowercase SURNAME-only mentions ("did galewright follow up" — weak
+  candidates never reach the surname arm, retrieval-reflex.ts:195-230), caseless
+  non-CJK scripts (Arabic/Hebrew/Devanagari/Thai — \p{Lo} invisible to both passes),
+  pure-hiragana grams, and true pronoun coreference (LLM-pass idea). **Where:**
+  `entity-salience.ts`, `retrieval-reflex.ts`.
 - [x] **P3 — recall knob: optional fuzzy/prefix-expansion resolution.** RESOLVED
   differently by the v0.46.15 identity wave, with a receipt: trigram fuzzy in the
   reflex is deliberately REJECTED — the BrainBench adversarial near-miss class
@@ -4164,7 +4290,14 @@ fixtures + scaling-skills tutorial. Two findings deferred:
   tests prove parser output, integration tests prove reachability, and the
   current docs don't bridge the two cleanly. Doc-only follow-up.
 
-- [ ] **P1 flake — audit-writer.test.ts week-boundary failure.** Caught
+- [x] **P1 flake — audit-writer.test.ts week-boundary failure.** DONE — both
+  halves of the prescribed move already landed: src half in `ca68633f`
+  (`fileDate` derived from the event's own `ts`, not wall-clock, at
+  `src/core/audit/audit-writer.ts` computeFilename call site) and test half
+  in `0b7efd35` (the hardcoded `2026-05-22` replaced with real `now` + direct
+  week-file writes). The remaining Monday-straddle case works BECAUSE of the
+  src fix (a Sunday `ts` routes to the previous week's file, which
+  readRecent's two-file walk covers). Original filing: Caught
   during ship of v0.41.7.0. Test at `test/audit/audit-writer.test.ts:229`
   ("returns events from current week, filtered by ts cutoff") fails when
   real UTC date is in a different ISO week than the test's hardcoded
@@ -4579,7 +4712,8 @@ outside-voice triage on the reshaped plan.
   speedup pass: an in-repo canonical qrels target now exists (`gbrain eval gate`
   with the deterministic embedder option against `test/fixtures/eval-baselines/
   qrels-search.json`; runner `scripts/run-eval-canary.ts`, CI-gated via
-  check:eval-canary, ledger `.gbrain-evals/eval-results.jsonl`). What remains
+  `test/eval-canary.test.ts` in the unit matrix with `check:eval-canary` as
+  the on-demand package script, ledger `.gbrain-evals/eval-results.jsonl`). What remains
   here is only the sibling-repo REGRESSION baseline (.baseline.ndjson for the
   jaccard/top1 gate) — the correctness-gate half is done.
 
@@ -4788,7 +4922,7 @@ contributor traps.
 
 ## v0.41+ master flake follow-ups (filed during v0.40.8.0 ship)
 
-- [ ] **(P3) — Audit other gateway-mutating tests for missing afterAll cleanup.** v0.40.8.0 added `afterAll(() => resetGateway())` to `test/ai/gateway.test.ts` and quarantined `test/ai/header-transport.test.ts` as `.serial.test.ts`. Two other files mutate gateway state without an explicit cleanup hook: `test/ai/rerank.test.ts`, `test/gateway-embed-model-override.test.ts`. They haven't surfaced flakes yet (different test sequences), but they're the same risk class. Add `afterAll(() => resetGateway())` to both for defense-in-depth, or quarantine if they prove racy under future parallelism changes.
+- [x] **(P3) — Audit other gateway-mutating tests for missing afterAll cleanup.** DONE (stale as originally written + swept): the two named files already carry cleanup (`test/ai/rerank.test.ts` afterEach→resetGateway; `test/gateway-embed-model-override.test.ts` beforeEach/afterEach→resetGateway). The one live instance found by a fresh sweep — `test/ambient-recall.test.ts` configuring a keyless gateway with no reset anywhere — gained `afterAll(() => resetGateway())` in the test-infra perf wave.
 ## v0.40.4 adversarial review LOW findings — captured for v0.41+
 
 - [ ] **Codex L1**: `gbrain search stats --days N` underreports for N > 7. audit-writer.ts reads only current + previous ISO week (~14 days). `--days 30` silently shows ~2 weeks of failure events. Fix shape: extend readRecent to walk N/7 weeks dynamically OR cap user input with a clear message.
@@ -4805,7 +4939,7 @@ contributor traps.
 
 ## Pre-existing flake on master (noticed during v0.40.4 ship)
 
-- [ ] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 ZeroEntropy default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default ZeroEntropy/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
+- [x] **`test/search/embedding-column.test.ts:466,489,522` — `isCacheSafe` returns false when run after gateway-state-mutating siblings in shard 2.** DONE: closed by option (c) — the file was renamed to `test/search/embedding-column.serial.test.ts` in `ca68633f` (v0.41.2.0), giving it its own bun process; entry left open pointed at a filename that no longer exists. If the file is ever un-quarantined, add `beforeEach(() => resetGateway())` (NOT `__unconfigureGatewayForTests` — that falls through to the ZE/1280 defaults; `resetGateway` re-applies the preload's OpenAI/1536 baseline). Original filing: Confirmed pre-existing on master (`git stash` + `SHARD=2/8 bash scripts/run-unit-shard.sh` reproduces 3 fails on a clean working tree). Symptom: `isCacheSafe(default-named-column, empty-cfg)` expects `gwDims=1536` but reads `1280` (the post-v0.37.11.0 ZeroEntropy default). Some test in the shard before embedding-column.test.ts initializes the gateway with the PGLite-default ZeroEntropy/1280 config and leaves it that way. Either: (a) embedding-column.test.ts grows a `beforeEach` that calls `__setEmbedTransportForTests`-style reset, (b) the offending sibling adds an `afterAll(reset)`, or (c) embedding-column.test.ts becomes `*.serial.test.ts` to quarantine. Three test files in shard 2 touch gateway state via PGLite engine connects: `restart-sweep.test.ts`, `init-mode-picker.test.ts`, `doctor.test.ts`. Tests pass in isolation (50/50); only fail under shard-2 ordering. v0.40.4 ships through this flake — not introduced by the wave.
 
 ## v0.40.4 graph signals — deferred follow-ups (v0.41+)
 
@@ -7276,15 +7410,96 @@ respective shapes. Small, mechanical; pinned by `test/init-embed-check.test.ts`
   `CREATE UNIQUE INDEX ... ON access_tokens (name) WHERE revoked_at IS NULL` would
   make names honest for humans too. Needs a dedup pass first on brains that already
   carry twins. **Start:** `src/core/migrate.ts` (CONCURRENTLY + `transaction: false`).
-- [ ] **P2 — codex hook lane.** codex-cli 0.147.0 ships a real hook system (hooks.json;
-  PreToolUse…SessionEnd — recorded on `TARGETS['codex-2026-08']` in
-  `src/core/bootstrap/host-specs.ts`), falsifying the old "codex has no hooks" premise.
-  Wiring SessionEnd transcript capture (+ SessionStart context) would give codex
-  sessions the same memory loop Claude Code gets, and supersedes the FF2 notify-sweeper
-  idea. Needs its own dated spec-target verification (payload shapes, deny-unknown-fields
-  config) + e2e before any writer lands. **Trigger:** first user asking why codex
-  sessions don't persist; **Start:** `host-specs.ts` TARGETS + a codex sibling of
-  `writeClaudeHooksAt`.
+- [x] **P2 — codex hook lane.** DONE (Memorable wave): SessionEnd capture landed —
+  `src/core/bootstrap/codex-hooks.ts` (trust-gated two-file writer, verified spec
+  target 2026-08-25) + `src/core/transcripts/codex-hook-lane.ts` + the capture-spec
+  dispatch in hook.ts. SessionStart context on codex remains open (below).
+- [ ] **P3 — codex SessionStart context lane.** The SessionEnd capture lane landed;
+  a SessionStart greeting/context injection lane would close the loop (same
+  trust-gated hooks.json mechanics, `CODEX_HOOK_EVENTS` gains 'SessionStart').
+  **Start:** `src/core/bootstrap/codex-hooks.ts` (writer already generalizes),
+  `src/commands/hook.ts` session-start branch. Filed from the Memorable wave
+  (v0.46.30.0-era, 2026-08-25).
+- [ ] **P1 — OpenClaw tool-call ARGS capture (Memorable value gate).** The openclaw
+  lane ships name-only tool calls (`input: null` — the args field is unobserved in
+  OpenClaw's session format), and Memorable's extraction API REFUSES name-only traces
+  as `no_decisive_steps` (verified live with a synthetic ingest 2026-08-25): openclaw
+  relays are currently rejected politely. One observation run against a real
+  `~/.openclaw/agents/<agent>/sessions/*.jsonl` store must characterize the toolCall
+  args field (+ any result block), then extend `mapOpenclawLine` — the interface
+  (`ToolCallRecord`) is already final, so enrichment is additive. Until then the
+  openclaw lane is plumbing-correct but value-dry. **Start:**
+  `src/core/transcripts/openclaw.ts` (OPENCLAW_SPEC_TARGET note carries the checklist).
+  Filed from the Memorable wave (2026-08-25).
+- [ ] **P3 — native opencode capture lane.** opencode has no characterized session
+  store, no transcript adapter, no discovery root — it rides `HookIo.harness` as a
+  channel label only, and `captureSpecFor('opencode')` deliberately resolves to the
+  claude spec (documented). A native lane needs an observation run against opencode
+  1.18.18 (session store location + format), a new adapter, and a plugin/event-system
+  integration (in-process JS, not a `gbrain hook` subprocess — raises the engine-free
+  question). Until then: `memorable ingest -` is the documented path. **Start:**
+  `docs/mcp/OPENCODE-CLI-PIN.md` + an observation run. Filed from the Memorable wave
+  (2026-08-25).
+- [ ] **P3 — hermes native capture lane.** SQLite one-store-many-sessions breaks the
+  hand-the-hook-a-path contract, and `src/core/transcripts/hermes.ts` is still
+  `provisional` (no populated production sample verified). `memorable ingest` is the
+  documented path. Filed from the Memorable wave (2026-08-25).
+- [ ] **P2 — verify memorable-cli ≥0.3.5 fixes the consent-before-egress ordering.**
+  0.3.4's `record` POSTs the trace to `/v1/extract` BEFORE its consent-checked store
+  (decompile-verified); gbrain mitigates with its own pre-spawn evidence check, but
+  the complete fix is CLI-side (asked in the adoption PR, along with confirming the
+  extraction API accepts arbitrary `harness` strings server-side). When a new CLI
+  version ships, re-verify by decompile and consider relaxing nothing — the gbrain
+  gate stays regardless. Filed from the Memorable wave (2026-08-25).
+- [ ] **P2 — win32: resolveMemorableBin finds `.cmd` shims spawn() refuses to run.**
+  The resolver accepts `.cmd`/`.exe` on win32 but the detached relay spawn passes no
+  `shell: true` — Node/Bun refuse direct `.cmd` spawn since the CVE-2024-27980
+  hardening, the async error is swallowed, and an npm-installed memorable on Windows
+  looks resolvable yet never executes (only the delayed `relay_never_reported` doctor
+  warn surfaces it). Fix: spawn via `cmd.exe /c` for `.cmd`/`.bat`, or resolve the
+  underlying `.js` entry. **Start:** `src/core/context/hook-heartbeat.ts`
+  resolveMemorableBin + the spawn site. Filed from the ship review (2026-08-26).
+- [ ] **P3 — openclaw-only hosts never compact session-receipts.jsonl.** The openclaw
+  lane deliberately skips receipts compaction (hook lane is the ONE compactor —
+  two-writer rename race), so a host running ONLY the openclaw lane grows the file
+  unbounded (slowly: name-only receipts are ~1-2 KB/line vs claude's ~110 KB). Fix
+  shape: a converging-trim discipline like the relay file's, or a quiet-path
+  compaction outside the compact() callback. **Start:**
+  `src/core/context/hook-heartbeat.ts` appendSessionReceipt + context-engine.ts
+  receipt block. Filed from the ship review (2026-08-26).
+- [ ] **P3 — flag-registry generator: exclude spawn-argv string literals.** The
+  text-scan generator picked up `--session` (from the memorable spawn argv) and
+  `--harness` (from imports) into commands' accept-lists, so
+  `gbrain sync --harness codex` is silently accepted instead of failing loud. Teach
+  `scripts/generate-flag-registry.ts` to skip flags that only appear inside
+  spawn()/argv arrays (or add an exclusion marker), then regenerate. **Start:**
+  `scripts/generate-flag-registry.ts` + `src/core/cli-flag-registry.generated.ts`.
+  Filed from the ship review (2026-08-26).
+- [ ] **P3 — consolidate the memorable test fixtures.** The stub `memorable` shell
+  script, the CLI-evidence config seed, and the full opt-in chain are re-implemented
+  in four suites (memorable-relay.serial, context-engine-checkpoint.serial,
+  doctor-memorable, session-receipts) — extract `test/helpers/memorable-fixtures.ts`
+  so a consent-shape change is one edit. Filed from the ship review (2026-08-26).
+- [ ] **P3 — readJsonlTailLines: incremental window growth.** The doubling retry
+  re-opens and re-reads the whole window from scratch (up to ~31 MB cumulative in
+  the pathological case) and zero-fills with Buffer.alloc; read only the
+  newly-uncovered prefix on retry and use allocUnsafe. Rare path (fires only when a
+  window holds zero complete lines). **Start:** `src/core/context/hook-heartbeat.ts`
+  readJsonlTailLines. Filed from the ship review (2026-08-26).
+- [ ] **P2 — openclaw real-plugin door: extend with a receipt+relay assertion.** The
+  per-compaction Memorable receipt is pinned at the unit/serial tier
+  (context-engine-checkpoint.serial MR1-MR3) but the installed-plugin e2e door
+  (`test/e2e/openclaw-plugin-load-real.test.ts`) does not yet assert a receipt lands
+  through the real plugin path; a deadline-seam unit test for the always-skip
+  receipts-compaction posture is also unwritten. Filed from the ship review
+  (2026-08-26).
+- [ ] **P2 — codex e2e door: assert codex EXECUTES the trust-gated hook.** The heavy
+  door asserts the hooks.json + trust-entry pair EXISTS but not that a live
+  `codex exec` session-end actually fires it (a receipt landing after the smoke turn
+  would pin gbrain's codexTrustHash against codex's fingerprint.rs for real — the
+  golden-vector unit test pins OUR recipe, not the consumer's acceptance). **Start:**
+  `test/e2e/bootstrap-real-codex.serial.test.ts` (heavy lane, keyless codex turn).
+  Filed from the ship review (2026-08-26).
 - [ ] **P3 — PGLite admin-lane scoped minting.** `gbrain bootstrap harness` refuses to
   mint under a live PGLite serve (single-writer) and points at pre-mint + `--token`.
   Auto-driving `POST /admin/login` + `POST /admin/api/api-keys` (when

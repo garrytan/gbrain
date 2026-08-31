@@ -147,10 +147,21 @@ to add a new directory the synthesis subagent may write to:
 | Cycle summary | `dream-cycle-summaries/YYYY-MM-DD` | Index of every page produced by one dream cycle. Auto-written deterministically by the orchestrator. |
 
 **Iron Law for synthesize output:**
-1. Quote the user verbatim. Do not paraphrase memorable phrasings.
+1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible
+   EXACTLY from the source transcript — if you cannot reproduce a span
+   exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase
+   memorable phrasings you can quote exactly. A mechanical, zero-LLM verify
+   pass re-checks every quoted span after the write and repairs or unquotes
+   whatever it cannot ground (`dream.synthesize.quote_verify`, default on).
 2. Cross-reference compulsively: every new page MUST link to existing brain content.
 3. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated. NO underscores, NO file extensions.
 4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite a prior reflection.
+5. Preserve concrete facts: carry the specific numbers, dates, dollar amounts,
+   names, and who-decided-what of the salient content you write about, exactly
+   as the source states them. Do not add routine logistics for their own sake.
+6. Ground every claim in the source. Attribute speculation as speculation
+   ("the user wondered whether…"), and never state a completion state or an
+   outcome the source does not show.
 
 ## Takes attribution (v0.32+)
 

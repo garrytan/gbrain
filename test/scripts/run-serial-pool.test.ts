@@ -172,4 +172,68 @@ it('passes after one external SIGTERM', () => {
     expect(r.out).toContain('test/h-hang.serial.test.ts');
     rmSync(join(ROOT, 'test', 'h-hang.serial.test.ts'));
   }, 60000);
+
+  it('dispatches heaviest-first from serial-weights.json (LPT); --dry-run-list stays discovery-ordered', () => {
+    // The aggregation loop prints PASS lines in pool_files order, so stdout
+    // order IS dispatch order regardless of pool width. Weights are advisory:
+    // the sort must reorder dispatch without touching the discovery list.
+    writeFileSync(join(ROOT, 'test', 'a-light.serial.test.ts'), PASSING);
+    writeFileSync(join(ROOT, 'test', 'm-mid.serial.test.ts'), PASSING);
+    writeFileSync(join(ROOT, 'test', 'z-heavy.serial.test.ts'), PASSING);
+    writeFileSync(join(ROOT, 'scripts', 'serial-weights.json'), JSON.stringify({
+      'test/a-light.serial.test.ts': 1,
+      'test/m-mid.serial.test.ts': 10,
+      'test/z-heavy.serial.test.ts': 30,
+    }));
+    try {
+      const dry = execFileSync(
+        'bash',
+        [join(ROOT, 'scripts', 'run-serial-tests.sh'), '--dry-run-list'],
+        { cwd: ROOT, encoding: 'utf-8', env: ENV },
+      );
+      expect(dry.trim().split('\n')).toEqual([
+        'test/a-light.serial.test.ts',
+        'test/m-mid.serial.test.ts',
+        'test/z-heavy.serial.test.ts',
+      ]);
+      const r = runScript();
+      expect(r.code).toBe(0);
+      const passOrder = [...r.out.matchAll(/\] PASS \d+s (\S+)/g)].map((m) => m[1]);
+      expect(passOrder).toEqual([
+        'test/z-heavy.serial.test.ts',
+        'test/m-mid.serial.test.ts',
+        'test/a-light.serial.test.ts',
+      ]);
+    } finally {
+      rmSync(join(ROOT, 'test', 'a-light.serial.test.ts'), { force: true });
+      rmSync(join(ROOT, 'test', 'm-mid.serial.test.ts'), { force: true });
+      rmSync(join(ROOT, 'test', 'z-heavy.serial.test.ts'), { force: true });
+      rmSync(join(ROOT, 'scripts', 'serial-weights.json'), { force: true });
+    }
+  }, 60000);
+
+  it('a corrupt serial-weights.json falls back to discovery order (fail-soft)', () => {
+    writeFileSync(join(ROOT, 'test', 'a-first.serial.test.ts'), PASSING);
+    writeFileSync(join(ROOT, 'test', 'b-second.serial.test.ts'), PASSING);
+    // Truncated JSON that, if a lenient parser ever "recovered" it, would put
+    // b-second FIRST (weight 99) — so this test distinguishes the fail-soft
+    // branch from an accidentally-parsed sort, not just from a crash.
+    writeFileSync(
+      join(ROOT, 'scripts', 'serial-weights.json'),
+      '{"test/b-second.serial.test.ts": 99, "test/a-first.serial.test.ts": 1',
+    );
+    try {
+      const r = runScript();
+      expect(r.code).toBe(0);
+      const passOrder = [...r.out.matchAll(/\] PASS \d+s (\S+)/g)].map((m) => m[1]);
+      expect(passOrder).toEqual([
+        'test/a-first.serial.test.ts',
+        'test/b-second.serial.test.ts',
+      ]);
+    } finally {
+      rmSync(join(ROOT, 'test', 'a-first.serial.test.ts'), { force: true });
+      rmSync(join(ROOT, 'test', 'b-second.serial.test.ts'), { force: true });
+      rmSync(join(ROOT, 'scripts', 'serial-weights.json'), { force: true });
+    }
+  }, 60000);
 });

@@ -403,3 +403,132 @@ describe('checkpoint compaction (cathedral 5)', () => {
     }
   });
 });
+
+// ── Memorable receipts on the openclaw compaction lane (A-3) ────────────────
+//
+// OpenClaw has no session end; capture is per-compaction. These tests drive
+// the REAL engine.compact() path under a temp GBRAIN_HOME with the full
+// consent chain seeded (config gate + gbrain disclosure stamp + CLI-side
+// evidence + stub binary), asserting the do-no-harm default and the
+// per-compaction receipt semantics.
+
+describe('memorable receipts from compact() (openclaw lane)', () => {
+  const { existsSync, readFileSync, mkdirSync: mkd, writeFileSync: wf, chmodSync: chm } = require('node:fs') as typeof import('node:fs');
+  let tmpDir: string | undefined;
+  let home: string | undefined;
+  const SAVED: Record<string, string | undefined> = {};
+  const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_MEMORABLE', 'GBRAIN_MEMORABLE_CONFIG', 'MEMORABLE_BIN', 'PATH'];
+
+  beforeEach(() => {
+    __resetSdkLoadStateForTests();
+    for (const k of ENV_KEYS) SAVED[k] = process.env[k];
+    home = mkdtempSync(join(tmpdir(), 'gb-ce-mem-'));
+    process.env.GBRAIN_HOME = home;
+    delete process.env.GBRAIN_MEMORABLE;
+  });
+
+  afterEach(() => {
+    for (const k of ENV_KEYS) {
+      if (SAVED[k] === undefined) delete process.env[k];
+      else process.env[k] = SAVED[k];
+    }
+    if (home) rmSync(home, { recursive: true, force: true });
+    home = undefined;
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+    tmpDir = undefined;
+  });
+
+  const sessionLine = JSON.stringify({ type: 'session', id: 'oc-mem', cwd: '/w', timestamp: 't0' });
+  const msg = (text: string, call?: string) =>
+    JSON.stringify({
+      type: 'message',
+      timestamp: 't1',
+      message: { role: 'assistant', content: [{ type: 'text', text }, ...(call ? [{ type: 'toolCall', id: 'tc', name: call }] : [])] },
+    });
+
+  /** Seed the FULL consent chain; returns the marker file the stub relay touches. */
+  async function optIn(): Promise<string> {
+    const gb = join(home!, '.gbrain');
+    mkd(gb, { recursive: true });
+    wf(join(gb, 'config.json'), JSON.stringify({ engine: 'pglite', integrations: { memorable: { enabled: true } } }));
+    const { writeMemorableConsent } = await import('../src/core/context/hook-heartbeat.ts');
+    await writeMemorableConsent();
+    const cli = join(home!, 'memorable-cli');
+    mkd(cli, { recursive: true });
+    wf(join(cli, 'config.json'), JSON.stringify({ backend: 'local', consent: 'read-write' }));
+    process.env.GBRAIN_MEMORABLE_CONFIG = cli;
+    const marker = join(home!, 'relay-marker.txt');
+    const bin = join(home!, 'memorable');
+    wf(bin, `#!/bin/sh\necho "$@" >> ${marker}\n`);
+    chm(bin, 0o755);
+    process.env.MEMORABLE_BIN = bin;
+    return marker;
+  }
+
+  async function receipts(): Promise<Array<{ session_id: string; harness: string; content_hash: string; tool_calls_json: string }>> {
+    const { readSessionReceiptsTail } = await import('../src/core/context/hook-heartbeat.ts');
+    return readSessionReceiptsTail(50);
+  }
+
+  it('MR1: default-off — compact writes segments but NO receipt, NO spawn', async () => {
+    tmpDir = makeWorkspace();
+    const sessionFile = join(home!, 'oc-mem.jsonl');
+    wf(sessionFile, [sessionLine, msg('some work', 'exec')].join('\n') + '\n');
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+    await engine.compact({ sessionId: 'oc-mem', sessionFile });
+    expect(await receipts()).toEqual([]);
+    expect(existsSync(join(home!, 'relay-marker.txt'))).toBe(false);
+  });
+
+  it('MR2: opted in — one receipt per compaction, harness openclaw, span-filtered calls; second checkpoint ⇒ second receipt; identical retry ⇒ no dup', async () => {
+    tmpDir = makeWorkspace();
+    const marker = await optIn();
+    const sessionFile = join(home!, 'oc-mem.jsonl');
+    wf(sessionFile, [sessionLine, msg('window one', 'search_brain')].join('\n') + '\n');
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+    await engine.compact({ sessionId: 'oc-mem', sessionFile });
+
+    let r = await receipts();
+    expect(r).toHaveLength(1);
+    expect(r[0]!.harness).toBe('openclaw');
+    expect(r[0]!.session_id).toBe('oc-mem');
+    expect(JSON.parse(r[0]!.tool_calls_json)).toEqual([{ name: 'search_brain', input: null }]);
+
+    // Identical retried compaction: same window hash ⇒ deduped, no second relay.
+    await engine.compact({ sessionId: 'oc-mem', sessionFile });
+    expect(await receipts()).toHaveLength(1);
+
+    // Real new work behind a boundary ⇒ a SECOND receipt with a new hash,
+    // carrying only the post-boundary call (span rule).
+    const boundaryLine = JSON.stringify({ type: 'compaction', timestamp: 't2' });
+    wf(sessionFile, [sessionLine, msg('window one', 'search_brain'), boundaryLine, msg('window two', 'read_file')].join('\n') + '\n');
+    await engine.compact({ sessionId: 'oc-mem', sessionFile });
+    r = await receipts();
+    expect(r).toHaveLength(2);
+    expect(r[1]!.content_hash).not.toBe(r[0]!.content_hash);
+    expect(JSON.parse(r[1]!.tool_calls_json)).toEqual([{ name: 'read_file', input: null }]);
+
+    // The relay child actually ran (fire-and-forget: poll briefly).
+    const deadline = Date.now() + 3000;
+    let body = '';
+    while (Date.now() < deadline) {
+      if (existsSync(marker)) { body = readFileSync(marker, 'utf8'); if (body.trim().split('\n').length >= 2) break; }
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    expect(body).toContain('record --session oc-mem');
+  });
+
+  it('MR3: enabled flag WITHOUT the disclosure stamp (out-of-band write) ⇒ no receipt, no spawn', async () => {
+    tmpDir = makeWorkspace();
+    await optIn();
+    const { clearMemorableConsent } = await import('../src/core/context/hook-heartbeat.ts');
+    await clearMemorableConsent();
+    const sessionFile = join(home!, 'oc-mem.jsonl');
+    wf(sessionFile, [sessionLine, msg('work', 'exec')].join('\n') + '\n');
+    const engine = createGBrainContextEngine({ workspaceDir: tmpDir });
+    const result = await engine.compact({ sessionId: 'oc-mem', sessionFile });
+    expect(result.ok).toBe(true); // the checkpoint itself is untouched
+    expect(await receipts()).toEqual([]);
+    expect(existsSync(join(home!, 'relay-marker.txt'))).toBe(false);
+  });
+});

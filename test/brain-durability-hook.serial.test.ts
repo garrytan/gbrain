@@ -10,6 +10,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
 import { hardenBrainRepo, unhardenBrainRepo } from '../src/core/brain-repo-durability.ts';
+import { crontabAvailable } from './helpers/fs-perms.ts';
 import { runPull } from '../src/commands/sources-harden.ts';
 
 // #2943 root cause: `env: process.env` is REQUIRED here. Bun snapshots
@@ -209,7 +210,10 @@ describe('post-commit hook (D9 local, D7 self-contained)', () => {
 // then invokes that exact command to prove it performs a real pull. It always
 // unregisters the launchd/cron job afterward so no scheduled job survives.
 describe('durability schedule (installCron:true) [D2/D12]', () => {
-  test('registers the DB-free pull job with the right command + interval, and the job performs a real pull', async () => {
+  // skipIf: needs a real crontab/launchctl to register against — on hosts
+  // without one (some sandboxes) hardenBrainRepo correctly degrades the cron
+  // step to 'skipped', which is the product working, not this arc.
+  test.skipIf(!crontabAvailable() && process.platform !== 'darwin')('registers the DB-free pull job with the right command + interval, and the job performs a real pull', async () => {
     const sourceId = 'wiki';
     const report = await hardenBrainRepo({
       repoPath: work, sourceId, pat: 'ghp_x', installCron: true, intervalSec: 900, verify: false,

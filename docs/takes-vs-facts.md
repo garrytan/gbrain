@@ -38,7 +38,9 @@ Personal knowledge from the brain owner's conversations. Real-time capture.
 
 - **Source:** Extracted per-turn from conversation by the facts hook (Haiku)
 - **Scope:** Single-user — only the brain owner's stated knowledge
-- **Kinds:** `event`, `preference`, `commitment`, `belief`, `fact`
+- **Kinds:** `event`, `preference`, `commitment`, `belief`, `fact`, `idea`
+  (`idea` is extractor/DB-only — the frozen `remember` verb enum stays at five,
+  per `docs/protocol/MEMORY_VERBS_v1.md`)
 - **Lifecycle:** Hot storage, real-time. Captured as conversations happen.
 - **Bridge:** Dream cycle `consolidate` phase promotes hot facts → cold takes nightly
 

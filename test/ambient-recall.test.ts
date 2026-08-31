@@ -16,7 +16,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { configureGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { operations } from '../src/core/operations.ts';
 import { MEMORY_VERBS_VERSION, VERB_NAMES } from '../src/core/verbs.ts';
 import {
@@ -79,6 +79,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await engine.disconnect();
+  // Restore the preload baseline — leaving the keyless config in place
+  // configures every LATER file in this shard's process (the exact
+  // leak-to-neighbor class the beforeAll pin defends against).
+  resetGateway();
 });
 
 beforeEach(async () => {

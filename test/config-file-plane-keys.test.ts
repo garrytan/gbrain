@@ -7,7 +7,7 @@
  * the loud warning) and the read half (configAllowsUnverifiedRemote).
  */
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -244,6 +244,138 @@ describe('config set — vendor API keys are FILE-plane canonical', () => {
       expect(out).toContain('file plane');
       expect((JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>).openai_api_key)
         .toBeUndefined();
+    });
+  });
+});
+
+/**
+ * integrations.memorable.enabled is a CONSENT event, not a plain write.
+ * Enabling requires the gbrain-authored disclosure stamp (a separate 0600
+ * file the external memorable CLI has never written — it full-file-rewrites
+ * config.json, so a config-key stamp could be forged by habit, lost to a
+ * rewrite race, or resurrected after revocation). Under bun test stdin is not
+ * a TTY, so the non-interactive posture is what these tests exercise:
+ * refuse without --yes, consent with it.
+ */
+import {
+  memorableConsentPath,
+  memorableGateAllowed,
+  readMemorableConsent,
+} from '../src/core/context/hook-heartbeat.ts';
+
+async function captureAll(fn: () => Promise<void>): Promise<{ out: string; err: string; exitCode: number | null }> {
+  const origLog = console.log;
+  const origErr = console.error;
+  const origExit = process.exit;
+  let out = '';
+  let err = '';
+  let exitCode: number | null = null;
+  console.log = (...a: unknown[]) => { out += a.map(String).join(' ') + '\n'; };
+  console.error = (...a: unknown[]) => { err += a.map(String).join(' ') + '\n'; };
+  process.exit = ((code?: number) => { exitCode = code ?? 0; throw new Error(`__exit_${code}`); }) as never;
+  try {
+    await fn();
+  } catch (e) {
+    if (!(e instanceof Error && e.message.startsWith('__exit_'))) throw e;
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+    process.exit = origExit;
+  }
+  return { out, err, exitCode };
+}
+
+describe('config set integrations.memorable.enabled — the disclosure consent gate', () => {
+  const enabledOn = { integrations: { memorable: { enabled: true } } };
+
+  test('non-TTY without --yes: disclosure shown, refusal, NOTHING written', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-mem-refuse-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_MEMORABLE: undefined }, async () => {
+      const r = await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', 'true']));
+      expect(r.out).toContain('closed source'); // the disclosure text rendered
+      expect(r.err).toContain('refusing to enable');
+      expect(r.err).toContain('[AGENT]');
+      expect(r.exitCode).toBe(1);
+      expect(await readMemorableConsent()).toBeNull();
+      expect(existsSync(join(parent, '.gbrain', 'config.json'))).toBe(false);
+      expect((await memorableGateAllowed(enabledOn)).allowed).toBe(false);
+    });
+  });
+
+  test('--yes consents: stamp written, flag set, gate opens; disable revokes both', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-mem-yes-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_MEMORABLE: undefined }, async () => {
+      const r = await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', 'true', '--yes']));
+      expect(r.out).toContain('Consent recorded');
+      expect(r.out).toContain('Set integrations.memorable.enabled = true');
+      // The enable banner names the off switches — the env kill switch is
+      // documented nowhere else in gbrain's own output. (#4743 pin)
+      expect(r.out).toContain('Turn off:');
+      expect(r.out).toContain('GBRAIN_MEMORABLE=0');
+      const stamp = await readMemorableConsent();
+      expect(stamp).not.toBeNull();
+      expect(stamp!.harnesses).toContain('claude-code');
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { integrations?: { memorable?: { enabled?: boolean } } };
+      expect(cfg.integrations?.memorable?.enabled).toBe(true);
+      expect((await memorableGateAllowed(cfg)).allowed).toBe(true);
+
+      // Disable = revocation: flag off AND the stamp file deleted.
+      const r2 = await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', 'false']));
+      expect(r2.out).toContain('consent was revoked');
+      expect(await readMemorableConsent()).toBeNull();
+      expect(existsSync(await memorableConsentPath())).toBe(false);
+      // Re-enabling without --yes now refuses again (disclosure required anew).
+      const r3 = await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', 'true']));
+      expect(r3.exitCode).toBe(1);
+    });
+  });
+
+  test('unset routes to the file plane and revokes the stamp (the pre-fix DB fall-through lied)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-mem-unset-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_MEMORABLE: undefined }, async () => {
+      await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', 'true', '--yes']));
+      expect(await readMemorableConsent()).not.toBeNull();
+      const r = await captureAll(() => runConfig(noEngine, ['unset', 'integrations.memorable.enabled']));
+      expect(r.out).toContain('Unset integrations.memorable.enabled (file plane)');
+      expect(await readMemorableConsent()).toBeNull();
+      const cfg = JSON.parse(readFileSync(join(parent, '.gbrain', 'config.json'), 'utf8')) as { integrations?: { memorable?: { enabled?: boolean } } };
+      expect(cfg.integrations?.memorable?.enabled).toBeUndefined();
+    });
+  });
+
+  test('every off-ish spelling writes literal false without prompting (#4743 pin)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-mem-offish-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_MEMORABLE: undefined }, async () => {
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      for (const spelling of ['false', 'off', 'no', '0', 'nonsense']) {
+        const r = await captureAll(() => runConfig(noEngine, ['set', 'integrations.memorable.enabled', spelling]));
+        // The false path is not a consent event: no disclosure, no refusal,
+        // and the stored value is a real boolean — a string here would still
+        // read as OFF at the gate, but the file must say what it means.
+        expect(r.out).toContain('= false');
+        expect(r.exitCode).toBeNull();
+        const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as { integrations?: { memorable?: { enabled?: unknown } } };
+        expect(cfg.integrations?.memorable?.enabled).toBe(false);
+      }
+    });
+  });
+
+  test('the key is registered in KNOWN_CONFIG_KEYS, so `config get` does not report it unknown (#4743 pin)', async () => {
+    const { KNOWN_CONFIG_KEYS } = await import('../src/core/config.ts');
+    expect(KNOWN_CONFIG_KEYS).toContain('integrations.memorable.enabled');
+  });
+
+  test('the out-of-band state: flag true (as `memorable enable` writes it) but no stamp — gate stays closed', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-mem-oob-'));
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_MEMORABLE: undefined }, async () => {
+      // Simulate the external CLI's b2() write: enabled: true, no disclosure.
+      const gb = join(parent, '.gbrain');
+      mkdirSync(gb, { recursive: true });
+      const cfg = { engine: 'pglite', integrations: { memorable: { enabled: true } } };
+      writeFileSync(join(gb, 'config.json'), JSON.stringify(cfg, null, 2));
+      const gate = await memorableGateAllowed(cfg);
+      expect(gate).toEqual({ allowed: false, reason: 'disclosure_missing' });
     });
   });
 });

@@ -29,12 +29,23 @@
  *  - Wrapper try/catch around the walk per OV13: ENOENT/EACCES on local_path
  *    yields zero files, NOT a thrown crash that takes down the whole doctor
  *    run.
+ *  - #4712: the slug derivation below is `local_path`-relative only, which
+ *    is the `'source-root'` slug-root shape (#4342, src/core/sync-anchor.ts).
+ *    A source pinned to `'git-root'` mode produces slugs prefixed with its
+ *    subdir under the repo root instead — this module has no git-root
+ *    discovery of its own, so it CANNOT compute the slug sync actually
+ *    produces for such a source. Rather than compare against the wrong
+ *    slug (false-positive drift, with delete advice naming an unrelated
+ *    page), a git-root-pinned source is skipped entirely and reported via
+ *    `git_root_skipped`. True prefix-aware matching is tracked as a
+ *    follow-up, not attempted here.
  */
 
 import { readdirSync, lstatSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { pathToSlug } from './sync.ts';
+import { readSlugRootMode } from './sync-anchor.ts';
 
 export interface SourceWithPath {
   id: string;
@@ -53,6 +64,13 @@ export interface MisroutedResult {
   /** Per-source breakdown: slugs that appear at (default, slug) but NOT at (X, slug). */
   count: number;
   sample: MisroutedSample[];
+  /**
+   * #4712: source IDs skipped because their persisted slug_root_mode is
+   * 'git-root' — this check only knows how to derive 'source-root'-shaped
+   * (local_path-relative) slugs, so a git-root-pinned source is excluded
+   * rather than checked against the wrong slug shape.
+   */
+  git_root_skipped: string[];
 }
 
 const DEFAULT_FILE_LIMIT = 10_000;
@@ -192,6 +210,7 @@ export async function findMisroutedPages(
   let totalCount = 0;
   let walkTruncated = false;
   const sample: MisroutedSample[] = [];
+  const gitRootSkipped: string[] = [];
 
   for (const src of sources) {
     if (src.id === 'default') continue;
@@ -199,6 +218,15 @@ export async function findMisroutedPages(
     if (Date.now() >= deadlineMs) {
       walkTruncated = true;
       break;
+    }
+    // #4712: local_path-relative slugs are only correct for 'source-root'-
+    // pinned sources. A 'git-root' pin means sync produces subdir-prefixed
+    // slugs this module doesn't know how to reconstruct — skip rather than
+    // compare against a slug shape that will never match.
+    const rootMode = await readSlugRootMode(engine, src.id);
+    if (rootMode === 'git-root') {
+      gitRootSkipped.push(src.id);
+      continue;
     }
     const { files, truncated } = walkMarkdownAndMdxFiles(src.local_path, limit, deadlineMs);
     if (truncated) walkTruncated = true;
@@ -223,5 +251,5 @@ export async function findMisroutedPages(
     }
   }
 
-  return { walk_truncated: walkTruncated, count: totalCount, sample };
+  return { walk_truncated: walkTruncated, count: totalCount, sample, git_root_skipped: gitRootSkipped };
 }

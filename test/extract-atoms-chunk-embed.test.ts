@@ -20,6 +20,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { serializeMarkdown, parseMarkdown } from '../src/core/markdown.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseExtractAtoms } from '../src/core/cycle/extract-atoms.ts';
+import { configureGateway, resetGateway, isAvailable } from '../src/core/ai/gateway.ts';
 import type { ChatResult, ChatOpts } from '../src/core/ai/gateway.ts';
 
 /** Mirrors the write site in extract-atoms.ts. */
@@ -157,14 +158,34 @@ describe('extracted atoms reach content_chunks (PGLite round-trip)', () => {
   // src file and re-running.
   let engine: PGLiteEngine;
   beforeAll(async () => {
+    // Hermetic embedding (TODOS "deflake extract-atoms chunk-embed"): pin the
+    // gateway to a KEYLESS config so importFromContent's
+    // `noEmbed: !isAvailable('embedding')` (extract-atoms.ts write site) is
+    // deterministically true. A shard-neighbor's leaked provider key otherwise
+    // reaches the gateway singleton via the preload's `env: {...process.env}`
+    // snapshot (surviving the neighbor's own env restore), the atom import
+    // fires a real embed inside withBudgetTracker, reserve() throws
+    // BudgetExhausted(no_pricing), and every work item is skipped → status
+    // 'warn' with 0 processed. Same pin as test/ambient-recall.test.ts.
+    // Dimensions stay 1536 to match the preload's schema width; configure
+    // BEFORE initSchema (the vector column width tracks gateway dims).
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: {},
+    });
     engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
   });
   afterAll(async () => {
     await engine.disconnect();
+    resetGateway(); // back to the preload baseline; don't leak env:{} onward
   });
   test('runPhaseExtractAtoms writes content_chunks rows for atom pages', async () => {
+    // Self-asserting hermeticity pin: if a neighbor's key ever reaches the
+    // gateway again, fail loudly here instead of flaking downstream.
+    expect(isAvailable('embedding')).toBe(false);
     {
       const chat = async (_o: ChatOpts): Promise<ChatResult> => ({
         text: `[{"title":"Chunked atom","atom_type":"insight","body":"Enterprise buyers want tangible prototypes, not renders."}]`,

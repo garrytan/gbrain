@@ -397,12 +397,19 @@ describe('codex scope-note guard — Codex has no scope flag; stale MCP_SCOPE an
 
   async function withScopeHome<T>(parent: string, fn: () => Promise<T>): Promise<T> {
     const prev = process.env.GBRAIN_HOME;
+    const prevCodexHome = process.env.CODEX_HOME;
     process.env.GBRAIN_HOME = parent;
+    // The codex hooks writer resolves CODEX_HOME || ~/.codex and Bun caches
+    // homedir() — without this isolation the codex-lane tests would write the
+    // operator's REAL ~/.codex/hooks.json + config.toml trust block.
+    process.env.CODEX_HOME = join(parent, 'codex-home');
     try {
       return await fn();
     } finally {
       if (prev === undefined) delete process.env.GBRAIN_HOME;
       else process.env.GBRAIN_HOME = prev;
+      if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = prevCodexHome;
     }
   }
 
@@ -424,14 +431,20 @@ describe('codex scope-note guard — Codex has no scope flag; stale MCP_SCOPE an
     });
   }
 
-  test('codex + explicit project → note fires; hooks skipped; receipt records user scope', async () => {
+  test('codex + explicit project → note fires; SessionEnd hook written (trust-gated pair); receipt records user scope', async () => {
     const { fws, fhome, fparent } = scopeWorkspace('project');
     const r = await renderThenHooks(fws, fparent, 'codex');
     expect(r.result).toBe(0);
     expect(r.err).toContain(NOTE);
     expect(r.err).toContain('user-global');
     expect(existsSync(join(fws, '.claude', 'settings.local.json'))).toBe(false);
-    expect(readReceipt(fhome)?.registrations).toEqual([{ host: 'codex', scope: 'user', detail: 'mcp' }]);
+    // The codex hook lane is live: hooks.json + its config.toml trust entry
+    // land in CODEX_HOME (isolated above), and the receipt records both.
+    const codexHome = join(fparent, 'codex-home');
+    expect(existsSync(join(codexHome, 'hooks.json'))).toBe(true);
+    expect(readFileSync(join(codexHome, 'hooks.json'), 'utf8')).toContain('hook session-end --harness codex');
+    expect(readFileSync(join(codexHome, 'config.toml'), 'utf8')).toContain('trusted_hash');
+    expect(readReceipt(fhome)?.registrations).toEqual([{ host: 'codex', scope: 'user', detail: 'mcp+hooks' }]);
   }, 30_000);
 
   test('codex + unset → NO note (raw read, not the project-defaulting resolver)', async () => {

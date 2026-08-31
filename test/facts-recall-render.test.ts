@@ -68,6 +68,10 @@ describe('gbrain recall --today', () => {
       { fact: 'fact-fact', kind: 'fact', entity_slug: 'render-test-f', source: 'test' },
       { source_id: 'default' },
     );
+    await engine.insertFact(
+      { fact: 'idea-fact', kind: 'idea', entity_slug: 'render-test-i', source: 'test' },
+      { source_id: 'default' },
+    );
 
     await runRecall(engine, ['--today']);
     process.stdout.write = origWrite;
@@ -77,6 +81,7 @@ describe('gbrain recall --today', () => {
     expect(captured).toContain('🤝');  // commitment
     expect(captured).toContain('💭');  // belief
     expect(captured).toContain('📌');  // fact
+    expect(captured).toContain('💡');  // idea
   });
 });
 

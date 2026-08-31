@@ -57,7 +57,7 @@ export const FACTS_FENCE_END   = '<!--- gbrain:facts:end -->';
 // the fence parser has zero engine dependencies — it must run in pure-
 // markdown contexts (the chunker strip, the CI invariant check) where
 // importing engine.ts pulls a large DB-shaped transitive graph.
-export type FactKind = 'event' | 'preference' | 'commitment' | 'belief' | 'fact';
+export type FactKind = 'event' | 'preference' | 'commitment' | 'belief' | 'fact' | 'idea';
 
 // Mirror src/core/engine.ts FactVisibility ('private' | 'world'). Binary
 // gate per the existing takes D21 contract — drives the chunker strip
@@ -67,7 +67,7 @@ export type FactVisibility = 'private' | 'world';
 export type FactNotability = 'high' | 'medium' | 'low';
 
 const KIND_VALUES: ReadonlySet<string> = new Set([
-  'event', 'preference', 'commitment', 'belief', 'fact',
+  'event', 'preference', 'commitment', 'belief', 'fact', 'idea',
 ]);
 const VISIBILITY_VALUES: ReadonlySet<string> = new Set(['private', 'world']);
 const NOTABILITY_VALUES: ReadonlySet<string> = new Set(['high', 'medium', 'low']);
@@ -244,7 +244,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
 
     const kind = kindRaw.trim().toLowerCase();
     if (!KIND_VALUES.has(kind)) {
-      warnings.push(`FACTS_TABLE_MALFORMED: unknown kind "${kindRaw}" (expected event|preference|commitment|belief|fact)`);
+      warnings.push(`FACTS_TABLE_MALFORMED: unknown kind "${kindRaw}" (expected event|preference|commitment|belief|fact|idea)`);
       continue;
     }
 

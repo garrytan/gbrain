@@ -128,7 +128,7 @@ Every non-localOnly operation on the MCP surface: 121 tools across 23 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `extract_facts` | v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs) from a conversation turn into the per-source hot memory. | write |  |  |
+| `extract_facts` | v0.31: extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
 | `forget_fact` | v0.32.2: forget a fact. | write |  |  |
 
 ## memory-verbs

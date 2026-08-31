@@ -61,6 +61,7 @@ Repo: https://github.com/garrytan/gbrain
 
 - [docs/designs/](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/designs/): Forward-looking designs.
 - [docs/architecture/infra-layer.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/architecture/infra-layer.md): Shared infra patterns.
+- [docs/memorable-agents.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/memorable-agents.md): Optional Memorable procedural-memory integration: the session-end receipt, the config gate and kill switch, the consent model, and exactly what leaves the machine.
 
 ## Operational tips
 

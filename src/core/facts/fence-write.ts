@@ -423,7 +423,7 @@ export async function writeFactsToFence(
         const { body: updated, rowNum } = upsertFactRow(body, {
           rowNum:      nextRowNum++,
           claim:       f.fact,
-          kind:        (f.kind ?? 'fact') as 'fact' | 'event' | 'preference' | 'commitment' | 'belief',
+          kind:        (f.kind ?? 'fact') as 'fact' | 'event' | 'preference' | 'commitment' | 'belief' | 'idea',
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',

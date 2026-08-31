@@ -13,7 +13,7 @@
 # isolate the Linux container's deps from the host's darwin-arm64 deps and
 # keep bun + postgres data warm across runs.
 #
-# Why 4 postgres services: bun's E2E suite shares one DB across 36 files and
+# Why 4 postgres services: bun's E2E suite shares one DB across the e2e glob and
 # uses TRUNCATE CASCADE in setupDB(). Running files in parallel against ONE DB
 # races (file A's TRUNCATE clobbers file B's fixture import). 4 separate DBs
 # remove the race; we shard the file list 1/4..4/4 and run shards in parallel.

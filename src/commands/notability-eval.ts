@@ -246,6 +246,7 @@ async function classifyBatch(paragraphs: string[]): Promise<Array<'high' | 'medi
     '  relationship status changes, health changes, emotional breakthroughs, financial decisions.',
     '- MEDIUM: Durable preferences, beliefs, strong opinions that reveal character.',
     '- LOW: Logistical noise, restaurant orders, routine scheduling.',
+    '  Label honestly — LOW is a real classification, not a skip; every paragraph gets a tier.',
     '',
     'Output strictly one JSON object: {"tiers":["high"|"medium"|"low",...]} ',
     'with one entry per input in order. No prose, no fences.',

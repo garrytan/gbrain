@@ -161,6 +161,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'bootstrap_harness_health',
   'bootstrap_hooks_heartbeat',
   'bootstrap_last_verify',
+  'memorable_relay_health',
   'backup_coverage',
   'bootstrap_push_health',
   'bootstrap_durability_job',

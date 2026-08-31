@@ -71,10 +71,13 @@ instead of the gateway, so the gate runs with no API keys and no network.
 Correctness-gate-only — it is rejected together with `--baseline` (replay
 re-embeds captured queries via the gateway) and requires `--qrels`. Bare
 `hybridSearch` never reads or writes the semantic query cache, so a
-deterministic run cannot poison cached production results. This is what CI's
-`check:eval-canary` gate runs via `scripts/run-eval-canary.ts`: a throwaway
+deterministic run cannot poison cached production results. This is what the
+hermetic retrieval canary (`scripts/run-eval-canary.ts`) runs: a throwaway
 PGLite brain seeded from the qrels fixture, gating the hybrid ranking
-pipeline (keyword/title/alias arms + RRF) with synthetic vectors. Honest
+pipeline (keyword/title/alias arms + RRF) with synthetic vectors. In CI the
+canary runs via `test/eval-canary.test.ts` in the unit matrix; `bun run
+check:eval-canary` is the on-demand package script (it is deliberately not
+in the `verify` battery — the unit-matrix twin already gates it). Honest
 scope: semantic-embedding regressions remain the keyed eval suites' job.
 Reproduce locally with `bun run scripts/run-eval-canary.ts` (`--record`
 appends to the `.gbrain-evals/eval-results.jsonl` ledger).

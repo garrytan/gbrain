@@ -20,6 +20,7 @@ import { join } from 'node:path';
 
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+
 import { addSource } from '../../src/core/sources-ops.ts';
 import { loadCorpusPages } from '../helpers/bootstrap-corpus.ts';
 import { runEmbedCore } from '../../src/commands/embed.ts';
@@ -39,6 +40,10 @@ import {
   VERIFY_MAGIC_TOKEN,
 } from '../../src/core/bootstrap/verify.ts';
 import type { CapabilityReport } from '../../src/core/capability.ts';
+
+// Cold-path opt-out (conservative): runs runSchemaTransition (embedding-width
+// schema migration) on top of a fresh engine — the base must be cold-built.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 const OPENAI = process.env.OPENAI_API_KEY;
 const VOYAGE = process.env.VOYAGE_API_KEY;

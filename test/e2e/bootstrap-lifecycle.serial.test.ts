@@ -131,6 +131,11 @@ beforeAll(() => {
   mkdirSync(home, { recursive: true });
   dbDir = join(tmpParent, 'db');
   process.env.GBRAIN_HOME = tmpParent;
+  // CODEX_HOME must be SET (not just deleted): the codex hooks lane writes
+  // hooks.json + a config.toml trust block, and the homedir fallback would
+  // land them in the operator's REAL ~/.codex on a dev machine.
+  process.env.CODEX_HOME = join(tmpParent, 'codex-home');
+  mkdirSync(process.env.CODEX_HOME, { recursive: true });
 
   // Engine phase artifact: the config `gbrain init --pglite` would write.
   writeFileSync(join(home, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dbDir }, null, 2));
@@ -448,8 +453,10 @@ describe('bootstrap lifecycle (serial e2e)', () => {
       expect(await runBootstrap(['render', '--workspace', ws2])).toBe(0);
 
       // Codex door: MCP registered via `codex mcp add` (user-global, env
-      // binding [G1]); NO hooks written — the pull protocol is the per-turn
-      // seam, stated plainly.
+      // binding [G1]) — and since the Memorable wave, a consent-gated
+      // SessionEnd hook pair (hooks.json + config.toml trust block) lands in
+      // CODEX_HOME too, so the receipt reads mcp+hooks. Per-turn context
+      // stays the pull protocol (codex hooks are SessionEnd-only).
       const gbrainBin = join(shimDir, 'gbrain');
       const { result: hooksCode, out: hooksOut } = await captureStdout(() =>
         runBootstrap(['hooks', '--workspace', ws2, '--harness', 'codex', '--gbrain-bin', gbrainBin], {
@@ -466,7 +473,10 @@ describe('bootstrap lifecycle (serial e2e)', () => {
       expect(existsSync(join(ws2, '.claude', 'settings.local.json'))).toBe(false);
       const receipt = readReceipt(home);
       // Receipt is machine-scoped last-attach-wins: ws2's registration replaced ws's record.
-      expect(receipt?.registrations).toEqual([{ host: 'codex', scope: 'user', detail: 'mcp' }]);
+      expect(receipt?.registrations).toEqual([{ host: 'codex', scope: 'user', detail: 'mcp+hooks' }]);
+      // The hook pair landed in the ISOLATED CODEX_HOME, never the real one.
+      expect(existsSync(join(process.env.CODEX_HOME!, 'hooks.json'))).toBe(true);
+      expect(readFileSync(join(process.env.CODEX_HOME!, 'config.toml'), 'utf8')).toContain('gbrain:codex-hooks-trust');
     } finally {
       delete process.env.GBRAIN_BOOTSTRAP_ABORT_AFTER;
       rmSync(ws2, { recursive: true, force: true });

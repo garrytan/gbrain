@@ -21,6 +21,8 @@ follows is `BOOTSTRAP_FOR_AGENTS.md` at the repo root, fetched at the
 | Local brain (PGLite) | `~/.gbrain/` (never in the repo) | while a session's MCP serve is open |
 | MCP registration (`gbrain serve`) | Claude Code: project scope by default; Codex: user-global (no scope flag); opencode: user-global by default (project scope is an explicit opt-in — see the degradation matrix) | spawned by your harness per session |
 | Hooks (Claude Code, ON by default) | local installs: `.claude/settings.local.json` (gitignored); cloud sandboxes: the COMMITTED `.claude/settings.json` (PATH-resolved, fail-open commands) | each prompt; fail-open; `--no-hooks` opts out at install, `GBRAIN_HOOKS=0` disables at runtime |
+| Codex SessionEnd hook (session capture only) | user-global `hooks.json` + a config.toml trust entry under CODEX_HOME (both managed by bootstrap — codex hooks are silently inert without the trust entry) | at codex session end, machine-wide; `--no-hooks` opts out, `GBRAIN_HOOKS=0` disables |
+| Memorable relay (OFF by default, disclosure-gated) | receipt + relay spawn from the session-end hooks / OpenClaw compaction; the third-party `memorable` CLI sends the redacted trace off-machine — see `docs/memorable-agents.md` | only after `gbrain config set integrations.memorable.enabled true` is accepted by a human; `GBRAIN_MEMORABLE=0` kills it |
 | Per-turn persistence | Stop hook → debounced, detached scan-gated push (per workspace; 5 min default, every turn in cloud sandboxes) | after each assistant turn; `GBRAIN_STOP_PUSH=0` disables; `GBRAIN_STOP_PUSH_DEBOUNCE_MIN` / config `hooks.stop_push_debounce_min` tune it |
 | Session persistence | SessionEnd hook → scan-gated commit+push | at session end (note: the harness never fires SessionEnd on `/exit` — the per-turn push is what covers that) |
 | Compaction checkpoints | PreCompact hook → secret-scanned boundary segment banked to the corpus dir; a live serve harvests it into facts + `brain://` links (see `docs/guides/checkpoint-compaction.md`) | at each Claude Code compaction; links render as `## Compaction checkpoints` on the post-compaction session start |
@@ -156,9 +158,10 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | API keys | everything (keyless mode) | semantic search, auto-extraction |
 | GitHub / `gh` | full local agent | off-machine durability (repo re-runnable later) |
 | Hooks (Claude Code) | pull protocol via AGENTS.md gates | automatic per-turn context + session-end persistence |
-| Codex (no wired hooks, no MCP scope flag) | pull protocol + MCP tools | per-turn push (stated plainly; not oversold — codex 0.147+ ships a hook system, but gbrain does not wire it yet) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
+| Codex (SessionEnd hook only, no MCP scope flag) | pull protocol + MCP tools + session-end capture (a trust-gated `hooks.json` entry bootstrap manages) | per-turn push (codex hooks are wired for SessionEnd only — per-turn context stays the pull protocol) + the ability to confine MCP reach to one folder (`codex mcp add` is always user-global) |
 | opencode (no wired hooks; scope INVERTED: user-global by default) | pull protocol (opencode reads AGENTS.md natively) + MCP tools; project scope available as an explicit opt-in | per-turn push (opencode ships a plugin/event system, but gbrain does not wire it yet). The project-scope default is deliberately NOT offered: opencode spawns project-config servers with no trust prompt, so a committed entry would auto-execute on every collaborator machine |
 | Bootstrap at all (plugin-only install) | MCP tools (`starter` surface, `--source-guard`) + the curated skill set via the codex/claude plugin (docs/mcp/CODEX.md) | identity files, hooks/push protocol, the private-repo body — the plugin is the lightweight lane; bootstrap is the full agent |
+| Memorable relay (declined or never disclosed) | everything — the integration is additive and off by default | replayable cross-session procedures via the third-party Memorable service (`docs/memorable-agents.md`) |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
 | Postgres brain (incl. harness mode) | MCP tools every session + pull protocol | per-turn hook injection (`no_pglite_path`: the hook IPC socket is PGLite-only today; hooks stay pre-wired and light up when the engine-uniform listener lands). Preferring Postgres — e.g. via `gbrain init --prefer-postgres` — deliberately trades the per-turn hook lane for MCP-every-session plus the pull protocol until that listener lands; a documented tradeoff, not an oversight |
 
@@ -195,7 +198,12 @@ mode wires them in one command, with no `agent.json` and no interview:
   also enabled, two `gbrain` servers exist in different layers — the wire
   proceeds with a loud WARNING and `gbrain doctor` reports the collision
   (`plugin_lane_collision`); keep one (`codex plugin remove gbrain@gbrain`, or
-  `--remove` here).
+  `--remove` here). Unless `--no-hooks`, the harness lane also installs the
+  codex SessionEnd capture hook — the user-global `hooks.json` entry plus its
+  `config.toml` trust entry beside the target config (codex hooks are silently
+  inert without the trust pair; the write backs the config up to
+  `<config.toml>.hooks.bak`), machine-global by nature; `--remove` tears it
+  down along with the MCP block.
 - opencode: one managed `mcp.gbrain` remote entry with the bearer header
   INLINE in the user-global JSONC config (0600), written by the same
   comment-preserving editor the workspace lane uses — the `{env:…}`
@@ -286,7 +294,9 @@ that changed shape, a harness that stopped calling our MCP server):
   keyless-`init` → interview → render → `gbrain bootstrap hooks --harness codex`
   path (executing the real `codex mcp add` into a hermetic `~/.codex/config.toml`),
   asserts the rendered `AGENTS.md` carries the Gate-3 brain-first pull protocol
-  (gbrain does not wire Codex hooks yet, so the pull protocol is its per-turn seam), then
+  (the pull protocol is codex's per-turn seam; the SessionEnd capture hook is
+  wired separately, and the door asserts its trust-gated hooks.json + config.toml
+  pair landed), then
   spends one live `codex exec` turn to prove real codex → gbrain MCP → brain →
   a seeded, brain-only fact (falling back to a shell `gbrain query` if headless
   stdio-MCP is unavailable).

@@ -12,7 +12,7 @@
 # `mock.module(...)` in one file leaks into the next file's imports. Per-file
 # processes give true isolation — and that isolation is per-PROCESS, not
 # per-machine, so separate processes run CONCURRENTLY through the pool below.
-# (The previous runner executed the ~140 processes strictly one-at-a-time:
+# (The previous runner executed the per-file processes strictly one-at-a-time:
 # an 8.5-minute CI job whose serialization was never required by the
 # quarantine contract.)
 #
@@ -116,6 +116,34 @@ for f in "${files[@]}"; do
   fi
 done
 
+# LPT dispatch: heaviest-first into the work-stealing pool (descending-weight
+# dispatch into a width-P pool IS longest-processing-time-first). Weights are
+# ADVISORY (scripts/serial-weights.json, seconds, mined from
+# .context/serial-durations.txt below); absent file / corrupt JSON / missing
+# bun keep discovery order (bun, not node: bun-only dev machines are the
+# common case — the script runs `bun test` right after). Absent key → corpus
+# p75 (same doctrine as
+# scripts/sharding.ts). Rank stability is all that matters — a wrong order
+# costs idle tail, never correctness. The --dry-run-list output above stays
+# discovery-ordered on purpose (pinned by test/scripts/run-serial-pool.test.ts).
+if [ "${#pool_files[@]}" -gt 1 ] && [ -f scripts/serial-weights.json ] && command -v bun >/dev/null 2>&1; then
+  lpt_sorted=$(printf '%s\n' "${pool_files[@]}" | bun -e '
+    const fs = require("fs");
+    let w = {};
+    try { w = JSON.parse(fs.readFileSync("scripts/serial-weights.json", "utf8")); } catch {}
+    const files = fs.readFileSync(0, "utf8").split("\n").filter(Boolean);
+    const vals = Object.values(w).filter((v) => typeof v === "number").sort((a, b) => a - b);
+    const p75 = vals.length ? vals[Math.floor(vals.length * 0.75)] : 0;
+    const wt = (f) => (typeof w[f] === "number" ? w[f] : p75);
+    files.sort((a, b) => (wt(b) - wt(a)) || (a < b ? -1 : 1));
+    process.stdout.write(files.join("\n"));
+  ' 2>/dev/null) || lpt_sorted=""
+  if [ -n "$lpt_sorted" ]; then
+    pool_files=()
+    while IFS= read -r f; do pool_files+=("$f"); done <<< "$lpt_sorted"
+  fi
+fi
+
 # ──────────────────────────────────────────────────────────────────────────
 # Pool sizing: min(detect_cpus, 4) — each pooled bun process can hold a
 # PGLite WASM instance (~1.5GB) — then clamped by available memory (same
@@ -192,7 +220,9 @@ idx=0
 if [ "${#pool_files[@]}" -gt 0 ]; then
   for f in "${pool_files[@]}"; do
     while [ "$(jobs -rp | wc -l | tr -d ' ')" -ge "$POOL" ]; do
-      sleep 0.2
+      # 0.05s granularity: at 0.2s the dispatch loop idled ~15% of a full
+      # serial run in aggregate poll latency across 200+ dispatches.
+      sleep 0.05
     done
     (
       s=$(date +%s)
@@ -314,7 +344,20 @@ i=0
 for f in "${ordered_files[@]}"; do
   [ -f "$LOG_DIR/$i.dur" ] && echo "$(cat "$LOG_DIR/$i.dur") $f"
   i=$((i + 1))
-done | sort -rn | head -10 | sed 's/^/  /'
+done | sort -rn | awk 'NR<=10' | sed 's/^/  /'
+
+# Bank the FULL per-file duration table before the tmpdir EXIT trap destroys
+# it — the mining input for scripts/serial-weights.json (workspace-local,
+# gitignored, overwritten per run).
+if mkdir -p .context 2>/dev/null; then
+  {
+    di=0
+    for f in "${ordered_files[@]}"; do
+      [ -f "$LOG_DIR/$di.dur" ] && echo "$(cat "$LOG_DIR/$di.dur") $f"
+      di=$((di + 1))
+    done
+  } > .context/serial-durations.txt 2>/dev/null || true
+fi
 
 total_epoch=$(( $(date +%s) - start_epoch ))
 if [ "$fail_count" -gt 0 ]; then

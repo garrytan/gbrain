@@ -13,7 +13,8 @@
  *      live backlog largely sits in dead per-run `dream-inline-*` queues no
  *      worker will ever drain), match (basename, hash16) to discovered
  *      transcripts, then:
- *        - matched below threshold      → cancel (frontier job not worth it)
+ *        - matched below the gate (threshold OR verified-segment rescue —
+ *          ONE predicate with the synthesize fan-out) → cancel
  *        - matched above, stale queue   → cancel as `converted_for_resubmit`
  *          (cancelled rows release their idempotency slot, so the next cycle
  *          re-adds them into ITS live private drain — this is what actually
@@ -50,6 +51,7 @@ import {
   type TriageFileReport,
 } from '../core/cycle/synthesize.ts';
 import { discoverTranscripts } from '../core/cycle/transcript-discovery.ts';
+import { passesTriageGate, rescueConfigOf } from '../core/cycle/triage-rescue.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
@@ -192,12 +194,13 @@ NOTES
   cancelled — they count as kept_live_queue. Running retriage while a cycle
   is active may double-judge some cache misses (benign: last write wins).
 
-RECONCILE SEMANTICS
-  matched + score <  threshold                  cancel
-  matched + score >= threshold, dead dream-inline-* queue (older than 1h)
+RECONCILE SEMANTICS (gate = threshold pass OR the verified-segment rescue —
+the same passesTriageGate the synthesize fan-out reads)
+  matched + below gate                          cancel
+  matched + passes gate, dead dream-inline-* queue (older than 1h)
                                                 cancel (converted_for_resubmit —
                                                 next cycle re-adds it into a live drain)
-  matched + score >= threshold, live queue      keep
+  matched + passes gate, live queue             keep
   matched, no reliable score                    keep
   unmatched / unparseable key                   keep (cancel with --cancel-unmatched)
   legacy dream:synth: (v1) keys                 never touched
@@ -218,6 +221,9 @@ interface ReconcileStats {
   candidates: number;
   cancelled: number;
   converted_for_resubmit: number;
+  /** Kept because the job PASSES THE GATE — score >= threshold OR the F2
+   * verified-segment rescue. The name predates the rescue; renaming would
+   * break --json consumers, so the widened semantics live here. */
   kept_above_threshold: number;
   kept_unscored: number;
   /** Rows in a dream-inline-* queue younger than the liveness grace — possibly a running cycle's; never cancelled (CX1). */
@@ -277,6 +283,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     return;
   }
   const threshold = parsed.threshold ?? config.triage.threshold;
+  // F2: ONE gate everywhere — the same verified-segment rescue the synthesize
+  // fan-out applies. An operator sweep must never cancel queued jobs the
+  // rescue admitted (reconcile below), nor audit rescued files as "rejects".
+  const rescueCfg = rescueConfigOf(config.triage);
 
   let transcripts = discoverTranscripts({
     corpusDir: config.corpusDir,
@@ -305,9 +315,11 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       if (cached && valid) {
         passStats.cacheHits++;
         byPath.set(t.filePath, cached);
+        const g = passesTriageGate(cached, t.content, threshold, rescueCfg);
         reports.push({
           filePath: t.filePath,
-          worth: cached.score !== null && cached.score >= threshold,
+          worth: g.pass,
+          ...(g.rescued ? { rescued: true, verified_segments: g.verified_segments } : {}),
           score: cached.score,
           content_type: cached.content_type,
           reasons: cached.reasons,
@@ -420,6 +432,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
       force: parsed.force,
       staleBefore: parsed.since ?? undefined,
       shouldStop,
+      rescue: rescueCfg,
     });
     reports = pass.reports;
     for (const [k, v] of pass.byPath) byPath.set(k, v);
@@ -451,9 +464,14 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     // fixed-width hex after the final separator.
     const discoveredKeys = new Set<string>();
     const verdictByKey = new Map<string, DreamVerdict>();
+    // F2: transcript content by match key, for the rescue's mechanical
+    // segment verification in the cancel decision below (references only —
+    // the contents are already resident on the transcripts array).
+    const contentByKey = new Map<string, string>();
     for (const t of transcripts) {
       const k = `${basename(t.filePath)}|${t.contentHash.slice(0, 16)}`;
       discoveredKeys.add(k);
+      contentByKey.set(k, t.content);
       const v = byPath.get(t.filePath);
       if (v) verdictByKey.set(k, v);
     }
@@ -631,7 +649,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
         }
         continue;
       }
-      if (verdict.score < threshold) {
+      // F2: the cancel decision reads THE gate (threshold OR verified-segment
+      // rescue) — a below-threshold job the rescue admitted must survive the
+      // sweep, or reconcile cancels exactly what the last cycle fought to run.
+      if (!passesTriageGate(verdict, contentByKey.get(matchKey) ?? '', threshold, rescueCfg).pass) {
         if (!parsed.dryRun) {
           const outcome = await cancelRow(row.id);
           if (outcome === 'cancelled') reconcile.cancelled++;
@@ -641,7 +662,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
         }
         continue;
       }
-      // Above threshold. C1: a row stranded in a provably-dead per-run
+      // Above the gate. C1: a row stranded in a provably-dead per-run
       // dream-inline-* queue (older than the liveness grace, no live cycle
       // lock — the possibly-live case was already kept above) will never be
       // claimed — cancel it so the next cycle's queue.add re-creates it in a
@@ -669,7 +690,10 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     process.stderr.write('[retriage] --audit-rejects skipped under --dry-run (the audit spends frontier-model calls)\n');
   }
   if (parsed.auditRejects !== null && !parsed.dryRun) {
-    const rejects = reports.filter(r => r.score !== null && r.score < threshold);
+    // F2: rescued band files are ACCEPTED, not rejects — auditing them as
+    // rejections would misreport the disagreement rate the threshold-tuning
+    // loop reads.
+    const rejects = reports.filter(r => r.score !== null && r.score < threshold && r.rescued !== true);
     // Deterministic stride-sample over the rejects in discovery order — no
     // randomness, so repeated audits compare like with like.
     const sample: TriageFileReport[] = [];

@@ -187,6 +187,32 @@ describe('recall — G1B superset + budget packing', () => {
 });
 
 describe('remember — contract behavior', () => {
+  it("kind enum is frozen at the 5 protocol kinds — 'idea' is extractor/DB-only", () => {
+    // docs/protocol/MEMORY_VERBS_v1.md:39-41 — the remember verb's kind enum
+    // is a frozen protocol surface. The extractor/DB taxonomy gained 'idea'
+    // (engine.ts FactKind, migration v145); the protocol enum MUST NOT.
+    const kindEnum = operationsByName['remember'].params?.kind?.enum ?? [];
+    expect(kindEnum).toEqual(['event', 'preference', 'commitment', 'belief', 'fact']);
+    expect(kindEnum).not.toContain('idea');
+  });
+
+  it("recall's RESPONSE kind enum admits 'idea' — the reader must not be told a lie", () => {
+    // The INPUT freeze above is the protocol contract (a caller cannot WRITE
+    // an idea through the verb). The response side describes what the system
+    // actually RETURNS: the extractor and the facts table carry 'idea', so a
+    // stored idea fact flows back through recall. A response schema omitting
+    // it would declare a contract the system itself violates. Widening a
+    // response enum is strictly permissive for consumers.
+    const { RESPONSE_SCHEMAS } = require('../src/core/verbs.ts') as {
+      RESPONSE_SCHEMAS: Record<string, Record<string, unknown>>;
+    };
+    const facts = ((RESPONSE_SCHEMAS.recall as Record<string, Record<string, Record<string, unknown>>>)
+      .properties?.facts) as Record<string, Record<string, Record<string, Record<string, unknown>>>>;
+    const kindEnum = facts?.items?.properties?.kind?.enum as string[] | undefined;
+    expect(kindEnum).toEqual(['event', 'preference', 'commitment', 'belief', 'fact', 'idea']);
+    // ...while the remember INPUT enum stays frozen at five (asserted above).
+  });
+
   it('rejects empty provenance with provenance_required + a populated suggestion', async () => {
     const { isError, body } = await callRemote('remember', { fact: 'x', provenance: '   ' });
     expect(isError).toBe(true);

@@ -14,10 +14,10 @@ process.env.TZ = 'UTC';
 // 1-3 seconds of cold init and load the post-schema state directly.
 //
 // Output: test/fixtures/pglite-snapshot.tar (binary, gitignored)
-//         test/fixtures/pglite-snapshot.version (hex SHA256 of MIGRATIONS SQL)
+//         test/fixtures/pglite-snapshot.version (hex SHA256 of the migrate.ts + pglite-schema.ts FILE BYTES)
 //
 // The version file lets the engine detect snapshot staleness — if the tar's
-// recorded version doesn't match the current MIGRATIONS hash, the engine
+// recorded version doesn't match the current schema-file hash, the engine
 // ignores the snapshot and runs a normal initSchema.
 //
 // Run: bun run scripts/build-pglite-snapshot.ts
@@ -29,16 +29,19 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, rmdirSync, rmSync, 
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import * as crypto from "node:crypto";
+import * as fsModule from "node:fs";
 
 import { configureGateway, getEmbeddingDimensions, getEmbeddingModel } from "../src/core/ai/gateway.ts";
 import { LEGACY_EMBEDDING_CONFIG } from "../test/helpers/legacy-embedding-config.ts";
 
 import { PGLiteEngine, computeSnapshotSchemaHash } from "../src/core/pglite-engine.ts";
-import { MIGRATIONS } from "../src/core/migrate.ts";
-import { PGLITE_SCHEMA_SQL } from "../src/core/pglite-schema.ts";
 
 function computeSchemaHash(): string {
-  return computeSnapshotSchemaHash(MIGRATIONS, PGLITE_SCHEMA_SQL, crypto);
+  // File-bytes hash (see computeSnapshotSchemaHash) — identical between this
+  // plain-`bun run` builder and a coverage-instrumented test process.
+  const h = computeSnapshotSchemaHash(crypto, fsModule);
+  if (!h) throw new Error('build-pglite-snapshot: cannot read src/core/migrate.ts + pglite-schema.ts — run from a source checkout');
+  return h;
 }
 
 async function main() {
@@ -130,7 +133,7 @@ async function main() {
   delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
   await engine.connect({});
-  console.log(`[build-pglite-snapshot] running initSchema (forward bootstrap + ${MIGRATIONS.length} migrations)...`);
+  console.log(`[build-pglite-snapshot] running initSchema (forward bootstrap + full migration replay)...`);
   const t0 = Date.now();
   await engine.initSchema();
   console.log(`[build-pglite-snapshot] initSchema completed in ${Date.now() - t0}ms`);

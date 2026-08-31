@@ -201,10 +201,21 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
           message: `${failures}/${tail.length} recent hook invocations hard-failed. Watch it; hooks fail open so sessions still work.`,
         });
       } else {
+        // Degraded entries are designed fallbacks, but a window that is
+        // MOSTLY one degrade reason is a standing misconfiguration hiding
+        // behind "healthy" — name the top reason so it is at least visible.
+        const degradedReasons = tail.filter((e) => e.outcome === 'degraded' && e.reason).map((e) => e.reason as string);
+        let topClause = '';
+        if (degradedReasons.length > 0) {
+          const counts = new Map<string, number>();
+          for (const r of degradedReasons) counts.set(r, (counts.get(r) ?? 0) + 1);
+          const [topReason, topN] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]!;
+          topClause = `; ${degradedReasons.length}/${tail.length} degraded (top: ${topReason} x${topN})`;
+        }
         checks.push({
           name: 'bootstrap_hooks_heartbeat',
           status: 'ok',
-          message: `hook heartbeat healthy (${failures}/${tail.length} hard failures in the trailing window)`,
+          message: `hook heartbeat healthy (${failures}/${tail.length} hard failures in the trailing window${topClause})`,
         });
       }
     }

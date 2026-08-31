@@ -109,9 +109,10 @@ export const TARGETS: Record<string, HostSpecTarget> = {
       'remove` rewrites config.toml wholesale and drops comments, so the ' +
       'stdio lane (runHooks) must never manage a name the harness block ' +
       'owns, and vice versa. Codex 0.147.0 also ships a real hook system ' +
-      '(hooks.json; PreToolUse…SessionEnd) — CODEX_HAS_HOOKS=false means ' +
-      '"gbrain does not wire codex hooks yet" (follow-up filed), NOT "codex ' +
-      'has no hooks". Some codex builds gate HTTP MCP servers behind ' +
+      '(hooks.json; PreToolUse…SessionEnd) — gbrain wires SessionEnd only ' +
+      '(CODEX_HAS_HOOKS=true; codex-hooks.ts owns the two-file write incl. ' +
+      'the config.toml trust entry, see CODEX_HOOKS_SPEC_TARGET there). ' +
+      'Some codex builds gate HTTP MCP servers behind ' +
       '`experimental_use_rmcp_client = true` — probe at wiring time. Skills: ' +
       'no attested native skills DIR for direct file installs (the plugin ' +
       'lane serves codex skills); a direct-copy target needs an observation ' +
@@ -333,17 +334,50 @@ export function claudeProjectSkillsDir(workspaceDir: string): string {
  * clobber the operator's real ~/.codex/config.toml.
  */
 export function codexConfigPath(): string {
-  const codexHome = process.env.CODEX_HOME?.trim();
-  return join(codexHome || join(homedir(), '.codex'), 'config.toml');
+  return join(codexHome(), 'config.toml');
+}
+
+/** THE one CODEX_HOME resolution (env override, else ~/.codex) — every codex
+ * path below joins onto it so the discipline can never drift per-path. */
+function codexHome(): string {
+  return process.env.CODEX_HOME?.trim() || join(homedir(), '.codex');
 }
 
 /**
- * Whether gbrain WIRES codex hooks. False = not yet: codex 0.147.0 ships a
- * real hook system (hooks.json; PreToolUse…SessionEnd — see the TARGETS
- * note), but gbrain's codex hook lane is a filed follow-up; per-turn context
- * on codex remains the pull-protocol AGENTS.md gates (plan D5).
+ * Codex rollout store — (CODEX_HOME || ~/.codex)/sessions/YYYY/MM/DD/
+ * rollout-*.jsonl (same CODEX_HOME resolution discipline as codexConfigPath;
+ * the spawner of a codex hook IS codex, which owns that env). This is the
+ * confinement root for the codex hook lane's transcript_path [S3#8] and the
+ * base of its discovery fallback — pinned here, never widenable by the
+ * process that spawned the hook.
  */
-export const CODEX_HAS_HOOKS = false;
+export function codexSessionsDir(): string {
+  return join(codexHome(), 'sessions');
+}
+
+/**
+ * Codex hooks file — (CODEX_HOME || ~/.codex)/hooks.json, USER-GLOBAL (no
+ * per-project scope for the user layer gbrain writes). Written by
+ * codex-hooks.ts together with its config.toml trust-state entry; see
+ * CODEX_HOOKS_SPEC_TARGET there for the verified 0.147.0 facts.
+ */
+export function codexHooksPath(): string {
+  return join(codexHome(), 'hooks.json');
+}
+
+/** Codex hook events gbrain wires (v1: session-end capture only — a
+ * SessionStart greeting lane is a filed follow-up). */
+export const CODEX_HOOK_EVENTS = ['SessionEnd'] as const;
+
+/**
+ * Whether gbrain WIRES codex hooks. True as of the Memorable wave: bootstrap
+ * writes a SessionEnd entry into hooks.json plus its config.toml trust-state
+ * entry (codex-hooks.ts — the 0.147.0 trust gate makes an untrusted entry
+ * silently inert). SESSION-END CAPTURE ONLY: per-turn context on codex
+ * remains the pull-protocol AGENTS.md gates (plan D5); a SessionStart lane
+ * is a filed follow-up.
+ */
+export const CODEX_HAS_HOOKS = true;
 
 /**
  * Managed-block markers for the harness lane's direct config.toml writes

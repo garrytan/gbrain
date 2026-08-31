@@ -7,15 +7,22 @@
  * touching the brain, so it must be fast (one regex pass) and precision-biased:
  * a false candidate costs a wasted resolve and, worse, a misleading pointer.
  *
- * DELIBERATE limits (documented, not bugs — see issue #1981 / eng-review):
- *   - Proper-case + ASCII biased. Misses lowercase names ("garry") and many
- *     non-Latin scripts.
+ * DELIBERATE limits (documented, not bugs — see issue #1981 / eng-review;
+ * updated for the v0.46.15 identity wave + #3746 CJK pass):
+ *   - Lowercase Latin names emit as WEAK candidates (v0.46.15 — resolved via
+ *     the alias arm only); CJK names emit as weak n-grams (#3746). Still out
+ *     of scope: pure-hiragana grams, caseless non-CJK scripts (Arabic,
+ *     Hebrew, Devanagari, Thai — \\p{Lo} is invisible to both passes), and
+ *     lowercase SURNAME-only mentions (weak candidates never reach the
+ *     surname arm; see retrieval-reflex.ts).
  *   - extractCandidates is single-turn. The v0.43 (#2095) window layer
  *     (extractCandidatesFromWindow) widens extraction across the last N turns
  *     — assistant-introduced entities and "what about her?" follow-ups whose
  *     antecedent was NAMED in the window now resolve; true pronoun
  *     coreference (never-named antecedents) remains out of scope.
- * Do NOT market this as full "human-like recall".
+ * Do NOT market this as full "human-like recall". (BrainBench receipt: the
+ * v1 know-to-ask failure rate 0.150 measured against these limits went to
+ * 0.0000 after the v0.46.15 arms — evals/brainbench/baselines/main.json.)
  *
  * Resolution (alias/slug lookup) lives in retrieval-reflex.ts; this module only
  * decides WHAT to look up.

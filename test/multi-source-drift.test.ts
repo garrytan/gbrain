@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSources } from '../src/commands/sources.ts';
 import { findMisroutedPages } from '../src/core/multi-source-drift.ts';
+import { writeSlugRootMode } from '../src/core/sync-anchor.ts';
 
 let engine: PGLiteEngine;
 const TMP_ROOTS: string[] = [];
@@ -170,5 +171,53 @@ describe('findMisroutedPages — heuristic correctness', () => {
     const result = await findMisroutedPages(engine, [{ id: 'src-case7', local_path: root }]);
     expect(result.count).toBe(1);
     expect(result.sample[0].slug).toBe('topics/mdx-page');
+  });
+
+  test('case 8 (#4712): a git-root-pinned source is skipped, not false-positived', async () => {
+    const root = makeTmpRoot('case8');
+    seedFile(root, 'page.md');
+
+    await runSources(engine, ['add', 'src-case8', '--no-federated']);
+    await engine.executeRaw(
+      `UPDATE sources SET local_path = $1 WHERE id = $2`,
+      [root, 'src-case8'],
+    );
+    await writeSlugRootMode(engine, 'src-case8', 'git-root');
+    // Sync actually produced the git-root-prefixed slug (what import.ts's
+    // importRelPath would derive) — NOT local_path-relative 'page'.
+    await engine.putPage('src-case8/page', { type: 'concept', title: 'p', compiled_truth: '.' }, { sourceId: 'src-case8' });
+    // An unrelated page legitimately owns the local_path-relative slug at
+    // default — this is exactly the #4712 false-positive shape pre-fix.
+    await engine.putPage('page', { type: 'concept', title: 'unrelated', compiled_truth: '.' });
+
+    const result = await findMisroutedPages(engine, [{ id: 'src-case8', local_path: root }]);
+    expect(result.count).toBe(0);
+    expect(result.sample).toEqual([]);
+    expect(result.git_root_skipped).toEqual(['src-case8']);
+  });
+
+  test('case 9 (#4712): git-root skip does not mask real drift on a sibling source-root source', async () => {
+    const gitRootRoot = makeTmpRoot('case9-gitroot');
+    seedFile(gitRootRoot, 'page.md');
+    await runSources(engine, ['add', 'src-case9-gr', '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [gitRootRoot, 'src-case9-gr']);
+    await writeSlugRootMode(engine, 'src-case9-gr', 'git-root');
+    await engine.putPage('src-case9-gr/page', { type: 'concept', title: 'p', compiled_truth: '.' }, { sourceId: 'src-case9-gr' });
+    await engine.putPage('page', { type: 'concept', title: 'unrelated', compiled_truth: '.' });
+
+    const sourceRootRoot = makeTmpRoot('case9-srcroot');
+    seedFile(sourceRootRoot, 'people/eve.md');
+    await runSources(engine, ['add', 'src-case9-sr', '--no-federated']);
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [sourceRootRoot, 'src-case9-sr']);
+    // Genuine misroute: exists at default, missing from the intended source.
+    await engine.putPage('people/eve', { type: 'person', title: 'Eve', compiled_truth: '.' });
+
+    const result = await findMisroutedPages(engine, [
+      { id: 'src-case9-gr', local_path: gitRootRoot },
+      { id: 'src-case9-sr', local_path: sourceRootRoot },
+    ]);
+    expect(result.count).toBe(1);
+    expect(result.sample[0]).toMatchObject({ slug: 'people/eve', intended_source: 'src-case9-sr' });
+    expect(result.git_root_skipped).toEqual(['src-case9-gr']);
   });
 });

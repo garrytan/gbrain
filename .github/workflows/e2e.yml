@@ -94,7 +94,31 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
+      # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
+      # run-e2e.sh builds it when absent/stale — this just avoids paying the
+      # build once per job. KEY: byte-identical with the homes in test.yml.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
+      # This job runs bare `bun test` (not run-e2e.sh), so the snapshot must
+      # be activated here or the restored tar is never read (the engine gates
+      # on the env var). Absolutized for varying-cwd CLI children.
+      - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
+        run: |
+          . scripts/lib/test-env.sh
+          ensure_pglite_snapshot jsonb-parity
+          # Export absolute (CLI children spawn with varying cwd); keep an
+          # already-absolute inherited path as-is; export nothing on build failure.
+          if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ]; then
+            case "$GBRAIN_PGLITE_SNAPSHOT" in
+              /*) echo "GBRAIN_PGLITE_SNAPSHOT=$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+              *)  echo "GBRAIN_PGLITE_SNAPSHOT=$PWD/$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+            esac
+          fi
       - name: Require DATABASE_URL (no silent skip)
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
@@ -166,6 +190,15 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
+      # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
+      # run-e2e.sh builds it when absent/stale — this just avoids paying the
+      # build once per job. KEY: byte-identical with the homes in test.yml.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
       - name: Select and run diff-relevant E2E files
         env:
@@ -231,7 +264,29 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
+      # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
+      # run-e2e.sh builds it when absent/stale — this just avoids paying the
+      # build once per job. KEY: byte-identical with the homes in test.yml.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
+      # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
+      - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
+        run: |
+          . scripts/lib/test-env.sh
+          ensure_pglite_snapshot tier1
+          # Export absolute (CLI children spawn with varying cwd); keep an
+          # already-absolute inherited path as-is; export nothing on build failure.
+          if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ]; then
+            case "$GBRAIN_PGLITE_SNAPSHOT" in
+              /*) echo "GBRAIN_PGLITE_SNAPSHOT=$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+              *)  echo "GBRAIN_PGLITE_SNAPSHOT=$PWD/$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+            esac
+          fi
       - name: Run Tier 1 E2E tests
         # job-isolation rides tier1 deliberately: e2e.yml runs only explicitly
         # NAMED files (no glob) — an unwired e2e file is silent coverage loss.
@@ -331,7 +386,29 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
+      # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
+      # run-e2e.sh builds it when absent/stale — this just avoids paying the
+      # build once per job. KEY: byte-identical with the homes in test.yml.
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install --frozen-lockfile
+      # Bare `bun test` job — activate the restored snapshot (see jsonb-parity).
+      - name: Ensure PGLite snapshot (build-or-validate, non-fatal)
+        run: |
+          . scripts/lib/test-env.sh
+          ensure_pglite_snapshot tier2
+          # Export absolute (CLI children spawn with varying cwd); keep an
+          # already-absolute inherited path as-is; export nothing on build failure.
+          if [ -n "${GBRAIN_PGLITE_SNAPSHOT:-}" ]; then
+            case "$GBRAIN_PGLITE_SNAPSHOT" in
+              /*) echo "GBRAIN_PGLITE_SNAPSHOT=$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+              *)  echo "GBRAIN_PGLITE_SNAPSHOT=$PWD/$GBRAIN_PGLITE_SNAPSHOT" >> "$GITHUB_ENV" ;;
+            esac
+          fi
       - name: Install OpenClaw
         # Bound + retry the install: a transient npm/registry stall here used to
         # hang unbounded and (since the v0.42.50.0 job timeout) burn the entire
@@ -490,6 +567,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.3.13
+      # PGLite snapshot (restore-only; test.yml's serial-tests job saves).
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/migrate.ts', 'src/core/pglite-schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
       - run: bun install
       - name: Full e2e glob with coverage (all files, incl. engine-parity)
         # run-e2e.sh redirects HOME, so COVERAGE_DIR must be absolute; its

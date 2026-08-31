@@ -532,6 +532,13 @@ async function runPipelineBodyInner(
   }
 
   const filter = ctx.notabilityFilter ?? 'all';
+  // `all` means ALL TIERS — a pinned contract (test/facts-backstop.test.ts
+  // "notabilityFilter=all embeds and persists every tier"), so no admission
+  // is passed and the extractor labels low honestly instead of withholding
+  // it. Behavior note for the eval fix wave: pre-wave the extractor prompt
+  // told the model to skip low rows entirely, so `all` under-delivered on
+  // its own promise; it now really does capture them. Callers that want
+  // suppression pass 'high-only' (sync does).
   const notabilityAdmission = filter === 'high-only'
     ? { allowed: ['high'] as const, invalid: 'drop' as const }
     : undefined;

@@ -64,6 +64,74 @@ function textFromBlocks(content: unknown, blockType: string): string {
   return parts.join('\n').trim();
 }
 
+/**
+ * One parsed codex rollout line, classified (mirrors openclaw.ts's
+ * mapOpenclawLine precedent: the hook lane's tail-capable parser reuses the
+ * SAME line→row mapping as the import adapter, so the dated CODEX_SPEC_TARGET
+ * stays the single source of truth).
+ *
+ * `tool_call` covers `custom_tool_call` (args in payload.`input`,
+ * fixture-verified) and `function_call` (args in payload.`arguments`,
+ * source-verified at openai/codex tag rust-v0.147.0) — both OBSERVED keys,
+ * never guessed. Args arrive as a JSON document serialized into a string;
+ * parsed tolerantly (a non-JSON string stays the raw string). `*_output`
+ * rows are classified `skip`: 0.147.0 persists no success/error flag on
+ * them, so there is no honest `result.ok` to join — calls ship without
+ * result rather than with an inferred one.
+ */
+export type CodexLineResult =
+  | { kind: 'session'; sessionId?: string; cwd?: string; startedAt?: string; cliVersion?: string; modelProvider?: string }
+  | { kind: 'user'; message: TranscriptMessage }
+  | { kind: 'assistant'; message: TranscriptMessage }
+  | { kind: 'tool_call'; name: string; input: unknown }
+  | { kind: 'boundary' }
+  | { kind: 'skip' };
+
+function tolerantJson(v: unknown): unknown {
+  if (typeof v !== 'string') return v ?? null;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v; // a non-JSON args string is still the honest payload
+  }
+}
+
+/** Map one ALREADY-JSON-PARSED codex rollout line. */
+export function mapCodexLine(entry: unknown): CodexLineResult {
+  if (typeof entry !== 'object' || entry === null) return { kind: 'skip' };
+  const e = entry as Record<string, unknown>;
+  const payload = (typeof e.payload === 'object' && e.payload !== null ? e.payload : {}) as Record<string, unknown>;
+  const lineTs = typeof e.timestamp === 'string' ? e.timestamp : '';
+  if (e.type === 'session_meta') {
+    return {
+      kind: 'session',
+      sessionId: typeof payload.session_id === 'string' ? payload.session_id : undefined,
+      cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
+      startedAt: typeof payload.timestamp === 'string' ? payload.timestamp : lineTs || undefined,
+      cliVersion: typeof payload.cli_version === 'string' ? payload.cli_version : undefined,
+      modelProvider: typeof payload.model_provider === 'string' ? payload.model_provider : undefined,
+    };
+  }
+  if (e.type === 'compacted') return { kind: 'boundary' };
+  if (e.type === 'event_msg' && payload.type === 'user_message') {
+    const text = typeof payload.message === 'string' ? payload.message.trim() : '';
+    return text ? { kind: 'user', message: { role: 'user', timestamp: lineTs, text } } : { kind: 'skip' };
+  }
+  if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
+    const text = textFromBlocks(payload.content, 'output_text');
+    return text ? { kind: 'assistant', message: { role: 'assistant', timestamp: lineTs, text } } : { kind: 'skip' };
+  }
+  if (e.type === 'response_item' && (payload.type === 'custom_tool_call' || payload.type === 'function_call')) {
+    const name = typeof payload.name === 'string' && payload.name ? payload.name : null;
+    if (!name) return { kind: 'skip' };
+    const rawArgs = payload.type === 'custom_tool_call' ? payload.input : payload.arguments;
+    return { kind: 'tool_call', name, input: tolerantJson(rawArgs) };
+  }
+  // reasoning, *_output rows, injected user/developer response_items,
+  // telemetry events: skipped by design.
+  return { kind: 'skip' };
+}
+
 export const codexAdapter: TranscriptAdapter = {
   format: 'codex',
   specTarget: CODEX_SPEC_TARGET,
@@ -142,37 +210,27 @@ export const codexAdapter: TranscriptAdapter = {
         skippedLines++;
         continue;
       }
-      if (typeof entry !== 'object' || entry === null) continue;
-      const e = entry as Record<string, unknown>;
-      const payload = (typeof e.payload === 'object' && e.payload !== null ? e.payload : {}) as Record<string, unknown>;
-      const lineTs = typeof e.timestamp === 'string' ? e.timestamp : '';
-
-      if (e.type === 'session_meta') {
-        if (typeof payload.session_id === 'string') sessionId = payload.session_id;
-        if (typeof payload.cwd === 'string') cwd = payload.cwd;
-        if (typeof payload.timestamp === 'string') startedAt = payload.timestamp;
-        else if (lineTs) startedAt = lineTs;
+      const mapped = mapCodexLine(entry);
+      if (mapped.kind === 'session') {
+        if (mapped.sessionId) sessionId = mapped.sessionId;
+        if (mapped.cwd) cwd = mapped.cwd;
+        if (mapped.startedAt) startedAt = mapped.startedAt;
         rawMeta = {
           session_id: sessionId,
           cwd: cwd ?? null,
-          cli_version: typeof payload.cli_version === 'string' ? payload.cli_version : null,
-          model_provider: typeof payload.model_provider === 'string' ? payload.model_provider : null,
+          cli_version: mapped.cliVersion ?? null,
+          model_provider: mapped.modelProvider ?? null,
           source_path: path,
         };
         continue;
       }
-      if (e.type === 'event_msg' && payload.type === 'user_message') {
-        const text = typeof payload.message === 'string' ? payload.message.trim() : '';
-        if (text) messages.push({ role: 'user', timestamp: lineTs, text });
+      if (mapped.kind === 'user' || mapped.kind === 'assistant') {
+        messages.push(mapped.message);
         continue;
       }
-      if (e.type === 'response_item' && payload.type === 'message' && payload.role === 'assistant') {
-        const text = textFromBlocks(payload.content, 'output_text');
-        if (text) messages.push({ role: 'assistant', timestamp: lineTs, text });
-        continue;
-      }
-      // Everything else (reasoning, tool traffic, injected user/developer
-      // response_items, telemetry events) is skipped by design.
+      // tool_call / boundary / skip: the ARCHIVE records conversation text
+      // only (lossy by design) — the hook lane's parseCodexHookTranscript is
+      // the consumer that keeps calls and boundary positions.
     }
 
     let sessions = 0;

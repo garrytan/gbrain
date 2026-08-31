@@ -30,6 +30,10 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { v0_22_4, __setTestEngineOverride } from '../../src/commands/migrations/v0_22_4.ts';
 
+// Cold-path opt-out: drives the real v0_22_4 migration orchestrator — the
+// engine under migration must be a cold build, not a snapshot restore.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 const fence = '---';
 
 let workdir: string;

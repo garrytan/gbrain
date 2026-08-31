@@ -402,6 +402,61 @@ Data flowing into the brain. Each integration is a recipe — markdown + setup h
 - **Rerankers**: Voyage `rerank-2.5` hosted (the new-install default; reranking is on in `balanced` and `tokenmax` modes, same `VOYAGE_API_KEY` as embeddings), ZeroEntropy `zerank-2` (deprecated — hosted API ends 2026-09-04; still the fallback for brains that never set `search.reranker.model`), plus the `llama-server-reranker` recipe for fully-local cross-encoder rerank via llama.cpp — runs Qwen3-Reranker or self-hosted zerank weights against the same `gateway.rerank()` seam. Setup walkthrough in [`docs/ai-providers/llama-server-reranker.md`](docs/ai-providers/llama-server-reranker.md).
 - **Credential vault + gateway**: `gbrain creds` manages OAuth and API credentials in a local vault ([`recipes/credential-gateway.md`](recipes/credential-gateway.md)); agent-side vault-aware secret distribution: [`docs/integrations/credential-gateway.md`](docs/integrations/credential-gateway.md).
 - **MCP clients**: every major MCP client is supported. [`docs/mcp/`](docs/mcp/) per-client setup.
+- **Memorable (procedural memory)**: optional, off by default. Your brain remembers *what* happened; Memorable makes your agent remember *how* — finished sessions become replayable procedures stored on your machine (in a standalone local store, or inside your brain database if you opt in), recalled when a similar task comes back. See the section below, and [`docs/memorable-agents.md`](docs/memorable-agents.md) for the agent-facing detail.
+
+### Memorable — remember how, not just what (optional)
+
+The third time your agent fixes the same class of bug, it shouldn't re-diagnose it from scratch. Without procedural memory, every session starts cold: re-explore the codebase, re-find the file, re-discover which command actually verifies the fix. [Memorable](https://www.memorable.sh) closes that loop. Once enabled, a finished session's real tool calls — what ran, with what arguments, and (where the harness records it) whether each step succeeded — become an ordered, replayable *procedure*: steps, trigger signature, preconditions, postconditions. It is stored **on your machine**, in a standalone local store by default or inside your existing brain database if you opt in (the fine print explains the trade-off). Next time a similar task shows up:
+
+```sh
+memorable recall "the order-validation tests are failing again"
+# → 0.981  procedures/ab12cd34-fix-failing-order-tests  [lexical]
+memorable show procedures/ab12cd34-fix-failing-order-tests
+# → last time this landed in src/orders/validate.js and
+#   ./test.sh verified it — the steps, in order, with real outcomes
+```
+
+Your agent skips the diagnosis it already did once and goes straight to the fix. That's the whole product: **capture is automatic** (nothing to remember at the end of a session), and **recall is one command** at the start of the next.
+
+**Say to your agent:** *"Set up Memorable so you remember how tasks were done"* — your agent installs and initializes the CLI (`npm i -g memorable-cli`, `memorable init`, `memorable enable`); you then run the one consent step below yourself. Day to day: *"Before you start, check Memorable for how we did this last time"* — your agent runs `memorable recall "<the task in your words>"` — and *"What has Memorable stored so far?"* — your agent runs `memorable list`.
+
+**Turn it on (three steps, the last one is yours):**
+
+```sh
+npm i -g memorable-cli                    # 1. the CLI, published on npm (closed source)
+memorable init && memorable enable         # 2. standalone local store + let Memorable record sessions
+                                           #    (`memorable init gbrain` stores procedures in your brain DB
+                                           #     instead — trade-off in the fine print's first bullet)
+gbrain config set integrations.memorable.enabled true   # 3. YOU run this: gbrain shows exactly what
+                                                         #    leaves the machine and asks you to approve it
+```
+
+Step 3 is mandatory and interactive by design — the relay stays off until you accept gbrain's disclosure prompt. There is no account to create and no embedding model to configure (your gbrain provider is reused if present; otherwise Memorable's server computes the embedding for you). From then on, capture runs itself: Claude Code and Codex sessions are recorded at session end. OpenClaw capture runs per compaction but does not yet yield stored procedures (it records tool names only, which the service rejects as not replayable — details in the fine print).
+
+#### The fine print (read before enabling)
+
+**Provenance, stated plainly:** the `memorable` CLI is a closed-source npm package published by a third party (Memorable, not gbrain), with no public source repository and no build attestation gbrain can verify. Enabling the relay means a third-party binary runs at your session boundaries and sends redacted session data to Memorable's extraction API. gbrain itself never sends anything off-machine for this integration.
+
+**What gbrain verifies vs. what is Memorable's claim** — the split matters:
+
+- *gbrain-verified (enforced by gbrain's own code):*
+  - The relay is OFF by default and stays off until you accept gbrain's disclosure prompt (`gbrain config set integrations.memorable.enabled true`). The consent stamp it writes lives in a gbrain-private file the CLI has never written, so the CLI flipping the config flag out-of-band can never activate the relay before you have consented once; gbrain-side disable/unset revokes the stamp and forces a fresh disclosure.
+  - Tool-call arguments are secret-scanned with the high-entropy rules before they reach the receipt.
+  - The relay process gbrain launches at session end is additionally skipped without positive evidence of Memorable-side consent.
+  - `GBRAIN_MEMORABLE=0` (any common negative spelling, trimmed — no env value can enable) kills everything.
+  - `gbrain doctor`'s `memorable_relay_health` names every broken or half-consented state.
+- *Memorable's claims (from its docs and observable client behavior — gbrain cannot verify the server side):* the extraction API is stateless, raw traces are not kept long-term, only derived "nodes" are stored, and there is no shared graph across users. Note the anonymous `mk_` API key means there is also no account through which to exercise deletion of anything the server did retain.
+
+How it fits gbrain's model:
+
+- **Where procedures live — know the trust shape.** Standalone mode (`memorable init`, the default in the block above) stores procedures in a local store under `~/.memorable` and keeps the CLI out of your brain database entirely — the safer choice for sensitive brains. In gbrain-backend mode (`memorable init gbrain`), procedures become ordinary pages in a dedicated non-federated `memorable` source in the brain you already run; Memorable's *service* never connects to your database, but the closed-source *CLI* then has full local access to the whole brain database (that is how it stores procedures).
+- **Recall is mostly local — with one exception.** Lookup is exact + lexical first, then semantic through your own embedding provider. If you have **no** local provider configured and the lexical match misses, the CLI sends the query text (your task description, up to 8 KB) to Memorable's `/v1/embed` — recall is not always free of egress.
+- **Per-harness capture.** Claude Code and Codex sessions are captured at session end (Codex via a trust-gated `hooks.json` entry that `gbrain bootstrap` manages); OpenClaw sessions are captured **per compaction** — short sessions that never compact are not captured, and the tail after the last compaction never is. OpenClaw capture currently records tool *names* only (arguments unobserved in its session format so far), and Memorable's API refuses name-only traces as not replayable — expect OpenClaw relays to be rejected until argument capture lands. Any other harness can hand a trace over directly: `memorable ingest trace.json`.
+- **The store prunes itself, and you can prune it too.** Re-recording refreshes identical revisions and keeps different approaches side by side; `memorable list` / `memorable prune` manage the store, in every consent mode. Local gbrain-side artifacts (`~/.gbrain/integrations/hooks/session-receipts.jsonl` + `memorable-relay.jsonl`) are size-capped, and a one-line purge removes them (see the docs).
+- **On/off is explicit — and the CLI writes gbrain's config.** `memorable enable | disable | setup` flips `integrations.memorable.enabled` in `~/.gbrain/config.json` itself (out-of-band). That flag alone never activates the relay: gbrain's disclosure consent is separate, revoked by `gbrain config set integrations.memorable.enabled false` or `gbrain config unset …`, and re-required whenever the capture surface grows (a new harness lane invalidates old consent by design).
+
+The receipt shape, per-command egress table, troubleshooting, and the full consent model are documented in [`docs/memorable-agents.md`](docs/memorable-agents.md).
+
 
 ## Architecture
 

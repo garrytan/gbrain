@@ -103,7 +103,7 @@ lifecycle is [`docs/TESTING.md`](docs/TESTING.md). The short version:
 bun run test                      # parallel 4-shard fan-out (memory-adaptive) + serial post-pass; PGLite snapshot default-on
 bun test test/markdown.test.ts    # specific unit test
 
-# Pre-push gate (40+ parallel checks + typecheck)
+# Pre-push gate (50+ parallel checks + typecheck)
 bun run verify
 
 # Pre-merge sanity (everything CI runs)
@@ -111,7 +111,7 @@ bun run test:full                 # verify + parallel unit + slow + smart e2e
 
 # Slow / serial / e2e in isolation
 bun run test:slow                 # *.slow.test.ts only (cold-path correctness)
-bun run test:serial               # *.serial.test.ts only (--max-concurrency=1)
+bun run test:serial               # *.serial.test.ts only (pooled per-file processes, heaviest-first)
 bun run test:e2e                  # real-Postgres E2E (requires DATABASE_URL)
 
 # E2E setup (Postgres with pgvector)
@@ -134,7 +134,7 @@ the database name must carry "test" as a word segment (like `gbrain_test`
 above) or destructive tests refuse to run — opt a differently-named database
 in one-shot with `GBRAIN_E2E_ALLOW_DB=<name>`.
 
-Use `bun run verify` before pushing. It runs 40+ guard checks in parallel
+Use `bun run verify` before pushing. It runs 50+ guard checks in parallel
 (`scripts/run-verify-parallel.sh`), including: banned fork-name leaks
 (`scripts/check-privacy.sh`), `JSON.stringify(x)::jsonb` interpolation
 patterns (`scripts/check-jsonb-pattern.sh`), `\r` progress bleed to stdout

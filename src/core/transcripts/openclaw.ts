@@ -31,10 +31,14 @@ export const OPENCLAW_SPEC_TARGET: HostSpecTarget = {
     "One JSON object per line. Header: {type:'session', id, cwd, timestamp, " +
     "version}. Turns: {type:'message', timestamp, message:{role, content, " +
     "timestamp}} where content is [{type:'text', text}] blocks (non-text " +
-    'blocks skipped). model_change / thinking_level_change / custom / ' +
+    'blocks skipped for TEXT). model_change / thinking_level_change / custom / ' +
     "compaction lines are skipped. Sibling files named " +
     "'<id>.checkpoint.<uuid>.jsonl' are snapshots, never imported. Unknown " +
-    'fields tolerated.',
+    'fields tolerated. Tool calls: content blocks {type:\'toolCall\', id, name} ' +
+    '(fixture-verified NAME-ONLY — the args field name and any result block ' +
+    'shape are PROVISIONAL/unobserved as of 2026-08-25; extraction ships ' +
+    'input:null and no result until a live session store characterizes them, ' +
+    'deliberately never guessing keys into an egress payload).',
 };
 
 const CHECKPOINT_RE = /\.checkpoint\.[^./]+\.jsonl$/;
@@ -54,10 +58,25 @@ export function isOpenclawCheckpointFile(path: string): boolean {
  * model_change / thinking_level_change / custom / non-text / malformed.
  */
 export type OpenclawLineResult =
-  | { kind: 'message'; message: TranscriptMessage }
+  | { kind: 'message'; message: TranscriptMessage; toolCalls?: OpenclawToolCall[] }
   | { kind: 'boundary' }
   | { kind: 'session'; id?: string; cwd?: string; startedAt?: string }
-  | { kind: 'skip' };
+  | { kind: 'skip'; toolCalls?: OpenclawToolCall[] };
+
+/**
+ * A tool call surfaced from an openclaw message's content blocks
+ * (ToolCallRecord-shaped, memorable integration). NAME-ONLY v1: the fixture
+ * and spec target pin only {type:'toolCall', id, name}; the args field name is
+ * unobserved, and guessing keys (`arguments` ?? `args` ?? `input`) would feed
+ * speculative data into an egress payload — so `input` is literally null until
+ * an observation run characterizes the field. `result` is omitted for the
+ * same reason. Rides on OpenclawLineResult (a `skip` line can still carry
+ * calls — a placeholder-only message has no text but its calls are real work).
+ */
+export interface OpenclawToolCall {
+  name: string;
+  input: null;
+}
 
 /** Map one ALREADY-JSON-PARSED openclaw session line. */
 export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
@@ -80,6 +99,7 @@ export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
   if (!role) return { kind: 'skip' };
   const content = m.content;
   let text = '';
+  const toolCalls: OpenclawToolCall[] = [];
   if (typeof content === 'string') {
     text = content;
   } else if (Array.isArray(content)) {
@@ -88,18 +108,19 @@ export function mapOpenclawLine(entry: unknown): OpenclawLineResult {
       if (typeof block !== 'object' || block === null) continue;
       const b = block as Record<string, unknown>;
       if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
+      if (b.type === 'toolCall' && typeof b.name === 'string' && b.name) toolCalls.push({ name: b.name, input: null });
     }
     text = parts.join('\n');
   }
   text = text.trim();
-  if (!text) return { kind: 'skip' };
+  if (!text) return toolCalls.length > 0 ? { kind: 'skip', toolCalls } : { kind: 'skip' };
   const timestamp =
     typeof m.timestamp === 'string' && m.timestamp
       ? m.timestamp
       : typeof e.timestamp === 'string'
         ? e.timestamp
         : '';
-  return { kind: 'message', message: { role, timestamp, text } };
+  return { kind: 'message', message: { role, timestamp, text }, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
 }
 
 export const openclawAdapter: TranscriptAdapter = {

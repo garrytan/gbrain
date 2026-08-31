@@ -12,10 +12,39 @@ file, the workflow pins, and the affected assertions together.
   version stamp; CI installs the RELEASE TAG `v2026.8.3` = commit `3c27eb62` — the two
   differ by post-release main commits, same declared version. If a CI door run ever
   diverges from these notes, re-observe against the tag checkout.)
-- Installer sha256: `868ed3a91e0fabbff6d7418b3ede82bf4833652ec4e77196a42852fb35a9e5b9`
-  (refreshed 2026-08-15: upstream installer drifted past the prior pin —
-  reviewed; the `--commit` payload-pin path the door depends on is intact,
-  and the payload pins (tag+commit) are unchanged)
+- Installer sha256: `2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c`
+  (refreshed 2026-08-31: upstream drifted past the 2026-08-28 pin `4b5839eb…`
+  by exactly 4 commits touching `scripts/install.sh` (the served file;
+  matched byte-for-byte against the upstream repo at `a071fc80d`). Full
+  62-line diff reviewed: (1) Node support gate tightens 24.x → 24.11+
+  (version arithmetic only); (2) new `run_locked_uv_sync` helper — re-enables
+  PROJECT `[tool.uv]` config discovery for the Tier-0 locked sync in a
+  subshell while redirecting user/system uv config to an empty XDG dir, so
+  `uv sync --locked` is hash-verified again instead of falling through to
+  the non-hash-verified PyPI tiers (security-positive; the project config it
+  discovers comes from OUR tag+commit-pinned checkout); (3) default SOUL.md
+  prompt text rewrite (cosmetic, no exec). Outbound hosts and curl/wget
+  surfaces byte-identical to the prior pin; all five door flags
+  (`--skip-setup`/`--non-interactive`/`--skip-browser`/`--skip-computer-use`/
+  `--branch`/`--commit`) intact; unknown flags still hard-fail; payload pins
+  (tag+commit) unchanged.)
+  Prior record (2026-08-28 pin `4b5839eb…`, reviewed in full at 3,639 lines —
+  reviewed in full, all 3,639 lines: the `--skip-setup`/`--non-interactive`/
+  `--branch`/`--commit`/`--force-commit` flags the door depends on are intact
+  and unknown flags hard-fail (`exit 1`, so a dropped flag can never silently
+  skip the pin); outbound hosts remain the expected toolchain (github,
+  nousresearch, astral/uv, nodejs.org, pypi, npmmirror; plus a HEAD-only
+  duckduckgo connectivity probe); no eval/base64 obfuscation; sudo limited to
+  distro package installs (the one setuid chrome-sandbox sudo is
+  desktop-build-only, never in the door path); payload pins (tag+commit)
+  unchanged. KNOWN SURFACE, now REMOVED from the door: the computer-use
+  sub-installer pipes trycua/cua's installer from raw.githubusercontent.com
+  at unpinned `main` to bash — the door now passes `--skip-browser
+  --skip-computer-use`, so no unpinned code runs in CI. Behavioral notes:
+  non-root layout still `~/.hermes/hermes-agent` (root installs now use
+  FHS `/usr/local/lib/hermes-agent` — the door's runners are non-root);
+  npm-dep failures now abort the install, absorbed by the door's 3-attempt
+  retry; managed Node is now v26.)
   (download https://hermes-agent.nousresearch.com/install.sh to a file first; verify; then run)
 - Installer flags used: `--skip-setup --non-interactive`; binary lands at `~/.local/bin/hermes`
 - Python 3.11.15 via uv
@@ -96,9 +125,15 @@ non-interactive. `hermes cron tick` = run due jobs once and exit. `hermes cron l
   `git -C ~/.hermes/hermes-agent rev-parse HEAD` and loud-fails on any mismatch, so an
   installer that silently ignores unknown flags (or a moved checkout layout) can never
   run unpinned upstream code on a runner that later holds secrets.
-- `HERMES_INSTALL_SHA256: "868ed3a91e0fabbff6d7418b3ede82bf4833652ec4e77196a42852fb35a9e5b9"`
+- `HERMES_INSTALL_SHA256: "c0380bc1f78d3d662a77663ce20cc17e14cbc4bec35e61ab7a33bac5f3afed2d"`
 - Door test asserts `hermes --version` output contains `v$HERMES_VERSION` when the env var is set.
 - `hermes --version` output shape: `Hermes Agent v0.20.0 (2026.8.3)` + install dir + python lines.
+- Missing-secret posture is SPLIT by trigger: on `pull_request` the paid leg is
+  a VISIBLE SKIP (warning + job summary; installer digest, payload, and version
+  pins still verified — neither a fork nor a branch PR author can fix repo
+  secrets, and a permanently-red door trains reviewers to ignore it). The
+  nightly schedule and `workflow_dispatch` stay loud-fail so the owner sees red
+  until `gh secret set ANTHROPIC_API_KEY` runs.
 
 ## Multi-provider 401 gotcha (door hermeticity)
 With `model.default` pinned to `anthropic/*` but a SECOND provider key visible (env or

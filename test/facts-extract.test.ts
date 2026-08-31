@@ -115,4 +115,17 @@ describe('parseExtractorJson — B1 parser-pin (v0.31.2 ship-blocker fix)', () =
     expect(parsed).not.toBeNull();
     expect(parsed![0].notability).toBe('high');
   });
+
+  test('all six taxonomy kinds pass through the parse verbatim', () => {
+    // The parser is kind-agnostic (coercion lives in the candidate loop —
+    // pinned in facts-extract-idea-kind.test.ts); this pins the full
+    // extractor taxonomy incl. the F5 'idea' kind surviving the parse.
+    const kinds = ['event', 'preference', 'commitment', 'belief', 'fact', 'idea'];
+    const raw = JSON.stringify({
+      facts: kinds.map(k => ({ fact: `a ${k} claim`, kind: k, notability: 'medium' })),
+    });
+    const parsed = parseExtractorJson(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.map(f => f.kind)).toEqual(kinds);
+  });
 });

@@ -258,6 +258,44 @@ describe('dream retriage — reconcile matrix', () => {
     }
   }, 30_000);
 
+  test('F2: a rescued-band job SURVIVES reconcile (the one-gate rule); the same score without segments cancels', async () => {
+    const rig = await setupRig();
+    try {
+      const buried = writeTranscript(rig.corpusDir, '2026-08-05-buried.txt');
+      const plain = writeTranscript(rig.corpusDir, '2026-08-06-plain.txt');
+      // Verified segments: verbatim (normalized) substrings of the transcript,
+      // each over the 40-normalized-char substantive bar and DISTINCT after
+      // normalization (duplicates count once).
+      const n = '2026-08-05-buried.txt';
+      await rig.engine.putDreamVerdict(buried.filePath, buried.hash, {
+        worth_processing: false,
+        reasons: ['seed'],
+        score: 0.35,
+        content_type: 'mixed',
+        segments: [
+          { quote: `conversation in ${n}\nconversation in ${n}` },
+          { quote: `in ${n} conversation in ${n} conversation` },
+        ],
+        entities: [],
+        model: TIER_DEFAULTS.utility,
+        triage_version: TRIAGE_VERSION,
+      });
+      await seedScore(rig, plain.filePath, plain.hash, 0.35); // same band, NO segments
+      const rescuedJob = await seedJob(rig, { key: synthKey('default', basename(buried.filePath), buried.hash16), queue: 'default' });
+      const plainJob = await seedJob(rig, { key: synthKey('default', basename(plain.filePath), plain.hash16), queue: 'default' });
+
+      const { out } = await captureStdout(() => withoutAnthropicKey(() => runDreamRetriage(rig.engine, ['--reconcile-queue', '--json'])));
+      const summary = JSON.parse(out) as { queue: { cancelled: number; kept_above_threshold: number }; reports?: Array<{ filePath: string; rescued?: boolean }> };
+
+      expect(await jobStatus(rig, rescuedJob)).toBe('waiting');   // rescue admitted it — sweep must not cancel
+      expect(await jobStatus(rig, plainJob)).toBe('cancelled');   // genuine reject
+      expect(summary.queue.cancelled).toBe(1);
+      expect(summary.queue.kept_above_threshold).toBe(1);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
   test('C9: key-source vs data.source_id mismatch is skipped, never cancelled', async () => {
     const rig = await setupRig();
     try {
@@ -617,6 +655,49 @@ describe('dream retriage — reconcile matrix', () => {
         expect(summary.audit.sampled).toBe(2);
         expect(summary.audit.disagreements).toBe(2);
         expect(summary.audit.disagreement_rate).toBe(1);
+      } finally {
+        __setChatTransportForTests(null);
+        resetGateway();
+      }
+    } finally {
+      await rig.cleanup();
+    }
+  }, 30_000);
+
+  test('F2 regression: --audit-rejects samples only NON-rescued rejects (rescued band files are accepted, not rejects)', async () => {
+    const rig = await setupRig();
+    try {
+      const { __setChatTransportForTests, resetGateway } = await import('../src/core/ai/gateway.ts');
+      const rescued = writeTranscript(rig.corpusDir, '2026-08-25-rescued.txt');
+      const plain = writeTranscript(rig.corpusDir, '2026-08-26-plain-reject.txt');
+      const n = '2026-08-25-rescued.txt';
+      await rig.engine.putDreamVerdict(rescued.filePath, rescued.hash, {
+        worth_processing: false,
+        reasons: ['seed'],
+        score: 0.35,
+        content_type: 'mixed',
+        segments: [
+          { quote: `conversation in ${n}\nconversation in ${n}` },
+          { quote: `in ${n} conversation in ${n} conversation` },
+        ],
+        entities: [],
+        model: TIER_DEFAULTS.utility,
+        triage_version: TRIAGE_VERSION,
+      });
+      await seedScore(rig, plain.filePath, plain.hash, 0.35); // same band, no segments → true reject
+      __setChatTransportForTests(async () => ({
+        text: '{"score": 0.9, "content_type": "idea", "segments": [], "entities": [], "reasons": ["frontier disagrees"]}',
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 10, output_tokens: 50, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'test:stub',
+        providerId: 'test',
+      }));
+      try {
+        const { out } = await captureStdout(() => withEnv({ ANTHROPIC_API_KEY: 'sk-test-audit' }, () =>
+          runDreamRetriage(rig.engine, ['--audit-rejects', '5', '--yes', '--json'])));
+        const summary = JSON.parse(out) as { audit: { sampled: number } };
+        expect(summary.audit.sampled).toBe(1); // the plain reject only — never the rescued file
       } finally {
         __setChatTransportForTests(null);
         resetGateway();

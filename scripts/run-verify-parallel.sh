@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # scripts/run-verify-parallel.sh — parallel verify dispatcher.
 #
-# Runs the 19+ verify checks (privacy, jsonb, source-id, … + typecheck +
+# Runs the verify checks (privacy, jsonb, source-id, … + typecheck +
 # admin-build) as background jobs, waits for all, aggregates exit codes,
-# surfaces failed-check name + tail of its log to stderr.
+# surfaces failed-check name + tail of its log to stderr. The CHECKS array
+# below is the single source of truth for what runs (50+ checks; count it,
+# don't trust prose).
 #
 # Replaces the sequential `&&`-chain in package.json's `verify` script.
-# Wallclock: 19 sequential checks (~15-25s on CI) → parallel (~3-5s).
+# Wallclock: pool-bounded — the longest check (typecheck) dominates.
 #
 # Usage:
 #   bash scripts/run-verify-parallel.sh              # run every CHECK below
@@ -63,12 +65,14 @@ CHECKS=(
   # Boots its own PGLite — budget ≤60s under a saturated pool; if it breaches
   # ~100s under contention, move it into the serial-tests CI job instead.
   "check:eval-chronicle"
-  # Retrieval canary: $0, hermetic, deterministic-embedder CLI run of the
-  # qrels correctness gate. Boots two PGLite processes (seed + real CLI) —
-  # budget ≤60s under a saturated pool; if it breaches ~100s under
-  # contention, move it into the serial-tests CI job instead (same fallback
-  # as eval-chronicle above).
-  "check:eval-canary"
+  # check:eval-canary deliberately NOT here: test/eval-canary.test.ts spawns
+  # the identical scripts/run-eval-canary.ts in the unit matrix, and in CI the
+  # verify job and the matrix always run together (same workflow, same cache
+  # gate) — keeping it in verify was pure double work plus this battery's
+  # worst 120s-timeout flake exposure (two extra PGLite boots under a
+  # saturated pool). The package script `check:eval-canary` remains for
+  # on-demand runs; local `verify`-only callers lose the canary, local
+  # `bun run test` keeps it.
   "check:bootstrap-templates"
   "check:skill-brain-first"
   "check:conversation-parser"

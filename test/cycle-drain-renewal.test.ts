@@ -33,6 +33,17 @@ describe('drain-loop wiring (structural — the shape guard only covers worker.t
     // inside the interval) must not come back.
     expect(src).not.toMatch(/setInterval\(\(\) => \{\s*\n\s*queue\.renewLock\(/);
   });
+
+  test('the handler invocation carries its own chat phase (worker.ts #4218 parity)', () => {
+    // Red-team regression: the bare `await handler(context)` inherited the
+    // CALLER's AsyncLocalStorage phase, so a cycle phase that wraps its own
+    // work (dream synthesize wraps `phase:synthesize`) silently absorbed every
+    // inline-drained child's gateway spend into the phase tag — exactly the
+    // double-counting the phase telemetry's one-ledger-per-surface rule
+    // forbids. The child's own `job:<name>` tag must win.
+    expect(src).toContain("withChatPhase(`job:${job.name}`, () => handler(context))");
+    expect(src).not.toMatch(/result = await handler\(context\);/);
+  });
 });
 
 describe('db-lock heartbeat wiring (structural — issue #6 cancellation)', () => {

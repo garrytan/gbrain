@@ -156,3 +156,19 @@ export function multiSourceDriftAdvice(count: number, sampleStr: string): string
     `so pin it to 'default' explicitly.`
   );
 }
+
+/**
+ * #4712 — note appended when one or more sources were excluded from the
+ * multi_source_drift walk because they're pinned to slug_root_mode='git-root'
+ * (#4342). The check only derives local_path-relative ('source-root')
+ * slugs; comparing a git-root-pinned source against that shape produced
+ * false-positive drift (and dangerous delete advice naming an unrelated
+ * default page). Skipped, not mismatched — this is disclosure of reduced
+ * coverage, not a problem to fix.
+ */
+export function multiSourceDriftGitRootSkipNote(skippedIds: string[]): string {
+  return (
+    ` ${skippedIds.length} source(s) not checked (git-root-pinned, prefix-aware ` +
+    `matching not yet implemented — #4712): ${skippedIds.join(', ')}.`
+  );
+}

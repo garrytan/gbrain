@@ -61,6 +61,7 @@ import {
   writeCommittedClaudeHooks,
   removeClaudeHooks,
 } from '../core/bootstrap/hooks.ts';
+import { removeCodexHooks, writeCodexHooks } from '../core/bootstrap/codex-hooks.ts';
 import {
   guardReceiptOverwrite,
   readHarnessReceiptState,
@@ -1520,7 +1521,35 @@ async function runHooks(
         );
       }
     } else if (harness === 'codex') {
-      console.log('gbrain does not wire Codex hooks yet — per-turn context is the AGENTS.md pull protocol (stated plainly; the codex hook lane is a filed follow-up).');
+      if (hooksConsent) {
+        // Codex hooks are user-global (one hooks.json per CODEX_HOME) and
+        // TRUST-GATED: the writer lands both the hooks.json entry and its
+        // config.toml trusted_hash, or codex silently never runs it. The
+        // command carries NO GBRAIN_SOURCE — hooks.json is machine-global, a
+        // baked source would stamp every codex session on this machine with
+        // this repo's source; session-end resolves from the payload instead.
+        const r = writeCodexHooks({ gbrainBin });
+        if (r.ok) {
+          hooksWritten = true;
+          console.log(
+            `codex SessionEnd hook installed in ${r.hooksPath} (+ trust entry in ${r.configPath}) — session capture is live for the WHOLE machine's codex sessions. Turn off any time with GBRAIN_HOOKS=0, or remove with \`gbrain bootstrap uninstall\`.`,
+          );
+          console.log('note: per-turn context on codex stays the AGENTS.md pull protocol — this hook is session-END capture only (v1).');
+          for (const note of r.notes) console.error(note);
+        } else {
+          for (const note of r.notes) console.error(note);
+          if (!mcpSkipped) {
+            appendReceiptRegistration(home, ws, { host: harness, scope: 'user', detail: 'mcp' });
+          }
+          return 1;
+        }
+      } else {
+        console.log(
+          noHooks
+            ? 'codex hooks skipped (--no-hooks) — per-turn context is the AGENTS.md pull protocol; re-enable with `gbrain bootstrap hooks --harness codex`.'
+            : 'codex hooks declined (HOOKS_CONSENT set to no) — per-turn context is the AGENTS.md pull protocol; re-enable with `gbrain bootstrap hooks --harness codex`.',
+        );
+      }
     } else {
       console.log(
         'gbrain does not wire opencode\'s plugin/event system yet — per-turn context is the AGENTS.md ' +
@@ -1775,6 +1804,9 @@ async function runUninstall(ws: string, rest: string[], home: string, runner: Ex
           break;
         }
         case 'codex': {
+          const rh = removeCodexHooks();
+          if (rh.removed) console.log(`removed gbrain's codex SessionEnd hook (${rh.hooksPath}) + its trust entry (${rh.configPath})`);
+          for (const note of rh.notes) console.error(note);
           if (pluginOwned) {
             console.log('MCP server was provided by the gbrain plugin (not registered by bootstrap) — leaving it; `codex plugin remove gbrain@gbrain` removes the plugin.');
             break;

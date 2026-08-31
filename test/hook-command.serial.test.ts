@@ -43,6 +43,8 @@ const ENV_KEYS = [
   // stop-push [D3/D17/D20] + banner [D5] + cloud detection knobs
   'GBRAIN_STOP_PUSH', 'GBRAIN_STOP_PUSH_DEBOUNCE_MIN', 'CLAUDE_CODE_REMOTE',
   'CLAUDE_CODE_REMOTE_SESSION_ID', 'GH_TOKEN', 'GITHUB_TOKEN',
+  // optional Memorable integration: config gate + env kill switch
+  'GBRAIN_MEMORABLE',
 ] as const;
 
 let tmp: string;

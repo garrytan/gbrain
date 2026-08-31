@@ -155,11 +155,16 @@ if [ "${GBRAIN_TEST_NO_MEM_ADAPT:-0}" != "1" ]; then
     MAX_TOTAL=$((BUDGET_MB / MEM_PER_FILE_MB))
     [ "$MAX_TOTAL" -lt 1 ] && MAX_TOTAL=1
     ORIG_N="$N"; ORIG_INTRA="$INTRA_CONC"
-    # Shed shards before intra-shard concurrency: fewer bun processes frees
-    # more than narrower ones (each process carries its own heap + WASM).
+    # Shed intra-shard concurrency before shards. `bun test --max-concurrency`
+    # only bounds test.concurrent tests (1 file in the corpus) — every other
+    # file runs serially inside its shard process, so INTRA_CONC is nearly
+    # free to shed: dropping it costs no throughput, while dropping a SHARD
+    # removes a whole bun process of real fan-out. The old order (shards
+    # first) collapsed a 16GB box to 1x4 — effectively a serial run behind a
+    # 12000s watchdog (measured 3.25x slower than 4 shards on the same box).
     while [ $((N * INTRA_CONC)) -gt "$MAX_TOTAL" ]; do
-      if [ "$N" -gt 1 ]; then N=$((N - 1))
-      elif [ "$INTRA_CONC" -gt 1 ]; then INTRA_CONC=$((INTRA_CONC - 1))
+      if [ "$INTRA_CONC" -gt 1 ]; then INTRA_CONC=$((INTRA_CONC - 1))
+      elif [ "$N" -gt 1 ]; then N=$((N - 1))
       else break
       fi
     done
@@ -192,7 +197,7 @@ else
   mkdir -p "$LOG_DIR" || { echo "ERROR: cannot create log dir" >&2; exit 2; }
 fi
 # Clear from prior run.
-rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged "$LOG_DIR"/shard-*.lastkb "$LOG_DIR"/shard-*.lastprogress "$LOG_DIR"/shard-*.start "$LOG_DIR"/shard-*.end 2>/dev/null
+rm -f "$LOG_DIR"/shard-*.log "$LOG_DIR"/shard-*.exit "$LOG_DIR"/shard-*.wedged "$LOG_DIR"/shard-*.lastkb "$LOG_DIR"/shard-*.lastprogress "$LOG_DIR"/shard-*.start "$LOG_DIR"/shard-*.end "$LOG_DIR"/shard-*.watchdog "$LOG_DIR"/shard-*.assigned "$LOG_DIR"/shard-*.hbsum 2>/dev/null
 : > "$FAILURES_LOG"
 : > "$SUMMARY_FILE"
 
@@ -237,7 +242,8 @@ for i in $(seq 1 "$N"); do
         bash scripts/run-unit-shard.sh --max-concurrency="$INTRA_CONC" \
         > "$SHARD_LOG" 2>&1 &
       pid=$!
-      ( sleep "$SHARD_TIMEOUT" && kill -TERM "$pid" 2>/dev/null && \
+      ( sleep "$SHARD_TIMEOUT" && touch "$LOG_DIR/shard-$i.watchdog" && \
+        kill -TERM "$pid" 2>/dev/null && \
         sleep "$SHARD_KILL_AFTER" && kill -KILL "$pid" 2>/dev/null ) &
       cap_pid=$!
       wait "$pid" 2>/dev/null
@@ -258,6 +264,12 @@ for i in $(seq 1 "$N"); do
     date +%s > "$LOG_DIR/shard-$i.end"
     echo "$rc" > "$LOG_DIR/shard-$i.exit"
     { [ "$rc" = "124" ] || [ "$rc" = "137" ]; } && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
+    # No-timeout-binary fallback: its watchdog TERMs the shard (rc 143), which
+    # the 124/137 line above can't see — the sentinel dropped right before the
+    # TERM marks the wedge, so the EXIT-HANG/WEDGED classifier is reachable on
+    # machines without coreutils timeout instead of a bare rc=143 hard-fail.
+    [ -f "$LOG_DIR/shard-$i.watchdog" ] && { [ "$rc" = "143" ] || [ "$rc" = "137" ]; } \
+      && echo "WEDGED" > "$LOG_DIR/shard-$i.wedged"
   ) &
   SHARD_PIDS+=($!)
 done
@@ -363,13 +375,20 @@ heartbeat() {
     local hb_elapsed=$((now - hb_start))
     for i in $(seq 1 "$N"); do
       if [ -f "$LOG_DIR/shard-$i.exit" ]; then
-        local rc; rc=$(cat "$LOG_DIR/shard-$i.exit" 2>/dev/null || echo "?")
+        # Finished shards never change: compute the summary once at first
+        # sight of .exit and cache it — re-running strip_ansi+awk over a
+        # multi-MB log twice per shard on every 10s tick was hundreds of
+        # full-file passes per run.
+        local rc p f
+        if [ ! -f "$LOG_DIR/shard-$i.hbsum" ]; then
+          rc=$(cat "$LOG_DIR/shard-$i.exit" 2>/dev/null || echo "?")
+          p=$(bun_summary_count "pass" "$LOG_DIR/shard-$i.log")
+          f=$(bun_summary_count "fail" "$LOG_DIR/shard-$i.log")
+          echo "$rc $p $f" > "$LOG_DIR/shard-$i.hbsum"
+        fi
+        read -r rc p f < "$LOG_DIR/shard-$i.hbsum"
         local status="✓"
         [ "$rc" != "0" ] && status="✗"
-        local f
-        f=$(bun_summary_count "fail" "$LOG_DIR/shard-$i.log")
-        local p
-        p=$(bun_summary_count "pass" "$LOG_DIR/shard-$i.log")
         line="$line [s$i: done $status ${p}p ${f}f]"
       else
         local lf="$LOG_DIR/shard-$i.log"
@@ -498,6 +517,28 @@ failing_files_in_log() {
   ' | sort -u
 }
 
+# shard_assigned_list: the deterministic per-shard file list, computed once
+# per shard and cached — shard_unstarted_files and the rescue-queue appends
+# used to re-walk `find test` via --dry-run-list up to 3x per wedged shard.
+shard_assigned_list() {
+  local shard_idx="$1" cache="$LOG_DIR/shard-$shard_idx.assigned"
+  if [ ! -f "$cache" ]; then
+    # Cache ONLY on success (tmp + mv): a failed/truncated first attempt —
+    # most likely under the exact fork-pressure conditions this path runs in —
+    # must not be served to the rescue queue as a partial file list.
+    if SHARD="$shard_idx/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null > "$cache.tmp"; then
+      mv "$cache.tmp" "$cache"
+    else
+      rm -f "$cache.tmp"
+      # Loud, not silent: an underivable list means a rescue-queue append got
+      # NOTHING while the summary says the shard was queued.
+      echo "⚠️  shard $shard_idx/$N: assigned-file list underivable — rescue queue may be incomplete" >&2
+      return 0
+    fi
+  fi
+  cat "$cache"
+}
+
 # shard_unstarted_files: completion evidence for the EXIT-HANG classifier.
 # Prints every file assigned to shard $1 (same deterministic split the shard
 # itself used, via --dry-run-list) whose started file-header never appeared
@@ -509,7 +550,7 @@ failing_files_in_log() {
 shard_unstarted_files() {
   local shard_idx="$1" log="$2"
   local assigned
-  assigned=$(SHARD="$shard_idx/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null)
+  assigned=$(shard_assigned_list "$shard_idx")
   if [ -z "$assigned" ]; then
     echo "(assigned-file-list-underivable)"
     return
@@ -618,12 +659,12 @@ for i in $(seq 1 "$N"); do
     fi
     TOTAL_RC=1
     if [ "$shard_external_kill" = "1" ]; then
-      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      shard_assigned_list "$i" >> "$OOM_RESCUE_LIST"
       echo "shard $i/$N: KILLED externally after ${s_elapsed}s (rc=$rc, well before ${SHARD_TIMEOUT}s cap — queued for serial rescue)" >> "$SUMMARY_FILE"
     elif [ "$shard_oom" = "1" ]; then
       # Wedged UNDER memory pressure: we can't attribute failures, so queue
       # the shard's entire file list for the serial rescue pass.
-      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      shard_assigned_list "$i" >> "$OOM_RESCUE_LIST"
       echo "shard $i/$N: WEDGED after ${SHARD_TIMEOUT}s (rc=$rc, OOM signature — queued for serial rescue)" >> "$SUMMARY_FILE"
     else
       NON_OOM_FAIL=1
@@ -646,10 +687,10 @@ for i in $(seq 1 "$N"); do
       else
         # OOM signature but no attributable files (e.g. bun died before any
         # file header) → rescue the whole shard.
-        SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+        shard_assigned_list "$i" >> "$OOM_RESCUE_LIST"
       fi
     elif [ "$shard_external_kill" = "1" ]; then
-      SHARD="$i/$N" bash scripts/run-unit-shard.sh --dry-run-list 2>/dev/null >> "$OOM_RESCUE_LIST"
+      shard_assigned_list "$i" >> "$OOM_RESCUE_LIST"
       echo "shard $i/$N: KILLED externally after ${s_elapsed}s (rc=$rc — queued for serial rescue)" >> "$SUMMARY_FILE"
     else
       NON_OOM_FAIL=1

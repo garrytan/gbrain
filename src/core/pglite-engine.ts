@@ -240,8 +240,6 @@ export function tryLoadSnapshot(snapshotPath: string): Blob | null {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('node:fs') as typeof import('node:fs'); // engine-dynamic-import-ok
       const crypto = require('node:crypto') as typeof import('node:crypto'); // engine-dynamic-import-ok
-      const { MIGRATIONS } = require('./migrate.ts') as typeof import('./migrate.ts'); // engine-dynamic-import-ok
-      const { PGLITE_SCHEMA_SQL } = require('./pglite-schema.ts') as typeof import('./pglite-schema.ts'); // engine-dynamic-import-ok
 
       if (!fs.existsSync(snapshotPath)) {
         if (!_snapshotWarnLogged) {
@@ -263,7 +261,10 @@ export function tryLoadSnapshot(snapshotPath: string): Blob | null {
         return null;
       }
       if (_snapshotSchemaHashMemo === null) {
-        _snapshotSchemaHashMemo = computeSnapshotSchemaHash(MIGRATIONS, PGLITE_SCHEMA_SQL, crypto);
+        // 'unavailable' (source files unreadable — compiled binary) never
+        // matches a hex hash below, so the snapshot is refused via the same
+        // stale path. Memoized either way: one file read per process.
+        _snapshotSchemaHashMemo = computeSnapshotSchemaHash(crypto, fs) ?? 'unavailable';
       }
       const versionLines = fs.readFileSync(versionPath, 'utf8').trim().split('\n');
       if (_snapshotSchemaHashMemo !== (versionLines[0] ?? '')) {
@@ -326,32 +327,36 @@ export function tryLoadSnapshot(snapshotPath: string): Blob | null {
 }
 
 export function computeSnapshotSchemaHash(
-  migrations: Array<{ version: number; name: string; sql?: string; sqlFor?: { pglite?: string }; handler?: unknown }>,
-  schemaSQL: string,
   crypto: typeof import('node:crypto'),
-): string {
-  const hash = crypto.createHash('sha256');
-  hash.update('schema:');
-  hash.update(schemaSQL);
-  hash.update('\nmigrations:\n');
-  for (const m of migrations) {
-    hash.update(String(m.version));
-    hash.update('\t');
-    hash.update(m.name);
-    hash.update('\t');
-    hash.update(m.sql ?? '');
-    hash.update('\t');
-    hash.update(m.sqlFor?.pglite ?? '');
-    hash.update('\t');
-    // W0 fix-wave (D5.13, Codex #4): 19+ migrations carry executable
-    // `handler` code with empty/absent sql — invisible to the sql-only hash,
-    // so editing a handler reused a stale snapshot. Function.prototype
-    // .toString folds the handler SOURCE into the hash (deterministic within
-    // a checkout; this is a dev/test fixture, not a shipped artifact).
-    hash.update(typeof m.handler === 'function' ? String(m.handler) : '');
-    hash.update('\n');
+  fs: typeof import('node:fs'),
+): string | null {
+  // Instrumentation-immune schema hash: the raw FILE BYTES of migrate.ts +
+  // pglite-schema.ts, resolved relative to this module.
+  //
+  // The previous form hashed the in-memory MIGRATIONS array, folding each
+  // migration handler's Function.prototype.toString (W0 D5.13 — editing a
+  // handler must stale the snapshot). But coverage instrumentation rewrites
+  // LOADED function bodies, so under `bun test --coverage` (every CI shard)
+  // the runtime hash never matched the plain-`bun run` builder's, and every
+  // CI engine silently cold-initted ("snapshot stale") — a permanent
+  // CI-vs-local timing divergence that amplified ordering flakes. File bytes
+  // keep the D5.13 property (a handler edit edits the file) and are identical
+  // under any loader, runtime, or instrumentation. They are also the same
+  // inputs CI's snapshot-cache key hashes, so builder, engine, and cache can
+  // no longer disagree in kind.
+  //
+  // Returns null when the source files are unreadable (compiled binary) —
+  // the snapshot is a dev/test fixture; no-snapshot is the safe answer there.
+  try {
+    const hash = crypto.createHash('sha256');
+    hash.update('files:v2\n');
+    hash.update(fs.readFileSync(new URL('./migrate.ts', import.meta.url)));
+    hash.update('\n--\n');
+    hash.update(fs.readFileSync(new URL('./pglite-schema.ts', import.meta.url)));
+    return hash.digest('hex');
+  } catch {
+    return null;
   }
-  return hash.digest('hex');
 }
 
 /**

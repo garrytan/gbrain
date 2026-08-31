@@ -73,7 +73,10 @@ cd "$(dirname "$0")/.."
 # Removing both heavy atoms from matrix-eligible files keeps the per-shard
 # total bounded. With 10 matrix shards the per-shard total drops to ~272s.
 # Dedicated jobs run in parallel so total CI wallclock = max(matrix ~4.5min,
-# slow-eval ~3.3min, slow-entity-resolve-perf ~2.6min) ≈ 4.5min.
+# slow-eval ~3.3min, slow-entity-resolve-perf ~2.6min, slow-brainbench ~1.5min)
+# ≈ 4.5min. eval-brainbench-e2e was the matrix's heaviest atom (98s mined —
+# 10% of the whole corpus weight) and capped shard-count scaling; it now rides
+# its own job like the other two outliers.
 # evals/ is included: its *.test.ts files (eval-harness unit tests) were
 # previously collected by NO runner — 45+ real tests never executed anywhere.
 # Every collected evals file must be KEYLESS (no API keys, no network) —
@@ -84,6 +87,7 @@ ALL_FILES=$(find test evals -name '*.test.ts' \
   -not -name '*.serial.test.ts' \
   -not -name 'eval-longmemeval-e2e.slow.test.ts' \
   -not -name 'entity-resolve-perf.slow.test.ts' \
+  -not -name 'eval-brainbench-e2e.slow.test.ts' \
   -not -path 'test/e2e/*' | sort)
 
 if [ -z "$ALL_FILES" ]; then

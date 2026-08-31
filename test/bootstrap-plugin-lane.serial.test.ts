@@ -227,7 +227,10 @@ describe('runHooks plugin-lane skip (serial: env fixtures)', () => {
     // No `codex mcp add` argv, and no registration-smoke probes either.
     expect(calls.some((c) => c[0] === 'codex')).toBe(false);
     const receipt = readReceipt(join(tmpParent, '.gbrain'));
-    expect(receipt?.registrations?.at(-1)).toEqual({ host: 'codex', scope: 'user', detail: 'plugin-mcp' });
+    // MCP stays plugin-owned, but the SessionEnd hook (memorable wave) is
+    // bootstrap-written even on plugin installs — the receipt records both.
+    expect(receipt?.registrations?.at(-1)).toEqual({ host: 'codex', scope: 'user', detail: 'hooks+plugin-mcp' });
+    expect(existsSync(join(codexHome, 'hooks.json'))).toBe(true);
   }, 30_000);
 
   test('codex + NO plugin → registration argv executes exactly as today (REGRESSION pin)', async () => {

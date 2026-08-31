@@ -121,9 +121,11 @@ The synthesize phase is a two-stage cascade: a cheap scored triage
 (utility-tier model, one call per new transcript) gates the expensive
 per-transcript synthesis subagents. The dials:
 
-- `dream.triage.threshold` (default 0.5) — the gate. Scores are cached, so
-  retuning it re-gates instantly with **zero** new LLM calls. Raise it if too
-  much routine content synthesizes; lower it if real signal is being skipped.
+- `dream.triage.threshold` (default 0.5) — the score bar, and the first of the
+  two ways a transcript passes the gate (the verified-segment rescue below is
+  the second). Scores are cached, so retuning it re-gates instantly with
+  **zero** new LLM calls. Raise it if too much routine content synthesizes;
+  lower it if real signal is being skipped.
 - `models.dream.triage` — the triage model (default: utility tier / Haiku).
 - `dream.triage.max_chars` (default 24000, floor 1000) — per-transcript
   sample window (head/middle/tail) sent to the judge. Not part of cache
@@ -132,6 +134,20 @@ per-transcript synthesis subagents. The dials:
 - `dream.triage.max_tokens` (default 2048, floor 256) — judge output budget.
 - `dream.triage.concurrency` (default 4, clamped 1–16) — concurrent judge
   calls.
+- **Verified-segment rescue** (buried-signal recovery, $0): a transcript whose
+  score lands in `[dream.triage.rescue_floor, threshold)` still passes when at
+  least `dream.triage.rescue_min_segments` (default 2; **0 disables**) of the
+  judge's own quoted segments verify as substrings of the transcript AND its
+  content type is in `dream.triage.rescue_content_types` (default
+  `mixed,reflection,idea,strategy,people` — never routine/technical). Zero
+  extra LLM calls; works on cached verdicts; `dream retriage` reads the same
+  gate, so a reconcile sweep never cancels rescued jobs. Telemetry:
+  `details.triage.rescue_checked` / `rescue_fired`.
+- `dream.synthesize.quote_verify` (default on) — the mechanical post-write
+  quote verify/repair pass on newly-created dream pages (paraphrased "quotes"
+  are repaired to verbatim transcript slices or unquoted; never invented).
+  The off switch is the incident escape hatch; telemetry lands in
+  `details.synthesis.quote_verify`.
 - `dream.synthesize.max_turns` (default 16) — synthesis turn budget for
   agentic children and oneshot fallbacks (the default oneshot path — see
   the next section — is a single completion and never spends turns). The
@@ -152,12 +168,15 @@ per-transcript synthesis subagents. The dials:
   for busy deployments.
 
 Maintenance recipe — after changing the threshold, upgrading through a
-`TRIAGE_VERSION` bump, or to drain a queued synthesis backlog:
+`TRIAGE_VERSION` bump (the eval fix wave ships v2: peak-not-average scoring —
+the first post-upgrade cycle re-judges the corpus within the `max_ms` budget
+and defers the rest to following cycles), or to drain a queued synthesis
+backlog:
 
 ```bash
 gbrain dream retriage --dry-run          # what would change (zero LLM calls)
-gbrain dream retriage --reconcile-queue  # re-score + cancel below-threshold queued jobs
-gbrain dream retriage --audit-rejects 20 # synthesis-model second opinion on 20 rejects
+gbrain dream retriage --reconcile-queue  # re-score + cancel queued jobs that fail the gate
+gbrain dream retriage --audit-rejects 20 # synthesis-model second opinion on 20 gate rejects
 ```
 
 ### Synthesis speed: oneshot mode + the drain pool
@@ -197,6 +216,25 @@ nightly retries exactly the failed transcripts; a run whose EVERY child
 died fails the phase loudly. Synthesis children also fail (dead-letter)
 when every attempted page write failed — `completed` can no longer mean
 "zero pages written".
+
+Three more fields answer "what did that cost and did it land":
+
+- `spend` — what the phase actually spent, `cost_basis: 'in+out+cache_read'`.
+  Children are summed from `minion_jobs` token counts priced at the configured
+  synthesis model; triage comes from the pass's own usage. `total_usd` is
+  `null` unless BOTH price, so an unpriced model reads as unknown rather than
+  as a fake `0`. `details.triage` carries the judge's own `tokens_in` /
+  `tokens_out` / `cost_usd` on the same terms.
+- `children_zero_pages` — children that completed but wrote no page. A number
+  that climbs here means the model is producing valid-but-empty output, which
+  a green phase status alone would hide.
+- `quote_verify` — what the post-write quote pass touched: spans checked,
+  repaired, and stripped, pages skipped as pre-existing, unbalanced paragraphs,
+  and the warn-only ungrounded numeric/date claim count.
+
+Per-call spend also lands in the `chat_usage_log` ledger with a phase tag:
+the orchestrator's own calls under `phase:synthesize`, each drained child
+under its own `job:<name>`, so the two never double-count.
 
 ### What It Does
 

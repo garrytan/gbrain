@@ -70,7 +70,10 @@ import {
   decideCorpusMode,
   gcCorpusArtifacts,
   HARVEST_RECEIPT_SUFFIX,
+  segmentHash,
 } from '../core/context/corpus-segments.ts';
+import { memorableGateAllowed, recordAndRelayReceipt, redactedToolCallsJson } from '../core/context/hook-heartbeat.ts';
+import { captureSpecFor } from '../core/transcripts/capture-spec.ts';
 import {
   heartbeatPath,
   hookStatusPath,
@@ -411,7 +414,11 @@ function ensureDir0700(dir: string): string {
 }
 
 function sanitizeSessionId(id: unknown): string {
-  const s = typeof id === 'string' ? id.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 120) : '';
+  // Leading dashes are stripped so the id can never be parsed as a FLAG by a
+  // downstream argv consumer (the detached memorable spawn passes it as a
+  // positional value) — hook stdin is untrusted input.
+  const s =
+    typeof id === 'string' ? id.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+/, '').slice(0, 120) : '';
   return s && !/^\.+$/.test(s) ? s : 'unknown';
 }
 
@@ -1512,19 +1519,56 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   let sessionId = 'unknown';
   let ws: string | undefined;
   let segmentMode: string | undefined;
+  // Apply-LAST reasons: entries here describe something other than THIS
+  // session's own capture health — prior-run relay failures (memorable_relay_*)
+  // and a discovery-fallback note — so under first-degrade-wins they must not
+  // mask a current-session reason (e.g. push_unavailable, scan_unavailable).
+  // Held here and applied just before the heartbeat write.
+  const deferredReasons: string[] = [];
   try {
     const j = await readStdinJson(io, 500);
     sessionId = sanitizeSessionId(j?.session_id);
     ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
     const cfg = loadConfig();
+    // ONE gate for the whole Memorable integration (memorableGateAllowed —
+    // shared with the openclaw lane and doctor). Answered BEFORE the parse so
+    // the default gate-off population never pays tool-call collection.
+    const memorableAllowed = (await memorableGateAllowed(cfg)).allowed;
 
-    const conf = confineTranscriptPath(j?.transcript_path, {
-      ...(io.transcriptRoot ? { root: io.transcriptRoot } : {}),
-    });
+    // Per-harness capture seam: claude-code and codex each pin their OWN
+    // confinement root + parser; unknown harnesses resolve to the claude spec
+    // (today's behavior, pinned by the capture-spec golden test).
+    const spec = captureSpecFor(io.harness);
+    const rootOpt = io.transcriptRoot ? { root: io.transcriptRoot } : {};
+    let conf = spec.confine(j?.transcript_path, { ...rootOpt });
+    // A newest-mtime discovery with NO session-id match is a guess: on a
+    // machine with concurrent sessions it can be a different, still-RUNNING
+    // rollout. Fine for the local corpus (overwritten on the real session
+    // end), never for the relay — a receipt would describe a session that
+    // has not ended, and its partial hash would double-pay extraction later.
+    let discoveryWasGuess = false;
+    if (!conf.ok && conf.reason === 'missing_path' && spec.discover) {
+      // A codex SessionEnd payload can carry transcript_path:null (no local
+      // rollout); the bounded newest-first discovery keeps the lane useful —
+      // LOUDLY (typed deferred reason, never a silent guess).
+      const found = spec.discover(sessionId === 'unknown' ? null : sessionId, { ...rootOpt });
+      if (found) {
+        deferredReasons.push(found.degrade);
+        discoveryWasGuess = found.degrade === 'transcript_discovered_newest';
+        conf = spec.confine(found.path, { ...rootOpt });
+      }
+    }
     if (!conf.ok) {
       degrade(`transcript_${conf.reason}`);
     } else {
-      const parsed = parseTranscript(conf.path);
+      const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed });
+      if (sessionId === 'unknown') {
+        // Stdin payload carried no session_id (observed on codex): adopt the
+        // transcript's own id so successive such sessions don't collapse onto
+        // one shared unknown.txt corpus (overwriting each other's dedup key).
+        const inline = (parsed as { sessionId?: string | null }).sessionId;
+        if (typeof inline === 'string' && inline) sessionId = sanitizeSessionId(inline);
+      }
       turnsN = parsed.turns.length;
       bytesN = parsed.bytesRead;
       if (bytesN > 0 && turnsN === 0) {
@@ -1558,12 +1602,22 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           // [S3#2] Secret-scan AT WRITE TIME. Scanner absent → still write
           // (the corpus is 0700-local), but say so in the heartbeat.
           let text = toCorpusText(corpusTurns);
+          let toolCallsJson = '[]';
           try {
             const scan = await import('../core/secret-scan.ts');
-            const redacted = scan.redactFindings(text);
+            // The relay child derives its egress task line from this corpus, so
+            // the moment the integration is on, the corpus scan runs with the
+            // same highEntropy posture as the tool-calls JSON below — the
+            // local-only default keeps the cheaper vendor-prefix-only scan.
+            const redacted = scan.redactFindings(text, memorableAllowed ? { highEntropy: true } : {});
             text = redacted.text;
             // COUNT only — the findings themselves never land in telemetry [S3#7].
             redactionsN = redacted.redactions.length;
+            if (memorableAllowed) {
+              // Same span as the corpus, highEntropy always on — see the
+              // shared helper's doc for why.
+              toolCallsJson = await redactedToolCallsJson(parsed.toolCalls, parsed.toolCallTurnIndexes, decided.startTurnIndex);
+            }
           } catch {
             degrade('scan_unavailable');
           }
@@ -1578,6 +1632,37 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
           const tmpCorpus = `${corpusFile}.tmp-${process.pid}`;
           writeFileSync(tmpCorpus, text, { mode: 0o600 });
           renameSync(tmpCorpus, corpusFile);
+          // Additive signal for a local third-party consumer (never gbrain
+          // itself): the corpus file above is done, hashed post-redaction so
+          // the hash can never fingerprint pre-scrub content. Receipt + relay
+          // live in hook-heartbeat.ts's recordAndRelayReceipt (shared with the
+          // openclaw context-engine lane): dedup by content hash, prior-run
+          // outcome surfacing, detached fire-and-forget spawn.
+          if (memorableAllowed && discoveryWasGuess) {
+            deferredReasons.push('memorable_relay_skipped_newest_guess');
+          } else if (memorableAllowed && redactionsN === undefined) {
+            // Scanner unavailable → the corpus above is UNREDACTED. The local
+            // 0600 write is fine, but nothing unscanned may reach the relay
+            // child (its egress task line derives from this corpus). Fail
+            // CLOSED — same posture as the openclaw context-engine lane —
+            // instead of delegating the refusal to the closed-source child.
+            deferredReasons.push('memorable_relay_skipped_unscanned');
+          } else if (memorableAllowed) {
+            const relay = await recordAndRelayReceipt({
+              session_id: sessionId,
+              harness: io.harness ?? 'claude-code',
+              corpus_path: corpusFile,
+              content_hash: segmentHash(text),
+              turn_count: turnsN,
+              workspace_root: ws ?? process.cwd(),
+              tool_calls_json: toolCallsJson,
+              secret_scan_ok: true, // scanner ran — the unscanned case took the branch above
+            }, { trimRelayFile: true }); // both capture lanes trim memorable-relay.jsonl (converging newest-keeping trims)
+            for (const r of relay.degradeReasons) {
+              if (r.startsWith('memorable_relay_')) deferredReasons.push(r);
+              else degrade(r);
+            }
+          }
           try {
             rmSync(corpusFile + CORPUS_INGESTED_SUFFIX, { force: true });
           } catch {
@@ -1651,6 +1736,10 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
   } catch {
     /* best effort */
   }
+
+  // Deferred reasons apply LAST — visible when nothing about THIS session
+  // degraded, never masking a current-session reason.
+  for (const r of deferredReasons) degrade(r);
 
   await writeHeartbeat(io, {
     ts: new Date().toISOString(),

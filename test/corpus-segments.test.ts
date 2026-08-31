@@ -272,3 +272,92 @@ describe('pre-landing review pins', () => {
     expect(parsed!.turns.slice(b).map((x) => x.text)).toEqual(['tail-a', 'tail-b']);
   });
 });
+
+describe('decideCorpusMode reports where the written span begins', () => {
+  /** Anything else derived from the transcript — tool calls, hashes — must
+   * use the same origin as the corpus, or the receipt describes two spans. */
+  test('full and full_fallback modes start at zero', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-start-'));
+    try {
+      const turns = [{ role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }] as never;
+      const d = await decideCorpusMode(dir, 'sess', turns, []);
+      expect(d.mode).toBe('full');
+      expect(d.startTurnIndex).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test('an uncovered boundary falls back to full, still from zero', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-start-'));
+    try {
+      const turns = [{ role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }] as never;
+      const d = await decideCorpusMode(dir, 'sess', turns, [1]);
+      expect(d.mode).toBe('full_fallback');
+      expect(d.startTurnIndex).toBe(0);
+      // the whole window is written, so nothing may be filtered out of it
+      expect(d.turns.length).toBe(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('readOpenclawBoundaryTail — tool-call extraction (memorable, name-only v1)', () => {
+  test('fixture toolCall block extracted with input:null, stamped at its own turn slot', () => {
+    const parsed = readOpenclawBoundaryTail('test/fixtures/transcripts/agent-session.jsonl');
+    expect(parsed).not.toBeNull();
+    // The fixture's one toolCall rides the assistant message at turn index 1
+    // (m-1 user = 0, m-2 assistant = 1) — stamped BEFORE its turn is pushed.
+    expect(parsed!.toolCalls).toEqual([{ name: 'search_brain', input: null }]);
+    expect(parsed!.toolCallTurnIndexes).toEqual([1]);
+    expect(parsed!.toolCalls.length).toBe(parsed!.toolCallTurnIndexes.length);
+  });
+
+  test('a placeholder-only message (toolCall, no text) keeps its calls; stamps stay non-decreasing', () => {
+    const lines = [
+      JSON.stringify({ type: 'session', id: 's-tc', cwd: '/w', timestamp: 't0', version: 3 }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'run the tests' }] } }),
+      // No text at all — today's mapper skips the TURN but the call is real work.
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'tc-a', name: 'exec' }] } }),
+      JSON.stringify({ type: 'compaction', summary: 'x' }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }, { type: 'toolCall', id: 'tc-b', name: 'read_file' }] } }),
+    ];
+    const p = join(dir, 'tc.jsonl');
+    writeFileSync(p, lines.join('\n') + '\n');
+    const parsed = readOpenclawBoundaryTail(p);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.turns.map((x) => x.text)).toEqual(['run the tests', 'done']);
+    expect(parsed!.toolCalls.map((c) => c.name)).toEqual(['exec', 'read_file']);
+    // exec sits between turn 0 and turn 1 (stamped 1 — the slot it precedes);
+    // read_file rides the turn at index 1. Non-decreasing, parallel arrays.
+    expect(parsed!.toolCallTurnIndexes).toEqual([1, 1]);
+    const idx = parsed!.toolCallTurnIndexes;
+    for (let i = 1; i < idx.length; i++) expect(idx[i]!).toBeGreaterThanOrEqual(idx[i - 1]!);
+    // Boundary position unchanged by call extraction.
+    expect(parsed!.boundaryTurnIndexes).toEqual([1]);
+    // Filtering at the boundary keeps only the post-boundary call — the
+    // span rule the receipt writer applies.
+    const startTurnIndex = parsed!.boundaryTurnIndexes[0]!;
+    const span = parsed!.toolCalls.filter((_c, i) => (parsed!.toolCallTurnIndexes[i] ?? 0) >= startTurnIndex);
+    expect(span.map((c) => c.name)).toEqual(['exec', 'read_file']);
+  });
+
+  test('no speculative args keys: an args-bearing block still extracts input:null (name-only v1)', () => {
+    const lines = [
+      JSON.stringify({ type: 'session', id: 's-args', cwd: '/w', timestamp: 't0', version: 3 }),
+      JSON.stringify({
+        type: 'message',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'ok' },
+            // Whatever field the real format uses for args, v1 must NOT guess
+            // it into an egress payload.
+            { type: 'toolCall', id: 'tc-x', name: 'exec', arguments: { command: 'rm -rf /' }, args: { c: 1 }, input: { c: 2 } },
+          ],
+        },
+      }),
+    ];
+    const p = join(dir, 'tc-args.jsonl');
+    writeFileSync(p, lines.join('\n') + '\n');
+    const parsed = readOpenclawBoundaryTail(p);
+    expect(parsed!.toolCalls).toEqual([{ name: 'exec', input: null }]);
+  });
+});

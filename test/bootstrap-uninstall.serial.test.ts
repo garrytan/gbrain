@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { permsEnforced } from './helpers/fs-perms.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -162,7 +163,9 @@ describe('uninstallWorkspace', () => {
     expect(existsSync(hooksDir)).toBe(false); // created_paths still removed
   });
 
-  test('deleteBrain rm FAILURE: brain_deleted false, failure reason surfaced, receipt + telemetry kept (retry possible)', async () => {
+  // skipIf: simulates rm failure via permission bits — unrunnable on hosts
+  // that don't enforce them (FUSE/overlay sandboxes, root).
+  test.skipIf(!permsEnforced())('deleteBrain rm FAILURE: brain_deleted false, failure reason surfaced, receipt + telemetry kept (retry possible)', async () => {
     if (typeof process.getuid === 'function' && process.getuid() === 0) return; // root ignores modes
     seedHome({ brain_created_by_bootstrap: true });
     // A read-only subdir makes rmSync fail mid-removal (EACCES unlinking inside).

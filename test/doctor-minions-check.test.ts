@@ -9,66 +9,65 @@
  *   - DB-path (check #6a): schema is v7+ but `preferences.json` is missing.
  *     Catches installs that never ran the stopgap at all.
  *
- * Invokes the CLI via subprocess against a temp $HOME so the checks see
- * clean fixture state per test.
+ * JSON-shape assertions drive the exported `buildChecks()` seam in-process
+ * (the same seam test/doctor-behavioral.test.ts uses) under a withEnv-scoped
+ * temp GBRAIN_HOME — the check reads completed.jsonl at call time through
+ * gbrainPath(), so no subprocess is needed. Exit-code parity is exact:
+ * runDoctor's verdict is computeDoctorReport(checks).status === 'unhealthy'
+ * ? 1 : 0 (doctor.ts:outputResults) and buildChecks receives the same args
+ * the --fast CLI dispatch passes. Two real CLI spawns remain, each pinning a
+ * path the seam can't reach:
+ *   - the human-output banner render + real process exit code (wiring smoke)
+ *   - the dead-DB fallback note + credential redaction, which live in
+ *     src/cli.ts's doctor dispatch, not in buildChecks
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync } from 'child_process';
-
-const CLI = join(__dirname, '..', 'src', 'cli.ts');
+import { withEnv } from './helpers/with-env.ts';
+import { runCli } from './helpers/cli-spawn.ts';
+import { buildChecks, computeDoctorReport, type Check } from '../src/commands/doctor.ts';
+import { getDbUrlSource } from '../src/core/config.ts';
 
 let tmp: string;
-let origHome: string | undefined;
 
-function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  // Strip DATABASE_URL so doctor runs filesystem-only for these tests.
-  // Half-migrated checks run in the filesystem section; no DB needed.
-  // Both HOME and GBRAIN_HOME must point at the fixture dir: config/path
-  // resolution prefers GBRAIN_HOME (which the test preload sets to its own
-  // scratch), so HOME alone leaves the child reading the wrong .gbrain.
-  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
-  delete env.DATABASE_URL;
-  delete env.GBRAIN_DATABASE_URL;
-  // Cross-file poisoning guard: sibling test files in the same bun process
-  // set process.env.GBRAIN_HOME (preferences, friction, bootstrap-* et al),
-  // and doctor resolves ~/.gbrain via resolveGbrainHome — which prefers
-  // GBRAIN_HOME over HOME. A leaked value makes the seeded
-  // $HOME/.gbrain/migrations fixture invisible and doctor exits 0 where the
-  // test expects the FAIL exit. Scrub it like the DB URLs above.
-  delete env.GBRAIN_HOME;
-  try {
-    const stdout = execFileSync('bun', ['run', CLI, ...args], {
-      env: env as Record<string, string>,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err: any) {
-    return {
-      exitCode: err.status ?? 1,
-      stdout: err.stdout?.toString?.() ?? '',
-      stderr: err.stderr?.toString?.() ?? '',
-    };
-  }
+/**
+ * In-process equivalent of the old `bun run src/cli.ts doctor --fast --json`
+ * child. Both HOME and GBRAIN_HOME are scoped to the fixture dir — gbrainPath
+ * prefers GBRAIN_HOME and appends '.gbrain', so either root resolves to the
+ * same `<tmp>/.gbrain` the fixtures seed — and the DB URLs are stripped so
+ * doctor runs filesystem-only (half-migrated checks need no DB). Sibling test
+ * files' env mutations can't poison this: withEnv overrides GBRAIN_HOME for
+ * the duration of the call instead of inheriting a leaked value. exitCode is
+ * derived exactly the way runDoctor derives it (unhealthy → 1), and
+ * getDbUrlSource() is computed inside the env scope, matching the --fast
+ * dispatch in src/cli.ts.
+ */
+async function runFastChecks(): Promise<{ exitCode: number; checks: Check[] }> {
+  return withEnv(
+    { HOME: tmp, GBRAIN_HOME: tmp, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+    async () => {
+      const checks = await buildChecks(null, ['--fast', '--json'], getDbUrlSource());
+      return {
+        exitCode: computeDoctorReport(checks).status === 'unhealthy' ? 1 : 0,
+        checks,
+      };
+    },
+  );
 }
 
 beforeEach(() => {
-  origHome = process.env.HOME;
   tmp = mkdtempSync(join(tmpdir(), 'gbrain-doctor-minions-test-'));
 });
 
 afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
   try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
 describe('gbrain doctor — half-migrated Minions detection', () => {
-  test('filesystem: partial completed.jsonl entry with no matching complete → FAIL', () => {
+  test('filesystem: partial completed.jsonl entry with no matching complete → FAIL', async () => {
     // Seed ~/.gbrain/migrations/completed.jsonl with a single status:"partial"
     // entry — the classic signal the stopgap ran but apply-migrations didn't.
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
@@ -85,11 +84,11 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       }) + '\n',
     );
 
-    // Use --fast so we skip the DB section entirely (no engine configured).
-    const result = run(['doctor', '--fast', '--json']);
+    // --fast skips the DB section entirely (no engine configured).
+    const result = await runFastChecks();
     // doctor exits 1 on any FAIL; that's expected here.
     expect(result.exitCode).toBe(1);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string; message: string }>;
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     expect(minions).toBeDefined();
     expect(minions!.status).toBe('fail');
@@ -98,7 +97,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(minions!.message).toContain('0.11.0');
   });
 
-  test('filesystem: partial followed by complete → NO warning', () => {
+  test('filesystem: partial followed by complete → NO warning', async () => {
     // The stopgap wrote partial, then v0.11.1 apply-migrations wrote
     // complete. Doctor should stay quiet.
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
@@ -111,8 +110,8 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       ].join('\n') + '\n',
     );
 
-    const result = run(['doctor', '--fast', '--json']);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string }>;
+    const result = await runFastChecks();
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     // No warn/fail — either the check isn't emitted at all (no issues) or
     // it emits an ok entry. Either is acceptable for a quiet state.
@@ -121,19 +120,19 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     }
   });
 
-  test('filesystem: no completed.jsonl at all → NO warning (fresh install path)', () => {
+  test('filesystem: no completed.jsonl at all → NO warning (fresh install path)', async () => {
     // Doctor must NOT warn about half-migrated Minions just because a user
     // hasn't run any migration yet. The FS check only fires when there's
     // genuine partial-without-complete evidence.
-    const result = run(['doctor', '--fast', '--json']);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string }>;
+    const result = await runFastChecks();
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     if (minions) {
       expect(['ok']).toContain(minions.status);
     }
   });
 
-  test('regression: fresh install with schema-applied DB but no prefs must NOT fail', () => {
+  test('regression: fresh install with schema-applied DB but no prefs must NOT fail', async () => {
     // CI regression. `gbrain init` against Postgres applies schema v7 but
     // doesn't write preferences.json (the migration orchestrator does that
     // via apply-migrations). For that brief window, schema is v7 with no
@@ -144,8 +143,8 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     // preferences.json → FAIL" rule was too aggressive. Only a concrete
     // "partial without complete" entry in completed.jsonl counts as
     // half-migrated.
-    const result = run(['doctor', '--fast', '--json']);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string }>;
+    const result = await runFastChecks();
+    const checks = result.checks;
     // No check with `minions_config` or `minions_migration` should be in FAIL
     for (const check of checks) {
       if (check.name === 'minions_config' || check.name === 'minions_migration') {
@@ -154,7 +153,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     }
   });
 
-  test('filesystem: multiple versions each need their own complete entry', () => {
+  test('filesystem: multiple versions each need their own complete entry', async () => {
     // v0.10 is fully migrated but v0.11 is only partial. Doctor should
     // flag v0.11 by name. The forward-progress override only kicks in
     // when a NEWER version completed; v0.10 is older than v0.11 so the
@@ -169,16 +168,16 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       ].join('\n') + '\n',
     );
 
-    const result = run(['doctor', '--fast', '--json']);
+    const result = await runFastChecks();
     expect(result.exitCode).toBe(1);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string; message: string }>;
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('fail');
     expect(minions!.message).toContain('0.11.0');
     expect(minions!.message).not.toContain('0.10.0');
   });
 
-  test('filesystem: stale partial superseded by newer complete → NO warning (forward-progress override)', () => {
+  test('filesystem: stale partial superseded by newer complete → NO warning (forward-progress override)', async () => {
     // v0.16.0 completed AFTER v0.11.0 went partial. The schema clearly
     // advanced past v0.11.0, so the partial record is stale historical
     // noise — not a real "MINIONS HALF-INSTALLED" condition.
@@ -201,10 +200,10 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       ].join('\n') + '\n',
     );
 
-    const result = run(['doctor', '--fast', '--json']);
+    const result = await runFastChecks();
     // No FAIL on minions_migration — the v0.11.0 partials are stale
     // because v0.16.0 (a newer release) completed.
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string }>;
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     if (minions) {
       expect(minions.status).not.toBe('fail');
@@ -215,7 +214,7 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test('filesystem: stale partial NOT superseded → still flagged', () => {
+  test('filesystem: stale partial NOT superseded → still flagged', async () => {
     // The override only fires when a >= partial version has completed.
     // Older completes (e.g. v0.10 complete + v0.16 partial) do NOT
     // supersede the partial; the partial still indicates a real problem.
@@ -229,18 +228,19 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       ].join('\n') + '\n',
     );
 
-    const result = run(['doctor', '--fast', '--json']);
+    const result = await runFastChecks();
     expect(result.exitCode).toBe(1);
-    const checks = JSON.parse(result.stdout).checks as Array<{ name: string; status: string; message: string }>;
+    const checks = result.checks;
     const minions = checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('fail');
     expect(minions!.message).toContain('0.16.0');
   });
 
-  test('human output: prints MINIONS HALF-INSTALLED loud banner', () => {
+  test('human output: prints MINIONS HALF-INSTALLED loud banner', async () => {
     // Same fixture as the first test, but check the human-readable output
     // includes the exact banner phrase an OpenClaw host's cron script
-    // can grep for.
+    // can grep for. This is the file's real-CLI wiring smoke: render +
+    // process exit code go through src/cli.ts, which buildChecks can't reach.
     const migrationsDir = join(tmp, '.gbrain', 'migrations');
     mkdirSync(migrationsDir, { recursive: true });
     writeFileSync(
@@ -248,17 +248,19 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       JSON.stringify({ version: '0.11.0', status: 'partial' }) + '\n',
     );
 
-    const result = run(['doctor', '--fast']);
+    const result = await runCli(['doctor', '--fast'], { home: tmp });
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('MINIONS HALF-INSTALLED');
     expect(result.stdout).toContain('gbrain apply-migrations --yes');
-  });
+  }, 60_000);
 
-  test('DB-connect failure announces the filesystem-only fallback on stderr, credentials redacted', () => {
+  test('DB-connect failure announces the filesystem-only fallback on stderr, credentials redacted', async () => {
     // The fallback used to be silent — indistinguishable from a healthy
     // DB-backed run minus the DB checks. Pin the stderr note AND that a
     // credential-bearing connect error never leaks the password (doctor
-    // output is what users paste into issues and CI logs).
+    // output is what users paste into issues and CI logs). Must be a real
+    // spawn: the note + redaction live in src/cli.ts's doctor dispatch,
+    // not in buildChecks.
     const gbrainDir = join(tmp, '.gbrain');
     mkdirSync(gbrainDir, { recursive: true });
     // Assembled at runtime so the source never contains a scannable
@@ -269,17 +271,10 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
       JSON.stringify({ engine: 'postgres', database_url: fakeUrl }) + '\n',
     );
 
-    // The shared run() helper discards stderr on exit 0; this pin needs it
-    // regardless of exit code, so spawn directly.
-    const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
-    delete env.DATABASE_URL;
-    delete env.GBRAIN_DATABASE_URL;
-    const { spawnSync } = require('child_process') as typeof import('child_process');
-    const res = spawnSync('bun', ['run', CLI, 'doctor', '--json'], {
-      env: env as NodeJS.ProcessEnv,
-      encoding: 'utf-8',
-      timeout: 60_000,
-    });
+    // runCli strips DATABASE_URL/GBRAIN_DATABASE_URL and points HOME +
+    // GBRAIN_HOME at the fixture dir; it captures stderr regardless of the
+    // exit code, which this pin needs.
+    const res = await runCli(['doctor', '--json'], { home: tmp });
     expect(res.stderr).toContain('[doctor] DB-backed doctor run failed');
     expect(res.stderr).toContain('filesystem-only checks');
     expect(res.stderr).not.toContain('sekrit-hunter2');

@@ -12,6 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { permsEnforced } from './helpers/fs-perms.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
@@ -132,7 +133,9 @@ describe('read-failure classes are distinct', () => {
     expect((parsed.mcp as Record<string, unknown>).gbrain).toBeDefined();
   });
 
-  test('unreadable file → refuse loudly, never clobber', () => {
+  // skipIf: asserts a chmod-000 read MUST fail — unrunnable on hosts that
+  // don't enforce permission bits (FUSE/overlay sandboxes, root).
+  test.skipIf(!permsEnforced())('unreadable file → refuse loudly, never clobber', () => {
     if (process.getuid?.() === 0) return; // root ignores modes
     writeFileSync(cfg(), '{"mcp":{}}');
     chmodSync(cfg(), 0o000);

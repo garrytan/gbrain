@@ -9,12 +9,18 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
 import { runDetect } from '../../src/core/schema-pack/detect.ts';
 import { runReviewCandidates, runReviewOrphans } from '../../src/core/schema-pack/review.ts';
 import { knobsHash } from '../../src/core/search/mode.ts';
 import { detectArtifactKind, validateManifestByKind } from '../../src/core/artifact/index.ts';
+
+// Cold-path opt-out (conservative): umbrella schema-invariant suite whose
+// point is proving the cathedral end-to-end through a genuinely cold-built
+// schema — keep it off the snapshot fast path.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 let engine: PGLiteEngine;
 

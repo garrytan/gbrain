@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { runBootstrap } from '../../src/commands/bootstrap.ts';
+
 import type { ExecRunner } from '../../src/core/bootstrap/repo.ts';
 import { attachWorkspace } from '../../src/core/bootstrap/attach.ts';
 import { readManifest, readReceipt } from '../../src/core/bootstrap/format.ts';
@@ -42,6 +43,10 @@ import { verifyWorkspace } from '../../src/core/bootstrap/verify.ts';
 import { operations, type OperationContext } from '../../src/core/operations.ts';
 import type { CapabilityReport } from '../../src/core/capability.ts';
 import { CORPUS_DIR } from '../helpers/bootstrap-corpus.ts';
+
+// Cold-path opt-out (conservative): bootstrap-arc file — attach semantics on
+// a brain whose init path should stay the genuine cold build.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 /** Keyless capability report — machine 2 re-ingests + verifies with ZERO keys. */
 const KEYLESS: CapabilityReport = {

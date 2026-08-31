@@ -26,6 +26,7 @@ import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { permsEnforced } from './helpers/fs-perms.ts';
 import { runImport } from '../src/commands/import.ts';
 
 let engine: PGLiteEngine;
@@ -149,7 +150,10 @@ describe('runImport checkpoint resume — v0.33.2 path-based', () => {
     });
   }, 30_000);
 
-  test('interrupted run preserves its tail below the 100-file boundary', async () => {
+  // skipIf: forces the error path via a chmod-000 file — unrunnable on hosts
+  // that don't enforce permission bits (the read succeeds, errors stays 0,
+  // and the checkpoint is legitimately cleared).
+  test.skipIf(!permsEnforced())('interrupted run preserves its tail below the 100-file boundary', async () => {
     // The periodic checkpoint save fires on `completed.size % 100 === 0`. With
     // fewer than 100 successful files there is no boundary to hit, so before
     // the final save every completed file in a run that ends with errors was

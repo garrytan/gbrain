@@ -6,71 +6,72 @@
  * existing Postgres install must not flip it to PGLite. Running it against a
  * missing config must fail loudly with a clear "run gbrain init first" error.
  *
- * Uses child_process subprocess invocations (not in-proc) because runInit
- * calls process.exit(1) on error paths, which breaks test isolation.
+ * Uses subprocess invocations (not in-proc) because runInit calls
+ * process.exit(1) on error paths, which breaks test isolation. Spawns route
+ * through test/helpers/cli-spawn.ts (async Bun.spawn; DATABASE_URL /
+ * GBRAIN_DATABASE_URL always stripped — the "no config" error paths need
+ * loadConfig() to return null, which any env-var fallback would defeat, see
+ * src/core/config.ts:30; opts.home pins BOTH HOME and GBRAIN_HOME so the
+ * child never reads the operator's real ~/.gbrain). The four error paths are
+ * flag/config validation that exits before any write, so they share one
+ * empty home and run once through runCliBatch (width 2 — the machine-wide
+ * cap, see cli-spawn.ts) in the describe's beforeAll; each test asserts on
+ * its cached result, exit code included. The happy-path tests share one
+ * home: the idempotence rerun reuses the brain the config-preservation test
+ * already built (bun runs in-file tests in declaration order) instead of
+ * cold-building a second PGLite schema from scratch.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { execFileSync } from 'child_process';
-
-const CLI = join(__dirname, '..', 'src', 'cli.ts');
-
-let tmp: string;
-let origHome: string | undefined;
-
-function run(args: string[]): { exitCode: number; stdout: string; stderr: string } {
-  // Strip DATABASE_URL / GBRAIN_DATABASE_URL from the subprocess env. The
-  // "no config" error-path tests need loadConfig() to return null, which it
-  // won't if any env var fallback is set (src/core/config.ts:30). Tests
-  // that seed their own config use freshHomeWithConfig() below.
-  // Both HOME and GBRAIN_HOME must point at the fixture dir: config/path
-  // resolution prefers GBRAIN_HOME (which the test preload sets to its own
-  // scratch), so HOME alone leaves the child reading the wrong .gbrain.
-  const env = { ...process.env, HOME: tmp, GBRAIN_HOME: tmp } as Record<string, string | undefined>;
-  delete env.DATABASE_URL;
-  delete env.GBRAIN_DATABASE_URL;
-  try {
-    const stdout = execFileSync('bun', ['run', CLI, ...args], {
-      env: env as Record<string, string>,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err: any) {
-    return {
-      exitCode: err.status ?? 1,
-      stdout: err.stdout?.toString?.() ?? '',
-      stderr: err.stderr?.toString?.() ?? '',
-    };
-  }
-}
-
-beforeEach(() => {
-  origHome = process.env.HOME;
-  tmp = mkdtempSync(join(tmpdir(), 'gbrain-init-migrate-only-test-'));
-});
-
-afterEach(() => {
-  if (origHome === undefined) delete process.env.HOME;
-  else process.env.HOME = origHome;
-  try { rmSync(tmp, { recursive: true, force: true }); } catch { /* best-effort */ }
-});
+import { runCli, runCliBatch, type CliResult } from './helpers/cli-spawn.ts';
 
 describe('gbrain init --migrate-only — error paths', () => {
+  // Every argv here is a validation-failure path verified to exit before any
+  // migrate-only side effects (no config write, no DB touch), so all four
+  // share one empty home. That makes the config.json absence checks below
+  // strictly stronger than the per-test homes they replaced: if ANY of the
+  // four runs wrote a config, they fail. Do NOT add anything here that
+  // writes config or state — batch order is not execution order.
+  const ERROR_ARGVS: string[][] = [
+    ['init', '--migrate-only', '--dry-run'],
+    ['init', '--migrate-only', '--dry-run', '--json'],
+    ['init', '--migrate-only'],
+    ['init', '--migrate-only', '--json'],
+  ];
+
+  let errHome: string;
+  const batched = new Map<string, CliResult>();
+
+  beforeAll(async () => {
+    errHome = mkdtempSync(join(tmpdir(), 'gbrain-init-migrate-only-test-'));
+    const results = await runCliBatch(ERROR_ARGVS, { home: errHome });
+    ERROR_ARGVS.forEach((argv, i) => batched.set(argv.join(' '), results[i]));
+  }, 60_000);
+
+  afterAll(() => {
+    try { rmSync(errHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  function cached(...argv: string[]): CliResult {
+    const r = batched.get(argv.join(' '));
+    if (!r) throw new Error(`not in ERROR_ARGVS batch: gbrain ${argv.join(' ')}`);
+    return r;
+  }
+
   test('rejects unknown flags before any migrate-only side effects', () => {
-    const result = run(['init', '--migrate-only', '--dry-run']);
+    const result = cached('init', '--migrate-only', '--dry-run');
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('unknown flag --dry-run');
     // Unknown safety flags must not fall through to the migration path.
     expect(result.stderr).not.toContain('No brain configured');
-    expect(existsSync(join(tmp, '.gbrain', 'config.json'))).toBe(false);
+    expect(existsSync(join(errHome, '.gbrain', 'config.json'))).toBe(false);
   });
 
   test('unknown flags respect --json output', () => {
-    const result = run(['init', '--migrate-only', '--dry-run', '--json']);
+    const result = cached('init', '--migrate-only', '--dry-run', '--json');
     expect(result.exitCode).toBe(1);
     const lines = result.stdout.split('\n').filter((l: string) => l.trim().startsWith('{'));
     const parsed = JSON.parse(lines[lines.length - 1]);
@@ -80,15 +81,15 @@ describe('gbrain init --migrate-only — error paths', () => {
   });
 
   test('errors with clear message when no config exists', () => {
-    const result = run(['init', '--migrate-only']);
+    const result = cached('init', '--migrate-only');
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('No brain configured');
     // Config file must not have been created (no saveConfig silently)
-    expect(existsSync(join(tmp, '.gbrain', 'config.json'))).toBe(false);
+    expect(existsSync(join(errHome, '.gbrain', 'config.json'))).toBe(false);
   });
 
   test('JSON output flag emits a structured error', () => {
-    const result = run(['init', '--migrate-only', '--json']);
+    const result = cached('init', '--migrate-only', '--json');
     expect(result.exitCode).toBe(1);
     // --json writes the structured error to stdout per the pattern in init.ts
     const lines = result.stdout.split('\n').filter((l: string) => l.trim().startsWith('{'));
@@ -100,9 +101,24 @@ describe('gbrain init --migrate-only — error paths', () => {
 });
 
 describe('gbrain init --migrate-only — happy path with PGLite config', () => {
-  test('applies schema against existing PGLite config; does NOT modify config.json', () => {
+  // One home for both tests: the config-preservation test builds the brain,
+  // the idempotence test reruns against it. Declaration order IS execution
+  // order within a bun test file, so the reuse never observes an unbuilt
+  // brain in a full-file run.
+  let home: string;
+  let firstRun: CliResult | null = null;
+
+  beforeAll(() => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-init-migrate-only-test-'));
+  });
+
+  afterAll(() => {
+    try { rmSync(home, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  test('applies schema against existing PGLite config; does NOT modify config.json', async () => {
     // Seed an existing PGLite config + brain file.
-    const gbrainDir = join(tmp, '.gbrain');
+    const gbrainDir = join(home, '.gbrain');
     mkdirSync(gbrainDir, { recursive: true });
     const dbPath = join(gbrainDir, 'brain.pglite');
     const configPath = join(gbrainDir, 'config.json');
@@ -114,7 +130,8 @@ describe('gbrain init --migrate-only — happy path with PGLite config', () => {
     const contentBefore = readFileSync(configPath, 'utf-8');
 
     // First run: should apply schema.
-    const result = run(['init', '--migrate-only', '--json']);
+    const result = await runCli(['init', '--migrate-only', '--json'], { home });
+    firstRun = result; // stash before asserting so the rerun test reuses it even on failure
     expect(result.exitCode).toBe(0);
     const jsonLines = result.stdout.split('\n').filter((l: string) => l.trim().startsWith('{'));
     const parsed = JSON.parse(jsonLines[jsonLines.length - 1]);
@@ -133,17 +150,22 @@ describe('gbrain init --migrate-only — happy path with PGLite config', () => {
     expect(existsSync(dbPath)).toBe(true);
   }, 30_000);
 
-  test('idempotent on rerun — second call succeeds without error', () => {
-    const gbrainDir = join(tmp, '.gbrain');
-    mkdirSync(gbrainDir, { recursive: true });
-    const dbPath = join(gbrainDir, 'brain.pglite');
-    const configPath = join(gbrainDir, 'config.json');
-    writeFileSync(configPath, JSON.stringify({ engine: 'pglite', database_path: dbPath }) + '\n');
-
-    const first = run(['init', '--migrate-only', '--json']);
+  test('idempotent on rerun — second call succeeds without error', async () => {
+    // Normal path: `first` is the previous test's run against this home —
+    // the second call below is the true rerun on an existing brain. Under a
+    // `-t` filter that skipped the previous test, seed + run the first call
+    // here (the original two-spawn shape).
+    let first = firstRun;
+    if (first === null) {
+      const gbrainDir = join(home, '.gbrain');
+      mkdirSync(gbrainDir, { recursive: true });
+      const dbPath = join(gbrainDir, 'brain.pglite');
+      writeFileSync(join(gbrainDir, 'config.json'), JSON.stringify({ engine: 'pglite', database_path: dbPath }) + '\n');
+      first = await runCli(['init', '--migrate-only', '--json'], { home });
+    }
     expect(first.exitCode).toBe(0);
 
-    const second = run(['init', '--migrate-only', '--json']);
+    const second = await runCli(['init', '--migrate-only', '--json'], { home });
     expect(second.exitCode).toBe(0);
   }, 60_000);
 });

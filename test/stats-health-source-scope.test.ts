@@ -265,6 +265,10 @@ describe.skipIf(!DATABASE_URL)('#4592 source-scoped stats/health (REAL Postgres 
   }, 120_000);
 
   afterAll(async () => {
+    // Guard: when beforeAll dies before assigning (e.g. a shard-neighbor
+    // leaked a DATABASE_URL that flips the skipIf but fails the db-guard),
+    // this hook still runs — a bare TypeError here buries the real error.
+    if (!engine) return;
     await engine.executeRaw(`DELETE FROM pages WHERE source_id IN ('${SRCA}', '${SRCB}')`);
     await engine.executeRaw(`DELETE FROM sources WHERE id IN ('${SRCA}', '${SRCB}')`);
     await (engine as { disconnect(): Promise<void> }).disconnect();

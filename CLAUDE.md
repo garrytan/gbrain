@@ -76,10 +76,12 @@ Per-file detail is in `docs/architecture/KEY_FILES.md`.
   `src/core/pglite-engine.ts`, `src/core/postgres-engine.ts`, and
   `src/core/migrate.ts`, dependencies previously reached through runtime dynamic
   imports use static top-level imports. Besides the snapshot loader's lazy
-  `require()` cluster in `pglite-engine.ts:tryLoadSnapshot` (fs/crypto/
-  migrate/pglite-schema + one gateway shape lookup — lazy so production
-  builds without the test-fixture path don't eager-load; the guard now
-  matches `require()` calls too), the only dynamic-`import()` exceptions
+  `require()` cluster in `pglite-engine.ts:tryLoadSnapshot` (fs/crypto + one
+  gateway shape lookup — lazy so production builds without the test-fixture
+  path don't eager-load; the snapshot hash reads migrate.ts/pglite-schema.ts
+  FILE BYTES, never the loaded modules, so coverage instrumentation can't
+  skew it; the guard now matches `require()` calls too), the only
+  dynamic-`import()` exceptions
   are the four `ai/gateway.ts` lookups in both engines'
   `initSchema()` and `_upsertChunksOnce()` methods; each remains lazy inside a
   local `try/catch` because the gateway has a large provider/config closure and,
@@ -150,6 +152,7 @@ detail on demand.)
 | the monthly backup-coverage check (`gbrain backup`, render channels, nag budget) | `docs/operations/backup-check.md` + the `backup/*` entries in `KEY_FILES.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
 | checkpoint compaction / compiled context files (`gbrain compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |
+| Memorable integration / session receipts / relay consent (`integrations.memorable.*`) | `docs/memorable-agents.md` + the hook-heartbeat/capture-spec/codex-hooks entries in `KEY_FILES.md` |
 | chat connectors (live ChatGPT/Claude history sync — `gbrain connectors`) | `docs/guides/chat-connectors.md` + the `src/core/connectors/*` entries in `KEY_FILES.md` |
 | schema packs / page types / extraction | `docs/architecture/schema-packs.md`, `type-taxonomy.md`, `lens-packs.md` |
 | thin-client / remote MCP / cross-modal | `docs/architecture/thin-client.md` |

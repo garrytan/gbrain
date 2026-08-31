@@ -17,6 +17,7 @@ import {
 } from '../src/core/git-remote.ts';
 import { execFileSync } from 'child_process';
 import { withEnv } from './helpers/with-env.ts';
+import { gitStderrLeads } from './helpers/git-stderr-probe.ts';
 
 // ---------------------------------------------------------------------------
 // Fake-git harness: write a shell script that records its argv to a log file,
@@ -488,7 +489,10 @@ describe('#1315 — stderr-first GitOperationError (real git, file-origin repo)'
     return mirror;
   }
 
-  test('pullRepo message leads with the real git stderr, not the Command-failed envelope', () => {
+  // skipIf: pins "git's own fatal: appears within the first 200 chars" —
+  // unrunnable behind an ambient git PATH shim that prints its own stderr
+  // first (e.g. Conductor's auth-broker wrapper). See helpers/git-stderr-probe.
+  test.skipIf(!gitStderrLeads())('pullRepo message leads with the real git stderr, not the Command-failed envelope', () => {
     const mirror = mkFileOriginMirror();
     let threw: GitOperationError | undefined;
     try {
@@ -507,7 +511,7 @@ describe('#1315 — stderr-first GitOperationError (real git, file-origin repo)'
     expect(threw!.cause).toBeDefined();
   });
 
-  test('fetchRemote message is stderr-first too', () => {
+  test.skipIf(!gitStderrLeads())('fetchRemote message is stderr-first too', () => {
     const mirror = mkFileOriginMirror();
     let threw: GitOperationError | undefined;
     try {

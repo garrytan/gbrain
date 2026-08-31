@@ -28,6 +28,42 @@ describe('loadSynthConfig honors a configured 0', () => {
     expect(cfg.minChars).toBe(2000);
   });
 
+  test('rescue knobs: defaults, clamps, kill-switch zero, CSV content types', async () => {
+    const def = await __testing.loadSynthConfig(stubEngine({}));
+    expect(def.triage.rescueFloor).toBe(0.30);
+    expect(def.triage.rescueMinSegments).toBe(2);
+    expect(def.triage.rescueContentTypes).toEqual(['mixed', 'reflection', 'idea', 'strategy', 'people']);
+
+    // Kill switch: an explicit 0 must survive (getNumberConfig, not ||).
+    const off = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.rescue_min_segments': '0' }));
+    expect(off.triage.rescueMinSegments).toBe(0);
+
+    // Floor clamps to [0,1]; negative min_segments floors at 0.
+    const clamped = await __testing.loadSynthConfig(stubEngine({
+      'dream.triage.rescue_floor': '1.7',
+      'dream.triage.rescue_min_segments': '-3',
+    }));
+    expect(clamped.triage.rescueFloor).toBe(1);
+    expect(clamped.triage.rescueMinSegments).toBe(0);
+
+    // CSV parse: trimmed, lowercased, empties dropped; empty string → defaults.
+    const csv = await __testing.loadSynthConfig(stubEngine({
+      'dream.triage.rescue_content_types': ' Mixed, IDEA ,, strategy ',
+    }));
+    expect(csv.triage.rescueContentTypes).toEqual(['mixed', 'idea', 'strategy']);
+    const blank = await __testing.loadSynthConfig(stubEngine({ 'dream.triage.rescue_content_types': '   ' }));
+    expect(blank.triage.rescueContentTypes).toEqual(['mixed', 'reflection', 'idea', 'strategy', 'people']);
+  });
+
+  test('quote_verify defaults ON; false/0/off disable; anything else stays on', async () => {
+    expect((await __testing.loadSynthConfig(stubEngine({}))).quoteVerify).toBe(true);
+    for (const off of ['false', '0', 'off', ' FALSE ', 'Off']) {
+      const cfg = await __testing.loadSynthConfig(stubEngine({ 'dream.synthesize.quote_verify': off }));
+      expect(cfg.quoteVerify).toBe(false);
+    }
+    expect((await __testing.loadSynthConfig(stubEngine({ 'dream.synthesize.quote_verify': 'yes' }))).quoteVerify).toBe(true);
+  });
+
   test('unparseable values fall back to the defaults', async () => {
     const cfg = await __testing.loadSynthConfig(stubEngine({
       'dream.synthesize.cooldown_hours': 'abc',

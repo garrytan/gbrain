@@ -16,6 +16,7 @@ import {
   parseTranscript,
   SPEC_TARGET,
   toCorpusText,
+  TOOL_CALL_VALUE_MAX_CHARS,
   TRANSCRIPT_HARD_CAP_BYTES,
   TRANSCRIPT_MAX_BYTES_DEFAULT,
 } from '../src/core/transcripts/claude-code-jsonl.ts';
@@ -359,5 +360,193 @@ describe('confineTranscriptPath — cross-OS WSL translation (#4522)', () => {
       wslMountRoot: mountRoot,
     });
     expect(r).toEqual({ ok: false, reason: 'symlink' });
+  });
+});
+
+describe('tool calls carry their turn position', () => {
+  /** The receipt hashes the corpus it wrote, and in remainder mode that
+   * corpus is only the post-boundary tail. The tool calls were the whole
+   * parsed window, so content_hash and tool_calls_json could describe
+   * different spans of the same session. Positions make them alignable. */
+  function fixture(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-span-'));
+    tmp = dir;
+    const line = (o: unknown) => JSON.stringify(o);
+    writeFileSync(join(dir, 't.jsonl'), [
+      line({ type: 'user', message: { role: 'user', content: 'first task' } }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'a1', name: 'Bash', input: { command: 'echo one' } }] } }),
+      line({ type: 'system', subtype: 'compact_boundary' }),
+      line({ type: 'user', message: { role: 'user', content: 'second task' } }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'echo two' } }] } }),
+    ].join('\n') + '\n', { mode: 0o600 });
+    return join(dir, 't.jsonl');
+  }
+
+  // Collection is opt-in (pinned below): the session-end lane is the only
+  // caller that asks for it, and only when the memorable gate is open.
+  const parseTC = (p: string) => parseTranscript(p, { collectToolCalls: true });
+
+  test('every tool call has a turn index, and the arrays stay parallel', () => {
+    const p = parseTC(fixture());
+    expect(p.toolCallTurnIndexes.length).toBe(p.toolCalls.length);
+    expect(p.toolCalls.length).toBeGreaterThan(0);
+    for (const i of p.toolCallTurnIndexes) expect(Number.isInteger(i)).toBe(true);
+  });
+
+  test('collection is OFF unless the caller asks: the default parse costs a brain that never opted in nothing', () => {
+    const p = fixture();
+    // The per-prompt lane parses this way, in front of every prompt.
+    const off = parseTranscript(p);
+    expect(off.toolCalls).toEqual([]);
+    expect(off.toolCallTurnIndexes).toEqual([]);
+    expect(JSON.stringify(off.toolCalls)).not.toContain('echo one');
+    // Explicit false reads the same as absent.
+    expect(parseTranscript(p, { collectToolCalls: false }).toolCalls).toEqual([]);
+    // Everything else the existing callers read is byte-identical either way.
+    const on = parseTC(p);
+    expect(off.turns).toEqual(on.turns);
+    expect(off.bytesRead).toBe(on.bytesRead);
+    expect(off.boundaryTurnIndexes).toEqual(on.boundaryTurnIndexes);
+  });
+
+  test('the corpus text still carries only the placeholder — collection never changes what is written', () => {
+    const r = parseTC(fixture());
+    expect(r.toolCalls.map((c) => c.name)).toContain('Bash');
+    expect(toCorpusText(r.turns)).toContain('[tool: Bash]');
+    expect(toCorpusText(r.turns)).not.toContain('echo one');
+  });
+
+  test('calls keep transcript order, and a missing input reads as null rather than absent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-order-'));
+    tmp = dir;
+    const p = join(dir, 'o.jsonl');
+    writeFileSync(p, [
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: '1', name: 'first' }] } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: '2', name: 'second', input: { a: 1 } }] } }),
+    ].join('\n') + '\n', { mode: 0o600 });
+    const r = parseTC(p);
+    expect(r.toolCalls.map((c) => c.name)).toEqual(['first', 'second']);
+    expect(r.toolCalls[0]!.input).toBeNull();
+  });
+
+  test('a transcript with no tool calls yields an empty array, never undefined', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-empty-'));
+    tmp = dir;
+    const p = join(dir, 'e.jsonl');
+    writeFileSync(p, JSON.stringify({ type: 'user', message: { role: 'user', content: 'hello' } }) + '\n', { mode: 0o600 });
+    expect(parseTC(p).toolCalls).toEqual([]);
+  });
+
+  test('tool_result joins to its call by tool_use_id: ok mirrors is_error, internal id stripped', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-join-'));
+    tmp = dir;
+    const line = (o: unknown) => JSON.stringify(o);
+    const p = join(dir, 'j.jsonl');
+    writeFileSync(p, [
+      line({ type: 'assistant', message: { role: 'assistant', content: [
+        { type: 'tool_use', id: 'ok-1', name: 'Bash', input: { command: 'true' } },
+        { type: 'tool_use', id: 'bad-1', name: 'Bash', input: { command: 'false' } },
+        { type: 'tool_use', id: 'orphan-1', name: 'Read', input: { file_path: '/x' } },
+      ] } }),
+      // Results arrive in a LATER line than their calls — the join is post-parse.
+      line({ type: 'user', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'ok-1', content: 'fine' },
+        { type: 'tool_result', tool_use_id: 'bad-1', is_error: true, content: 'boom' },
+      ] } }),
+    ].join('\n') + '\n', { mode: 0o600 });
+    const r = parseTranscript(p, { collectToolCalls: true });
+    expect(r.toolCalls).toHaveLength(3);
+    expect(r.toolCalls[0]).toEqual({ name: 'Bash', input: { command: 'true' }, result: { ok: true } });
+    expect(r.toolCalls[1]).toEqual({ name: 'Bash', input: { command: 'false' }, result: { ok: false } });
+    // No matching result seen → result omitted, never guessed.
+    expect(r.toolCalls[2]).toEqual({ name: 'Read', input: { file_path: '/x' } });
+    // The transcript-internal tool_use_id never reaches the public shape.
+    expect(JSON.stringify(r.toolCalls)).not.toContain('ok-1');
+  });
+
+  test('indexes are non-decreasing and bounded by the turn count', () => {
+    const p = parseTC(fixture());
+    const idx = p.toolCallTurnIndexes;
+    for (let i = 1; i < idx.length; i++) expect(idx[i]!).toBeGreaterThanOrEqual(idx[i - 1]!);
+    for (const i of idx) expect(i).toBeLessThanOrEqual(p.turns.length);
+  });
+
+  test('filtering by a boundary keeps only the calls in that span', () => {
+    const p = parseTC(fixture());
+    expect(p.boundaryTurnIndexes.length).toBeGreaterThan(0);
+    const start = p.boundaryTurnIndexes[p.boundaryTurnIndexes.length - 1]!;
+    const span = p.toolCalls.filter((_c, i) => (p.toolCallTurnIndexes[i] ?? 0) >= start);
+    // the post-boundary span must not carry the pre-boundary command
+    const cmds = span.map((c) => (c.input as { command?: string }).command);
+    expect(cmds).toContain('echo two');
+    expect(cmds).not.toContain('echo one');
+    // and the unfiltered set is strictly larger — proving the old behaviour differed
+    expect(span.length).toBeLessThan(p.toolCalls.length);
+  });
+});
+
+describe('parseTranscript toolCalls — the record is bounded (#4743)', () => {
+  const parse = (path: string) => parseTranscript(path, { collectToolCalls: true });
+
+  test('a file body in a tool input is capped with an explicit omission marker, and a real command is untouched', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-cap-'));
+    tmp = dir;
+    const p = join(dir, 'big.jsonl');
+    const body = 'A'.repeat(TOOL_CALL_VALUE_MAX_CHARS + 5_000);
+    writeFileSync(p, JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'tool_use', id: 'w', name: 'Write', input: { file_path: '/repo/blob.txt', content: body } },
+          { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'pytest -q tests/' } },
+        ],
+      },
+    }) + '\n', { mode: 0o600 });
+    const r = parse(p);
+    const write = r.toolCalls[0]!.input as { file_path: string; content: string };
+    expect(write.file_path).toBe('/repo/blob.txt');
+    expect(write.content.startsWith('A'.repeat(TOOL_CALL_VALUE_MAX_CHARS))).toBe(true);
+    expect(write.content).toContain('…[5000 chars omitted]');
+    expect(write.content.length).toBeLessThan(TOOL_CALL_VALUE_MAX_CHARS + 100);
+    // The sibling command is a fact, and facts are never rewritten.
+    expect((r.toolCalls[1]!.input as { command: string }).command).toBe('pytest -q tests/');
+  });
+
+  test('the cap reaches strings nested in arrays and objects', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-cap-nested-'));
+    tmp = dir;
+    const p = join(dir, 'nested.jsonl');
+    const body = 'B'.repeat(TOOL_CALL_VALUE_MAX_CHARS + 1);
+    writeFileSync(p, JSON.stringify({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: 'e', name: 'MultiEdit', input: { edits: [{ new_string: body }] } }],
+      },
+    }) + '\n', { mode: 0o600 });
+    const r = parse(p);
+    const edits = (r.toolCalls[0]!.input as { edits: Array<{ new_string: string }> }).edits;
+    expect(edits[0]!.new_string).toContain('…[1 chars omitted]');
+    expect(edits[0]!.new_string.length).toBeLessThan(TOOL_CALL_VALUE_MAX_CHARS + 100);
+  });
+
+  test('pathological nesting past the depth cap reads as null, never a stack overflow', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-cap-depth-'));
+    tmp = dir;
+    const p = join(dir, 'deep.jsonl');
+    // 12 levels of {a: {a: …}} — past TOOL_CALL_MAX_DEPTH (8).
+    let deep: unknown = 'leaf';
+    for (let i = 0; i < 12; i++) deep = { a: deep };
+    writeFileSync(p, JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'd', name: 'Deep', input: deep }] },
+    }) + '\n', { mode: 0o600 });
+    const r = parse(p);
+    // The record exists and JSON-serializes; somewhere below the cap the
+    // chain terminates in null instead of the leaf string.
+    const json = JSON.stringify(r.toolCalls[0]!.input);
+    expect(json).not.toContain('leaf');
+    expect(json).toContain('null');
   });
 });

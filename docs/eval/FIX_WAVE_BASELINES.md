@@ -23,6 +23,52 @@ touch `~/.gbrain` per the eval discipline — results land in
 `<repo>/.gbrain-evals/eval-results.jsonl`). Record the gate verdict + headline
 metrics here per run.
 
+## Eval write-path fix wave (2026-08-31, branch roseau)
+
+The first wave whose receipt is the WRITE path (gbrain-evals Cat 35), bracketed
+by two paid runs at the sonnet judge:
+
+- **Pre-wave baseline (Phase 0, REQUIRED before any code change):** gbrain
+  master @ aa820c7f re-pinned into gbrain-evals — dream salient recall
+  **70.2%** (the published 61.5% was 62 commits stale; +8.7pp had already
+  landed via #4152 + oneshot), quote fidelity **54.2%** (130/240),
+  hallucination 14.0%, emission **16/20** (same four triage misses, scores
+  0.32–0.42 — the F2 rescue band), facts lane 58.6%. Receipt archived at
+  `~/gbrain-cat35-receipts/phase0-baseline-aa820c7f.json` (operator machine).
+- **Post-wave run (final, RC 079941d2 after the ship-review fixes; gates PASS,
+  $6.36, 35 min):** dream salient recall **88.1%** [82.0-93.5] (+17.9pp vs the
+  Phase-0 baseline; strict 82.1%), emission **20/20** — and this run is the
+  cleanest proof of the rescue: ALL FOUR previously-missed transcripts scored
+  BELOW the 0.5 gate (0.45 / 0.35 / 0.42 / 0.42) and still emitted, while
+  pure-routine controls stayed at zero pages (no false fires). Quote fidelity
+  **82.7%** (115/139 vs 130/240 = 54.2% at baseline), hallucination **7.0%**
+  (45/645, halved from 14.0%), facts lane **64.8%** (+6.2pp; idea-kind 50.0%
+  vs the published 38.3%), usability 41.9% (from 36%). Per-kind dream, every
+  kind up sharply: fact 86.1 (from 64.8) / decision 88.6 / idea 86.7 / entity
+  95.0 / vibe 87.5. Judge ceiling 93.0% (stable — runs comparable); 95 item
+  flips. Dream distractor leakage 1.2% (1 item) — the Phase-0 baseline also
+  measured 1.2% and the intermediate run 0%, so this is single-item run-to-run
+  noise, not a rescue cost. Receipt:
+  `~/gbrain-cat35-receipts/phase7b-final-079941d2.json` (operator machine).
+  An intermediate run at 1ee7db52 (pre-review-fixes) measured dream 80.5% /
+  quotes 84.6%; the +7.6pp between them is the quote-span and offset-map fixes
+  the ship review caught. Two commits land after the measured SHA
+  (docs/TODOs/manifest + the inline-drain phase tag, normalizer code-point
+  parity, newline-collapse, mask reuse); all are measurement-neutral on this
+  corpus — the scorer normalizes whitespace on both sides (`normalizeWs` in
+  cat35-checks.ts), the parity change only moves Greek final-sigma/non-BMP
+  folding, and the rest is telemetry.
+
+In-repo gates at the wave head: verify 54/54; BrainBench compare **PASS
+(same-hash)** — kta 0/149 on all three seams, push recall/precision and
+isolation unchanged (read path untouched by design); live triage calibration
+(required Phase-4 gate): band accuracy **95%** on the 20-fixture drift pin,
+buried gate passes **5/5** under rubric v2.
+
+Retrieval canary: PASS @ 1ce45f0a (hermetic deterministic-embedder CLI run;
+recall@10=1.0000 first_relevant=1.0000 expected_top1=0.8571 vs floors
+0.70/0.60/0.85; 14/14 queries; ledger: .gbrain-evals/eval-results.jsonl).
+
 ## Containment sprint (2026-08-15, v0.46.9.1, branch garrytan/containment-sprint-coverage-modularity)
 
 God-file line counts AFTER the façade peels. Five of the six giants (all but
@@ -101,7 +147,9 @@ recall@10=1.0000 first_relevant=1.0000 expected_top1=0.8333 vs floors
 ranking pipeline (keyword/title/alias arms + RRF against gold qrels) with
 synthetic basis vectors — no API keys, no production brain, so the live-serve
 lock is moot. Semantic-embedding regressions remain the keyed eval suites'
-job. Wired into `bun run verify` as check:eval-canary.
+job. Runs in CI via `test/eval-canary.test.ts` in the unit matrix;
+`check:eval-canary` remains as an on-demand package script (removed from the
+verify battery as pure double work).
 
 Verified-bug status at W0 ship: cycle-lock refresh + fencing (TODO-OPS-2
 closed), stall-death parent unblock, started_at ×4, modality carry, import

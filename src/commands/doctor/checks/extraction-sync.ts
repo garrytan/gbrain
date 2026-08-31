@@ -740,10 +740,24 @@ export async function computeExtractHealthCheck(
     const highHaltKinds = kinds.filter(k => k.halt_rate > 0.10);
 
     if (highHaltKinds.length > 0) {
+      // Each row's halt_count/round_completed_count are 7-day SUMS (the
+      // rollup table is one row per kind per day), so a kind whose most
+      // recent activity is near the edge of the 7-day window can show a
+      // high halt rate from entirely historical failures with nothing
+      // currently wrong — the operator has no way to tell "actively
+      // failing" from "hasn't run since a bug that's already fixed" without
+      // this. last_updated_at is already computed (MAX(updated_at) above)
+      // but wasn't surfaced in the message text, only in `details`.
       const top3 = [...highHaltKinds]
         .sort((a, b) => b.halt_rate - a.halt_rate)
         .slice(0, 3)
-        .map(k => `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%`)
+        .map(k => {
+          const ageDays = k.last_updated_at
+            ? Math.floor((Date.now() - new Date(k.last_updated_at).getTime()) / 86_400_000)
+            : null;
+          const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', today' : `, ${ageDays}d ago`;
+          return `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%${ageSuffix}`;
+        })
         .join(', ');
       return {
         name,

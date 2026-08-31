@@ -41,6 +41,7 @@ import { UnrecoverableError } from '../minions/types.ts';
 import { makeSubagentHandler } from '../minions/handlers/subagent.ts';
 import { RateLeaseUnavailableError, leaseFullBackoffMs } from '../minions/rate-leases.ts';
 import { reconnectAfterConnectionError } from '../minions/reconnect.ts';
+import { withChatPhase } from '../ai/chat-usage.ts';
 import { isRetryableConnError } from '../retry-matcher.ts';
 import { anySignal, throwIfAborted } from '../abort-check.ts';
 import { CYCLE_DEADLINE_RESERVE_MS } from './base-phase.ts';
@@ -356,7 +357,14 @@ async function drainLoop(
       let handlerErr: unknown;
       let handlerRan = false;
       try {
-        result = await handler(context);
+        // #4218 parity with minions/worker.ts: attribute every gateway.chat()
+        // the handler makes to THIS job, so chat_usage_log rows carry
+        // `phase = 'job:<name>'`. Without it the inline drain inherits its
+        // caller's AsyncLocalStorage phase — a cycle phase that wraps its own
+        // work (e.g. dream synthesize) would silently absorb every child's
+        // spend into the phase tag, breaking the one-ledger-per-surface rule
+        // the phase telemetry depends on.
+        result = await withChatPhase(`job:${job.name}`, () => handler(context));
         handlerRan = true;
       } catch (e) {
         handlerErr = e;

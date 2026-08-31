@@ -2,6 +2,332 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.9.0] - 2026-08-31
+
+Optional Memorable integration, adopted from community PR #4537 (thank you
+@NIkhil-cmd-cmd) and hardened end-to-end: your agent sessions can now feed
+*how a task was done* — the redacted tool calls that changed files and ran
+verifications — into the third-party Memorable service's procedure store, and
+recall it when a similar task comes back. OFF by default; nothing changes
+until a human accepts an explicit disclosure.
+
+### Added
+- **Memorable session-end relay (opt-in)** across three harnesses: Claude
+  Code and Codex capture at session end; OpenClaw captures per compaction.
+  gbrain writes a local, secret-scanned session receipt and fire-and-forget
+  spawns the `memorable` CLI, which owns all egress. Operator doc with a
+  per-command egress table and a per-harness capture matrix:
+  `docs/memorable-agents.md`.
+- **Consent that cannot be flipped out-of-band.** Enabling requires
+  `gbrain config set integrations.memorable.enabled true` plus accepting a
+  disclosure that names exactly what leaves the machine; acceptance writes a
+  gbrain-private consent stamp that the third-party CLI has never written,
+  scope-bound to the disclosed harness list — widening the capture surface
+  in a future release re-runs the disclosure. `GBRAIN_MEMORABLE=0` (any
+  negative spelling) is the env kill switch; no env value can enable.
+- **Codex SessionEnd hooks, trust-gated.** `gbrain bootstrap` (workspace,
+  harness, and plugin lanes) wires a codex `hooks.json` entry together with
+  its `config.toml` trust hash — verified live against codex-cli 0.147.0,
+  where an untrusted hook is silently never executed. Re-runs replace
+  gbrain's entry in place so your own hook entries never lose trust;
+  uninstall removes exactly what gbrain wrote.
+- **Doctor coverage:** a `memorable_relay_health` check names every broken
+  or half-consented state — enabled-without-disclosure, CLI missing,
+  the last relay failure, receipts never relayed, and a codex hook that is
+  wired but has never fired. The hooks heartbeat check now names the top
+  degrade reason instead of hiding a standing misconfiguration behind
+  "healthy".
+
+### Changed
+- Session-end capture dispatches per harness through one capture seam
+  (claude-code and codex each pin their own transcript root and parser);
+  transcript parsing skips tool-call collection entirely when the
+  integration is off, so the default path does less work than before.
+- Absorbed the leaner re-cut of the integration from community PR #4743
+  (thank you again @NIkhil-cmd-cmd): tool-call collection is now OPT-IN at
+  the parser level (the per-prompt lanes never collect tool inputs for
+  brains that never opted in), every string in a collected tool-call input
+  is bounded (32k with an explicit omission marker) on both capture lanes,
+  and a dozen of its sharpest test pins were ported onto the hardened
+  implementation.
+- The `bootstrap_hooks_heartbeat` doctor message now surfaces the most
+  common degrade reason in an otherwise-healthy window.
+- Nightly real-binary door pins refreshed (hermes installer digest reviewed
+  and re-pinned; claude plugin door expectation updated), healing a red
+  nightly that predated this wave.
+- The paid hermes/opencode door legs now SKIP VISIBLY on labeled PRs when the
+  `ANTHROPIC_API_KEY` repo secret is absent (warning + job summary; everything
+  keyless still runs and gates) — the nightly schedule keeps its loud fail.
+
+### Fixed
+- `gbrain config unset integrations.memorable.enabled` now routes to the
+  same config plane as `set` and revokes the disclosure consent, so unset
+  actually turns the relay off.
+- Redaction hardening across both capture lanes before anything reaches the
+  receipt: tool-call arguments are scanned leaf-by-leaf (quoted values
+  inside shell commands included), the high-entropy rules cover more
+  credential keyword shapes and value lengths, and a session whose scan
+  cannot run is never relayed.
+- Hook session-end resilience: payloads without a session id adopt the
+  transcript's own id instead of sharing one corpus file, and a
+  discovered-by-recency transcript (which can belong to a different, still
+  running session) is captured locally but never relayed.
+
+### To take advantage of v0.47.9.0
+```bash
+gbrain upgrade            # no schema migration — new files + hooks only
+npm i -g memorable-cli    # the third-party CLI (optional; closed source)
+memorable init && memorable enable
+gbrain config set integrations.memorable.enabled true   # read + accept the disclosure
+gbrain doctor             # memorable_relay_health should read ok
+```
+Nothing activates without the disclosure step — installs that skip it are
+byte-for-byte unaffected. Read `docs/memorable-agents.md` first: it states
+plainly what leaves the machine, that the CLI is closed source, and how to
+purge every local artifact after disabling.
+## [0.47.8.0] - 2026-08-31
+
+**Your nightly dream cycle stops losing the good stuff. Sessions where the real
+insight was buried in routine chatter now produce pages instead of being
+skipped, quotes on those pages are actually the words you said, and the facts
+extractor finally has a home for ideas.**
+
+Three things used to go wrong when gbrain turned a working session into a brain
+page. First, if you spent an hour on scheduling and email and dropped one
+genuinely good idea in the middle, the cheap "is this worth writing up?" check
+averaged the whole conversation, scored it medium, and wrote nothing — the
+whole session vanished. Second, quotes on the pages it did write were often
+paraphrases wearing quotation marks: the words looked verbatim, but you never
+said them that way. Third, when the extractor pulled structured facts out of a
+conversation, it had categories for events, preferences, commitments, beliefs,
+and plain facts — but none for an idea, so your best thinking got filed as a
+generic "fact" or dropped.
+
+All three are fixed, and the fix is measured end to end on a public benchmark
+rather than asserted. On the write-path benchmark (24 fictional agent sessions
+with 173 planted salient units), the amount of a session's meaningful content
+that survives into a page went from **70.2% to 88.1%**, every one of the four
+previously-skipped sessions now produces pages, and quote fidelity went from
+**54% to 83%**. Invented claims roughly halved.
+
+## To take advantage of v0.47.8.0
+
+`gbrain upgrade` should do this automatically. If it did not, or if
+`gbrain doctor` warns about a partial migration:
+
+1. **Run the orchestrator manually:**
+   ```bash
+   gbrain apply-migrations --yes
+   ```
+   Migration v145 widens the facts table so the new `idea` kind can be stored.
+   Until it runs, an extractor that emits an idea will have that page's fact
+   batch rejected (atomically — nothing is lost, and the markdown fence stays
+   the source of truth), so run it before your first post-upgrade extraction.
+
+2. **Nothing else is required.** The distillation improvements are on by
+   default. Your next dream cycle re-scores the transcript corpus once (the
+   scoring rubric changed, so cached verdicts are invalidated) — that is one
+   cycle of cheap re-judging, bounded by `dream.triage.max_ms`. To sweep it in
+   one go instead:
+   ```bash
+   gbrain dream retriage --dry-run     # what would change, zero LLM calls
+   gbrain dream retriage               # re-score the corpus
+   ```
+
+3. **Verify the outcome:**
+   ```bash
+   gbrain dream --phase synthesize --dry-run   # see which transcripts pass now
+   gbrain stats
+   ```
+
+4. **If any step fails or the numbers look wrong,** please file an issue:
+   https://github.com/garrytan/gbrain/issues with the output of `gbrain doctor`,
+   the contents of `~/.gbrain/upgrade-errors.jsonl` if it exists, and which step
+   broke. This feedback loop is how the maintainers find fragile upgrade paths.
+   Thank you.
+
+**Say to your agent:** *"synthesize my conversations"* / *"process yesterday's
+transcripts"* — *"re-score the triage"* / *"retriage the backlog"* — *"what do
+we know about"* the topic you worked through, to read the page back.
+
+### What you would see in a concrete example
+
+A two-hour session: forty minutes of calendar shuffling, one paragraph where
+you work out why customers actually churn, then more logistics.
+
+| | Before v0.47.8.0 | After |
+|---|---|---|
+| Did it produce a page? | No — scored 0.35, under the 0.5 bar | Yes |
+| Why | The whole session averaged out as routine | Two passages verified word-for-word against the transcript carried it through |
+| The quotes on the page | Often paraphrased inside quote marks | Verbatim, or unquoted and honest |
+| "our churn is a billing-surprise problem" | Filed as a generic fact, or dropped | Filed as an idea |
+
+### Things to watch
+
+- **The scoring change re-judges your corpus once.** Cached scores are
+  invalidated on upgrade; the first cycle re-scores within its time budget and
+  continues next cycle if it runs out. `gbrain dream retriage` does it in one
+  sweep.
+- **Quote repair rewrites page bodies.** It only touches pages the current run
+  just created, only quoted spans, and never invents text — an ungroundable
+  quote loses its quotation marks and keeps its words. If you ever need it off:
+  `gbrain config set dream.synthesize.quote_verify false`.
+- **`idea` is a storage kind, not a new verb.** The `remember` verb's kinds are
+  a frozen protocol enum and still number five. Note that once idea facts
+  exist, an OLDER gbrain reading those pages drops them as malformed — forward
+  only, same as previous taxonomy widenings.
+- **Real-time fact capture now stores low-importance facts when you asked it
+  to.** The `all` setting always promised every tier; the extractor used to be
+  told to skip the low ones anyway. It now labels them honestly. Pass
+  `high-only` if you want the old suppression (sync already does).
+
+### Itemized changes
+
+#### Added
+
+- **Verified-segment triage rescue** (`src/core/cycle/triage-rescue.ts`). A
+  transcript scoring in `[dream.triage.rescue_floor, dream.triage.threshold)`
+  passes the gate when at least `dream.triage.rescue_min_segments` (default 2;
+  `0` disables) of the triage judge's own quoted segments verify as normalized
+  substrings of the transcript, and its content type is in
+  `dream.triage.rescue_content_types` (default mixed/reflection/idea/strategy/
+  people). Zero extra model calls, works on already-cached scores, and
+  fabricated segments cannot trigger it. `passesTriageGate` is the single gate
+  every consumer reads — the synthesize fan-out, the report telemetry, dry-run
+  counts, and `gbrain dream retriage` (so a queue reconcile can no longer
+  cancel the jobs the rescue just admitted).
+- **Mechanical quote verify/repair** (`src/core/cycle/synthesize-verify.ts`),
+  on by default via `dream.synthesize.quote_verify`. Runs after the synthesis
+  children write and before the provenance stamp, file dual-write, and embed
+  sweep, so every downstream artifact carries the repaired body. Ladder per
+  quoted span: exact substring kept; whitespace/punctuation-drifted match
+  replaced with the verbatim transcript slice; near match (rare-trigram anchor,
+  ≥0.8 token overlap, ambiguity refuses to guess) replaced; otherwise the
+  quotation marks come off and the text stays. Scoped to pages the run just
+  created, fail-open per page, hard CPU caps. Telemetry in
+  `details.synthesis.quote_verify`, including a warn-only count of numeric and
+  date claims that do not appear in the transcript.
+- **`idea` fact kind** across the extractor, database (migration v145), fence
+  round-trip, decay half-life (365d), and `gbrain recall` rendering.
+- **Synthesis spend telemetry**: `details.synthesis.spend` (child tokens from
+  the job rows plus triage judge tokens, `cost_basis: in+out+cache_read`, cost
+  `null` rather than a fake `0` for unpriced models) and
+  `children_zero_pages`, which distinguishes a child that read the session and
+  decided not to write from a session that never got scored.
+- **A hermetic write-path regression harness** (`bun test
+  test/cycle-write-path-mini-eval.test.ts`) — a frozen mini-corpus through the
+  real synthesis phase with only the model transport scripted, in ~3 seconds
+  at no cost.
+
+#### Changed
+
+- The synthesis prompt's output policy: quotation marks are now explicitly only
+  for spans reproducible exactly (otherwise paraphrase without them), pages must
+  carry the specific numbers, dates, amounts, names, and who-decided-what of the
+  content they cover, and claims must be grounded with speculation attributed as
+  speculation.
+- The triage rubric scores by a transcript's peak passage rather than its
+  average, and prefers segments carrying concrete facts and decisions. Cached
+  verdicts re-judge once on upgrade.
+- Real-time fact capture labels low-importance facts honestly instead of being
+  told to skip them; `high-only` callers are unaffected.
+
+#### Fixed
+
+- Quoted spans after a paragraph break longer than two characters were silently
+  skipped by the verifier, and an interior curly-quoted phrase inside a
+  straight-quoted span mis-paired across quote types.
+- Case folding desynced from its offset map whenever lowercasing expanded a
+  character (Turkish dotted I), which could splice garbled or empty text into a
+  page as a "verbatim" repair. Presence checks and repair now share one folding
+  routine, so they cannot disagree.
+- A long ungroundable quote could scan a large transcript thousands of times on
+  the event loop; the search is now bounded and yields between pages.
+- Chat spend from inline-drained background jobs was attributed to the calling
+  cycle phase instead of the job itself, so the same tokens could be counted
+  twice by anything reading both ledgers.
+
+#### For contributors
+
+- `evals/brainbench` gate, the retrieval canary, and the read path are
+  unchanged by this wave and pinned green (know-to-ask 0/149 on all three
+  harness seams, same-hash compare).
+- Wave receipts, including the bracketing benchmark runs and the live triage
+  calibration numbers, are in `docs/eval/FIX_WAVE_BASELINES.md`.
+
+## [0.47.7.0] - 2026-08-30
+
+**The test-infra speed wave: the local suite runs up to 3× faster on
+memory-constrained machines and comes back green on machines it used to fail
+on, the CI matrix sheds its heaviest atom,
+and the e2e lane finally gets the schema-snapshot fast path every other lane
+already had.**
+
+### Fixed
+
+- **`bun run test` no longer collapses to a single shard on 16GB machines.**
+  The memory-adaptive runner shed shards before intra-shard width, but bun's
+  `--max-concurrency` only bounds `test.concurrent` tests (one file in the
+  corpus uses it) — so a common dev box ran the whole suite serially behind a
+  12000s watchdog, measured 3.25× slower than the same box at 4 shards. Width
+  sheds first now, and a new pinned test keeps it that way.
+- **Machines without coreutils `timeout` no longer hard-fail on watchdog
+  kills.** The fallback watchdog now drops a sentinel before TERMing a shard,
+  so the WEDGED/EXIT-HANG classifier is reachable there instead of a bare
+  rc=143 failure (regression-pinned).
+- **A long-registered shard flake is fixed at the root.** The extract-atoms
+  chunk-embed suite failed under shard parallelism because a neighbor's
+  provider key baked into the AI gateway's captured env snapshot survived the
+  neighbor's own cleanup; the suite now pins a keyless gateway and asserts its
+  own hermeticity. Two other registered flakes were verified already fixed and
+  their entries closed.
+- **Tests that assert "this must fail" now skip visibly on hosts that can't
+  make it fail.** Sandboxes with non-enforcing filesystems (permission bits
+  ignored), no crontab, or a git PATH shim that pollutes stderr previously
+  produced eight hard-red failures; environment probes turn those into
+  explicit skips while CI keeps full coverage.
+
+### Changed
+
+- **The unit suite's slowest files were rewritten into minimal forms with
+  assertion parity.** Thirteen files keep every test and every assertion while
+  running 1.2-8.6× faster (batched CLI spawns through a bounded pool, condition
+  polling instead of fixed sleeps, one engine + reset instead of per-test
+  boots, a build-once git fixture). Four attempted rewrites were reverted
+  with documented cause rather than shipped at risk.
+- **The BrainBench CLI e2e file moved to the slow tier with its own CI job.**
+  At 98s mined it was 10% of the whole matrix's weight and capped shard
+  scaling; post-rewrite it runs its independent CLI calls once through a
+  width-2 pool, and its in-process full-corpus duplicate of the CI brainbench
+  gate was removed.
+- **The serial lane dispatches heaviest-first.** A new advisory
+  `scripts/serial-weights.json` (mined from each run's banked durations)
+  drives LPT ordering; corrupt or missing weights fall back to discovery
+  order, never affecting correctness.
+- **`bun run test:e2e` activates the PGLite schema snapshot** like every other
+  runner (exported absolute so spawned CLI children find it), with explicit
+  per-file cold-path opt-outs for the suites that assert the path TO
+  post-init state. The e2e CI jobs restore the snapshot cache and activate it
+  too.
+- **`bun run verify` dropped its one genuinely duplicated check** (the
+  retrieval canary rides the unit matrix via its test file; the package
+  script remains for on-demand runs) and its worst timeout-flake exposure
+  with it.
+- **New shared test helpers** for contributors: `cli-spawn` (hermetic
+  async CLI spawns + bounded batching + memoized help calls), `wait-for`
+  (condition polling), `with-snapshot` (scoped cold-boot opt-out),
+  `resetPgliteStateNarrow` (explicit-table resets), `git-fixture`
+  (build-once repos), and environment probes (`fs-perms`,
+  `git-stderr-probe`). The speed helpers each ship with their own unit test
+  (the two environment probes are exercised through their consumer suites);
+  docs/TESTING.md carries the reach-for guide.
+
+To take advantage of v0.47.7.0: `gbrain upgrade`, then in the repo the fast
+loop is the same `bun run test` — just faster and honest about environment
+skips. Contributors writing tests: read the "Speed + environment helpers"
+section of docs/TESTING.md before hand-rolling spawn wrappers, sleeps, or
+permission-dependent assertions.
+
 ## [0.47.6.0] - 2026-08-29
 
 **The community fix wave: takes work on Postgres again, sync deletions get a

@@ -37,6 +37,12 @@
 import { describe, test, expect } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
+
+// Cold-path opt-out: asserts hasPendingMigrations === true on a FRESH brain
+// before initSchema — a restored snapshot already carries the config.version
+// row, which would flip that to false. The migration-replay arc must start cold.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+
 import {
   readContentChunksEmbeddingDim,
   embeddingMismatchMessage,

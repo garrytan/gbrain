@@ -73,7 +73,7 @@ test/cycle-abort.test.ts	#4077 — synthesize/patterns cooperative-abort threadi
 test/cycle-abort.test.ts	CycleOpts.signal contract (v0.20.5)	4	readFileSync
 test/cycle-abort.test.ts	autopilot-cycle handler contract (v0.20.5)	3	readFileSync
 test/cycle-drain-renewal.test.ts	db-lock heartbeat wiring (structural — issue #6 cancellation)	1	readFileSync
-test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	1	readFileSync
+test/cycle-drain-renewal.test.ts	drain-loop wiring (structural — the shape guard only covers worker.ts)	2	readFileSync
 test/cycle-pack-gating.test.ts	#2117: pack-gated skip summaries are actionable	2	readFileSync
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: NEEDS_LOCK_PHASES contract (source-shape)	2	readFileSync
 test/cycle-pack-gating.test.ts	v0.41 T9 R-GATE: dispatch result envelope	2	readFileSync
@@ -124,10 +124,10 @@ test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (
 test/e2e/skillpack-flow.test.ts	skillpack flow (E2E)	17	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
-test/eval-brainbench-e2e.test.ts	--llm availability gate	1	exec-scan
-test/eval-brainbench-e2e.test.ts	privacy guard violation branches (negative path)	1	exec-scan
-test/eval-brainbench-e2e.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
-test/eval-brainbench-e2e.test.ts	run-all once-per-sweep semantics (decision 16)	1	exec-scan
+test/eval-brainbench-e2e.slow.test.ts	--llm availability gate	1	exec-scan
+test/eval-brainbench-e2e.slow.test.ts	privacy guard violation branches (negative path)	1	exec-scan
+test/eval-brainbench-e2e.slow.test.ts	render-brainbench-delta.ts (the CI step-summary block)	2	exec-scan
+test/eval-brainbench-e2e.slow.test.ts	run-all once-per-sweep semantics (decision 16)	1	exec-scan
 test/eval-capture-db-plane.serial.test.ts	eval.capture set on the DB plane reaches the runtime gate (#1475)	9	bun-file
 test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routing can’t regress silently)	2	readFileSync
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	readFileSync
@@ -250,6 +250,7 @@ test/skillpack-migrate-fence.test.ts	runMigrateFence	8	readFileSync
 test/skillpack-scaffold.test.ts	runScaffold — IRON-RULE regressions (R1, R2)	3	readFileSync
 test/skillpack-scaffold.test.ts	runScaffold — happy path	3	readFileSync
 test/skillpack-scrub-legacy.test.ts	runScrubLegacy	8	readFileSync
+test/snapshot-shape-guard.test.ts	(file-level)	9	readFileSync
 test/sources-webhook.test.ts	Webhook sync job extraction contract	1	readFileSync
 test/spend-off-switch.test.ts	reindex / onboard off-switch dispatch (regression guards)	3	bun-file
 test/supervisor.test.ts	recovery hook timeout bound (structural)	1	readFileSync

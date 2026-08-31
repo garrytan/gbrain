@@ -11,6 +11,7 @@
  *   preference  90 days — "doesn't drink coffee" stays useful for a quarter
  *   belief      365 days — opinions decay slow but not infinite
  *   fact        365 days — most factual rows; same as belief by default
+ *   idea        365 days — articulated frames/theses age like beliefs
  *
  * Formula: confidence × exp(-age_days / halflife_days). Clamped to [0, 1].
  * If valid_until is set and we're past it, decay returns 0 regardless.
@@ -28,6 +29,7 @@ export const HALFLIFE_DAYS: Record<FactKind, number> = {
   preference: 90,
   belief: 365,
   fact: 365,
+  idea: 365,
 };
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;

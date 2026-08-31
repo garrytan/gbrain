@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { listBackfills, getBackfill } from '../../src/core/backfill-registry.ts';
+
 import { runBackfill } from '../../src/core/backfill-base.ts';
 import { dropZombieIndexes, checkActiveBuild } from '../../src/core/vector-index.ts';
 import {
@@ -40,6 +41,11 @@ import {
   type UpgradeCheckpoint,
 } from '../../src/core/upgrade-checkpoint.ts';
 import { LATEST_VERSION } from '../../src/core/migrate.ts';
+
+// Cold-path opt-out: asserts config.version === LATEST_VERSION *because of*
+// initSchema's migration chain — under a snapshot the version comes from the
+// fixture and the assertion proves nothing.
+delete process.env.GBRAIN_PGLITE_SNAPSHOT;
 
 let tmpHome: string;
 let originalHome: string | undefined;

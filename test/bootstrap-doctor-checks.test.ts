@@ -251,6 +251,19 @@ describe('bootstrap_hooks_heartbeat thresholds', () => {
     expect(c?.message).toContain('3/10');
   }, T);
 
+  test('a mostly-degraded window names the TOP reason in the healthy message (standing misconfig made visible)', async () => {
+    const { parent, home } = makeHome();
+    const line = (reason: string) =>
+      JSON.stringify({ ts: new Date().toISOString(), event: 'session-end', outcome: 'degraded', reason, duration_ms: 1 });
+    writeHeartbeat(home, [], [
+      ...Array.from({ length: 8 }, () => line('scan_unavailable')),
+      ...Array.from({ length: 2 }, () => line('push_unavailable')),
+    ]);
+    const c = byName(await run(parent), 'bootstrap_hooks_heartbeat');
+    expect(c?.status).toBe('ok'); // degraded is a designed fallback, never a failure
+    expect(c?.message).toContain('10/10 degraded (top: scan_unavailable x8)');
+  }, T);
+
   test('exactly 0.2 → ok (threshold is strictly greater-than)', async () => {
     const { parent, home } = makeHome();
     writeHeartbeat(home, mix(2, 8));

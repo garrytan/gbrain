@@ -49,7 +49,9 @@ flows through in both directions.
 > **Keyless brains:** when `extract_facts` returns `skipped:
 > extraction_unavailable`, YOU are the extractor — pull the facts from the turn
 > yourself and write each one via `remember` with `kind` set (event | preference
-> | commitment | belief) and the visibility the envelope's `agent_action` names
+> | commitment | belief | fact — those five are the frozen protocol enum; the
+> `idea` kind the extractor and DB carry is NOT one of them) and the
+> visibility the envelope's `agent_action` names
 > (default private — pin it; `remember` defaults to world), or author a
 > `## Facts` fence on the entity page. A `skipped: extraction_failed` envelope
 > (server-side extractor errored on this turn; `reason` names why) invites the
