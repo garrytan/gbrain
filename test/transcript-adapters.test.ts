@@ -7,7 +7,7 @@
  * parseClaudeSessionFile must never change it.
  */
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -38,15 +38,25 @@ import {
   type OpenclawLineResult,
 } from '../src/core/transcripts/openclaw.ts';
 import { hermesAdapter } from '../src/core/transcripts/hermes.ts';
+import {
+  grokAdapter,
+  isGrokChatHistoryFile,
+  isGrokSessionSidecar,
+  mapGrokLine,
+} from '../src/core/transcripts/grok.ts';
 import { chatgptExportAdapter } from '../src/core/transcripts/chatgpt-export.ts';
 import { claudeExportAdapter } from '../src/core/transcripts/claude-export.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
+import { discoverTranscriptFiles, buildStatusRows } from '../src/core/transcripts/discover.ts';
+import { redactSession } from '../src/core/transcripts/render.ts';
+import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 
 const CHATGPT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'chatgpt-conversations.json');
 const CLAUDE_EXPORT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'claude-export.json');
 
 const FIXTURE = join(import.meta.dir, 'fixtures', 'conversation-formats', 'claude-code.jsonl');
 const CODEX_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'codex-rollout.jsonl');
+const GROK_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'grok-session', 'chat_history.jsonl');
 const AGENT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'agent-session.jsonl');
 const CHECKPOINT_FIXTURE = join(
   import.meta.dir,
@@ -149,6 +159,9 @@ describe('buildTranscriptSlug', () => {
     expect(slug).toBe(
       `conversations/sessions/2026-08-14-codex-${transcriptSlugId('AB12cd34ef56')}`,
     );
+    expect(
+      buildTranscriptSlug('grok', '2026-08-08T11:00:00.000Z', { sessionId: 'grok-fixture-session-1' }),
+    ).toMatch(/^conversations\/sessions\/2026-08-08-grok-[0-9a-f]{12}$/);
   });
   test('exports get per-provider dirs with title + hash12', () => {
     expect(
@@ -217,9 +230,9 @@ describe('detectAdapter', () => {
 });
 
 describe('harnessRoots', () => {
-  test('covers the four harnesses and is override-injectable for tests', () => {
+  test('covers the five harnesses and is override-injectable for tests', () => {
     const formats = harnessRoots().map((r) => r.format);
-    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes']);
+    expect(formats).toEqual(['claude-code', 'codex', 'openclaw', 'hermes', 'grok']);
     const injected = harnessRoots([{ format: 'codex', root: '/tmp/x', extension: '.jsonl' }]);
     expect(injected).toHaveLength(1);
     expect(injected[0].root).toBe('/tmp/x');
@@ -470,6 +483,186 @@ describe('hermesAdapter', () => {
   });
 });
 
+// ── Grok adapter [chat_history.jsonl; sidecars skipped; no per-message times] ─
+
+const GROK_SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+function writeGrokTree(
+  root: string,
+  opts: {
+    cwd?: string;
+    id?: string;
+    body?: string;
+    summary?: Record<string, unknown> | null;
+    sidecars?: boolean;
+  } = {},
+): string {
+  const cwd = opts.cwd ?? '/home/alice-example/agent-workspace';
+  const id = opts.id ?? GROK_SESSION_ID;
+  const sessionDir = join(root, encodeURIComponent(cwd), id);
+  mkdirSync(sessionDir, { recursive: true });
+  const p = join(sessionDir, 'chat_history.jsonl');
+  writeFileSync(p, opts.body ?? readFileSync(GROK_FIXTURE, 'utf8'));
+  if (opts.summary !== null) {
+    const summary =
+      opts.summary ??
+      JSON.parse(readFileSync(join(import.meta.dir, 'fixtures', 'transcripts', 'grok-session', 'summary.json'), 'utf8'));
+    writeFileSync(join(sessionDir, 'summary.json'), JSON.stringify(summary));
+  }
+  if (opts.sidecars) {
+    writeFileSync(join(sessionDir, 'updates.jsonl'), '{"timestamp":1,"method":"session/update","params":{}}\n');
+    writeFileSync(join(sessionDir, 'events.jsonl'), '{"ts":1,"type":"turn_started"}\n');
+    writeFileSync(join(dirnameGrokCwd(root, cwd), 'prompt_history.jsonl'), '{"timestamp":1,"session_id":"x","prompt":"hi"}\n');
+  }
+  return p;
+}
+
+function dirnameGrokCwd(root: string, cwd: string): string {
+  return join(root, encodeURIComponent(cwd));
+}
+
+describe('grokAdapter', () => {
+  test('user/assistant text only; system, reasoning, tools, synthetic user never leak', async () => {
+    const { sessions, diag } = await drain(grokAdapter.parse(GROK_FIXTURE));
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0];
+    expect(s.meta.harness).toBe('grok');
+    expect(s.meta.sessionId).toBe('grok-fixture-session-1');
+    expect(s.meta.cwd).toBe('/home/alice-example/agent-workspace');
+    expect(s.meta.title).toBe('Widget seed round');
+    expect(s.meta.model).toBe('grok-4.6-build');
+    expect(s.meta.startedAt).toBe('2026-08-08T11:00:00.000Z');
+    expect(s.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(s.messages[0].text).toContain('Which fund led the widget-co seed');
+    expect(s.messages[1].text).toContain('fund-a led the widget-co seed');
+    expect(s.messages[0].timestamp).toBe('2026-08-08T11:00:00.000Z');
+    expect(s.messages[3].timestamp).toBe('2026-08-08T11:05:00.000Z');
+    const all = s.messages.map((m) => m.text).join('\n');
+    expect(all).not.toContain('SYSTEM-ONLY-TEXT');
+    expect(all).not.toContain('REASONING-ONLY-TEXT');
+    expect(all).not.toContain('TOOL-OUTPUT-ONLY-TEXT');
+    expect(all).not.toContain('SYNTHETIC-ONLY-TEXT');
+    expect(diag.sessions).toBe(1);
+    expect(diag.skippedLines).toBe(1);
+    expect(diag.expectedEmpty).toBe(false);
+  });
+
+  test('cwd is url-decoded from the session-store path when summary is absent', async () => {
+    const p = writeGrokTree(tdir(), { summary: null });
+    const { sessions } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].meta.sessionId).toBe(GROK_SESSION_ID);
+    expect(sessions[0].meta.cwd).toBe('/home/alice-example/agent-workspace');
+  });
+
+  test('redaction runs on grok text the same as every other format', async () => {
+    const planted = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
+    const p = writeGrokTree(tdir(), {
+      body:
+        JSON.stringify({ type: 'system', content: 'sys' }) +
+        '\n' +
+        JSON.stringify({ type: 'user', content: [{ type: 'text', text: `key ${planted}` }] }) +
+        '\n' +
+        JSON.stringify({ type: 'assistant', content: 'ok', model_id: 'grok-4.6-build' }) +
+        '\n',
+      summary: {
+        info: { id: GROK_SESSION_ID, cwd: '/tmp' },
+        created_at: '2026-08-08T11:00:00.000Z',
+        last_active_at: '2026-08-08T11:00:01.000Z',
+      },
+    });
+    const { sessions } = await drain(grokAdapter.parse(p));
+    const redacted = redactSession(sessions[0], { userPatternsPath: '/nonexistent' });
+    expect(redacted.redactionCount).toBeGreaterThan(0);
+    expect(redacted.session.messages[0].text).not.toContain(planted);
+  });
+
+  test('empty (system-only) session explains itself and is not host-format drift', async () => {
+    const p = writeGrokTree(tdir(), {
+      body: JSON.stringify({ type: 'system', content: 'SYSTEM-ONLY-TEXT' }) + '\n',
+      summary: {
+        info: { id: GROK_SESSION_ID, cwd: '/tmp' },
+        created_at: '2026-08-08T11:00:00.000Z',
+      },
+    });
+    const { sessions, diag } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(0);
+    expect(diag.sessions).toBe(0);
+    expect(diag.bytesRead).toBeGreaterThan(0);
+    expect(diag.expectedEmpty).toBe(true);
+    expect(diag.zeroSessionsReason).toMatch(/tool\/reasoning-only|no user\/assistant text/);
+    const r = await runTranscriptsIngest({} as never, {
+      paths: [p],
+      dryRun: true,
+      sourceId: 'default',
+      userPatternsPath: '/nonexistent',
+    });
+    expect(r.driftFiles).toBe(0);
+    expect(r.sessionsSeen).toBe(0);
+  });
+
+  test('malformed lines are skipped and the rest of the session still imports', async () => {
+    const { diag } = await drain(grokAdapter.parse(GROK_FIXTURE));
+    expect(diag.skippedLines).toBe(1);
+    expect(diag.sessions).toBe(1);
+  });
+
+  test('detect matches chat_history.jsonl and the system-head sniff; sidecars are rejected', () => {
+    expect(grokAdapter.detect(GROK_FIXTURE, readSample(GROK_FIXTURE))).toBe(true);
+    expect(grokAdapter.detect(CODEX_FIXTURE, readSample(CODEX_FIXTURE))).toBe(false);
+    expect(grokAdapter.detect(FIXTURE, readSample(FIXTURE))).toBe(false);
+    const d = tdir();
+    const sidecar = join(d, GROK_SESSION_ID, 'updates.jsonl');
+    mkdirSync(join(d, GROK_SESSION_ID), { recursive: true });
+    writeFileSync(sidecar, '{"timestamp":1}\n');
+    expect(isGrokSessionSidecar(sidecar)).toBe(true);
+    expect(grokAdapter.detect(sidecar, readSample(sidecar))).toBe(false);
+    expect(isGrokChatHistoryFile(GROK_FIXTURE)).toBe(true);
+    // Nested scratch under the session UUID (Grok's terminal/ logs) must
+    // also count as sidecars — a parent-only check misses them.
+    const nested = join(d, GROK_SESSION_ID, 'terminal', 'call-1.log');
+    mkdirSync(join(d, GROK_SESSION_ID, 'terminal'), { recursive: true });
+    writeFileSync(nested, 'not json\n');
+    expect(isGrokSessionSidecar(nested)).toBe(true);
+  });
+
+  test('auto-detect picks grok for the fixture and for the session-store path shape', () => {
+    const r = detectAdapter(GROK_FIXTURE);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.adapter.format).toBe('grok');
+    const p = writeGrokTree(tdir(), { sidecars: true });
+    const r2 = detectAdapter(p);
+    expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.adapter.format).toBe('grok');
+  });
+
+  test('discovery keeps chat_history.jsonl and drops sidecars; status gap uses parent UUID', async () => {
+    const root = tdir();
+    const p = writeGrokTree(root, { sidecars: true });
+    const roots = [{ format: 'grok' as const, root, extension: '.jsonl' as const }];
+    const discovered = discoverTranscriptFiles(roots);
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0].path).toBe(p);
+    const imported = { byHarness: new Map([['grok', new Set([GROK_SESSION_ID])]]), pagesScanned: 1 };
+    const rows = buildStatusRows(discovered, imported, roots);
+    const grok = rows.find((x) => x.format === 'grok')!;
+    expect(grok.found).toBe(1);
+    expect(grok.importedSessions).toBe(1);
+    expect(grok.gapFiles).toBe(0);
+    const empty = { byHarness: new Map<string, Set<string>>(), pagesScanned: 0 };
+    expect(buildStatusRows(discovered, empty, roots).find((x) => x.format === 'grok')!.gapFiles).toBe(1);
+  });
+
+  test('mapGrokLine classifies synthetic user and tool-only assistant as typed skips', () => {
+    expect(mapGrokLine({ type: 'user', synthetic_reason: 'system_reminder', content: [{ type: 'text', text: 'x' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'assistant', content: '', tool_calls: [{ id: 'c' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'reasoning', id: 'r' }).kind).toBe('typed');
+    const msg = mapGrokLine({ type: 'user', content: [{ type: 'text', text: 'hello' }] });
+    expect(msg.kind).toBe('message');
+    if (msg.kind === 'message') expect(msg.message.text).toBe('hello');
+  });
+});
+
 // ── ChatGPT export adapter [mapping-tree walk: T13 edge fixture] ────────────
 
 describe('chatgptExportAdapter', () => {
@@ -544,6 +737,7 @@ describe('detection matrix', () => {
       [CODEX_FIXTURE, 'codex'],
       [AGENT_FIXTURE, 'openclaw'],
       [dbPath, 'hermes'],
+      [GROK_FIXTURE, 'grok'],
       [CHATGPT_FIXTURE, 'chatgpt'],
       [CLAUDE_EXPORT_FIXTURE, 'claude-export'],
     ];

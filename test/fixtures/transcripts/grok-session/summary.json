@@ -1,0 +1,18 @@
+{
+  "info": {
+    "id": "grok-fixture-session-1",
+    "cwd": "/home/alice-example/agent-workspace"
+  },
+  "created_at": "2026-08-08T11:00:00.000000Z",
+  "updated_at": "2026-08-08T11:05:00.000000Z",
+  "last_active_at": "2026-08-08T11:05:00.000000Z",
+  "generated_title": "Widget seed round",
+  "current_model_id": "grok-4.6-build",
+  "chat_format_version": 1,
+  "num_messages": 11,
+  "num_chat_messages": 4,
+  "session_summary": "Planning the widget-co seed recap.",
+  "agent_name": "Grok",
+  "sandbox_profile": "default",
+  "reasoning_effort": "xhigh"
+}
