@@ -31,7 +31,7 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
-import { resolveSourceId } from '../core/source-resolver.ts';
+import { resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
@@ -419,11 +419,14 @@ Options:
                       cycle_freshness check sees a fresh stamp on
                       completion. When omitted, gbrain derives the
                       source from --dir / the configured checkout
-                      when it matches a source's local_path (#1869).
+                      when it matches a source's local_path (#1869),
+                      or from the default-like source selected by
+                      sources.default / sole-non-default routing.
                       A named non-default source runs the deterministic
                       freshness phases unless --phase is given
-                      (explicit phases are honored verbatim);
-                      --source default still runs the full cycle.
+                      (explicit phases are honored verbatim). A bare
+                      no --source dream against the default-like source,
+                      and --source default, still run the full cycle.
   --source-id <id>    Alias for --source. Matches the v0.37.7.0+
                       naming used by import/extract/graph-query.
 
@@ -706,6 +709,23 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   //      last_full_cycle_at to an archived source would mask data
   //      staleness when the source is later restored)
   let resolvedSourceId: string | undefined;
+  let implicitDefaultSourceId: string | null = null;
+  let fullImplicitSourceCycle = false;
+  if (opts.source === null && engine !== null) {
+    try {
+      implicitDefaultSourceId = await resolveImplicitDefaultSourceId(engine);
+    } catch (e) {
+      if (isResolverUserError(e)) {
+        console.error((e as Error).message);
+        process.exit(1);
+      }
+      throw e;
+    }
+    if (opts.dir === null && implicitDefaultSourceId && implicitDefaultSourceId !== 'default') {
+      resolvedSourceId = implicitDefaultSourceId;
+      fullImplicitSourceCycle = true;
+    }
+  }
   if (opts.source !== null) {
     if (engine === null) {
       console.error(
@@ -767,7 +787,12 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     const derived = await resolveSourceForDir(engine, brainDir);
     if (derived !== undefined) {
       const src = await fetchSource(engine, derived);
-      if (src?.archived !== true) resolvedSourceId = derived;
+      if (src?.archived !== true) {
+        resolvedSourceId = derived;
+        fullImplicitSourceCycle = opts.source === null
+          && implicitDefaultSourceId === derived
+          && derived !== 'default';
+      }
     }
   }
   // ─── issue #1678: bounded single-hold extract_atoms drain ──────────
@@ -788,7 +813,10 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,
-    sourceId: resolvedSourceId, // undefined when --source not set → legacy back-compat
+    // Undefined for legacy unscoped runs; set for explicit source cycles,
+    // path-derived cycles, and bare default-like non-default source cycles.
+    sourceId: resolvedSourceId,
+    fullImplicitSourceCycle,
     synthInputFile: opts.inputFile ?? undefined,
     synthDate: opts.date ?? undefined,
     synthFrom: opts.from ?? undefined,
