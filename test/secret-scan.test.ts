@@ -29,7 +29,7 @@ const GHO = 'gho_' + 'B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8s9';
 const GH_PAT = 'github_pat_' + '11AAAAAAA0aaaaaaaaaaaa_bbbbbbbbbbbbbbbbbbbbbb';
 const SLACK = 'xoxb-' + '123456789012-abcdefABCDEF';
 const AWS = 'AKIA' + 'IOSFODNN7EXAMPLE';
-const GBRAIN = 'gbrain_' + '0123456789abcdef'.repeat(4);
+const GBRAIN_HEX = '0123456789abcdef'.repeat(4);
 const PEM = '-----BEGIN RSA PRIVATE KEY-----';
 
 let tmp: string | null = null;
@@ -77,9 +77,17 @@ describe('scanText — pattern classes', () => {
     }
   });
 
-  test("gbrain's own bearer token (auth create shape) fires as gbrain_token", () => {
-    const findings = scanText(`claude mcp list printed: Authorization: Bearer ${GBRAIN}`);
-    expect(findings.map((f) => f.pattern)).toEqual(['gbrain_token']);
+  test("gbrain's own tokens (generateToken prefix family) fire as gbrain_token", () => {
+    // '' = legacy bearer (auth create / token-mint / serve-http); the rest are
+    // the OAuth forms from oauth-provider.ts, gbrain_at_ being the /mcp bearer.
+    for (const infix of ['', 'at_', 'rt_', 'cs_', 'code_']) {
+      const findings = scanText(`Authorization: Bearer gbrain_${infix}${GBRAIN_HEX}`);
+      expect(findings.map((f) => f.pattern)).toEqual(['gbrain_token']);
+    }
+  });
+
+  test('a gbrain_cl_ client id (public identifier) does not fire', () => {
+    expect(scanText(`client_id=gbrain_cl_${GBRAIN_HEX}`)).toEqual([]);
   });
 
   test('a Voyage key (pa-…, PROVIDER_KEY_SHAPES shape) fires as voyage', () => {
