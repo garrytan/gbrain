@@ -35,6 +35,8 @@ import {
   embed,
   splitByTokenBudget,
   capBatchItems,
+  windowOversizedItems,
+  meanPoolByOwner,
   isTokenLimitError,
   __setEmbedTransportForTests,
   __getShrinkStateForTests,
@@ -93,6 +95,14 @@ function configureGoogle(): void {
     embedding_model: 'google:gemini-embedding-001',
     embedding_dimensions: 768,
     env: { GOOGLE_GENERATIVE_AI_API_KEY: 'fake' },
+  });
+}
+
+function configureDashscope(): void {
+  configureGateway({
+    embedding_model: 'dashscope:text-embedding-v2',
+    embedding_dimensions: 1536,
+    env: { DASHSCOPE_API_KEY: 'sk-fake' },
   });
 }
 
@@ -214,6 +224,57 @@ describe('capBatchItems (hard COUNT cap helper)', () => {
   });
 });
 
+describe('per-item windowing and pooling (pure helpers)', () => {
+  test('under-cap inputs keep the identity shape and exact text', () => {
+    const texts = ['alpha', 'beta'];
+    const result = windowOversizedItems(texts, 10);
+    expect(result.flat).toEqual(texts);
+    expect(result.owners).toEqual([0, 1]);
+    expect(result.splitAny).toBe(false);
+  });
+
+  test('oversized inputs split without overlap or a dropped tail', () => {
+    const texts = ['a', 'b'.repeat(11), 'c'];
+    const result = windowOversizedItems(texts, 4);
+    expect(result.flat.map(s => s.length)).toEqual([1, 4, 4, 3, 1]);
+    expect(result.owners).toEqual([0, 1, 1, 1, 2]);
+    expect(result.flat.filter((_, i) => result.owners[i] === 1).join('')).toBe(texts[1]);
+    expect(result.splitAny).toBe(true);
+  });
+
+  test('non-positive window size is a defensive identity path', () => {
+    const texts = ['a', 'b'];
+    expect(windowOversizedItems(texts, 0)).toEqual({
+      flat: texts,
+      owners: [0, 1],
+      splitAny: false,
+    });
+  });
+
+  test('singleton vectors pass through while multi-window vectors are normalized means', () => {
+    const singleton = new Float32Array([3, 4]);
+    const pooled = meanPoolByOwner(
+      [singleton, new Float32Array([1, 0]), new Float32Array([0, 1])],
+      [0, 1, 1],
+      2,
+    );
+    expect(pooled).toHaveLength(2);
+    expect(pooled[0]).toBe(singleton);
+    expect(pooled[1][0]).toBeCloseTo(Math.SQRT1_2, 5);
+    expect(pooled[1][1]).toBeCloseTo(Math.SQRT1_2, 5);
+  });
+
+  test('zero-vector means never produce NaN', () => {
+    const pooled = meanPoolByOwner(
+      [new Float32Array([0, 0]), new Float32Array([0, 0])],
+      [0, 0],
+      1,
+    );
+    expect(Array.from(pooled[0])).toEqual([0, 0]);
+    expect(Array.from(pooled[0]).every(Number.isFinite)).toBe(true);
+  });
+});
+
 describe('isTokenLimitError (pure helper)', () => {
   test('matches Voyage error format', () => {
     expect(isTokenLimitError(VOYAGE_TOKEN_LIMIT_ERROR)).toBe(true);
@@ -240,6 +301,10 @@ describe('isTokenLimitError (pure helper)', () => {
 
   test('matches generic "max tokens per request" phrasing', () => {
     expect(isTokenLimitError(new Error('Exceeded 300000 max tokens per request'))).toBe(true);
+  });
+
+  test('matches DashScope per-item input length errors', () => {
+    expect(isTokenLimitError(new Error('Range of input length should be [1, 2048]'))).toBe(true);
   });
 
   test('does not match unrelated errors', () => {
@@ -365,6 +430,68 @@ describe('embed() OpenAI fast path (no max_batch_tokens)', () => {
     await embed(['x', 'y']);
     expect(openaiStub).toHaveBeenCalledTimes(1);
     expect(__getShrinkStateForTests('voyage')).toBeUndefined();
+  });
+});
+
+// --------- 5b. DashScope v2 per-item limits (max_item_tokens) ---------
+
+describe('embed() DashScope v2 limits', () => {
+  beforeEach(() => resetGateway());
+  afterEach(() => __setEmbedTransportForTests(null));
+
+  test('uses the recipe-wide conservative 10-item cap while preserving result count and order', async () => {
+    configureDashscope();
+    const calls: string[][] = [];
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      calls.push([...values]);
+      return {
+        embeddings: values.map(value => {
+          const vector = new Array<number>(1536).fill(0.1);
+          vector[0] = Number(value.slice(1));
+          return vector;
+        }),
+      };
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    const texts = Array.from({ length: 60 }, (_, i) => `t${i}`);
+    const result = await embed(texts);
+
+    expect(calls.map(values => values.length)).toEqual([10, 10, 10, 10, 10, 10]);
+    expect(calls.flat()).toEqual(texts);
+    expect(result.map(vector => vector[0])).toEqual(texts.map((_, i) => i));
+  });
+
+  test('embeds every window of a 6000-char item and returns one vector', async () => {
+    configureDashscope();
+    const seen: string[] = [];
+    const stub = mock(async ({ values }: { values: string[] }) => {
+      seen.push(...values);
+      return fakeEmbeddings(values, 1536);
+    });
+    __setEmbedTransportForTests(stub as any);
+
+    const text = '知'.repeat(6000);
+    const result = await embed([text]);
+
+    expect(seen.map(value => value.length)).toEqual([1638, 1638, 1638, 1086]);
+    expect(seen.join('')).toBe(text);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toHaveLength(1536);
+    const norm = Math.sqrt(Array.from(result[0]).reduce((sum, value) => sum + value * value, 0));
+    expect(norm).toBeCloseTo(1, 5);
+  });
+
+  test('ordinary DashScope inputs pass through without pooling', async () => {
+    configureDashscope();
+    const first = new Float32Array(1536).fill(0.25);
+    const second = new Float32Array(1536).fill(0.5);
+    const stub = mock(async () => ({ embeddings: [Array.from(first), Array.from(second)] }));
+    __setEmbedTransportForTests(stub as any);
+
+    const result = await embed(['short one', 'short two']);
+    expect(Array.from(result[0])).toEqual(Array.from(first));
+    expect(Array.from(result[1])).toEqual(Array.from(second));
   });
 });
 

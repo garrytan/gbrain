@@ -105,6 +105,23 @@ export interface EmbeddingTouchpoint {
    */
   max_batch_items?: number;
   /**
+   * Maximum tokens per SINGLE input item (e.g. DashScope text-embedding-v1/v2:
+   * 2048). Independent of the batch budget: the token-budget pre-split never
+   * subdivides one text, so without this a single over-cap item reaches the
+   * wire alone and fails.
+   *
+   * When set, the gateway enforces the cap by CONTENT-PRESERVING WINDOWING,
+   * not truncation: after the global MAX_CHARS ceiling is applied, any item
+   * over the conservative window size (`max_item_tokens` chars at a worst-case
+   * 1 token/char CJK density, × 0.8 safety) is split into adjacent character
+   * windows. Windows are embedded as ordinary inputs under the existing
+   * token/item batch caps, then L2-normalized arithmetic-mean pooled back to
+   * exactly one vector per original input. No text is dropped; items at or
+   * under the window size (and all inputs of recipes without this field) are
+   * embedded exactly as before.
+   */
+  max_item_tokens?: number;
+  /**
    * v0.27.1: when true, at least one model in this recipe accepts image
    * inputs via a multimodal embedding endpoint (e.g. Voyage's
    * /v1/multimodalembeddings). Drives gateway.embedMultimodal() routing.
