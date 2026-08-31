@@ -93,6 +93,8 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     // Declared true — loop-capable.
     expect(getProviderCapabilities('anthropic:claude-sonnet-4-6').supportsSubagentLoop).toBe(true);
     expect(getProviderCapabilities('deepseek:deepseek-v4-flash').supportsSubagentLoop).toBe(true);
+    expect(getProviderCapabilities('openrouter:deepseek/deepseek-v4-flash').supportsSubagentLoop).toBe(true);
+    expect(getProviderCapabilities('openrouter:deepseek/deepseek-v4-flash-0731').supportsSubagentLoop).toBe(true);
     // Declared false — tools work, but tool_call_ids aren't replay-stable.
     expect(getProviderCapabilities('moonshot:kimi-k2.5').supportsSubagentLoop).toBe(false);
     expect(getProviderCapabilities('mistral:mistral-large-latest').supportsSubagentLoop).toBe(false);
@@ -126,14 +128,15 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
     expect(classifyCapabilities('google:gemini-1.5-pro')).toBe('degraded:no_caching');
   });
 
-  it('allows OpenRouter Anthropic routes for the subagent loop and refuses other OR families', () => {
-    // Anthropic-via-OR shares the Anthropic tool envelope; replay keys off
-    // gbrain_tool_use_id. Other proxied families stay refused until they get
-    // their own live abort/retry pin.
+  it('allows OpenRouter Anthropic and DeepSeek routes for the subagent loop and refuses other OR families', () => {
+    // Anthropic-via-OR shares the Anthropic tool envelope; DeepSeek-via-OR
+    // shares the native deepseek: openai-compat tool_call_id shape. Other
+    // proxied families stay refused until they get their own live abort/retry pin.
     expect(classifyCapabilities('openrouter:anthropic/claude-sonnet-4.6')).toBe('ok');
     expect(classifyCapabilities('openrouter:anthropic/claude-haiku-4.5')).toBe('ok');
+    expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('ok');
+    expect(classifyCapabilities('openrouter:deepseek/deepseek-v4-flash-0731')).toBe('ok');
     expect(classifyCapabilities('openrouter:openai/gpt-5.2')).toBe('unusable:no_subagent_loop');
-    expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('unusable:no_subagent_loop');
   });
 
   it('returns unusable:no_subagent_loop when tools work but the recipe declares the loop unsupported', () => {

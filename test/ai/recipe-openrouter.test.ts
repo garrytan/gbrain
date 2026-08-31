@@ -16,6 +16,7 @@ import {
   openrouterCompatFetch,
   openrouterRequiresExplicitPromptCache,
   openrouterSupportsPromptCache,
+  openrouterSupportsSubagentLoop,
 } from '../../src/core/ai/recipes/openrouter.ts';
 import { defaultResolveAuth } from '../../src/core/ai/gateway.ts';
 import { assertTouchpoint, embeddingDimsForModel } from '../../src/core/ai/model-resolver.ts';
@@ -75,7 +76,7 @@ describe('recipe: openrouter', () => {
       expect(loop('anthropic/claude-haiku-4.5')).toBe(true);
       expect(loop('anthropic/claude-sonnet-4.6')).toBe(true);
       expect(loop('openai/gpt-5.2')).toBe(false);
-      expect(loop('deepseek/deepseek-chat')).toBe(false);
+      expect(loop('deepseek/deepseek-chat')).toBe(true);
     }
     expect(() =>
       assertTouchpoint(r, 'chat', 'some/provider-model'),
@@ -205,6 +206,15 @@ describe('recipe: openrouter', () => {
     expect(openrouterRequiresExplicitPromptCache('anthropic/claude-sonnet-4.6')).toBe(true);
     expect(openrouterRequiresExplicitPromptCache('openai/gpt-5.2')).toBe(false);
     expect(openrouterRequiresExplicitPromptCache('deepseek/deepseek-chat')).toBe(false);
+  });
+
+  test('13b. subagent loop is allowed for Anthropic and DeepSeek routes only', () => {
+    expect(openrouterSupportsSubagentLoop('anthropic/claude-sonnet-4.6')).toBe(true);
+    expect(openrouterSupportsSubagentLoop('deepseek/deepseek-v4-flash')).toBe(true);
+    expect(openrouterSupportsSubagentLoop('deepseek/deepseek-v4-flash-0731')).toBe(true);
+    expect(openrouterSupportsSubagentLoop('deepseek/deepseek-chat:free')).toBe(true);
+    expect(openrouterSupportsSubagentLoop('openai/gpt-5.2')).toBe(false);
+    expect(openrouterSupportsSubagentLoop('google/gemini-3-flash-preview')).toBe(false);
   });
 
   test('14. recipe installs the cache compat fetch shim', () => {

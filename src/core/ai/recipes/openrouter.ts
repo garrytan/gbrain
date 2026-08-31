@@ -50,11 +50,14 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
 /**
  * OpenRouter Anthropic routes share Anthropic's tool-call envelope (and the
  * gateway loop already keys replay on gbrain_tool_use_id, not the raw
- * provider id). Other proxied families stay refused until they get their
- * own live abort/retry evidence (TODOS.md OpenRouter follow-up).
+ * provider id). DeepSeek routes share the native `deepseek:` openai-compat
+ * tool_call_id shape (`supports_subagent_loop: true` on that recipe). Other
+ * proxied families stay refused until they get their own live abort/retry
+ * evidence (TODOS.md OpenRouter follow-up).
  */
 export function openrouterSupportsSubagentLoop(modelId: string): boolean {
-  return modelId.trim().toLowerCase().startsWith('anthropic/');
+  const normalized = modelId.trim().toLowerCase();
+  return normalized.startsWith('anthropic/') || normalized.startsWith('deepseek/');
 }
 
 /**
@@ -161,8 +164,9 @@ export const openrouterCompatFetch = (async (
  * `supports_subagent_loop` so classifyCapabilities() allows them. The
  * handler still refuses the Anthropic-direct SDK for `openrouter:*` and
  * auto-routes those jobs through `gateway.toolLoop()` — OR is not a native
- * Anthropic provider. Other OR families stay refused until they get a live
- * abort/retry pin (TODOS.md).
+ * Anthropic provider. DeepSeek routes (`deepseek/…`) match the native
+ * `deepseek:` recipe (openai-compat tool_call ids). Other OR families stay
+ * refused until they get a live abort/retry pin (TODOS.md).
  */
 export const openrouter: Recipe = {
   id: 'openrouter',
