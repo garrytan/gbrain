@@ -2,6 +2,38 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- **`gbrain code-def` and `gbrain code-refs` are source-scoped on the CLI.**
+  They previously searched every registered source. On a multi-source brain
+  that meant a lookup run inside one repo returned other repos' definitions
+  and references, and since each row's `file` is repo-relative, a foreign hit
+  was indistinguishable from a local one. Both now honor the `.gbrain-source`
+  pin and the rest of the resolution chain, like `code-callers` /
+  `code-callees` already did, and accept `--source <id>` / `--all-sources`
+  (`--source` was previously accepted and silently ignored). The JSON envelope
+  gained `source_id` and `scope`.
+
+  **Breaking:** on a multi-source brain these two commands now return a subset
+  of what they used to. Pass `--all-sources` for the old behavior. Single-source
+  brains are unaffected, as are the `code_def` / `code_refs` MCP ops and direct
+  library calls to `findCodeDef` / `findCodeRefs`, all of which stay brain-wide.
+
+  A source resolved implicitly that holds no code at all (the vault+code shape,
+  where the seed source carries notes and the code lives in sibling sources)
+  widens back to every source with a note on stderr, rather than answering every
+  lookup with a silent zero.
+
+### Fixed
+
+- **A value-taking flag's argument is no longer mistaken for the symbol** in the
+  four `code-*` commands. `gbrain code-def --source repo-b parseMarkdown` looked
+  up the symbol `"repo-b"`; `--lang typescript sym` looked up `"typescript"`.
+  Contradictory `--source` with `--all-sources`, a `--source` whose value is
+  another flag, and a `--source` naming an unregistered source are now usage
+  errors instead of silently-empty results.
 ## [0.47.9.0] - 2026-08-31
 
 Optional Memorable integration, adopted from community PR #4537 (thank you
