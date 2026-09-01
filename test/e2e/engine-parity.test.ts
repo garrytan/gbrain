@@ -19,6 +19,7 @@ import type { ChunkInput, SearchResult } from '../../src/core/types.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { getSessionContextState, upsertSessionContextState } from '../../src/core/context/session-state.ts';
 import { linkEntityIdentity, listEntityIdentities } from '../../src/core/entity-identity.ts';
+import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
 
 const SKIP_PG = !hasDatabase();
@@ -149,6 +150,60 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     const pgliteResults = await pgliteEngine.searchVector(queryVec, { limit: 5 });
 
     expect(pgResults[0]?.slug).toBe(pgliteResults[0]?.slug);
+  });
+
+  test('entity card exact fact count + wire-date normalization match across engines', async () => {
+    // Pre-fix, active_fact_count was the length of a 100-row capped fetch
+    // (silently 100 for bigger entities) and PGLite leaked Date objects into
+    // the string|null timeline-date contract.
+    const slug = 'people/entity-card-parity';
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putPage(slug, {
+        type: 'person',
+        title: 'Entity Card Parity Person',
+        compiled_truth: '# Entity Card Parity Person\n\nSynthetic parity fixture.',
+      }, { sourceId: 'default' });
+      await eng.executeRaw(
+        `INSERT INTO facts
+           (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+         SELECT 'default', 'people/entity-card-parity', 'ordinary fact ' || gs::text,
+                'fact', 'world', 'medium', NOW(), 'parity-seed', 1.0, NOW()
+           FROM generate_series(1, 105) gs`,
+      );
+      await eng.insertFact(
+        {
+          fact: 'PRIVATE-PARITY-SENTINEL fact',
+          kind: 'fact',
+          entity_slug: slug,
+          visibility: 'private',
+          source: 'parity-seed',
+        },
+        { source_id: 'default' },
+      );
+      await eng.addTimelineEntry(
+        slug,
+        { date: new Date().toISOString().slice(0, 10), source: 'parity-seed', summary: 'Recent parity event' },
+        { sourceId: 'default' },
+      );
+    }
+
+    const pg = await buildEntityCard(pgEngine, 'default', slug, { remote: true });
+    const lite = await buildEntityCard(pgliteEngine, 'default', slug, { remote: true });
+    for (const result of [pg, lite]) {
+      expect(result.card?.active_fact_count).toBe(105); // exact, world-only for remote
+      expect(typeof result.card?.last_touched.last_timeline_date).toBe('string');
+      for (const thread of result.card?.open_threads ?? []) {
+        expect(thread.date === null || typeof thread.date === 'string').toBe(true);
+      }
+    }
+    expect(pg.card?.active_fact_count).toBe(lite.card?.active_fact_count);
+    expect(pg.card?.last_touched.last_timeline_date).toBe(lite.card?.last_touched.last_timeline_date!);
+
+    // Local callers see private rows in the count too — on both engines.
+    const pgLocal = await buildEntityCard(pgEngine, 'default', slug, { remote: false });
+    const liteLocal = await buildEntityCard(pgliteEngine, 'default', slug, { remote: false });
+    expect(pgLocal.card?.active_fact_count).toBe(106);
+    expect(liteLocal.card?.active_fact_count).toBe(106);
   });
 
   test('#4304 listAllPageRefs parity: updated_at is a real Date, same (source_id, slug) ordering', async () => {
