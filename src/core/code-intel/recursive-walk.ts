@@ -199,8 +199,10 @@ export async function runRecursiveWalk(
         edges = [];
       }
 
-      // freshness check: any edge whose owning chunk has edges_backfilled_at IS NULL
-      // → partial. v0.34 W3b's getCachedOrCompute will gate this further.
+      // A traversal containing even one ambiguous/unresolved edge is useful but
+      // not authoritative. Preserve that uncertainty so code_blast cannot emit
+      // ready=true merely because it found some nodes.
+      if (edges.some((edge) => !edge.resolved)) freshness = 'partial';
 
       for (const e of edges) {
         const next =

@@ -41,12 +41,14 @@
  * untrusted, fail-closed). A scoped remote caller sees `not_built`, never
  * a brain-wide code-existence disclosure.
  *
- * Cost: callers run this ONLY when `count === 0` (see `resolveCodeReadiness`);
- * a non-empty result short-circuits to `ready: true` with no query. Probes use
+ * Cost: symbol lookups run this only when `count === 0`. Edge lookups always
+ * probe for source-wide pending work, because one resolved result does not
+ * prove that every other caller/callee has been resolved yet. Probes use
  * `EXISTS` (short-circuits on first row) rather than `COUNT(*)` because the
  * bootstrap schema has no `page_kind` index; the pending probe rides the
- * partial `idx_content_chunks_edges_backfill` index. Fail-open: any DB error
- * yields `status: 'unknown'` so a supplementary signal never breaks the command.
+ * partial `idx_content_chunks_edges_backfill` index. Any DB error yields
+ * `status: 'unknown', ready: false`: the command remains available, but its
+ * result cannot claim graph authority.
  *
  * Scope must match the result query exactly: `code-def` / `code-refs` do NOT
  * filter `deleted_at`, so neither do these probes (else readiness could say
@@ -163,14 +165,17 @@ async function pendingEdgeChunksExist(engine: BrainEngine, sourceId: string | un
  * Resolve the readiness signal for a code-* command.
  *
  * `kind: 'symbol'` for code-def/code-refs (2-state); `kind: 'edge'` for
- * code-callers/code-callees (3-state). When `count > 0` the result is
- * trivially `ready` and no query runs. Fail-open: any DB error → `unknown`.
+ * code-callers/code-callees (3-state). A positive edge result is useful but
+ * not authoritative until the source-wide pending-edge probe is clear.
+ * Any DB error fails closed to `unknown`.
  */
 export async function resolveCodeReadiness(
   engine: BrainEngine,
   opts: {
     kind: 'symbol' | 'edge';
     count: number;
+    /** Returned call edges that still lack a resolved target. */
+    unresolvedCount?: number;
     /**
      * #4352 remediation: trust gate for the #3707 out_of_scope brain-wide
      * rerun. Pass `ctx.remote` (ops) or `false` (local CLI commands).
@@ -181,11 +186,21 @@ export async function resolveCodeReadiness(
     remote?: boolean;
   } & ReadinessScope,
 ): Promise<CodeGraphReadiness> {
-  if (opts.count > 0) {
+  if (opts.kind === 'symbol' && opts.count > 0) {
     return { status: 'ready', ready: true, has_code: true, pending_edges: false };
   }
   const sourceId = effectiveSourceId(opts);
   try {
+    // A cached traversal or a partially resolved result can contain valid
+    // nodes while other source edges are still pending. This source-wide gate
+    // runs after cache retrieval too, so an old cached `fresh` walk cannot
+    // regain authority while the graph is incomplete.
+    if (opts.kind === 'edge' && opts.count > 0) {
+      const pending = await pendingEdgeChunksExist(engine, sourceId);
+      return pending
+        ? { status: 'indexing', ready: false, has_code: true, pending_edges: true }
+        : { status: 'ready', ready: true, has_code: true, pending_edges: false };
+    }
     const hasCode = await codeChunksExist(engine, sourceId);
     if (!hasCode) {
       // #3707: "no code in scope" conflated two very different situations —

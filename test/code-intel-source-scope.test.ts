@@ -288,8 +288,14 @@ describe('A13 — code_blast / code_flow resolveCodeIntelScope fence', () => {
     const scoped = (await op.handler(remoteAlpha(), { symbol: 'betaSecretFn' })) as {
       result: string;
       did_you_mean: unknown[];
+      status: string;
+      ready: boolean;
     };
     expect(scoped.result).toBe('not_found');
+    // A miss is trustworthy only when the symbol index for this exact scope
+    // is ready. This keeps "not found" distinct from "index unavailable".
+    expect(scoped.status).toBe('ready');
+    expect(scoped.ready).toBe(true);
     // The did_you_mean suggestions are source-scoped too — no beta leak.
     expect(containsBeta(scoped.did_you_mean)).toBe(false);
     // Anti-vacuity control: beta scope resolves and walks the same symbol.

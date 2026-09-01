@@ -21,6 +21,7 @@ import {
   readEdgeResolution,
   EDGE_EXTRACTOR_VERSION_TS,
 } from '../../src/core/chunkers/symbol-resolver.ts';
+import { getCachedOrCompute } from '../../src/core/code-intel/traversal-cache.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -139,6 +140,59 @@ describe('v0.34 W0c symbol-resolver — watermark + idempotency', () => {
     const stats2 = await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });
     expect(stats2.chunks_walked).toBe(0);
     expect(stats2.edges_examined).toBe(0);
+  });
+
+  test('resolving a new caller invalidates stale traversal cache', async () => {
+    await registerSource(engine, 'source-a');
+    const pageId = await insertCodePage(engine, 'source-a', 'src/foo.ts');
+    const callerChunk = await insertChunk(engine, pageId, 0, 'callerInA', 'function');
+    await insertChunk(engine, pageId, 1, 'parseMarkdown', 'function');
+    await insertUnresolvedEdge(engine, callerChunk, 'callerInA', 'parseMarkdown', 'source-a');
+
+    const key = { symbol_qualified: 'parseMarkdown', depth: 5, source_id: 'source-a' };
+    const stale = await getCachedOrCompute(engine, key, async () => ({ callers: [] as string[] }));
+    expect(stale.callers).toEqual([]);
+
+    await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });
+
+    let recomputed = false;
+    const fresh = await getCachedOrCompute(engine, key, async () => {
+      recomputed = true;
+      return { callers: ['callerInA'] };
+    });
+    expect(recomputed).toBe(true);
+    expect(fresh.callers).toEqual(['callerInA']);
+  });
+
+  test('invalidation failure leaves the batch pending and retryable', async () => {
+    await registerSource(engine, 'source-a');
+    const pageId = await insertCodePage(engine, 'source-a', 'src/foo.ts');
+    const callerChunk = await insertChunk(engine, pageId, 0, 'callerInA', 'function');
+    await insertChunk(engine, pageId, 1, 'parseMarkdown', 'function');
+    await insertUnresolvedEdge(engine, callerChunk, 'callerInA', 'parseMarkdown', 'source-a');
+
+    const originalSetConfig = engine.setConfig.bind(engine);
+    engine.setConfig = async () => { throw new Error('injected config failure'); };
+    await expect(resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' }))
+      .rejects.toThrow('injected config failure');
+
+    const pending = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM content_chunks
+        WHERE page_id = $1 AND edges_backfilled_at IS NULL`,
+      [pageId],
+    );
+    expect(pending[0]!.count).toBe(2);
+
+    engine.setConfig = originalSetConfig;
+    const retry = await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });
+    expect(retry.chunks_walked).toBe(2);
+
+    const completed = await engine.executeRaw<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM content_chunks
+        WHERE page_id = $1 AND edges_backfilled_at IS NOT NULL`,
+      [pageId],
+    );
+    expect(completed[0]!.count).toBe(2);
   });
 });
 

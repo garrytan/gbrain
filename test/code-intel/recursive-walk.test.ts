@@ -153,6 +153,7 @@ describe('W3: code_flow (callees walk + sink tagging)', () => {
     });
     expect(r.result).toBe('ok');
     if (r.result === 'ok') {
+      expect(r.freshness).toBe('partial');
       // terminal_nodes should include fetch tagged as http_call
       expect(r.terminal_nodes?.some((n) => n.symbol === 'fetch' && n.sink_kind === 'http_call')).toBe(true);
     }

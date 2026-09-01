@@ -116,7 +116,6 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
       allSources,
       sourceId: sourceId ?? undefined,
     });
-
     const scope = allSources ? 'all' : 'single';
     const envelopeSourceId = allSources ? null : (sourceId ?? null);
 
@@ -125,7 +124,9 @@ export async function runCodeCallees(engine: BrainEngine, args: string[]): Promi
     // remote: false — direct CLI invocation is the trusted local caller, so
     // the #3707 out_of_scope brain-wide rerun stays available (#4352 gate).
     const readiness = await resolveCodeReadiness(engine, {
-      kind: 'edge', count: edges.length, sourceId: sourceId ?? undefined, allSources, remote: false,
+      kind: 'edge', count: edges.length,
+      unresolvedCount: edges.filter((edge) => !edge.resolved).length,
+      sourceId: sourceId ?? undefined, allSources, remote: false,
     });
 
     if (shouldEmitJson(args)) {

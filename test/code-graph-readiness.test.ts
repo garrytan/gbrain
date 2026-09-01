@@ -107,11 +107,39 @@ describe('resolveCodeReadiness — code synced, edges unresolved', () => {
     expect(r.pending_edges).toBe(false);
   });
 
-  test('count > 0 short-circuits to ready with no probe', async () => {
-    // Even with pending edges, a non-empty result is trivially ready.
+  test('positive edge results remain indexing while source edges are pending', async () => {
+    // One resolved caller cannot hide another source edge that is still pending.
+    const r = await resolveCodeReadiness(engine, { kind: 'edge', count: 3 });
+    expect(r.status).toBe('indexing');
+    expect(r.ready).toBe(false);
+    expect(r.pending_edges).toBe(true);
+  });
+
+  test('positive edge results become ready after source edges are fully resolved', async () => {
+    await engine.executeRaw('UPDATE content_chunks SET edges_backfilled_at = NOW()');
     const r = await resolveCodeReadiness(engine, { kind: 'edge', count: 3 });
     expect(r.status).toBe('ready');
     expect(r.ready).toBe(true);
+    expect(r.pending_edges).toBe(false);
+  });
+
+  test('non-empty unresolved results remain indexing', async () => {
+    const r = await resolveCodeReadiness(engine, {
+      kind: 'edge', count: 3, unresolvedCount: 2,
+    });
+    expect(r.status).toBe('indexing');
+    expect(r.ready).toBe(false);
+    expect(r.pending_edges).toBe(true);
+  });
+
+  test('processed symbolic edge results become ready once the source watermark is fresh', async () => {
+    await engine.executeRaw('UPDATE content_chunks SET edges_backfilled_at = NOW()');
+    const r = await resolveCodeReadiness(engine, {
+      kind: 'edge', count: 3, unresolvedCount: 2,
+    });
+    expect(r.status).toBe('ready');
+    expect(r.ready).toBe(true);
+    expect(r.pending_edges).toBe(false);
   });
 });
 
