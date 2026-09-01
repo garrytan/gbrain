@@ -52,7 +52,7 @@
 //     inside the registry.
 
 import { statSync } from 'node:fs';
-import type { SchemaPackManifest } from './manifest-v1.ts';
+import type { PackPageType, SchemaPackManifest } from './manifest-v1.ts';
 import { computeManifestSha8, packIdentity } from './manifest-v1.ts';
 import { computeAliasClosureHash, buildAliasGraph, type AliasGraph } from './closure.ts';
 import { mergeInheritedManifest, type BorrowedTypes } from './merge.ts';
@@ -87,6 +87,11 @@ export interface ResolvedPack {
   manifest_sha8: string;
   alias_closure_hash: string;
   alias_graph: AliasGraph;
+  /** Winning declaration provenance for each merged page type. */
+  page_type_declaration_origins: Readonly<Record<string, {
+    pack_name: string;
+    manifest_path: string | null;
+  }>>;
 }
 
 export interface ResolutionInput {
@@ -287,12 +292,21 @@ export async function resolvePack(
   // declared types only — not its inherited/merged ones.
   const borrowed: BorrowedTypes = { page_types: [], link_types: [] };
   const borrowedNames: string[] = [];
+  const pageTypeOwners = new Map<PackPageType, string>();
+  for (const ancestor of ancestorsNearestFirst) {
+    for (const pageType of ancestor.page_types) pageTypeOwners.set(pageType, ancestor.name);
+  }
+  for (const pageType of manifest.page_types) pageTypeOwners.set(pageType, manifest.name);
   for (const entry of manifest.borrow_from) {
     const src = await loadByName(entry.pack);
     borrowedNames.push(entry.pack);
     const wantTypes = new Set(entry.types ?? []);
     const wantLinks = new Set(entry.link_types ?? []);
-    for (const pt of src.page_types) if (wantTypes.has(pt.name)) borrowed.page_types.push(pt);
+    for (const pt of src.page_types) {
+      if (!wantTypes.has(pt.name)) continue;
+      borrowed.page_types.push(pt);
+      pageTypeOwners.set(pt, entry.pack);
+    }
     for (const lt of src.link_types) if (wantLinks.has(lt.name)) borrowed.link_types.push(lt);
   }
 
@@ -303,6 +317,20 @@ export async function resolvePack(
   const merged = mergeInheritedManifest(ancestorsBaseFirst, manifest, borrowed);
   const alias_graph = buildAliasGraph(merged);
   const alias_closure_hash = await computeAliasClosureHash(merged);
+  const page_type_declaration_origins: Record<string, {
+    pack_name: string;
+    manifest_path: string | null;
+  }> = {};
+  for (const pageType of merged.page_types) {
+    const packName = pageTypeOwners.get(pageType);
+    if (!packName) {
+      throw new Error(`cannot resolve declaration origin for page type: ${pageType.name}`);
+    }
+    page_type_declaration_origins[pageType.name] = {
+      pack_name: packName,
+      manifest_path: opts.loadByPath?.(packName) ?? null,
+    };
+  }
 
   const resolved: ResolvedPack = {
     manifest: merged,
@@ -310,6 +338,7 @@ export async function resolvePack(
     manifest_sha8: sha8,
     alias_closure_hash,
     alias_graph,
+    page_type_declaration_origins,
   };
 
   // Capture file-stat snapshot for the stat-TTL gate over EVERY file that

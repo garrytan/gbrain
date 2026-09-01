@@ -1254,6 +1254,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'cycle.extract_atoms.max_input_chars',
   'cycle.extract_atoms.max_output_tokens',
   'cycle.extract_atoms.pacing_ms',
+  'cycle.extract_atoms.concurrency',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
   // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;

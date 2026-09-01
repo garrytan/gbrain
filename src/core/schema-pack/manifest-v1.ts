@@ -60,9 +60,13 @@ const LinkTypeSchema = z.object({
  * See plan D-EXTRACT-17/19/21/37/42/47 for the load-bearing decisions.
  */
 const ExtractableSpecSchema = z.object({
-  /** Pack-supplied LLM prompt template. Plain text; sent to gateway.chat()
-   * with NO conversation context per the v0.41.23 threat model. */
+  /** Relative path to a pack-supplied LLM prompt template. The runtime loads
+   * it only from the pack that supplied the winning page-type declaration. */
   prompt_template: z.string().optional(),
+  /** Relative path to a declarative source-selection/windowing contract.
+   * The file is trusted pack data, never executable code. Packs that omit it
+   * retain the legacy whole-page prefix behavior. */
+  input_profile: z.string().optional(),
   /** Relative path within pack root to a JSONL fixture corpus. Validated
    * against path traversal at parse + load time. */
   fixture_corpus: z.string().optional(),
@@ -72,6 +76,9 @@ const ExtractableSpecSchema = z.object({
   /** Optional recall floor for `gbrain extract benchmark` CI gate.
    * Defaults to 0.8 at consume site when omitted. */
   benchmark_min_recall: z.number().min(0).max(1).optional(),
+  /** Optional schema-pack link type for the native source-page → atom edge.
+   * When absent, extract_atoms preserves the legacy untyped provenance edge. */
+  provenance_link_type: z.string().regex(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/).optional(),
   /** RESERVED for a follow-up release: relative path to pack-shipped verifier
    * code. Validated as relative + within-pack at parse; REFUSES at runtime
    * in v0.41.23 with paste-ready hint. */
