@@ -266,7 +266,7 @@ describe('recipe: openrouter', () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({
         choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'the answer' } }],
-      }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+      }), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     try {
       const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
       const json = await res.json();
