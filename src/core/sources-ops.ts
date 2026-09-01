@@ -377,6 +377,34 @@ export function unownedHint(
 // ── addSource ───────────────────────────────────────────────────────────────
 
 /**
+ * Overlapping-path guard shared by every surface that binds a local_path to a
+ * source (`sources add`, `sources set-path`): a path equal to, nested inside,
+ * or enclosing any OTHER source's local_path is rejected as
+ * `overlapping_path`. Overlapping trees make sync / write-through attribute
+ * files to the wrong source, so no add or repair path may skip this.
+ */
+export async function assertNoOverlappingPath(
+  engine: BrainEngine,
+  id: string,
+  path: string,
+): Promise<void> {
+  const others = await engine.executeRaw<{ id: string; local_path: string }>(
+    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
+    [id],
+  );
+  for (const other of others) {
+    const b = other.local_path;
+    if (path === b || path.startsWith(b + '/') || b.startsWith(path + '/')) {
+      throw new SourceOpError(
+        'overlapping_path',
+        `path "${path}" overlaps with existing source "${other.id}" at "${b}". ` +
+          `Overlapping sources are not allowed.`,
+      );
+    }
+  }
+}
+
+/**
  * #2707: `--path` registration used to accept any existing directory with
  * zero git validation, deferring the failure to the first `gbrain sync`
  * ("Not inside a git repository: ..."). By the time that surfaces the
@@ -482,23 +510,7 @@ export async function addSource(
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
   }
-  if (finalPath) {
-    const others = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
-      [opts.id],
-    );
-    for (const other of others) {
-      const a = finalPath;
-      const b = other.local_path;
-      if (a === b || a.startsWith(b + '/') || b.startsWith(a + '/')) {
-        throw new SourceOpError(
-          'overlapping_path',
-          `path "${a}" overlaps with existing source "${other.id}" at "${b}". ` +
-            `Overlapping sources are not allowed.`,
-        );
-      }
-    }
-  }
+  if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath);
 
   // ── Path A: --url (clone + INSERT + rename) ────────────────────────────
   if (parsedUrl) {

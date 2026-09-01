@@ -7,13 +7,16 @@
  *   - Missing args → exit 2 with usage.
  *   - Unknown source → exit 4 (loud rejection, never a silent 0-row UPDATE).
  *   - Nonexistent path → exit 5, no mutation (never creates directories).
+ *   - Path that exists but is a FILE → exit 5, no mutation.
+ *   - Path overlapping another source's tree → exit 6 (`overlapping_path`,
+ *     the same guard addSource enforces), no mutation; --force bypasses.
  *
  * Modeled on test/sources-set-cr-mode.test.ts (same runSources dispatch,
  * same process.exit stub).
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -124,5 +127,85 @@ describe('gbrain sources set-path', () => {
     }
     expect(exitCode).toBe(5);
     expect(await readLocalPath('default')).toBeNull(); // no mutation
+  });
+
+  test('rejection: path exists but is a FILE → exit 5, no mutation', async () => {
+    const dir = makeDir();
+    const file = join(dir, 'not-a-dir.md');
+    writeFileSync(file, 'a page, not a tree\n');
+    try {
+      await runSources(engine, ['set-path', 'default', file]);
+    } catch (err) {
+      expect((err as Error).message).toContain('__test_exit_5__');
+    }
+    expect(exitCode).toBe(5);
+    expect(await readLocalPath('default')).toBeNull(); // no mutation
+  });
+
+  // Review fix: the repair command bypassed the overlapping-path guard that
+  // `sources add` enforces, so a repointed source could silently nest inside
+  // (or swallow) another source's tree — the exact shape that makes sync and
+  // write-through attribute files to the wrong source.
+  async function seedSource(id: string, localPath: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, created_at)
+       VALUES ($1, $1, $2, '{}'::jsonb, NOW())`,
+      [id, localPath],
+    );
+  }
+
+  test('rejection: path inside another source\'s tree → exit 6 (overlapping_path), no mutation', async () => {
+    const otherRoot = makeDir();
+    await seedSource('other-src', otherRoot);
+    const nested = join(otherRoot, 'nested');
+    mkdirSync(nested);
+    const errs: string[] = [];
+    const origErr = console.error;
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')); };
+    try {
+      await runSources(engine, ['set-path', 'default', nested]);
+    } catch (err) {
+      expect((err as Error).message).toContain('__test_exit_6__');
+    } finally {
+      console.error = origErr;
+    }
+    expect(exitCode).toBe(6);
+    const out = errs.join('\n');
+    expect(out).toContain('overlapping_path');
+    // Same wording addSource uses, so the two surfaces never drift.
+    expect(out).toContain(`overlaps with existing source "other-src" at "${otherRoot}"`);
+    expect(await readLocalPath('default')).toBeNull(); // no mutation
+  });
+
+  test('rejection: path that CONTAINS another source\'s tree is also an overlap', async () => {
+    const parent = makeDir();
+    const child = join(parent, 'child');
+    mkdirSync(child);
+    await seedSource('other-src', child);
+    try {
+      await runSources(engine, ['set-path', 'default', parent]);
+    } catch (err) {
+      expect((err as Error).message).toContain('__test_exit_6__');
+    }
+    expect(exitCode).toBe(6);
+    expect(await readLocalPath('default')).toBeNull();
+  });
+
+  test('--force bypasses the overlap guard (operator override)', async () => {
+    const otherRoot = makeDir();
+    await seedSource('other-src', otherRoot);
+    const nested = join(otherRoot, 'nested');
+    mkdirSync(nested);
+    await runSources(engine, ['set-path', 'default', nested, '--force']);
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(nested);
+  });
+
+  test('a source\'s own current path is not an overlap with itself (idempotent re-set)', async () => {
+    const dir = makeDir();
+    await runSources(engine, ['set-path', 'default', dir]);
+    await runSources(engine, ['set-path', 'default', dir]);
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(dir);
   });
 });

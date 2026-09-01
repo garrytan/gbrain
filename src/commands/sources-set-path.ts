@@ -7,7 +7,9 @@
  * runSetCrMode's shape (sources.ts): loud rejection on a missing source
  * (never a silent 0-row UPDATE), prints the prior value before changing it
  * so the change is visible/reversible, and never touches files on disk —
- * purely a DB pointer repair.
+ * purely a DB pointer repair. Enforces the same overlapping-path guard
+ * `sources add` does (a repointed source nesting inside / swallowing another
+ * source's tree misattributes files on sync); `--force` bypasses it.
  *
  * Lives in its own module (like sources-demo.ts / sources-harden.ts) so
  * sources.ts stays under its module-size ratchet ceiling.
@@ -16,16 +18,20 @@ import { existsSync, statSync } from 'fs';
 import { resolve as resolvePath } from 'path';
 import { msysToNativePath } from '../core/path-confine.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
 
-export async function runSetPath(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
+  const force = rawArgs.includes('--force');
+  const args = rawArgs.filter((a) => a !== '--force');
   const id = args[0];
   const rawPath = args[1];
 
   if (!id || !rawPath) {
-    console.error('Usage: gbrain sources set-path <id> <path>');
+    console.error('Usage: gbrain sources set-path <id> <path> [--force]');
     console.error("  Sets the source's local_path — the on-disk directory gbrain treats as");
     console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
     console.error('  updates the pointer, never touches files on disk.');
+    console.error("  Refuses a path that overlaps another source's tree; --force bypasses that guard.");
     process.exit(2);
   }
 
@@ -54,6 +60,19 @@ export async function runSetPath(engine: BrainEngine, args: string[]): Promise<v
     console.error('  This command only repairs the DB pointer — it never creates directories.');
     console.error('  Create the directory first, then re-run.');
     process.exit(5);
+  }
+
+  if (!force) {
+    try {
+      await assertNoOverlappingPath(engine, id, path);
+    } catch (e) {
+      if (e instanceof SourceOpError && e.code === 'overlapping_path') {
+        console.error(`Error (${e.code}): ${e.message}`);
+        console.error('  Pass --force to set it anyway (only if the trees are meant to overlap).');
+        process.exit(6);
+      }
+      throw e;
+    }
   }
 
   await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = $2`, [path, id]);
