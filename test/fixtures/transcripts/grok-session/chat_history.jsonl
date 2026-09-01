@@ -1,0 +1,11 @@
+{"type":"system","content":"SYSTEM-ONLY-TEXT: injected grok system prompt that must never reach the archive"}
+{"type":"user","content":[{"type":"text","text":"Which fund led the widget-co seed round?"}]}
+{"type":"reasoning","id":"r-1","encrypted_content":"enc","status":"completed","summary":[{"type":"summary_text","text":"REASONING-ONLY-TEXT: never extracted"}]}
+{"type":"assistant","content":"","model_id":"grok-4.6-build","model_fingerprint":"fp-example","reasoning_effort":"xhigh","tool_calls":[{"id":"call-1","name":"search_brain","arguments":"{\"query\":\"widget-co seed\"}"}]}
+{"type":"tool_result","tool_call_id":"call-1","content":"TOOL-OUTPUT-ONLY-TEXT: 3 pages found"}
+{"type":"assistant","content":"fund-a led the widget-co seed; fund-b participated.","model_id":"grok-4.6-build","model_fingerprint":"fp-example","reasoning_effort":"xhigh"}
+{"type":"user","synthetic_reason":"system_reminder","content":[{"type":"text","text":"SYNTHETIC-ONLY-TEXT: injected system reminder that must never reach the archive"}]}
+{"type":"user","content":[{"type":"text","text":"Great. Note that the bridge check-in is every Thursday."}]}
+{"type":"assistant","content":"Noted: bridge check-in every Thursday.","model_id":"grok-4.6-build","model_fingerprint":"fp-example","reasoning_effort":"xhigh"}
+{malformed grok line — parser must count it as skipped and continue
+{"type":"backend_tool_call","kind":{"id":"b-1","tool_type":"web_search","action":"search","status":"ok"}}
