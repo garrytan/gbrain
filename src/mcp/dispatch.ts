@@ -498,7 +498,7 @@ export async function dispatchToolCall(
   const isVerb = VERB_NAME_SET.has(name);
   // [c11] dispatch-layer usage sidecar for the five verbs — counts validation
   // failures too. Fire-and-forget; never awaited, never throws.
-  const logVerb = (ok: boolean, extra?: { budget_dropped?: number; entity_found?: boolean }) => {
+  const logVerb = (ok: boolean, extra?: { budget_dropped?: number; entity_found?: boolean; remember_status?: string }) => {
     if (!isVerb) return;
     logVerbUsage({
       verb: name,
@@ -668,10 +668,14 @@ export async function dispatchToolCall(
     const result = await op.handler(ctx, safeParams);
     // [E4] verb success metrics: budget drops + entity hit/miss when present.
     {
-      const r = result as { dropped_count?: number; found?: boolean } | null;
+      const r = result as { dropped_count?: number; found?: boolean; status?: string } | null;
       logVerb(true, {
         ...(typeof r?.dropped_count === 'number' ? { budget_dropped: r.dropped_count } : {}),
         ...(name === 'entity' && typeof r?.found === 'boolean' ? { entity_found: r.found } : {}),
+        // remember's frozen status enum (inserted|duplicate|superseded) —
+        // the memory_writeback doctor counters read this (all-MCP-callers
+        // semantics, labeled honestly there; OV-A11).
+        ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
       });
     }
     const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

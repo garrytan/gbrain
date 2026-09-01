@@ -28,7 +28,8 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
+import { buildMcpInstructions } from './instructions.ts';
+import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
 import { VERSION } from '../version.ts';
@@ -418,13 +419,27 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
       // initialize
       if (method === 'initialize') {
         logRequest(auth.tokenName!, 'initialize', 'success', Date.now() - startedMs);
+        // Ambient writeback (opt-in, default off): resolved per initialize —
+        // fail-closed with a per-engine last-known-good bundle, so a config
+        // read failure serves the previous bundle (or the base string), never
+        // a wrong posture. This transport carries no per-token scopes
+        // (OV-A5 is the OAuth lane's concern) but it DOES clamp surfaces —
+        // extract_facts is advertised only when the resolved surface can
+        // actually call it (OV2-14; a verbs/starter-pinned serve must not
+        // order agents to call a tool dispatch will deny).
+        const writeback = await resolveWritebackConfig(engine, fileConfig);
         return Response.json(
           {
             result: {
               protocolVersion: '2025-03-26',
               serverInfo: { name: 'gbrain', version: VERSION },
               capabilities: { tools: {} },
-              instructions: GBRAIN_MCP_INSTRUCTIONS,
+              instructions: buildMcpInstructions({
+                writeback: ambientOptsFrom(writeback, {
+                  remember: surfaceAllowedOps ? surfaceAllowedOps.has('remember') : true,
+                  extractFacts: surfaceAllowedOps ? surfaceAllowedOps.has('extract_facts') : true,
+                }),
+              }),
             },
             jsonrpc: '2.0',
             id,
