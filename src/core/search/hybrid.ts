@@ -1152,7 +1152,16 @@ export async function hybridSearch(
   // per-mode evals would not test production search if modes lived only in
   // the wrapper. See `[CDX-5+6]` in the plan.
   const { loadSearchModeConfig, resolveSearchMode } = await import('./mode.ts');
-  const modeInput = await loadSearchModeConfig(engine);
+  // SEARCH_MODE_CONFIG_KEYS is 32 keys + the mode key, each read as its own
+  // `SELECT value FROM config WHERE key = $1`. config-snapshot.ts exists for
+  // exactly this and is already used by loadConfigWithEngine and the gateway;
+  // the search path just never adopted it. Measured on a 232k-chunk PGLite
+  // brain: 34 reads, 314 ms, before any retrieval runs. (The module header
+  // assumes PGLite reads cost microseconds — that holds on a small brain, not
+  // on a 5 GB one where each round trip crosses the WASM wire protocol.)
+  const { snapshotConfigReader } = await import('../config-snapshot.ts');
+  const modeReader = (await snapshotConfigReader(engine)) ?? engine;
+  const modeInput = await loadSearchModeConfig(modeReader);
   const resolvedMode = resolveSearchMode({
     // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
     // only passes this for trusted/local callers; remote callers leave it
@@ -2305,7 +2314,12 @@ export async function hybridSearchCached(
   // that scopes the cache row so a tokenmax write can't be served to a
   // conservative read. See [CDX-4] in the plan.
   const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('./mode.ts');
-  const modeInputForCache = await loadSearchModeConfig(engine);
+  // Same snapshot as bare hybridSearch below. Note this wrapper resolves the
+  // mode and then calls hybridSearch, which resolves it AGAIN — so an uncached
+  // query paid ~66 per-key reads end to end, not 34.
+  const { snapshotConfigReader: snapshotConfigReaderForCache } = await import('../config-snapshot.ts');
+  const cacheModeReader = (await snapshotConfigReaderForCache(engine)) ?? engine;
+  const modeInputForCache = await loadSearchModeConfig(cacheModeReader);
   const resolvedForCache = resolveSearchMode({
     // T4/D5 — per-call mode folds into the cache key (resolved_mode is part
     // of knobsHash) so a per-call `--mode tokenmax` read can't be served a
