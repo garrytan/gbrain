@@ -22,7 +22,12 @@ test proven red before the fix.
   `direction: both` and receive explicit `GraphPath[]` edges — a wire-shape
   change if your remote client parsed the old no-filter node output. Pass an
   explicit `direction` to pin a shape. Trusted local callers (`gbrain
-  graph`) keep the node shape unchanged. (#4704, contributed by
+  graph`) keep the node shape unchanged. A remote call that leaves BOTH
+  direction and depth to default walks at depth 2 (bidirectional path
+  enumeration is combinatorial on entity hubs); an explicit `depth` is
+  honored up to the cap of 10. Both engines bound every path walk at
+  5,000 edge rows — the shallowest edges are kept, a truncation note goes
+  to stderr, and the wire shape is unchanged. (#4704, contributed by
   @javieraldape; fixes #4666)
 - **Atom identity now folds in the source page.** Two source pages that
   emit the same atom title on the same date get distinct atom slugs instead
@@ -42,8 +47,10 @@ test proven red before the fix.
   an undeclared link verb on `add_link` is rejected with the pack's actual
   vocabulary in the error, instead of quietly minting an off-taxonomy page
   or edge. No pack (or an unresolvable one) means no enforcement — writes
-  behave exactly as before. (#4721, contributed by @javieraldape; fixes
-  #4655)
+  behave exactly as before. A capture whose frontmatter declares a type
+  the pack accepts is stored under that type — over MCP as well as from
+  the CLI — instead of being silently retyped to `note`. (#4721,
+  contributed by @javieraldape; fixes #4655)
 
 ### AI providers
 
@@ -252,6 +259,86 @@ test proven red before the fix.
   timeline parsers skip generated backlink receipts (#4277, contributed by
   @avs-io).
 
+### Ship-review hardening
+
+Three cross-model adversarial review rounds ran over the wave before ship,
+followed by a targeted test sweep. Every fix below carries a regression
+test proven red first; the rounds added roughly 225 test cases across 75
+test files, 11 of them new.
+
+- **Graph traversal and aliases.** Remote `traverse_graph` defaults to
+  depth 2 when direction is also defaulted, and both engines bound the
+  recursive edge walk at 5,000 rows with a stderr truncation note (see
+  Behavior changes; `gbrain graph-query` prints the same note). (#4704)
+  `get_page`'s alias hop reads the canonical page in the source that owns
+  the alias, so an unrelated live page at the same slug in another granted
+  source can no longer shadow it, and the trusted unscoped read consults
+  archived sources' alias rows only under `include_deleted`. (#4275)
+- **Capture and schema packs.** Frontmatter-typed captures over MCP
+  persist the declared type instead of being retyped to `note` (#4721).
+  The pack-vocabulary loader never throws — an unresolvable pack lets the
+  write proceed — and `add_link` dry runs preview a rejection.
+- **Default-write guard.** `gbrain sync --dry-run` is no longer refused on
+  a brain whose pages overwhelmingly live outside `default`: it prints
+  `[dry-run] a real run would be refused:` with the same routing guidance
+  and previews the run; only a real run exits. The MCP stdio advisory and
+  the `gbrain import` warning latch only after a successful assessment, so
+  a transient database error can no longer silence the advisory for the
+  life of the process; the import assessment is memoized per engine so
+  in-process callers (the `sync_brain` op, autopilot, minion sync) pay for
+  it once. (#4583) **Say to your agent:** *"Show me what a sync would do
+  without writing anything"* — your agent runs `gbrain sync --dry-run`.
+- **Calendar mail and open loops.** Calendar system mail is recognized by
+  the iCalendar `METHOD` Gmail carries in the calendar part's own
+  Content-Type header, only real METHOD values count as a stamp, and a
+  generic "Notification:" subject is no longer treated as calendar mail —
+  so a real inbound notification opens a loop again (#4723). `loops mute
+  sender` gates on who WROTE in a thread, never on recipients or CC, so
+  muting one person stops hiding everyone else's commitments in a group
+  thread; thread pages carry a `senders:` list beside `participants:`. The
+  loop-extraction queue budget is counted per source, so one account's
+  stalled backlog no longer starves another's (#4724). The calendar sync
+  token is bound to the calendar it was minted for: re-pointing a source's
+  `g_calendar_id` discards the old cursor and starts a fresh window instead
+  of replaying a foreign delta. `gbrain google calendars --json` emits the
+  standard `{ ok, status, … }` envelope every other google subcommand does
+  (#4698). **Say to your agent:** *"list the calendars my google account
+  can read"* — your agent runs `gbrain google calendars`.
+- **Transcripts.** The Grok Build adapter classifies an undecodable human
+  turn as malformed, so an upstream schema change is reported as drift
+  (watermark frozen) instead of silently advancing past whole
+  conversations; a session whose `summary.json` has not been written yet
+  imports with file-mtime provenance (`timestamp_source: file_mtime`)
+  instead of freezing the watermark for the whole store, and a
+  summary-less session gets a stable path-hash id. (#4751)
+- **Facts and eval.** The deterministic junk gate exempts commitment facts
+  from its plan-narration arm — "I'll send the deck by Friday" is exactly
+  the fact the loop engine exists to capture (#3852). The cross-modal judge
+  neutralizes a closing data-boundary delimiter inside candidate output, so
+  injected text stays inside the graded block (#4338). CRAG escalation
+  honors the caller's explicit limit or the mode-derived default and fires
+  only when the first pass did not already run with expansion on (#4610).
+  The drain summary's count-only error path routes through the same
+  failure sanitizer as typed records (#4731).
+- **MCP identity.** `gbrain config set mcp.instructions "<identity>"`
+  writes the file plane every MCP transport's initialize response reads —
+  the command was accepted and silently ignored before — and a blank
+  `GBRAIN_MCP_INSTRUCTIONS` in the environment no longer blanks a
+  configured identity (an empty or whitespace-only value is treated as
+  unset). (#4748)
+- **CLI and doctor.** `gbrain sources set-path` enforces the same
+  overlapping-path guard `sources add` does — exit 6 with the exact
+  message; `--force` bypasses it (#4739). An archived `--source` on
+  `gbrain agent run` is a clean one-line error + exit 1, not a stack trace
+  (#2922). The `home_dir_in_worktree` check normalizes a trailing-slash
+  `$HOME` before its containment test (#4683). Ollama's thinking predicate
+  excludes `qwen3-coder` and admits `phi4-mini-reasoning` (#4569). The
+  code-* family shares one source-scope SQL predicate, with the inline
+  `--source=<id>` spelling pinned across all four commands (#4747).
+  `recall`'s entity→text fallback is pinned to stay inside the source
+  boundary and to mirror over the thin client (#4720); `reranker_health`
+  warns at three or more audited pass-throughs (#4648).
+
 With thanks to every contributor whose pull request this wave adopts:
 @1kuna, @avs-io, @chrispaterson, @danwiggins, @DarkNightForge, @Grimnoth,
 @javieraldape, @jcnouwens, @jonathanlesh, @jpark43, @Masashi-Ono0611,
@@ -290,11 +377,39 @@ verified issues drove the direct fixes.
 
    PGLite brains can simply let the one-time re-scan happen.
 
+3. **Optional: give this brain an identity for connected agents.** An agent
+   holding several brains behind one tool catalog tells them apart by the
+   `Deployment identity:` banner in the MCP initialize response:
+
+   ```bash
+   gbrain config set mcp.instructions "Team wiki brain — route product and roadmap questions here"
+   # restart `gbrain serve` afterwards (the response is built once per process)
+   ```
+
+   `GBRAIN_MCP_INSTRUCTIONS="<identity>"` in the serve process's environment
+   overrides the configured value for that process; a blank or unset variable
+   falls back to the configured one. `gbrain config unset mcp.instructions`
+   returns to the bare canonical contract.
+
+4. **Optional: sync a secondary calendar.**
+
+   ```bash
+   gbrain google calendars --json        # every readable calendar + ids, standard envelope
+   gbrain sources add family-cal --kind google --account you@example.com \
+     --services calendar --calendar-id "<id from the list>"
+   ```
+
+   Re-pointing an existing source's `g_calendar_id` is safe: the old sync
+   cursor is discarded and the new calendar starts from a fresh window.
+
 **Say to your agent:** *"Archive my session transcripts"* (Grok Build now
 included) — *"Mute this sender's loops"* / *"unmute them"* (your agent runs
 `gbrain loops mute|unmute sender <email>`) — *"Set up local embeddings
 through LM Studio"* (your agent runs `gbrain init --embedding-model
-lmstudio:<model-id> --embedding-dimensions <N>`).
+lmstudio:<model-id> --embedding-dimensions <N>`) — *"Tell connected agents
+which brain this is"* (your agent runs `gbrain config set mcp.instructions
+"<identity>"`) — *"list the calendars my google account can read"* (your
+agent runs `gbrain google calendars`).
 
 ## [0.47.9.0] - 2026-08-31
 
