@@ -587,30 +587,15 @@ async function runCorpusIngestPass(
     .slice(0, batchLimit);
   if (candidates.length === 0) return;
 
-  // [CX-P0.5] Keyless rule: no extraction provider configured ⇒ skip the
-  // whole pass. Agent-authored fences (pass 1) carry keyless memory.
-  const caps = ctx.capabilities ?? detectCapabilities();
-  if (!caps.extraction.available) {
-    skip('keyless', candidates.length);
-    return;
-  }
-
-  // Existing spend gate: operators flip facts.extraction_enabled off to
-  // stop ALL fact extraction brain-wide (facts/extract.ts:43).
-  const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
-  if (!(await isFactsExtractionEnabled(engine))) {
-    skip('extraction_disabled', candidates.length);
-    return;
-  }
-
-  const { runFactsPipeline } = await import('./facts/backstop.ts');
-  const { isDreamOutput } = await import('./cycle/transcript-discovery.ts');
-
   // Ambient-writeback turn files (`.wb-` basenames) ride this pass as the
   // batch backstop when serve/IPC was away (OV2-11) — but they answer to the
   // AUTHORITATIVE `memory.auto_writeback` gate, resolved once per pass: off ⇒
   // terminal sidecar (operator intent beats a leftover hook-side bank), on ⇒
   // extracted with the lane's own provenance + salient notability filter.
+  // Resolved BEFORE the keyless/kill-switch short-circuits so an operator's
+  // OFF retires banked turns even when the brain cannot extract — otherwise
+  // the files linger eligible and a later re-enable would extract turns the
+  // operator already revoked (codex re-review, this wave).
   const { parseWbFileName, writebackOffSidecarJson } = await import('./context/corpus-segments.ts');
   const { resolveWritebackConfig } = await import('./facts/writeback-config.ts');
   const { loadConfig: loadFileCfg } = await import('./config.ts');
@@ -621,6 +606,44 @@ async function runCorpusIngestPass(
   // an unrecognized mode value all skip wb files WITHOUT a terminal sidecar
   // so the next sweep retries them once the config is coherent.
   const wbCfg = await resolveWritebackConfig(engine, loadFileCfg(), { gate: true });
+  // Genuinely-resolved OFF: terminal-sidecar the wb candidates regardless of
+  // extraction capability (idempotent one-line writes; a lost race with a
+  // concurrent sweep writing the same sidecar is benign).
+  const wbGenuinelyOff = !wbCfg.enabled && wbCfg.mode_valid && !wbCfg.plane_drift && !wbCfg.read_error;
+  const retireWbCandidatesIfOff = async (): Promise<Set<string>> => {
+    const retired = new Set<string>();
+    if (!wbGenuinelyOff) return retired;
+    for (const name of candidates) {
+      if (!parseWbFileName(name)) continue;
+      try {
+        await writeFile(join(dir, name) + CORPUS_INGESTED_SUFFIX, writebackOffSidecarJson());
+        retired.add(name);
+        skip('writeback_off');
+      } catch { /* per-file best effort — the next sweep retries */ }
+    }
+    return retired;
+  };
+
+  // [CX-P0.5] Keyless rule: no extraction provider configured ⇒ skip the
+  // whole pass. Agent-authored fences (pass 1) carry keyless memory.
+  const caps = ctx.capabilities ?? detectCapabilities();
+  if (!caps.extraction.available) {
+    const retired = await retireWbCandidatesIfOff();
+    skip('keyless', candidates.length - retired.size);
+    return;
+  }
+
+  // Existing spend gate: operators flip facts.extraction_enabled off to
+  // stop ALL fact extraction brain-wide (facts/extract.ts:43).
+  const { isFactsExtractionEnabled } = await import('./facts/extract.ts');
+  if (!(await isFactsExtractionEnabled(engine))) {
+    const retired = await retireWbCandidatesIfOff();
+    skip('extraction_disabled', candidates.length - retired.size);
+    return;
+  }
+
+  const { runFactsPipeline } = await import('./facts/backstop.ts');
+  const { isDreamOutput } = await import('./cycle/transcript-discovery.ts');
 
   for (let i = 0; i < candidates.length; i++) {
     if (overBudget()) {

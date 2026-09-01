@@ -142,9 +142,12 @@ describe('renderAmbientInstructionBlock', () => {
     expect(header).toContain('mode: salient');
     expect(header).toContain(`serve: ${URL}`);
     expect(header).toContain('do not hand-edit inside markers');
-    // Shared-builder body: the harness block addresses the full agent surface.
+    // Shared-builder body. The block cannot probe the registered serve's
+    // surface (a --surface verbs serve has no extract_facts), so it carries
+    // the HEDGED multi-fact line — honest on every surface (codex re-review).
     expect(block).toContain('Ambient memory writeback (enabled by this brain\'s operator — mode: salient)');
-    expect(block).toContain('extract_facts');
+    expect(block).toContain('extract_facts when that tool is in your tool list');
+    expect(block).toContain('otherwise distill them yourself');
     expect(block).toContain('ttl: "3d"');
     expect(block).toContain('visibility: "world"');
   });

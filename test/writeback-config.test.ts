@@ -410,6 +410,29 @@ describe('config set/unset memory.* — dual-plane routing (OV2-5)', () => {
     }
   });
 
+  test('unset --pattern memory. clears the file mirror too — the engine-free hook must not keep banking (codex re-review)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-wbcfg8-'));
+    const db = new Map<string, string>([['memory.auto_writeback', 'salient']]);
+    const engine = {
+      getConfig: async (k: string) => db.get(k) ?? null,
+      setConfig: async (k: string, v: string) => { db.set(k, v); },
+      unsetConfig: async (k: string) => (db.delete(k) ? 1 : 0),
+      listConfigKeys: async (prefix: string) => [...db.keys()].filter((k) => k.startsWith(prefix)),
+    } as unknown as BrainEngine;
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      // Seed the realistic dual-written state.
+      await captureLog(() => runConfig(engine, ['set', 'memory.auto_writeback', 'salient']));
+      const cfgPath = join(parent, '.gbrain', 'config.json');
+      expect((JSON.parse(readFileSync(cfgPath, 'utf8')) as { memory?: { auto_writeback?: string } }).memory?.auto_writeback).toBe('salient');
+
+      const out = await captureLog(() => runConfig(engine, ['unset', '--pattern', 'memory.']));
+      expect(out).toContain('File mirror cleared for: memory.auto_writeback');
+      expect(db.has('memory.auto_writeback')).toBe(false);
+      const after = JSON.parse(readFileSync(cfgPath, 'utf8')) as { memory?: { auto_writeback?: string } };
+      expect(after.memory?.auto_writeback).toBeUndefined();
+    });
+  });
+
   test('set-to-off prints the block-converge hint (the off switch names its second step)', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'gb-wbcfg7-'));
     const db = new Map<string, string>();

@@ -147,9 +147,10 @@ export interface AmbientInstructionBlockOpts {
 /**
  * The block BODY: a managed-by header line (naming the mode + serve endpoint
  * so multi-brain last-wins stays visible [OV-A3]) followed by the shared
- * ambient-writeback section. `extractFactsAvailable` is TRUE here by design:
- * the harness block addresses the agent-side full surface (CLI + full MCP
- * tool list), not a narrowed transport.
+ * ambient-writeback section. `extractFactsAvailable` is 'unknown' here by
+ * design: the engine-free harness lane cannot probe the registered serve's
+ * surface (a `--surface verbs` serve has no extract_facts), so the block
+ * carries the hedged multi-fact line that stays honest on every surface.
  */
 export function renderAmbientInstructionBlock(opts: AmbientInstructionBlockOpts): string {
   const header =
@@ -159,7 +160,11 @@ export function renderAmbientInstructionBlock(opts: AmbientInstructionBlockOpts)
     mode: opts.mode,
     transientTtl: opts.transientTtl,
     visibility: opts.visibility,
-    extractFactsAvailable: true,
+    // The engine-free harness lane cannot probe the serve's surface — a
+    // clamped `--surface verbs` serve has no extract_facts. 'unknown'
+    // renders the hedged multi-fact line ("when that tool is in your tool
+    // list"), honest on every surface (codex re-review, this wave).
+    extractFactsAvailable: 'unknown',
   });
   return `${header}\n${section}`;
 }

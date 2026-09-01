@@ -397,12 +397,6 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   duplicate?: number;
   superseded?: number;
 }> {
-  const caps = job.capabilities ?? (await import('../capability.ts')).detectCapabilities();
-  if (!caps.extraction.available) return { outcome: 'degraded', reason: 'keyless' };
-  const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
-  if (!(await isFactsExtractionEnabled(job.engine))) {
-    return { outcome: 'degraded', reason: 'extraction_disabled' };
-  }
   const { resolveWritebackConfig } = await import('../facts/writeback-config.ts');
   const { loadConfig } = await import('../config.ts');
   // Gate semantics ({gate:true}): a config READ FAILURE is OFF but NOT
@@ -411,6 +405,11 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
   // says enabled — a failed dual-write is not operator intent) and for an
   // UNRECOGNIZED mode value (a typo is not a decision). Only a
   // genuinely-resolved OFF writes the terminal sidecar: that one is intent.
+  // The gate resolves BEFORE the capability/kill-switch checks: an
+  // operator's OFF must retire the banked turn even on a keyless or
+  // extraction-disabled brain — otherwise the file lingers eligible and a
+  // later re-enable would extract turns the operator already revoked
+  // (codex re-review, this wave).
   const wb = await resolveWritebackConfig(job.engine, loadConfig(), { gate: true });
   if (wb.read_error) return { outcome: 'degraded', reason: 'gate_unreadable' };
   if (!wb.enabled && (wb.plane_drift || !wb.mode_valid)) {
@@ -420,6 +419,12 @@ async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: str
     const { writebackOffSidecarJson } = await import('./corpus-segments.ts');
     await writeFile(ingestedPath, writebackOffSidecarJson());
     return { outcome: 'ok', reason: 'writeback_off' };
+  }
+  const caps = job.capabilities ?? (await import('../capability.ts')).detectCapabilities();
+  if (!caps.extraction.available) return { outcome: 'degraded', reason: 'keyless' };
+  const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
+  if (!(await isFactsExtractionEnabled(job.engine))) {
+    return { outcome: 'degraded', reason: 'extraction_disabled' };
   }
 
   const raw = await readFile(full, 'utf-8');

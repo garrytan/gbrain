@@ -231,7 +231,30 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         process.exit(1);
       }
       const keys = await engine.listConfigKeys(prefix);
-      if (keys.length === 0) {
+      // Dual-plane keys matching the prefix must ALSO leave the file mirror
+      // (codex re-review, this wave): a DB-only pattern delete would report
+      // success while the engine-free Stop hook keeps reading the mirror's
+      // enabled value — the exact bypass the single-key dual-plane branch
+      // below exists to prevent. Swept even when the DB had no matching rows
+      // (a previously-failed dual-write leaves the key file-only).
+      const fileSwept: string[] = [];
+      const dualPlaneMatches = [...MEMORY_DUAL_PLANE_KEYS, BRAIN_AUDIENCE_KEY].filter((k) => k.startsWith(prefix));
+      if (dualPlaneMatches.length > 0) {
+        const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+        const cfg = loadConfigFileOnly();
+        if (cfg) {
+          for (const k of dualPlaneMatches) {
+            if (k === BRAIN_AUDIENCE_KEY) {
+              if (cfg.brain && 'audience' in cfg.brain) { delete cfg.brain.audience; fileSwept.push(k); }
+            } else {
+              const leaf = k.slice('memory.'.length) as (typeof MEMORY_DUAL_PLANE_LEAVES)[number];
+              if (cfg.memory && leaf in cfg.memory) { delete cfg.memory[leaf]; fileSwept.push(k); }
+            }
+          }
+          if (fileSwept.length > 0) saveConfig(cfg);
+        }
+      }
+      if (keys.length === 0 && fileSwept.length === 0) {
         console.log(`No keys match prefix "${prefix}".`);
         return;
       }
@@ -242,6 +265,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       console.log(`Unset ${deleted} key(s) matching "${prefix}":`);
       for (const k of keys) console.log(`  - ${k}`);
+      for (const k of fileSwept) {
+        if (!keys.includes(k)) console.log(`  - ${k} (file mirror)`);
+      }
+      if (fileSwept.length > 0) console.log(`File mirror cleared for: ${fileSwept.join(', ')}`);
       return;
     }
 
@@ -512,13 +539,20 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       // Stamp the resolved visibility POSTURE into the mirror while we hold
       // an engine: the engine-free bootstrap-harness renderer embeds it in
-      // the managed instruction block. Best-effort — a failed read keeps any
-      // prior stamp (doctor's drift check compares against DB truth).
+      // the managed instruction block. A failed read keeps any prior stamp;
+      // with NO prior stamp it fail-closes to 'private' — the file resolver
+      // defaults an ABSENT stamp to 'world' (F5's readable-unset rule), so
+      // leaving it absent here would let a transient blip on an explicitly
+      // private brain render world-widening instructions (codex re-review,
+      // this wave). A wrongly-private stamp on a world brain only costs a
+      // doctor drift warn; the reverse widens facts.
       let posture: string | undefined = cfg.memory?.visibility_posture;
       try {
         const { visibilityPostureFromRaw } = await import('../core/facts/writeback-config.ts');
         posture = visibilityPostureFromRaw(await engine.getConfig('facts.default_visibility')).visibility;
-      } catch { /* keep prior stamp */ }
+      } catch {
+        posture = posture ?? 'private';
+      }
       cfg.memory = {
         ...(cfg.memory ?? {}),
         [key.slice('memory.'.length)]: normalized,

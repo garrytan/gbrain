@@ -130,6 +130,24 @@ describe('runMaintenanceSweep — ambient-writeback turn files (OV2-11)', () => 
     expect(r2.skipped).toContainEqual({ reason: 'already_ingested', count: 1 });
   });
 
+  test('gate OFF beats keyless: wb candidates are terminally retired even when the pass short-circuits (codex re-review)', async () => {
+    // memory.auto_writeback stays unset (off) in the DB and the file mirror
+    // is absent — genuinely off. A keyless pass must still write the
+    // terminal writeback_off sidecar instead of leaving the file eligible
+    // for a later re-enable.
+    const keyless: CapabilityReport = {
+      embeddings: { available: false },
+      extraction: { available: false },
+      search: 'keyword-only',
+      mode: 'keyless',
+    };
+    const file = await bankWb('sess-swpoffkeyless', 'I moved the standing desk into the garden office yesterday.');
+    const r = await runMaintenanceSweep(engine, { sourceId: 'default', capabilities: keyless });
+    expect(r.skipped).toContainEqual({ reason: 'writeback_off', count: 1 });
+    const sidecar = JSON.parse(readFileSync(join(corpusDir, file + CORPUS_INGESTED_SUFFIX), 'utf8'));
+    expect(sidecar.skipped).toBe('writeback_off');
+  });
+
   test('source fidelity: a wb file banked under GBRAIN_SOURCE=wiki extracts into wiki even when the sweep runs as default (adversarial review)', async () => {
     await engine.setConfig('memory.auto_writeback', 'salient');
     await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('wiki', 'wiki') ON CONFLICT (id) DO NOTHING`);

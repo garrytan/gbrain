@@ -1131,6 +1131,17 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           failTarget(t, 'internal: instructions target planned without a rendered block body');
           continue;
         }
+        // Same precedent as the permission pre-approval above: the block
+        // orders agents to save through THIS host's gbrain registration —
+        // if that registration didn't land (foreign-url refusal, write
+        // failure), installing the block would direct ambient saves at
+        // whatever server already owns the name, a consent the operator
+        // never gave (codex re-review, this wave).
+        const hostMcp = targets.find((x) => x.host === t.host && x.kind === 'mcp');
+        if (hostMcp && hostMcp.state !== 'confirmed') {
+          failTarget(t, `skipped: the ${t.host} MCP registration itself did not land — an instruction block without it would direct saves at a foreign server`);
+          continue;
+        }
         installAmbientWritebackBlockAt(t.path, ambientBody);
         confirm(t);
         d.log(`ambient-writeback instruction block installed in ${t.path} (mode: ${wb.mode}).`);

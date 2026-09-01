@@ -488,6 +488,26 @@ describe('writeback lane (ambient memory backstop)', () => {
     expect(hb[0]?.reason).toBe('writeback_off');
   });
 
+  test('gate OFF beats keyless: the terminal writeback_off sidecar lands even when the brain cannot extract (codex re-review)', async () => {
+    // The gate resolves BEFORE the capability short-circuit — otherwise the
+    // banked file of an operator who turned writeback OFF would linger
+    // eligible on a keyless brain and a later re-enable would extract it.
+    await engine.unsetConfig('memory.auto_writeback');
+    const keyless: CapabilityReport = {
+      embeddings: { available: false },
+      extraction: { available: false },
+      search: 'keyword-only',
+      mode: 'keyless',
+    };
+    const file = await bankWb('sess-wboffkeyless', 'I moved the standing desk into the garden office yesterday.');
+    scheduleCheckpointHarvest({
+      engine, sourceId: 'default', sessionId: 'sess-wboffkeyless', corpusDir, file, capabilities: keyless, lane: 'writeback',
+    });
+    await __drainCheckpointHarvestForTests();
+    const sidecar = JSON.parse(readFileSync(join(corpusDir, file + '.ingested'), 'utf8'));
+    expect(sidecar.skipped).toBe('writeback_off');
+  });
+
   test('plane drift (DB unset + file mirror enabled): NO sidecar, file survives — a failed dual-write is not operator intent (adversarial review)', async () => {
     await engine.unsetConfig('memory.auto_writeback');
     const { configDir } = await import('../src/core/config.ts');
