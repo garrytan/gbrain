@@ -258,4 +258,90 @@ describe('recipe: openrouter', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('16. fetch shim promotes reasoning_content when content is empty (DeepSeek-via-OpenRouter, #4753)', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'the answer' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions');
+      const json = await res.json();
+      expect(json.choices[0].message.content).toBe('the answer');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('17. fetch shim does not promote on tool-call turns or non-empty content', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string' ? init.body : '';
+      const kind = body.includes('tool') ? 'tool' : 'content';
+      if (kind === 'tool') {
+        return new Response(JSON.stringify({
+          choices: [{ finish_reason: 'tool_calls', message: {
+            content: null,
+            reasoning_content: 'INTERNAL CHAIN OF THOUGHT — must not leak',
+            tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'brain_search', arguments: '{}' } }],
+          } }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'real content', reasoning_content: 'ignored' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const toolRes = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'deepseek/deepseek-v4-flash-0731', kind: 'tool' }),
+      });
+      const toolJson = await toolRes.json();
+      expect(toolJson.choices[0].message.content).toBeNull();
+      expect(toolJson.choices[0].message.tool_calls).toHaveLength(1);
+
+      const textRes = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'deepseek/deepseek-v4-flash-0731' }),
+      });
+      expect((await textRes.json()).choices[0].message.content).toBe('real content');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('18. cache_control rewrite still runs, then reasoning_content is promoted on the response', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ init?: RequestInit }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '   ', reasoning_content: 'from ws' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { [OPENROUTER_CACHE_HEADER]: '1' },
+        body: JSON.stringify({
+          model: 'anthropic/claude-sonnet-4.6',
+          messages: [
+            { role: 'system', content: 'stable system prompt' },
+            { role: 'user', content: 'hello' },
+          ],
+        }),
+      });
+      const rewritten = JSON.parse(calls[0].init!.body as string);
+      expect(rewritten.messages[0].content).toEqual([
+        { type: 'text', text: 'stable system prompt', cache_control: { type: 'ephemeral' } },
+      ]);
+      expect(new Headers(calls[0].init!.headers as any).has(OPENROUTER_CACHE_HEADER)).toBe(false);
+      expect((await res.json()).choices[0].message.content).toBe('from ws');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

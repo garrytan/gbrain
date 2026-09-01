@@ -1,4 +1,5 @@
 import type { Recipe } from '../types.ts';
+import { deepseekReasoningContentCompatFetch } from './deepseek.ts';
 import { openaiModelSupportsPromptCache } from './openai.ts';
 
 /**
@@ -98,9 +99,13 @@ function withSystemCacheControl(body: unknown): unknown {
 }
 
 /**
- * Compat fetch: honors the OPENROUTER_CACHE_HEADER marker by splicing an
+ * Compat fetch: (1) honors the OPENROUTER_CACHE_HEADER marker by splicing an
  * Anthropic cache_control breakpoint onto the system block, then strips the
- * marker. Fail-open: any parse problem sends the original body unchanged.
+ * marker; (2) composes the native DeepSeek `reasoning_content` promote so
+ * OpenRouter-hosted thinking models (DeepSeek V4, etc.) do not arrive at the
+ * AI SDK adapter as empty `content` (#4753). Fail-open: any parse problem
+ * sends the original body unchanged. Tool-call turns are never promoted
+ * (that logic lives in `deepseekReasoningContentCompatFetch`).
  *
  * @internal exported for tests. Cast through `unknown` because TS's
  * `typeof fetch` includes a `preconnect` member (matches azure-openai.ts).
@@ -109,9 +114,11 @@ export const openrouterCompatFetch = (async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> => {
-  if (!init?.headers) return fetch(input as any, init as any);
+  const promote = (nextInit?: RequestInit) =>
+    deepseekReasoningContentCompatFetch(input as any, nextInit as any);
+  if (!init?.headers) return promote(init);
   const headers = new Headers(init.headers as any);
-  if (!headers.has(OPENROUTER_CACHE_HEADER)) return fetch(input as any, init as any);
+  if (!headers.has(OPENROUTER_CACHE_HEADER)) return promote(init);
   headers.delete(OPENROUTER_CACHE_HEADER);
   let body = init.body;
   if (typeof body === 'string') {
@@ -126,7 +133,7 @@ export const openrouterCompatFetch = (async (
       // Non-JSON body: let the provider surface the original problem.
     }
   }
-  return fetch(input as any, { ...init, headers, body } as any);
+  return promote({ ...init, headers, body } as any);
 }) as unknown as typeof fetch;
 
 /**
