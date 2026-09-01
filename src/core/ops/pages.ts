@@ -150,6 +150,40 @@ const get_page: Operation = {
     if (page && excludePrivate && isPrivatePage(page.frontmatter)) page = null;
     let resolved_slug: string | undefined;
 
+    // #4275: slug aliases are redirects — dedup/migration retires a slug and
+    // registers alias → canonical. Search and the wikilink resolver already
+    // follow them (resolveSlugWithAlias documents get_page as a consumer);
+    // the direct exact read 404ing on a retired slug made the surfaces
+    // disagree. Resolution runs ONLY on an exact-read miss, so a live page at
+    // the requested slug (or, with include_deleted, its recoverable shell —
+    // restore workflows need the shell, not a redirect) always wins, and it
+    // runs BEFORE fuzzy (the alias table is authoritative; fuzzy is a guess).
+    // Scope: federated grants consult only granted sources' alias rows, so an
+    // out-of-grant alias behaves exactly like a missing page; a scalar scope
+    // consults that source (the remote '__all__' literal matches no real
+    // source and fail-closes); the trusted UNSCOPED read consults every
+    // source, matching the unscoped getPage it fronts. The redirect target
+    // composes with the same excludePrivate gate as the exact read.
+    if (!page) {
+      try {
+        const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
+          ? sourceOpts.sourceIds
+          : sourceOpts.sourceId !== undefined
+            ? sourceOpts.sourceId
+            : (await ctx.engine.listAllSources({ includeArchived: true })).map(s => s.id);
+        const canonical = await ctx.engine.resolveSlugWithAlias(slug, aliasScope);
+        if (canonical !== slug) {
+          const aliasPage = await ctx.engine.getPage(canonical, { includeDeleted, ...sourceOpts });
+          if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
+            page = aliasPage;
+            resolved_slug = canonical;
+          }
+        }
+      } catch {
+        // Pre-v104 brains have no slug_aliases table — behave as before.
+      }
+    }
+
     if (!page && fuzzy) {
       let candidates = await ctx.engine.resolveSlugs(slug, fuzzyScope);
       // #4352: the ambiguous_slug candidate list must not enumerate private slugs.

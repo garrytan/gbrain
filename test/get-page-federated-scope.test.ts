@@ -69,6 +69,17 @@ beforeEach(async () => {
   await engine.putPage('shared/alpha-doc', {
     type: 'note', title: 'Alpha doc', compiled_truth: 'alpha content', frontmatter: {},
   }, { sourceId: 'alpha' });
+  // --- #4275 slug-alias redirect fixtures (retired dedup/migration slugs) ---
+  await engine.executeRaw(
+    `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes)
+     VALUES ('alpha', 'legacy/alpha-doc', 'shared/alpha-doc', 'test alias'),
+            ('beta', 'legacy/beta-doc', 'secret/beta-doc', 'test alias'),
+            ('beta', 'legacy/priv-doc', 'secret/priv-doc', 'test alias')`,
+  );
+  await engine.putPage('secret/priv-doc', {
+    type: 'note', title: 'Private canonical', compiled_truth: 'private body',
+    frontmatter: { visibility: 'private' },
+  }, { sourceId: 'beta' });
 
   // --- #2200 secondary-fetch fixtures ---
   // beta page's own tags.
@@ -210,6 +221,64 @@ describe('get_page handler closes the cross-source exact-read leak', () => {
     const ctx = ctxOf({ remote: true, auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['alpha'] } as any });
     const page: any = await get_page.handler(ctx, { slug: 'shared/alpha-doc' });
     expect(page.title).toBe('Alpha doc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #4275 — get_page follows slug aliases inside the caller's source scope.
+// resolveSlugWithAlias documents get_page as a consumer, but the handler
+// never called it: direct reads of retired dedup/migration slugs 404ed while
+// search and wikilinks followed the redirect.
+// ---------------------------------------------------------------------------
+describe('#4275 get_page follows slug aliases inside the caller source scope', () => {
+  test('single-source read of a retired slug returns the active canonical page', async () => {
+    const page: any = await get_page.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
+      slug: 'legacy/alpha-doc',
+    });
+    expect(page.slug).toBe('shared/alpha-doc');
+    expect(page.resolved_slug).toBe('shared/alpha-doc');
+    expect(page.title).toBe('Alpha doc');
+  });
+
+  test('federated grant cannot resolve an alias outside its allowed sources', async () => {
+    await expect(
+      get_page.handler(remoteCtx(['alpha']), { slug: 'legacy/beta-doc' }),
+    ).rejects.toBeInstanceOf(OperationError);
+  });
+
+  test('federated grant resolves an in-scope alias', async () => {
+    const page: any = await get_page.handler(remoteCtx(['alpha', 'beta']), {
+      slug: 'legacy/beta-doc',
+    });
+    expect(page.slug).toBe('secret/beta-doc');
+    expect(page.resolved_slug).toBe('secret/beta-doc');
+    expect(page.title).toBe('Beta secret');
+  });
+
+  test('unscoped trusted read follows aliases across every source (no default-only under-scope)', async () => {
+    const page: any = await get_page.handler(ctxOf({ remote: false, sourceId: undefined }), {
+      slug: 'legacy/beta-doc',
+    });
+    expect(page.slug).toBe('secret/beta-doc');
+    expect(page.resolved_slug).toBe('secret/beta-doc');
+  });
+
+  test('a live page at the requested slug wins over the alias (redirect only on miss)', async () => {
+    await engine.putPage('legacy/alpha-doc', {
+      type: 'note', title: 'Still live at legacy slug', compiled_truth: 'live', frontmatter: {},
+    }, { sourceId: 'alpha' });
+    const page: any = await get_page.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
+      slug: 'legacy/alpha-doc',
+    });
+    expect(page.slug).toBe('legacy/alpha-doc');
+    expect(page.title).toBe('Still live at legacy slug');
+    expect(page.resolved_slug).toBeUndefined();
+  });
+
+  test('#4352 composition: a private canonical page behaves like a missing one for remote callers', async () => {
+    await expect(
+      get_page.handler(remoteCtx(['beta']), { slug: 'legacy/priv-doc' }),
+    ).rejects.toBeInstanceOf(OperationError);
   });
 });
 
