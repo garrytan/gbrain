@@ -48,6 +48,10 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'hooks.stop_push_debounce_min',
   'backup.check_enabled',
   'backup.check_interval_days',
+  // #4748: resolveMcpInstructions reads ONLY the file plane (all three MCP
+  // transports build their initialize response from loadConfig()); the
+  // `mcp.` prefix made a DB-plane write accepted and silently ignored.
+  'mcp.instructions',
 ]);
 
 export const FILE_PLANE_API_KEYS: readonly string[] = [
@@ -213,7 +217,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
-      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup', string];
+      const [top, leaf] = key.split('.') as ['push' | 'hooks' | 'backup' | 'mcp', string];
       const branch = cfg?.[top] as Record<string, unknown> | undefined;
       if (cfg && branch && leaf in branch) {
         delete branch[leaf];
@@ -430,6 +434,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         cfg.backup = { ...(cfg.backup ?? {}), check_interval_days: n };
         saveConfig(cfg);
         console.log(`Set ${key} = ${n} (file plane: ~/.gbrain/config.json)`);
+      } else if (key === 'mcp.instructions') {
+        // #4748: deployment identity appended to the MCP initialize contract.
+        // Takes effect on the next `gbrain serve` start (the response is
+        // built once per process from loadConfig()).
+        cfg.mcp = { ...(cfg.mcp ?? {}), instructions: value };
+        saveConfig(cfg);
+        console.log(`Set ${key} (file plane: ~/.gbrain/config.json) — restart \`gbrain serve\` to apply`);
       } else {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n < 0) {
