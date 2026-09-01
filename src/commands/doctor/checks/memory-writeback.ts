@@ -183,6 +183,14 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
         for (const t of receipt.receipt.targets) {
           if (t.kind !== 'instructions' || !t.path) continue;
           const entry: Record<string, unknown> = { host: t.host, path: t.path, receipt_state: t.state };
+          // A FAILED receipt target is a standing warn regardless of what the
+          // live probe says (codex re-review): the one physical-survival path
+          // — a strip that THREW during smoke rollback — leaves a
+          // healthy-looking block on disk directing sessions at a rolled-back
+          // endpoint, and only this receipt state knows.
+          if (t.state === 'failed') {
+            problems.push(`${t.host} instruction block target previously FAILED (${t.error ?? 'unknown reason'}) — converge: gbrain bootstrap harness --yes (or --remove)`);
+          }
           if (!existsSync(t.path)) {
             entry.probe = 'missing';
             problems.push(`${t.host} instruction block missing at ${t.path} — re-run: gbrain bootstrap harness --yes`);

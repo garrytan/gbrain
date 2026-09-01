@@ -169,6 +169,39 @@ describe('memory_writeback doctor check', () => {
     });
   });
 
+  test('a FAILED receipt target warns even when the live probe looks current — the smoke-rollback strip-failure survivor (codex re-review)', async () => {
+    await engine.setConfig('memory.auto_writeback', 'salient');
+    writeFileMirror(tmp, { auto_writeback: 'salient' });
+    const codexHome = join(tmp, 'codex-home');
+    mkdirSync(codexHome, { recursive: true });
+    const agents = join(codexHome, 'AGENTS.md');
+    const url = 'http://127.0.0.1:19999';
+    // Receipt records the target FAILED (strip threw during smoke rollback)
+    // while the block itself still sits on disk looking perfectly current.
+    const dir = join(tmp, '.gbrain', 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'harness.json'), JSON.stringify({
+      harness_receipt_version: 1,
+      created_at: new Date().toISOString(),
+      created_by: 'test',
+      url,
+      source_id: 'default',
+      token: { name: 'test-token', minted: false },
+      targets: [
+        { host: 'codex', kind: 'instructions', state: 'failed', scope: 'user', path: agents, mechanism: 'managed-block', error: 'smoke failed and the instruction block could not be removed — run `gbrain bootstrap harness --remove` to converge' },
+      ],
+    }) + '\n');
+    installAmbientWritebackBlockAt(agents, renderAmbientInstructionBlock({
+      mode: 'salient', transientTtl: '3d', visibility: 'world', serveUrl: url,
+    }));
+    await withEnv({ GBRAIN_HOME: tmp, CODEX_HOME: codexHome }, async () => {
+      const c = await buildMemoryWritebackCheck(engine);
+      expect(c.status).toBe('warn');
+      expect(c.message).toContain('previously FAILED');
+      expect(c.message).toContain('bootstrap harness');
+    });
+  });
+
   test('off but an instruction block is still installed → warn naming the converge command (red-team review)', async () => {
     // memory.auto_writeback unset everywhere = off. The lingering block means
     // every NEW session is still instructed to save via remember — the off
