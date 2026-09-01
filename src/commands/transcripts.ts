@@ -15,6 +15,7 @@
  * `gbrain serve` holds the single-writer lock — the lock error names the PID.
  */
 
+import { homedir } from 'node:os';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
@@ -245,13 +246,23 @@ const IMPORTABLE_EXTENSIONS = ['.jsonl', '.db', '.json'];
  * dropped explicit sessions that merely lived under a UUID-named directory.
  * Exported for tests.
  */
+/**
+ * Shell-style tilde expansion for a user path spec: a bare `~` or a leading
+ * `~/` (or `~\\`) resolves against the home dir. `~user` forms and a `~`
+ * anywhere else in the string are left untouched (they are literal path
+ * characters). Exported for tests.
+ */
+export function expandTilde(raw: string): string {
+  if (raw === '~') return homedir();
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) return homedir() + raw.slice(1);
+  return raw;
+}
+
 export async function expandPaths(specs: string[]): Promise<string[]> {
   const { statSync } = await import('node:fs');
-  const { homedir } = await import('node:os');
   const out: string[] = [];
   for (const raw of specs) {
-    const spec =
-      raw === '~' ? homedir() : raw.startsWith('~/') || raw.startsWith('~\\') ? homedir() + raw.slice(1) : raw;
+    const spec = expandTilde(raw);
     let matched = false;
     try {
       if (statSync(spec).isFile()) {

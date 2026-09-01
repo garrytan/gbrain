@@ -22,10 +22,17 @@
  *
  * chat_history.jsonl carries NO per-message timestamps. Session times come
  * from the sibling summary.json (`created_at`, `last_active_at`) — real
- * source times, never invented. Missing summary ⇒ no startedAt (render
- * refuses to fabricate provenance).
+ * source times, never invented. Grok writes summary.json at session END, so
+ * an in-progress session (or a partial rsync) has none: the session then
+ * falls back to the log file's own mtime — a real filesystem time for that
+ * file — and STAMPS the provenance (`raw.timestamp_source = 'file_mtime'`
+ * vs `'summary.json'`) so consumers can tell the two apart. Without the
+ * fallback the session parsed fine, yielded, and render refused it
+ * ('carries no timestamps') → a per-file error → cleanScan=false → the
+ * --since-last watermark froze for the WHOLE grok root on every run.
  */
 
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { HostSpecTarget } from '../bootstrap/host-specs.ts';
@@ -215,6 +222,16 @@ function readGrokSummary(sessionDir: string): GrokSummary {
   }
 }
 
+/**
+ * Stable id for a session directory that is neither UUID-named nor described
+ * by a summary.json: a hash of the log path. The pre-fix fallback was the
+ * bare basename — every such session collapsed onto the literal
+ * 'chat_history' id (one slug, one page, endless overwrite).
+ */
+function stableIdFromPath(path: string): string {
+  return `grok-${createHash('sha256').update(path).digest('hex').slice(0, 16)}`;
+}
+
 function identityFromPath(path: string): { sessionId?: string; cwd?: string } {
   const sessionDir = dirname(path);
   const sessionId = basename(sessionDir);
@@ -279,7 +296,8 @@ export const grokAdapter: TranscriptAdapter = {
 
   async *parse(path: string, opts: ParseSessionsOpts = {}): AsyncGenerator<ParsedSession, FileDiagnostics> {
     const cap = opts.maxBytes ?? TRANSCRIPT_JSONL_HARD_CAP;
-    const size = statSync(path).size;
+    const st = statSync(path);
+    const size = st.size;
     if (size > cap) {
       throw new Error(`grok session too large for import: ${size} bytes (cap ${cap})`);
     }
@@ -306,10 +324,22 @@ export const grokAdapter: TranscriptAdapter = {
 
     const fromPath = identityFromPath(path);
     const summary = readGrokSummary(dirname(path));
-    const sessionId = summary.sessionId || fromPath.sessionId || basename(path, '.jsonl');
+    const sessionId = summary.sessionId || fromPath.sessionId || stableIdFromPath(path);
     const cwd = summary.cwd || fromPath.cwd;
-    const startedAt = summary.createdAt;
-    const lastActiveAt = summary.lastActiveAt || startedAt;
+    // summary.json first (real source times). In-progress session / partial
+    // rsync → no summary → the log file's mtime, stamped as such below.
+    let startedAt = summary.createdAt || summary.lastActiveAt;
+    let lastActiveAt = summary.lastActiveAt || startedAt;
+    let timestampSource: 'summary.json' | 'file_mtime' = 'summary.json';
+    if (!startedAt) {
+      const mtimeMs = st.mtime.getTime();
+      const mtimeIso = Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : '';
+      if (mtimeIso) {
+        startedAt = mtimeIso;
+        lastActiveAt = mtimeIso;
+        timestampSource = 'file_mtime';
+      }
+    }
     if (startedAt && messages.length > 0) {
       for (let i = 0; i < messages.length; i++) {
         messages[i].timestamp = i === messages.length - 1 ? lastActiveAt || startedAt : startedAt;
@@ -331,6 +361,7 @@ export const grokAdapter: TranscriptAdapter = {
             session_id: sessionId,
             cwd: cwd ?? null,
             source_path: path,
+            timestamp_source: timestampSource,
           },
         },
         messages,

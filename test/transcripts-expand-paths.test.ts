@@ -14,7 +14,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { expandPaths } from '../src/commands/transcripts.ts';
+import { expandPaths, expandTilde } from '../src/commands/transcripts.ts';
+import { homedir } from 'node:os';
 import { isGrokSessionSidecarStrict } from '../src/core/transcripts/grok.ts';
 
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
@@ -91,5 +92,29 @@ describe('expandPaths grok-sidecar scoping', () => {
     writeFileSync(ph2, '{"p":1}\n');
     expect(isGrokSessionSidecarStrict(ph2)).toBe(false);
     expect(await expandPaths([ph2])).toEqual([ph2]);
+  });
+});
+
+describe('expandPaths tilde expansion', () => {
+  test('expandTilde: bare ~ and ~/x resolve to the home dir; a mid-string ~ is untouched', () => {
+    expect(expandTilde('~')).toBe(homedir());
+    expect(expandTilde('~/sessions/x.jsonl')).toBe(join(homedir(), 'sessions', 'x.jsonl'));
+    expect(expandTilde('~\\sessions')).toBe(homedir() + '\\sessions');
+    expect(expandTilde('a~b.jsonl')).toBe('a~b.jsonl');
+    expect(expandTilde('/abs/~/x.jsonl')).toBe('/abs/~/x.jsonl');
+    expect(expandTilde('~alice/x.jsonl')).toBe('~alice/x.jsonl'); // ~user is not expanded
+    expect(expandTilde('')).toBe('');
+  });
+
+  test('expandPaths resolves a ~/ spec against the home dir (unmatched specs are kept, expanded)', async () => {
+    const spec = `~/gb-expand-tilde-${process.pid}-${Date.now()}.jsonl`;
+    expect(await expandPaths([spec])).toEqual([join(homedir(), spec.slice(2))]);
+  });
+
+  test('expandPaths leaves a mid-string ~ file path alone', async () => {
+    const d = tdir();
+    const p = join(d, 'a~b.jsonl');
+    writeFileSync(p, '{"type":"system","content":"x"}\n');
+    expect(await expandPaths([p])).toEqual([p]);
   });
 });

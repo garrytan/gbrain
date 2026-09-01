@@ -50,6 +50,7 @@ import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builde
 import { discoverTranscriptFiles, buildStatusRows } from '../src/core/transcripts/discover.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const CHATGPT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'chatgpt-conversations.json');
 const CLAUDE_EXPORT_FIXTURE = join(import.meta.dir, 'fixtures', 'transcripts', 'claude-export.json');
@@ -236,6 +237,17 @@ describe('harnessRoots', () => {
     const injected = harnessRoots([{ format: 'codex', root: '/tmp/x', extension: '.jsonl' }]);
     expect(injected).toHaveLength(1);
     expect(injected[0].root).toBe('/tmp/x');
+  });
+
+  test('GROK_HOME relocates the grok session root (docs/mcp/GROK-CLI-PIN.md)', async () => {
+    await withEnv({ GROK_HOME: '/tmp/grok-home-relocated' }, async () => {
+      const grok = harnessRoots().find((r) => r.format === 'grok')!;
+      expect(grok.root).toBe(join('/tmp/grok-home-relocated', 'sessions'));
+    });
+    await withEnv({ GROK_HOME: undefined }, async () => {
+      const grok = harnessRoots().find((r) => r.format === 'grok')!;
+      expect(grok.root.endsWith(join('.grok', 'sessions'))).toBe(true);
+    });
   });
 });
 
@@ -549,6 +561,97 @@ describe('grokAdapter', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].meta.sessionId).toBe(GROK_SESSION_ID);
     expect(sessions[0].meta.cwd).toBe('/home/alice-example/agent-workspace');
+  });
+
+  test('summary.json present → session times carry summary.json provenance', async () => {
+    const { sessions } = await drain(grokAdapter.parse(GROK_FIXTURE));
+    expect(sessions[0].meta.raw?.timestamp_source).toBe('summary.json');
+  });
+
+  test('missing summary.json (in-progress session / partial rsync) imports with file-mtime provenance; no drift, no per-file error', async () => {
+    // Grok writes summary.json at session END, so a live session — or a
+    // partial rsync — has none. Pre-fix the session parsed and yielded, then
+    // render refused it ('carries no timestamps') → per-file error →
+    // cleanScan=false → the --since-last watermark froze for the WHOLE grok
+    // root on every run. The log file's mtime is a real filesystem time for
+    // this file; it is used and STAMPED as such, never presented as a
+    // summary time.
+    const p = writeGrokTree(tdir(), { summary: null });
+    const mtimeIso = statSync(p).mtime.toISOString();
+    const { sessions, diag } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0];
+    expect(s.meta.startedAt).toBe(mtimeIso);
+    expect(s.meta.raw?.timestamp_source).toBe('file_mtime');
+    expect(s.messages.length).toBeGreaterThan(0);
+    expect(s.messages.every((m) => m.timestamp === mtimeIso)).toBe(true);
+    expect(diag.sessions).toBe(1);
+    expect(diag.expectedEmpty).toBe(false);
+
+    const r = await runTranscriptsIngest({} as never, {
+      paths: [p],
+      dryRun: true,
+      sourceId: 'default',
+      userPatternsPath: '/nonexistent',
+    });
+    expect(r.sessionsSeen).toBe(1);
+    expect(r.sessionsErrored).toBe(0);
+    expect(r.erroredFiles).toBe(0);
+    expect(r.driftFiles).toBe(0);
+    expect(r.files[0].error).toBeUndefined();
+    expect(r.pages.planned).toBeGreaterThan(0);
+  });
+
+  test('a summary-less session outside a UUID dir gets a stable path-hash id, not the literal "chat_history"', async () => {
+    const d = tdir();
+    const body =
+      JSON.stringify({ type: 'system', content: 'sys' }) +
+      '\n' +
+      JSON.stringify({ type: 'user', content: [{ type: 'text', text: 'hello there' }] }) +
+      '\n' +
+      JSON.stringify({ type: 'assistant', content: 'hi', model_id: 'grok-4.6-build' }) +
+      '\n';
+    mkdirSync(join(d, 'not-a-uuid'), { recursive: true });
+    mkdirSync(join(d, 'other-dir'), { recursive: true });
+    const p1 = join(d, 'not-a-uuid', 'chat_history.jsonl');
+    const p2 = join(d, 'other-dir', 'chat_history.jsonl');
+    writeFileSync(p1, body);
+    writeFileSync(p2, body);
+    const a = (await drain(grokAdapter.parse(p1))).sessions[0];
+    const b = (await drain(grokAdapter.parse(p1))).sessions[0];
+    const c = (await drain(grokAdapter.parse(p2))).sessions[0];
+    expect(a.meta.sessionId).not.toBe('chat_history');
+    expect(a.meta.sessionId).toMatch(/^grok-[0-9a-f]{16}$/);
+    expect(b.meta.sessionId).toBe(a.meta.sessionId); // stable across parses
+    expect(c.meta.sessionId).not.toBe(a.meta.sessionId); // distinct per path
+  });
+
+  test('rejects (never tail-reads) a chat_history.jsonl over the cap', async () => {
+    await expect(drain(grokAdapter.parse(GROK_FIXTURE, { maxBytes: 64 }))).rejects.toThrow(/too large/);
+  });
+
+  test('a file of ONLY malformed lines is REAL drift (expectedEmpty=false, driftFiles=1)', async () => {
+    const p = writeGrokTree(tdir(), {
+      body: 'not json at all\n{"type":"user","content":[{"type":"text","text":"broken\n',
+      summary: {
+        info: { id: GROK_SESSION_ID, cwd: '/tmp' },
+        created_at: '2026-08-08T11:00:00.000Z',
+      },
+    });
+    const { sessions, diag } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(0);
+    expect(diag.sessions).toBe(0);
+    expect(diag.skippedLines).toBe(2);
+    expect(diag.expectedEmpty).toBe(false);
+    const r = await runTranscriptsIngest({} as never, {
+      paths: [p],
+      dryRun: true,
+      sourceId: 'default',
+      userPatternsPath: '/nonexistent',
+    });
+    expect(r.driftFiles).toBe(1);
+    expect(r.sessionsSeen).toBe(0);
+    expect(r.cleanScan).toBe(false);
   });
 
   test('redaction runs on grok text the same as every other format', async () => {
