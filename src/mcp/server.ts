@@ -67,6 +67,37 @@ export async function resolveMcpStdioSourceScope(
 }
 
 /**
+ * #4583 rework + review fix: once-per-process unscoped-default-write advisory
+ * for the stdio lane. The latch arms on the FIRST completed assessment
+ * REGARDLESS of outcome — pre-fix it armed only when a warning printed, so on
+ * a no-guard brain the assessment's unindexed full-`pages` aggregate ran on
+ * EVERY mutating stdio call. The inputs are process-stable (env escape hatch,
+ * the brain's page distribution), so one assessment decides for the process.
+ * Cheap early-returns (non-mutating call, non-seed tier) do NOT latch — a
+ * later mutating seed_default call still gets its one assessment. Exported
+ * for tests; `write` is injectable (production writes stderr).
+ */
+export function createDefaultWriteAdvisory(
+  engine: BrainEngine,
+  opts: { enabled: boolean; write?: (line: string) => void },
+): (tier: import('../core/source-resolver.ts').SourceTier, mutating: boolean) => Promise<void> {
+  let latched = false;
+  const write = opts.write ?? ((line: string) => process.stderr.write(line + '\n'));
+  return async (tier, mutating) => {
+    if (latched || !opts.enabled) return;
+    if (!mutating || tier !== 'seed_default') return;
+    // Arm BEFORE the assessment so it runs at most once no matter the outcome
+    // (warned, no-guard verdict, or a thrown assessment error).
+    latched = true;
+    try {
+      const { maybeWarnUnscopedDefaultWrite } = await import('../core/source-resolver.ts');
+      const warning = await maybeWarnUnscopedDefaultWrite(engine, tier, mutating);
+      if (warning) write(warning);
+    } catch { /* advisory; never block a write */ }
+  };
+}
+
+/**
  * Per-request stdio tools/list set: the surfaced ops minus publish-gated ops
  * whose gate resolves off. stdio dispatches remote:true (agent-facing), and
  * the gate enforcement (assertPublishEnabled, the advisor inline gate) exempts
@@ -172,10 +203,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     tools: buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
   })));
 
-  // #4583 (fixes #4564's misrouted-write symptom): latch so the "unscoped
-  // default write on a multi-source brain" warning fires at most once per
-  // serve process (avoids log spam per call).
-  let warnedDefaultWrite = false;
+  // #4583 (fixes #4564's misrouted-write symptom): once-per-process advisory
+  // for unscoped default writes on a multi-source brain; latch semantics live
+  // in createDefaultWriteAdvisory above. Skipped under --source-guard (the
+  // opt-in fail-closed guard owns that lane).
+  const defaultWriteAdvisory = createDefaultWriteAdvisory(engine, { enabled: !opts.sourceGuard });
 
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
   // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
@@ -207,19 +239,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // bulk-non-default brain. Keyed on the already-computed resolution tier —
     // NOT on raw GBRAIN_SOURCE presence — so dotfile / local_path /
     // brain_default pins never false-positive. No `--source` flag exists on
-    // this transport, so warn instead of refusing the agent's write; skipped
-    // under --source-guard (the opt-in fail-closed guard owns that lane).
-    if (!warnedDefaultWrite && !opts.sourceGuard) {
-      const op = operations.find(o => o.name === name);
-      try {
-        const { maybeWarnUnscopedDefaultWrite } = await import('../core/source-resolver.ts');
-        const warning = await maybeWarnUnscopedDefaultWrite(engine, sourceScope.tier, op?.mutating === true);
-        if (warning) {
-          process.stderr.write(warning + '\n');
-          warnedDefaultWrite = true;
-        }
-      } catch { /* advisory; never block a write */ }
-    }
+    // this transport, so warn instead of refusing the agent's write.
+    await defaultWriteAdvisory(
+      sourceScope.tier,
+      operations.find(o => o.name === name)?.mutating === true,
+    );
     return dispatchToolCall(engine, name, params, {
       remote: true,
       // #1061: mark the transport so whoami can report {transport: 'stdio'}
