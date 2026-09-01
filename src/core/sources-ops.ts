@@ -36,7 +36,7 @@
  * out of the confine.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { isPathContained, msysToNativePath } from './path-confine.ts';
 import { randomBytes } from 'crypto';
@@ -392,9 +392,24 @@ export async function assertNoOverlappingPath(
     `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
     [id],
   );
+  // Compare by spelling AND by realpath: a symlink whose spelling shares no
+  // prefix with another source's tree still resolves onto that tree, and the
+  // sibling may itself be registered via a symlink. Realpath only when the
+  // path exists (a dangling/absent path keeps its spelling — the string check
+  // still applies); the stored value and the error message keep the spelling.
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const overlaps = (x: string, y: string): boolean =>
+    x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
+  const realPath = real(path);
   for (const other of others) {
     const b = other.local_path;
-    if (path === b || path.startsWith(b + '/') || b.startsWith(path + '/')) {
+    if (overlaps(path, b) || overlaps(realPath, real(b))) {
       throw new SourceOpError(
         'overlapping_path',
         `path "${path}" overlaps with existing source "${other.id}" at "${b}". ` +

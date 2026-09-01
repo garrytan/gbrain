@@ -16,7 +16,7 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -207,5 +207,70 @@ describe('gbrain sources set-path', () => {
     await runSources(engine, ['set-path', 'default', dir]);
     expect(exitCode).toBeNull();
     expect(await readLocalPath('default')).toBe(dir);
+  });
+
+  // Ship-review fix: the overlap guard compared path STRINGS, so a symlink
+  // whose spelling shares no prefix with another source's tree resolved onto
+  // that very tree and passed without --force. Both sides are now compared by
+  // realpath (when they exist) as well as by spelling.
+  test('rejection: a SYMLINK into another source\'s tree is an overlap (realpath-compared), no mutation', async () => {
+    const otherRoot = makeDir();
+    await seedSource('other-src', otherRoot);
+    const nested = join(otherRoot, 'nested');
+    mkdirSync(nested);
+    const linkHome = makeDir();
+    const link = join(linkHome, 'looks-unrelated');
+    symlinkSync(nested, link);
+    const errs: string[] = [];
+    const origErr = console.error;
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')); };
+    try {
+      await runSources(engine, ['set-path', 'default', link]);
+    } catch (err) {
+      expect((err as Error).message).toContain('__test_exit_6__');
+    } finally {
+      console.error = origErr;
+    }
+    expect(exitCode).toBe(6);
+    expect(errs.join('\n')).toContain('overlapping_path');
+    expect(await readLocalPath('default')).toBeNull(); // no mutation
+  });
+
+  test('rejection: another source registered VIA a symlink is still an overlap for its real tree', async () => {
+    const realRoot = makeDir();
+    const linkHome = makeDir();
+    const link = join(linkHome, 'alias-of-real-root');
+    symlinkSync(realRoot, link);
+    await seedSource('other-src', link); // sibling's local_path is the symlink spelling
+    const nested = join(realRoot, 'nested');
+    mkdirSync(nested);
+    try {
+      await runSources(engine, ['set-path', 'default', nested]);
+    } catch (err) {
+      expect((err as Error).message).toContain('__test_exit_6__');
+    }
+    expect(exitCode).toBe(6);
+    expect(await readLocalPath('default')).toBeNull();
+  });
+
+  test('--force still bypasses the realpath overlap guard', async () => {
+    const otherRoot = makeDir();
+    await seedSource('other-src', otherRoot);
+    const linkHome = makeDir();
+    const link = join(linkHome, 'forced-link');
+    symlinkSync(otherRoot, link);
+    await runSources(engine, ['set-path', 'default', link, '--force']);
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(link);
+  });
+
+  test('a symlink to an UNRELATED tree is accepted and stored as typed', async () => {
+    const realRoot = makeDir();
+    const linkHome = makeDir();
+    const link = join(linkHome, 'unrelated-link');
+    symlinkSync(realRoot, link);
+    await runSources(engine, ['set-path', 'default', link]);
+    expect(exitCode).toBeNull();
+    expect(await readLocalPath('default')).toBe(link);
   });
 });
