@@ -70,8 +70,8 @@ async function withConfiguredSql<T>(
   }
 }
 
-async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[] } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write]'); process.exit(1); }
+async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; source?: string } = {}) {
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--source <id>]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -94,7 +94,29 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
         ? opts.takesHolders
         : ['world'];
-      const permissions = { takes_holders: takesHolders };
+      // #bearer-source: the write source of a legacy token lives in
+      // permissions.source_id (read by parseLegacyTokenScope). Until this flag
+      // existed there was no way to set it, so every legacy token fell back to
+      // the literal 'default' — on a multi-source brain that silently routes
+      // every write to whichever source is named 'default', which is rarely the
+      // one the operator meant. Validate here: a typo must fail at mint time,
+      // not surface later as writes landing in the wrong (or an archived) source.
+      if (opts.source !== undefined) {
+        const known = await engine.executeRaw<{ id: string }>(
+          `SELECT id FROM sources WHERE id = $1`,
+          [opts.source],
+        );
+        if (known.length === 0) {
+          const all = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`);
+          console.error(
+            `Unknown source '${opts.source}'. Known sources: ${all.map(r => r.id).join(', ') || '(none)'}`,
+          );
+          process.exit(1);
+        }
+      }
+      const permissions = opts.source !== undefined
+        ? { takes_holders: takesHolders, source_id: opts.source }
+        : { takes_holders: takesHolders };
       // JSONB write: pass the object via executeRawJsonb with an explicit
       // ::jsonb cast in the SQL string. Both engines round-trip the object
       // through the wire-protocol type oid without the v0.12.0 double-encode
@@ -125,7 +147,10 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
-      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}):\n`);
+      const sourceLine = opts.source !== undefined
+        ? `, source=${opts.source}`
+        : ', source=default (pass --source <id> to target another source)';
+      console.log(`Token created for "${name}" (takes_holders=${JSON.stringify(takesHolders)}, ${scopeLine}${sourceLine}):\n`);
       console.log(`  ${token}\n`);
       console.log('Save this token — it will not be shown again.');
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
@@ -1083,7 +1108,7 @@ async function clientsCmd(args: string[]) {
  * register-client #3990 normalization precedent). Validation against the
  * allowed scope set happens in create() so the error path exits cleanly.
  */
-export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; error?: string } {
+export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolders?: string[]; scopes?: string[]; source?: string; error?: string } {
   const takesIdx = rest.indexOf('--takes-holders');
   const takesValue = takesIdx >= 0 ? rest[takesIdx + 1] : undefined;
   // Fail closed on a missing/flag-like value: `--scopes` as the last arg
@@ -1103,15 +1128,36 @@ export function parseAuthCreateArgs(rest: string[]): { name: string; takesHolder
   const scopes = scopesValue !== undefined
     ? scopesValue.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
     : undefined;
-  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue);
-  return { name: positional || '', takesHolders, ...(scopes !== undefined ? { scopes } : {}) };
+  // #bearer-source: without this the token's write source falls back to the
+  // literal 'default' in parseLegacyTokenScope, which on a multi-source brain
+  // is whatever source happens to be named 'default' — silently the WRONG one.
+  const sourceIdx = rest.indexOf('--source');
+  const sourceValue = sourceIdx >= 0 ? rest[sourceIdx + 1] : undefined;
+  if (sourceIdx >= 0 && (sourceValue === undefined || sourceValue.startsWith('--'))) {
+    return { name: '', error: 'the source flag requires a value (e.g. workspace)' };
+  }
+  const source = sourceValue !== undefined ? sourceValue.trim() : undefined;
+  if (source !== undefined && source.length === 0) {
+    return { name: '', error: 'the source flag requires a non-empty value (e.g. workspace)' };
+  }
+  const positional = rest.find(a => !a.startsWith('--') && a !== takesValue && a !== scopesValue && a !== sourceValue);
+  return {
+    name: positional || '',
+    takesHolders,
+    ...(scopes !== undefined ? { scopes } : {}),
+    ...(source !== undefined ? { source } : {}),
+  };
 }
 
 const AUTH_USAGE = `GBrain Token Management
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write]
-                                                          Create a legacy bearer token. v0.28: --takes-holders
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--source <id>]
+                                                          Create a legacy bearer token. --source sets the
+                                                          token's WRITE source (default: 'default'); required
+                                                          on a multi-source brain, where the fallback would
+                                                          otherwise route writes to the wrong source.
+                                                          v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
                                                           takes_list / takes_search / query filter by this.
@@ -1189,7 +1235,7 @@ export async function runAuth(args: string[]): Promise<void> {
         console.error(`Error: ${parsed.error}`);
         process.exit(1);
       }
-      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes });
+      await create(parsed.name, { takesHolders: parsed.takesHolders, scopes: parsed.scopes, source: parsed.source });
       return;
     }
     case 'list': await list(); return;
