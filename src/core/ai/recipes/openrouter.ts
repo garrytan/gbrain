@@ -1,4 +1,5 @@
 import type { Recipe } from '../types.ts';
+import { openrouterModelSupportsSubagentLoop } from '../openrouter-families.ts';
 import { deepseekReasoningContentCompatFetch } from './deepseek.ts';
 import { openaiModelSupportsPromptCache } from './openai.ts';
 
@@ -59,13 +60,15 @@ export function openrouterThinkingByDefault(modelId: string): boolean {
 }
 
 /**
- * OpenRouter Anthropic routes share Anthropic's tool-call envelope (and the
- * gateway loop already keys replay on gbrain_tool_use_id, not the raw
- * provider id). Other proxied families stay refused until they get their
- * own live abort/retry evidence (TODOS.md OpenRouter follow-up).
+ * Which proxied families may drive the subagent loop. The gateway loop keys
+ * replay on gbrain_tool_use_id, not the raw provider id, so a family only
+ * needs a live abort/retry pin proving its tool-call envelope survives a
+ * resume. Anthropic and DeepSeek have one (test/e2e/openrouter-*-subagent-
+ * replay.live.test.ts); other families stay refused until they do
+ * (TODOS.md OpenRouter follow-up). List lives in ../openrouter-families.ts.
  */
 export function openrouterSupportsSubagentLoop(modelId: string): boolean {
-  return modelId.trim().toLowerCase().startsWith('anthropic/');
+  return openrouterModelSupportsSubagentLoop(modelId);
 }
 
 /**
@@ -174,12 +177,12 @@ export const openrouterCompatFetch = (async (
  * downstream agent stacks (OpenClaw deployments, etc.) get their own
  * attribution on OR's leaderboard instead of polluting gbrain's.
  *
- * Subagent loops: Anthropic routes (`anthropic/…`) declare
- * `supports_subagent_loop` so classifyCapabilities() allows them. The
- * handler still refuses the Anthropic-direct SDK for `openrouter:*` and
- * auto-routes those jobs through `gateway.toolLoop()` — OR is not a native
- * Anthropic provider. Other OR families stay refused until they get a live
- * abort/retry pin (TODOS.md).
+ * Subagent loops: Anthropic (`anthropic/…`) and DeepSeek (`deepseek/…`)
+ * routes declare `supports_subagent_loop` so classifyCapabilities() allows
+ * them, and the handler auto-routes those jobs through `gateway.toolLoop()`
+ * (OR is not a native Anthropic provider, so the Messages SDK path is never
+ * used for `openrouter:*`). Other OR families stay refused until they get a
+ * live abort/retry pin (TODOS.md).
  */
 export const openrouter: Recipe = {
   id: 'openrouter',

@@ -133,14 +133,16 @@ describe('classifyCapabilities (D6 — three-tier capability verdict)', () => {
     expect(classifyCapabilities('google:gemini-1.5-pro')).toBe('degraded:no_caching');
   });
 
-  it('allows OpenRouter Anthropic routes for the subagent loop and refuses other OR families', () => {
-    // Anthropic-via-OR shares the Anthropic tool envelope; replay keys off
+  it('allows OpenRouter Anthropic + DeepSeek routes for the subagent loop and refuses other OR families', () => {
+    // Anthropic-via-OR and DeepSeek-via-OR each have a live abort/retry pin
+    // (test/e2e/openrouter-*-subagent-replay.live.test.ts); replay keys off
     // gbrain_tool_use_id. Other proxied families stay refused until they get
-    // their own live abort/retry pin.
+    // their own pin (family list: src/core/ai/openrouter-families.ts).
     expect(classifyCapabilities('openrouter:anthropic/claude-sonnet-4.6')).toBe('ok');
     expect(classifyCapabilities('openrouter:anthropic/claude-haiku-4.5')).toBe('ok');
+    expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('ok');
     expect(classifyCapabilities('openrouter:openai/gpt-5.2')).toBe('unusable:no_subagent_loop');
-    expect(classifyCapabilities('openrouter:deepseek/deepseek-chat')).toBe('unusable:no_subagent_loop');
+    expect(classifyCapabilities('openrouter:google/gemini-3-flash-preview')).toBe('unusable:no_subagent_loop');
   });
 
   it('returns unusable:no_subagent_loop when tools work but the recipe declares the loop unsupported', () => {
