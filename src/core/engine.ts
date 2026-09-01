@@ -1633,11 +1633,23 @@ export interface BrainEngine {
    * no-inbound-only view (a page that links out but is never linked TO still
    * counts as an orphan there).
    */
+  /**
+   * #4280: rows carry `type` + `quarantined` so the shared orphan-reporting
+   * policy can exclude machine leaf types and quarantined shells that slug
+   * conventions cannot infer. The SQL stays raw (no filtering here) — policy
+   * lives in ONE place (`shouldExcludeFromOrphanReporting`).
+   */
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
     mode?: 'inbound' | 'islanded';
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+  }): Promise<Array<{
+    slug: string;
+    title: string;
+    domain: string | null;
+    type?: string | null;
+    quarantined?: boolean;
+  }>>;
 
   // Tags
   /**

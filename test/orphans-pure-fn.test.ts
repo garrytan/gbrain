@@ -254,6 +254,38 @@ describe('shouldExclude — orphan filter regression (preserve curation)', () =>
     // #2264 — only life/events/ is excluded; human-authored life/diary/ stays counted.
     expect(shouldExclude('life/diary/2026-08-01-xyz')).toBe(false);
   });
+
+  test('#4280 — machine leaf types and quarantined pages are excluded regardless of slug', () => {
+    expect(shouldExclude('legacy-root-atom', undefined, { type: 'atom' })).toBe(true);
+    expect(shouldExclude('legacy-root-chat', undefined, { type: 'conversation' })).toBe(true);
+    expect(shouldExclude('legacy-root-source', undefined, { type: 'source' })).toBe(true);
+    expect(shouldExclude('legacy-rescue', undefined, { type: 'synthesis', quarantined: true })).toBe(true);
+    expect(shouldExclude('concepts/real-topic', undefined, { type: 'concept' })).toBe(false);
+    expect(shouldExclude('concepts/real-topic', undefined, { type: 'concept', quarantined: false })).toBe(false);
+  });
+
+  test('#4280 — findOrphans excludes quarantined + machine-leaf pages from list AND denominator', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('quarantined-shell', {
+      type: 'company', title: 'Quarantined Shell', compiled_truth: 'junk', timeline: '',
+      frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'test', assessed_at: '2026-01-01T00:00:00Z' } },
+    });
+    await engine.putPage('legacy-root-atom', {
+      type: 'atom', title: 'Atom Leaf', compiled_truth: 'atom', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('legacy-root-chat', {
+      type: 'conversation', title: 'Chat Leaf', compiled_truth: 'chat', timeline: '', frontmatter: {},
+    });
+
+    const result = await findOrphans(engine, { includePseudo: false });
+    expect(result.orphans.map(o => o.slug)).toEqual(['people/alice']);
+    expect(result.total_orphans).toBe(1);
+    // Denominator counts only served memory: 4 live pages - 3 excluded.
+    expect(result.total_pages).toBe(4);
+    expect(result.total_linkable).toBe(1);
+  });
 });
 
 describe('getHealth orphan_pages uses shared exclusion policy', () => {
@@ -273,6 +305,22 @@ describe('getHealth orphan_pages uses shared exclusion policy', () => {
 
     const health = await engine.getHealth();
 
+    expect(health.orphan_pages).toBe(1);
+  });
+
+  test('#4280 — quarantined + machine-leaf islands do not count against health', async () => {
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: 'real island', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('quarantined-shell', {
+      type: 'company', title: 'Quarantined Shell', compiled_truth: 'junk', timeline: '',
+      frontmatter: { quarantine: { reason: 'junk_pattern', detail: 'test', assessed_at: '2026-01-01T00:00:00Z' } },
+    });
+    await engine.putPage('legacy-root-atom', {
+      type: 'atom', title: 'Atom Leaf', compiled_truth: 'atom', timeline: '', frontmatter: {},
+    });
+
+    const health = await engine.getHealth();
     expect(health.orphan_pages).toBe(1);
   });
 

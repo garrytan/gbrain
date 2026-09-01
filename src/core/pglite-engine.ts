@@ -99,7 +99,7 @@ import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
-import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
 import {
   normalizeEngineColumn,
   buildVectorCastFragment,
@@ -4585,7 +4585,7 @@ export class PGLiteEngine implements BrainEngine {
     sourceId?: string;
     sourceIds?: string[];
     mode?: 'inbound' | 'islanded';
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>> {
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
     //   - link source: src.deleted_at IS NULL — links FROM soft-deleted pages don't count as inbound
@@ -4624,7 +4624,9 @@ export class PGLiteEngine implements BrainEngine {
       `SELECT
          p.slug,
          COALESCE(p.title, p.slug) AS title,
-         p.frontmatter->>'domain' AS domain
+         p.frontmatter->>'domain' AS domain,
+         p.type,
+         (NOT ${QUARANTINE_FILTER_FRAGMENT}) AS quarantined
        FROM pages p
        WHERE p.deleted_at IS NULL
          ${sourceFilter}
@@ -4639,7 +4641,7 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY p.slug`,
       params
     );
-    return rows as Array<{ slug: string; title: string; domain: string | null }>;
+    return rows as Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>;
   }
 
   // Tags
@@ -5675,8 +5677,12 @@ export class PGLiteEngine implements BrainEngine {
         WHERE ($1::text[] IS NULL OR p.source_id = ANY($1))
       ),
       entity_pages AS (
+        -- #4280: quarantined entity shells are not served memory — keep them
+        -- out of the link/timeline coverage denominators (parity with
+        -- onboard's VISIBLE_ENTITY_PREDICATE).
         SELECT id, slug FROM scoped_pages WHERE id IN (
           SELECT id FROM pages WHERE type IN ('entity', 'person', 'company') AND deleted_at IS NULL
+            AND ${quarantineFilterFragment('pages')}
         )
       )
       SELECT
@@ -5747,6 +5753,7 @@ export class PGLiteEngine implements BrainEngine {
              )::int as link_count
       FROM pages p
       WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL
+        AND ${QUARANTINE_FILTER_FRAGMENT}
         AND ($1::text[] IS NULL OR p.source_id = ANY($1))
       ORDER BY link_count DESC
       LIMIT 5
@@ -5767,8 +5774,11 @@ export class PGLiteEngine implements BrainEngine {
     // `gbrain orphans` whenever a soft-deleted page still linked to (or was
     // linked from) a live one.
     // #4592: out-of-scope endpoints cannot rescue a page from orphan-hood.
+    // #4280: quarantined pages drop out of the linkable scope in SQL;
+    // machine leaf types (atom/conversation/source) drop out through the
+    // shared policy below via p.type.
     const { rows: pageScopeRows } = await this.db.query(`
-      SELECT p.slug,
+      SELECT p.slug, p.type,
              (NOT EXISTS (SELECT 1 FROM links l
                           JOIN pages src ON src.id = l.from_page_id
                           WHERE l.to_page_id = p.id AND src.deleted_at IS NULL
@@ -5780,6 +5790,7 @@ export class PGLiteEngine implements BrainEngine {
              EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
       FROM pages p
       WHERE p.deleted_at IS NULL
+        AND ${QUARANTINE_FILTER_FRAGMENT}
         AND ($1::text[] IS NULL OR p.source_id = ANY($1))
     `, [scope]);
 
@@ -5794,8 +5805,8 @@ export class PGLiteEngine implements BrainEngine {
           this.countStalePagesForExtraction({ sourceId: sid, versionTs: LINK_EXTRACTOR_VERSION_TS }),
         ))).reduce((a, b) => a + b, 0);
     const orphanOverrides = await loadOrphanPolicyOverrides(this);
-    const linkablePages = (pageScopeRows as { slug: string; islanded: boolean; has_timeline: boolean }[])
-      .filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides));
+    const linkablePages = (pageScopeRows as { slug: string; type: string; islanded: boolean; has_timeline: boolean }[])
+      .filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides, { type: row.type }));
     const linkablePageCount = linkablePages.length;
     const orphanPages = linkablePages.filter(row => row.islanded).length;
     const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;

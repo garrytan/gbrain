@@ -34,7 +34,10 @@ async function seedFourPages(eng: PGLiteEngine): Promise<void> {
   const sql = sqlQueryForEngine(eng);
   // 6 eligible entity pages (>= the gbrain#4147 small-N floor of 5, so the
   // entity ratio is a real percentage rather than the below-floor null),
-  // 2 technical/non-entity pages. THREE entity pages carry timeline entries:
+  // 2 technical/non-entity pages, and one quarantined entity shell (#4280:
+  // NOT served memory, so it must not join any coverage denominator — with
+  // it counted, Metric A reads 3/7 and Metric B 3/9, breaking every pinned
+  // number below). THREE served entity pages carry timeline entries:
   //   Metric A (entity-scoped):   3/6 = 50%  (same 50% the contract pins)
   //   Metric B (whole-brain):     3/8 -> round(15 * 0.375) = 6/15
   // The two stay provably distinct (50% vs 40%).
@@ -47,6 +50,7 @@ async function seedFourPages(eng: PGLiteEngine): Promise<void> {
       ('carol-example', 'default', 'person', 'Carol', '', '{}', 'h6', now(), now()),
       ('widget-co-example', 'default', 'company', 'Widget Co', '', '{}', 'h7', now(), now()),
       ('dana-example', 'default', 'person', 'Dana', '', '{}', 'h8', now(), now()),
+      ('quarantined-example', 'default', 'company', 'Quarantined', '', '{"quarantine":{"reason":"junk_pattern","detail":"test","assessed_at":"2026-01-01T00:00:00Z"}}', 'hq', now(), now()),
       ('technical-a', 'default', 'note', 'Tech A', '', '{}', 'h3', now(), now()),
       ('technical-b', 'default', 'note', 'Tech B', '', '{}', 'h4', now(), now())
   `;

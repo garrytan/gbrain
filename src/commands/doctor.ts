@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../core/embed-skip.ts';
+import { quarantineFilterFragment } from '../core/quarantine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
@@ -2519,7 +2520,9 @@ export async function buildChecks(
       // warn about coverage on pages the rest of the system treats as gone.
       // buildGazetteer (src/core/by-mention.ts) already filters this way, so
       // without it the two disagree about whether entity pages exist at all.
-      "SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization')",
+      // #4280: quarantined shells are excluded too — parity with onboard's
+      // VISIBLE_ENTITY_PREDICATE, which never counted them.
+      `SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization') AND ${quarantineFilterFragment('pages')}`,
     ))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
@@ -2537,6 +2540,7 @@ export async function buildChecks(
         SELECT id FROM pages
         WHERE deleted_at IS NULL
           AND type IN ('entity','person','company','organization')
+          AND ${quarantineFilterFragment('pages')}
           AND slug NOT LIKE 'tools/gbrain/test/%'
           AND slug <> 'templates/new-person'
       )

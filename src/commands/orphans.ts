@@ -24,7 +24,9 @@ import {
   shouldExcludeFromOrphanReporting,
   loadOrphanPolicyOverrides,
   type OrphanPolicyOverrides,
+  type OrphanPageMeta,
 } from '../core/orphan-policy.ts';
+import { quarantineFilterFragment } from '../core/quarantine.ts';
 
 // --- Types ---
 
@@ -48,8 +50,12 @@ export interface OrphanResult {
  * Returns true if a slug should be excluded from orphan reporting by default.
  * These are pages where having no inbound links is expected / not a content problem.
  */
-export function shouldExclude(slug: string, overrides?: OrphanPolicyOverrides): boolean {
-  return shouldExcludeFromOrphanReporting(slug, overrides);
+export function shouldExclude(
+  slug: string,
+  overrides?: OrphanPolicyOverrides,
+  meta?: OrphanPageMeta,
+): boolean {
+  return shouldExcludeFromOrphanReporting(slug, overrides, meta);
 }
 
 /**
@@ -74,7 +80,7 @@ export function deriveDomain(frontmatterDomain: string | null | undefined, slug:
  */
 export async function queryOrphanPages(
   engine: BrainEngine,
-): Promise<{ slug: string; title: string; domain: string | null }[]> {
+): Promise<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }[]> {
   return engine.findOrphanPages();
 }
 
@@ -116,7 +122,7 @@ export async function findOrphans(
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
   progress.start('orphans.scan');
   const stopHb = startHeartbeat(progress, 'scanning pages for missing inbound links…');
-  let allOrphans: { slug: string; title: string; domain: string | null }[];
+  let allOrphans: { slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }[];
   let total: number;
   let excludedAll: number;
   const overrides = includePseudo ? undefined : await loadOrphanPolicyOverrides(engine);
@@ -142,14 +148,17 @@ export async function findOrphans(
       liveParams.push(sourceId);
       scopeClause = ` AND source_id = $${liveParams.length}`;
     }
-    const liveRows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE deleted_at IS NULL${scopeClause}`,
+    // #4280: carry type + quarantine metadata so the denominator applies the
+    // same served-memory policy as the orphan list itself.
+    const liveRows = await engine.executeRaw<{ slug: string; type: string | null; quarantined: boolean }>(
+      `SELECT slug, type, (NOT ${quarantineFilterFragment('pages')}) AS quarantined
+         FROM pages WHERE deleted_at IS NULL${scopeClause}`,
       liveParams,
     );
     total = liveRows.length;
     excludedAll = includePseudo
       ? 0
-      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, overrides) ? 1 : 0), 0);
+      : liveRows.reduce((n, r) => n + (shouldExclude(r.slug, overrides, r) ? 1 : 0), 0);
   } finally {
     stopHb();
     progress.finish();
@@ -157,7 +166,7 @@ export async function findOrphans(
 
   const filtered = includePseudo
     ? allOrphans
-    : allOrphans.filter(row => !shouldExclude(row.slug, overrides));
+    : allOrphans.filter(row => !shouldExclude(row.slug, overrides, row));
 
   const orphans: OrphanPage[] = filtered.map(row => ({
     slug: row.slug,
