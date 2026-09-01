@@ -715,6 +715,8 @@ promised, and the context needed to respond.
 gbrain upgrade            # applies migration v144 automatically
 gbrain google setup       # connect Gmail/Calendar/Contacts → first digest
 gbrain waiting            # who is waiting on you, with receipts
+```
+
 ## [0.46.35.0] - 2026-08-27
 
 **The maintainer train: 31 red-proven fixes, every one adversarially verified.**
