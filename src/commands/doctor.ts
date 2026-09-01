@@ -128,6 +128,7 @@ export {
   checkUndeclaredDbOnlyPages,
   checkDbOnlyCollectorCollision,
   computeExtractAtomsBacklogCheck,
+  computeAtomProvenanceDriftCheck,
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
@@ -213,6 +214,7 @@ import {
   checkUndeclaredDbOnlyPages,
   checkDbOnlyCollectorCollision,
   computeExtractAtomsBacklogCheck,
+  computeAtomProvenanceDriftCheck,
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
@@ -1462,6 +1464,13 @@ export async function buildChecks(
       checks.push(await computeExtractAtomsBacklogCheck(engine));
     } catch {
       // Best-effort; backlog query failure shouldn't stop doctor.
+    }
+    // The mirror of the backlog check: atoms whose source_hash no longer
+    // resolves to any live page (#4566). Same best-effort posture.
+    try {
+      checks.push(await computeAtomProvenanceDriftCheck(engine));
+    } catch {
+      // Best-effort; provenance query failure shouldn't stop doctor.
     }
   }
 
