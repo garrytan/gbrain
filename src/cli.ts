@@ -1162,15 +1162,32 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
-        params[key] = true;
+        // #4602: a boolean flag followed by the word false used to set the
+        // flag TRUE (silent intent inversion, exit 0) and leave the literal
+        // 'false' to bind to the next unfilled positional slot (data
+        // corruption on multi-positional ops). A LITERAL true/false following
+        // a boolean flag is that flag's value — consume it, matching the
+        // inline `=false` spelling that already worked. Any OTHER following
+        // token keeps the old semantics (flag = true, token stays positional).
+        if (args[i + 1] === 'true' || args[i + 1] === 'false') {
+          params[key] = args[++i] === 'true';
+        } else {
+          params[key] = true;
+        }
       } else if (key === 'json' || key === 'dry_run') {
         // CLI-local booleans, intentionally NOT on the operation contract
         // exposed over MCP/tools: json is the formatter flag; dry_run feeds
-        // makeContext's ctx.dryRun. Both must never consume a value token —
+        // makeContext's ctx.dryRun. Neither consumes an ARBITRARY value token —
         // pre-fix, `gbrain delete x --dry-run` (trailing) set NOTHING, so
         // ctx.dryRun stayed false and the REAL delete ran despite the
         // rehearsal request (the resurrected #2185 class the red team caught).
-        params[key] = true;
+        // #4602: a literal true/false is the one exception — it is this
+        // flag's value (never a plausible positional), same as above.
+        if (args[i + 1] === 'true' || args[i + 1] === 'false') {
+          params[key] = args[++i] === 'true';
+        } else {
+          params[key] = true;
+        }
       } else if (i + 1 < args.length) {
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
@@ -1442,13 +1459,20 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
     //   dry-run — makeContext's ctx.dryRun projection.
     // Pre-fix, rejecting these broke documented invocations
     // (`gbrain search "x" --source y`, `gbrain put x --dry-run`).
-    if (rawKey === 'json') continue;
+    if (rawKey === 'json') {
+      // #4602: parseOpArgs consumes a literal true/false as this boolean's
+      // value — mirror the traversal so the token counts as consumed here too.
+      if (m[2] === undefined && (args[i + 1] === 'true' || args[i + 1] === 'false')) i++;
+      continue;
+    }
     if ((rawKey === 'explain' || rawKey === 'help') && m[2] === undefined) continue;
     if (rawKey === 'source' || rawKey === 'dry-run') {
       // Non-boolean-style CLI-locals consume the next token as their value
       // in parseOpArgs (source does; dry-run is boolean-read) — mirror the
-      // parser: source consumes a value when not inline-`=`.
+      // parser: source consumes a value when not inline-`=`; dry-run
+      // consumes only a literal true/false (#4602).
       if (rawKey === 'source' && m[2] === undefined) i++;
+      if (rawKey === 'dry-run' && m[2] === undefined && (args[i + 1] === 'true' || args[i + 1] === 'false')) i++;
       continue;
     }
     if (rawKey.startsWith('no-')) {
@@ -1459,8 +1483,13 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
     const paramDef = op.params[key];
     if (paramDef) {
       // Non-boolean flags consume the next token as their value unless
-      // provided inline via `=` — exactly like parseOpArgs.
+      // provided inline via `=` — exactly like parseOpArgs. Boolean flags
+      // consume only a literal true/false value token (#4602).
       if (paramDef.type !== 'boolean' && m[2] === undefined) i++;
+      else if (
+        paramDef.type === 'boolean' && m[2] === undefined &&
+        (args[i + 1] === 'true' || args[i + 1] === 'false')
+      ) i++;
       continue;
     }
     return `--${rawKey}`;
