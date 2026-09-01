@@ -34,13 +34,67 @@ import {
 // ── extractCalendarMethod (pure) ─────────────────────────────────────────────
 
 describe('extractCalendarMethod', () => {
-  test('text/calendar part with a method → the METHOD, uppercased', () => {
+  // Gmail's MessagePart.mimeType is the BARE media type ('text/calendar');
+  // the Content-Type parameters (method=, charset=) live on the part's own
+  // headers[] (format=full). Fixtures mirror that real shape — two reviewers
+  // confirmed the parameterized-mimeType fixture never occurs in production,
+  // so a mimeType-only parser read '' for every real invite.
+  const calendarPart = (contentType: string, mimeType = 'text/calendar') => ({
+    partId: '1',
+    mimeType,
+    filename: 'invite.ics',
+    headers: [
+      { name: 'Content-Type', value: contentType },
+      { name: 'Content-Transfer-Encoding', value: 'base64' },
+    ],
+    body: { size: 12, data: 'QkVHSU46VkNBTEVOREFS' },
+  });
+
+  test('real API shape: bare text/calendar mimeType + Content-Type header carrying method=REQUEST → REQUEST', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'text/plain', body: { data: 'aGk=' } },
+          calendarPart('text/calendar; charset="UTF-8"; method=REQUEST'),
+        ],
+      }),
+    ).toBe('REQUEST');
+  });
+
+  test('quoted / lowercase methods normalize to the bare uppercase METHOD', () => {
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; method="reply"; charset=utf-8')] }),
+    ).toBe('REPLY');
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; METHOD=cancel')] }),
+    ).toBe('CANCEL');
+  });
+
+  test('a text/calendar part with no method= anywhere → "" (seen, but no METHOD)', () => {
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; charset="UTF-8"')] }),
+    ).toBe('');
+    // No headers at all on the part either.
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [{ mimeType: 'text/calendar', filename: 'invite.ics' }] }),
+    ).toBe('');
+  });
+
+  test('fallback: a mimeType that still carries the Content-Type params parses too', () => {
     expect(
       extractCalendarMethod({
         mimeType: 'multipart/mixed',
         parts: [{ mimeType: 'text/calendar; charset="UTF-8"; method=REQUEST' }],
       }),
     ).toBe('REQUEST');
+    // The header wins over the mimeType when both carry a method.
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [calendarPart('text/calendar; method=REPLY', 'text/calendar; method=REQUEST')],
+      }),
+    ).toBe('REPLY');
   });
 
   test('bare .ics FILENAME with a non-calendar MIME type claims NOTHING (human attachment)', () => {
@@ -64,7 +118,13 @@ describe('extractCalendarMethod', () => {
         mimeType: 'multipart/mixed',
         parts: [
           { mimeType: 'application/octet-stream', filename: 'invite.ics' },
-          { mimeType: 'text/calendar; method=CANCEL' },
+          {
+            mimeType: 'multipart/alternative',
+            parts: [
+              { mimeType: 'text/html', body: { data: 'PHA+aGk8L3A+' } },
+              calendarPart('text/calendar; charset="UTF-8"; method=CANCEL'),
+            ],
+          },
         ],
       }),
     ).toBe('CANCEL');
@@ -491,6 +551,66 @@ describe('GmailClient', () => {
     // quoted tail trimmed.
     expect(third.bodyText).toBe('Sounds good.');
     expect(third.labelIds).toEqual(['SENT']);
+  });
+
+  test('getThread stamps calendarMethod from a real-shape text/calendar part; plain messages get null', async () => {
+    const rawThread = {
+      id: '17aa7777eeee8888',
+      messages: [
+        {
+          id: '18c2f4a9b3d21e10',
+          threadId: '17aa7777eeee8888',
+          labelIds: [],
+          internalDate: String(Date.parse('2026-08-10T09:00:00Z')),
+          payload: {
+            mimeType: 'multipart/mixed',
+            headers: [
+              { name: 'From', value: 'Charlie Example <charlie@example.com>' },
+              { name: 'To', value: 'a@example.com' },
+              { name: 'Subject', value: 'Invitation: Team sync @ Fri Aug 21, 2026 1pm' },
+            ],
+            parts: [
+              {
+                mimeType: 'multipart/alternative',
+                parts: [
+                  { mimeType: 'text/plain', body: { data: b64url('You have been invited.') } },
+                  {
+                    // Real Gmail shape: bare media type, params on the part headers.
+                    partId: '0.1',
+                    mimeType: 'text/calendar',
+                    filename: 'invite.ics',
+                    headers: [{ name: 'Content-Type', value: 'text/calendar; charset="UTF-8"; method=REQUEST' }],
+                    body: { data: b64url('BEGIN:VCALENDAR') },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          id: '18c2f4a9b3d21e11',
+          threadId: '17aa7777eeee8888',
+          labelIds: [],
+          internalDate: String(Date.parse('2026-08-10T10:00:00Z')),
+          payload: {
+            mimeType: 'text/plain',
+            headers: [
+              { name: 'From', value: 'Dana Example <dana@example.com>' },
+              { name: 'To', value: 'a@example.com' },
+              { name: 'Subject', value: 'Re: Team sync' },
+            ],
+            body: { data: b64url('Can we move it to 2pm?') },
+          },
+        },
+      ],
+    };
+    const h = makeHarness(() => json(rawThread));
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const thread = await gmail.getThread('17aa7777eeee8888', 'a@example.com');
+    const [invite, plain] = thread.messages;
+    expect(invite.calendarMethod).toBe('REQUEST');
+    expect(invite.bodyText).toBe('You have been invited.');
+    expect(plain.calendarMethod).toBeNull();
   });
 
   test('getThread caps bodies at 8KB with a [truncated] marker', async () => {

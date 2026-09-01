@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   calendarRelPath,
   htmlToText,
+  isCalendarSystemMail,
   isNoiseSender,
   isSignatureRequest,
   personSlugFromContact,
@@ -156,6 +157,38 @@ describe('isNoiseSender', () => {
     expect(isNoiseSender('alice@example.com')).toBe(false);
     expect(isNoiseSender('replies-welcome@example.com')).toBe(false);
   });
+});
+
+describe('isCalendarSystemMail', () => {
+  // Structural METHOD first (any non-empty method), then the anchored
+  // subject-prefix fallback for messages whose calendar part carried no
+  // parsable method ('' / null). A Re:/Fwd:-style prefix always loses.
+  const cases: Array<[string, { calendarMethod?: string | null; subject?: string }, boolean]> = [
+    ['non-empty METHOD wins regardless of subject', { calendarMethod: 'REQUEST', subject: 'Zephyr roadmap' }, true],
+    ['REPLY method on a plain subject', { calendarMethod: 'REPLY', subject: 'Accepted: Team sync' }, true],
+    ["'' method + Invitation subject → fallback true", { calendarMethod: '', subject: 'Invitation: Team sync @ Fri Aug 21' }, true],
+    ["'' method + plain subject → false", { calendarMethod: '', subject: 'Team sync notes' }, false],
+    ['null method + Updated invitation subject', { calendarMethod: null, subject: 'Updated invitation: Budget sync' }, true],
+    ['es prefix', { calendarMethod: null, subject: 'Invitación: Sincronización semanal' }, true],
+    ['es updated prefix', { calendarMethod: null, subject: 'Invitación actualizada: Sincronización' }, true],
+    ['fr prefix', { calendarMethod: null, subject: 'Invitation mise à jour: Point hebdo' }, true],
+    ['fr accepted prefix', { calendarMethod: null, subject: 'Acceptée: Point hebdo' }, true],
+    ['de prefix', { calendarMethod: null, subject: 'Einladung: Wöchentlicher Sync' }, true],
+    ['de accepted prefix', { calendarMethod: null, subject: 'Zugesagt: Wöchentlicher Sync' }, true],
+    ['AW: (de reply) never system mail', { calendarMethod: null, subject: 'AW: Einladung: Wöchentlicher Sync' }, false],
+    ['SV: (sv reply) never system mail', { calendarMethod: null, subject: 'SV: Invitation: Team sync' }, false],
+    ['Re: Fwd: chain never system mail', { calendarMethod: null, subject: 'Re: Fwd: Invitation: Team sync' }, false],
+    ['Fwd: alone never system mail', { calendarMethod: '', subject: 'Fwd: Invitation: Team sync' }, false],
+    ['leading whitespace is trimmed before anchoring', { calendarMethod: null, subject: '   Invitation: Team sync' }, true],
+    ['mid-subject "invitation:" does not match (anchored)', { calendarMethod: null, subject: 'About the Invitation: thoughts?' }, false],
+    ['empty message shape', {}, false],
+    ['no method, empty subject', { calendarMethod: null, subject: '' }, false],
+  ];
+  for (const [label, msg, expected] of cases) {
+    test(`${label} → ${expected}`, () => {
+      expect(isCalendarSystemMail(msg)).toBe(expected);
+    });
+  }
 });
 
 describe('isSignatureRequest', () => {

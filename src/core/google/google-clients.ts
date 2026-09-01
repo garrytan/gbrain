@@ -155,8 +155,12 @@ interface RawGmailHeader {
 }
 
 interface RawGmailPart {
+  /** BARE media type ('text/calendar') — Gmail strips the Content-Type
+   *  parameters from this field; they live on `headers[]` (format=full). */
   mimeType?: string;
   filename?: string;
+  /** Per-part MIME headers (Content-Type with its params, Content-Disposition, …). */
+  headers?: RawGmailHeader[];
   body?: { data?: string; size?: number };
   parts?: RawGmailPart[];
 }
@@ -166,7 +170,7 @@ interface RawGmailMessage {
   threadId: string;
   labelIds?: string[];
   internalDate?: string;
-  payload?: RawGmailPart & { headers?: RawGmailHeader[] };
+  payload?: RawGmailPart;
 }
 
 interface RawGmailThread {
@@ -175,10 +179,17 @@ interface RawGmailThread {
   messages?: RawGmailMessage[];
 }
 
-function header(msg: RawGmailMessage, name: string): string {
-  const h = msg.payload?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
+function partHeader(part: RawGmailPart | undefined, name: string): string {
+  const h = part?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
   return h?.value ?? '';
 }
+
+function header(msg: RawGmailMessage, name: string): string {
+  return partHeader(msg.payload, name);
+}
+
+/** iCalendar METHOD parameter of a Content-Type value (quoted or bare). */
+const CALENDAR_METHOD_RE = /method\s*=\s*"?([a-z]+)"?/i;
 
 function decodeB64Url(data: string): string {
   try {
@@ -231,7 +242,15 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
     const p = stack.shift()!;
     const mime = (p.mimeType ?? '').toLowerCase();
     if (mime.startsWith('text/calendar') || mime === 'application/ics') {
-      const m = /method\s*=\s*"?([a-z]+)"?/i.exec(p.mimeType ?? '');
+      // Gmail's MessagePart.mimeType is the BARE media type; the `method=`
+      // parameter lives in the part's own Content-Type header (format=full
+      // carries headers on nested parts). Read that first — a parser that
+      // only looked at mimeType read '' for every real invite, which silently
+      // downgraded the structural signal to the subject-prefix fallback. A
+      // mimeType that still carries the params (other providers / fixtures)
+      // remains the fallback parse.
+      const contentType = partHeader(p, 'Content-Type');
+      const m = CALENDAR_METHOD_RE.exec(contentType) ?? CALENDAR_METHOD_RE.exec(p.mimeType ?? '');
       return (m?.[1] ?? '').toUpperCase();
     }
     // A bare `.ics` FILENAME with a non-calendar MIME type claims nothing:
