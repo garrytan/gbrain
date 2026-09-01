@@ -102,11 +102,14 @@ export interface ModeBundle {
   expansion: boolean;
   /**
    * Default `limit` for the operation layer (`src/core/operations.ts:1087`).
-   * Note: production `query` op TODAY defaults to 20. Mode bundle becomes
-   * the default ONLY when the caller omits the field — same chain semantics
-   * as model-tier resolution. See `[CDX-1+2+3]` in the plan: the original
-   * "tokenmax preserves Garry's setup" framing is wrong; tokenmax is an
-   * EXPANSION from the implicit current default (limit 20).
+   * Mode bundle becomes the default ONLY when the caller omits the field —
+   * same chain semantics as model-tier resolution. See `[CDX-1+2+3]` in the
+   * plan: the original "tokenmax preserves Garry's setup" framing is wrong;
+   * tokenmax is an EXPANSION from the implicit historical default (limit 20).
+   * (That flat-20 default no longer exists anywhere in `query`: #4360 fixed
+   * the text/hybrid path's cache-hit slice, #4356 Problem 2 fixed the
+   * image-similarity branch. `search_by_image`, a separate op with no mode
+   * param, still hard-defaults to 20 — a different public contract.)
    */
   searchLimit: number;
   /**

@@ -7,6 +7,7 @@
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
 import {
   gradeRetrievalConfidence,
@@ -278,12 +279,13 @@ const query: Operation = {
     // similarity branch below it) — none of which support a literal
     // empty-result request today; introducing that only here would be a
     // new, undocumented asymmetry rather than a limit-consistency fix.
-    // (`search_by_image`, a separate op in src/core/ops/image.ts, has the
-    // same convention but isn't "in this file".) The image-similarity path
-    // (`image` param) is unaffected by this change and still hard-defaults
-    // to 20 regardless of mode — out of scope here, tracked separately
-    // (#4356 Problem 2).
-    limit: { type: 'number', description: 'Max results. For text queries, omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override). For image-similarity queries (`image` param), always defaults to 20 regardless of mode.' },
+    // (`search_by_image`, a separate op in src/core/ops/image.ts, keeps its
+    // own independent flat-20 default — different public contract, out of
+    // scope here.) #4356 Problem 2: the image-similarity path (`image`
+    // param) below now resolves the SAME mode-derived searchLimit as the
+    // text path (was a hard `|| 20` regardless of mode, the last search arm
+    // in this op that didn't honor conservative/balanced/tokenmax).
+    limit: { type: 'number', description: 'Max results. Omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override) — for both text queries and image-similarity queries (`image` param).' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
@@ -413,8 +415,21 @@ const query: Operation = {
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
       // image pages across sources independent of the text path's fix.
+      // #4356 Problem 2: the image path also bypasses hybridSearch's mode
+      // resolution, so its default limit didn't honor the active search
+      // mode. Resolve mode here the same way hybridSearch does, including
+      // its remote trust gate (`resolvePerCallMode` — a remote caller's
+      // `mode` param still can't select the mode-derived default; an
+      // explicit `limit` still overrides it either way, same as every
+      // other limit surface in this op).
+      const imagePerCallMode = resolvePerCallMode(ctx, p.mode);
+      const imageModeInput = await loadSearchModeConfig(ctx.engine);
+      const imageResolvedMode = resolveSearchMode({
+        mode: imagePerCallMode ?? imageModeInput.mode,
+        overrides: imageModeInput.overrides,
+      });
       const results = await ctx.engine.searchVector(vec, {
-        limit: (p.limit as number) || 20,
+        limit: (p.limit as number) || imageResolvedMode.searchLimit,
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         excludePrivate,
