@@ -14,7 +14,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
+import { resolveMcpInstructions } from './instructions.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 
 export async function resolveMcpStdioSourceScope(
@@ -129,6 +129,7 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
 }
 
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
+  const config = loadConfig();
   const server = new Server(
     { name: 'gbrain', version: VERSION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
@@ -137,7 +138,8 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     // so the full catalog comes back without a harness restart.
     {
       capabilities: { tools: { listChanged: true } },
-      instructions: GBRAIN_MCP_INSTRUCTIONS,
+      // #4748: canonical contract + optional operator-set deployment identity.
+      instructions: resolveMcpInstructions(config),
     },
   );
 
@@ -158,7 +160,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // FILE config plane only — stdio has no per-request list cycle, so a
   // `mcp.strict_params` flip needs a serve restart here (deliberate; the
   // OAuth HTTP path re-reads dual-plane per request).
-  const strictParams = parseStrictParamsMode(loadConfig()?.mcp?.strict_params) === 'reject';
+  const strictParams = parseStrictParamsMode(config?.mcp?.strict_params) === 'reject';
 
   // Generate tool definitions from operations. Extracted to buildToolDefs so
   // the subagent tool registry (v0.15+) can call the same mapper against a

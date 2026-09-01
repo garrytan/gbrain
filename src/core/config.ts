@@ -468,6 +468,14 @@ export interface GBrainConfig {
    */
   mcp?: {
     /**
+     * #4748 — deployment-specific identity and routing guidance appended to
+     * the canonical operating contract in the MCP initialize response (all
+     * three transports). Distinguishes brains sharing one tool catalog.
+     * `GBRAIN_MCP_INSTRUCTIONS` env overrides this slot; blank/absent keeps
+     * the initialize response byte-identical to the canonical contract.
+     */
+    instructions?: string;
+    /**
      * Gate for `list_skills` / `get_skill` over a REMOTE transport. Runtime
      * default is OFF (absent key → OFF) so an upgrade never silently grants
      * existing read tokens host-skill read. `gbrain init` writes `true` for new
