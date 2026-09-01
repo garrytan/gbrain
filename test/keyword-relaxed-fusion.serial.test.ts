@@ -38,7 +38,7 @@ mock.module('../src/core/embedding.ts', () => ({
   },
 }));
 
-const { hybridSearch } = await import('../src/core/search/hybrid.ts');
+const { hybridSearch, textVectorArmNonEmpty } = await import('../src/core/search/hybrid.ts');
 const { configureGateway, resetGateway } = await import('../src/core/ai/gateway.ts');
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
 const { mkdtempSync, rmSync } = await import('node:fs');
@@ -145,5 +145,36 @@ describe('hybrid fusion demotion', () => {
     expect(res.length).toBeGreaterThan(0);
     // The rescue rows are the OR-fallback pool — tagged, and allowed to serve.
     expect(res.some((r) => r.keyword_relaxed === true)).toBe(true);
+  });
+
+  test('muted relaxed rows surface as meta.relaxed_dropped, NOT as a degraded stage (observability without a TTL collapse)', async () => {
+    let meta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const res = await hybridSearch(engine, 'zephyr walrus', {
+      limit: 10,
+      expansion: false,
+      onMeta: (m) => { meta = m; },
+    });
+    expect(res.length).toBeGreaterThan(0);
+    expect(meta?.relaxed_dropped ?? 0).toBeGreaterThan(0);
+    // Common-case demotion must never look degraded — that would put every
+    // zero-strict-lexical query on the 60s cache TTL.
+    expect((meta?.degraded ?? []).some((d) => d.stage === 'keyword_relaxed_carried')).toBe(false);
+  });
+});
+
+describe('textVectorArmNonEmpty (pure demotion gate — red-team both-mode finding)', () => {
+  const row = (slug: string) => ({ slug, chunk_text: slug, score: 1 }) as never;
+  test('both mode: a nonempty IMAGE branch alone must NOT mute the lexical rescue (text lists all empty)', () => {
+    // vectorLists = [textList(empty), imageList(nonempty)] — pre-fix this
+    // read as "vector arm healthy" and dropped the only text-side recall arm.
+    expect(textVectorArmNonEmpty([[], [row('img/photo')]], true)).toBe(false);
+  });
+  test('both mode: any nonempty TEXT list counts as healthy (image branch irrelevant)', () => {
+    expect(textVectorArmNonEmpty([[row('notes/a')], []], true)).toBe(true);
+    expect(textVectorArmNonEmpty([[], [row('notes/b')], []], true)).toBe(true); // expansion variant hit
+  });
+  test('text mode: gate reads every list (no image branch to exclude)', () => {
+    expect(textVectorArmNonEmpty([[]], false)).toBe(false);
+    expect(textVectorArmNonEmpty([[], [row('notes/a')]], false)).toBe(true);
   });
 });

@@ -58,6 +58,14 @@ const NULL_BINDING: ResolveIpcBinding = { server: null, socketPath: null, close:
  * slug-only suppression + the wide ungated pool cap volunteerStage always
  * sends. A normal pointer resolve stamping probe:'volunteer' to evade
  * delivery telemetry keeps logging. Exported for direct unit testing.
+ *
+ * ADVISORY, not a control (adversarial review, 2026-09): the shape is
+ * publicly reproducible, so a client that deliberately sends the full
+ * volunteer shape receives up to the wide pool with no delivery log line.
+ * Delivery logging is precision/recall telemetry — the caller already holds
+ * read access to the same pages via ordinary ops — but treat the audit
+ * trail as best-effort until the server-side volunteer-report IPC kind
+ * (filed) closes it.
  */
 export function isVolunteerProbeShaped(req: {
   probe?: string;

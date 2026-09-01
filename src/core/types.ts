@@ -1806,6 +1806,14 @@ export interface EvalCaptureFailure {
  *                        it was the primary recall arm (vector unavailable)
  *   cache_prestamp     — served from a cache row written before the
  *                        degradation stamp existed; cleanliness unprovable
+ *   keyword_relaxed_carried — OR-relaxed lexical rows VOTED in fusion because
+ *                        every text vector list came back empty on a
+ *                        vector-enabled run (e.g. mid embed-backfill). The
+ *                        result set leans on noise-shaped rank evidence, so
+ *                        the cache write takes the degraded (short) TTL —
+ *                        otherwise a transitional relaxed-carried row would
+ *                        shadow the recovered pipeline for the full TTL
+ *                        under the same knobs hash (2026-09 red-team).
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1818,6 +1826,7 @@ export const DEGRADED_STAGES = [
   'budget_truncated',
   'keyword_zero',
   'cache_prestamp',
+  'keyword_relaxed_carried',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1914,6 +1923,17 @@ export interface HybridSearchMeta {
    * existed (surfaced as `cache_prestamp` at hit time).
    */
   degraded?: DegradedStageEntry[];
+  /**
+   * 2026-09 fix wave (#3617 follow-up): count of OR-relaxed lexical rows
+   * fetched but EXCLUDED from RRF fusion because the text vector arm was
+   * healthy (the designed demotion). NOT a degraded stage — muting relaxed
+   * noise on a healthy run is normal operation and common (any query with
+   * zero strict lexical matches), so it must not shorten the cache TTL —
+   * but without this field `_meta` implies the lexical arms voted when they
+   * contributed nothing, hiding the demotion from an operator debugging a
+   * miss. Omitted when zero.
+   */
+  relaxed_dropped?: number;
   /**
    * WP2/T3 — pre-budget hit count: how many results retrieval produced for
    * this page BEFORE token-budget enforcement. Lets a consumer distinguish

@@ -66,3 +66,36 @@ describe('pre-registered absolute floors (v0.46.15) hold in the committed baseli
     }
   });
 });
+
+/**
+ * Injected-token CEILINGS (2026-08 fix wave, red-team): the volunteer-arm
+ * rebank raised openclaw avg_injected_tokens ~17% — recall bought with
+ * downstream context cost. The recall/precision floors alone can't see a
+ * future gate regression that volunteers pages every turn (gold-adjacent
+ * volunteers keep precision at 1.0 while cost climbs invisibly). Ceilings
+ * are measured-plus-margin (~+30%) at the 2026-08 rebank; a justified bank
+ * that exceeds one must consciously re-register the ceiling here, same
+ * convention as the recall floors.
+ */
+const TOKEN_CEILINGS: Record<string, number> = {
+  'openclaw/push': 76,
+  'openclaw/know-to-ask': 58,
+  'openclaw/continuity': 98,
+  'claude-code/push': 66,
+  'claude-code/know-to-ask': 50,
+  'claude-code/continuity': 78,
+  'codex/push': 72,
+  'codex/know-to-ask': 59,
+  'codex/continuity': 197,
+};
+
+describe('avg_injected_tokens ceilings hold in the committed baseline', () => {
+  for (const [key, ceiling] of Object.entries(TOKEN_CEILINGS)) {
+    test(`${key}: avg_injected_tokens ≤ ${ceiling}`, () => {
+      const [harness, suite] = key.split('/');
+      const m = cell(harness, suite);
+      expect(m.avg_injected_tokens).toBeGreaterThan(0);
+      expect(m.avg_injected_tokens).toBeLessThanOrEqual(ceiling);
+    });
+  }
+});

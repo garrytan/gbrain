@@ -173,13 +173,20 @@ export function gateVolunteeredPointers(
     const boost = cand && (cand.occurrences >= 2 || cand.inNewestTurn) ? VOLUNTEER_SALIENCE_BOOST : 0;
     const confidence = Math.min(0.99, ARM_CONFIDENCE[p.arm] + boost);
     if (confidence < minConfidence) continue;
+    // Collapse whitespace in display at CONSTRUCTION (adversarial review,
+    // 2026-09): display comes from brain content (page titles/aliases) and
+    // renders into single-line prompt bullets in both lanes — a multi-line
+    // title must not be able to forge markdown structure in the injected
+    // block. synopsis is already collapse+clip sanitized (safeSynopsis);
+    // rationale is template-generated from this sanitized display.
+    const display = p.display.replace(/\s+/g, ' ').trim();
     out.push({
       slug: p.slug,
       source_id: p.source_id,
-      display: p.display,
+      display,
       confidence,
       arm: p.arm,
-      rationale: rationaleFor(p.arm, p.display, cand, opts.windowSize),
+      rationale: rationaleFor(p.arm, display, cand, opts.windowSize),
       synopsis: p.synopsis,
     });
     if (out.length >= maxPages) break;
@@ -197,6 +204,15 @@ export type VolunteerResolveFn = (
   candidates: WindowEntityCandidate[],
   opts: {
     priorContextText?: string;
+    /**
+     * CONTRACT (red-team, 2026-09): the resolver MUST honor this cap — the
+     * volunteer stage requests a wide ungated pool (VOLUNTEER_MAX_PAGES_CAP*2)
+     * so the confidence gate sees every candidate; a resolver that silently
+     * applies its own smaller pointer budget reintroduces the gated-out-alias-
+     * shadows-a-passing-title bug the wide pool exists to prevent, with no
+     * telemetry (host rungs can't log). Host-injected resolvers that ignore
+     * `probe` are tolerated; ignoring `maxPointers` is not.
+     */
     maxPointers?: number;
     suppression?: 'slug-and-title' | 'slug-only';
     lexicalArms?: boolean;

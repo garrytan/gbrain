@@ -136,10 +136,19 @@ const TIMEOUT_MS = 1500; // generous per-turn ceiling; the work is usually <100m
 const MIN_VOLUNTEER_BUDGET_MS = 50;
 const HEARTBEAT_PATH = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
 
-/** File-plane + env gate. Default ON. DB-plane does NOT gate (assemble() is sync). */
+/**
+ * File-plane + env gate. Default ON. DB-plane does NOT gate (assemble() is sync).
+ *
+ * 2026-08 fix wave (red-team): widened from the strict legacy parse
+ * ('false'|'0' only) to the same robust negative family the child switches
+ * (volunteer, lexical arms) honor — an operator disabling the WHOLE reflex
+ * mid-incident with GBRAIN_RETRIEVAL_REFLEX=off used to get a silent no-op
+ * while the same value worked on the children. Widening a disable-parse is
+ * safe: no enabled-today value becomes disabled except intended negatives.
+ */
 export function reflexEnabled(cfg: GBrainConfig | null): boolean {
   const env = process.env.GBRAIN_RETRIEVAL_REFLEX;
-  if (env != null && env !== '') return !(env === 'false' || env === '0');
+  if (env != null && env !== '') return !isEnvDisabled(env);
   return cfg?.retrieval_reflex !== false;
 }
 
@@ -216,21 +225,31 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
     if (windowCandidates && windowSlice && volunteerEnabled(cfg)) {
       const remaining = TIMEOUT_MS - (Date.now() - startedAt);
       if (remaining > MIN_VOLUNTEER_BUDGET_MS) {
-        const v = await withTimeout(
-          volunteerStage(
-            (cands, ropts) => resolve(params, cfg, cands, ropts),
-            windowCandidates,
-            windowSlice.length,
-            {
-              excludeSlugs: new Set(pointers.map((p) => p.slug)),
-              priorContextText: params.priorContextText,
-              lexicalArms: opts.lexicalArms,
-              maxPages: VOLUNTEER_DEFAULT_MAX_PAGES,
-            },
-          ),
-          remaining,
-        );
-        volunteered = v ?? [];
+        // Own try/catch, NOT just the timeout race (codex adversarial,
+        // 2026-09): a non-timeout REJECTION of the volunteer resolve would
+        // otherwise propagate through Promise.race to the outer catch and
+        // return null — destroying Arm 1's already-resolved pointer block, a
+        // floor regression vs the pointer-only lane. Arm 2 fails open to the
+        // pointer-only block on ANY failure mode, not just expiry.
+        try {
+          const v = await withTimeout(
+            volunteerStage(
+              (cands, ropts) => resolve(params, cfg, cands, ropts),
+              windowCandidates,
+              windowSlice.length,
+              {
+                excludeSlugs: new Set(pointers.map((p) => p.slug)),
+                priorContextText: params.priorContextText,
+                lexicalArms: opts.lexicalArms,
+                maxPages: VOLUNTEER_DEFAULT_MAX_PAGES,
+              },
+            ),
+            remaining,
+          );
+          volunteered = v ?? [];
+        } catch {
+          volunteered = [];
+        }
       }
     }
 

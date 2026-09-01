@@ -29,7 +29,12 @@
   F6): the two-call shape is byte-parity with the proven claude-code lane
   (96/96 at precision 1.0), and a single-pool refactor changes suppression/cap
   interplay on the exact number being published. Re-attempt only with a
-  brainbench same-hash proof + latency receipt. **Where:**
+  brainbench same-hash proof + latency receipt. Fold in two adjacent
+  adversarial-review notes when picked up: (a) the doomed-rung retry — when
+  Arm 1 already proved the resolver rung unavailable, Arm 2 still burns its
+  budget on a second doomed attempt; (b) neither arm's `withTimeout` cancels
+  the LOSING resolver promise (no AbortSignal threading through the rungs),
+  so a slow rung's query keeps running server-side after expiry. **Where:**
   `src/core/context/reflex.ts` + `volunteer.ts:volunteerStage`. **Effort:** M.
 - [ ] **P3 — LoCoMo benchmark lane (gbrain-evals).** **What:** the comparison
   doc calls LoCoMo "the most interesting unrun benchmark on this page for
@@ -66,7 +71,7 @@
   eval surface that reports ok for work it never ran corrodes trust in every
   other receipt. **How:** either add dispatch + honest not_implemented
   envelopes (ok:false, nonzero exit) or delete the files + their scaffold test.
-- [ ] **P2 — E5: adaptive-return config plane + KNOBS_HASH fold (its own wave).**
+- [x] **P2 — E5: adaptive-return config plane + KNOBS_HASH fold (its own wave).** **Completed: v0.48.0.0 (2026-09-01)** — all three sub-items shipped: keys registered in KNOWN_CONFIG_KEYS, KNOBS_HASH v=27 fold (gate params + resolved intent class; adaptive-on calls cache), AdaptiveQueryIntent gained 'concept' (hybrid.ts coercion dropped).
   **What:** (a) the four search.adaptive_return* keys are a DB-config no-op
   (not in KNOWN_CONFIG_KEYS; config-db-merge folds only cycle.*; GBrainConfig
   has no search block) — register + fold or move onto the ModeBundle ladder
@@ -3466,7 +3471,7 @@ the PrecisionMemBench integration in gbrain-evals). The feature shipped
 default-off; these are the gates and extensions before any default flip.
 
 - [ ] **v0.42+: cross-surface ablation before flipping `search.adaptive_return` default.** The gate ships default-off. Before turning it on in any `MODE_BUNDLES` tier, run the recall ablation (adaptive off vs on, recall-preserving caps) across `gbrain eval longmemeval`, `gbrain eval whoknows`, `gbrain eval suspected-contradictions`, and the BrainBench-Real replay (sibling gbrain-evals repo). Confirm recall@k / answer quality does not regress; pick the safe caps; probably flip `tokenmax` first (broadest searchLimit, most noise). On-surface evidence (the PrecisionMemBench precision/recall frontier: off 0.076/0.99, e1/o2 0.40/0.91, e1/o1 0.58/0.82) is recorded in `gbrain-evals/docs/benchmarks/2026-05-29-precisionmembench.md`. Priority: P2.
-- [ ] **v0.42+: fold adaptive-return params into KNOBS_HASH so adaptive-on calls can cache.** v0.41.33.0 skips `hybridSearchCached` entirely when the gate is on (cache-safe but cache-cold). Fold `adaptive_return` enabled + caps + `minKeep` into `knobsHash()` (append-only, bump `KNOBS_HASH_VERSION`) so a gate-on write segregates from a gate-off row and adaptive calls cache correctly. Required before any default flip (else default-on means cache-cold everywhere). See `src/core/search/mode.ts` KNOBS_HASH parts + `return-policy.ts`. Priority: P2 (paired with the default-flip ablation above).
+- [x] **v0.42+: fold adaptive-return params into KNOBS_HASH so adaptive-on calls can cache.** **Completed: v0.48.0.0 (2026-09-01)** — same change as the write-path E5 entry (KNOBS_HASH v=27). v0.41.33.0 skips `hybridSearchCached` entirely when the gate is on (cache-safe but cache-cold). Fold `adaptive_return` enabled + caps + `minKeep` into `knobsHash()` (append-only, bump `KNOBS_HASH_VERSION`) so a gate-on write segregates from a gate-off row and adaptive calls cache correctly. Required before any default flip (else default-on means cache-cold everywhere). See `src/core/search/mode.ts` KNOBS_HASH parts + `return-policy.ts`. Priority: P2 (paired with the default-flip ablation above).
 - [ ] **v0.42+: gentle adaptive gate on `think`'s gather stage (A3).** The plan's A3 decision was a gentler return-gate on `runThink`'s gather candidates (cleaner context, fewer tokens per reasoning call). Deferred because the benefit is unvalidated without a longmemeval answer-quality run, and trimming the answer path (even default-off) carries regression risk. gather fuses 4 streams (page / takes-keyword / takes-vector / graph); the gate must operate on the fused output with a higher min-keep than search, validated on `gbrain eval longmemeval` answer quality (not retrieval precision). Also: `RunThinkOpts` has no `sourceId` today, so think's gather runs unscoped (codex finding) — scope-isolated think needs that plumbing first. Priority: P2.
 - [ ] **v0.42+: `--explain` human header for adaptive_return.** The decision is in `HybridSearchMeta.adaptive_return` and surfaces in `--json` today. The per-result `explain-formatter.ts` is result-scoped and can't render a per-query meta line; the human `gbrain search --explain` header needs the meta threaded through `cli.ts:formatResult` (it currently only receives `results`). Add a one-line gate-decision header (intent / cap / kept of total). Priority: P3.
 - [ ] **v0.42+: structured-alias / facts-mode fidelity for the PrecisionMemBench eval.** The gbrain-evals benchmark seeds beliefs as pages with aliases in the body (real FTS). A second fidelity that exercises gbrain's structured alias/entity-resolution layer (facts with `valid_until` + entity resolution) would measure gbrain's structured-belief path on the 23 alias cases. Lives in gbrain-evals (`eval/precisionmembench/seed.ts` throws on `fidelity:'structured'` today). Priority: P3.
@@ -8492,3 +8497,34 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   Agents cannot do this — it exists to calibrate the judge against a human.
   **Where:** gbrain-evals repo. **Priority:** P2 (publication-quality gate,
   not a number gate).
+- [ ] **P2 — BrainBench assistant-role window fidelity (requires rebank).**
+  **What:** the bench harness replays USER turns only (`harness.ts` folds
+  assistant turns into priorContext), so adapter windows are user-only while
+  production `getWindowTurns` windows mixed roles — assistant-introduced
+  entities (a designed volunteer input with their own rationale template) are
+  exercised as SUPPRESSION input, the inverse of their production role, and
+  per-window user-content depth runs ~2x production. **How:** feed assistant
+  turns to adapter windows (e.g. an `onNonUserTurn` hook on HarnessAdapter),
+  then re-bank every cell + re-derive the 0.95 openclaw floor and token
+  ceilings in the SAME commit (hold-or-improve). Filed instead of fixed
+  in-wave: changing replay semantics after seeing results violates the
+  frozen-measurement rule; the 2026-08 delta is internally valid (baseline
+  and fix measured under identical window semantics) and the deviation is
+  disclosed in BRAINBENCH.md's seam table. **Where:**
+  `src/eval/brainbench/harness.ts`, `adapters/*.ts`. **Effort:** M.
+- [ ] **P3 — server-side volunteer-report IPC kind.** **What:** a small IPC
+  message the reflex client sends AFTER gating, carrying the volunteered
+  survivors, so the serve logs volunteer events on the PGLite/IPC rung
+  (today: direct-Postgres rung only) AND the delivery audit stops depending
+  on the advisory `isVolunteerProbeShaped` exemption (a deliberate client
+  can shape a request as a volunteer probe and receive the wide pool with no
+  delivery log line — acceptable while the log is tuning telemetry, not an
+  audit control; this closes it). **Where:** `src/mcp/resolve-ipc*.ts`,
+  `src/core/context/reflex.ts`. **Effort:** S/M.
+- [ ] **P3 — IPC probe-field version echo.** **What:** a NEW reflex client
+  against an OLD long-running `gbrain serve` sends `probe:'volunteer'` that
+  the serve ignores, logging the wide ungated pool as delivered pointers on
+  every windowed turn until the serve restarts (per-turn ~10-row inflation of
+  reflex precision stats). Echo a protocol/feature version in the IPC hello
+  and skip probe sends (or the volunteer arm) when the server predates
+  `probe`. **Where:** `src/mcp/resolve-ipc*.ts`. **Effort:** S.

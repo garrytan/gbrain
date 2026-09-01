@@ -1963,13 +1963,37 @@ export async function hybridSearch(
   // 93.8%; per-question probe shows gold at vector ranks 0-2 sinking to
   // fused ranks 14-17 under relaxed-arm votes, and recovering exactly on
   // kof-off). Strict-match keyword/title rows are unaffected.
-  const vectorArmNonEmpty = vectorLists.some((l) => l.length > 0);
+  //
+  // The gate judges TEXT vector lists only (red-team, 2026-09): in 'both'
+  // mode the appended image branch must not veto the lexical rescue — a
+  // text-intent query whose text embeds returned zero rows (mid-backfill,
+  // image-heavy corpus) would otherwise lose its only text-side recall arm
+  // to image votes. ANY nonempty text list counts as healthy, including a
+  // surviving expansion-variant list: variant hits are real semantic
+  // evidence, which still beats noise-shaped OR matches (adjudicated vs the
+  // stricter original-list-only reading).
+  const vectorArmNonEmpty = textVectorArmNonEmpty(vectorLists, isBothMode);
   const keywordFusionList = vectorArmNonEmpty
     ? keywordResults.filter((r) => !r.keyword_relaxed)
     : keywordResults;
   const titleFusionList = vectorArmNonEmpty
     ? titleResults.filter((r) => !r.keyword_relaxed)
     : titleResults;
+  // Observability for both demotion outcomes (adversarial review, 2026-09):
+  // muted relaxed rows get a meta COUNT (common, normal operation — never a
+  // degraded stage, which would collapse the cache TTL for every query with
+  // zero strict lexical matches); carried relaxed rows on a vector-ENABLED
+  // run get a degraded stage so the cache write takes the short TTL instead
+  // of pinning transitional noise for the full TTL.
+  const relaxedDropped =
+    (keywordResults.length - keywordFusionList.length) +
+    (titleResults.length - titleFusionList.length);
+  if (
+    !vectorArmNonEmpty &&
+    (keywordFusionList.some((r) => r.keyword_relaxed) || titleFusionList.some((r) => r.keyword_relaxed))
+  ) {
+    pushDegraded(degraded, 'keyword_relaxed_carried');
+  }
 
   const allLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
     ? [
@@ -2067,10 +2091,11 @@ export async function hybridSearch(
         fused.sort((a, b) => b.score - a.score);
       }
       // Widen per-page dedup cap when walking — but an EXPLICIT per-call
-      // maxPerPage is never silently overridden (CEO review D8): tightest
-      // wins. A caller asking for maxPerPage:1 (session diversity) keeps 1
-      // even under a walk; callers without an explicit cap get the widened
-      // walk cap as before.
+      // maxPerPage is never LOOSENED (CEO review D8): tightest wins. A
+      // caller asking for maxPerPage:1 (session diversity) keeps 1 even
+      // under a walk; an explicit cap LOOSER than the walk cap is tightened
+      // to it (min of the two); callers without an explicit cap get the
+      // widened walk cap as before.
       const capFromWalk = Math.min(10, Math.max(walkDepth * 5, 5));
       dedupOpts = {
         ...(dedupOpts ?? {}),
@@ -2247,6 +2272,7 @@ export async function hybridSearch(
       ? { token_budget: budgetMeta }
       : {}),
     ...(vectorPoolUnderfill ? { vector_pool_underfilled: vectorPoolUnderfill } : {}),
+    ...(relaxedDropped > 0 ? { relaxed_dropped: relaxedDropped } : {}),
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
     ...(relationalSlotDecision ? { relational_evidence_slot: relationalSlotDecision } : {}),
@@ -2392,6 +2418,12 @@ export async function hybridSearchCached(
   // the cache key and the (former) skip decision. Adaptive-on calls now
   // cache — the gate params + the query's resolved intent class fold into
   // knobsHash (v=27) so gate-off/-on and cross-intent rows never cross-serve.
+  // Known-narrow residual (adversarial review, 2026-09): bare hybridSearch
+  // re-classifies intent for the applied trim, so a `search.intent_patterns`
+  // write (or bank-TTL expiry) landing BETWEEN the two loads can store a set
+  // trimmed under intent X beneath a key claiming intent Y for up to
+  // ttl_seconds — same class as the documented #4356 double-resolution
+  // caveat: cache-only, self-healing, accepted.
   const adaptiveResolvedForCache = resolveAdaptiveReturn(
     opts?.adaptiveReturn,
     adaptiveReturnFromConfig(cfgCached as unknown as Record<string, unknown> | null),
@@ -2760,6 +2792,22 @@ export async function hybridSearchCached(
 export const DEGRADED_CACHE_TTL_SECONDS = 60;
 
 /**
+ * 2026-09 fix wave — pure gate for the OR-relaxed lexical demotion: is the
+ * TEXT vector arm healthy? In 'both' cross-modal mode the LAST list in
+ * vectorLists is the appended image branch (see the allLists assembly), and
+ * it must not count: image evidence can't substitute for the text-side
+ * lexical rescue the relaxed rows exist to provide. Exported for direct
+ * unit-testing (simulating the both-mode mixed state needs no engine).
+ */
+export function textVectorArmNonEmpty(
+  vectorLists: SearchResult[][],
+  isBothMode: boolean,
+): boolean {
+  const textLists = isBothMode ? vectorLists.slice(0, -1) : vectorLists;
+  return textLists.some((l) => l.length > 0);
+}
+
+/**
  * RRF/dedup identity for a result row, at chunk granularity.
  *
  * Includes `source_id` so two same-slug pages in different federated sources
@@ -2891,9 +2939,11 @@ export function rrfFusionWeighted(
  */
 /**
  * CEO review D8 (2026-08 wave): the two-pass walk's widened per-page dedup
- * cap must never silently override an EXPLICIT per-call maxPerPage — tightest
- * wins. Pure + exported so the precedence rule is unit-testable without a
- * graph-walk fixture (the walk path itself is engine-bound and default-off).
+ * cap must never LOOSEN an EXPLICIT per-call maxPerPage — tightest wins in
+ * both directions (an explicit 1 survives the walk's widening; an explicit
+ * 15 is tightened to the walk cap). Pure + exported so the precedence rule
+ * is unit-testable without a graph-walk fixture (the walk path itself is
+ * engine-bound and default-off).
  */
 export function resolveWalkDedupCap(explicitCap: number | undefined, capFromWalk: number): number {
   return explicitCap === undefined ? capFromWalk : Math.min(explicitCap, capFromWalk);
