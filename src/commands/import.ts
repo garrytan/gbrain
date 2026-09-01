@@ -845,7 +845,80 @@ export async function runImport(
     // this import's to move (its sync anchors live on the `sources` row).
   }
 
+  // #1691: a named source registered with `local_path` but fed only via
+  // `gbrain import` (never `gbrain sync`) never got `sources.last_sync_at`
+  // touched, so doctor's `sync_freshness` read it as permanently
+  // "never synced". Stamp it on a clean run only (mirrors the bookmark
+  // gate above). `!opts.managedBookmark` excludes performFullSync's call —
+  // that path stamps its own, more-authoritative `last_sync_at` via
+  // writeSyncAnchor AFTER its full gate (applySyncFailureGate) decides the
+  // sync actually advanced; stamping here too would race ahead of that
+  // decision. remote_url sources are excluded too: autopilot's freshness
+  // dispatcher (autopilot.ts) reads last_sync_at to decide when to queue a
+  // real `git pull` for those, and a plain import never pulls. A git-tracked
+  // local_path is excluded too (scoped to #1691's actual "non-git local
+  // source" case): `gbrain import` never advances the source's own
+  // `last_commit`, so stamping last_sync_at for a git checkout would mask
+  // real commit-level staleness that `gbrain sync` (not `import`) is the
+  // correct pipeline to detect. Detection reuses sync's own
+  // `discoverGitRoot` (rev-parse --show-toplevel, walks UP) rather than a
+  // bare `.git`-at-local_path probe, so a source anchored at a SUBDIR of a
+  // git checkout (the #753/#774 monorepo shape) is excluded too — that is
+  // exactly the shape sync's git-root slug anchoring exists for.
+  // Malformed-filename exclusions/skips (tallied into `totalMalformed`
+  // below, NOT into `failures`) count toward the clean-run gate too — a run
+  // that silently dropped files isn't "clean" for freshness purposes even
+  // with zero recorded failures.
   const totalMalformed = malformedExcluded.length + malformedFileSkips;
+  if (sourceId && failures.length === 0 && totalMalformed === 0 && !opts.managedBookmark) {
+    try {
+      const [row] = await engine.executeRaw<{ local_path: string | null; config: unknown }>(
+        `SELECT local_path, config FROM sources WHERE id = $1`,
+        [sourceId],
+      );
+      const { sourceConfigHasRemoteUrl, parseSourceConfig } = await import('../core/sources-load.ts');
+      // Connector-managed sources (config.kind: github/google, v0.47 API-backed
+      // shapes) own their last_sync_at via the connector's sync path — a google
+      // source has a non-git local_path and no remote_url, so without this
+      // check a stray `import --source-id` would mask connector staleness
+      // (and flip `gbrain waiting`'s google-freshness gate). parseSourceConfig,
+      // not a bare JSON.parse: nested-string / historical-array configs are
+      // real shapes (#2829) and must not slip past the kind check.
+      const cfg = parseSourceConfig(row?.config);
+      const isConnectorManaged = typeof cfg.kind === 'string' && cfg.kind.length > 0;
+      // Freshness is a claim about the WHOLE registered root. Configured-root
+      // enforcement is default-off, so an import of an unrelated directory —
+      // or of a mere subdirectory of the root — can complete cleanly with
+      // --source-id; neither says anything about the rest of the root, so
+      // only an import whose canonical target IS the registered local_path
+      // may stamp. `dir` is already the canonical realpath (#1728).
+      let coversRegisteredRoot = false;
+      if (row?.local_path) {
+        try {
+          const { realpathSync } = await import('fs');
+          coversRegisteredRoot = realpathSync(row.local_path) === dir;
+        } catch {
+          coversRegisteredRoot = false;
+        }
+      }
+      let isGitTracked = false;
+      if (row?.local_path) {
+        try {
+          const { discoverGitRoot } = await import('../core/sync-git.ts');
+          discoverGitRoot(row.local_path);
+          isGitTracked = true;
+        } catch {
+          isGitTracked = false;
+        }
+      }
+      if (row?.local_path && coversRegisteredRoot && !sourceConfigHasRemoteUrl(row.config) && !isGitTracked && !isConnectorManaged) {
+        await engine.executeRaw(`UPDATE sources SET last_sync_at = now() WHERE id = $1`, [sourceId]);
+      }
+    } catch {
+      // best-effort — a freshness nicety never fails the import (see above).
+    }
+  }
+
   return {
     imported, skipped, errors, chunksCreated, failures,
     ...(totalMalformed > 0 ? { malformedSkipped: totalMalformed } : {}),
