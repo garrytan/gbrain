@@ -309,6 +309,23 @@ async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId: 
   process.stdout.write(lines.join('\n') + '\n');
 }
 
+/**
+ * #4720 — shared by the local (fetchRowsLocal) and thin-client entity→text
+ * fallbacks: a bare positional that matched no facts by entity is retried as
+ * a fact-text grep. One gating predicate + one stderr note so the two paths
+ * can't drift. Explicit --grep callers keep exact semantics (their filter
+ * already ran); --supersessions/--session-id keep their own arms.
+ */
+function entityTextFallbackApplies(flags: ParsedFlags, matched: number): boolean {
+  return matched === 0 && !!flags.entity && !flags.grep && !flags.supersessions && !flags.sessionId;
+}
+
+function noteEntityTextFallback(entity: string, matched: number): void {
+  process.stderr.write(
+    `[recall] no facts for entity '${entity}'; matched ${matched} fact(s) by text — use --grep to force text matching.\n`,
+  );
+}
+
 async function runRecallOnce(
   engine: BrainEngine,
   flags: ParsedFlags,
@@ -363,8 +380,8 @@ async function runRecallOnce(
     // fetchRowsLocal). A bare positional that matched no facts by entity is
     // retried as a fact-text grep so a literal word from fact text still
     // recalls over the wire.
-    if (rows.length === 0 && flags.entity && !flags.grep && !flags.supersessions && !flags.sessionId) {
-      const fbParams: Record<string, unknown> = { ...params, grep: flags.entity.toLowerCase() };
+    if (entityTextFallbackApplies(flags, rows.length)) {
+      const fbParams: Record<string, unknown> = { ...params, grep: flags.entity!.toLowerCase() };
       delete fbParams.entity;
       const fbRaw = await callRemoteTool(cfg!, 'recall', fbParams, { timeoutMs: 30_000 });
       const fb = unpackToolResult<{
@@ -373,9 +390,7 @@ async function runRecallOnce(
         pending_consolidation_count?: number;
       }>(fbRaw);
       if (fb.facts.length > 0) {
-        process.stderr.write(
-          `[recall] no facts for entity '${flags.entity}'; matched ${fb.facts.length} fact(s) by text — use --grep to force text matching.\n`,
-        );
+        noteEntityTextFallback(flags.entity!, fb.facts.length);
         rows = fb.facts.map(remoteFactToRow);
         pendingCount = fb.pending_consolidation_count ?? pendingCount;
       }
@@ -450,8 +465,9 @@ async function fetchRowsLocal(
     // `--grep` both find the fact. When the entity arm comes up empty, fall
     // back to the SQL-level fact-text grep (the same pre-limit arm --grep
     // uses) with a stderr note. Explicit --grep callers keep exact
-    // semantics (their filter already ran; no fallback surprise).
-    if (rows.length === 0 && !flags.grep) {
+    // semantics (their filter already ran; no fallback surprise). Gating +
+    // note are shared with the thin-client mirror in runRecallOnce.
+    if (entityTextFallbackApplies(flags, rows.length)) {
       const textRows = await engine.listFactsSince(sourceId, new Date(0), {
         eventTime: true,
         activeOnly: !flags.includeExpired,
@@ -460,9 +476,7 @@ async function fetchRowsLocal(
         excludeAuditRows: true,
       });
       if (textRows.length > 0) {
-        process.stderr.write(
-          `[recall] no facts for entity '${flags.entity}'; matched ${textRows.length} fact(s) by text — use --grep to force text matching.\n`,
-        );
+        noteEntityTextFallback(flags.entity, textRows.length);
         return textRows;
       }
     }
