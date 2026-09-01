@@ -180,17 +180,15 @@ describe('#4583 runSync — unscoped seed_default write refusal', () => {
     expect(counts['default']).toBeGreaterThan(0);
   }, 60_000);
 
-  // The gate at sync.ts (`resolved.tier === 'seed_default' && !syncAll &&
-  // !defaultWriteAllowedByEnv()`) does not consult --dry-run today, so a
-  // dry-run preview is refused like a real write. Another train is changing
-  // that; flip this to a real test (dry-run proceeds past the gate, writes
-  // nothing) when the guard learns to skip previews.
-  test.todo('--dry-run proceeds past the gate (pending the dry-run exemption in sync.ts)', async () => {
+  // --dry-run writes nothing, so the gate only WARNS (prefixed so an operator
+  // can tell the preview apart from a refusal) and lets the preview run.
+  test('--dry-run proceeds past the gate: warns, previews, writes nothing', async () => {
     await withEnv(
       { GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined },
       async () => {
         const r = await runSyncCaptured(['--dry-run', '--no-embed', '--no-pull', '--repo', repo]);
-        expect(r.stderr).not.toContain(REFUSAL);
+        expect(r.exitCode === undefined || r.exitCode === 0).toBe(true);
+        expect(r.stderr).toContain('[dry-run] a real run would be refused');
       },
     );
     expect((await pageCountBySource())['default'] ?? 0).toBe(0);
