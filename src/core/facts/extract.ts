@@ -118,19 +118,33 @@ export async function getFactsExtractionPromptAppendix(
  *
  * @internal Exported for tests.
  */
+// Assistant plan/offer narration masquerading as a claim. The first-person
+// arms ("I'll / I will / I'm going to …") are ALSO the surface shape of a
+// genuine commitment — the one kind the loop engine exists to capture — so
+// this pattern is skipped for candidates the extractor classified as
+// `commitment` (see isJunkFact). Every other kind stays gated.
+const PLAN_NARRATION_PATTERN =
+  /^["'«]?(now,?\s+)?(let me\b|let's\b|i('| wi)ll\b|i am going to\b|i'm going to\b|next,? i\b|about to\b|proceeding to\b|offered to\b)/i;
+
 export const JUNK_FACT_PATTERNS: readonly RegExp[] = [
-  // Assistant plan/offer narration masquerading as a claim.
-  /^["'«]?(now,?\s+)?(let me\b|let's\b|i('| wi)ll\b|i am going to\b|i'm going to\b|next,? i\b|about to\b|proceeding to\b|offered to\b)/i,
+  PLAN_NARRATION_PATTERN,
   // Meta-narration about the conversation itself.
   /^["'«]?(the user is asking|the user wants me to|another agent is\b)/i,
   // Provider billing/rate-limit error text captured verbatim as a "fact".
   /\b(you'?ve hit your|monthly spend limit|spend cap reached|rate limit (hit|exceeded|reached))\b/i,
 ];
 
-export function isJunkFact(text: string): boolean {
+/**
+ * `kind` is the extractor's classification for the candidate. A `commitment`
+ * is exempt from the plan-narration arm only — meta-narration and provider
+ * error strings are junk whatever the model labelled them.
+ */
+export function isJunkFact(text: string, kind?: string): boolean {
   const t = text.trim();
   if (!t) return true;
-  return JUNK_FACT_PATTERNS.some((rx) => rx.test(t));
+  return JUNK_FACT_PATTERNS.some(
+    (rx) => !(kind === 'commitment' && rx === PLAN_NARRATION_PATTERN) && rx.test(t),
+  );
 }
 
 export async function isJunkFilterEnabled(engine?: BrainEngine): Promise<boolean> {
@@ -524,16 +538,17 @@ export async function extractFactsFromTurnWithOutcome(
     // Sanitize on the way OUT too.
     for (const p of INJECTION_PATTERNS) factText = factText.replace(p.rx, p.replacement);
     if (factText.length > 500) factText = factText.slice(0, 497) + '...';
+    const kind = ALL_EXTRACT_KINDS.includes(candidate.kind as FactKind)
+      ? (candidate.kind as FactKind)
+      : 'fact';
     // #3852: deterministic junk gate (plan narration / error strings /
-    // meta-chatter). Deliberately narrow; kill-switch via config.
-    if (junkFilterOn && isJunkFact(factText)) {
+    // meta-chatter). Deliberately narrow; kill-switch via config. Kind-aware
+    // so a first-person commitment is not mistaken for assistant narration.
+    if (junkFilterOn && isJunkFact(factText, kind)) {
       junkSkipped++;
       continue;
     }
 
-    const kind = ALL_EXTRACT_KINDS.includes(candidate.kind as FactKind)
-      ? (candidate.kind as FactKind)
-      : 'fact';
     const confidence = clampConfidence(candidate.confidence);
     const validTier = ['high', 'medium', 'low'].includes(candidate.notability ?? '');
     if (input.notabilityAdmission) {

@@ -25,7 +25,9 @@ import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import {
   buildExtractorSystem,
   extractFactsFromTurn,
+  getFactsExtractionPromptAppendix,
   isJunkFact,
+  isJunkFilterEnabled,
   JUNK_FACT_PATTERNS,
 } from '../src/core/facts/extract.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
@@ -79,6 +81,57 @@ describe('isJunkFact — passes durable operational knowledge', () => {
       expect(isJunkFact(text)).toBe(false);
     });
   }
+});
+
+describe('isJunkFact — first-person commitments are NOT plan narration', () => {
+  // The plan-narration pattern ("I'll / I will / I'm going to …") is meant to
+  // catch the ASSISTANT narrating its next step. A first-person COMMITMENT is
+  // the one kind the loop engine exists to capture — the same surface text
+  // survives when the extractor classified it as a commitment.
+  const commitments = [
+    "I'll send the deck by Friday",
+    'I will follow up with the fund-a partner after the board meeting',
+    "I'm going to ship the migration before the offsite",
+  ];
+  for (const text of commitments) {
+    test(`commitment survives: ${text}`, () => {
+      expect(isJunkFact(text, 'commitment')).toBe(false);
+    });
+    test(`same text with no kind (or a non-commitment kind) is still gated: ${text}`, () => {
+      expect(isJunkFact(text)).toBe(true);
+      expect(isJunkFact(text, 'fact')).toBe(true);
+    });
+  }
+
+  test('the exemption is narrow: meta-narration and provider errors stay junk even as "commitment"', () => {
+    expect(isJunkFact('The user is asking about the deploy status', 'commitment')).toBe(true);
+    expect(isJunkFact("You've hit your org's monthly spend limit.", 'commitment')).toBe(true);
+    expect(isJunkFact('   ', 'commitment')).toBe(true);
+  });
+});
+
+describe('isJunkFilterEnabled — off tokens + fail-open', () => {
+  for (const off of ['0', 'no', ' OFF ', 'False', 'false']) {
+    test(`'${off}' disables the gate`, async () => {
+      expect(await isJunkFilterEnabled(stubEngine({ 'facts.extraction_junk_filter': off }))).toBe(false);
+    });
+  }
+  for (const on of ['true', '1', 'yes', 'anything-else', '']) {
+    test(`'${on}' keeps the gate on`, async () => {
+      expect(await isJunkFilterEnabled(stubEngine({ 'facts.extraction_junk_filter': on }))).toBe(true);
+    });
+  }
+  test('unset key and no engine both default ON', async () => {
+    expect(await isJunkFilterEnabled(stubEngine({}))).toBe(true);
+    expect(await isJunkFilterEnabled(undefined)).toBe(true);
+  });
+  test('a rejecting getConfig fails OPEN: junk gate on, appendix null', async () => {
+    const throwing = {
+      getConfig: async () => { throw new Error('config table unavailable'); },
+    } as unknown as BrainEngine;
+    expect(await isJunkFilterEnabled(throwing)).toBe(true);
+    expect(await getFactsExtractionPromptAppendix(throwing)).toBeNull();
+  });
 });
 
 test('pattern list stays narrow (no accidental broad additions)', () => {
@@ -192,6 +245,28 @@ describe('extraction_junk_filter — end-to-end gate + kill-switch (#3852)', () 
     });
     expect(facts.map(f => f.fact)).toEqual([
       'User prefers detached nohup jobs over run_in_background',
+    ]);
+  });
+
+  test("a first-person COMMITMENT survives the gate; assistant narration tagged as a fact is still dropped", async () => {
+    // Pre-fix the plan-narration pattern deleted "I'll send the deck by
+    // Friday" — the one kind of fact the loop engine exists to capture.
+    const json = JSON.stringify({
+      facts: [
+        { fact: "I'll send the deck by Friday", kind: 'commitment', notability: 'medium' },
+        { fact: "I'll write the oracle next and then rerun the totals", kind: 'fact', notability: 'low' },
+        { fact: 'Now let me write an oracle that recomputes the totals', kind: 'fact', notability: 'low' },
+        { fact: "You've hit your org's monthly spend limit.", kind: 'commitment', notability: 'low' },
+      ],
+    });
+    __setChatTransportForTests(async () => chatResult(json, 'end'));
+    const facts = await extractFactsFromTurn({
+      turnText: 'a work-session turn',
+      source: 'test:junk-gate-commitment',
+      engine: stubEngine({}),
+    });
+    expect(facts.map(f => [f.fact, f.kind])).toEqual([
+      ["I'll send the deck by Friday", 'commitment'],
     ]);
   });
 
