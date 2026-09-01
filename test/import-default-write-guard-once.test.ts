@@ -24,8 +24,10 @@ import * as sourceResolver from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
+let other: PGLiteEngine;
 let home: string;
 let aggregateRuns = 0;
+let otherRuns = 0;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -39,10 +41,21 @@ beforeAll(async () => {
     return realExecuteRaw(sql, params);
   }) as typeof realExecuteRaw;
   home = mkdtempSync(join(tmpdir(), 'gbrain-import-guard-once-home-'));
+  // Second engine for the per-engine memo test; created here so the isolation
+  // guard's lifecycle rule (R3/R4: engines live in beforeAll/afterAll) holds.
+  other = new PGLiteEngine();
+  await other.connect({});
+  await other.initSchema();
+  const realOtherExecuteRaw = other.executeRaw.bind(other);
+  (other as unknown as { executeRaw: typeof realOtherExecuteRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+    if (sql.includes('non_default_sources')) otherRuns++;
+    return realOtherExecuteRaw(sql, params);
+  }) as typeof realOtherExecuteRaw;
 });
 
 afterAll(async () => {
   await engine.disconnect();
+  await other.disconnect();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -52,6 +65,7 @@ beforeEach(() => {
   // discriminating assertion instead of failing at link time.
   (sourceResolver as { __resetDefaultWriteGuardMemo?: () => void }).__resetDefaultWriteGuardMemo?.();
   aggregateRuns = 0;
+  otherRuns = 0;
 });
 
 async function importOnce(dir: string): Promise<void> {
@@ -91,15 +105,6 @@ describe('runImport memoizes the default-write guard assessment per engine', () 
   test('the memo is per engine: a fresh engine gets its own assessment', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-guard-once-b-'));
     writeFileSync(join(dir, 'c.md'), '---\ntype: note\ntitle: c\n---\n# c\n\nbody c\n');
-    const other = new PGLiteEngine();
-    await other.connect({});
-    await other.initSchema();
-    let otherRuns = 0;
-    const realExecuteRaw = other.executeRaw.bind(other);
-    (other as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
-      if (sql.includes('non_default_sources')) otherRuns++;
-      return realExecuteRaw(sql, params);
-    }) as typeof realExecuteRaw;
     try {
       await withEnv(
         { GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined },
@@ -116,7 +121,6 @@ describe('runImport memoizes the default-write guard assessment per engine', () 
       expect(aggregateRuns).toBe(1);
       expect(otherRuns).toBe(1);
     } finally {
-      await other.disconnect();
       rmSync(dir, { recursive: true, force: true });
     }
   });
