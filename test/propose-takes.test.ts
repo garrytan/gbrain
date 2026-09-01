@@ -19,6 +19,7 @@ import { withEnv, emptyHome } from './helpers/with-env.ts';
 import {
   runPhaseProposeTakes,
   parseExtractorOutput,
+  EXTRACT_TAKES_PROMPT,
   contentHash,
   hasCompleteFence,
   extractExistingTakesForDedup,
@@ -184,6 +185,50 @@ describe('parseExtractorOutput', () => {
     const raw = '[{"claim_text":"X","kind":"take","holder":"brain","weight":0.5,"domain":"macro"}]';
     const out = parseExtractorOutput(raw);
     expect(out[0]!.domain).toBe('macro');
+  });
+
+  // #4736 — the prompt's kind vocabulary and the parser's allowlist must
+  // never diverge again: every kind token the prompt instructs the model to
+  // emit must survive parsing with its provenance intact (NOT be silently
+  // coerced to the default 'take').
+  test('every kind token in EXTRACT_TAKES_PROMPT is accepted, not coerced (#4736)', () => {
+    const kindLine = EXTRACT_TAKES_PROMPT.split('\n').find((l) => l.trim().startsWith('- kind'));
+    expect(kindLine).toBeDefined();
+    const tokens = [...kindLine!.matchAll(/'([a-z]+)'/g)].map((m) => m[1]!);
+    expect(tokens.length).toBeGreaterThanOrEqual(2);
+    for (const token of tokens) {
+      const out = parseExtractorOutput(
+        JSON.stringify([{ claim_text: `claim of kind ${token}`, kind: token, holder: 'brain', weight: 0.6 }]),
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0]!.kind).toBe(token as ProposedTake['kind']);
+    }
+  });
+
+  test('legacy prompt kinds (prediction/judgment) map onto the fence vocabulary (#4736)', () => {
+    // Cached / old-model outputs still emit the pre-#4736 prompt vocabulary;
+    // they classify deterministically instead of relying on blind coercion.
+    const legacy: Array<[string, ProposedTake['kind']]> = [
+      ['prediction', 'take'],
+      ['judgment', 'take'],
+    ];
+    for (const [legacyKind, mapped] of legacy) {
+      const out = parseExtractorOutput(
+        JSON.stringify([{ claim_text: 'x', kind: legacyKind, holder: 'brain', weight: 0.5 }]),
+      );
+      expect(out[0]!.kind).toBe(mapped);
+    }
+  });
+
+  test('kind matching is case/whitespace-insensitive (#4736)', () => {
+    const out = parseExtractorOutput(
+      JSON.stringify([
+        { claim_text: 'a', kind: 'Bet', holder: 'brain', weight: 0.5 },
+        { claim_text: 'b', kind: ' hunch ', holder: 'brain', weight: 0.5 },
+      ]),
+    );
+    expect(out[0]!.kind).toBe('bet');
+    expect(out[1]!.kind).toBe('hunch');
   });
 
   test('strips <think> reasoning tags before parsing (MiniMax-M3, DeepSeek-R1)', () => {
