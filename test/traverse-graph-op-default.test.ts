@@ -205,3 +205,51 @@ describe('remote traverse_graph default depth follows the bidirectional default'
     expect(nodes.map(n => n.slug)).toContain('notes/o3');
   });
 });
+
+/**
+ * #4666/#4704 ship-review gap: the bidirectional default keys on the
+ * DIRECTION being omitted, not on "no filter at all". A remote caller that
+ * passes `link_type` (a per-edge filter) but no `direction` must still get
+ * both directions at the conservative depth-2 default — pre-fix that call
+ * took the legacy outgoing-only path and an inbound-only typed edge read as
+ * absent.
+ */
+describe('remote link_type filter without direction keeps the bidirectional depth-2 default', () => {
+  test('inbound-only `supports` edges come back as GraphPath rows at depth <= 2, other types filtered', async () => {
+    await seedInboundChain();
+    // An inbound edge of ANOTHER type: the link_type filter must still apply.
+    await engine.putPage('notes/m1', { type: 'note', title: 'm1', compiled_truth: 'm1', timeline: '', frontmatter: {} });
+    await engine.addLink('notes/m1', 'knowledge/kcs/target', '', 'mentions', 'manual');
+
+    const result = await operationsByName.traverse_graph.handler(ctx(), {
+      slug: 'knowledge/kcs/target',
+      link_type: 'supports',
+    }) as Array<Edge & { link_type: string }>;
+
+    // Inbound rows are present (direction defaulted to 'both', not 'out')...
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e1', to_slug: 'knowledge/kcs/target', link_type: 'supports', depth: 1,
+    }));
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e2', to_slug: 'notes/e1', link_type: 'supports', depth: 2,
+    }));
+    // ...at the remote bidirectional default depth (2), not the legacy 5...
+    expect(result.some(e => e.from_slug === 'notes/e3')).toBe(false);
+    expect(Math.max(...result.map(e => e.depth))).toBeLessThanOrEqual(2);
+    // ...and the per-edge filter still excludes the `mentions` edge.
+    expect(result.some(e => e.from_slug === 'notes/m1')).toBe(false);
+    expect(result.every(e => e.link_type === 'supports')).toBe(true);
+  });
+
+  test('link_type + an explicit direction=out still honors the caller (no outbound `supports` edges → [])', async () => {
+    await seedInboundChain();
+
+    const result = await operationsByName.traverse_graph.handler(ctx(), {
+      slug: 'knowledge/kcs/target',
+      link_type: 'supports',
+      direction: 'out',
+    });
+
+    expect(result).toEqual([]);
+  });
+});
