@@ -152,12 +152,17 @@ const remember: Operation = {
       };
     }
 
-    const { writeSingleFact } = await import('./facts/write-single.ts');
+    const { writeSingleFact, isNullLikeEntity } = await import('./facts/write-single.ts');
+    // #4755: a null-like entity token ("null", "None", "N/A", …) means the
+    // same thing as omitting the param — LLM callers emit these for
+    // subjectless statements, and resolving them would file the fact under
+    // a non-existent entity_slug no lookup can reach.
+    const entityParam = typeof p.entity === 'string' ? p.entity.trim() : null;
     const result = await writeSingleFact(ctx.engine, ctx.sourceId ?? 'default', {
       fact,
       provenance,
       kind: kind as (typeof FACT_KINDS)[number],
-      entity: typeof p.entity === 'string' && p.entity.trim() ? p.entity.trim() : null,
+      entity: entityParam && !isNullLikeEntity(entityParam) ? entityParam : null,
       visibility,
       validUntil,
     });

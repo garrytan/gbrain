@@ -231,6 +231,17 @@ describe('remember — contract behavior', () => {
     expect(body.suggestion).toContain('30d');
   });
 
+  it('treats a null-like entity STRING ("null") as absent — never entity_slug=\'null\' (#4755)', async () => {
+    // LLM callers emit the literal token "null" for subjectless statements;
+    // it means what omitting the param means.
+    const { isError, body } = await callRemote('remember', {
+      fact: 'a gap statement with no subject', provenance: 'test', entity: 'null',
+    });
+    expect(isError).toBe(false);
+    expect(body.status).toBe('inserted');
+    expect(body.entity_slug).toBe(null);
+  });
+
   it('accepts duration ttl and returns a future ISO valid_until; echoes null entity_slug', async () => {
     const { isError, body } = await callRemote('remember', {
       fact: 'expiring fact with ttl', provenance: 'test', ttl: '30d',
