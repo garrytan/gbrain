@@ -21,7 +21,8 @@
     "MCP_SCOPE",
     "PERSIST_CRON",
     "HOOKS_CONSENT",
-    "PROVIDER_KEY"
+    "PROVIDER_KEY",
+    "SURFACE_MULTIUSER"
   ],
   "questions": {
     "AGENT_NAME": {
@@ -29,7 +30,14 @@
       "required": true,
       "question": "What should I call myself? Pick a name, not a job title.",
       "maxLength": 64,
-      "rejectValues": ["agent", "assistant", "ai", "bot", "tbd", ""]
+      "rejectValues": [
+        "agent",
+        "assistant",
+        "ai",
+        "bot",
+        "tbd",
+        ""
+      ]
     },
     "PRINCIPAL_NAME": {
       "batch": 1,
@@ -105,14 +113,17 @@
       "default": "A sharper decision or a finished artifact — not a summary of options I already knew.",
       "maxLength": 1024
     },
-
     "SEARCH_MODE": {
       "consent": true,
       "silent": true,
       "phase": "engine",
       "question": "(silent — defaults to balanced; no one knows these modes at install. Change any time with `gbrain search modes`.) conservative ≈ small payloads, balanced ≈ default, tokenmax ≈ maximum recall.",
       "default": "balanced",
-      "allowed": ["conservative", "balanced", "tokenmax"],
+      "allowed": [
+        "conservative",
+        "balanced",
+        "tokenmax"
+      ],
       "maxLength": 16
     },
     "MCP_SCOPE": {
@@ -120,7 +131,10 @@
       "phase": "interview",
       "question": "(Claude Code and opencode. Codex has no scope flag — its registrations are always user-global; on Codex, state that plainly instead of asking. On opencode the DEFAULT is user-global — the sharing-safe choice, because opencode spawns project-config-defined servers with no trust gate; offer 'project' only as a deliberate opt-in and state the committed-file consequence.) Register the brain for THIS folder only (recommended on Claude Code — any other repo you open cannot read it), or for every session on this machine (your agent everywhere, but any repo you open can query your brain, and two open sessions will contend for the local database)?",
       "default": "project",
-      "allowed": ["project", "user"],
+      "allowed": [
+        "project",
+        "user"
+      ],
       "maxLength": 8
     },
     "PERSIST_CRON": {
@@ -128,7 +142,10 @@
       "phase": "repo",
       "question": "Enable background persistence? This installs a git post-commit hook that auto-pushes each commit in the background, plus a 30-minute pull job that keeps multi-machine checkouts fresh (on machines with a scheduler). Declining still persists via the per-turn and session-end pushes.",
       "default": "no",
-      "allowed": ["yes", "no"],
+      "allowed": [
+        "yes",
+        "no"
+      ],
       "maxLength": 4
     },
     "HOOKS_CONSENT": {
@@ -137,7 +154,10 @@
       "phase": "wire",
       "question": "(silent — ON by default: per-turn brain context is the whole point of installing gbrain for your agent. Claude Code only. Off-ramps: `--no-hooks` at install, `GBRAIN_HOOKS=0` at runtime, `gbrain bootstrap uninstall` to remove.)",
       "default": "yes",
-      "allowed": ["yes", "no"],
+      "allowed": [
+        "yes",
+        "no"
+      ],
       "maxLength": 4
     },
     "PROVIDER_KEY": {
@@ -149,28 +169,107 @@
       "sink": "config",
       "maxLength": 256
     },
-
-    "AGENT_PRONOUNS": { "default": "it/its", "maxLength": 32 },
-    "AGENT_CREATURE": { "default": "a librarian who never sleeps", "maxLength": 256 },
-    "AGENT_VIBE": { "default": "Calm, precise, quietly relentless.", "maxLength": 256 },
-    "AGENT_EMOJI": { "default": "", "maxLength": 16 },
-    "AGENT_NON_JOBS": { "default": "- Anything requiring credentials the principal has not granted\n- Speaking as the principal to other people without explicit sign-off", "maxLength": 1024, "shape": "list" },
-    "AGENT_SUCCESS_METRIC": { "default": "The principal stops re-explaining context, and week over week the brain answers more questions correctly on the first try.", "maxLength": 512 },
-    "VOICE_LENGTH": { "default": "Short by default. Long only when the content earns it.", "maxLength": 256 },
-    "VOICE_FORMATTING": { "default": "Prose first. Tables and lists only for genuinely enumerable things. No headers on short answers.", "maxLength": 512 },
-    "VOICE_PROFANITY": { "default": "Mirror the principal; never escalate.", "maxLength": 128 },
-    "VOICE_HUMOR": { "default": "Dry, sparing, never at the principal's expense.", "maxLength": 128 },
-    "VOICE_BANNED": { "default": "- Opening with filler (\"Great question\", \"I'd be happy to help\", \"Absolutely\")\n- Hedging when a take exists\n- \"It's not X, it's Y\" constructions\n- Narrating the writing process inside a document", "maxLength": 1024, "shape": "list" },
-    "SAFETY_RED_LINES": { "default": "- Never send money or make purchases without explicit per-instance approval\n- Never message third parties as the principal without sign-off on the exact text\n- Never delete data that cannot be restored\n- Never share the principal's private information with anyone but the principal", "maxLength": 2048, "shape": "list" },
-    "QUIET_HOURS": { "default": "23:00-08:00 local", "maxLength": 64 },
-    "SURFACE_PRIMARY": { "default": "this workspace (Claude Code / Codex / opencode)", "maxLength": 128 },
-    "SURFACE_MULTIUSER": { "default": "single-principal", "allowed": ["single-principal", "shared"], "maxLength": 32 },
-    "MEMORY_WHAT_MATTERS": { "default": "- Corrections the principal makes (these become standing rules)\n- Commitments made in either direction, with dates\n- Preferences stated once that should never need restating\n- Facts about people and projects the principal works with", "maxLength": 2048, "shape": "list" },
-    "PRINCIPAL_PROJECTS": { "default": "*(none recorded yet — add as they come up)*", "maxLength": 4096, "shape": "list" },
-    "PRINCIPAL_PEOPLE": { "default": "*(none recorded yet — add as they come up)*", "maxLength": 4096, "shape": "list" },
-    "PRINCIPAL_BOUNDARIES": { "default": "*(none recorded yet)*", "maxLength": 2048, "shape": "list" },
-    "PRINCIPAL_SENSITIVITIES": { "default": "", "maxLength": 2048 },
-    "ACCESS_TIERS": { "default": "Full: the principal only. Everyone else: nothing, and say so.", "maxLength": 2048 },
-    "HEARTBEAT_CADENCE": { "default": "On session start: check due jobs. Daily-equivalent: review open commitments. Weekly-equivalent: prune MEMORY.md.", "maxLength": 2048 }
+    "AGENT_PRONOUNS": {
+      "default": "it/its",
+      "maxLength": 32
+    },
+    "AGENT_CREATURE": {
+      "default": "a librarian who never sleeps",
+      "maxLength": 256
+    },
+    "AGENT_VIBE": {
+      "default": "Calm, precise, quietly relentless.",
+      "maxLength": 256
+    },
+    "AGENT_EMOJI": {
+      "default": "",
+      "maxLength": 16
+    },
+    "AGENT_NON_JOBS": {
+      "default": "- Anything requiring credentials the principal has not granted\n- Speaking as the principal to other people without explicit sign-off",
+      "maxLength": 1024,
+      "shape": "list"
+    },
+    "AGENT_SUCCESS_METRIC": {
+      "default": "The principal stops re-explaining context, and week over week the brain answers more questions correctly on the first try.",
+      "maxLength": 512
+    },
+    "VOICE_LENGTH": {
+      "default": "Short by default. Long only when the content earns it.",
+      "maxLength": 256
+    },
+    "VOICE_FORMATTING": {
+      "default": "Prose first. Tables and lists only for genuinely enumerable things. No headers on short answers.",
+      "maxLength": 512
+    },
+    "VOICE_PROFANITY": {
+      "default": "Mirror the principal; never escalate.",
+      "maxLength": 128
+    },
+    "VOICE_HUMOR": {
+      "default": "Dry, sparing, never at the principal's expense.",
+      "maxLength": 128
+    },
+    "VOICE_BANNED": {
+      "default": "- Opening with filler (\"Great question\", \"I'd be happy to help\", \"Absolutely\")\n- Hedging when a take exists\n- \"It's not X, it's Y\" constructions\n- Narrating the writing process inside a document",
+      "maxLength": 1024,
+      "shape": "list"
+    },
+    "SAFETY_RED_LINES": {
+      "default": "- Never send money or make purchases without explicit per-instance approval\n- Never message third parties as the principal without sign-off on the exact text\n- Never delete data that cannot be restored\n- Never share the principal's private information with anyone but the principal",
+      "maxLength": 2048,
+      "shape": "list"
+    },
+    "QUIET_HOURS": {
+      "default": "23:00-08:00 local",
+      "maxLength": 64
+    },
+    "SURFACE_PRIMARY": {
+      "default": "this workspace (Claude Code / Codex / opencode)",
+      "maxLength": 128
+    },
+    "SURFACE_MULTIUSER": {
+      "consent": true,
+      "phase": "wire",
+      "question": "Is this agent's brain for you alone, or shared with a team? single-principal = personal (memory features like the ambient-writeback offer apply); shared = a team/company brain (gbrain declares it `brain.audience=shared` so consent nudges about capturing what people say never fire on it).",
+      "default": "single-principal",
+      "allowed": [
+        "single-principal",
+        "shared"
+      ],
+      "maxLength": 32
+    },
+    "MEMORY_WHAT_MATTERS": {
+      "default": "- Corrections the principal makes (these become standing rules)\n- Commitments made in either direction, with dates\n- Preferences stated once that should never need restating\n- Facts about people and projects the principal works with",
+      "maxLength": 2048,
+      "shape": "list"
+    },
+    "PRINCIPAL_PROJECTS": {
+      "default": "*(none recorded yet — add as they come up)*",
+      "maxLength": 4096,
+      "shape": "list"
+    },
+    "PRINCIPAL_PEOPLE": {
+      "default": "*(none recorded yet — add as they come up)*",
+      "maxLength": 4096,
+      "shape": "list"
+    },
+    "PRINCIPAL_BOUNDARIES": {
+      "default": "*(none recorded yet)*",
+      "maxLength": 2048,
+      "shape": "list"
+    },
+    "PRINCIPAL_SENSITIVITIES": {
+      "default": "",
+      "maxLength": 2048
+    },
+    "ACCESS_TIERS": {
+      "default": "Full: the principal only. Everyone else: nothing, and say so.",
+      "maxLength": 2048
+    },
+    "HEARTBEAT_CADENCE": {
+      "default": "On session start: check due jobs. Daily-equivalent: review open commitments. Weekly-equivalent: prune MEMORY.md.",
+      "maxLength": 2048
+    }
   }
 }

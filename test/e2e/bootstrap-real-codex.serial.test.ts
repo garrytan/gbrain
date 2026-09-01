@@ -567,3 +567,95 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
     }
   }, 480_000);
 });
+
+// ── 4. AMBIENT-WRITEBACK door (WP8/OV-A12 — NON-GATING evidence) ─────────────
+// The hermetic lifecycle fixture (test/ambient-writeback-lifecycle.serial.
+// test.ts) proves the wiring deterministically with a scripted agent; THIS
+// door proves the headline behavior with the real model: a managed
+// ambient-writeback AGENTS.md block + a plain user statement → codex saves
+// the preference through gbrain WITHOUT being told to in the prompt. Auth-
+// gated skip; bounded retry; never in required CI (flaky-model tolerance is
+// the retry, not a softened assertion).
+describe.skipIf(!CAN_RUN)('real codex — ambient writeback door (non-gating)', () => {
+  test('managed block + plain user statement → unprompted remember lands the fact', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gb-rc-wb-'));
+    try {
+      execFileSync('git', ['init', '-q', home]);
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: home });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: home });
+
+      const sourceId = 'workspace';
+      await seedBrainForAgent(home, sourceId);
+
+      // Enable ambient writeback on the seeded brain's DB plane — what the
+      // spawned serve's boot resolver reads (WP2 stdio lane).
+      {
+        const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+        const eng = new PGLiteEngine();
+        await eng.connect({ database_path: join(home, '.gbrain', 'brain.pglite') });
+        await eng.setConfig('memory.auto_writeback', 'salient');
+        await eng.disconnect();
+      }
+
+      // The PRODUCTION block (exact renderer) over seedCodexHome's placeholder
+      // AGENTS.md — the only instruction surface telling codex to save.
+      seedCodexHome(home);
+      const { installAmbientWritebackBlockAt, renderAmbientInstructionBlock } =
+        await import('../../src/core/bootstrap/instructions-block.ts');
+      installAmbientWritebackBlockAt(
+        join(home, '.codex', 'AGENTS.md'),
+        renderAmbientInstructionBlock({ mode: 'salient', transientTtl: '3d', visibility: 'world', serveUrl: 'stdio:test' }),
+      );
+
+      const runner = makeCodexRunner(home);
+      const server = resolveGbrainServerCommand(REPO_ROOT, ['--surface', 'full']);
+      const add = await runner([
+        'codex', 'mcp', 'add', 'gbrain',
+        '--env', `GBRAIN_HOME=${home}`,
+        '--env', `GBRAIN_SOURCE=${sourceId}`,
+        '--', server.command, ...server.args,
+      ]);
+      expect(add.code).toBe(0);
+
+      // A plain user statement — the prompt NEVER mentions saving, memory,
+      // gbrain, or tools. Only the AGENTS.md block carries the contract.
+      const prompt = 'I prefer dark mode in every editor — that is my standing preference going forward. A one-line acknowledgement is enough.';
+
+      const maxAttempts = 2;
+      let passed = false;
+      let lastEvidence = '';
+      for (let attempt = 1; attempt <= maxAttempts && !passed; attempt++) {
+        if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000));
+        const turn = await codexExecTurn({ prompt, cwd: home, home, timeoutMs: 230_000 });
+        const raw = turn.rawLines.join('\n');
+        const usedWriteTool = /"type"\s*:\s*"mcp_tool_call"[^\n]*"server"\s*:\s*"gbrain"[^\n]*"tool"\s*:\s*"(remember|extract_facts)"/.test(raw)
+          || (/"server"\s*:\s*"gbrain"/.test(raw) && /"tool"\s*:\s*"(remember|extract_facts)"/.test(raw));
+
+        // Ground truth: did a fact land in the brain? (codex's MCP server
+        // exits with the turn, so the PGLite lock is free again.)
+        await new Promise((r) => setTimeout(r, 1_000));
+        let factRow = false;
+        try {
+          const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
+          const eng = new PGLiteEngine();
+          await eng.connect({ database_path: join(home, '.gbrain', 'brain.pglite') });
+          const rows = await eng.executeRaw<{ n: number | string }>(
+            `SELECT count(*)::int AS n FROM facts WHERE lower(fact) LIKE '%dark mode%'`,
+          );
+          factRow = Number(rows[0]?.n ?? 0) > 0;
+          await eng.disconnect();
+        } catch { /* lock contention — evidence line carries it */ }
+
+        lastEvidence =
+          `[wb door attempt ${attempt}/${maxAttempts}] exit=${turn.exitCode} timedOut=${turn.timedOut} ` +
+          `usedWriteTool=${usedWriteTool} factRow=${factRow}\n` +
+          `finalText=${turn.finalText.slice(0, 400)}`;
+        console.log(lastEvidence);
+        if (factRow || usedWriteTool) passed = true;
+      }
+      expect(passed, `ambient-writeback door failed on all ${maxAttempts} attempts.\n${lastEvidence}`).toBe(true);
+    } finally {
+      try { rmSync(home, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  }, 480_000);
+});
