@@ -31,7 +31,7 @@ import {
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
-import { resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
+import { isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { existsSync } from 'fs';
@@ -564,28 +564,12 @@ export const __testing = {
 
 // ─── CLI entry ─────────────────────────────────────────────────────
 
-/**
- * Predicate: is this error one of the resolver's user-facing throws
- * we want to surface as a clean stderr line + exit 1?
- *
- * Matches the message prefixes thrown from
- * `src/core/source-resolver.ts:resolveSourceId` and
- * `assertSourceExists` — both the legacy ` not found.` and the
- * fail-closed ` not found or is archived.` wordings, mirroring
- * code-callers/code-callees. Anything else (TypeError /
- * ReferenceError / postgres connection failures / unexpected bugs)
- * is intentionally NOT caught — those propagate to Bun's default
- * unhandled handler with a stack trace so genuine programmer bugs
- * aren't hidden as if they were operator errors. (Plan D-T3, codex C-7.)
- */
-function isResolverUserError(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const m = e.message;
-  return (m.startsWith('Source "')
-      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
-      || m.startsWith('Invalid --source value')
-      || m.startsWith('Invalid GBRAIN_SOURCE value');
-}
+// The resolver's user-facing throws (unknown/archived source, invalid --source
+// / GBRAIN_SOURCE value) surface as a clean stderr line + exit 1 via the shared
+// `isResolverUserError` predicate (source-resolver.ts, next to the messages it
+// matches). Anything else — TypeError / connection failures / genuine bugs —
+// is intentionally NOT caught and propagates with a stack trace so programmer
+// bugs are never hidden as operator errors. (Plan D-T3, codex C-7.)
 
 /**
  * issue #1678 — bounded single-hold extract_atoms drain (see DreamArgs.drain).

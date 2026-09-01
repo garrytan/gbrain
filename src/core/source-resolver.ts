@@ -597,6 +597,28 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
 }
 
 /**
+ * Predicate: is this error one of THIS module's user-facing throws (an
+ * unknown / archived source from `assertSourceExists`, or an invalid
+ * `--source` / `GBRAIN_SOURCE` value from the resolve chain) that a CLI
+ * command should surface as a clean stderr line + exit 1?
+ *
+ * Lives next to the messages it matches so the wordings cannot drift apart
+ * again — three commands (dream, agent, the code-* scope resolver) once
+ * carried their own copies, and one of them missed the fail-closed
+ * ` not found or is archived.` wording, so an archived source escaped as a
+ * stack trace. Anything else (TypeError / connection failures / genuine
+ * bugs) is deliberately NOT matched and keeps propagating.
+ */
+export function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "')
+      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
+    || m.startsWith('Invalid --source value')
+    || m.startsWith('Invalid GBRAIN_SOURCE value');
+}
+
+/**
  * #3765 — resolve the source id for an EXPLICIT repo path (`sync --repo <dir>`
  * / the sync_brain op's `repo` param), anchored at the REPO DIR instead of
  * process.cwd(). Without this, `gbrain sync --repo ~/other-vault` parsed the

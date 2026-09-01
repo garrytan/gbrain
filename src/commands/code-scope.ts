@@ -13,24 +13,14 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor } from '../core/errors.ts';
 import { resolveScopedSourceOrThrow, SourceResolutionError } from '../core/sources-ops.ts';
-import { formatSoleNonDefaultNudge } from '../core/source-resolver.ts';
+import { formatSoleNonDefaultNudge, isResolverUserError } from '../core/source-resolver.ts';
 import { codeChunksExist } from '../core/code-graph-readiness.ts';
 
-/** A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
- * `resolveSourceWithTier`'s `assertSourceExists` as a plain Error with one of
- * these message prefixes. Mirrors dream.ts:isResolverUserError so we surface a
- * clean usage error instead of an uncaught stack. Matches both the legacy
- * `not found.` and the fail-closed `not found or is archived.` wordings —
- * the message change silently un-caught the bad-pin path (the exit-2
- * `invalid_source_pin` envelope became an uncaught SourceTargetError). */
-export function isResolverUserError(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const m = e.message;
-  return (m.startsWith('Source "')
-      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
-    || m.startsWith('Invalid --source value')
-    || m.startsWith('Invalid GBRAIN_SOURCE value');
-}
+// A bad/invalid `.gbrain-source` pin or GBRAIN_SOURCE value surfaces from
+// `resolveSourceWithTier`'s `assertSourceExists` as a resolver user error;
+// the shared `isResolverUserError` (source-resolver.ts, next to the messages
+// it matches) turns it into the exit-2 `invalid_source_pin` envelope below
+// instead of an uncaught stack.
 
 /**
  * Flags that consume the NEXT argv entry as their value. A positional scan that
