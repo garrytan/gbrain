@@ -12,6 +12,7 @@
  *   gbrain loops show <id> [--json]
  *   gbrain loops done <id> / drop <id>
  *   gbrain loops mute <sender|thread> <value> [--source <id>]
+ *   gbrain loops unmute <sender|thread> <value> [--source <id>]
  *
  * All paths dispatch through the trusted-local op layer (handleToolCall,
  * remote:false) so CLI and MCP share one behavior. Reads default to the
@@ -145,6 +146,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
         '  done  <id>        mark handled',
         '  drop  <id>        not going to do it',
         '  mute  sender <email> | thread <thread-id>   [--source <id>]',
+        '  unmute sender <email> | thread <thread-id>  [--source <id>]   undo a mute',
         '',
         'The ranked digest lives at: gbrain waiting',
       ].join('\n') + '\n',
@@ -236,15 +238,17 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
     return;
   }
 
-  if (sub === 'mute') {
+  if (sub === 'mute' || sub === 'unmute') {
     const kind = rest[0];
     const value = rest[1];
     if ((kind !== 'sender' && kind !== 'thread') || !value) {
-      console.error('Usage: gbrain loops mute sender <email> | thread <thread-id> [--source <id>]');
+      console.error(`Usage: gbrain loops ${sub} sender <email> | thread <thread-id> [--source <id>]`);
       process.exit(2);
     }
     // A suppression row is only consulted by the detector inside ITS source —
-    // an unqualified mute must land in the google source, never 'default'.
+    // an unqualified mute/unmute must land in the google source, never
+    // 'default'. Both directions share this resolution so an unmute can never
+    // aim at a different source than the mute it is reversing.
     let sourceId = sourceFlag(rest);
     if (!sourceId) {
       const gs = await googleSourceIds(engine);
@@ -252,23 +256,42 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       else {
         console.error(
           gs.length === 0
-            ? 'No google source found — pass --source <id> to scope the mute (gbrain sources list).'
+            ? `No google source found — pass --source <id> to scope the ${sub} (gbrain sources list).`
             : `Multiple google sources — pass --source <id> (one of: ${gs.join(', ')}).`,
         );
         process.exit(2);
       }
     }
-    const result = (await handleToolCall(engine, 'loops_mute', {
+    if (sub === 'mute') {
+      const result = (await handleToolCall(engine, 'loops_mute', {
+        kind,
+        value,
+        source_id: sourceId,
+      })) as { muted: boolean; reason?: string };
+      if (json) {
+        process.stdout.write(JSON.stringify({ ok: result.muted, status: result.muted ? 'muted' : 'not_muted', ...result }, null, 2) + '\n');
+      } else {
+        process.stdout.write(result.muted ? `Muted ${kind} ${value}. New loops won't open for it (existing loops keep their state).\n` : `Not muted: ${result.reason}\n`);
+      }
+      if (!result.muted) setCliExitVerdict(1);
+      return;
+    }
+    const result = (await handleToolCall(engine, 'loops_unmute', {
       kind,
       value,
       source_id: sourceId,
-    })) as { muted: boolean; reason?: string };
+    })) as { removed: boolean; reason?: string };
+    // A repeated unmute is a no-op, NOT a failure: removed:false exits 0 so
+    // scripts can call it unconditionally without special-casing.
     if (json) {
-      process.stdout.write(JSON.stringify({ ok: result.muted, status: result.muted ? 'muted' : 'not_muted', ...result }, null, 2) + '\n');
+      process.stdout.write(JSON.stringify({ ok: true, status: result.removed ? 'unmuted' : 'not_muted', ...result }, null, 2) + '\n');
     } else {
-      process.stdout.write(result.muted ? `Muted ${kind} ${value}. New loops won't open for it (existing loops keep their state).\n` : `Not muted: ${result.reason}\n`);
+      process.stdout.write(
+        result.removed
+          ? `Unmuted ${kind} ${value}. New loops can open for it again (loops closed meanwhile stay closed).\n`
+          : `Not muted: ${kind} ${value} had no suppression in ${sourceId}.\n`,
+      );
     }
-    if (!result.muted) setCliExitVerdict(1);
     return;
   }
 

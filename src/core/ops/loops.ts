@@ -5,6 +5,7 @@
  *                         promised, and the context needed to respond.
  *   loops_close (write) — mark a loop done/dropped.
  *   loops_mute  (write) — suppress a sender/thread from future detection.
+ *   loops_unmute (write) — remove a suppression so detection can resume.
  *
  * Remote posture (approved D4-A): open_loops is NOT localOnly — hosted
  * gbrain.io serves it over HTTP to its authenticated owner. Fail-closed
@@ -25,6 +26,7 @@ import {
   addSuppression,
   closeOpenLoop,
   listOpenLoops,
+  removeSuppression,
   type LoopStatus,
   type LoopType,
   type OpenLoopRow,
@@ -480,4 +482,53 @@ const loops_mute: Operation = {
   },
 };
 
-export const loopsOperations: Operation[] = [open_loops, loops_close, loops_mute];
+const loops_unmute: Operation = {
+  name: 'loops_unmute',
+  description:
+    'Remove a sender/thread suppression added by loops_mute, so the detector can open NEW loops for ' +
+    'it again. Exact-match only. Does not reopen loops closed while the mute was in place.',
+  params: {
+    kind: { type: 'string', required: true, enum: ['sender', 'thread'], description: 'What to unmute.' },
+    value: { type: 'string', required: true, description: 'The sender email or Gmail thread id.' },
+    source_id: { type: 'string', description: 'Google source the mute was scoped to (default: routed source).' },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const sourceId = (p.source_id as string | undefined) ?? ctx.sourceId ?? 'default';
+    validateSourceId(sourceId);
+    // Same grant check as loops_mute — an unmute is equally a targeted write:
+    // letting a remote caller lift another source's suppression would re-open
+    // the very noise channel its owner silenced.
+    if (ctx.remote !== false) {
+      const scope = sourceScopeOpts(ctx);
+      const granted =
+        (scope.sourceId && scope.sourceId === sourceId) ||
+        (scope.sourceIds?.includes(sourceId) ?? false);
+      if (!granted) {
+        throw new OperationError(
+          'permission_denied',
+          `loops_unmute: source "${sourceId}" is outside the caller's scope`,
+        );
+      }
+    }
+    if (ctx.dryRun) return { dry_run: true, action: 'loops_unmute', kind: p.kind, value: p.value };
+    const removed = await removeSuppression(
+      ctx.engine,
+      sourceId,
+      p.kind as 'sender' | 'thread',
+      p.value as string,
+    );
+    // removed:false is the ordinary "was not muted" answer, never an error —
+    // a retried unmute must be safe.
+    return {
+      removed: removed > 0,
+      kind: p.kind,
+      value: (p.value as string).toLowerCase(),
+      source_id: sourceId,
+      ...(removed > 0 ? {} : { reason: 'no matching suppression' }),
+    };
+  },
+};
+
+export const loopsOperations: Operation[] = [open_loops, loops_close, loops_mute, loops_unmute];

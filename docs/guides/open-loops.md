@@ -81,6 +81,8 @@ gbrain loops done <id> | drop <id>   close (a closed commitment expires its
 gbrain loops mute sender <email>     never open loops for this sender again
 gbrain loops mute thread <id>        ...or this thread (existing loops keep
                                      their state)
+gbrain loops unmute sender <email>   undo a mute — the detector may open new
+gbrain loops unmute thread <id>      loops for it again
 ```
 
 `gbrain waiting` and `gbrain loops list` read across **every source in the
@@ -88,15 +90,28 @@ brain** by default (loops live in google sources, not `default` — a
 default-scoped read would say "all clean" while people wait); `--source <id>`
 narrows explicitly. An unqualified `loops mute` resolves to the brain's
 google source automatically, and refuses with the exact fix when there is
-none or more than one (`--source` disambiguates).
+none or more than one (`--source` disambiguates). `loops unmute` resolves
+its source the same way, so an unmute cannot aim at a different source than
+the mute it reverses.
 
-MCP: the `open_loops`, `loops_close`, `loops_mute` ops. `open_loops` is
+**Unmute is exact and forward-only.** It deletes the one
+`(source_id, kind, value)` row the mute wrote — the same lower-casing, so
+`unmute sender BOB@Example.com` reverses `mute sender bob@example.com`, while
+a sibling source, the other `kind`, or a different value are untouched. It
+does **not** reopen loops: suppressions gate NEW detection only, so anything
+closed or never opened while the mute was in place stays that way; the
+detector simply resumes opening loops from the next sync. A repeated unmute
+is a no-op that reports `removed: false` and exits 0, so a script may call it
+unconditionally without special-casing "was not muted".
+
+MCP: the `open_loops`, `loops_close`, `loops_mute`, `loops_unmute` ops. `open_loops` is
 served to remote callers with **fail-closed evidence redaction** — counts,
 counterparty, summary, due date; verbatim quotes, deep links, and the
 injectable `text` digest are trusted-local only. Remote callers also need a
 resolved source scope: an unscoped remote read is refused outright rather
-than spanning the brain, and the two write ops require a single-source scope
-that matches the caller's grants. `open_loops` takes per-call scope params —
+than spanning the brain, and the write ops require a single-source scope
+that matches the caller's grants (`loops_unmute` included — lifting another
+source's suppression is as much a targeted write as planting one). `open_loops` takes per-call scope params —
 `source_id` (an MCP client whose transport is bound to another source can
 point the read at the google source, grant-checked for remote callers) and
 `all_sources` (trusted local spans the brain; remote stays in-grant).
