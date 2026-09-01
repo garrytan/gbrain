@@ -2,6 +2,105 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.47.10.0] - 2026-09-01
+
+Ambient memory writeback, opt-in and OFF by default: tell your agent
+something about yourself once — "I prefer dark mode in every editor" — and
+every MCP-connected agent on your brain is instructed to save it as a fact
+with provenance, so a fresh session next week already knows. Transient
+things ("I have a mild cough today") expire on their own. Personal brains
+get asked once whether to turn it on; company and team brains are never
+nudged.
+
+### Added
+- **Ambient memory writeback** (`gbrain config set memory.auto_writeback
+  salient|all`, default `off`): one canonical ~15-line instruction contract
+  — one claim per `remember` call, entity attribution
+  (people/alice-example), concise provenance (harness + session + date),
+  durable facts without TTL, transient facts with a configurable TTL
+  (`memory.auto_writeback_transient_ttl`, default `3d`), a skip-list
+  (greetings, acks, questions, tool output, quotes, pastes), never the
+  assistant's own inferences, never raw transcripts — served through the
+  MCP `instructions` field on all three transports (stdio, OAuth HTTP,
+  legacy bearer) from a single builder. The section only renders for
+  callers that can actually invoke `remember` (write scope, surface, and
+  client fences all respected), and `extract_facts` is only named when the
+  caller's real tool set carries it.
+- **Managed harness instruction blocks.** `gbrain bootstrap harness --yes`
+  installs the same contract (same builder — the surfaces cannot drift) as
+  an idempotent marker-delimited block in user-scope `CLAUDE.md` (Claude
+  Code) and `$CODEX_HOME/AGENTS.md` (Codex — first-class, verified against
+  a real codex session saving a fact unprompted). Re-running with writeback
+  off removes the block; registrar-mode installs against a remote brain
+  never write blocks (the remote brain's own opt-in governs); when Codex's
+  `AGENTS.override.md` shadows `AGENTS.md`, bootstrap and doctor say so
+  instead of reporting a dead integration healthy.
+- **Claude Code Stop-hook backstop.** After each turn, a deterministic
+  zero-LLM gate (min length with CJK awareness, ack/greeting lexicon, slash
+  commands, question-only turns, quoted/tool output, bulk pastes) banks the
+  user's message as a secret-scanned, content-addressed corpus file — the
+  same turn never banks twice — and asks the serve to extract it
+  asynchronously under the authoritative DB-side gate. Never blocks: its
+  own 2s deadline inside Stop's 10s cap, exit 0 on every path. Serve away?
+  The maintenance sweep extracts the banked file later, into the same
+  source the session was scoped to. Codex has no per-turn hook (documented
+  honestly); its existing session-end capture → sweep lane is the delayed
+  backstop.
+- **Audience-aware consent.** Personal brains get a one-time `[AGENT]`-
+  relayed ask (init epilogue / post-upgrade banner) with a mechanical
+  disclosure of what gets stored and the full off switch; company/team
+  brains stay silent — a `brain.audience` declaration (operator,
+  company-brainify handoff, or the bootstrap interview's multi-user answer,
+  applied before init runs) beats a deliberately conservative usage
+  heuristic. Enabling on a shared-classified brain prints a privacy caution
+  and proceeds (operator sovereignty). Nothing is ever auto-enabled.
+- **Transient facts expire at read time.** Active reads (recall, entity
+  cards, hot-memory injection, dedup candidates) now exclude facts whose
+  `valid_until` has passed — exact-time, both engines, no sweeper, nothing
+  mutated; history views (`--asof`, supersessions, trajectories) still see
+  them, and a re-stated fact after expiry inserts fresh.
+- **Diagnostics:** `gbrain doctor` → `memory_writeback` reports the
+  resolved mode/TTL/visibility postures, brain audience with its evidence,
+  installed blocks (receipt vs live probe vs drift, with the exact
+  converging command), config-plane agreement, validity-lapsed fact count,
+  and honest 7-day counters — including a warning when writeback is off
+  but an instruction block is still installed.
+
+### Changed
+- The off switch is loud and complete: `config set memory.auto_writeback
+  off` (and `unset`) names the block-removal step, a failed authoritative
+  write exits non-zero saying the runtime value is unchanged, and
+  `config get` reports these keys from the plane the runtime actually
+  reads. Diverged config planes hold banked turns for retry instead of
+  discarding them, and doctor names the one-line re-sync.
+- Changing `facts.default_visibility` now refreshes the posture the
+  harness block renderer reads, so a re-run always converges an installed
+  block to the operator's current visibility.
+- Hot-memory injection honors a fact's expiry inside its cache window; the
+  consolidator's bucket scan and entity enrichment evidence reads now use
+  the same active-fact definition as recall. On existing brains the first
+  upgraded read reclassifies rows whose `valid_until` already passed out of
+  the active set (history is untouched; doctor's `validity_lapsed_facts`
+  sizes it).
+
+### To take advantage of v0.47.10.0
+```bash
+gbrain upgrade      # no schema migration — new config keys + surfaces only
+gbrain config set memory.auto_writeback salient
+gbrain bootstrap harness --yes         # installs the harness blocks
+gbrain doctor | grep -A6 memory_writeback
+# In a NEW agent session, say: "I prefer dark mode in every editor." Then:
+gbrain recall --grep "dark mode"
+# Off switch (anytime):
+gbrain config set memory.auto_writeback off && gbrain bootstrap harness --yes
+```
+
+**Say to your agent:** *"Enable ambient memory writeback on this brain —
+salient mode"* — your agent runs `gbrain config set memory.auto_writeback
+salient` and `gbrain bootstrap harness --yes`. — *"Is ambient writeback
+healthy?"* — your agent runs `gbrain doctor` and reads the
+`memory_writeback` check.
+
 ## [0.47.9.0] - 2026-08-31
 
 Optional Memorable integration, adopted from community PR #4537 (thank you
