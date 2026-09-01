@@ -14,8 +14,8 @@ import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath, loadConfig } from '../core/config.ts';
-import { dirname, join } from 'path';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 import { resolveEnvNumber, resolveHoursEnv } from '../core/env-number.ts';
 import { computeEffectiveDate } from '../core/effective-date.ts';
 import { parseFrontmatter } from '../core/backfill-effective-date.ts';
@@ -32,6 +32,8 @@ import { multiSourceDriftAdvice, multiSourceDriftGitRootSkipNote } from './docto
 import { bootstrapDoctorChecks } from './doctor/bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
 export { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
+import { buildHomeDirInWorktreeCheck } from './doctor/checks/home-worktree.ts';
+export { buildHomeDirInWorktreeCheck, isValidGitMarker } from './doctor/checks/home-worktree.ts';
 import {
   skillConformanceCheck,
   skillsManifestIntegrityCheck,
@@ -1553,65 +1555,16 @@ export async function buildChecks(
     // Best-effort; audit-log read failure shouldn't stop doctor.
   }
 
-  // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
-  // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
-  // lives inside a git worktree, so an accidental `git add` from the
-  // worktree root could stage the brain. Pairs with the retroactive
-  // `~/.gbrain/.gitignore` (single-line `*`) laid down by saveConfig +
-  // post-upgrade. Honest scope: the .gitignore covers casual `git add`
-  // but NOT already-tracked files, screenshots, backups, or `git add -f`.
-  //
-  // Walk termination: stops at $HOME (don't keep walking into / on a user
-  // who set GBRAIN_HOME=/tmp/something). Handles `.git` as both a directory
-  // (main repo) and a file (linked worktree pointing at parent's worktrees/).
+  // 3e. home_dir_in_worktree (v0.35.8.0; peeled to doctor/checks/home-worktree.ts).
+  // Walks up from `gbrainPath()` toward $HOME looking for a VALIDATED `.git`
+  // marker (#4683: an empty/invalid `.git` git itself rejects no longer warns).
   // Honors GBRAIN_HOME via gbrainPath().
   try {
-    const gbrainHome = gbrainPath();
-    const home = process.env.HOME || '';
-    let worktreeRoot: string | null = null;
-    if (gbrainHome && home && gbrainHome.startsWith(home + '/')) {
-      // Walk up from gbrainHome's parent toward $HOME, stopping at $HOME.
-      // We don't check gbrainHome itself: a `.git` directly inside ~/.gbrain
-      // isn't a containing-worktree, it would be a brain repo cloned there.
-      let cur = dirname(gbrainHome);
-      while (cur && cur.length >= home.length) {
-        const gitPath = join(cur, '.git');
-        try {
-          const st = statSync(gitPath);
-          // Either a directory (main repo) or a file (linked worktree pointer).
-          if (st.isDirectory() || st.isFile()) {
-            worktreeRoot = cur;
-            break;
-          }
-        } catch {
-          // No .git at this level; continue.
-        }
-        if (cur === home) break;
-        const parent = dirname(cur);
-        if (parent === cur) break;
-        cur = parent;
-      }
-    }
-    if (worktreeRoot) {
-      const homeEnvHint = process.env.GBRAIN_HOME
-        ? `# Or move \`~/.gbrain\` outside the worktree by setting GBRAIN_HOME elsewhere.`
-        : `# Fix: \`export GBRAIN_HOME=/some/path/outside/the/worktree\` (gbrain appends \`.gbrain\`).`;
-      checks.push({
-        name: 'home_dir_in_worktree',
-        status: 'warn',
-        message:
-          `~/.gbrain lives inside git worktree at ${worktreeRoot}. ` +
-          `Config + brain DB could be committed by accident. ` +
-          `A retroactive ~/.gbrain/.gitignore blocks casual \`git add\`, but does NOT cover ` +
-          `already-tracked files, screenshots, backups, or \`git add -f\`. ${homeEnvHint}`,
-      });
-    } else {
-      checks.push({
-        name: 'home_dir_in_worktree',
-        status: 'ok',
-        message: 'gbrain home is outside any enclosing git worktree.',
-      });
-    }
+    checks.push(buildHomeDirInWorktreeCheck(
+      gbrainPath(),
+      process.env.HOME || '',
+      Boolean(process.env.GBRAIN_HOME),
+    ));
   } catch {
     // Best-effort filesystem-hygiene check; never block doctor.
   }
