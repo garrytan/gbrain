@@ -594,6 +594,31 @@ async function latestFullCycleEvidence(
 }
 
 /**
+ * #4576 review fix: can this brain's shape produce per-source
+ * last_full_cycle_at stamps at all? Two lanes write them:
+ *   - the per-source cycle (autopilot fanout / dream --source / dream --dir
+ *     matching a registered local_path) stamps that local_path source;
+ *   - the #4700 implicit-default lane stamps the resolved implicit default.
+ * A brain with ZERO local_path sources and NO implicit default (the legacy
+ * unscoped-dream shape — everything in 'default', dir via sync.repo_path)
+ * has neither lane, so evidence state 'never' is a property of the SHAPE,
+ * not evidence that nothing runs. Fail-open: a probe error reads as
+ * cannot-verify (false), keeping the pre-#4576 ok-with-reassurance.
+ */
+async function brainShapeCanCarryCycleStamps(engine: BrainEngine): Promise<boolean> {
+  try {
+    const sources = await engine.listAllSources({ localPathOnly: true });
+    if (sources.length > 0) return true;
+    const { resolveImplicitDefaultSourceId } = await import('../../../core/source-resolver.ts');
+    const implicitDefault = await resolveImplicitDefaultSourceId(engine);
+    // dream only runs the stamping implicit lane for a NON-'default' target.
+    return implicitDefault !== null && implicitDefault !== 'default';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * issue #1678 — extract_atoms_backlog doctor check.
  *
  * Closes the "silent backlog" gap: extract_atoms is pack-gated, so on a brain
@@ -652,6 +677,18 @@ export async function computeExtractAtomsBacklogCheck(
       // time (the same silent-backlog failure mode #1678 closed for the
       // !declared branch, reopened through a different door).
       const evidence = backlog > 10 ? await latestFullCycleEvidence(engine) : null;
+      // #4576 review fix: 'never' only indicts the scheduler when the brain
+      // shape can actually produce stamps. On the legacy unscoped-dream shape
+      // (no local_path sources, no implicit default) no lane ever writes
+      // last_full_cycle_at, so 'never' would be a permanent false warn —
+      // keep the old ok-with-reassurance there instead.
+      if (evidence && evidence.state === 'never' && !(await brainShapeCanCarryCycleStamps(engine))) {
+        return {
+          name, status: 'ok',
+          message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
+          details: { backlog, pack_declares_phase: true, cycle_evidence: 'unavailable', known_approximation: approx },
+        };
+      }
       if (evidence && (evidence.state === 'never' || evidence.state === 'stale')) {
         const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
         const drain = buildExtractAtomsDrainCommand(backlogBySource);

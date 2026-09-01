@@ -224,4 +224,28 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
     expect(check.status).toBe('ok');
     expect(check.message).toContain('active pack runs extract_atoms each cycle');
   });
+
+  it("stays OK on a brain shape that CANNOT carry cycle stamps (legacy unscoped-dream: no local_path sources, no implicit default)", async () => {
+    // Review fix for the #4576 gate: with zero local_path sources and no
+    // implicit default, neither the per-source cycle nor the #4700 implicit
+    // lane can ever write last_full_cycle_at — 'never' is a property of the
+    // brain SHAPE, not evidence that nothing runs. Keep the old
+    // ok-with-reassurance instead of a false warn.
+    for (let i = 0; i < 11; i++) await seedArticle(`declared-shapeless-${i}`);
+    // Deliberately NO seedCycledSource / sources.default: everything lives in
+    // 'default' with no local_path registration.
+    const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('active pack runs extract_atoms each cycle');
+    expect((check.details as { cycle_evidence?: string }).cycle_evidence).toBe('unavailable');
+  });
+
+  it('still WARNs on that shape once an implicit default exists (sources.default routes the canonical cycle)', async () => {
+    for (let i = 0; i < 11; i++) await seedArticle(`declared-implicit-${i}`);
+    await seedCycledSource('vault'); // stampable local_path source, no stamp
+    await engine.setConfig('sources.default', 'vault');
+    const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('no full cycle has ever completed');
+  });
 });
