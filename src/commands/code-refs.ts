@@ -21,7 +21,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
 
 export interface CodeRefResult {
   slug: string;
@@ -81,11 +81,6 @@ export async function findCodeRefs(
     end_line: r.end_line,
     snippet: r.chunk_text.slice(0, 500),
   }));
-}
-
-function parseFlag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 }
 
 function shouldEmitJson(args: string[]): boolean {

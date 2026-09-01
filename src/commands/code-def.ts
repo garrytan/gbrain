@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
 
 export interface CodeDefResult {
   slug: string;
@@ -141,11 +141,6 @@ export async function probeFilteredSymbolTypes(
   return rows
     .map((r) => r.symbol_type)
     .filter((t): t is string => t != null && !allow.has(t));
-}
-
-function parseFlag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 }
 
 function shouldEmitJson(args: string[]): boolean {

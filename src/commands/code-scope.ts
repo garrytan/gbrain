@@ -40,7 +40,9 @@ export function isResolverUserError(e: unknown): boolean {
  */
 const VALUE_FLAGS = new Set(['--source', '--limit', '--lang']);
 
-/** Positional args, skipping both value-taking flags and their values. */
+/** Positional args, skipping both value-taking flags and their values.
+ * The inline `name=value` flag spelling is one token starting with a double
+ * dash, so the generic branch skips it without consuming a following token. */
 export function positionalArgs(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -52,6 +54,22 @@ export function positionalArgs(args: string[]): string[] {
     out.push(a);
   }
   return out;
+}
+
+/**
+ * Value-flag reader shared by the four code-* commands: accepts BOTH the
+ * two-token `name value` and the inline `name=value` flag spellings. The
+ * per-command exact-token copies silently ignored the inline spelling of
+ * the source flag, answering from the wrong scope for a user who explicitly
+ * named a source (review fix on the #4749 adoption).
+ * NOTE: no double-dash flag literals in this comment — the flag-registry
+ * generator harvests them from every scanned module (see source-resolver.ts).
+ */
+export function parseFlag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  if (i >= 0 && i + 1 < args.length) return args[i + 1];
+  const inline = args.find((a) => a.startsWith(`${name}=`));
+  return inline ? inline.slice(name.length + 1) : undefined;
 }
 
 export interface CodeScope {

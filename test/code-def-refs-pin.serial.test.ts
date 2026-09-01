@@ -149,6 +149,24 @@ describe('code-def / code-refs — CLI source resolution (#4747)', () => {
       }
     });
 
+    test(`${name}: the --source=<id> inline spelling scopes the lookup (review fix)`, async () => {
+      // Exact-token parseFlag silently ignored '--source=repo-b', so a user
+      // who explicitly named a source got the pin's scope instead — a
+      // wrong-scope answer with no error.
+      await addSource('repo-a', '/fake/a');
+      await addSource('repo-b', '/fake/b');
+      const dir = pinnedDir('repo-a');
+      process.chdir(dir);
+      try {
+        const { logs, exitCode } = await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+          capture(() => run(engine, ['someSym', '--source=repo-b', '--json'])));
+        expect(exitCode).toBeNull();
+        expect(envelope(logs).source_id).toBe('repo-b');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test(`${name}: --all-sources reports source_id null and scope all`, async () => {
       await addSource('repo-a', '/fake/a');
       await addSource('repo-b', '/fake/b');

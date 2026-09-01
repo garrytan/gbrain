@@ -28,13 +28,8 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
-import { resolveCliCodeScope, positionalArgs } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-
-function parseFlag(args: string[], name: string): string | undefined {
-  const i = args.indexOf(name);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
-}
 
 function shouldEmitJson(args: string[]): boolean {
   if (args.includes('--json')) return true;
