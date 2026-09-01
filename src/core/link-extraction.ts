@@ -1514,6 +1514,16 @@ export function parseTimelineEntries(content: string): TimelineCandidate[] {
       summary = cm[5].trim();
     }
     if (!isValidDate(date) || summary.length === 0) { i++; continue; }
+    // #4277: backlink materialization historically wrote dated navigation
+    // receipts such as `- **2026-06-13** | Referenced in [Acme](../companies/acme.md)`.
+    // The date belongs to the backlink write, not to an event involving this
+    // entity — treating it as timeline evidence both invents event dates and
+    // lets graph-maintenance noise satisfy timeline coverage. Guard on the
+    // PRE-split rest (must START with the marker) so a write-through rendered
+    // `source — summary` bullet whose summary merely mentions the phrase is
+    // untouched. Mirrored in extractTimelineFromContent (timeline-extract.ts)
+    // so FS- and DB-side extraction stay in lockstep.
+    if (/^Referenced in\s+\[/i.test(summary)) { i++; continue; }
     // #3957: pipe-separated bullets carry the canonical `Source — Summary`
     // shape; split them exactly like the FS extractor (extractTimelineFromContent
     // Format 1) so FS- and DB-extracted rows share one (source, summary) shape

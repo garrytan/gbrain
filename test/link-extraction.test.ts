@@ -966,6 +966,32 @@ describe('parseTimelineEntries', () => {
     expect(parseTimelineEntries('Just some plain text.')).toEqual([]);
   });
 
+  test('skips generated backlink receipts because their dates are not entity events (#4277)', () => {
+    const entries = parseTimelineEntries(
+      '- **2026-06-13** | Referenced in [Acme](../companies/acme.md)',
+    );
+    expect(entries).toEqual([]);
+  });
+
+  test('skips a receipt without swallowing the real entries around it (#4277)', () => {
+    const content = `## Timeline
+- **2026-01-15** | Met with Alice
+- **2026-06-13** | Referenced in [Acme](../companies/acme.md)
+- **2026-07-01** | Signed the term sheet`;
+    const entries = parseTimelineEntries(content);
+    expect(entries.map(e => e.summary)).toEqual(['Met with Alice', 'Signed the term sheet']);
+  });
+
+  test('keeps a Source — Summary pipe bullet whose summary merely mentions Referenced in', () => {
+    // Write-through renders `- **DATE** | source — summary`; the receipt
+    // guard must only fire when the rest STARTS with the generated marker.
+    const entries = parseTimelineEntries(
+      '- **2026-06-13** | inbox — Referenced in [Acme](../companies/acme.md) — follow up',
+    );
+    expect(entries.length).toBe(1);
+    expect(entries[0].source).toBe('inbox');
+  });
+
   test('handles mixed content (timeline lines interspersed with prose)', () => {
     const content = `Some intro paragraph.
 
