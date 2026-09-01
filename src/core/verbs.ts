@@ -269,6 +269,7 @@ const synthesize: Operation = {
     }
     const scope = sourceScopeOpts(ctx);
     const { runThink } = await import('./think/index.ts');
+    const { embedQuery } = await import('./embedding.ts');
     // Remote-safe delegation: save/take are NEVER offered through this verb,
     // for any caller — the verb is a pure read.
     const result = await runThink(ctx.engine, {
@@ -280,6 +281,8 @@ const synthesize: Operation = {
       ...(scope.sourceIds !== undefined ? { allowedSources: scope.sourceIds } : {}),
       // Fail-closed: only a context that explicitly says local gets local.
       remote: ctx.remote !== false,
+      // #3734: activate takes' vector retrieval arm for the synthesize verb.
+      embedQuestion: (q) => embedQuery(q),
     });
 
     // [c10] runThink degrades gracefully to a no-LLM stub RESULT; the protocol

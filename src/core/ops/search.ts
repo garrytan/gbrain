@@ -577,6 +577,7 @@ const query: Operation = {
         if (thinkCfg === 'true' && ctx.remote === false) {
           try {
             const { runThink } = await import('../think/index.ts');
+            const { embedQuery } = await import('../embedding.ts');
             const thinkScope = thinkSourceScopeOpts(ctx);
             const t = await runThink(ctx.engine, {
               question: queryText,
@@ -584,6 +585,8 @@ const query: Operation = {
               until: typeof p.until === 'string' ? p.until : undefined,
               ...thinkScope,
               remote: false,
+              // #3734: activate takes' vector retrieval arm for CRAG think escalation.
+              embedQuestion: (q) => embedQuery(q),
             });
             crag.think = {
               answer: t.answer,

@@ -268,6 +268,8 @@ test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — scratch-DB additions (jobs partial dispatch + config refusal)	5	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — v0.32 REFUSE additions stay in the table	4	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — v0.32 ROUTE additions wire callRemoteTool	4	readFileSync
+test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync
+test/think-embed-question-wiring.serial.test.ts	#3734 — synthesize verb wires embedQuestion into runThink	1	readFileSync
 test/timing-safe.test.ts	extraction contract	1	readFileSync
 test/tool-catalog.test.ts	freshness guard	2	readFileSync
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
