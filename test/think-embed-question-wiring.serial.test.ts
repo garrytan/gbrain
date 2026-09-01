@@ -58,7 +58,9 @@ describe('#3734 — synthesize verb wires embedQuestion into runThink', () => {
     await synthesize.handler(ctx as never, { question: 'what changed last week?' });
 
     expect(capturedOpts).not.toBeNull();
-    const embedQuestion = (capturedOpts as Record<string, unknown>).embedQuestion;
+    // TS control-flow narrows the module-level `capturedOpts` to null here
+    // (the assignment happens inside the mocked runThink, invisible to CFA).
+    const embedQuestion = (capturedOpts as unknown as Record<string, unknown>).embedQuestion;
     // Pre-fix: undefined — the takes vector arm silently never activated.
     expect(typeof embedQuestion).toBe('function');
 
