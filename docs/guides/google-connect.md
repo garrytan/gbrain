@@ -119,6 +119,14 @@ gbrain sources add family-cal --kind google --account you@example.com \
 *"ingest my family calendar into the brain"* (your agent runs
 `gbrain google calendars`, then `gbrain sources add … --calendar-id <id>`).
 
+Each source's incremental sync token is bound to the calendar it was minted
+for. Re-pointing an existing source at a different calendar (its
+`g_calendar_id` config key) is safe: the next sweep notices the change, logs
+`[google] calendar changed (<old> → <new>)`, discards the old cursor, and
+re-lists the new calendar from a fresh window instead of replaying the old
+calendar's delta. Pages already imported from the previous calendar stay in
+the brain until you remove them — they are not reconciled automatically.
+
 ## Continuous sync
 
 Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,

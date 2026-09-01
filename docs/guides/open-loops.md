@@ -38,11 +38,15 @@ negative filter.
 `Canceled event:` notices are sent by Calendar ON BEHALF OF a human, so they
 arrive from your colleague's real address — `isNoiseSender` cannot see them
 and `loops mute sender` would silence that person's genuine email along with
-them. They are identified by the `text/calendar` part (or `.ics` attachment)
-Gmail carries on every one of them and on no ordinary human mail; the subject
-prefix is a fallback for messages whose MIME was not captured, anchored to
-the start of the subject and refusing anything with a Re:/Fwd: prefix so a
-human forward of an invite thread still opens a loop. These notices neither
+them. They are identified by the iCalendar `METHOD` (`REQUEST`, `REPLY`,
+`CANCEL`, … — the RFC 5546 values; nothing else counts) that Gmail carries in
+the `text/calendar` part's own Content-Type header on every one of them and on
+no ordinary human mail; a human attaching an `.ics` file, or an unrecognized
+method value, is not a stamp. The subject prefix is a fallback for messages
+whose MIME was not captured: anchored to the start of the subject, limited to
+Calendar's own headers (a generic word like `Notification:` is a human or
+vendor subject and never matches), and refusing anything with a Re:/Fwd:
+prefix so a human forward of an invite thread still opens a loop. These notices neither
 OPEN nor CLOSE a loop — an invite is not a reply, and letting it flip the
 turn would silently answer a real outbound loop. They still ingest as normal
 searchable pages and still feed calendar/meeting context.
@@ -66,7 +70,12 @@ days of mail (the deep backfill is never extracted), kill switch
 `gbrain config set loops.extraction_enabled false`. Sender/thread
 suppressions are shared by both detectors: `loops mute` also stops the LLM
 lane from recreating a commitment or decision for a muted sender/thread,
-while leaving the underlying email page searchable.
+while leaving the underlying email page searchable. A sender mute gates on
+who **wrote** in the thread — every message author, not only the newest —
+and never on recipients or CC: muting one person does not hide everyone
+else's commitments in a group thread they were copied on, and an outside
+sender cannot dodge extraction by CC'ing a muted address. Thread pages carry
+the author list as `senders:` frontmatter beside `participants:`.
 
 **Which threads reach the extractor.** A structural eligibility gate runs
 first (`loopExtractionEligibility`), so bulk mail neither pays for model

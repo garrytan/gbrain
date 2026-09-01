@@ -209,10 +209,14 @@ Two cross-cutting seams sit around the pipeline rather than inside it:
   `query` op result (`strong`/`moderate`/`weak`) from the already-stamped
   honesty signals — zero LLM, zero added latency — and attaches the grade to
   response meta. Config-gated and default OFF: `search.crag_escalation=true`
-  re-runs a weak retrieval once at a higher ceiling (expansion + relational +
-  wide limit, autocut off) and keeps the better-graded run;
-  `search.crag_think=true` (local callers) escalates a still-weak result to
-  `think`.
+  re-runs a weak retrieval once at a higher ceiling (expansion + relational
+  on, autocut off, limit = the caller's explicit `limit` or the mode-derived
+  default — never a hardcoded row count — floored at 50) and keeps the
+  better-graded run; the re-run fires only when the first pass did not
+  already run with the caller's expansion on (`shouldEscalateRetrieval` in
+  `crag.ts`), so default-shape callers never pay a second expansion call for
+  a near-identical candidate set. `search.crag_think=true` (local callers)
+  escalates a still-weak result to `think`.
 
 ### Autocut: score-discontinuity result-sizing
 
