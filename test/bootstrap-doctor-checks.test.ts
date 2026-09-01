@@ -105,15 +105,17 @@ function writeVerifyRun(home: string, name: string, body: string): void {
  * like `clean` but checked out at a detached HEAD with NO remote-tracking
  * ref at all (no `origin/<branch>` line to key off, and `@{u}` can't
  * resolve) — the working tree is genuinely clean, but push-ahead status
- * can't be verified this way.
+ * can't be verified this way. `neverPushed: true` is a NAMED branch with a
+ * commit but NO `origin/<branch>` ref at all (never pushed). With no options
+ * the dir is a plain non-git directory.
  */
-function makeWorkspace(opts: { dirty?: boolean; clean?: boolean; ahead?: boolean; detached?: boolean } = {}): string {
+function makeWorkspace(opts: { dirty?: boolean; clean?: boolean; ahead?: boolean; detached?: boolean; neverPushed?: boolean } = {}): string {
   const ws = mkdtempSync(join(tmpdir(), 'gb-bdc-ws-'));
   tmpDirs.push(ws);
   if (opts.dirty) {
     execFileSync('git', ['init', '-q', ws], { stdio: 'ignore' });
     writeFileSync(join(ws, 'unpushed-note.md'), 'recent agent memory\n');
-  } else if (opts.clean || opts.ahead || opts.detached) {
+  } else if (opts.clean || opts.ahead || opts.detached || opts.neverPushed) {
     const g = (...args: string[]) =>
       execFileSync('git', ['-C', ws, ...args], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
     execFileSync('git', ['init', '-q', ws], { stdio: 'ignore' });
@@ -133,8 +135,9 @@ function makeWorkspace(opts: { dirty?: boolean; clean?: boolean; ahead?: boolean
     }
     if (opts.detached) {
       g('checkout', '-q', '--detach', originSha); // no branch, no origin/<branch> ref at all
-    } else {
+    } else if (!opts.neverPushed) {
       // `opts.clean`: origin/<branch> === HEAD (nothing to push).
+      // `opts.neverPushed` skips this: a named branch with NO origin ref.
       execFileSync('git', ['-C', ws, 'update-ref', `refs/remotes/origin/${branch}`, originSha], { stdio: 'ignore' });
     }
   }
@@ -443,6 +446,44 @@ describe('bootstrap_push_health', () => {
     const c = byName(await run(parent), 'bootstrap_push_health');
     expect(c?.status).toBe('warn');
     expect(c?.message).toContain('unreadable');
+  }, T);
+
+  test('>48h stale + NAMED branch with a commit but NO origin/<branch> ref (never pushed) → fail, loud over silent', async () => {
+    const { parent, home } = makeHome();
+    // `rev-list origin/<branch>..HEAD` cannot resolve; the named-branch
+    // fallback counts local commits instead (mirrors treeNeedsPush) — any
+    // commit on a never-pushed branch is unpushed work.
+    const ws = makeWorkspace({ neverPushed: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toContain('DIRTY');
+    expect(c?.message).toContain(ws);
+  }, T);
+
+  test('>48h stale + receipt naming a NON-git dir → warn "git probe failed", never ok', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace(); // plain directory, no git init → every probe fails
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('git probe failed');
+    expect(c?.message).toContain(ws);
+  }, T);
+
+  test('>48h stale + a SINGLE tracked target whose repoRoot is NOT the receipt ws → warn naming 1 tracked workspace', async () => {
+    const { parent, home } = makeHome();
+    // The receipt workspace is verified clean, but the one tracked push
+    // target is a DIFFERENT root — the clean probe says nothing about the
+    // stale entry, so it must not resolve to ok.
+    const ws = makeWorkspace({ clean: true });
+    writeReceipt(home, ws);
+    writePushStatusRoot(home, 'cccccccccccc', JSON.stringify({ ts: STALE_TS, ok: true, repoRoot: makeWorkspace() }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('1 tracked workspace');
   }, T);
 });
 
