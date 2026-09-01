@@ -5225,9 +5225,16 @@ export class PostgresEngine implements BrainEngine {
     slug: string,
     sourceOrSources: string | readonly string[],
   ): Promise<string> {
+    return (await this.resolveSlugWithAliasDetailed(slug, sourceOrSources))?.canonical_slug ?? slug;
+  }
+
+  async resolveSlugWithAliasDetailed(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<{ canonical_slug: string; source_id: string } | null> {
     const sql = this.sql;
     const sources = Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources];
-    if (sources.length === 0) return slug;
+    if (sources.length === 0) return null;
     try {
       const rows = await sql`
         SELECT canonical_slug, source_id
@@ -5236,18 +5243,18 @@ export class PostgresEngine implements BrainEngine {
           AND source_id = ANY(${sources}::text[])
         ORDER BY array_position(${sources}::text[], source_id), id
       `;
-      if (rows.length === 0) return slug;
+      if (rows.length === 0) return null;
       if (rows.length > 1) {
         warnOncePerProcess(
           `resolveSlugWithAlias:multi_match:${slug}`,
           `[resolveSlugWithAlias] multi_match: alias '${slug}' exists in ${rows.length} sources; returning first by sourceOrSources order.`,
         );
       }
-      return (rows[0].canonical_slug as string) ?? slug;
+      return { canonical_slug: rows[0].canonical_slug as string, source_id: rows[0].source_id as string };
     } catch (e) {
       // Pre-v105 brain: slug_aliases table doesn't exist yet. Defense-in-depth
       // per the engine interface contract.
-      if (isUndefinedTableError(e)) return slug;
+      if (isUndefinedTableError(e)) return null;
       throw e;
     }
   }

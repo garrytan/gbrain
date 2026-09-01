@@ -164,6 +164,9 @@ const get_page: Operation = {
     // source and fail-closes); the trusted UNSCOPED read consults every LIVE
     // source (archived sources are excluded everywhere else in the ladder; their
     // alias rows count only when include_deleted asks for retired material).
+    // The canonical is then read in the source that OWNS the alias row: a
+    // federated getPage prefers the anchor source, so an unrelated live page at
+    // the canonical slug in another granted source would otherwise shadow it.
     if (!page) {
       try {
         const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
@@ -171,12 +174,12 @@ const get_page: Operation = {
           : sourceOpts.sourceId !== undefined
             ? sourceOpts.sourceId
             : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
-        const canonical = await ctx.engine.resolveSlugWithAlias(slug, aliasScope);
-        if (canonical !== slug) {
-          const aliasPage = await ctx.engine.getPage(canonical, { includeDeleted, ...sourceOpts });
+        const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope);
+        if (hit) {
+          const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, sourceId: hit.source_id });
           if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
             page = aliasPage;
-            resolved_slug = canonical;
+            resolved_slug = hit.canonical_slug;
           }
         }
       } catch {

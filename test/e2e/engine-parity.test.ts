@@ -2045,6 +2045,76 @@ describeBoth('Engine parity — traversePaths row cap', () => {
   });
 });
 
+// ── resolveSlugWithAliasDetailed parity ─────────────────────────────────
+// Postgres orders by array_position() in SQL; PGLite re-sorts in JS. The
+// owning source_id is what get_page now pins its canonical read to, so both
+// engines must agree on WHICH alias row wins under a federated scope, not
+// just on the canonical slug string.
+async function seedAliasOwners(eng: BrainEngine) {
+  for (const id of ['par-a', 'par-b']) {
+    await eng.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [id],
+    );
+  }
+  // slug_aliases is not in the e2e TRUNCATE list — clear this fixture's rows.
+  await eng.executeRaw(`DELETE FROM slug_aliases WHERE alias_slug LIKE 'par/%'`);
+  await eng.executeRaw(
+    `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes)
+     VALUES ('par-b', 'par/old-b', 'par/canonical-b', 'owned by b'),
+            ('par-a', 'par/shared', 'par/canonical-a', 'shared a'),
+            ('par-b', 'par/shared', 'par/canonical-b', 'shared b')`,
+  );
+}
+
+describeBoth('Engine parity — resolveSlugWithAliasDetailed', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedAliasOwners(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedAliasOwners(pgliteEngine);
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  test('owning source_id + canonical agree on both engines (scalar, federated, out-of-scope, no match)', async () => {
+    for (const scope of ['par-b', ['par-a', 'par-b'], ['par-a'], ['default']] as const) {
+      const pg = await pgEngine.resolveSlugWithAliasDetailed('par/old-b', scope);
+      const pglite = await pgliteEngine.resolveSlugWithAliasDetailed('par/old-b', scope);
+      expect(pg).toEqual(pglite);
+    }
+    expect(await pgEngine.resolveSlugWithAliasDetailed('par/old-b', ['par-a', 'par-b']))
+      .toEqual({ canonical_slug: 'par/canonical-b', source_id: 'par-b' });
+    expect(await pgEngine.resolveSlugWithAliasDetailed('par/old-b', ['par-a'])).toBeNull();
+    expect(await pgEngine.resolveSlugWithAliasDetailed('par/none', ['par-a', 'par-b'])).toBeNull();
+  });
+
+  test('multi-source winner follows the scope order identically; the wrapper is the canonical projection', async () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      for (const scope of [['par-a', 'par-b'], ['par-b', 'par-a']]) {
+        const pg = await pgEngine.resolveSlugWithAliasDetailed('par/shared', scope);
+        const pglite = await pgliteEngine.resolveSlugWithAliasDetailed('par/shared', scope);
+        expect(pg).toEqual(pglite);
+        expect(pg!.source_id).toBe(scope[0]);
+        expect(await pgEngine.resolveSlugWithAlias('par/shared', scope)).toBe(pg!.canonical_slug);
+        expect(await pgliteEngine.resolveSlugWithAlias('par/shared', scope)).toBe(pglite!.canonical_slug);
+      }
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
+
 // ── D7: restorePage arc parity ───────────────────────────────────────────
 // softDelete → hidden → includeDeleted peek → restore → visible → second
 // restore false. Both engines gate restore on `deleted_at IS NOT NULL` and

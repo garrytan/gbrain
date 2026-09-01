@@ -5932,10 +5932,17 @@ export class PGLiteEngine implements BrainEngine {
     slug: string,
     sourceOrSources: string | readonly string[],
   ): Promise<string> {
+    return (await this.resolveSlugWithAliasDetailed(slug, sourceOrSources))?.canonical_slug ?? slug;
+  }
+
+  async resolveSlugWithAliasDetailed(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<{ canonical_slug: string; source_id: string } | null> {
     const sources = Array.isArray(sourceOrSources)
       ? [...sourceOrSources]
       : [sourceOrSources as string];
-    if (sources.length === 0) return slug;
+    if (sources.length === 0) return null;
     try {
       // PGLite supports `= ANY($N::text[])` per pgvector / postgres semantics.
       // ORDER BY array_position pins the federated-read precedence so the
@@ -5949,7 +5956,7 @@ export class PGLiteEngine implements BrainEngine {
          ORDER BY id`,
         [slug, ...sources],
       );
-      if (rows.length === 0) return slug;
+      if (rows.length === 0) return null;
       if (rows.length > 1) {
         warnOncePerProcess(
           `resolveSlugWithAlias:multi_match:${slug}`,
@@ -5962,9 +5969,9 @@ export class PGLiteEngine implements BrainEngine {
         order: sources.indexOf((r as { source_id: string }).source_id),
       }));
       indexedRows.sort((a, b) => a.order - b.order);
-      return indexedRows[0].canonical_slug ?? slug;
+      return { canonical_slug: indexedRows[0].canonical_slug, source_id: indexedRows[0].source_id };
     } catch (e) {
-      if (isUndefinedTableError(e)) return slug;
+      if (isUndefinedTableError(e)) return null;
       throw e;
     }
   }

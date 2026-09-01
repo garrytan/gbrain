@@ -280,6 +280,33 @@ describe('#4275 get_page follows slug aliases inside the caller source scope', (
       get_page.handler(remoteCtx(['beta']), { slug: 'legacy/priv-doc' }),
     ).rejects.toBeInstanceOf(OperationError);
   });
+
+  test('ship-review: the alias hop reads the canonical in the OWNING source, not the anchor source', async () => {
+    // beta owns legacy/beta-doc -> secret/beta-doc; alpha holds an UNRELATED
+    // live page at the canonical slug. A federated grant anchors getPage on
+    // sourceIds[0] (alpha), so a scope-wide read of the canonical returned
+    // alpha's decoy as if it were the alias target.
+    await engine.putPage('secret/beta-doc', {
+      type: 'note', title: 'Alpha decoy at the canonical slug', compiled_truth: 'alpha decoy', frontmatter: {},
+    }, { sourceId: 'alpha' });
+
+    const federated: any = await get_page.handler(remoteCtx(['alpha', 'beta']), { slug: 'legacy/beta-doc' });
+    expect(federated.source_id).toBe('beta');
+    expect(federated.title).toBe('Beta secret');
+    expect(federated.resolved_slug).toBe('secret/beta-doc');
+
+    // Trusted unscoped read: same owner pin (the unscoped getPage tiebreak is
+    // source_id ASC, which would also have picked alpha's decoy).
+    const local: any = await get_page.handler(ctxOf({ remote: false, sourceId: undefined }), { slug: 'legacy/beta-doc' });
+    expect(local.source_id).toBe('beta');
+    expect(local.title).toBe('Beta secret');
+
+    // An exact read of the canonical slug itself is untouched by the hop:
+    // the anchor-source preference still applies to a direct lookup.
+    const direct: any = await get_page.handler(remoteCtx(['alpha', 'beta']), { slug: 'secret/beta-doc' });
+    expect(direct.source_id).toBe('alpha');
+    expect(direct.resolved_slug).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
