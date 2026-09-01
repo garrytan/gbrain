@@ -201,3 +201,64 @@ describe('applyExactLookupTier (#1663)', () => {
     expect(out.map((r) => r.slug)).toEqual(['a', 'b']);
   });
 });
+
+describe('applyExactLookupTier collapse — tie-break, interleaving, source isolation (#4531 review)', () => {
+  test('a score tie between two chunks of the identity page keeps the FIRST chunk', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.2, { chunk_text: 'first chunk' }),
+      res('people/alice-example', 0.2, { chunk_text: 'second chunk' }),
+      res('notes/unrelated', 0.1),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice.length).toBe(1);
+    expect(alice[0].chunk_text).toBe('first chunk');
+    expect(out.length).toBe(2);
+  });
+
+  test('interleaved identity chunks collapse safely (highest-index-first splice keeps the others intact)', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.3, { chunk_text: 'weaker alice chunk' }),
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.5, { chunk_text: 'best alice chunk' }),
+      res('notes/other', 0.1),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    expect(out.map((r) => r.slug)).toEqual(['people/alice-example', 'notes/unrelated', 'notes/other']);
+    expect(out[0].chunk_text).toBe('best alice chunk');
+    expect(out[0].exact_lookup).toBe('slug');
+    // The non-identity rows survive with their scores untouched.
+    expect(out[1].score).toBe(0.9);
+    expect(out[2].score).toBe(0.1);
+  });
+
+  test('a same-slug row from ANOTHER source_id is not collapsed, promoted, or stamped', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.4, { source_id: 'wiki', chunk_text: 'wiki alice chunk' }),
+      res('people/alice-example', 0.2, { chunk_text: 'default alice chunk' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const wiki = out.find((r) => r.slug === 'people/alice-example' && r.source_id === 'wiki');
+    const def = out.find((r) => r.slug === 'people/alice-example' && r.source_id === 'default');
+    expect(out.length).toBe(3);
+    // Foreign-source row untouched: same score, no identity stamp.
+    expect(wiki).toBeDefined();
+    expect(wiki!.score).toBe(0.4);
+    expect(wiki!.exact_lookup).toBeUndefined();
+    expect(wiki!.chunk_text).toBe('wiki alice chunk');
+    // The in-scope row is the one promoted to rank-1 and stamped.
+    expect(out[0]).toBe(def!);
+    expect(def!.exact_lookup).toBe('slug');
+    expect(def!.chunk_text).toBe('default alice chunk');
+  });
+});

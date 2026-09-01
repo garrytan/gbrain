@@ -36,6 +36,22 @@ import {
   thinkSourceScopeOpts,
 } from './context.ts';
 
+/**
+ * The caller's effective row contract for the `query` op's non-hybrid legs
+ * (#4356 image branch, #4610 CRAG escalation slice): an explicit `limit` wins;
+ * omitted/0 resolves the mode-derived searchLimit (10/25/50 or the configured
+ * `search.searchLimit` override) through the SAME trust-gated chain
+ * hybridSearch applies — `resolvePerCallMode` ignores a remote caller's
+ * `mode`, so a remote client can't select the tokenmax row count. Resolved
+ * lazily by the callers (the config reads only run on the paths that need it).
+ */
+async function resolveEffectiveLimit(ctx: OperationContext, p: Record<string, unknown>): Promise<number> {
+  const perCallMode = resolvePerCallMode(ctx, p.mode);
+  const modeInput = await loadSearchModeConfig(ctx.engine);
+  const resolved = resolveSearchMode({ mode: perCallMode ?? modeInput.mode, overrides: modeInput.overrides });
+  return (p.limit as number) || resolved.searchLimit;
+}
+
 // --- Search ---
 
 /**
@@ -417,19 +433,10 @@ const query: Operation = {
       // image pages across sources independent of the text path's fix.
       // #4356 Problem 2: the image path also bypasses hybridSearch's mode
       // resolution, so its default limit didn't honor the active search
-      // mode. Resolve mode here the same way hybridSearch does, including
-      // its remote trust gate (`resolvePerCallMode` — a remote caller's
-      // `mode` param still can't select the mode-derived default; an
-      // explicit `limit` still overrides it either way, same as every
-      // other limit surface in this op).
-      const imagePerCallMode = resolvePerCallMode(ctx, p.mode);
-      const imageModeInput = await loadSearchModeConfig(ctx.engine);
-      const imageResolvedMode = resolveSearchMode({
-        mode: imagePerCallMode ?? imageModeInput.mode,
-        overrides: imageModeInput.overrides,
-      });
+      // mode. resolveEffectiveLimit applies the same chain (and the same
+      // remote trust gate) hybridSearch does.
       const results = await ctx.engine.searchVector(vec, {
-        limit: (p.limit as number) || imageResolvedMode.searchLimit,
+        limit: await resolveEffectiveLimit(ctx, p),
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         excludePrivate,
@@ -548,20 +555,11 @@ const query: Operation = {
         callerExpanded: expand,
       })) {
         try {
-          // The caller's effective row contract, resolved the same way the
-          // image branch does (#4356 pattern): explicit `limit` wins;
-          // omitted/0 resolves the mode-derived searchLimit (10/25/50 or the
-          // configured `search.searchLimit` override) — NOT a hardcoded 20,
-          // which over-delivered on conservative and under-delivered on
-          // tokenmax. Resolved here (not earlier) so the config reads only
-          // run on the rare escalation path.
-          const escPerCallMode = resolvePerCallMode(ctx, p.mode);
-          const escModeInput = await loadSearchModeConfig(ctx.engine);
-          const escResolvedMode = resolveSearchMode({
-            mode: escPerCallMode ?? escModeInput.mode,
-            overrides: escModeInput.overrides,
-          });
-          const effectiveLimit = (p.limit as number) || escResolvedMode.searchLimit;
+          // The caller's effective row contract (shared with the image
+          // branch — NOT a hardcoded 20, which over-delivered on conservative
+          // and under-delivered on tokenmax). Resolved here, not earlier, so
+          // the config reads only run on the rare escalation path.
+          const effectiveLimit = await resolveEffectiveLimit(ctx, p);
           let escalatedMeta: HybridSearchMeta | null = null;
           const escalated = await hybridSearchCached(ctx.engine, queryText, {
             limit: Math.max(effectiveLimit, 50),

@@ -39,7 +39,7 @@ import {
 } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
-import { applyReranker } from './rerank.ts';
+import { applyReranker, type RerankPassThroughReason } from './rerank.ts';
 import {
   classifyQuery,
   classifyQueryWithBrainPatterns,
@@ -112,7 +112,7 @@ export function shouldBoostCompiledTruth(detail: string | null | undefined): boo
  * cosineReScore never runs. Unverified auto-extracted stubs stay excluded
  * (issue #160, stamped pre-fusion by stampUnverifiedExtractions).
  */
-function compiledTruthBoost(result: SearchResult, applyBoost: boolean): number {
+export function compiledTruthBoost(result: SearchResult, applyBoost: boolean): number {
   const syntheticTitleRow = result.chunk_id === 0 && (result.chunk_text ?? '').trim().length === 0;
   return applyBoost &&
     result.chunk_source === 'compiled_truth' &&
@@ -2113,10 +2113,10 @@ export async function hybridSearch(
   const reranked = rerankerOpts.enabled
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
-        onPassThrough: (reason: 'empty_result_set' | 'malformed_shape') => {
+        onPassThrough: (reason: RerankPassThroughReason) => {
           pushDegraded(degraded, 'rerank_passthrough', reason);
           // Chain a per-call callback if the caller supplied one.
-          (rerankerOpts as { onPassThrough?: (r: string) => void }).onPassThrough?.(reason);
+          (rerankerOpts as { onPassThrough?: (r: RerankPassThroughReason) => void }).onPassThrough?.(reason);
         },
       })
     : deduped;

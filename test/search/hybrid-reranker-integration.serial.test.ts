@@ -339,3 +339,39 @@ describe('hybridSearch — fail-open contract end-to-end', () => {
     expect(degraded.some(d => d.stage === 'rerank_passthrough')).toBe(false);
   });
 });
+
+describe('#4648 malformed pass-through — meta stamp + caller onPassThrough chain', () => {
+  test('rerankerFn returning null stamps rerank_passthrough/malformed_shape AND chains the caller spy', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-malformed-'));
+    const prevAudit = process.env.GBRAIN_AUDIT_DIR;
+    process.env.GBRAIN_AUDIT_DIR = auditDir;
+    try {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      const spy: string[] = [];
+      const out = await hybridSearch(engine, 'alpha keyword', {
+        limit: 10,
+        reranker: {
+          enabled: true,
+          topNIn: 30,
+          topNOut: null,
+          // A non-array body (e.g. `{"error": "..."}` on HTTP 200) — the
+          // malformed_shape class, distinct from the empty-array class.
+          rerankerFn: (async () => null) as unknown as () => Promise<RerankResult[]>,
+          // Caller-supplied callback: hybridSearch wraps it to stamp meta and
+          // MUST still invoke it (the chain is what lets an eval harness or
+          // telemetry sink observe the pass-through per call).
+          onPassThrough: (reason) => { spy.push(reason); },
+        },
+        onMeta: (meta) => { degraded = meta.degraded ?? []; },
+      });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every(r => r.rerank_score === undefined)).toBe(true);
+      expect(degraded).toContainEqual({ stage: 'rerank_passthrough', reason: 'malformed_shape' });
+      expect(spy).toEqual(['malformed_shape']);
+    } finally {
+      if (prevAudit === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+      else process.env.GBRAIN_AUDIT_DIR = prevAudit;
+      rmSync(auditDir, { recursive: true, force: true });
+    }
+  });
+});
