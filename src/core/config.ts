@@ -1282,6 +1282,13 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'loops.extraction_enabled',
   // #2113: output-token cap for the per-turn facts extractor (default 4000).
   'facts.extraction_max_tokens',
+  // #3852: operator-set system-prompt appendix for the facts extractor (e.g.
+  // a durable-vs-ephemeral rubric for agent work-session transcripts).
+  // Composes with BOTH honest-notability prompt variants.
+  'facts.extraction_prompt_appendix',
+  // #3852: kill-switch for the deterministic junk gate on extracted fact text
+  // (plan narration / provider error strings / meta-chatter). Default on.
+  'facts.extraction_junk_filter',
   // [ENG-8] Brain-level default visibility for facts writes when the caller
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
