@@ -582,3 +582,16 @@ export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
     claim: String(row.claim),
   };
 }
+
+/**
+ * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
+ * comes back as a string on the routed path). Lets any op-output serializer
+ * round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of throwing
+ * `TypeError: Do not know how to serialize a BigInt`. Shared by cli.ts's
+ * local-result normalizer and the commands that stringify results themselves
+ * (`gbrain call`, `extract --explain --json`) — commands import it from here,
+ * never from the dispatcher.
+ */
+export function bigintToStringReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
+}

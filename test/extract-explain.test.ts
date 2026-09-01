@@ -67,6 +67,35 @@ function stubEngine(rollupRow: Record<string, unknown>, capturedSql?: string[]):
   } as unknown as BrainEngine;
 }
 
+/** An engine whose rollup query throws — the pre-v106 brain (no
+ * extract_rollup_7d table yet) the command's try/catch exists for. */
+function failingRollupEngine(): BrainEngine {
+  return {
+    executeRaw: async () => { throw new Error('relation "extract_rollup_7d" does not exist'); },
+  } as unknown as BrainEngine;
+}
+
+describe('runExtractExplain — failing rollup query (pre-v106 brain)', () => {
+  it('--json emits rollup_7d: null and still renders the rest of the envelope', async () => {
+    let out = '';
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      out = await runAndCapture(failingRollupEngine(), ['--json']);
+    });
+    const parsed = JSON.parse(out);
+    expect(parsed.kind).toBe('atoms');
+    expect(parsed.rollup_7d).toBeNull();
+  });
+
+  it('text path prints "no runs recorded" instead of failing the command', async () => {
+    let out = '';
+    await withEnv({ GBRAIN_HOME: tmpDir, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+      out = await runAndCapture(failingRollupEngine());
+    });
+    expect(out).toContain('Kind: atoms');
+    expect(out).toContain('Last 7 days (rollup): no runs recorded');
+  });
+});
+
 describe('runExtractExplain --json', () => {
   it('casts the four INT-aggregate SUM() columns to ::text in the query itself', async () => {
     // Pins the actual fix (not just that already-stringified stub data

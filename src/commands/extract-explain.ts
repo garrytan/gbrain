@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { BrainEngine } from '../core/engine.ts';
-import { bigintToStringReplacer } from '../cli.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 import { loadActivePackBestEffort } from '../core/schema-pack/best-effort.ts';
 import { getExtractableSpec, extractableSpecsFromPack } from '../core/schema-pack/extractable.ts';
 import { locateMutablePackFile } from '../core/schema-pack/mutate.ts';

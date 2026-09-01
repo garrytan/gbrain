@@ -41,6 +41,7 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta }
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
 import { VERSION } from './version.ts';
+import { bigintToStringReplacer } from './core/utils.ts';
 
 // db-availability loop: best-effort brain-id for the GBRAIN_DB_ACCESS marker,
 // so a MOUNT's DB failure reads as `brain=<id>` instead of masquerading as a
@@ -63,15 +64,10 @@ for (const op of operations) {
   }
 }
 
-/**
- * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
- * comes back as a string on the routed path). Lets the local-engine output
- * normalizer round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of
- * throwing `TypeError: Do not know how to serialize a BigInt`.
- */
-export function bigintToStringReplacer(_key: string, value: unknown): unknown {
-  return typeof value === 'bigint' ? value.toString() : value;
-}
+// bigint → string JSON replacer: defined in core/utils.ts (commands must not
+// reach into the dispatcher for it); re-exported here so existing importers
+// and tests keep their surface. (#2450)
+export { bigintToStringReplacer };
 
 // ENG-2 renderer parity: round-trip a local-engine op's return value so
 // renderers see the same shape the routed path produces. Bigint-safe via
