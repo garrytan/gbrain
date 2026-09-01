@@ -202,6 +202,70 @@ describe('applyExactLookupTier (#1663)', () => {
   });
 });
 
+describe('applyExactLookupTier chunk-collapse — three chunks, tie, ordering, foreign source (ship-review)', () => {
+  test('three chunks of the identity page collapse to ONE (the strongest), even when the weaker chunks precede it', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.1, { chunk_id: 1, chunk_text: 'weak chunk' }),
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.3, { chunk_id: 2, chunk_text: 'medium chunk' }),
+      res('people/alice-example', 0.6, { chunk_id: 3, chunk_text: 'strong chunk' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice).toHaveLength(1);
+    expect(alice[0].chunk_text).toBe('strong chunk');
+    expect(alice[0].exact_lookup).toBe('slug');
+    expect(out.map((r) => r.slug)).toEqual(['people/alice-example', 'notes/unrelated']);
+    expect(out[1].score).toBe(0.9);
+  });
+
+  test('a three-way score tie keeps the FIRST chunk in input order', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.25, { chunk_id: 1, chunk_text: 'first' }),
+      res('people/alice-example', 0.25, { chunk_id: 2, chunk_text: 'second' }),
+      res('people/alice-example', 0.25, { chunk_id: 3, chunk_text: 'third' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice).toHaveLength(1);
+    expect(alice[0].chunk_text).toBe('first');
+    expect(out).toHaveLength(2);
+  });
+
+  test('a same-slug row from ANOTHER source (team-b) is never merged into the collapse — it survives with its score', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.1, { chunk_id: 1, chunk_text: 'default weak' }),
+      res('people/alice-example', 0.7, { source_id: 'team-b', chunk_id: 9, chunk_text: 'team-b alice' }),
+      res('people/alice-example', 0.4, { chunk_id: 2, chunk_text: 'default strong' }),
+      res('notes/unrelated', 0.2),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const teamB = out.filter((r) => r.slug === 'people/alice-example' && r.source_id === 'team-b');
+    const def = out.filter((r) => r.slug === 'people/alice-example' && r.source_id === 'default');
+    // Two in-scope chunks collapsed to one; the team-b row is a separate page.
+    expect(def).toHaveLength(1);
+    expect(def[0].chunk_text).toBe('default strong');
+    expect(def[0].exact_lookup).toBe('slug');
+    expect(teamB).toHaveLength(1);
+    expect(teamB[0].score).toBe(0.7);
+    expect(teamB[0].chunk_text).toBe('team-b alice');
+    expect(teamB[0].exact_lookup).toBeUndefined();
+    // Identity match outranks every scored row, including team-b's higher organic score.
+    expect(out[0]).toBe(def[0]);
+    expect(out).toHaveLength(3);
+  });
+});
+
 describe('applyExactLookupTier collapse — tie-break, interleaving, source isolation (#4531 review)', () => {
   test('a score tie between two chunks of the identity page keeps the FIRST chunk', async () => {
     await engine.putPage('people/alice-example', {
