@@ -136,6 +136,14 @@ export interface ProposedTake {
   holder: string;
   weight: number;
   domain?: string;
+  /**
+   * #4737: 'provider:modelId' of the model that ACTUALLY answered the
+   * extraction call (ChatResult.model — alias/provider-recipe resolution
+   * can differ from the configured string). Stamped by defaultExtractor;
+   * optional so injected test extractors need not care. When present it
+   * wins over the requested model for take_proposals.model_id provenance.
+   */
+  served_model?: string;
 }
 
 /** Extractor function signature — injected for tests; production calls gateway. */
@@ -420,7 +428,11 @@ export async function defaultExtractor(
   if (takes.length === 0 && !isWellFormedEmptyExtraction(result.text)) {
     throw new Error('propose_takes extractor: no parseable takes JSON (transient — retry)');
   }
-  return takes;
+  // #4737: model_id provenance comes from the RESPONSE, not the request —
+  // ChatResult.model is the 'provider:modelId' that actually answered.
+  const servedModel =
+    typeof result.model === 'string' && result.model.trim() !== '' ? result.model : undefined;
+  return servedModel ? takes.map((t) => ({ ...t, served_model: servedModel })) : takes;
 }
 
 /**
@@ -887,7 +899,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            modelId,
+            // #4737: prefer the response-derived model (what actually
+            // answered) over the requested one for provenance.
+            p.served_model ?? modelId,
           ],
         );
         result.proposals_inserted += inserted.length;
