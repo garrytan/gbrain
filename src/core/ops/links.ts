@@ -16,6 +16,7 @@ import {
   sourceScopeOpts,
 } from './context.ts';
 import { PageMissingError } from '../engine-errors.ts';
+import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 import { findPrivateOnlySlugs, resolveExcludePrivatePages } from '../search/private-visibility.ts';
@@ -325,7 +326,15 @@ const traverse_graph: Operation = {
           ? { ...n, links: n.links.filter(l => !hidden.has(l.to_slug)) }
           : n));
     }
-    const paths = await ctx.engine.traversePaths(slug, { depth, linkType, direction, ...scope });
+    const { paths, truncated } = await ctx.engine.traversePathsDetailed(slug, { depth, linkType, direction, ...scope });
+    // Row cap hit: the walk's deepest edges were dropped. stderr-only so the
+    // GraphPath[] wire shape stays unchanged (additive contract).
+    if (truncated) {
+      ctx.logger.warn(
+        `[gbrain] traverse_graph output truncated at ${TRAVERSE_PATH_ROW_CAP} edge rows (shallowest first). ` +
+        `Lower depth or narrow with link_type/direction for a complete walk.`,
+      );
+    }
     if (!excludePrivate) return paths;
     const hidden = await findPrivateOnlySlugs(
       ctx.engine,

@@ -21,6 +21,8 @@ import { getSessionContextState, upsertSessionContextState } from '../../src/cor
 import { linkEntityIdentity, listEntityIdentities } from '../../src/core/entity-identity.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { hasDatabase, setupDB, teardownDB, getEngine } from './helpers.ts';
+import { TRAVERSE_PATH_ROW_CAP } from '../../src/core/engine-constants.ts';
+import { DENSE_HUB_SLUG, DENSE_HUB_SPOKES, seedDenseHub } from '../helpers/dense-hub.ts';
 
 const SKIP_PG = !hasDatabase();
 const describeBoth = SKIP_PG ? describe.skip : describe;
@@ -1987,6 +1989,59 @@ describeBoth('Engine parity — traverseGraph / traversePaths (D7)', () => {
     const pgliteBoth = await pgliteEngine.traversePaths('tg/a', { depth: 2, direction: 'both', sourceId: 'default' });
     expect(edgeShape(pgBoth)).toEqual(edgeShape(pgliteBoth));
     expect(edgeShape(pgBoth)).not.toContain('tg/b>tg/x:xsrc@2');
+  });
+});
+
+// ── traversePaths row cap parity ─────────────────────────────────────────
+// Both engines bound the final SELECT at TRAVERSE_PATH_ROW_CAP (+1 probe
+// row) and report the overflow through traversePathsDetailed().truncated.
+// The LIMIT sits under the shared ORDER BY depth, from_slug, to_slug, so on
+// an identical corpus the two engines must keep the SAME shallow edge set —
+// a drift in the cap placement (postgres.js sql`` vs positional $N) or in
+// the probe-row arithmetic would only show against real Postgres.
+describeBoth('Engine parity — traversePaths row cap', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    await seedDenseHub(pgEngine);
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+    await seedDenseHub(pgliteEngine);
+  }, 180_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  const edgeShape = (paths: Awaited<ReturnType<BrainEngine['traversePaths']>>) =>
+    paths.map(p => `${p.from_slug}>${p.to_slug}:${p.link_type}@${p.depth}`);
+
+  test('depth-3 both-direction walk from the hub: truncated on both, identical bounded edge set', async () => {
+    const pg = await pgEngine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
+    const pglite = await pgliteEngine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
+    expect(pg.truncated).toBe(true);
+    expect(pglite.truncated).toBe(true);
+    expect(pg.paths.length).toBeLessThanOrEqual(TRAVERSE_PATH_ROW_CAP);
+    expect(pglite.paths.length).toBeLessThanOrEqual(TRAVERSE_PATH_ROW_CAP);
+    // Shallowest-first survives the cut identically: every hub edge at depth 1.
+    expect(pg.paths.filter(p => p.depth === 1).length).toBe(DENSE_HUB_SPOKES);
+    expect(edgeShape(pg.paths)).toEqual(edgeShape(pglite.paths));
+    // The GraphPath[] projection is the same bounded list on both engines.
+    expect(edgeShape(await pgEngine.traversePaths(DENSE_HUB_SLUG, { depth: 3, direction: 'both' }))).toEqual(edgeShape(pg.paths));
+    expect(edgeShape(await pgliteEngine.traversePaths(DENSE_HUB_SLUG, { depth: 3, direction: 'both' }))).toEqual(edgeShape(pglite.paths));
+  }, 120_000);
+
+  test('under the cap: truncated=false on both, full edge set identical', async () => {
+    const pg = await pgEngine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 1, direction: 'both' });
+    const pglite = await pgliteEngine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 1, direction: 'both' });
+    expect(pg.truncated).toBe(false);
+    expect(pglite.truncated).toBe(false);
+    expect(pg.paths.length).toBe(DENSE_HUB_SPOKES);
+    expect(edgeShape(pg.paths)).toEqual(edgeShape(pglite.paths));
   });
 });
 

@@ -16,6 +16,7 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import type { GraphPath } from '../core/types.ts';
+import { TRAVERSE_PATH_ROW_CAP } from '../core/engine-constants.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 
@@ -149,11 +150,15 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     }, { timeoutMs: 30_000 });
     paths = unpackToolResult<GraphPath[]>(raw);
   } else {
-    paths = await engine.traversePaths(args.slug, {
+    const walk = await engine.traversePathsDetailed(args.slug, {
       depth: args.depth,
       linkType: args.linkType,
       direction: args.direction,
     });
+    paths = walk.paths;
+    if (walk.truncated) {
+      console.error(`(edge walk truncated at ${TRAVERSE_PATH_ROW_CAP} rows, shallowest first; lower --depth or narrow with --type/--direction)`);
+    }
   }
 
   if (paths.length === 0) {
