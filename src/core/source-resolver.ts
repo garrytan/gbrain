@@ -297,7 +297,10 @@ async function listRegisteredLocalPathSources(
   }
 }
 
-async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | null> {
+async function pickSoleNonDefaultSource(
+  engine: BrainEngine,
+  opts: { quiet?: boolean } = {},
+): Promise<string | null> {
   // archived column was added in v34 (v0.26.5). Older brains may not have
   // it — fall back to the un-archived query in that case via try/catch.
   let rows: Array<{ id: string }>;
@@ -321,7 +324,7 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
       // every bare command away from the sole side-source, and the user
       // hunts for "lost" writes. One stderr line names both sides so the
       // misroute is diagnosable; same suppression knob as the routing nudge.
-      if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
+      if (!opts.quiet && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
         console.error(
           `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
         );
@@ -334,6 +337,21 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
     // resolution outright.
   }
   return rows[0].id;
+}
+
+/**
+ * Source id that represents the brain's implicit default target for a bare
+ * local command (#4700). Unlike resolveSourceWithTier(), this deliberately
+ * ignores env, dotfile, cwd, and local_path tiers so callers can distinguish
+ * the canonical default-like source from an explicit/path-scoped source cycle.
+ */
+export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promise<string | null> {
+  const globalDefault = await engine.getConfig('sources.default');
+  if (globalDefault && isValidSourceId(globalDefault)) {
+    await assertSourceExists(engine, globalDefault);
+    return globalDefault;
+  }
+  return pickSoleNonDefaultSource(engine, { quiet: true });
 }
 
 /**

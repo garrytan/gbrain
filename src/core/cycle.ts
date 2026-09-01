@@ -243,15 +243,18 @@ export const SOURCE_BACKGROUND_PHASES: CyclePhase[] = SOURCE_PHASES.filter(
  * re-run mixed or background work once per source while human intent stays
  * authoritative.
  *
- * The canonical `default` cycle remains the one place where a full implicit
- * cycle (including mixed phases) is valid.
+ * The canonical `default` cycle remains a place where a full implicit
+ * cycle (including mixed phases) is valid; full implicit NON-default source
+ * cycles are caller opt-in via `fullImplicitSourceCycle` (#4700 — bare
+ * `gbrain dream` targeting the brain's default-like source).
  */
 export function resolveCyclePhases(
   requested: CyclePhase[] | undefined,
   sourceId: string | undefined,
+  fullImplicitSourceCycle = false,
 ): CyclePhase[] {
   if (!sourceId || sourceId === 'default') return requested ?? ALL_PHASES;
-  if (requested === undefined) return SOURCE_FRESHNESS_PHASES;
+  if (requested === undefined) return fullImplicitSourceCycle ? ALL_PHASES : SOURCE_FRESHNESS_PHASES;
   return requested;
 }
 
@@ -529,6 +532,13 @@ export interface CycleOpts {
    * Validated via `assertValidSourceId` in `cycleLockIdFor` (defense-in-depth).
    */
   sourceId?: string;
+  /**
+   * #4700 — bare `gbrain dream` may opt the brain's default-like source
+   * (sources.default / sole-non-default routing) into the full implicit
+   * phase set instead of the freshness-only source cycle. Never set by the
+   * autopilot fanout or explicit `--source <id>` runs.
+   */
+  fullImplicitSourceCycle?: boolean;
   /**
    * issue #2860 — one-shot per-invocation bypass of a phase's own
    * `dream.<phase>.enabled` / `cycle.<phase>.enabled` config gate. Wired
@@ -1860,7 +1870,7 @@ export async function runCycle(
 ): Promise<CycleReport> {
   const start = performance.now();
   const requestedPhases = opts.phases ?? ALL_PHASES;
-  const phases = resolveCyclePhases(opts.phases, opts.sourceId);
+  const phases = resolveCyclePhases(opts.phases, opts.sourceId, opts.fullImplicitSourceCycle);
   const excludedPhases = requestedPhases.filter((phase) => !phases.includes(phase));
   const dryRun = !!opts.dryRun;
   const pull = !!opts.pull;
