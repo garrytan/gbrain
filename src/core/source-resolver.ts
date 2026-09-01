@@ -424,6 +424,12 @@ export interface DefaultWriteAssessment {
   nonDefaultPages: number;
   /** Count of distinct non-default source_ids with at least one page. */
   nonDefaultSources: number;
+  /**
+   * True when the page-distribution aggregate FAILED and the verdict above is
+   * the fail-open default rather than a measurement. A caller that caches or
+   * latches on an assessment must not treat a failed one as settled.
+   */
+  failed?: true;
 }
 
 /**
@@ -476,7 +482,7 @@ export async function assessDefaultWriteGuard(
     const shouldGuard = nonDefaultSources >= 1 && nonDefaultPages > defaultPages;
     return { shouldGuard, defaultPages, nonDefaultPages, nonDefaultSources };
   } catch {
-    return empty;
+    return { ...empty, failed: true };
   }
 }
 
@@ -488,16 +494,24 @@ export async function assessDefaultWriteGuard(
  * sync_brain MCP op, the autopilot daemon, minion sync — pay for it ONCE per
  * engine rather than on every call. Mirrors the stdio advisory latch
  * (createDefaultWriteAdvisory in mcp/server.ts): the memo arms on the first
- * completed assessment regardless of verdict. Fail-open like the underlying
- * assessment. A WeakMap so a disconnected engine never pins its entry.
+ * SUCCESSFUL assessment, whatever its verdict. A FAILED assessment (the
+ * fail-open `failed: true` shape) is returned to its caller but forgotten,
+ * so one transient query error cannot pin "no guard" for the rest of the
+ * process — the next caller retries. Concurrent callers share the in-flight
+ * attempt. A WeakMap so a disconnected engine never pins its entry.
  */
 let defaultWriteAssessments = new WeakMap<BrainEngine, Promise<DefaultWriteAssessment>>();
 
 export function assessDefaultWriteGuardOnce(engine: BrainEngine): Promise<DefaultWriteAssessment> {
-  let pending = defaultWriteAssessments.get(engine);
+  const memo = defaultWriteAssessments;
+  let pending = memo.get(engine);
   if (!pending) {
-    pending = assessDefaultWriteGuard(engine);
-    defaultWriteAssessments.set(engine, pending);
+    const attempt: Promise<DefaultWriteAssessment> = assessDefaultWriteGuard(engine).then(a => {
+      if (a.failed && memo.get(engine) === attempt) memo.delete(engine);
+      return a;
+    });
+    pending = attempt;
+    memo.set(engine, attempt);
   }
   return pending;
 }
@@ -567,19 +581,31 @@ export function formatDefaultWriteWarning(a: DefaultWriteAssessment, sourceFlag?
  * (resolveMcpStdioSourceScope), so a dotfile / local_path / brain_default pin
  * resolves a REAL source — warning there would be a false positive. Only the
  * `seed_default` tier actually lands the write in 'default'. Returns the
- * warning line, or null when nothing should be printed. Never throws
- * (assessment is fail-open).
+ * warning line (null when nothing should be printed) plus `assessed`: true
+ * when the decision is settled for the process (a successful assessment, a
+ * non-writing tier, or the process-stable env escape hatch), false when the
+ * aggregate FAILED — the null is fail-open for this write only and the caller
+ * must not latch on it. Never throws.
  */
+export async function assessUnscopedDefaultWrite(
+  engine: BrainEngine,
+  tier: SourceTier,
+  mutating: boolean,
+): Promise<{ warning: string | null; assessed: boolean }> {
+  if (!mutating || tier !== 'seed_default') return { warning: null, assessed: true };
+  if (defaultWriteAllowedByEnv()) return { warning: null, assessed: true };
+  const assessment = await assessDefaultWriteGuard(engine);
+  if (assessment.failed) return { warning: null, assessed: false };
+  return { warning: assessment.shouldGuard ? formatDefaultWriteWarning(assessment) : null, assessed: true };
+}
+
+/** The warning-only projection of assessUnscopedDefaultWrite. */
 export async function maybeWarnUnscopedDefaultWrite(
   engine: BrainEngine,
   tier: SourceTier,
   mutating: boolean,
 ): Promise<string | null> {
-  if (!mutating || tier !== 'seed_default') return null;
-  if (defaultWriteAllowedByEnv()) return null;
-  const assessment = await assessDefaultWriteGuard(engine);
-  if (!assessment.shouldGuard) return null;
-  return formatDefaultWriteWarning(assessment);
+  return (await assessUnscopedDefaultWrite(engine, tier, mutating)).warning;
 }
 
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {

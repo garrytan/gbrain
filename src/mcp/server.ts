@@ -67,33 +67,44 @@ export async function resolveMcpStdioSourceScope(
 }
 
 /**
- * #4583 rework + review fix: once-per-process unscoped-default-write advisory
- * for the stdio lane. The latch arms on the FIRST completed assessment
- * REGARDLESS of outcome — pre-fix it armed only when a warning printed, so on
- * a no-guard brain the assessment's unindexed full-`pages` aggregate ran on
- * EVERY mutating stdio call. The inputs are process-stable (env escape hatch,
- * the brain's page distribution), so one assessment decides for the process.
- * Cheap early-returns (non-mutating call, non-seed tier) do NOT latch — a
- * later mutating seed_default call still gets its one assessment. Exported
- * for tests; `write` is injectable (production writes stderr).
+ * #4583 rework + review fixes: once-per-process unscoped-default-write
+ * advisory for the stdio lane. The latch arms on the first SUCCESSFUL
+ * assessment whatever its verdict (warned, or no-guard) — pre-fix it armed
+ * only when a warning printed, so on a no-guard brain the assessment's
+ * unindexed full-`pages` aggregate ran on EVERY mutating stdio call. The
+ * inputs are process-stable (env escape hatch, the brain's page
+ * distribution), so one assessment decides for the process. A FAILED
+ * assessment does NOT latch: the write proceeds (fail-open) but the next
+ * mutating seed_default call retries, so a transient DB error cannot disable
+ * the advisory for the life of the serve process. Concurrent calls share one
+ * in-flight assessment. Cheap early-returns (non-mutating call, non-seed
+ * tier) do NOT latch either — a later mutating seed_default call still gets
+ * its assessment. Exported for tests; `write` is injectable (production
+ * writes stderr).
  */
 export function createDefaultWriteAdvisory(
   engine: BrainEngine,
   opts: { enabled: boolean; write?: (line: string) => void },
 ): (tier: import('../core/source-resolver.ts').SourceTier, mutating: boolean) => Promise<void> {
   let latched = false;
+  let inflight: Promise<void> | null = null;
   const write = opts.write ?? ((line: string) => process.stderr.write(line + '\n'));
   return async (tier, mutating) => {
     if (latched || !opts.enabled) return;
     if (!mutating || tier !== 'seed_default') return;
-    // Arm BEFORE the assessment so it runs at most once no matter the outcome
-    // (warned, no-guard verdict, or a thrown assessment error).
-    latched = true;
-    try {
-      const { maybeWarnUnscopedDefaultWrite } = await import('../core/source-resolver.ts');
-      const warning = await maybeWarnUnscopedDefaultWrite(engine, tier, mutating);
-      if (warning) write(warning);
-    } catch { /* advisory; never block a write */ }
+    inflight ??= (async () => {
+      try {
+        const { assessUnscopedDefaultWrite } = await import('../core/source-resolver.ts');
+        const { warning, assessed } = await assessUnscopedDefaultWrite(engine, tier, mutating);
+        // Latch before writing so a throwing stderr writer still counts as
+        // assessed; never latch on a failed (fail-open) assessment.
+        if (assessed) latched = true;
+        if (warning) write(warning);
+      } catch { /* advisory; never block a write */ } finally {
+        inflight = null;
+      }
+    })();
+    await inflight;
   };
 }
 

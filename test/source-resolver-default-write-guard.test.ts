@@ -91,6 +91,8 @@ describe('assessDefaultWriteGuard', () => {
   test('fail-open: a query error returns shouldGuard=false (never breaks a write)', async () => {
     const a = await assessDefaultWriteGuard(makeStub('throw'));
     expect(a.shouldGuard).toBe(false);
+    // ...but marked as a failed (unmeasured) verdict so latches/memos retry.
+    expect(a.failed).toBe(true);
     expect(a.defaultPages).toBe(0);
   });
 
@@ -101,6 +103,8 @@ describe('assessDefaultWriteGuard', () => {
     } as unknown as Parameters<typeof assessDefaultWriteGuard>[0];
     const a = await assessDefaultWriteGuard(engine);
     expect(a.shouldGuard).toBe(false);
+    // An empty result IS a measurement (no rows), not a failure.
+    expect(a.failed).toBeUndefined();
   });
 });
 
