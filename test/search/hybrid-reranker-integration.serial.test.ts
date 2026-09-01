@@ -348,20 +348,23 @@ describe('#4648 malformed pass-through — meta stamp + caller onPassThrough cha
     try {
       let degraded: Array<{ stage: string; reason?: string }> = [];
       const spy: string[] = [];
+      // Caller-supplied callback: hybridSearch wraps it to stamp meta and MUST
+      // still invoke it (the chain is what lets an eval harness or telemetry
+      // sink observe the pass-through per call). SearchOpts.reranker's declared
+      // shape doesn't list onPassThrough — hybrid.ts reads it through a cast —
+      // so the test hands it over the same way.
+      const rerankerWithSpy = {
+        enabled: true,
+        topNIn: 30,
+        topNOut: null,
+        // A non-array body (e.g. `{"error": "..."}` on HTTP 200) — the
+        // malformed_shape class, distinct from the empty-array class.
+        rerankerFn: (async () => null) as unknown as () => Promise<RerankResult[]>,
+        onPassThrough: (reason: string) => { spy.push(reason); },
+      } as unknown as NonNullable<SearchOpts['reranker']>;
       const out = await hybridSearch(engine, 'alpha keyword', {
         limit: 10,
-        reranker: {
-          enabled: true,
-          topNIn: 30,
-          topNOut: null,
-          // A non-array body (e.g. `{"error": "..."}` on HTTP 200) — the
-          // malformed_shape class, distinct from the empty-array class.
-          rerankerFn: (async () => null) as unknown as () => Promise<RerankResult[]>,
-          // Caller-supplied callback: hybridSearch wraps it to stamp meta and
-          // MUST still invoke it (the chain is what lets an eval harness or
-          // telemetry sink observe the pass-through per call).
-          onPassThrough: (reason) => { spy.push(reason); },
-        },
+        reranker: rerankerWithSpy,
         onMeta: (meta) => { degraded = meta.degraded ?? []; },
       });
       expect(out.length).toBeGreaterThan(0);
