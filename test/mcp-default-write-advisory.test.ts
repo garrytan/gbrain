@@ -80,4 +80,39 @@ describe('createDefaultWriteAdvisory (stdio lane, #4583 review fix)', () => {
     await advise('seed_default', true);
     expect(count()).toBe(0);
   });
+
+  test('a THROWING assessment still latches and never propagates (advisory, never blocks a write)', async () => {
+    // The latch arms BEFORE the assessment runs, so a brain whose aggregate
+    // throws (no pages table yet, a permissions error, a transient) is
+    // assessed exactly once, prints nothing, and the mutating call proceeds.
+    let aggregateRuns = 0;
+    const engine = {
+      kind: 'pglite' as const,
+      async executeRaw<T>(sql: string): Promise<T[]> {
+        if (sql.includes('FROM pages')) {
+          aggregateRuns++;
+          throw new Error('relation "pages" does not exist');
+        }
+        return [];
+      },
+    } as unknown as BrainEngine;
+    const lines: string[] = [];
+    const advise = createDefaultWriteAdvisory(engine, { enabled: true, write: (l) => lines.push(l) });
+    await expect(advise('seed_default', true)).resolves.toBeUndefined();
+    await advise('seed_default', true);
+    await advise('seed_default', true);
+    expect(aggregateRuns).toBe(1);
+    expect(lines).toEqual([]);
+  });
+
+  test('a THROWING writer never propagates either', async () => {
+    const { engine, count } = makeCountingStub(GUARDED);
+    const advise = createDefaultWriteAdvisory(engine, {
+      enabled: true,
+      write: () => { throw new Error('EPIPE: stderr closed'); },
+    });
+    await expect(advise('seed_default', true)).resolves.toBeUndefined();
+    await advise('seed_default', true);
+    expect(count()).toBe(1);
+  });
 });
