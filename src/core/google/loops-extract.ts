@@ -76,11 +76,12 @@ export interface ExtractEligibility {
  * contain no sender, domain, subject or body matching, so no vendor list has
  * to be maintained and nobody's mail is special-cased.
  *
- * The load-bearing rule is `owner_participated`: a thread carrying ANY message
- * from the account owner stays eligible whatever its labels say, because the
- * owner's own outbound message is exactly where their commitment lives. That
- * is what makes "I'll send this by Friday", written in reply to a bulk-labelled
- * thread, still reachable.
+ * The load-bearing rule is `owner_participated`: a thread carrying ANY
+ * substantive (non-noise, non-calendar) message from the account owner stays
+ * eligible whatever its labels say, because the owner's own outbound message is
+ * exactly where their commitment lives. That is what makes "I'll send this by
+ * Friday", written in reply to a bulk-labelled thread, still reachable — while
+ * an RSVP notice Calendar sent on the owner's behalf does not count as writing.
  *
  * CATEGORY_UPDATES is deliberately NOT excluded: invoices, contracts and
  * document requests land there, and they carry real obligations.
@@ -100,19 +101,22 @@ export function loopExtractionEligibility(
     return { eligible: false, reason: 'spam_or_trash' };
   }
 
-  // The owner's own message is where their promise is. This beats every
-  // exclusion below — replying to a newsletter makes the thread real.
-  const ownerWrote = (m: GmailMessageMeta): boolean =>
-    m.labelIds.includes('SENT') || myAddresses.has(m.fromAddress);
-  if (messages.some(ownerWrote)) return { eligible: true, reason: 'owner_participated' };
-
   // Machine mail carries no commitments: pure noise senders, and Calendar's
   // invitation/response notices (which come FROM a real colleague, so the
-  // sender check alone cannot see them).
+  // sender check alone cannot see them). Computed FIRST: the owner override
+  // below only counts messages the owner actually wrote — an "Accepted:" RSVP
+  // Calendar sends on the owner's behalf (SENT label, METHOD:REPLY) is still
+  // calendar mail, so a pure invitation exchange never pays for a model call.
   const substantive = messages.filter(
     (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
   );
   if (substantive.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
+
+  // The owner's own message is where their promise is. This beats every
+  // exclusion below — replying to a newsletter makes the thread real.
+  const ownerWrote = (m: GmailMessageMeta): boolean =>
+    m.labelIds.includes('SENT') || myAddresses.has(m.fromAddress);
+  if (substantive.some(ownerWrote)) return { eligible: true, reason: 'owner_participated' };
 
   // Bulk by Gmail's own classification, and the owner never joined in.
   if (BULK_CATEGORY_LABELS.some((l) => labels.has(l))) {

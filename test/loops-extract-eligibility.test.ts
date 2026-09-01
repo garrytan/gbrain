@@ -187,6 +187,59 @@ const ROWS: Row[] = [
     eligible: false,
     reason: 'no_substantive_messages',
   },
+  // Ship-review fix: owner_participated used to be evaluated BEFORE the
+  // calendar/noise filter, so an invitation the owner merely RSVP'd to (the
+  // "Accepted:" notice Calendar sends on the owner's behalf — SENT label,
+  // METHOD:REPLY) was eligible and paid for a model call. The owner must have
+  // written a SUBSTANTIVE message; a pure-calendar exchange is never one.
+  {
+    name: "an invitation the owner RSVP'd to (Accepted: reply, SENT, METHOD:REPLY) is still pure calendar mail",
+    messages: [
+      msg({ from: 'kate@example.com', calendarMethod: 'REQUEST', subject: 'Invitation: Sync @ Tue' }),
+      msg({
+        from: 'me@example.com',
+        to: ['kate@example.com'],
+        labels: ['SENT'],
+        calendarMethod: 'REPLY',
+        subject: 'Accepted: Sync @ Tue',
+      }),
+    ],
+    eligible: false,
+    reason: 'no_substantive_messages',
+  },
+  {
+    name: "an owner RSVP recognised by ADDRESS (no SENT label) is still pure calendar mail",
+    messages: [
+      msg({ from: 'kate@example.com', calendarMethod: 'REQUEST', subject: 'Invitation: Sync @ Tue' }),
+      msg({ from: 'me@example.com', to: ['kate@example.com'], calendarMethod: 'REPLY', subject: 'Accepted: Sync @ Tue' }),
+    ],
+    eligible: false,
+    reason: 'no_substantive_messages',
+  },
+  {
+    name: "the owner's REAL reply to an invitation (no calendar part) keeps the thread eligible",
+    messages: [
+      msg({ from: 'kate@example.com', calendarMethod: 'REQUEST', subject: 'Invitation: Sync @ Tue' }),
+      msg({
+        from: 'me@example.com',
+        to: ['kate@example.com'],
+        labels: ['SENT'],
+        subject: 'Re: Invitation: Sync @ Tue',
+        body: 'Can we push to Wednesday? I will send the agenda tonight.',
+      }),
+    ],
+    eligible: true,
+    reason: 'owner_participated',
+  },
+  {
+    name: 'an owner RSVP does not rescue a bulk thread either — the owner wrote nothing substantive',
+    messages: [
+      msg({ from: 'bob@example.com', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] }),
+      msg({ from: 'me@example.com', labels: ['SENT'], calendarMethod: 'REPLY', subject: 'Accepted: Webinar' }),
+    ],
+    eligible: false,
+    reason: 'bulk_category',
+  },
 ];
 
 describe('loopExtractionEligibility', () => {
