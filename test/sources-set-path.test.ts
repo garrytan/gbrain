@@ -77,6 +77,25 @@ describe('gbrain sources set-path', () => {
     expect(await readLocalPath('default')).toBe(second);
   });
 
+  test('normalizes a relative path to absolute before storing (#3696 phantom-path class)', async () => {
+    // The repair command must apply the same resolvePath(msysToNativePath())
+    // treatment addSource uses: storing '.' verbatim plants the exact
+    // phantom-path class set-path exists to repair (a daemon at cwd=/ later
+    // join-resolves a path that does not exist).
+    const dir = makeDir();
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    let expected: string;
+    try {
+      expected = process.cwd(); // symlink-resolved spelling of dir
+      await runSources(engine, ['set-path', 'default', '.']);
+    } finally {
+      process.chdir(origCwd);
+    }
+    const stored = await readLocalPath('default');
+    expect(stored).toBe(expected);
+  });
+
   test('rejection: missing arguments → exit 2 (usage)', async () => {
     try {
       await runSources(engine, ['set-path', 'default']);

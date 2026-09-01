@@ -13,19 +13,29 @@
  * sources.ts stays under its module-size ratchet ceiling.
  */
 import { existsSync, statSync } from 'fs';
+import { resolve as resolvePath } from 'path';
+import { msysToNativePath } from '../core/path-confine.ts';
 import type { BrainEngine } from '../core/engine.ts';
 
 export async function runSetPath(engine: BrainEngine, args: string[]): Promise<void> {
   const id = args[0];
-  const path = args[1];
+  const rawPath = args[1];
 
-  if (!id || !path) {
+  if (!id || !rawPath) {
     console.error('Usage: gbrain sources set-path <id> <path>');
     console.error("  Sets the source's local_path — the on-disk directory gbrain treats as");
     console.error('  its write-through target and walks for sync/audit. Non-destructive: only');
     console.error('  updates the pointer, never touches files on disk.');
     process.exit(2);
   }
+
+  // Same treatment addSource applies (#3696 / gbrain#2955): absolutize a
+  // relative path and normalize MSYS/Git-Bash drive spellings BEFORE the
+  // existence check and the UPDATE. Storing '.' or '/c/Users/x' verbatim
+  // would plant the exact phantom-path class this repair command exists to
+  // fix (a daemon at cwd=/ join-resolves a path that does not exist).
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- set-path is a trusted local CLI repair command (CLI_ONLY); absolutizing the operator's own directory is the #3696 fix
+  const path = resolvePath(msysToNativePath(rawPath));
 
   const existing = await engine.executeRaw<{ id: string; local_path: string | null }>(
     `SELECT id, local_path FROM sources WHERE id = $1 LIMIT 1`,
