@@ -273,7 +273,13 @@ export function locateQuote(
   while (at !== -1 && seen < MAX_CANDIDATES) {
     seen++;
     const start = c.map[at]!;
-    const end = c.map[at + q.norm.length - 1]! + 1;
+    // map[] names the FIRST code unit of the original character; advance the
+    // end by the whole code point, not +1 — a bare +1 splits the surrogate
+    // pair when the quote ends with a non-BMP char ('ship it 🚀'), and the
+    // half-pair slice then fails the round-trip re-fold below.
+    const lastOrig = c.map[at + q.norm.length - 1]!;
+    const lastCp = content.codePointAt(lastOrig);
+    const end = lastOrig + (lastCp !== undefined && lastCp > 0xffff ? 2 : 1);
     if (
       normalizeForGrounding(content.slice(start, end)).norm === q.norm &&
       !valid.some(v => v.start === start && v.end === end)

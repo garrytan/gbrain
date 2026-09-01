@@ -75,6 +75,21 @@ describe('locateQuote — offsets point into the ORIGINAL text', () => {
     expect(content.slice(loc!.start, loc!.end)).toBe('She paused… then answered.');
   });
 
+  test('a quote ending with a non-BMP char (surrogate pair) locates with the FULL code point', () => {
+    // map[lastUnit]+1 used to split the 🚀 surrogate pair: the sliced
+    // half-pair failed the round-trip re-fold, so the quote never located
+    // and a genuinely verbatim quotation was dropped as "paraphrased".
+    const content = 'Standup notes.\nAlice said ship it 🚀 and everyone agreed.';
+    const loc = locateQuote(content, 'ship it 🚀');
+    expect(loc).not.toBeNull();
+    expect(content.slice(loc!.start, loc!.end)).toBe('ship it 🚀');
+    // Also at end-of-content, where no trailing character can mask the split.
+    const tail = 'we said ship it 🚀';
+    const locTail = locateQuote(tail, 'ship it 🚀');
+    expect(locTail).not.toBeNull();
+    expect(tail.slice(locTail!.start, locTail!.end)).toBe('ship it 🚀');
+  });
+
   test('rides the ONE folding core: locateQuote and normForGrounding agree by construction', () => {
     // Guard against a second folding implementation drifting: any string a
     // presence check would fold must fold identically here.
