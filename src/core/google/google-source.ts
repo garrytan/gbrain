@@ -512,12 +512,17 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     // Jobs already waiting shrink this sweep's budget; overflow is a
     // DEFERRAL (the backlog still covers older revisions, and a deferred
     // thread re-candidates on its next touch), logged loudly either way.
+    //
+    // The depth is PER SOURCE (payload `sourceId`, the key this enqueue
+    // writes): a brain-wide count let one Google account's stalled backlog
+    // pin every other source's budget at 0 forever.
     const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
     let waitingDepth = 0;
     try {
       const rows = await deps.engine.executeRaw<{ n: string }>(
-        `SELECT count(*)::text AS n FROM minion_jobs WHERE name = $1 AND status = 'waiting'`,
-        [LOOPS_EXTRACT_JOB],
+        `SELECT count(*)::text AS n FROM minion_jobs
+          WHERE name = $1 AND status = 'waiting' AND data->>'sourceId' = $2`,
+        [LOOPS_EXTRACT_JOB, deps.sourceId],
       );
       waitingDepth = parseInt(rows[0]?.n ?? '0', 10) || 0;
     } catch {
