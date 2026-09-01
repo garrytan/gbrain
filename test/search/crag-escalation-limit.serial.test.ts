@@ -107,4 +107,41 @@ describe('#4610 query op — adopted escalation is sliced to the caller limit', 
     // …and the caller-visible set honors the limit contract (pre-fix: 30).
     expect(results.length).toBe(10);
   }, 30000);
+
+  test('omitted limit slices to the mode-resolved searchLimit, not a hardcoded 20', async () => {
+    // The op contract for an omitted/0 `limit` is the mode-resolved
+    // searchLimit (10/25/50 — same resolution the text path and the #4356
+    // image branch already apply). The adopted escalation must slice to
+    // THAT, not to a hardcoded 20 that under-delivers on tokenmax and
+    // over-delivers on conservative.
+    calls.length = 0;
+    await engine.setConfig('search.mode', 'conservative'); // searchLimit 10
+    try {
+      const meta: Record<string, unknown> = {};
+      const ctx = {
+        engine,
+        remote: false,
+        sourceId: 'default',
+        emitResponseMeta: (key: string, value: unknown) => { meta[key] = value; },
+      } as unknown as OperationContext;
+
+      const results = (await operationsByName.query.handler(ctx, {
+        query: 'sprocket subsystem retries',
+        expand: false,
+      })) as SearchResult[];
+
+      // Escalation fired with the wide ceiling and was adopted…
+      expect(calls.length).toBe(2);
+      expect(calls[1].limit).toBe(50);
+      const crag = (meta.retrieval as { crag: { escalated?: boolean; confidence: string } }).crag;
+      expect(crag.escalated).toBe(true);
+      expect(crag.confidence).toBe('strong');
+
+      // …and the caller-visible window is the conservative searchLimit (10).
+      // Pre-fix: slice(0, 20) handed back 20 rows regardless of mode.
+      expect(results.length).toBe(10);
+    } finally {
+      await engine.setConfig('search.mode', 'balanced');
+    }
+  }, 30000);
 });

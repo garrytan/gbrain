@@ -548,9 +548,23 @@ const query: Operation = {
         callerExpanded: expand,
       })) {
         try {
+          // The caller's effective row contract, resolved the same way the
+          // image branch does (#4356 pattern): explicit `limit` wins;
+          // omitted/0 resolves the mode-derived searchLimit (10/25/50 or the
+          // configured `search.searchLimit` override) — NOT a hardcoded 20,
+          // which over-delivered on conservative and under-delivered on
+          // tokenmax. Resolved here (not earlier) so the config reads only
+          // run on the rare escalation path.
+          const escPerCallMode = resolvePerCallMode(ctx, p.mode);
+          const escModeInput = await loadSearchModeConfig(ctx.engine);
+          const escResolvedMode = resolveSearchMode({
+            mode: escPerCallMode ?? escModeInput.mode,
+            overrides: escModeInput.overrides,
+          });
+          const effectiveLimit = (p.limit as number) || escResolvedMode.searchLimit;
           let escalatedMeta: HybridSearchMeta | null = null;
           const escalated = await hybridSearchCached(ctx.engine, queryText, {
-            limit: Math.max((p.limit as number) || 20, 50),
+            limit: Math.max(effectiveLimit, 50),
             offset: (p.offset as number) || 0,
             expansion: true,
             expandFn: expandQuery,
@@ -590,7 +604,7 @@ const query: Operation = {
           crag.escalated = true;
           crag.escalated_confidence = regraded.level;
           if (confidenceRank(regraded.level) > confidenceRank(grade.level)) {
-            results = escalated.slice(0, (p.limit as number) || 20);
+            results = escalated.slice(0, effectiveLimit);
             capturedMeta = escalatedMeta;
             grade = regraded;
             crag.confidence = regraded.level;
