@@ -328,8 +328,22 @@ function normalizeQrelEntry(e: unknown, i: number): EvalQrel {
   if (slugs.length === 0) {
     throw new Error(`qrels entry ${i} ("${o.query}"): "relevant" is empty — every entry needs at least one gold slug.`);
   }
-  if (o.grades !== undefined && (typeof o.grades !== 'object' || o.grades === null || Array.isArray(o.grades))) {
-    throw new Error(`qrels entry ${i} ("${o.query}"): "grades" must be an object mapping slug -> number.`);
+  if (o.grades !== undefined) {
+    if (typeof o.grades !== 'object' || o.grades === null || Array.isArray(o.grades)) {
+      throw new Error(`qrels entry ${i} ("${o.query}"): "grades" must be an object mapping slug -> number.`);
+    }
+    // #4608 residual: a non-numeric grade value (a string, null) survives
+    // the shape check above and the blind cast below, then produces NaN
+    // nDCG AFTER the paid searches already ran. Validate the VALUES behind
+    // the same pre-billing gate, with the same named-error + entry-index
+    // style as every other check here.
+    for (const [slug, g] of Object.entries(o.grades as Record<string, unknown>)) {
+      if (typeof g !== 'number' || !Number.isFinite(g)) {
+        throw new Error(
+          `qrels entry ${i} ("${o.query}"): "grades" value for "${slug}" must be a finite number, got ${JSON.stringify(g)}.`,
+        );
+      }
+    }
   }
   return {
     ...(typeof o.id === 'string' ? { id: o.id } : {}),

@@ -338,4 +338,17 @@ describe('parseQrels (#4608) — gate-shape aliases + per-entry validation', () 
     expect(() => parseQrels(JSON.stringify([{ query: 'q', relevant: ['a'], grades: ['x'] }]))).toThrow(/"grades"/);
     expect(() => parseQrels(JSON.stringify([{ query: 'q', relevant: [42] }]))).toThrow(/slug strings/);
   });
+
+  test('non-finite grade VALUES are named errors with the entry index (pre-billing)', () => {
+    // A string/null grade survives JSON.parse and the object-shape check;
+    // pre-fix it was cast blindly (grades as Record<string, number>) and
+    // produced NaN nDCG AFTER the paid searches had already run.
+    const stringGrade = JSON.stringify([{ query: 'q', relevant: ['a'], grades: { a: 'high' } }]);
+    expect(() => parseQrels(stringGrade)).toThrow(/entry 0/);
+    expect(() => parseQrels(stringGrade)).toThrow(/finite number/);
+    // null is representable in JSON and coerces to NaN through Math.log paths.
+    expect(() => parseQrels(JSON.stringify([{ query: 'q', relevant: ['a'], grades: { a: null } }]))).toThrow(/finite number/);
+    // Valid finite numeric grades still pass untouched.
+    expect(parseQrels(JSON.stringify([{ query: 'q', relevant: ['a'], grades: { a: 2.5 } }]))[0].grades).toEqual({ a: 2.5 });
+  });
 });
