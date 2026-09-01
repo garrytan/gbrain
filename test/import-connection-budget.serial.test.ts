@@ -157,6 +157,39 @@ test('import preserves legacy fan-out when the connection budget is unset', asyn
   expect(workerPoolSizes).toEqual([2, 2, 2]);
 });
 
+// Ship-review gap (#4619): resolveMaxConnections treats anything that is not
+// a positive integer as UNSET — the clamp is strictly opt-in, so a typo'd or
+// zeroed budget must preserve the legacy fan-out and print no clamp line
+// (a "clamped workers" line with a bogus budget would tell the operator a
+// clamp happened that never did).
+for (const [label, raw] of [
+  ['non-numeric', 'abc'],
+  ['zero', '0'],
+  ['negative', '-5'],
+  ['fractional', '2.5'],
+  ['empty string', ''],
+] as const) {
+  test(`GBRAIN_MAX_CONNECTIONS=${JSON.stringify(raw)} (${label}) preserves legacy fan-out with no clamp line`, async () => {
+    process.env.GBRAIN_MAX_CONNECTIONS = raw;
+    const engine = fakeEngine('postgres');
+
+    const errors: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      await runImport(engine, ['--no-embed', '--workers', '3', importDir]);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(workerConnects).toBe(3);
+    expect(workerPoolSizes).toEqual([2, 2, 2]);
+    expect(errors.some(line => line.includes('clamped workers'))).toBe(false);
+    expect(errors.some(line => line.includes('GBRAIN_MAX_CONNECTIONS'))).toBe(false);
+  });
+}
+
 test('PGLite bypasses the Postgres connection budget clamp', async () => {
   process.env.GBRAIN_MAX_CONNECTIONS = '1';
   const engine = fakeEngine('pglite');

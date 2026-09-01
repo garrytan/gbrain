@@ -20,6 +20,7 @@ import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -70,5 +71,70 @@ describe('unscoped import warns when the write actually lands in default (#4583 
 
     // ...and the operator was told about it.
     expect(errOut).toMatch(/writing to source 'default' on a multi-source brain/);
+  });
+});
+
+// Ship-review gaps (#4583): the advisory's escape hatches and its pure
+// seed_default arm, on the same guarded brain (2 non-default sources hold the
+// bulk; assessDefaultWriteGuard fires).
+describe('unscoped import advisory — escapes and the pure seed_default tier (#4583)', () => {
+  const WARN = /writing to source 'default' on a multi-source brain/;
+
+  async function importCapturingStderr(args: string[]): Promise<string> {
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runImport(engine, args);
+      return errSpy.mock.calls.flat().filter((x) => typeof x === 'string').join('\n');
+    } finally {
+      errSpy.mockRestore();
+    }
+  }
+
+  async function sourcesHolding(slug: string): Promise<string[]> {
+    const rows = await engine.executeRaw<{ source_id: string }>(
+      `SELECT source_id FROM pages WHERE slug = $1 AND deleted_at IS NULL ORDER BY source_id`, [slug],
+    );
+    return rows.map((r) => r.source_id);
+  }
+
+  test('GBRAIN_ALLOW_DEFAULT_WRITE=1 silences the advisory (the write still lands in default)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-warn-allow-'));
+    writeFileSync(join(dir, 'allowed.md'), '---\ntype: note\ntitle: allowed\n---\n# allowed\n\nbody\n');
+    let errOut = '';
+    await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: '1' }, async () => {
+      errOut = await importCapturingStderr([dir, '--no-embed', '--json']);
+    });
+    expect(errOut).not.toMatch(WARN);
+    expect(await sourcesHolding('allowed')).toEqual(['default']);
+  });
+
+  test('an explicit --source-id never warns and routes the write to that source', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-warn-explicit-'));
+    writeFileSync(join(dir, 'explicit.md'), '---\ntype: note\ntitle: explicit\n---\n# explicit\n\nbody\n');
+    let errOut = '';
+    await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined }, async () => {
+      errOut = await importCapturingStderr([dir, '--no-embed', '--json', '--source-id', 'dept-x']);
+    });
+    expect(errOut).not.toMatch(WARN);
+    expect(await sourcesHolding('explicit')).toEqual(['dept-x']);
+  });
+
+  test('the pure seed_default tier (no sources.default, no dotfile, 2+ sources) still warns', async () => {
+    // Drop the brain_default pin the file-level beforeAll set, so the
+    // resolver falls all the way through to seed_default.
+    await engine.executeRaw(`DELETE FROM config WHERE key = 'sources.default'`);
+    try {
+      const dir = mkdtempSync(join(tmpdir(), 'gbrain-import-warn-seed-'));
+      writeFileSync(join(dir, 'seeded.md'), '---\ntype: note\ntitle: seeded\n---\n# seeded\n\nbody\n');
+      let errOut = '';
+      await withEnv({ GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined }, async () => {
+        errOut = await importCapturingStderr([dir, '--no-embed', '--json']);
+      });
+      expect(errOut).toMatch(WARN);
+      expect(errOut).toContain('--source-id');
+      expect(await sourcesHolding('seeded')).toEqual(['default']);
+    } finally {
+      await engine.setConfig('sources.default', 'dept-x');
+    }
   });
 });
