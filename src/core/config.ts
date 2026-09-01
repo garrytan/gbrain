@@ -34,6 +34,25 @@ export interface GBrainConfig {
    * `gbrain config set` routes these two dotted keys here, not to the DB. */
   push?: { allow_unverified_remote?: boolean };
   hooks?: { stop_push_debounce_min?: number | string };
+  /** Ambient-writeback MIRROR of the DB-plane `memory.*` keys — `gbrain
+   * config set memory.*` dual-writes both planes so the engine-free Stop-hook
+   * child and the stdio boot resolve see the same truth the serve does. The
+   * DB plane stays authoritative (the serve-side harvest gate re-checks it).
+   * Resolved by src/core/facts/writeback-config.ts. */
+  /** Declared brain audience MIRROR (WP8; DB plane authoritative like
+   * `memory.*`): the engine-free bootstrap-harness lane gates its
+   * ambient-writeback enable-nudge on it — a shared-declared brain is never
+   * nudged. Written by `gbrain config set brain.audience personal|shared`. */
+  brain?: { audience?: string };
+  memory?: {
+    auto_writeback?: string;
+    auto_writeback_transient_ttl?: string;
+    /** Visibility POSTURE cache stamped by `config set memory.*` (which has
+     * the engine to resolve the DB-plane facts.default_visibility) so the
+     * engine-free bootstrap-harness renderer can embed it. Doctor's
+     * block-drift check catches staleness against DB truth. */
+    visibility_posture?: string;
+  };
   /**
    * Third-party integration gates, file-plane (read by engine-free hook
    * children). `integrations.memorable.enabled` gates the optional
@@ -1286,6 +1305,25 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // didn't specify one: 'private' (default) | 'world'. Resolved by
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
+  // Ambient memory writeback (opt-in, default OFF): 'off' | 'salient' | 'all'.
+  // DUAL-PLANE: `gbrain config set` writes the DB plane (authoritative — the
+  // serve-side harvest gate re-checks it) AND mirrors into the file plane's
+  // `memory` slot (read by the engine-free Stop-hook child and the stdio
+  // serve's boot resolve). Resolved by src/core/facts/writeback-config.ts.
+  'memory.auto_writeback',
+  // TTL the instruction template tells agents to pass on TRANSIENT facts
+  // (health/location/travel/mood/near-term schedule). Duration shorthand
+  // only ('3d', '12h'), positive, capped at 365d; default '3d'.
+  'memory.auto_writeback_transient_ttl',
+  // Fire-once sentinel for the ambient-writeback consent nudge (WP8):
+  // stamped 'true' after the init/post-upgrade ask has been shown once.
+  'memory.auto_writeback_notice_shown',
+  // Declared brain audience: 'personal' | 'shared'. Set by the operator, by
+  // company-brainify's Phase-5 handoff (shared), or from the bootstrap
+  // interview. Declaration beats the conservative client-count heuristic in
+  // src/core/facts/writeback-audience.ts; the consent nudge fires only on
+  // personal brains and never auto-enables anything.
+  'brain.audience',
   // Conversation parser LLM fallback. Deliberately register the exact key,
   // not a conversation_parser.* prefix: fallback is the only live opt-in
   // consumer, while the polish scaffold remains unwired.
