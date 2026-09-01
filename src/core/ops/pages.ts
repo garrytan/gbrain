@@ -1435,13 +1435,12 @@ const capture: Operation = {
     if (normalized.length === 0) {
       throw new OperationError('invalid_params', 'Refusing to capture empty content.');
     }
-    const type = typeof p.type === 'string' && p.type.length > 0 ? p.type : 'note';
     // #4655: fail-loud rejection of an EXPLICIT undeclared page type (the
     // `type` param or a frontmatter `type:` in the content) BEFORE writing,
     // naming the declared vocabulary so agents can self-correct. Best-effort:
-    // no resolvable pack → no check. The default-'note' path is never
-    // checked, and the mergeCaptureFrontmatter call below still receives the
-    // resolved `type` (default stamping semantics unchanged).
+    // no resolvable pack → no check; the default-'note' path is never checked.
+    // The validated explicit type IS the effective type (else 'note') for both
+    // the default slug and the merge below — approved as X, stored as X.
     const explicitType = explicitCaptureType(content, typeof p.type === 'string' && p.type.length > 0 ? p.type : undefined);
     if (explicitType) {
       const { loadActivePackForWriteVocabulary, packDeclaresPageType, undeclaredPageTypeMessage, undeclaredPageTypeSuggestion } =
@@ -1455,6 +1454,7 @@ const capture: Operation = {
         );
       }
     }
+    const type = explicitType ?? 'note';
     let slug = typeof p.slug === 'string' && p.slug.length > 0 ? p.slug : undefined;
     if (slug) {
       // Defense-in-depth on the caller-supplied slug (matches the takes ops);

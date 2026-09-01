@@ -92,21 +92,45 @@ describe('capture op', () => {
     expect(await engine.getPage(slug)).toBeNull();
   });
 
-  // #4721 rework rider: the capture op must NOT quietly stop stamping the
-  // resolved default type into mergeCaptureFrontmatter. With no explicit
-  // `type` param, the merge still receives 'note' — which (per the
-  // documented mergeCaptureFrontmatter precedence, opts.type first) is what
-  // gets stamped even when the content's own frontmatter declares a type.
-  test('keeps stamping the default note type into merges when no explicit type param is given', async () => {
-    const slug = 'inbox/capture-default-type-stamp';
+  // Ship-review fix on the #4721 rework: with no `type` param the handler
+  // used to validate the frontmatter's explicit type against the pack, then
+  // hand the defaulted 'note' to mergeCaptureFrontmatter (opts.type wins) —
+  // so a capture APPROVED as 'person' was STORED as 'note'. The effective
+  // type is the validated explicit/frontmatter type when present, else
+  // 'note', and it drives both the stamp and the default-slug prefix.
+  test('frontmatter type is the stored type when no type param is given', async () => {
+    const slug = 'inbox/capture-frontmatter-type-kept';
     const body = parsed(await dispatchToolCall(engine, 'capture', {
-      content: '---\ntype: meeting\n---\n\nDeclared frontmatter type, no explicit param.',
+      content: '---\ntype: person\ntitle: Alice Example\n---\n\nDeclared frontmatter type, no explicit param.',
       slug,
     }, { ...STDIO }));
     expect(body.error).toBeUndefined();
     const page = await engine.getPage(slug);
     // put_page lifts the stamped frontmatter `type` into the type column.
-    expect(page?.type).toBe('note');
+    expect(page?.type).toBe('person');
+  });
+
+  test('the default-slug prefix follows the frontmatter type (diary → life/diary/)', async () => {
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: '---\ntype: diary\n---\n\nFrontmatter diary, no explicit param.',
+    }, { ...STDIO }));
+    expect(body.error).toBeUndefined();
+    expect(body.slug).toMatch(/^life\/diary\/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
+    expect((await engine.getPage(body.slug))?.type).toBe('diary');
+  });
+
+  test('no frontmatter and no type param still stamps note; an explicit type param beats frontmatter', async () => {
+    const plain = parsed(await dispatchToolCall(engine, 'capture', {
+      content: 'Plain body, nothing declared.', slug: 'inbox/capture-plain-note',
+    }, { ...STDIO }));
+    expect((await engine.getPage(plain.slug))?.type).toBe('note');
+    const explicit = parsed(await dispatchToolCall(engine, 'capture', {
+      content: '---\ntype: person\n---\n\nParam wins over frontmatter.',
+      slug: 'inbox/capture-param-beats-frontmatter',
+      type: 'meeting',
+    }, { ...STDIO }));
+    expect(explicit.error).toBeUndefined();
+    expect((await engine.getPage(explicit.slug))?.type).toBe('meeting');
   });
 
   test('NUL byte and empty content are refused with named errors', async () => {
