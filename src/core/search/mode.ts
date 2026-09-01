@@ -952,7 +952,16 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // within cache.ttl_seconds (3600s default). (Authored as 23→24 on the
 // wave-g branch; 24 and 25 were claimed by the two bumps above while it
 // was in flight, so it takes the next free number per the D8 convention.)
-export const KNOBS_HASH_VERSION = 26;
+//
+// bump 26→27 (#4256, fixes #3695's fusion path): compiledTruthBoost now
+// suppresses the 2x compiled-truth authority boost for synthetic chunkless
+// title rows (chunk_id 0 + empty chunk_text) in both rrfFusion variants —
+// result ordering changes for identical knobs, so cached rows ranked under
+// the old boost must not be served under the new semantics. No new key
+// part; version-only invalidation (same class as the 13→14 detail=medium
+// boost-scope bump and the 21→22 stamp/injection epoch). One-time global
+// cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
+export const KNOBS_HASH_VERSION = 27;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
