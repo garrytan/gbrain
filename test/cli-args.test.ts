@@ -76,6 +76,17 @@ describe('#4602 — boolean flags consume a literal true/false value token', () 
     }
   });
 
+  test('validator arm: --dry-run true is a consumed value token, not an unknown flag or a positional', () => {
+    // The parser and the validator share ONE isBooleanLiteral definition; the
+    // `true` literal is the arm the table-driven --dry-run case above does not
+    // exercise. Pinned on a multi-positional op so a leak would be visible.
+    expect(findUnknownOpFlag(operationsByName.add_link, ['page-a', '--dry-run', 'true', 'page-b'])).toBeNull();
+    const params = parseOpArgs(operationsByName.add_link, ['page-a', '--dry-run', 'true', 'page-b']);
+    expect(params).toEqual({ from: 'page-a', dry_run: true, to: 'page-b' });
+    // Inline spelling stays consumed too, and never eats the next token.
+    expect(findUnknownOpFlag(operationsByName.add_link, ['page-a', '--dry-run=true', 'page-b'])).toBeNull();
+  });
+
   test('multi-positional op: link a --json false no longer binds to:"false"', () => {
     const params = parseOpArgs(operationsByName.add_link, ['page-a', '--json', 'false']);
     expect(params).toEqual({ from: 'page-a', json: false });

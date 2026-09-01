@@ -1120,6 +1120,12 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+// #4602: the ONE definition of "a literal true/false value token" — shared by
+// parseOpArgs (consume it as the boolean flag's value) and findUnknownOpFlag
+// (mirror the traversal so the token counts as consumed) so the parser and
+// the validator can never disagree on what a boolean flag swallows.
+const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1169,11 +1175,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // a boolean flag is that flag's value — consume it, matching the
         // inline `=false` spelling that already worked. Any OTHER following
         // token keeps the old semantics (flag = true, token stays positional).
-        if (args[i + 1] === 'true' || args[i + 1] === 'false') {
-          params[key] = args[++i] === 'true';
-        } else {
-          params[key] = true;
-        }
+        params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (key === 'json' || key === 'dry_run') {
         // CLI-local booleans, intentionally NOT on the operation contract
         // exposed over MCP/tools: json is the formatter flag; dry_run feeds
@@ -1183,11 +1185,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // rehearsal request (the resurrected #2185 class the red team caught).
         // #4602: a literal true/false is the one exception — it is this
         // flag's value (never a plausible positional), same as above.
-        if (args[i + 1] === 'true' || args[i + 1] === 'false') {
-          params[key] = args[++i] === 'true';
-        } else {
-          params[key] = true;
-        }
+        params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (i + 1 < args.length) {
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
@@ -1462,7 +1460,7 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
     if (rawKey === 'json') {
       // #4602: parseOpArgs consumes a literal true/false as this boolean's
       // value — mirror the traversal so the token counts as consumed here too.
-      if (m[2] === undefined && (args[i + 1] === 'true' || args[i + 1] === 'false')) i++;
+      if (m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
       continue;
     }
     if ((rawKey === 'explain' || rawKey === 'help') && m[2] === undefined) continue;
@@ -1472,7 +1470,7 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
       // parser: source consumes a value when not inline-`=`; dry-run
       // consumes only a literal true/false (#4602).
       if (rawKey === 'source' && m[2] === undefined) i++;
-      if (rawKey === 'dry-run' && m[2] === undefined && (args[i + 1] === 'true' || args[i + 1] === 'false')) i++;
+      if (rawKey === 'dry-run' && m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
       continue;
     }
     if (rawKey.startsWith('no-')) {
@@ -1486,10 +1484,7 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
       // provided inline via `=` — exactly like parseOpArgs. Boolean flags
       // consume only a literal true/false value token (#4602).
       if (paramDef.type !== 'boolean' && m[2] === undefined) i++;
-      else if (
-        paramDef.type === 'boolean' && m[2] === undefined &&
-        (args[i + 1] === 'true' || args[i + 1] === 'false')
-      ) i++;
+      else if (paramDef.type === 'boolean' && m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
       continue;
     }
     return `--${rawKey}`;
