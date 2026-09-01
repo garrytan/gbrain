@@ -23,6 +23,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // #4655: pin the active pack via the DB plane (tier-4) so the write-time
+  // vocabulary checks resolve gbrain-base regardless of the host's file config.
+  await engine.setConfig('schema_pack', 'gbrain-base');
 });
 
 afterAll(async () => {
@@ -57,6 +60,53 @@ describe('capture op', () => {
       content: 'Long day, good demo.', type: 'diary',
     }, { ...STDIO }));
     expect(body.slug).toMatch(/^life\/diary\/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
+  });
+
+  // #4655: EXPLICIT undeclared page types are rejected fail-loud, naming the
+  // pack and its declared vocabulary. STDIO carries remote: true, so these
+  // double as the remote-caller negative tests for the changed op.
+  test('rejects an undeclared explicit page type before writing (remote)', async () => {
+    const slug = 'inbox/capture-bad-explicit-type';
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: 'This should not be written.',
+      slug,
+      type: 'definitely_not_a_type',
+    }, { ...STDIO }));
+    expect(body.error).toBe('invalid_params');
+    expect(body.message).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(body.message).toContain('gbrain-base');
+    // The suggestion names the declared vocabulary so agents self-correct.
+    expect(body.suggestion).toContain('Use a declared page type');
+    expect(body.suggestion).toContain('analysis');
+    expect(await engine.getPage(slug)).toBeNull();
+  });
+
+  test('rejects an undeclared frontmatter page type before writing (remote)', async () => {
+    const slug = 'inbox/capture-bad-frontmatter-type';
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: '---\ntype: definitely_not_a_type\n---\n\nThis should not be written.',
+      slug,
+    }, { ...STDIO }));
+    expect(body.error).toBe('invalid_params');
+    expect(body.message).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(await engine.getPage(slug)).toBeNull();
+  });
+
+  // #4721 rework rider: the capture op must NOT quietly stop stamping the
+  // resolved default type into mergeCaptureFrontmatter. With no explicit
+  // `type` param, the merge still receives 'note' — which (per the
+  // documented mergeCaptureFrontmatter precedence, opts.type first) is what
+  // gets stamped even when the content's own frontmatter declares a type.
+  test('keeps stamping the default note type into merges when no explicit type param is given', async () => {
+    const slug = 'inbox/capture-default-type-stamp';
+    const body = parsed(await dispatchToolCall(engine, 'capture', {
+      content: '---\ntype: meeting\n---\n\nDeclared frontmatter type, no explicit param.',
+      slug,
+    }, { ...STDIO }));
+    expect(body.error).toBeUndefined();
+    const page = await engine.getPage(slug);
+    // put_page lifts the stamped frontmatter `type` into the type column.
+    expect(page?.type).toBe('note');
   });
 
   test('NUL byte and empty content are refused with named errors', async () => {

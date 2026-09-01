@@ -107,7 +107,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: FROM_SLUG,
       to: TO_FOREIGN,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, GRANTED);
 
     expect(result.isError).toBe(true);
@@ -122,7 +122,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: TO_FOREIGN,
       to: TO_SHARED,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, GRANTED);
 
     expect(result.isError).toBe(true);
@@ -135,7 +135,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: FROM_SLUG,
       to: TO_FOREIGN,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, UNGRANTED);
 
     expect(result.isError).toBe(true);
@@ -150,7 +150,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: FROM_SLUG,
       to: DELETED_FOREIGN,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, GRANTED);
 
     expect(result.isError).toBe(true);
@@ -162,7 +162,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: SD_FROM,
       to: SD_TO,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, GRANTED);
 
     expect(result.isError).toBeUndefined();
@@ -173,7 +173,7 @@ describe('add_link source-boundary diagnostics (#4109)', () => {
     const result = await dispatchToolCall(engine, 'add_link', {
       from: FROM_SLUG,
       to: TO_SHARED,
-      link_type: 'documents',
+      link_type: 'mentions',
     }, GRANTED);
 
     expect(result.isError).toBeUndefined();

@@ -1384,7 +1384,7 @@ const capture: Operation = {
   handler: async (ctx, p) => {
     const {
       detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter,
-      defaultSlug,
+      defaultSlug, explicitCaptureType,
     } = await import('../capture-content.ts');
     const { computeContentHash } = await import('../ingestion/types.ts');
     const content = p.content as string;
@@ -1399,6 +1399,25 @@ const capture: Operation = {
       throw new OperationError('invalid_params', 'Refusing to capture empty content.');
     }
     const type = typeof p.type === 'string' && p.type.length > 0 ? p.type : 'note';
+    // #4655: fail-loud rejection of an EXPLICIT undeclared page type (the
+    // `type` param or a frontmatter `type:` in the content) BEFORE writing,
+    // naming the declared vocabulary so agents can self-correct. Best-effort:
+    // no resolvable pack → no check. The default-'note' path is never
+    // checked, and the mergeCaptureFrontmatter call below still receives the
+    // resolved `type` (default stamping semantics unchanged).
+    const explicitType = explicitCaptureType(content, typeof p.type === 'string' && p.type.length > 0 ? p.type : undefined);
+    if (explicitType) {
+      const { loadActivePackForWriteVocabulary, packDeclaresPageType, undeclaredPageTypeMessage, undeclaredPageTypeSuggestion } =
+        await import('../schema-pack/write-vocabulary.ts');
+      const activePack = await loadActivePackForWriteVocabulary(ctx);
+      if (activePack && !packDeclaresPageType(activePack, explicitType)) {
+        throw new OperationError(
+          'invalid_params',
+          undeclaredPageTypeMessage(explicitType, activePack, 'capture'),
+          undeclaredPageTypeSuggestion(activePack),
+        );
+      }
+    }
     let slug = typeof p.slug === 'string' && p.slug.length > 0 ? p.slug : undefined;
     if (slug) {
       // Defense-in-depth on the caller-supplied slug (matches the takes ops);
