@@ -109,6 +109,8 @@ scope already covers are ingested by pointing an additional source at them:
 ```bash
 gbrain google calendars                 # list every calendar the account can
                                         # read (* marks the primary), with ids
+gbrain google calendars --json          # { ok, status, account, calendars[],
+                                        #   next_action.command } for agents
 gbrain sources add family-cal --kind google --account you@example.com \
   --services calendar --calendar-id "family0123456789@group.calendar.google.com"
 ```

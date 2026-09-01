@@ -1,6 +1,6 @@
 /**
- * gbrain google — connect/status/disconnect (+ setup, wired after the source
- * kind lands) for the Google connector.
+ * gbrain google — connect/status/calendars/disconnect (+ setup, wired after
+ * the source kind lands) for the Google connector.
  *
  * Agent-first contract (docs/guides/google-connect.md):
  *  - Every subcommand supports --json and emits the envelope
@@ -820,6 +820,8 @@ Docs: docs/guides/google-connect.md`;
  * `gbrain google calendars [--account <email>] [--json]`
  * Lists every calendar the connected account can read, so a secondary
  * calendar's id can be handed to `sources add --calendar-id`. Read-only.
+ * `--json` emits the shared envelope (`ok`, `status`, `next_action.command`
+ * = the `sources add` template) plus `account` and `calendars[]`.
  */
 export async function runGoogleCalendars(args: string[]): Promise<void> {
   let account = '';
@@ -854,18 +856,17 @@ export async function runGoogleCalendars(args: string[]): Promise<void> {
   const { CalendarClient } = await import('../core/google/google-clients.ts');
   const client = new CalendarClient(tokens, fetch, () => {}, entry.meta.client_id);
   const cals = await client.listCalendars();
-  if (json) {
-    process.stdout.write(JSON.stringify({ account, calendars: cals }, null, 2) + '\n');
-    return;
-  }
-  process.stdout.write(`Calendars readable by ${account}:\n\n`);
-  for (const c of cals) {
-    process.stdout.write(
-      `  ${c.primary ? '*' : ' '} ${c.summary}\n      id: ${c.id}\n      access: ${c.accessRole}\n`,
-    );
-  }
-  process.stdout.write(
-    `\n(* = primary, already synced). To ingest another:\n  gbrain sources add <id> --kind google --account ${account} --services calendar --calendar-id "<id>"\n`,
+  const addCommand = `gbrain sources add <id> --kind google --account ${account} --services calendar --calendar-id "<id>"`;
+  emit(
+    json,
+    { ok: true, status: 'ok', account, calendars: cals, next_action: { command: addCommand } },
+    [
+      `Calendars readable by ${account}:\n`,
+      ...cals.map(
+        (c) => `  ${c.primary ? '*' : ' '} ${c.summary}\n      id: ${c.id}\n      access: ${c.accessRole}`,
+      ),
+      `\n(* = primary, already synced). To ingest another:\n  ${addCommand}`,
+    ],
   );
 }
 
