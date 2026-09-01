@@ -5,7 +5,7 @@
 // page-to-alias) + final sync; active-pack flip (D13); celebration summary;
 // gbrain-unify lock held; verify-step thresholds.
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runUnifyTypes } from '../src/core/schema-pack/unify-types-handler.ts';
@@ -211,6 +211,82 @@ describe('#2184 conversation-shaped types survive v2 unify', () => {
 // UnifyTypesOpts.apply documents 'Default false (dry-run)'. Structural pin —
 // the worker source must default apply to false.
 import { readFileSync } from 'fs';
+
+// #4651 — the catch-all capture dropped path_filter/slug_filter, so the
+// synthesized per-type retype rules silently widened their selection to
+// EVERY page of an unknown type (the explicit-rule path always copied the
+// filters). Protected bulk mutation must respect the pack-declared
+// boundaries.
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { withEnv } from './helpers/with-env.ts';
+
+function filteredCatchAllPack(name: string, filterLines: string): string {
+  return `api_version: gbrain-schema-pack-v1
+name: ${name}
+version: 1.0.0
+description: catch-all retype scoped by disambiguation filters (regression pack for gbrain#4651)
+page_types:
+  - name: note
+    primitive: concept
+mapping_rules:
+  - kind: retype
+    from_type: "*unknown*"
+    to_type: note
+    subtype_field: legacy_type
+    subtype: "*original_type*"
+${filterLines}
+`;
+}
+
+describe('#4651 catch-all retype carries slug_filter/path_filter into synthesized rules', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'gbrain-unify-4651-'));
+    for (const [name, filterLines] of [
+      ['unify-catchall-slugfilter', '    slug_filter: "inbox/%"'],
+      ['unify-catchall-pathfilter', '    path_filter: "inbox/%"'],
+    ] as const) {
+      const dir = join(home, '.gbrain', 'schema-packs', name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'pack.yaml'), filteredCatchAllPack(name, filterLines));
+    }
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('dry-run: slug_filter scopes the synthesized rules — out-of-filter pages are not counted', async () => {
+    await seed('inbox/legacy-a', 'widget-legacy');
+    await seed('keep/legacy-b', 'widget-legacy');
+    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypes(ctxOf(), {
+      target_pack: 'unify-catchall-slugfilter',
+      apply: false,
+    }));
+    expect(result.per_phase.retype_catch_all.synthesized_rules).toBe(1);
+    // Pre-fix: 2 — the filter was dropped and the whole unknown type matched.
+    expect(result.per_phase.retype_catch_all.would_apply).toBe(1);
+  });
+
+  it('apply: path_filter parity — a same-type page outside the filter keeps its type', async () => {
+    await seed('inbox/legacy-a', 'widget-legacy');
+    await seed('keep/legacy-b', 'widget-legacy');
+    const result = await withEnv({ GBRAIN_HOME: home }, () => runUnifyTypes(ctxOf(), {
+      target_pack: 'unify-catchall-pathfilter',
+      apply: true,
+    }));
+    expect(result.per_phase.retype_catch_all.applied).toBe(1);
+    const rows = await engine.executeRaw<{ slug: string; type: string }>(
+      `SELECT slug, type FROM pages WHERE deleted_at IS NULL ORDER BY slug`,
+    );
+    const map = Object.fromEntries(rows.map((r) => [r.slug, r.type]));
+    expect(map['inbox/legacy-a']).toBe('note');
+    expect(map['keep/legacy-b']).toBe('widget-legacy');
+  });
+});
 
 describe('#1575 unify-types worker dry-run default', () => {
   it('jobs.ts worker registration defaults apply to false, matching the handler contract', () => {
