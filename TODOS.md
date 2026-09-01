@@ -73,6 +73,142 @@
   `src/commands/doctor/checks/default-source-path.ts`,
   `src/core/model-config.ts`, `src/core/write-through.ts`.
 
+### Ship-review deferrals (follow-up from v0.47.10.0 ship review)
+
+Items the three cross-model review rounds surfaced and deliberately deferred
+(each has a bounded blast radius today; none blocks the ship). The 27
+deferred M-effort issues above are NOT repeated here.
+
+- [ ] **P2 — loops_extract enqueue budget is a racy count-then-insert.**
+  **What:** `enqueueLoopsExtraction` (`src/core/google/google-source.ts`)
+  counts this source's waiting `loops_extract` jobs, then adds up to
+  `LOOPS_EXTRACT_ENQUEUE_CEILING - waiting`. Two concurrent sweeps of the
+  same source (a manual `sync --source` racing autopilot) each read the same
+  depth and both fill the budget, so the ceiling can be overshot by one
+  sweep's worth. Bounded: the per-revision idempotency key
+  (`loops:<source>:<slug>:<newestMs>`) means no thread is ever queued twice,
+  so the overshoot is spend headroom, never duplicate work. **Right
+  altitude:** reserve the budget in the same statement that inserts (an
+  `INSERT … SELECT` gated on the live count, or a per-source advisory lock
+  around the enqueue), or let `MinionQueue` own a `countWaiting(name,
+  predicate)` + `addBounded` pair. **Where:**
+  `src/core/google/google-source.ts`, `src/core/minions/queue.ts`.
+- [ ] **P3 — Grok per-message timestamps equal the session bounds.**
+  **What:** `chat_history.jsonl` carries no per-message times, so the adapter
+  stamps every message with `created_at` and only the last with
+  `last_active_at` (`src/core/transcripts/grok.ts`). Real source times, never
+  fabricated — but a downstream consumer that orders or windows by message
+  timestamp sees a flat session. Interpolation would fabricate provenance;
+  the honest fix is a per-message `timestamp_source` (or a session-level
+  `message_times: 'session_bounds'` stamp) so consumers can tell bounds
+  from real per-message times. **Where:** `src/core/transcripts/grok.ts`,
+  `render.ts`.
+- [ ] **P2 — Unbound legacy atom adoption can collide on slug.** **What:**
+  `isCompatibleAtomBinding` (`src/core/cycle/extract-atoms.ts`) treats an
+  atom with NO `source_slug`/`source_path` as adoptable by any source page
+  (pre-binding-era adoption). Two different source pages whose legacy
+  title-only slug coincides therefore both adopt the same unbound atom; the
+  second re-extraction rebinds it away from the first. Bounded to the
+  pre-binding era (new atoms are always bound). **Right altitude:** stamp
+  `source_slug` on first adoption so the second adopter hits the fail-closed
+  guard, and surface the conflict as a warn rather than a silent rebind.
+  **Where:** `src/core/cycle/extract-atoms.ts` (`resolvePageAtomSlug`,
+  `assertAtomImportBinding`).
+- [ ] **P3 — Provenance-link failures are counted as provider failures in
+  the drain summary.** **What:** in the extract_atoms batch, a failed
+  provenance-edge write (`link_source: 'atom-provenance'`, the #3961 bank)
+  lands in the same per-item failure records that feed
+  `status: 'provider_failure'` in `runExtractAtomsDrain`'s summary, so a
+  link-table hiccup reads as an LLM outage in `--json` and in doctor advice.
+  **Right altitude:** a typed failure `kind` (`provider` | `provenance` |
+  `write`) on the failure record, with `provider_failure` derived from the
+  provider kind only. **Where:** `src/core/cycle/extract-atoms.ts`,
+  `src/core/cycle/extract-atoms-drain.ts`.
+- [ ] **P3 — Cross-modal single-model quorum should stamp a degraded
+  verdict.** **What:** with only one of the three default slots keyed, a
+  cycle still emits PASS/FAIL from a single judge; the 2-model case is
+  already documented as "permanently inconclusive", but the 1-of-3 case
+  looks like a full-panel verdict. **Right altitude:** stamp
+  `degraded: 'single_model'` (and the reachable slot ids) on the verdict and
+  print it in the human summary. **Where:**
+  `src/core/cross-modal-eval/runner.ts`, `aggregate.ts`.
+- [ ] **P3 — OpenRouter `reasoning_content` promote shim buffers responses
+  for every family.** **What:** the compat fetch that promotes DeepSeek's
+  `reasoning_content` into an empty `content` reads and re-serializes the
+  whole JSON body for every OpenRouter response, not just the deepseek/
+  family it exists for (non-JSON bodies pass through byte-identical).
+  Correct, but it costs a parse per call and would break a streamed body.
+  **Right altitude:** family-gate the promote (the `openrouter-families.ts`
+  registry already names the families) and skip the parse otherwise.
+  **Where:** `src/core/ai/recipes/openrouter.ts`,
+  `src/core/ai/recipes/deepseek.ts`, `src/core/ai/openrouter-families.ts`.
+- [ ] **P3 — DRY dedupes left standing.** **What:** three hand-rolled copies
+  the review rounds saw but did not fold: `treeNeedsPush` in
+  `src/commands/hook.ts` duplicates the dirty-or-ahead probe the
+  `bootstrap_push_health` check (`src/commands/doctor/bootstrap-checks.ts`)
+  performs; `gatewayClient` in `src/commands/eval-longmemeval.ts` is a
+  private `ThinkLLMClient` adapter over the gateway that the other eval
+  commands re-derive; and the "waiting jobs for name N" count SQL lives in
+  `MinionQueue` (`queue.ts`) AND is hand-rolled (with a `sourceId`
+  predicate) in `google-source.ts`. **Right altitude:** one exported helper
+  each — a `git-state.ts` push-needed probe, a `gateway-think-client.ts`,
+  and `MinionQueue.countWaiting(name, { payloadFilter? })`. **Where:** as
+  named.
+- [ ] **P2 — `import-file.ts` protected-frontmatter strip is gated on
+  `opts.remote === true` (fail-open when `remote` is unset).** **What:**
+  the strip that keeps an untrusted writer from planting completion markers
+  (`atoms_scan_hash` and friends) only runs when the caller passed
+  `remote: true`; a caller that omits `remote` gets the trusted path. The
+  repo's trust rule is the opposite (`remote !== false` is untrusted). Every
+  current untrusted caller does thread `remote: true`, so this is a latent
+  fail-open, not a live hole. **Right altitude:** thread `remote: false`
+  explicitly from every trusted importer (sync, CLI import, cycle) first,
+  THEN flip the gate to `opts.remote !== false`. **Where:**
+  `src/core/import-file.ts`, `src/commands/import.ts`,
+  `src/commands/sync.ts`, `src/core/cycle/*`.
+- [ ] **P3 — `import.ts` `last_sync_at` stamp skips sources whose
+  `local_path` sits under ANY ancestor git repo.** **What:** the #1691 stamp
+  detects "git-tracked local_path" via `discoverGitRoot` (walks UP), so a
+  plain folder source nested anywhere inside an unrelated git checkout
+  (notes under a dotfiles repo, a vault inside `~/code`) never gets stamped
+  and stays flagged stale by `sync_freshness`. **Right altitude:** compare
+  the discovered git root against the source's OWN `local_path` /
+  `sync.repo_path` binding — only a source that sync itself would anchor to
+  that root should be excluded. **Where:** `src/commands/import.ts` (the
+  clean-run stamp block), `src/core/sync-git.ts:discoverGitRoot`.
+- [ ] **P3 — Remote `traverse_graph` flips to both/depth 2 even when
+  `link_type` is passed.** **What:** the conservative default keys on
+  `direction` alone, so a `link_type`-only remote call also walks
+  bidirectionally at depth 2 (pinned as intended, but a caller cannot tell a
+  defaulted walk from a requested one). **Right altitude:** stamp
+  `depth_defaulted` / `direction_defaulted` in the op's response meta (or the
+  stderr note) so agents can see when the walk was clamped for them. **Where:**
+  `src/core/ops/links.ts`.
+- [ ] **P2 — Pages for the PREVIOUS calendar are not reconciled when
+  `g_calendar_id` is re-pointed.** **What:** the sync token now rebinds and
+  the switch is logged, but the old calendar's event pages remain in the
+  brain until a `--full` reconcile learns to scope calendar pages by calendar
+  id. **Right altitude:** stamp `calendar_id` into the rendered event
+  frontmatter and reconcile by it, or delete the old calendar's pages on the
+  switch behind a confirm. **Where:** `src/core/google/google-render.ts`,
+  `src/core/google/google-source.ts:sweepCalendar`.
+- [ ] **P3 — CLI `gbrain capture` default slug uses only `--type`.** **What:**
+  the CLI lane keeps a frontmatter `type:` via `mergeCaptureFrontmatter`'s
+  user-wins fallback, but its default slug (the `inbox/` prefix decision) is
+  computed from `--type` alone, so a frontmatter-typed capture without
+  `--type` still lands under `inbox/`. The MCP `capture` op now derives both
+  the slug and the merge from the validated effective type; align the CLI.
+  **Where:** `src/commands/capture.ts`, `src/core/capture-content.ts`.
+- [ ] **P2 — `src/core/ops/pages.ts` sits at its 1505-line ratchet ceiling.**
+  **What:** the wave's capture-vocabulary enforcement and the get_page alias
+  ladder landed together and the ship-review alias-owner fix was a net-zero
+  edit to stay under the cap. The next change cannot land without a peel.
+  **Right altitude:** peel `capture` (+ `explicitCaptureType` wiring) into
+  `ops/pages-capture.ts` and the get_page resolution ladder into
+  `ops/pages-resolve.ts`, re-exported through `pages.ts`; lower the TSV row
+  in the same commit. **Where:** `src/core/ops/pages.ts`,
+  `scripts/module-size-limits.tsv`.
+
 ## Eval write-path fix wave follow-ups (filed 2026-08-31; the five CEO-review-deferred items — wave receipt: gbrain-evals Cat 35 bracketing runs, pre-wave baseline dream 70.2% / quote fidelity 54.2% / emission 16/20 at aa820c7f)
 
 - [ ] **P3 — E2: chunk-boundary overlap window in splitTranscriptByBudget.**
