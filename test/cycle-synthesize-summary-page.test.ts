@@ -104,6 +104,29 @@ describe('dream-cycle summary graph bounds (#4337)', () => {
     expect(Buffer.byteLength(forward.markdown, 'utf8')).toBeLessThan(8_192);
   });
 
+  test('exactly 20 slugs render inline as a complete list; 21 flips to the bounded sample + provenance pointer', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => `wiki/originals/ideas/output-${String(i).padStart(2, '0')}`);
+    const atCap = await renderSummary(twenty);
+    expect(atCap.body).toContain('**Pages written:** 20.');
+    expect(atCap.body).toContain('## Pages');
+    expect(atCap.body).not.toContain('## Page sample');
+    expect(atCap.body).not.toContain('## Full output provenance');
+    expect(atCap.body.match(/\[\[/g)).toHaveLength(20);
+    for (const slug of twenty) expect(atCap.body).toContain(`[[${slug}]]`);
+
+    const twentyOne = [...twenty, 'wiki/originals/ideas/output-20'];
+    const overCap = await renderSummary(twentyOne);
+    expect(overCap.body).toContain('**Pages written:** 21.');
+    expect(overCap.body).toContain('## Page sample (20 of 21)');
+    expect(overCap.body).not.toContain('## Pages\n');
+    expect(overCap.body).toContain('## Full output provenance');
+    expect(overCap.body).toContain('The complete 21-page set');
+    expect(overCap.body.match(/\[\[/g)).toHaveLength(20);
+    // Lexicographic sample: output-00..output-19 stay, output-20 is the one dropped.
+    expect(overCap.body).not.toContain('[[wiki/originals/ideas/output-20]]');
+    expect(overCap.body).toContain('[[wiki/originals/ideas/output-19]]');
+  });
+
   test('small runs retain a complete page list', async () => {
     const slugs = [
       'wiki/originals/ideas/output-charlie',
