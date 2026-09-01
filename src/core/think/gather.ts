@@ -141,10 +141,16 @@ export async function runGather(
   let windowDiagnostic: ThinkGatherResult['diagnostics']['window'];
 
   // Stream 1: hybrid page search (existing primitive).
+  // autocut: false on both legs (#4561) — autocut is default-ON in
+  // balanced/tokenmax and cuts BEFORE the limit slice, so an evidence
+  // gather sized for breadth (default 40) could collapse to minKeep=1 and
+  // starve synthesis. Same breadth reason as the CRAG escalation re-run in
+  // ops/search.ts; precision trimming is the synth prompt's job here.
   const pagesPromise = (window ? Promise.all([
     hybridSearch(engine, opts.question, {
       limit: Math.min(gatherLimit * 4, 200),
       expansion: false,
+      autocut: false,
       ...sourceScope,
     }),
     engine.listPages({
@@ -165,6 +171,7 @@ export async function runGather(
   }) : hybridSearch(engine, opts.question, {
     limit: gatherLimit,
     expansion: false,
+    autocut: false,
     ...sourceScope,
   })).catch((e) => {
     warnings.push('GATHER_HYBRID_FAILED');
