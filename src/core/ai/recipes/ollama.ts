@@ -81,9 +81,12 @@ export const ollama: Recipe = {
       // over the known reasoning families rather than a recipe-wide boolean —
       // non-reasoning local models (qwen2.5-coder, llama3.x, mistral) keep the
       // conservative default. `qwen3` is matched with a boundary so the
-      // qwen2.5-* tags can never be swallowed by it.
+      // qwen2.5-* tags can never be swallowed by it, and `qwen3-coder` (the
+      // instruct-only Qwen3 variant, no thinking mode) is excluded by
+      // lookahead. `phi4-mini-reasoning` is a reasoning model and matches
+      // alongside `phi4-reasoning`.
       thinking_by_default: (modelId: string) =>
-        /^(?:qwen3[0-9]*(?:[.\-:]|$)|deepseek-r[0-9]|gpt-oss(?:[.\-:]|$)|magistral(?:[.\-:]|$)|phi[0-9]+-reasoning)/i.test(
+        /^(?:qwen3[0-9]*(?!-coder)(?:[.\-:]|$)|deepseek-r[0-9]|gpt-oss(?:[.\-:]|$)|magistral(?:[.\-:]|$)|phi[0-9]+(?:-mini)?-reasoning)/i.test(
           modelId,
         ),
       // Provider-wide routing ceiling only; Ollama still enforces each loaded

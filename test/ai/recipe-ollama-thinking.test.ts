@@ -59,4 +59,25 @@ describe('recipe: ollama thinking-by-default', () => {
     expect(getProviderCapabilities('ollama:qwen2.5:7b').supportsThinking).toBe(false);
     expect(getProviderCapabilities('ollama:qwen:7b').supportsThinking).toBe(false);
   });
+
+  // Review fix — predicate boundaries the first cut got wrong in both
+  // directions: qwen3-coder is the INSTRUCT-only Qwen3 variant (no thinking
+  // mode) and was swallowed by the `qwen3` family match; phi4-mini-reasoning
+  // IS a reasoning model and was missed by `phi[0-9]+-reasoning`.
+  test.each([
+    'ollama:qwen3-coder:30b',
+    'ollama:qwen3-coder',
+    'ollama:qwen3-coder:480b-cloud',
+  ])('%s (instruct-only coder variant) is NOT thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(false);
+  });
+
+  test.each([
+    'ollama:phi4-mini-reasoning',
+    'ollama:phi4-mini-reasoning:3.8b',
+    'ollama:Qwen3:8B', // mixed case — Ollama tags are matched case-insensitively
+    'ollama:QWEN3-30B-A3B',
+  ])('%s is thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(true);
+  });
 });
