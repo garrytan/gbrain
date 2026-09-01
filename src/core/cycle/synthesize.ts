@@ -66,6 +66,7 @@ import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-com
 import type { MinionJobInput, SubagentHandlerData } from '../minions/types.ts';
 import { runSubagentsInline, runDrainRenewalTick, percentile, INLINE_LOCK_MS } from './inline-drain.ts';
 import { buildManifestContext, buildLinkManifest, type ManifestContext } from './link-manifest.ts';
+import { resolveCycleDate, utcDate } from './cycle-date.ts';
 import { throwIfAborted } from '../abort-check.ts';
 
 // Re-exports: the drain was peeled to inline-drain.ts (dream-wave C7), the
@@ -320,6 +321,8 @@ export interface SynthesizePhaseOpts {
   date?: string;
   from?: string;
   to?: string;
+  /** #4348: clock seam for deterministic cycle-date bucketing (tests). */
+  now?: () => Date;
   /** #4168 sibling: absolute wall-clock deadline (epoch ms) of the enclosing
    *  minion job. When set, child-subagent timeout_ms/wait are clamped via the
    *  clampSubagentBudgets template so a child submitted late in the cycle
@@ -391,6 +394,12 @@ async function runPhaseSynthesizeInner(
   try {
     throwIfAborted(opts.signal, '[dream] synthesize');
     const config = await loadSynthConfig(engine);
+    // #4348: the calendar day that owns this run — explicit --date >
+    // cycle.timezone config > host IANA timezone > UTC. Sampled ONCE at
+    // phase start so a run that crosses midnight stays in one bucket.
+    // Pre-fix this was UTC toISOString().slice(0,10), so a run after local
+    // midnight but before UTC midnight rewrote the previous day's summary.
+    const summaryDate = await resolveCycleDate(engine, { explicitDate: opts.date, now: opts.now });
 
     // #4168 sibling: clamp the child-subagent budgets to the REAL remaining
     // job time (patterns.ts clampSubagentBudgets template). Pre-fix,
@@ -1039,8 +1048,6 @@ async function runPhaseSynthesizeInner(
         process.stderr.write(`[dream] quote verify pass failed open: ${e instanceof Error ? e.message : String(e)}\n`);
       }
     }
-
-    const summaryDate = opts.date ?? today();
 
     // #2569: persist the dream-output identity marker into the DB frontmatter
     // of every child-written page BEFORE reverse-rendering, so generated pages
@@ -2607,7 +2614,9 @@ function buildSynthesisPrompt(
   reflectionsPrefix = `${outputRoot}/personal/reflections`,
   originalsPrefix = `${outputRoot}/originals/ideas`,
 ): string {
-  const dateHint = t.inferredDate ?? today();
+  // #4348: UTC projection retained here on purpose — this is a slug-name
+  // hint for undated sources, not calendar provenance.
+  const dateHint = t.inferredDate ?? utcDate();
   const baseSlugSegment = sanitizeForSlug(t.basename) || `session-${dateHint}`;
   const isChunked = chunkTotal > 1;
   const hashSuffix = isChunked
@@ -2932,7 +2941,7 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
   // in one place.
   //
   // #4337: preserve the DB-stamped first cycle date (stampDreamProvenance
-  // runs before the reverse-write). Falling back to today() is only for
+  // runs before the reverse-write). Falling back to utcDate() is only for
   // legacy callers rendering an unstamped page for the first time — the
   // pre-fix today() default rewrote every rerendered page's provenance to
   // the maintenance run's date.
@@ -2942,7 +2951,7 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
     ? createdCycleDate
     : typeof legacyCycleDate === 'string' && legacyCycleDate
       ? legacyCycleDate
-      : today();
+      : utcDate();
   return serializePageToMarkdown(page, tags, {
     frontmatterOverrides: {
       dream_generated: true,
@@ -3094,10 +3103,6 @@ function loadAdHocTranscript(
   const { readSingleTranscript } = require('./transcript-discovery.ts') as typeof import('./transcript-discovery.ts');
   const t = readSingleTranscript(filePath, { minChars, excludePatterns, bypassGuard });
   return t ? [t] : [];
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function ok(summary: string, details: Record<string, unknown> = {}): PhaseResult {

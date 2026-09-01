@@ -465,7 +465,7 @@ Examples:
 
 Configure synthesize:
   gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
-  gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
+  gbrain config set cycle.timezone Asia/Kolkata  # optional; defaults to host timezone
 
 Related:
   gbrain autopilot --install            # continuous maintenance as a daemon
