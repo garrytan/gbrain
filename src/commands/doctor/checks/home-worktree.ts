@@ -21,7 +21,7 @@
  * naming a directory git doesn't consider a repository. Invalid candidates
  * continue the walk instead of breaking — a valid repo higher up still warns.
  */
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { existsSync, readFileSync, statSync } from 'fs';
 import type { Check } from '../../doctor.ts';
 
@@ -44,10 +44,17 @@ export function isValidGitMarker(gitPath: string): boolean {
 }
 
 export function buildHomeDirInWorktreeCheck(
-  gbrainHome: string,
-  home: string,
+  rawGbrainHome: string,
+  rawHome: string,
   gbrainHomeEnvSet: boolean,
 ): Check {
+  // Normalize both anchors before comparing. `HOME=/home/user/` (trailing
+  // slash — a common shell / launchd spelling) made the containment gate
+  // compare against '/home/user//', which never matches, so a brain that WAS
+  // inside a worktree silently graded ok. resolve() strips trailing
+  // separators and collapses `.`/`..` without touching the filesystem.
+  const gbrainHome = rawGbrainHome ? resolve(rawGbrainHome) : rawGbrainHome;
+  const home = rawHome ? resolve(rawHome) : rawHome;
   let worktreeRoot: string | null = null;
   if (gbrainHome && home && gbrainHome.startsWith(home + '/')) {
     // Walk up from gbrainHome's parent toward $HOME, stopping at $HOME.

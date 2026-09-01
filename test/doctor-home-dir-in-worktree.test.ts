@@ -241,3 +241,38 @@ describe('buildHomeDirInWorktreeCheck marker validation (#4683)', () => {
     expect(isValidGitMarker(join(base, 'nowhere', '.git'))).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review fix — $HOME / GBRAIN_HOME spelled with a trailing slash.
+// ---------------------------------------------------------------------------
+
+describe('buildHomeDirInWorktreeCheck path normalization (trailing-slash $HOME)', () => {
+  test('a trailing slash on $HOME does not silently turn the check ok', () => {
+    // `HOME=/home/user/` is a common shell / launchd spelling. Pre-fix the walk
+    // gate was `gbrainHome.startsWith(home + '/')` → '/home/user//' never
+    // matched, so a brain INSIDE a worktree was reported ok.
+    const home = join(scratch, 'home');
+    const repo = join(home, 'myrepo');
+    mkValidGitDir(repo);
+    const check = buildHomeDirInWorktreeCheck(join(repo, '.gbrain'), home + '/', false);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain(repo);
+  });
+
+  test('a trailing slash on GBRAIN_HOME is normalized the same way', () => {
+    const home = join(scratch, 'home');
+    const repo = join(home, 'myrepo2');
+    mkValidGitDir(repo);
+    const check = buildHomeDirInWorktreeCheck(join(repo, '.gbrain') + '/', home, false);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain(repo);
+  });
+
+  test('the walk still terminates at a trailing-slash $HOME (no false positive above it)', () => {
+    mkValidGitDir(scratch); // a real .git ABOVE the fake $HOME
+    const home = join(scratch, 'home');
+    mkdirSync(home, { recursive: true });
+    const check = buildHomeDirInWorktreeCheck(join(home, '.gbrain'), home + '/', false);
+    expect(check.status).toBe('ok');
+  });
+});
