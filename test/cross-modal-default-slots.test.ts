@@ -7,7 +7,7 @@
  * key, pinning every batch verdict at inconclusive (which the nightly
  * quality probe surfaces as a doctor WARN).
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 
 import {
   DEFAULT_SLOTS,
@@ -15,6 +15,8 @@ import {
   buildPrompt,
   dimensionScoreKey,
 } from '../src/core/cross-modal-eval/runner.ts';
+import { substituteUnavailableDefaultSlots } from '../src/commands/eval-cross-modal.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { getRecipe } from '../src/core/ai/recipes/index.ts';
 import { splitProviderModelId } from '../src/core/model-id.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
@@ -48,6 +50,75 @@ describe('cross-modal DEFAULT_SLOTS ↔ recipe consistency', () => {
   test('slots span three distinct providers (uncorrelated blind spots)', () => {
     const providers = new Set(DEFAULT_SLOTS.map(s => splitProviderModelId(s.model).provider));
     expect(providers.size).toBe(3);
+  });
+});
+
+// #4636 — a single-provider install can never serve three distinct frontier
+// defaults; unusable defaults substitute the configured chat model so the
+// nightly probe reports provider reachability truthfully.
+describe('cross-modal slot substitution for unavailable default providers (#4636)', () => {
+  const NO_EXPLICIT = { A: undefined, B: undefined, C: undefined };
+
+  afterEach(() => {
+    resetGateway();
+  });
+
+  test('single-provider install: unusable frontier defaults fall back to the configured chat model', () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      env: { OPENAI_API_KEY: 'sk-test-openai-only' },
+    });
+    const out = substituteUnavailableDefaultSlots([...DEFAULT_SLOTS], NO_EXPLICIT);
+    expect(out.map(s => s.model)).toEqual(['openai:gpt-5.2', 'openai:gpt-5.2', 'openai:gpt-5.2']);
+    expect(out.map(s => s.id)).toEqual(['A', 'B', 'C']);
+  });
+
+  test('explicit --slot-*-model overrides always win, even when their provider has no key', () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      env: { OPENAI_API_KEY: 'sk-test-openai-only' },
+    });
+    const slots = [
+      { id: 'A', model: 'openai:gpt-5.2' },
+      { id: 'B', model: 'anthropic:claude-opus-4-7' },
+      { id: 'C', model: 'deepseek:deepseek-v4-pro' },
+    ];
+    const out = substituteUnavailableDefaultSlots(slots, {
+      A: undefined, B: 'anthropic:claude-opus-4-7', C: undefined,
+    });
+    expect(out.map(s => s.model)).toEqual([
+      'openai:gpt-5.2',
+      'anthropic:claude-opus-4-7', // explicit — untouched
+      'openai:gpt-5.2',
+    ]);
+  });
+
+  test('all three default providers keyed: slots are untouched', () => {
+    configureGateway({
+      chat_model: 'openai:gpt-5.2',
+      env: {
+        OPENAI_API_KEY: 'sk-test',
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+        DEEPSEEK_API_KEY: 'sk-ds-test',
+      },
+    });
+    const out = substituteUnavailableDefaultSlots([...DEFAULT_SLOTS], NO_EXPLICIT);
+    expect(out.map(s => s.model)).toEqual(DEFAULT_SLOTS.map(s => s.model));
+  });
+
+  test('no usable configured chat model: defaults stay (existing error path owns messaging)', () => {
+    configureGateway({
+      chat_model: 'anthropic:claude-opus-4-7',
+      env: {},
+    });
+    const out = substituteUnavailableDefaultSlots([...DEFAULT_SLOTS], NO_EXPLICIT);
+    expect(out.map(s => s.model)).toEqual(DEFAULT_SLOTS.map(s => s.model));
+  });
+
+  test('gateway unconfigured: defaults stay', () => {
+    resetGateway();
+    const out = substituteUnavailableDefaultSlots([...DEFAULT_SLOTS], NO_EXPLICIT);
+    expect(out.map(s => s.model)).toEqual(DEFAULT_SLOTS.map(s => s.model));
   });
 });
 
