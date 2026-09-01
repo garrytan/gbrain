@@ -18,6 +18,7 @@ import { deepseek } from './deepseek.ts';
 import { groq } from './groq.ts';
 import { together } from './together.ts';
 import { llamaServer } from './llama-server.ts';
+import { lmstudio } from './lmstudio.ts';
 import { minimax } from './minimax.ts';
 import { dashscope } from './dashscope.ts';
 import { dashscopeRerank } from './dashscope-rerank.ts';
@@ -45,6 +46,7 @@ const ALL: Recipe[] = [
   together,
   llamaServer,
   llamaServerReranker,
+  lmstudio,
   minimax,
   dashscope,
   dashscopeRerank,

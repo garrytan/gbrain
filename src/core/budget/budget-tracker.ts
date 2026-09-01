@@ -222,10 +222,8 @@ const FREE_LOCAL_RERANK_PROVIDERS: ReadonlySet<string> = new Set([
  * lookupEmbeddingPrice has no entry for them. Matched against the provider
  * half of the `provider:model` string.
  *
- * 'lmstudio' is intentionally excluded — no lmstudio recipe is registered, so
- * `lmstudio:` model strings never resolve (the env mapping in cli.ts is
- * pre-existing dead plumbing). 'litellm' is excluded too — a LiteLLM proxy can
- * front a paid provider, so pricing-unknown is the honest state there.
+ * 'litellm' is excluded — a LiteLLM proxy can front a paid provider, so
+ * pricing-unknown is the honest state there.
  *
  * Sibling to FREE_LOCAL_RERANK_PROVIDERS; v0.41+ TODO unifies them via
  * recipe-cost-driven resolution.
@@ -233,6 +231,7 @@ const FREE_LOCAL_RERANK_PROVIDERS: ReadonlySet<string> = new Set([
 const FREE_LOCAL_EMBED_PROVIDERS: ReadonlySet<string> = new Set([
   'ollama',
   'llama-server',
+  'lmstudio',
 ]);
 
 /**

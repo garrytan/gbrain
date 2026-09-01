@@ -467,7 +467,7 @@ export interface Recipe {
   };
   /**
    * v0.32 (D13=A): optional runtime readiness check for local-server
-   * recipes (ollama, llama-server, future lmstudio-recipe). Returns
+   * recipes (ollama, llama-server, lmstudio). Returns
    * `ready: false` when the local endpoint isn't reachable, with a `hint`
    * the wizard / doctor can surface.
    *
