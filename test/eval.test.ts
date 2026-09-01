@@ -339,6 +339,37 @@ describe('parseQrels (#4608) — gate-shape aliases + per-entry validation', () 
     expect(() => parseQrels(JSON.stringify([{ query: 'q', relevant: [42] }]))).toThrow(/slug strings/);
   });
 
+  test("'relevant' wins over 'relevant_slugs' when both are present (alias is a fallback, not a merge)", () => {
+    const input = JSON.stringify([
+      { query: 'q', relevant: ['topic/page-a'], relevant_slugs: ['topic/page-z'] },
+    ]);
+    expect(parseQrels(input)[0].relevant).toEqual(['topic/page-a']);
+  });
+
+  test('a non-array relevant_slugs names the key in the error (not a bare missing-relevant message)', () => {
+    const input = JSON.stringify([{ query: 'q', relevant_slugs: 'topic/page-a' }]);
+    expect(() => parseQrels(input)).toThrow(/relevant_slugs/);
+    expect(() => parseQrels(input)).toThrow(/non-array/);
+    expect(() => parseQrels(input)).toThrow(/entry 0/);
+  });
+
+  test('id is kept only when it is a string', () => {
+    const parsed = parseQrels(JSON.stringify([
+      { id: 'q-1', query: 'q', relevant: ['a'] },
+      { id: 7, query: 'q2', relevant: ['b'] },
+      { query: 'q3', relevant: ['c'] },
+    ]));
+    expect(parsed[0].id).toBe('q-1');
+    expect('id' in parsed[1]).toBe(false);
+    expect('id' in parsed[2]).toBe(false);
+  });
+
+  test('grades: null throws a named error mentioning grades (null is not an absent key)', () => {
+    const input = JSON.stringify([{ query: 'q', relevant: ['a'], grades: null }]);
+    expect(() => parseQrels(input)).toThrow(/"grades"/);
+    expect(() => parseQrels(input)).toThrow(/entry 0/);
+  });
+
   test('non-finite grade VALUES are named errors with the entry index (pre-billing)', () => {
     // A string/null grade survives JSON.parse and the object-shape check;
     // pre-fix it was cast blindly (grades as Record<string, number>) and
