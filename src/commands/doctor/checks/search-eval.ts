@@ -326,9 +326,6 @@ export async function checkEmbeddingMigrationState(engine: BrainEngine): Promise
 export async function checkSubagentCapability(engine: BrainEngine): Promise<Check> {
   try {
     const { classifyCapabilities } = await import('../../../core/ai/capabilities.ts');
-    const modelsSubagent = await engine.getConfig('models.subagent');
-    const tierSubagent = await engine.getConfig('models.tier.subagent');
-    const modelsDefault = await engine.getConfig('models.default');
 
     // Helper: explain a verdict in user-facing terms.
     const explain = (resolved: string, source: string): Check | null => {
@@ -382,23 +379,23 @@ export async function checkSubagentCapability(engine: BrainEngine): Promise<Chec
       return null;
     };
 
+    // #4575: resolve in the SAME order as the runtime (resolveModelDetailed:
+    // configKey → models.tier.<tier> → models.default, per the #3873 hoist).
+    // The shared exported precedence list keeps check and runtime from ever
+    // drifting again — pre-fix, the check read models.default before
+    // models.tier.subagent (the pre-#3873 order) and reported an unclearable
+    // warning that its own suggested fix could not retire.
+    const { SUBAGENT_CONFIG_KEY_PRECEDENCE } = await import('../../../core/model-config.ts');
     let resolvedSource: string | null = null;
     let resolvedModel: string | null = null;
-    if (modelsSubagent) {
-      resolvedSource = 'models.subagent';
-      resolvedModel = modelsSubagent;
-      const issue = explain(modelsSubagent, resolvedSource);
+    for (const key of SUBAGENT_CONFIG_KEY_PRECEDENCE) {
+      const value = await engine.getConfig(key);
+      if (!value) continue;
+      resolvedSource = key;
+      resolvedModel = value;
+      const issue = explain(value, key);
       if (issue) return issue;
-    } else if (modelsDefault) {
-      resolvedSource = 'models.default';
-      resolvedModel = modelsDefault;
-      const issue = explain(modelsDefault, 'models.default');
-      if (issue) return issue;
-    } else if (tierSubagent) {
-      resolvedSource = 'models.tier.subagent';
-      resolvedModel = tierSubagent;
-      const issue = explain(tierSubagent, resolvedSource);
-      if (issue) return issue;
+      break;
     }
     // v0.37 (T10 / D7) + v0.38 (D7 capability rename): warn when the configured
     // chat_model is non-Anthropic AND ANTHROPIC_API_KEY isn't set. With

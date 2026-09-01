@@ -124,10 +124,29 @@ describe('doctor command', () => {
     expect(check.message).toContain('Subagent model resolves via models.subagent to "anthropic:claude-opus-4-7"');
   });
 
-  test('subagent_capability checks models.default before tier fallback', async () => {
+  test('subagent_capability checks models.tier.subagent before models.default (#4575)', async () => {
+    // The runtime hoisted models.tier.<tier> above models.default in #3873;
+    // the check must mirror that order. Pre-fix it read models.default first
+    // and reported an unclearable degraded:no_caching warn on any brain that
+    // set both keys — following the warning's own advice (set
+    // models.tier.subagent) could never retire it.
     const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
     const config = new Map<string, string | null>([
       ['models.tier.subagent', 'anthropic:claude-sonnet-4-6'],
+      ['models.default', 'google:gemini-1.5-pro'],
+    ]);
+    const check = await checkSubagentCapability({
+      async getConfig(key: string): Promise<string | null> {
+        return config.get(key) ?? null;
+      },
+    } as any);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Subagent model resolves via models.tier.subagent to "anthropic:claude-sonnet-4-6"');
+  });
+
+  test('subagent_capability still explains models.default when it alone is set', async () => {
+    const { checkSubagentCapability } = await import('../src/commands/doctor.ts');
+    const config = new Map<string, string | null>([
       ['models.default', 'google:gemini-1.5-pro'],
     ]);
     const check = await checkSubagentCapability({

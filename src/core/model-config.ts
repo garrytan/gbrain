@@ -359,6 +359,22 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
   }
 }
 
+/**
+ * #4575 — the config-key precedence the subagent tier resolves through at
+ * runtime (`resolveModelDetailed` with configKey 'models.subagent' + tier
+ * 'subagent': steps 2 → 4 → 5 below). Doctor's `subagent_capability` check
+ * iterates THIS list so the check and the runtime cannot drift again —
+ * #3873 hoisted `models.tier.<tier>` above `models.default` in the runtime
+ * and the check kept the pre-fix order, producing an unclearable false
+ * positive whose own suggested fix (set models.tier.subagent) was the key
+ * the check read last.
+ */
+export const SUBAGENT_CONFIG_KEY_PRECEDENCE = [
+  'models.subagent',
+  'models.tier.subagent',
+  'models.default',
+] as const;
+
 /** Which step of the resolution chain produced the model. */
 export type ResolveSource =
   | 'cli_flag'
