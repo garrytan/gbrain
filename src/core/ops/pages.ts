@@ -167,23 +167,22 @@ const get_page: Operation = {
     // The canonical is then read in the source that OWNS the alias row: a
     // federated getPage prefers the anchor source, so an unrelated live page at
     // the canonical slug in another granted source would otherwise shadow it.
+    // No catch here: a pre-v104 brain (no slug_aliases table) is the ENGINE's
+    // contract to absorb (resolveSlugWithAliasDetailed → null); anything else
+    // (connection reset, timeout) must surface, not degrade to page_not_found.
     if (!page) {
-      try {
-        const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
-          ? sourceOpts.sourceIds
-          : sourceOpts.sourceId !== undefined
-            ? sourceOpts.sourceId
-            : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
-        const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope);
-        if (hit) {
-          const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, sourceId: hit.source_id });
-          if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
-            page = aliasPage;
-            resolved_slug = hit.canonical_slug;
-          }
+      const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
+        ? sourceOpts.sourceIds
+        : sourceOpts.sourceId !== undefined
+          ? sourceOpts.sourceId
+          : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
+      const hit = await ctx.engine.resolveSlugWithAliasDetailed(slug, aliasScope);
+      if (hit) {
+        const aliasPage = await ctx.engine.getPage(hit.canonical_slug, { includeDeleted, sourceId: hit.source_id });
+        if (aliasPage && !(excludePrivate && isPrivatePage(aliasPage.frontmatter))) {
+          page = aliasPage;
+          resolved_slug = hit.canonical_slug;
         }
-      } catch {
-        // Pre-v104 brains have no slug_aliases table — behave as before.
       }
     }
 
