@@ -21,6 +21,7 @@ import {
   type FactKind,
   type FactNotability,
 } from '../src/core/facts-fence.ts';
+import { splitBody } from '../src/core/markdown.ts';
 
 // ─────────────────────────────────────────────────────────────────
 // Helpers
@@ -513,6 +514,88 @@ describe('upsertFactRow', () => {
     expect(out).toContain('~~Old~~');
     expect(out).toContain('superseded by #2');
     expect(out).toContain('Replacement');
+  });
+
+  // #4756 — the FIRST fence must land in compiled_truth. splitBody() files
+  // everything below the timeline sentinel into page.timeline, where
+  // extract_facts refuses to reconcile it (FACTS_FENCE_BELOW_SENTINEL), so
+  // a blind EOF append on any page that already had a timeline froze the
+  // fence permanently.
+  describe('first-fence placement vs the timeline sentinel (#4756)', () => {
+    const newRow = {
+      claim: 'A new fact',
+      kind: 'fact' as const,
+      confidence: 1.0,
+      visibility: 'world' as const,
+      notability: 'medium' as const,
+    };
+
+    test('inserts the first fence ABOVE the <!-- timeline --> sentinel', () => {
+      const body = `# Some Entity
+
+Prose here.
+
+<!-- timeline -->
+
+## Timeline
+- 2024-05-01: Something happened
+`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeLessThan(out.indexOf('<!-- timeline -->'));
+      // The routing seam that decides FACTS_FENCE_BELOW_SENTINEL: the fence
+      // must land in compiled_truth, never in the timeline column.
+      const split = splitBody(out);
+      expect(split.compiled_truth).toContain(FACTS_FENCE_BEGIN);
+      expect(split.compiled_truth).toContain(FACTS_FENCE_END);
+      expect(split.timeline).not.toContain(FACTS_FENCE_BEGIN);
+      // Timeline content survives untouched below the sentinel.
+      expect(split.timeline).toContain('2024-05-01: Something happened');
+      // Fence still parses cleanly from the assembled body.
+      const parsed = parseFactsFence(out);
+      expect(parsed.warnings).toEqual([]);
+      expect(parsed.facts).toHaveLength(1);
+    });
+
+    test('recognizes the compact <!--timeline--> form', () => {
+      const body = `# Entity\n\nProse.\n\n<!--timeline-->\n\n## Timeline\n- 2020: Founded\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeLessThan(out.indexOf('<!--timeline-->'));
+      expect(splitBody(out).timeline).not.toContain(FACTS_FENCE_BEGIN);
+    });
+
+    test('recognizes the decorated --- timeline --- form', () => {
+      const body = `# Entity\n\nProse.\n\n--- timeline ---\n\n## Timeline\n- 2020: Founded\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeLessThan(out.indexOf('--- timeline ---'));
+      expect(splitBody(out).timeline).not.toContain(FACTS_FENCE_BEGIN);
+    });
+
+    test('no sentinel: still appends at EOF (previous behavior preserved)', () => {
+      const body = '# Entity\n\nProse only.\n';
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf('Prose only.')).toBeLessThan(out.indexOf(FACTS_FENCE_BEGIN));
+      expect(out).toContain('## Facts');
+    });
+
+    test('existing fence above the sentinel: replaced in place, not duplicated', () => {
+      const seeded = upsertFactRow(
+        `# Entity\n\nProse.\n\n<!-- timeline -->\n\n## Timeline\n- 2020: Founded\n`,
+        newRow,
+      ).body;
+      const { body: out, rowNum } = upsertFactRow(seeded, { ...newRow, claim: 'Second fact' });
+      expect(rowNum).toBe(2);
+      expect(out.split(FACTS_FENCE_BEGIN)).toHaveLength(2); // exactly one fence
+      expect(splitBody(out).compiled_truth).toContain('Second fact');
+    });
+
+    test('sentinel inside frontmatter-free body starting at line 0 still works', () => {
+      const body = `<!-- timeline -->\n\n## Timeline\n- 2020: Founded\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeLessThan(out.indexOf('<!-- timeline -->'));
+      const parsed = parseFactsFence(out);
+      expect(parsed.warnings).toEqual([]);
+      expect(parsed.facts).toHaveLength(1);
+    });
   });
 });
 

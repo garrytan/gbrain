@@ -508,10 +508,52 @@ export function upsertFactRow(
   if (beginIdx !== -1 && endIdx !== -1) {
     out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + FACTS_FENCE_END.length);
   } else {
-    const sep = body.endsWith('\n') ? '\n' : '\n\n';
-    out = `${body}${sep}## Facts\n\n${newFence}\n`;
+    // #4756: the FIRST fence must land in compiled_truth — ABOVE the timeline
+    // sentinel. splitBody() files everything below the sentinel into
+    // page.timeline, where extract_facts refuses to reconcile it
+    // (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that
+    // already had a timeline froze the fence permanently.
+    const section = `## Facts\n\n${newFence}\n`;
+    const sentinelAt = timelineSentinelOffset(body);
+    if (sentinelAt !== -1) {
+      const head = body.slice(0, sentinelAt);
+      const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
+      out = `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
+    } else {
+      const sep = body.endsWith('\n') ? '\n' : '\n\n';
+      out = `${body}${sep}${section}`;
+    }
   }
   return { body: out, rowNum: nextRowNum };
+}
+
+/**
+ * Char offset of the line start of the first timeline sentinel in `body`,
+ * or -1 when none is present. Mirrors the UNAMBIGUOUS sentinel forms of
+ * `markdown.ts:findTimelineSplitIndex` (`<!-- timeline -->` /
+ * `<!--timeline-->` — what serializeMarkdown emits — plus the decorated
+ * `--- timeline ---`). The legacy bare `---` + `## Timeline` fallback is
+ * deliberately NOT matched: upsertFactRow receives raw on-disk text that may
+ * still carry YAML frontmatter, whose `---` delimiters would false-positive
+ * that rule (findTimelineSplitIndex documents the same caveat — it expects
+ * body lines). Local rather than imported because this module must stay free
+ * of markdown.ts's transitive dependency graph (see the FactKind comment at
+ * the top of the file).
+ */
+function timelineSentinelOffset(body: string): number {
+  let offset = 0;
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (
+      trimmed === '<!-- timeline -->' ||
+      trimmed === '<!--timeline-->' ||
+      /^---\s+timeline\s+---$/i.test(trimmed)
+    ) {
+      return offset;
+    }
+    offset += line.length + 1;
+  }
+  return -1;
 }
 
 export interface StripFactsFenceOpts {
