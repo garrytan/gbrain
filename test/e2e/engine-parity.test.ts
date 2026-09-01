@@ -1152,6 +1152,74 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(slugs.indexOf('ep/ec-bob')).toBeLessThan(slugs.indexOf('companies/ec-widget'));
     expect(pg.find((r) => r.slug === 'ep/ec-alice')!.inbound_count).toBe(2);
   });
+
+  // #4280 — orphan / health denominators measured over SERVED memory.
+  // findOrphanPages carries {type, quarantined} so the shared policy can drop
+  // quarantined shells + machine leaf types; getHealth's entity denominator
+  // excludes quarantined entity shells in SQL. The Postgres half rides a
+  // `sql.unsafe(QUARANTINE_FILTER_FRAGMENT)` fragment that PGLite cannot
+  // exercise — pinned here against real Postgres. getStats stays RAW on both
+  // engines (pages_by_type counts the quarantined shell like any other page).
+  test('#4280 findOrphanPages {slug,type,quarantined} projection + getHealth/getStats entity denominators: Postgres ↔ PGLite parity', async () => {
+    const SRC = 'served-memory-parity';
+    const quarantine = { reason: 'junk_pattern', detail: 'parity fixture', assessed_at: new Date().toISOString() };
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, 'Served Memory Parity', '{}'::jsonb) ON CONFLICT DO NOTHING`, [SRC]);
+      // Three live, islanded entity pages.
+      for (const n of ['a', 'b', 'c']) {
+        await eng.putPage(`people/sm-${n}`, { type: 'person', title: `SM ${n}`, compiled_truth: 'entity body' }, { sourceId: SRC });
+      }
+      // A quarantined entity shell — islanded, but NOT served memory.
+      await eng.putPage('people/sm-quarantined', {
+        type: 'person', title: 'SM quarantined', compiled_truth: 'junk',
+        frontmatter: { quarantine },
+      }, { sourceId: SRC });
+      // A machine leaf type — islanded by design.
+      await eng.putPage('people/sm-atom', { type: 'atom', title: 'SM atom', compiled_truth: 'atom body' }, { sourceId: SRC });
+    }
+
+    // Raw findOrphanPages rows (policy-free SQL): every islanded page is
+    // returned, with the metadata the policy needs to exclude two of them.
+    const project = async (eng: BrainEngine) =>
+      (await eng.findOrphanPages({ sourceId: SRC }))
+        .map(r => ({ slug: r.slug, type: r.type ?? null, quarantined: r.quarantined === true }))
+        .sort((x, y) => x.slug.localeCompare(y.slug));
+    const pgRows = await project(pgEngine);
+    const pgliteRows = await project(pgliteEngine);
+    expect(pgRows).toEqual([
+      { slug: 'people/sm-a', type: 'person', quarantined: false },
+      { slug: 'people/sm-atom', type: 'atom', quarantined: false },
+      { slug: 'people/sm-b', type: 'person', quarantined: false },
+      { slug: 'people/sm-c', type: 'person', quarantined: false },
+      { slug: 'people/sm-quarantined', type: 'person', quarantined: true },
+    ]);
+    expect(pgliteRows).toEqual(pgRows);
+
+    // getHealth: the entity denominator and the linkable scope both exclude
+    // the quarantined shell (SQL) and the atom (shared policy via p.type).
+    const health = async (eng: BrainEngine) => {
+      const h = await eng.getHealth({ sourceId: SRC });
+      return {
+        entity_page_count: h.entity_page_count,
+        linkable_page_count: h.linkable_page_count,
+        orphan_pages: h.orphan_pages,
+        page_count: h.page_count,
+      };
+    };
+    const pgHealth = await health(pgEngine);
+    const pgliteHealth = await health(pgliteEngine);
+    expect(pgHealth).toEqual({ entity_page_count: 3, linkable_page_count: 3, orphan_pages: 3, page_count: 5 });
+    expect(pgliteHealth).toEqual(pgHealth);
+
+    // getStats stays a RAW corpus count on both engines — the quarantined
+    // shell is still a `person` row here, and the atom is counted.
+    const pgStats = await pgEngine.getStats({ sourceId: SRC });
+    const pgliteStats = await pgliteEngine.getStats({ sourceId: SRC });
+    expect(pgStats.pages_by_type).toEqual({ person: 4, atom: 1 });
+    expect(pgliteStats.pages_by_type).toEqual(pgStats.pages_by_type);
+    expect(pgStats.page_count).toBe(5);
+    expect(pgliteStats.page_count).toBe(pgStats.page_count);
+  });
 });
 
 // ── relationalFanout parity (v0.43) ─────────────────────────────────────
