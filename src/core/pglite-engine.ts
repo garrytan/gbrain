@@ -2572,7 +2572,8 @@ export class PGLiteEngine implements BrainEngine {
     // chunkless pages retrievable (the extreme D1 case: a title with no
     // body) with the alias-hop row shape (chunk_id 0, empty chunk_text).
     // Accepted limitations (Reviewer F5/F6): the synthetic chunkless row
-    // inherits the compiled-truth RRF boost and dedups on empty chunk_text;
+    // dedups on empty chunk_text (fusion's compiledTruthBoost skips it since
+    // #3695 — chunk_id 0 + empty chunk_text never gains chunk authority);
     // and detail='low' filters only the REPRESENTATIVE — pages without a
     // compiled_truth chunk still surface (unlike the keyword arm's filter).
     const titlesSql =
