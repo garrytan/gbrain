@@ -66,6 +66,13 @@ republished in gbrain-evals alongside this release.
   This carries the adaptive-return cache keying and the hybrid fusion fix
   so pre-fix cached results can never be served post-fix.
 
+Known (measured, filed): with fusion now clean, LLM multi-query expansion's
+extra variant lists can dilute small-k retrieval instead of helping it —
+on the same benchmark run, expansion scored well below plain hybrid at k=5.
+If you run `tokenmax` mode and retrieve small result sets, `balanced` may
+serve you better until the follow-up lands (TODOS: expansion variant
+weighting).
+
 **Say to your agent:** *"search my brain for everything about X"* — multi-
 answer recall is dramatically better on hybrid search. — *"turn on adaptive
 return sizing"* — your agent runs `gbrain config set search.adaptive_return

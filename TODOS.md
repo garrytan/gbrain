@@ -8521,6 +8521,26 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   delivery log line — acceptable while the log is tuning telemetry, not an
   audit control; this closes it). **Where:** `src/mcp/resolve-ipc*.ts`,
   `src/core/context/reflex.ts`. **Effort:** S/M.
+- [ ] **P2 — multi-query expansion dilutes small-k retrieval now that fusion
+  is clean.** **What:** post-#3617-demotion, the expansion path's variant
+  vector lists (equal RRF weight vs the original query's list) actively push
+  correct results out of the top-k: LongMemEval RC receipt shows
+  hybrid+expansion recall_all@5 49.57% vs plain hybrid 93.19% ON THE SAME RUN
+  — 208 questions pass on hybrid and fail on expansion, 3 the reverse; the
+  losses span every question type and the mechanism is verified by
+  construction (keyword/title/relational arms and the original vector list
+  are identical inputs; only variant lists differ; zero expansion errors in
+  the run). Pre-fix, variants were net-positive (+6.8pp) because the fusion
+  baseline was relaxed-row-poisoned; the marginal value flipped sign when the
+  baseline got clean. Production impact: tokenmax mode (expansion on) pays
+  Haiku spend for variants that HURT at small k; unmeasured at production
+  k=50. **Fix candidates (pre-register one next wave, frozen-corpus rules):**
+  weight variant lists below the original in RRF (variant-k penalty), cap
+  variant-list contribution, or CRAG-style trigger (expand only when the
+  original's recall evidence is weak). **Where:**
+  `src/core/search/hybrid.ts` fusion assembly (`allLists`),
+  `expansion.ts`. Receipt: gbrain-evals
+  `lme-phase6-8bb33cac-k5.{ndjson,json}`. **Effort:** M.
 - [ ] **P3 — IPC probe-field version echo.** **What:** a NEW reflex client
   against an OLD long-running `gbrain serve` sends `probe:'volunteer'` that
   the serve ignores, logging the wide ungated pool as delivered pointers on
