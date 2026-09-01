@@ -138,6 +138,7 @@ test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routin
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	readFileSync
 test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync
+test/extract-atoms-drain-errors.test.ts	runExtractAtomsDrainForSource forwards typed per-item failures (#4730)	1	readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	2	readFileSync
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
 test/extract-workers.test.ts	extract.ts → workers wiring (T7)	10	readFileSync

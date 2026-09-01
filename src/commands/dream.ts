@@ -606,7 +606,7 @@ async function runDrain(
   if (opts.dryRun) {
     const remaining = await countExtractAtomsBacklog(engine, extractionSourceId);
     if (opts.json) {
-      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, last_error: null }, null, 2));
+      console.log(JSON.stringify({ phase: 'extract_atoms', status: 'ok', dry_run: true, extracted: 0, skipped: 0, remaining, batches: 0, stopped: 'window', failure_count: 0, failures: [], omitted_failure_count: 0, last_error: null }, null, 2));
     } else {
       console.log(`[drain] dry-run: ${remaining ?? '?'} page(s) eligible for atom extraction (no work done)`);
     }
@@ -647,8 +647,14 @@ async function runDrain(
   // operator had to re-run the phase by hand to see the provider/parse error.
   // Stderr (not stdout): progress/diagnostics never pollute the data stream.
   if (result.failure_count > 0) {
+    // #4730: the bounded per-item records ride the --json payload; the human
+    // stderr line reports the totals (and any cap overflow) so nothing is
+    // silently dropped in either mode.
+    const omitted = result.omitted_failure_count > 0
+      ? ` (${result.failures.length} detailed, ${result.omitted_failure_count} beyond the record cap)`
+      : '';
     process.stderr.write(
-      `[drain] ${result.failure_count} item failure(s)${result.last_error ? `; last error: ${result.last_error}` : ''}\n`,
+      `[drain] ${result.failure_count} item failure(s)${omitted}${result.last_error ? `; last error: ${result.last_error}` : ''}\n`,
     );
   }
   if (opts.json) {
