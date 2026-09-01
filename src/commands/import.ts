@@ -315,14 +315,22 @@ export async function runImport(
       sourceId = resolved.source_id;
       const nudge = formatSoleNonDefaultNudge(sourceId);
       if (nudge) process.stderr.write(nudge + '\n');
-    } else if (resolved.tier === 'seed_default' && !defaultWriteAllowedByEnv()) {
+    } else if (!defaultWriteAllowedByEnv()) {
       // #4583 (fixes #4564's misrouted-write symptom): an unscoped import that
       // would silently land in 'default' on a bulk-non-default brain gets a
-      // loud warning. Advisory only — refusing here would change behaviour for
-      // callers that never asked about source routing, and runImport also runs
-      // in-process (sync_brain MCP op, autopilot daemon, minion sync), where
-      // aborting takes the host down mid-call. The CLI escape is the source-id
-      // flag; scripted pipelines set GBRAIN_ALLOW_DEFAULT_WRITE=1.
+      // loud warning. Keyed on the REAL destination, not the tier: only the
+      // sole_non_default adoption above changes where this run writes, so for
+      // EVERY other tier — seed_default, but also dotfile / local_path /
+      // brain_default, whose resolutions runImport deliberately does not
+      // adopt — `sourceId` stays undefined and the write lands in 'default'.
+      // (Warning only on seed_default let exactly those non-adopted tiers
+      // land in 'default' silently while the user believed the dotfile or
+      // sources.default had scoped the import.) Advisory only — refusing here
+      // would change behaviour for callers that never asked about source
+      // routing, and runImport also runs in-process (sync_brain MCP op,
+      // autopilot daemon, minion sync), where aborting takes the host down
+      // mid-call. The CLI escape is the source-id flag; scripted pipelines
+      // set GBRAIN_ALLOW_DEFAULT_WRITE=1.
       const assessment = await assessDefaultWriteGuard(engine);
       if (assessment.shouldGuard) {
         console.error(formatDefaultWriteWarning(assessment, '--source-id'));
