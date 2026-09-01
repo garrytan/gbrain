@@ -732,9 +732,11 @@ const search_stats: Operation = {
 const search_modes: Operation = {
   name: 'search_modes',
   description:
-    'Read-only search-mode dashboard: active mode, per-knob resolved value with attribution ' +
-    '(mode default vs config override), and the three frozen bundles. Never mutates; to ' +
-    'change modes, tell the user to set the search.mode config key on the brain host.',
+    'Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with ' +
+    'attribution (mode default vs config override), and the three frozen bundles. Brain-level ' +
+    'planes only — per-call SearchOpts overrides on individual searches are not shown ' +
+    '(per_call_note in the payload spells this out). Never mutates; to change modes, tell ' +
+    'the user to set the search.mode config key on the brain host.',
   params: {},
   scope: 'read',
   area: 'search',

@@ -57,6 +57,18 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
 };
 
+/**
+ * #4604: honest scope note carried on every report. The dashboard resolves
+ * the BRAIN-LEVEL planes (config override > mode bundle); per-call
+ * SearchOpts overrides on individual searches are not represented here —
+ * a live search that passes its own knobs can legitimately differ from
+ * this report for that one call.
+ */
+export const MODES_REPORT_PER_CALL_NOTE =
+  'Resolved from config overrides + the active mode bundle. Per-call SearchOpts ' +
+  'overrides on individual searches are not shown — a call that passes its own ' +
+  'knobs (e.g. expand, autocut, relational) wins for that call only.';
+
 export interface SearchModesReport {
   schema_version: 2;
   active_mode: SearchMode;
@@ -64,6 +76,8 @@ export interface SearchModesReport {
   resolved: Record<keyof ModeBundle, { value: unknown; source: string; source_detail: string; description: string }>;
   bundles: Record<SearchMode, ModeBundle>;
   config_keys: ReadonlyArray<string>;
+  /** #4604: what this report does NOT include (per-call plane). */
+  per_call_note: string;
   _meta?: {
     metric_glossary?: Record<string, string>;
   };
@@ -73,26 +87,13 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
   const input = await loadSearchModeConfig(engine);
   const resolved = resolveSearchMode(input);
 
-  const knobs: Array<keyof ModeBundle> = [
-    'cache_enabled',
-    'cache_similarity_threshold',
-    'cache_ttl_seconds',
-    'intentWeighting',
-    'keywordOrFallback',
-    'tokenBudget',
-    'expansion',
-    'searchLimit',
-    // v0.35.6.0 — floor-ratio surfaced in `gbrain search modes` dashboard
-    // so config drift is legible. Default undefined renders as 'undefined'
-    // in the bundle column, 'mode' source when unset by config/per-call.
-    'floor_ratio',
-    // v0.46.15 retrieval wave — evidence floor (label-only) + autocut weak-top
-    // floor surfaced so config drift on the new knobs is legible.
-    'evidence_cosine_floor',
-    'autocut_min_top',
-    // #3621 — the documented autocut floor, surfaced alongside the weak-top floor.
-    'autocut_min_keep',
-  ];
+  // #4604: derive the knob list from KNOB_DESCRIPTIONS (a Record over
+  // EVERY ModeBundle key, so the type system forces a description — and
+  // therefore a dashboard row — for each new knob). The previous literal
+  // array hardcoded 12 of the bundle's knobs, leaving live overrides like
+  // search.reranker.* and search.relational_retrieval invisible here while
+  // they steered every real search.
+  const knobs = Object.keys(KNOB_DESCRIPTIONS) as Array<keyof ModeBundle>;
 
   const attributions = {} as SearchModesReport['resolved'];
   for (const k of knobs) {
@@ -116,5 +117,6 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       tokenmax: { ...MODE_BUNDLES.tokenmax },
     },
     config_keys: SEARCH_MODE_CONFIG_KEYS,
+    per_call_note: MODES_REPORT_PER_CALL_NOTE,
   };
 }

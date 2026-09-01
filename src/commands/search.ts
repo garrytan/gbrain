@@ -77,6 +77,9 @@ function formatModesText(report: SearchModesReport): string {
   for (const [k, desc] of Object.entries(KNOB_DESCRIPTIONS)) {
     lines.push(`  ${k.padEnd(28)} ${desc}`);
   }
+  // #4604: the dashboard shows brain-level resolution only.
+  lines.push('');
+  lines.push(`Note: ${report.per_call_note}`);
   return lines.join('\n');
 }
 
