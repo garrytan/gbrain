@@ -654,6 +654,58 @@ describe('grokAdapter', () => {
     expect(r.cleanScan).toBe(false);
   });
 
+  test('user rows whose text sits under an unknown field are MALFORMED, not typed: expectedEmpty=false, driftFiles=1', async () => {
+    // Schema-drift shape: recognised `type:'user'` rows whose text moved off
+    // `content`. Pre-fix these mapped to 'typed' — indistinguishable from
+    // intentional tool/reasoning rows — so the file read as expectedEmpty and
+    // ingestion advanced the watermark past it silently (disappearing
+    // conversations). Undecodable HUMAN turns count as skipped lines.
+    const p = writeGrokTree(tdir(), {
+      body:
+        JSON.stringify({ type: 'system', content: 'sys' }) +
+        '\n' +
+        JSON.stringify({ type: 'user', text: 'hello there' }) +
+        '\n' +
+        JSON.stringify({ type: 'user', text: 'and again' }) +
+        '\n',
+      summary: {
+        info: { id: GROK_SESSION_ID, cwd: '/tmp' },
+        created_at: '2026-08-08T11:00:00.000Z',
+      },
+    });
+    const { sessions, diag } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(0);
+    expect(diag.sessions).toBe(0);
+    expect(diag.skippedLines).toBe(2);
+    expect(diag.expectedEmpty).toBe(false);
+    expect(diag.zeroSessionsReason).toMatch(/malformed/);
+    const r = await runTranscriptsIngest({} as never, {
+      paths: [p],
+      dryRun: true,
+      sourceId: 'default',
+      userPatternsPath: '/nonexistent',
+    });
+    expect(r.driftFiles).toBe(1);
+    expect(r.sessionsSeen).toBe(0);
+    expect(r.cleanScan).toBe(false);
+  });
+
+  test('mapGrokLine: undecodable human turns are malformed; intentional tool-only turns stay typed', () => {
+    expect(mapGrokLine({ type: 'user' }).kind).toBe('malformed');
+    expect(mapGrokLine({ type: 'user', content: 42 }).kind).toBe('malformed');
+    expect(mapGrokLine({ type: 'user', content: ['not-a-block'] }).kind).toBe('malformed');
+    expect(mapGrokLine({ type: 'assistant', content: [{ type: 'text', text: 'moved into blocks' }] }).kind).toBe('malformed');
+    expect(mapGrokLine({ type: 'assistant' }).kind).toBe('malformed');
+    // Intentional shapes keep their classification.
+    expect(mapGrokLine({ type: 'user', synthetic_reason: 'system_reminder', content: [{ type: 'text', text: 'x' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'user', content: [{ type: 'tool_result', tool_call_id: 'c1', content: 'out' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'user', content: [] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'assistant', content: '', tool_calls: [{ id: 'c1', name: 'search', arguments: '{}' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'assistant', content: null, tool_calls: [{ id: 'c1', name: 'search', arguments: '{}' }] }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'reasoning', id: 'r' }).kind).toBe('typed');
+    expect(mapGrokLine({ type: 'unknown_row_type' }).kind).toBe('skip');
+  });
+
   test('redaction runs on grok text the same as every other format', async () => {
     const planted = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
     const p = writeGrokTree(tdir(), {

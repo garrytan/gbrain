@@ -142,27 +142,47 @@ export function isGrokSessionSidecarStrict(path: string): boolean {
   return false;
 }
 
-function textFromUserContent(content: unknown): string {
+/**
+ * Decode a user row's `content` into text. Returns null when the shape is not
+ * one the SPEC_TARGET describes (missing, non-string/non-array, or an array
+ * holding non-block entries) — that is schema drift, not an intentional empty
+ * turn, and the caller classifies it 'malformed'. A recognised array with no
+ * text blocks (tool_result-only) decodes to '' (an intentional 'typed' row).
+ */
+function decodeUserContent(content: unknown): string | null {
   if (typeof content === 'string') return content.trim();
-  if (!Array.isArray(content)) return '';
+  if (!Array.isArray(content)) return null;
   const parts: string[] = [];
   for (const block of content) {
-    if (typeof block !== 'object' || block === null) continue;
+    if (typeof block !== 'object' || block === null) return null;
     const b = block as Record<string, unknown>;
+    if (typeof b.type !== 'string') return null;
     if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) parts.push(b.text);
   }
   return parts.join('\n').trim();
 }
 
+/**
+ * 'typed'     — a recognised row that intentionally carries no importable
+ *               text (system, reasoning, tool traffic, tool-only assistant,
+ *               synthetic user reminder).
+ * 'malformed' — a recognised HUMAN-turn row (user/assistant) whose content
+ *               this parser cannot decode. Distinct from 'typed' on purpose:
+ *               a file of only such rows is schema drift, and the caller
+ *               counts them as skipped so it is never reported expectedEmpty
+ *               (which would let the watermark advance past it silently).
+ */
 export type GrokLineResult =
   | { kind: 'message'; message: TranscriptMessage }
   | { kind: 'skip' }
-  | { kind: 'typed' };
+  | { kind: 'typed' }
+  | { kind: 'malformed' };
 
 /**
  * One ALREADY-JSON-PARSED grok chat_history line. Exported so tests pin the
  * dated SPEC_TARGET mapping: synthetic_reason user rows, tool-only
- * assistants, and reasoning/tool traffic never become messages.
+ * assistants, and reasoning/tool traffic never become messages, and an
+ * undecodable user/assistant row is 'malformed', never 'typed'.
  */
 export function mapGrokLine(entry: unknown): GrokLineResult {
   if (typeof entry !== 'object' || entry === null) return { kind: 'skip' };
@@ -172,12 +192,18 @@ export function mapGrokLine(entry: unknown): GrokLineResult {
     // Injected reminders are not typed user text (Codex skips injected
     // user/developer response_items for the same reason).
     if (typeof e.synthetic_reason === 'string' && e.synthetic_reason) return { kind: 'typed' };
-    const text = textFromUserContent(e.content);
+    const text = decodeUserContent(e.content);
+    if (text === null) return { kind: 'malformed' };
     if (!text) return { kind: 'typed' };
     return { kind: 'message', message: { role: 'user', timestamp: '', text } };
   }
   if (e.type === 'assistant') {
-    const text = typeof e.content === 'string' ? e.content.trim() : '';
+    if (typeof e.content !== 'string') {
+      // A tool-only turn may carry no content at all; any other non-string
+      // content is a shape this parser does not understand.
+      return Array.isArray(e.tool_calls) && e.tool_calls.length > 0 ? { kind: 'typed' } : { kind: 'malformed' };
+    }
+    const text = e.content.trim();
     if (!text) return { kind: 'typed' };
     return { kind: 'message', message: { role: 'assistant', timestamp: '', text } };
   }
@@ -304,6 +330,7 @@ export const grokAdapter: TranscriptAdapter = {
     const raw = readFileSync(path, 'utf8');
     let skippedLines = 0;
     let typedLines = 0;
+    let malformedRows = 0;
     const messages: TranscriptMessage[] = [];
 
     for (const line of raw.split('\n')) {
@@ -318,6 +345,14 @@ export const grokAdapter: TranscriptAdapter = {
       }
       const mapped = mapGrokLine(entry);
       if (mapped.kind === 'skip') continue;
+      if (mapped.kind === 'malformed') {
+        // Counted as SKIPPED, not typed: an undecodable human turn keeps the
+        // file out of expectedEmpty so the drift signal fires (see
+        // GrokLineResult).
+        skippedLines++;
+        malformedRows++;
+        continue;
+      }
       typedLines++;
       if (mapped.kind === 'message') messages.push(mapped.message);
     }
@@ -378,7 +413,9 @@ export const grokAdapter: TranscriptAdapter = {
         sessions === 0
           ? expectedEmpty
             ? 'no user/assistant text turns (tool/reasoning-only session)'
-            : 'no user/assistant text turns in grok chat_history'
+            : malformedRows > 0
+              ? `no user/assistant text turns in grok chat_history (${malformedRows} malformed user/assistant row(s))`
+              : 'no user/assistant text turns in grok chat_history'
           : undefined,
     };
   },
