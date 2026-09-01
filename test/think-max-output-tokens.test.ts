@@ -78,6 +78,10 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     // model-name regex, so provider renames keep the headroom.
     expect(maxOutputTokensFor('deepseek:deepseek-v4-flash')).toBe(16000);
     expect(maxOutputTokensFor('deepseek:deepseek-v4-pro')).toBe(16000);
+    // OpenRouter DeepSeek hosts think by default too (#4758) — same recipe
+    // capability, so the OR route gets the same headroom as native deepseek:.
+    expect(maxOutputTokensFor('openrouter:deepseek/deepseek-v4-flash')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:deepseek/deepseek-v4-flash-0731')).toBe(16000);
     // Retired alias still routes to a thinking v4 model at the provider.
     expect(maxOutputTokensFor('deepseek:deepseek-reasoner')).toBe(16000);
     // Recipes without the capability keep the conservative default.

@@ -63,6 +63,13 @@ describe('getProviderCapabilities (v0.38 Slice 1 — D6/D7 recipe-driven capabil
     expect(caps.supportsPromptCaching).toBe(false);
   });
 
+  it('marks OpenRouter DeepSeek routes as thinking-by-default (native deepseek: parity)', () => {
+    expect(getProviderCapabilities('deepseek:deepseek-v4-flash').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('openrouter:deepseek/deepseek-v4-flash-0731').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('openrouter:openai/gpt-5.2').supportsThinking).toBe(false);
+    expect(getProviderCapabilities('openrouter:anthropic/claude-sonnet-4.6').supportsThinking).toBe(false);
+  });
+
   it('returns local chat capabilities for Ollama without tool-loop support', () => {
     const caps = getProviderCapabilities('ollama:qwen2.5-coder:14b');
     expect(caps.supportsToolCalling).toBe(false);
