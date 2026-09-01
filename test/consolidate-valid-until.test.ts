@@ -48,6 +48,14 @@ beforeEach(async () => {
   await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'cdx4-%'`);
 });
 
+async function takeIdFor(slug: string): Promise<number> {
+  const r = await engine.executeRaw<{ id: number }>(
+    `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.slug = $1 ORDER BY t.id LIMIT 1`,
+    [slug],
+  );
+  return r[0].id;
+}
+
 function unitVec(): string {
   const a = new Float32Array(1536);
   a[0] = 1.0;
@@ -252,6 +260,57 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
       `SELECT consolidated_into FROM facts WHERE entity_slug = 'cdx4-idempo-1' AND consolidated_into IS NOT NULL`,
     );
     expect(facts.length).toBe(4);
+  });
+
+  test('identical claim text on TWO pages consolidates into two page-scoped takes (never cross-page merged)', async () => {
+    // The take identity is (page_id, claim) scoped to this phase's rows. Two
+    // entities that happen to carry the same wording must each get their own
+    // take — a claim-only lookup would attach page B's facts to page A's take.
+    await seedPage('cdx4-shared-a');
+    await seedPage('cdx4-shared-b');
+    const oldDate = new Date(Date.now() - 30 * 60 * 60 * 1000);
+    for (const slug of ['cdx4-shared-a', 'cdx4-shared-b']) {
+      for (let i = 0; i < 3; i++) {
+        await insertFact({
+          entity_slug: slug,
+          text: 'ships a weekly release',
+          valid_from: new Date(oldDate.getTime() + i * 60 * 60 * 1000),
+        });
+      }
+    }
+
+    const r1 = await runPhaseConsolidate(engine, {});
+    expect(r1.details.takes_written).toBe(2);
+    expect(r1.details.facts_consolidated).toBe(6);
+
+    const takes = await engine.executeRaw<{ page_id: number; slug: string; claim: string }>(
+      `SELECT t.page_id, p.slug, t.claim FROM takes t JOIN pages p ON p.id = t.page_id
+       WHERE t.claim = 'ships a weekly release' ORDER BY p.slug`,
+    );
+    expect(takes).toHaveLength(2);
+    expect(takes.map(t => t.slug)).toEqual(['cdx4-shared-a', 'cdx4-shared-b']);
+    expect(new Set(takes.map(t => t.page_id)).size).toBe(2);
+
+    // Each page's facts point at ITS OWN take, never the sibling page's.
+    for (const t of takes) {
+      const facts = await engine.executeRaw<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM facts WHERE entity_slug = $1 AND consolidated_into = $2`,
+        [t.slug, await takeIdFor(t.slug)],
+      );
+      expect(parseInt(facts[0].n, 10)).toBe(3);
+    }
+
+    // Re-run after an extract_facts-style reset: still two, zero new.
+    await engine.executeRaw(
+      `UPDATE facts SET consolidated_at = NULL, consolidated_into = NULL
+       WHERE entity_slug IN ('cdx4-shared-a', 'cdx4-shared-b')`,
+    );
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+    const after = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM takes WHERE claim = 'ships a weekly release'`,
+    );
+    expect(parseInt(after[0].n, 10)).toBe(2);
   });
 
   test('semantic upsert: a re-extracted claim with a newer valid_from reuses the take', async () => {
