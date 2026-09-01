@@ -44,23 +44,31 @@ export function isNoiseSender(fromAddress: string): boolean {
  * measured audit these notices were a large fraction of all open loops, every
  * one of them a "reply owed" that no human ever expected an answer to.
  *
- * PRIMARY signal is structural: a NON-EMPTY `calendarMethod`
- * (REQUEST/REPLY/CANCEL), which Calendar stamps on all of these and which
- * ordinary human mail never has. An EMPTY method ('' — an .ics-ish part was
- * seen but no iCalendar METHOD was found, e.g. a human attaching an invite
- * file) is deliberately NOT system mail: classifying it as system silenced
- * genuine human questions, which could then neither open nor close loops.
+ * PRIMARY signal is structural: a `calendarMethod` that is one of the
+ * iCalendar METHOD values (RFC 5546 — REQUEST/REPLY/CANCEL/…), which Calendar
+ * stamps on all of these and which ordinary human mail never has. Only the
+ * allowlisted values count: an EMPTY method ('' — an .ics-ish part was seen
+ * but no iCalendar METHOD was found, e.g. a human attaching an invite file)
+ * and an unrecognised value are both deliberately NOT trusted as a stamp —
+ * classifying them as system silenced genuine human questions, which could
+ * then neither open nor close loops.
  *
  * The subject prefix is a deliberate FALLBACK, reached when no usable MIME
  * method was captured for the message. It is anchored to the start of the
  * subject and refuses anything carrying a Re:/Fwd: prefix, so a human forward
- * that happens to begin "Invitation: ..." still opens a loop.
+ * that happens to begin "Invitation: ..." still opens a loop. The prefixes
+ * are Calendar's OWN localised headers only — a generic word like
+ * "Notification:" is a human/vendor subject and must never match.
  */
+const CALENDAR_METHODS = new Set([
+  'REQUEST', 'REPLY', 'CANCEL', 'PUBLISH', 'COUNTER', 'DECLINECOUNTER', 'REFRESH', 'ADD',
+]);
+
 const CALENDAR_SUBJECT_PREFIXES = [
   // en
   'invitation:', 'updated invitation:', 'invitation with note:',
   'updated invitation with note:', 'accepted:', 'declined:', 'tentative:',
-  'canceled event:', 'cancelled event:', 'notification:',
+  'canceled event:', 'cancelled event:',
   // ru
   'приглашение:', 'обновлённое приглашение:', 'обновленное приглашение:',
   'принято:', 'отклонено:', 'под вопросом:', 'отменено:', 'отмена мероприятия:',
@@ -75,7 +83,8 @@ const REPLY_OR_FORWARD_PREFIX = /^\s*((re|fwd?|aw|sv|vs)\s*:\s*)+/i;
 export function isCalendarSystemMail(
   msg: { calendarMethod?: string | null; subject?: string },
 ): boolean {
-  if (msg.calendarMethod) return true; // non-empty method only; '' falls through
+  // Allowlisted iCalendar METHOD only; '' and unknown values fall through.
+  if (msg.calendarMethod && CALENDAR_METHODS.has(msg.calendarMethod.trim().toUpperCase())) return true;
   const subject = (msg.subject ?? '').trim();
   // A human reply/forward is never Calendar system mail, whatever it is titled.
   if (REPLY_OR_FORWARD_PREFIX.test(subject)) return false;

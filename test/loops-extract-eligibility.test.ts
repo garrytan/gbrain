@@ -104,6 +104,18 @@ const ROWS: Row[] = [
     reason: 'no_substantive_messages',
   },
   {
+    name: 'a human "Notification: ..." thread with no calendar part is eligible',
+    messages: [msg({ from: 'bob@example.com', subject: 'Notification: your invoice is ready' })],
+    eligible: true,
+    reason: 'human_correspondence',
+  },
+  {
+    name: 'an unrecognised MIME method does not make a thread a calendar notice',
+    messages: [msg({ from: 'bob@example.com', calendarMethod: 'BOGUS' })],
+    eligible: true,
+    reason: 'human_correspondence',
+  },
+  {
     name: 'CATEGORY_PROMOTIONS without an owner message is not eligible',
     messages: [msg({ from: 'bob@example.com', labels: ['INBOX', 'CATEGORY_PROMOTIONS'] })],
     eligible: false,

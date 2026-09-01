@@ -606,6 +606,37 @@ describe('google calendar system mail', () => {
     expect(v.open).toEqual([]);
   });
 
+  test('a human "Notification: ..." email with no calendar part still opens a loop', () => {
+    // 'Notification:' is a generic vendor/human prefix, not a Calendar header —
+    // classifying it as system mail dropped real inbound questions from BOTH
+    // detectors (ship-review fix).
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Notification: your invoice is ready',
+        body: 'Can you confirm receipt?',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  test('an unrecognised MIME method is not trusted as a Calendar stamp', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Quarterly plan',
+        body: 'Can you review the plan?',
+        calendarMethod: 'BOGUS',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
   test('a forwarded human question is NOT lost just because it says Invitation', () => {
     // The fallback refuses anything carrying a Re:/Fwd: prefix, so a human
     // forward of an invite thread still owes a reply.

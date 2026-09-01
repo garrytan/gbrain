@@ -183,10 +183,24 @@ describe('isCalendarSystemMail', () => {
     ['mid-subject "invitation:" does not match (anchored)', { calendarMethod: null, subject: 'About the Invitation: thoughts?' }, false],
     ['empty message shape', {}, false],
     ['no method, empty subject', { calendarMethod: null, subject: '' }, false],
+    // Ship-review fixes: 'Notification:' is a generic human/vendor prefix (a
+    // human "Notification: your invoice" must keep opening loops), and an
+    // unrecognised MIME method is NOT trusted as a Calendar stamp.
+    ['generic "Notification:" prefix is NOT calendar system mail', { calendarMethod: null, subject: 'Notification: your invoice is ready' }, false],
+    ['unknown MIME method is not trusted', { calendarMethod: 'BOGUS', subject: 'Team sync notes' }, false],
+    ['unknown method + Invitation subject still reaches the subject fallback', { calendarMethod: 'BOGUS', subject: 'Invitation: Team sync' }, true],
   ];
   for (const [label, msg, expected] of cases) {
     test(`${label} → ${expected}`, () => {
       expect(isCalendarSystemMail(msg)).toBe(expected);
+    });
+  }
+
+  const ICAL_METHODS = ['REQUEST', 'REPLY', 'CANCEL', 'PUBLISH', 'COUNTER', 'DECLINECOUNTER', 'REFRESH', 'ADD'];
+  for (const method of ICAL_METHODS) {
+    test(`iCalendar METHOD ${method} is system mail (case-insensitive)`, () => {
+      expect(isCalendarSystemMail({ calendarMethod: method, subject: 'Team sync notes' })).toBe(true);
+      expect(isCalendarSystemMail({ calendarMethod: method.toLowerCase(), subject: 'Team sync notes' })).toBe(true);
     });
   }
 });
