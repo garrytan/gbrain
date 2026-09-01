@@ -79,7 +79,7 @@
 
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
-import { BudgetTracker } from '../budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker } from '../budget/budget-tracker.ts';
 import { withBudgetTracker } from '../ai/gateway.ts';
 import { errorFor } from '../errors.ts';
 import { applyEditBatch, getWorkingTreeStatusForFile, splitFrontmatter } from './apply-edits.ts';
@@ -241,6 +241,56 @@ export async function runSkillOpt(opts: SkillOptOpts): Promise<RunSkillOptResult
   return await withSkilloptLock(engine, skillName, async () => {
     return runOptimizationLoop(opts, bench, split, bundledCtx, mutateDecision, heldOutTasks);
   });
+}
+
+/**
+ * Classifies a run-loop error into the abort taxonomy the receipt + audit
+ * trail surface. Pulled out of runOptimizationLoop's catch block so it's
+ * unit-testable without driving a full orchestrator run (engine, benchmark,
+ * lock, LLM calls) — the string-sniff bug this replaces went unexercised
+ * for exactly that reason: nothing could cheaply throw a real error deep
+ * inside the loop to catch it.
+ *
+ * `err instanceof BudgetExhausted` is the real classification signal — the
+ * string sniff it replaces (`msg.includes('BudgetExhausted') ||
+ * msg.includes('budget_exhausted')`) could never match, because every
+ * BudgetExhausted thrown by src/core/budget/budget-tracker.ts carries a
+ * human-readable message ("projected cost $X exceeds the configured cap
+ * $Y", "N exceeded --max-runtime Ns", ...) containing neither literal
+ * substring. Every cost-cap / no-pricing / (unreachable from this tracker
+ * today, since it's never constructed with maxRuntimeMs) runtime abort fell
+ * through to the generic catch-all instead, misreporting outcome='errored'
+ * / abortReason='error' on the receipt and audit trail.
+ */
+export function classifyAbortError(
+  err: unknown,
+  opts: { maxRuntimeMin: number },
+): {
+  outcome: 'aborted' | 'errored';
+  abortReason: 'budget_exhausted' | 'runtime_exceeded' | 'sigint' | 'error';
+  abortDetail: string;
+} {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (err instanceof BudgetExhausted) {
+    return {
+      outcome: 'aborted',
+      abortReason: err.reason === 'runtime' ? 'runtime_exceeded' : 'budget_exhausted',
+      abortDetail: msg,
+    };
+  } else if (msg.includes('skillopt_runtime_exceeded')) {
+    return {
+      outcome: 'aborted',
+      abortReason: 'runtime_exceeded',
+      abortDetail: `exceeded --max-runtime-min ${opts.maxRuntimeMin}`,
+    };
+  } else if (msg.includes('SIGINT')) {
+    return { outcome: 'aborted', abortReason: 'sigint', abortDetail: msg };
+  } else {
+    // #3516: truthful catch-all. Pre-fix this logged reason:'sigint' for
+    // EVERY unrecognized error (provider failures, no_pricing hard-fails),
+    // which made the audit trail lie about why the run died.
+    return { outcome: 'errored', abortReason: 'error', abortDetail: msg };
+  }
 }
 
 async function runOptimizationLoop(
@@ -692,27 +742,10 @@ async function runOptimizationLoop(
       }
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('BudgetExhausted') || msg.includes('budget_exhausted')) {
-      outcome = 'aborted';
-      abortReason = 'budget_exhausted';
-      abortDetail = msg;
-    } else if (msg.includes('skillopt_runtime_exceeded')) {
-      outcome = 'aborted';
-      abortReason = 'runtime_exceeded';
-      abortDetail = `exceeded --max-runtime-min ${opts.maxRuntimeMin}`;
-    } else if (msg.includes('SIGINT')) {
-      outcome = 'aborted';
-      abortReason = 'sigint';
-      abortDetail = msg;
-    } else {
-      // #3516: truthful catch-all. Pre-fix this logged reason:'sigint' for
-      // EVERY unrecognized error (provider failures, no_pricing hard-fails),
-      // which made the audit trail lie about why the run died.
-      outcome = 'errored';
-      abortReason = 'error';
-      abortDetail = msg;
-    }
+    const classified = classifyAbortError(err, opts);
+    outcome = classified.outcome;
+    abortReason = classified.abortReason;
+    abortDetail = classified.abortDetail;
     logEvent({
       kind: 'abort',
       run_id: runId,
