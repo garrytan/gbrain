@@ -653,12 +653,18 @@ corpus and fires a scan-gated commit+push. "Your local harness IS your agent."
       `dream.synthesize.session_corpus_dir` (default `~/.gbrain/transcripts/corpus/`, 0700,
       never in the repo) + fire scan-gated commit+push (D6). Closes the transcript gap in PR1.
     - Absolute binary path everywhere; `GBRAIN_HOOKS=0` kill switch.
-  - Codex (no hooks): honest pull model. Rendered AGENTS.md carries adapted per-message
+  - Codex: honest pull model per turn. Rendered AGENTS.md carries adapted per-message
     gates 0–7 (entity lookup = "call recall/volunteer_context with recent window";
     receipts; WRITE IT DOWN same turn via extract_facts/put_page) +
-    `codex mcp add gbrain -- gbrain serve`. FF2: `notify` hook in ~/.codex/config.toml as
-    transcript sweeper (validate the event semantics first). Runbook/verify state the
-    degradation plainly: Claude Code = push-on-hook, Codex = pull-on-protocol.
+    `codex mcp add gbrain -- gbrain serve`. [STALE-SECTION REFRESH, Memorable wave +
+    ambient-writeback wave: codex DOES have hooks now — SessionEnd only, trust-gated
+    via `hooks.json` + config.toml (`src/core/bootstrap/codex-hooks.ts`,
+    `CODEX_HAS_HOOKS = true`); the old "FF2 notify sweeper" idea is superseded by the
+    SessionEnd capture → corpus → sweep lane. Per-turn context on codex remains the
+    pull protocol; ambient writeback's codex lane rides managed AGENTS.md blocks +
+    that same SessionEnd/sweep backstop — `docs/guides/ambient-writeback.md`.]
+    Runbook/verify state the degradation plainly: Claude Code = push-on-hook,
+    Codex = pull-on-protocol (+ session-end capture).
   - **Write-path rule rendered into AGENTS.md** (critique hole 2): on PGLite, durable
     knowledge is written through MCP ops (put_page/extract_facts/add_timeline_entry), never
     by editing brain/ files directly — file edits are invisible to retrieval until a sync

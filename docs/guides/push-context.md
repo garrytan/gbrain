@@ -14,6 +14,11 @@ The push channels share one zero-LLM core (`src/core/context/volunteer.ts`):
 | `watch` | `gbrain watch` | stream a transcript in, volunteered pages stream out |
 | `claude-code` / `codex` / `opencode` | `gbrain hook user-prompt` (registered by `gbrain bootstrap`) | per-prompt injection inside a harness; see "Harness hooks" below |
 
+Push context is READ-side. Its WRITE-side sibling — the opt-in ambient
+memory writeback channel (`gbrain hook stop` banking gated user turns for
+serve-side extraction, `memory.auto_writeback`) — is documented in
+[ambient-writeback.md](./ambient-writeback.md).
+
 ## How it decides
 
 1. **Extract** entities across the last N turns (capitalized runs, `@handles`),

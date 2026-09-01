@@ -8433,3 +8433,88 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   sends operators debugging connectivity when the fix is `gbrain init`.
   **Context:** follow-up from v0.46.30.0 wave-k, filed by #4364's verifier;
   `src/commands/apply-migrations.ts` probe branch. **Effort:** S.
+
+- [ ] **P1 — extractor-classified transient TTL for the ambient-writeback
+  backstop lane.** **What:** teach the facts extractor an optional `transient`
+  boolean (schema + prompt) and let `FactsBackstopCtx` carry a `transientTtl`
+  so backstop-extracted transient facts (health/location/travel/mood/near-term
+  schedule) get the configured `memory.auto_writeback_transient_ttl` instead
+  of being durable. **Why:** today only the instruction path applies the TTL
+  (agents pass `ttl` on `remember`); a transient fact caught only by the
+  Stop-hook/sweep backstop stays durable until forgotten — a documented
+  asymmetry in `docs/guides/ambient-writeback.md` that both cross-model
+  reviews flagged as next-release work. **Context:** filed from the
+  ambient-writeback wave; the admission seam already exists
+  (`notabilityAdmission` in `src/core/facts/extract.ts`); touching the shared
+  extractor prompt perturbs every extraction lane, so land with the prompt-
+  shape tests updated across sync/put_page/dream/sweep. **Effort:** M.
+
+- [ ] **P3 — opencode ambient-writeback instruction target.** **What:** a
+  `kind:'instructions'` harness target for opencode once a user-global
+  instruction file is attested (observation run per the [ENG-7] discipline —
+  workspace AGENTS.md is its only verified surface today). **Why:** opencode
+  sessions currently get the ambient contract only via MCP `instructions`.
+  **Context:** ambient-writeback wave follow-up; writer + splice helpers are
+  host-agnostic (`src/core/bootstrap/instructions-block.ts`). **Effort:** S
+  after the observation run.
+
+- [ ] **P3 — richer brain-audience heuristics for the writeback consent
+  nudge.** **What:** per-client human attribution beyond `likely_automation`
+  (and possibly repo-visibility as a signal) in
+  `src/core/facts/writeback-audience.ts`. **Why:** the v1 classifier is
+  deliberately declaration-first + conservative (≥3 distinct non-automation
+  clients / 30d); a personal power user with many surfaces or a two-person
+  team brain can each land on the wrong side until someone sets
+  `brain.audience`. Doctor names the evidence either way. **Context:**
+  ambient-writeback wave follow-up. **Effort:** M.
+
+- [ ] **P3 — promote the `$CODEX_HOME/AGENTS.md` + `AGENTS.override.md`
+  provisional spec entries to verified.** **What:** an observation run against
+  a pinned codex-cli release confirming the user-global AGENTS.md discovery
+  ladder and the override-exclusivity rule, then flip the PROVISIONAL notes in
+  `src/core/bootstrap/host-specs.ts` to a dated verified target. **Why:** the
+  harness `instructions` target and doctor's override probe currently rest on
+  documented-but-unobserved behavior (developers.openai.com/codex/guides/
+  agents-md, noted 2026-09-01). **Context:** ambient-writeback wave; the
+  live door test (`test/e2e/bootstrap-real-codex.serial.test.ts`, ambient-
+  writeback describe) is the harness for the run — it already passed once
+  against codex on 2026-09-01 (`usedWriteTool=true`). **Effort:** S.
+
+- [ ] **P2 — owner-scoped remote visibility for private facts.** **What:** an
+  owner-grade credential tier whose REMOTE `recall`/`context_pack`/`delta`
+  reads may include `visibility: 'private'` facts (today remote reads are
+  world-only unconditionally; `include_private` is honored solely for
+  `remote === false`). **Why:** the ambient-writeback template must currently
+  choose between round-trip-able facts (`world`) and operator-private facts
+  that the writing agent itself can never recall in a later remote session —
+  the F5 unset→world posture is the honest workaround, not the fix. An
+  owner-scoped tier would let explicitly-private brains keep ambient facts
+  private AND recallable by the owner's own remote agents. **Context:** filed
+  from the ambient-writeback wave; touches the trust boundary
+  (`docs/protocol/MEMORY_VERBS_v1.md` Trust boundary section — additive
+  credential semantics, not a protocol version bump), token scopes
+  (`src/core/scope.ts`), and every world-only read ternary
+  (`src/core/ops/facts.ts:214`, `src/core/facts/meta-hook.ts:115`,
+  context_pack/delta). Needs its own security review. **Effort:** L.
+
+- [ ] **P3 — extractor rule for quoted third-party material.** **What:** teach
+  the fact-extraction prompt (`src/core/facts/extract.ts`) to skip claims that
+  exist only inside quoted/pasted third-party text, mirroring the instruction
+  template's skip-list and the writeback gate's `quoted_or_tool_output` rule.
+  **Why:** the Stop-hook gate strips quotes only for CLASSIFICATION — a
+  substantive turn that also contains quoted material banks the full
+  (secret-scanned) text, and the extractor currently has no quoted-material
+  exclusion; secrets are covered by redaction, but non-secret third-party
+  claims can land as user facts. **Context:** residual from the
+  ambient-writeback wave (v0.47.10.0); deliberately deferred because prompt
+  changes perturb EVERY extraction lane and need an eval pass
+  (`docs/eval/`). **Effort:** M.
+
+- [ ] **P3 — align the BrainBench continuity metric with read-time TTL
+  validity.** **What:** `src/eval/brainbench/metrics/continuity.ts:70` still
+  counts rows whose `valid_until` has lapsed; the engines' facts-health
+  active bucket no longer does. **Why:** the eval metric and
+  `getFactsHealth` should measure the same "active" definition or the
+  continuity score silently drifts from what users see. **Context:** filed
+  from the ambient-writeback wave (v0.47.10.0, read-time validity).
+  **Effort:** S.
