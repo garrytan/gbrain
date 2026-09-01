@@ -340,16 +340,42 @@ async function pickSoleNonDefaultSource(
 }
 
 /**
+ * Once-per-process (per stale id) latch for the stale `sources.default`
+ * warning below, so bulk callers don't spam stderr. Reset seam exported via
+ * `__testing.resetStaleImplicitDefaultWarnings`.
+ */
+const warnedStaleImplicitDefaults = new Set<string>();
+
+/**
  * Source id that represents the brain's implicit default target for a bare
  * local command (#4700). Unlike resolveSourceWithTier(), this deliberately
  * ignores env, dotfile, cwd, and local_path tiers so callers can distinguish
  * the canonical default-like source from an explicit/path-scoped source cycle.
+ *
+ * Fail-open on a STALE `sources.default` (the configured source was deleted
+ * or archived after the config row was set): tier-5 posture, same as
+ * resolveSourceId's brain_default tier being silent-fallback and
+ * resolveLinkFallbackDefault never throwing. The stale value is treated as
+ * absent — one stderr warning names it — and resolution falls through to the
+ * legacy sole-non-default routing. Genuine engine failures still propagate.
  */
 export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promise<string | null> {
   const globalDefault = await engine.getConfig('sources.default');
   if (globalDefault && isValidSourceId(globalDefault)) {
-    await assertSourceExists(engine, globalDefault);
-    return globalDefault;
+    try {
+      await assertSourceExists(engine, globalDefault);
+      return globalDefault;
+    } catch (e) {
+      if (!(e instanceof SourceTargetError)) throw e;
+      if (!warnedStaleImplicitDefaults.has(globalDefault)) {
+        warnedStaleImplicitDefaults.add(globalDefault);
+        console.error(
+          `[gbrain] config sources.default points at '${globalDefault}', which is not an active source — ` +
+          `ignoring it for this run. Fix with \`gbrain config set sources.default <id>\` ` +
+          `(see \`gbrain sources list\`) or restore it: \`gbrain sources restore ${globalDefault}\`.`,
+        );
+      }
+    }
   }
   return pickSoleNonDefaultSource(engine, { quiet: true });
 }
@@ -914,4 +940,7 @@ export function __resetSourceGuardQueryShape(): void {
 export const __testing = {
   readDotfileWalk,
   SOURCE_ID_RE,
+  resetStaleImplicitDefaultWarnings(): void {
+    warnedStaleImplicitDefaults.clear();
+  },
 };

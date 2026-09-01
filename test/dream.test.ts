@@ -634,6 +634,28 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expectNoImplicitSourceExclusions(report);
   }, 300_000);
 
+  test('bare dream survives a stale sources.default: warns and falls back to the sole non-default source (#4700 review fix)', async () => {
+    await seedSource('solo');
+    // sources.default points at a source that no longer exists (deleted or
+    // never restored) — the tier-5 fail-open posture treats it as absent.
+    await engine.setConfig('sources.default', 'ghost-gone');
+    await engine.setConfig('sync.repo_path', repo);
+
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    let report: any;
+    let errOut = '';
+    try {
+      report = await runDream(engine, ['--dry-run', '--json']);
+      errOut = errSpy.mock.calls.flat().join(' ');
+    } finally {
+      errSpy.mockRestore();
+    }
+    expect(report).toBeTruthy();
+    expectNoImplicitSourceExclusions(report); // fell back to 'solo' as the implicit default
+    expect(errOut).toMatch(/ghost-gone/);
+    expect(errOut).toMatch(/sources\.default/);
+  }, 300_000);
+
   test('explicit --source remains a freshness-only source cycle even when it is sources.default', async () => {
     await seedSource('primary');
     await engine.setConfig('sources.default', 'primary');
