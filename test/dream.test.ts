@@ -533,9 +533,13 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     } catch (e: any) {
       thrown = e.message;
     }
-    // New contract: resolver throws the actionable error (central catch
-    // prints + verdict 1); accept either the throw or the legacy exit path.
-    const errOut = errSpy.mock.calls.flat().join(' ') + ' ' + thrown;
+    // Review fix: assertSourceExists now says "not found or is archived." —
+    // dream's isResolverUserError must match BOTH wordings (like
+    // code-callers/code-callees) so the resolver's user error surfaces as a
+    // clean stderr line + exit 1, never a propagated stack trace.
+    expect(thrown).toBe('EXIT');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/Source "no-such-source" not found/);
     expect(errOut).toMatch(/gbrain sources list/);
     exitSpy.mockRestore();

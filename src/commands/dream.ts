@@ -570,16 +570,19 @@ export const __testing = {
  *
  * Matches the message prefixes thrown from
  * `src/core/source-resolver.ts:resolveSourceId` and
- * `assertSourceExists`. Anything else (TypeError / ReferenceError /
- * postgres connection failures / unexpected bugs) is intentionally
- * NOT caught — those propagate to Bun's default unhandled handler
- * with a stack trace so genuine programmer bugs aren't hidden as
- * if they were operator errors. (Plan D-T3, codex C-7.)
+ * `assertSourceExists` — both the legacy ` not found.` and the
+ * fail-closed ` not found or is archived.` wordings, mirroring
+ * code-callers/code-callees. Anything else (TypeError /
+ * ReferenceError / postgres connection failures / unexpected bugs)
+ * is intentionally NOT caught — those propagate to Bun's default
+ * unhandled handler with a stack trace so genuine programmer bugs
+ * aren't hidden as if they were operator errors. (Plan D-T3, codex C-7.)
  */
 function isResolverUserError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
   const m = e.message;
-  return (m.startsWith('Source "') && m.includes(' not found.'))
+  return (m.startsWith('Source "')
+      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
       || m.startsWith('Invalid --source value')
       || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
