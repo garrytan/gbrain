@@ -244,6 +244,19 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
 
   const stat = statSync(filePath);
   const filename = basename(filePath);
+  // A file argument that IS `.` or `..` makes basename() return that
+  // literal string back rather than a real leaf filename (a trailing
+  // separator, e.g. `foo/`, is stripped by basename() to `foo` — not
+  // affected). The git-storage branch below joins this value onto its
+  // sidecar dest dir (`destDir/${filename}`) — a `..` segment there walks
+  // the join back up OUT of the intended `.raw/<page>/` dir before the
+  // copy. Reject early with a clear error instead of letting it silently
+  // resolve to the parent dir and fail deep inside copyFileSync with a
+  // confusing OS-level error.
+  if (filename === '.' || filename === '..') {
+    console.error(`files upload-raw: "${filePath}" does not name a real file (resolves to "${filename}").`);
+    process.exit(1);
+  }
   const mimeType = getMimeType(filePath);
   const isMedia = mimeType?.startsWith('video/') || mimeType?.startsWith('audio/') || mimeType?.startsWith('image/');
   const needsCloud = stat.size >= SIZE_THRESHOLD || isMedia;

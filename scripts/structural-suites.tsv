@@ -140,7 +140,7 @@ test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback reme
 test/features.test.ts	CLI routing	2	bun-file
 test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
-test/files.test.ts	files upload-raw git-storage branch (#2297)	3	readFileSync
+test/files.test.ts	files upload-raw git-storage branch (#2297)	5	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
 test/files.test.ts	storage precondition — the silent-no-op class (#4022)	3	readFileSync
 test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	3	readFileSync
