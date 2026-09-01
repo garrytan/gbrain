@@ -17,7 +17,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { execFileSync } from 'child_process';
-import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { withEnv } from './helpers/with-env.ts';
@@ -66,6 +66,9 @@ async function runDoctorJson(args: string[], env: Record<string, string | undefi
     captured.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n');
   };
   const origExit = process.exit;
+  // A failing check makes runDoctor set process.exitCode = 1 — restore it so
+  // a deliberately-failing fixture can't turn the whole test process red.
+  const origExitCode = process.exitCode;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process as any).exit = (code?: number) => { throw new Error(`__doctor_exit__:${code ?? 0}`); };
   try {
@@ -79,6 +82,7 @@ async function runDoctorJson(args: string[], env: Record<string, string | undefi
   } finally {
     console.log = origLog;
     process.exit = origExit;
+    process.exitCode = origExitCode;
   }
   const lines = captured.join('').split('\n');
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -152,5 +156,36 @@ describe('doctor --skills-dir (#4673)', () => {
     const after = readFileSync(skillPath, 'utf-8');
     expect(after).toContain('> **Convention:**');
     expect(after).toContain('skills/conventions/quality.md');
+  });
+
+  test('--skills-dir pointing at a NONEXISTENT dir does not throw; resolver_health grades it and names the path', async () => {
+    const missing = join(scratch, 'no-such-skills');
+    const parsed = await runDoctorJson(['--skills-dir', missing], NO_ENV_SKILLS);
+    const resolver = parsed.checks.find((c) => c.name === 'resolver_health');
+    expect(resolver).toBeDefined();
+    // An explicit flag at an empty tree is a real finding, never a silent ok
+    // (and never a fall-through to the auto-detected workspace).
+    expect(['fail', 'warn']).toContain(resolver!.status);
+    expect(JSON.stringify(resolver)).toContain(missing);
+  });
+
+  test('a RELATIVE --skills-dir resolves against cwd, not the install tree', async () => {
+    makeSkillsFixture(scratch, ['rel-skill']);
+    const origCwd = process.cwd();
+    process.chdir(scratch);
+    try {
+      const parsed = await runDoctorJson(['--skills-dir', 'skills'], NO_ENV_SKILLS);
+      const conformance = parsed.checks.find((c) => c.name === 'skill_conformance');
+      expect(conformance).toBeDefined();
+      expect(conformance!.message).toStartWith('1/1');
+    } finally {
+      process.chdir(origCwd);
+    }
+  });
+
+  test('--fix with a MISSING --skills-dir creates nothing on disk', async () => {
+    const missing = join(scratch, 'ghost-skills');
+    await runDoctorJson(['--fix', '--skills-dir', missing], NO_ENV_SKILLS);
+    expect(existsSync(missing)).toBe(false);
   });
 });
