@@ -19,7 +19,11 @@
 //   folds the SOURCE-PAGE SLUG in with the title (#4733: two same-date source
 //   pages emitting the same atom title used to alias one slug, and the
 //   canonical upsert silently overwrote the first atom's binding); transcript
-//   atoms keep the legacy title-only 6-char hash. Re-extracting the same atom
+//   atoms keep the legacy title-only 6-char hash. Pre-#4733 page-derived rows
+//   also live on the legacy shape: resolvePageAtomSlug ADOPTS such a row when
+//   its binding is compatible (same source page, or no binding at all), so a
+//   post-upgrade re-extraction upserts the legacy row instead of minting a
+//   duplicate beside it. Re-extracting the same atom
 //   from the same source resolves to the SAME slug, so the import upserts in
 //   place instead of minting a duplicate. This closes three bugs in one scheme:
 //     - PR #1414's page-side re-extraction.
@@ -971,11 +975,10 @@ export async function runPhaseExtractAtoms(
         const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
-          const slug = atomSlug(
-            atom.title,
-            srcRef,
-            item.kind === 'page' ? item.slug : undefined,
-          );
+          const slug =
+            item.kind === 'page'
+              ? await resolvePageAtomSlug(engine, atom.title, item.slug, sourceId)
+              : atomSlug(atom.title, srcRef);
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
@@ -1369,6 +1372,45 @@ function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): strin
 }
 
 /**
+ * #4733 upgrade idempotency: the slug a PAGE-derived atom upserts under.
+ *
+ * New extractions use the locator-folded slug shape, but a pre-#4733 install
+ * already holds this atom under the LEGACY title-only-hash slug. Computing
+ * only the new shape would find no row there, so every post-upgrade
+ * re-extraction of an unchanged title would mint a DUPLICATE atom beside the
+ * legacy one. Adoption rule:
+ *   1. A page already exists at the new-shape slug → normal upsert there.
+ *   2. Otherwise, a legacy-slug atom with a COMPATIBLE binding — bound to
+ *      THIS source page, or carrying no source binding at all (pre-binding
+ *      era) — is adopted: the upsert lands on the legacy slug, which is
+ *      exactly what a pre-#4733 re-extraction did (reword-still-upserts
+ *      across the upgrade boundary, no duplicate).
+ *   3. A legacy-slug atom bound to a DIFFERENT source locator (the #4733
+ *      collision class) is left untouched; the new-shape slug lands beside
+ *      it — that separation is the whole point of the locator fold.
+ * Both reads are scoped to the write's source (unscoped-check/scoped-write).
+ */
+async function resolvePageAtomSlug(
+  engine: BrainEngine,
+  title: string,
+  sourcePageSlug: string,
+  sourceId: string,
+): Promise<string> {
+  const slug = atomSlug(title, sourcePageSlug, sourcePageSlug);
+  if (await engine.getPage(slug, { sourceId })) return slug;
+  const legacySlug = atomSlug(title, sourcePageSlug);
+  const legacy = await engine.getPage(legacySlug, { sourceId });
+  if (legacy && legacy.type === 'atom') {
+    const fm = (legacy.frontmatter ?? {}) as Record<string, unknown>;
+    const compatible =
+      fm.source_slug === sourcePageSlug ||
+      (fm.source_slug == null && fm.source_path == null);
+    if (compatible) return legacySlug;
+  }
+  return slug;
+}
+
+/**
  * #4733 fail-closed identity guard: refuse to reuse a deterministic atom slug
  * for a DIFFERENT source locator. The canonical importer is an upsert, so
  * without this precondition a slug collision (a pre-#4733 title-only-hash row,
@@ -1388,7 +1430,14 @@ async function assertAtomImportBinding(
   const existing = await engine.getPage(slug, { sourceId });
   if (!existing) return;
   const fm = (existing.frontmatter ?? {}) as Record<string, unknown>;
-  if (existing.type === 'atom' && fm.source_slug === expectedSourceSlug) return;
+  // A pre-binding-era atom (no source_slug/source_path at all) is not bound
+  // to a different source — claiming it is the legacy-adoption upsert path
+  // (resolvePageAtomSlug), not a clobber.
+  if (
+    existing.type === 'atom' &&
+    (fm.source_slug === expectedSourceSlug ||
+      (fm.source_slug == null && fm.source_path == null))
+  ) return;
   throw new Error(
     `atom identity conflict for ${slug}: existing page is bound to a different source; ` +
     'refusing to overwrite it',

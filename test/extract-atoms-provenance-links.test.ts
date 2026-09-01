@@ -212,9 +212,10 @@ describe('atom identity folds the source locator (#4733)', () => {
     expect(preserved!.frontmatter.source_slug).toBe('research/2026-08-30-foreign-page');
   });
 
-  test('upgrade: pre-#4733 title-only-hash atoms keep their bindings; re-extraction lands beside them', async () => {
+  test('upgrade: a pre-#4733 title-only-hash atom with a compatible binding is ADOPTED — re-extraction upserts in place, no duplicate', async () => {
     // Seed a PRE-WAVE atom exactly where the legacy formula put it:
-    // atoms/<date>/<stem>-<sha256(title).slice(0,6)>.
+    // atoms/<date>/<stem>-<sha256(title).slice(0,6)>, bound to the SAME
+    // source page the re-extraction runs against.
     const title = 'Upgrade shared title';
     const sourceSlug = 'writings/2026-08-28-upgrade-page';
     const legacyHash = createHash('sha256').update(title).digest('hex').slice(0, 6);
@@ -240,23 +241,101 @@ describe('atom identity folds the source locator (#4733)', () => {
     expect(result.details?.failures).toEqual([]);
     expect(result.details?.atoms_extracted).toBe(1);
 
-    // The pre-wave atom's binding SURVIVES — same slug, same binding, same body.
+    // The legacy row was ADOPTED: same slug, binding kept, content refreshed —
+    // exactly what a pre-#4733 re-extraction did (reword-still-upserts holds
+    // across the upgrade boundary). Never deleted, never repointed elsewhere.
     const legacy = await engine.getPage(legacySlug, { sourceId: 'default' });
     expect(legacy).not.toBeNull();
     expect(legacy!.deleted_at ?? null).toBeNull();
     expect(legacy!.frontmatter.source_slug).toBe(sourceSlug);
-    expect(legacy!.frontmatter.source_hash).toBe('aaaa000011112222');
-    expect(legacy!.compiled_truth).toContain('Pre-wave atom body');
+    expect(legacy!.frontmatter.source_hash).toBe('bbbb333344445555');
 
-    // The new atom lands on the locator-folded slug (8-char hash), NOT the
-    // legacy one.
+    // NO duplicate on the locator-folded slug — pre-fix, re-extraction found
+    // nothing at the new shape and minted a second atom beside the legacy one.
     const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
     const newSlug = `atoms/2026-08-28/upgrade-shared-title-${newHash}`;
     expect(newSlug).not.toBe(legacySlug);
-    const fresh = await engine.getPage(newSlug, { sourceId: 'default' });
+    expect(await engine.getPage(newSlug, { sourceId: 'default' })).toBeNull();
+    const atoms = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE type = 'atom' AND frontmatter->>'source_slug' = $1 AND deleted_at IS NULL`,
+      [sourceSlug],
+    );
+    expect(atoms[0]!.n).toBe(1);
+    // Provenance edge points at the adopted legacy slug.
+    const links = (await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance');
+    expect(links).toHaveLength(1);
+    expect(links[0]!.to_slug).toBe(legacySlug);
+  });
+
+  test('upgrade: a legacy-slug atom bound to a DIFFERENT source page is NOT adopted — the new-shape slug lands beside it', async () => {
+    const title = 'Upgrade foreign title';
+    const foreignSource = 'research/2026-08-26-foreign-origin';
+    const sourceSlug = 'writings/2026-08-26-adoption-guard-page';
+    const legacyHash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+    const legacySlug = `atoms/2026-08-26/upgrade-foreign-title-${legacyHash}`;
+    await engine.putPage(legacySlug, {
+      type: 'atom',
+      title,
+      compiled_truth: 'Atom that belongs to the foreign source page.',
+      timeline: '',
+      frontmatter: { source_slug: foreignSource, source_hash: 'ffff000011112222', atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Adoption guard page', compiled_truth: 'A separately owned claim.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'A separately owned claim.', contentHash: 'dddd333344445555' }],
+      _chat: stubChat(title),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    // The foreign-bound legacy row is untouched (the #4733 collision class).
+    const legacy = await engine.getPage(legacySlug, { sourceId: 'default' });
+    expect(legacy!.frontmatter.source_slug).toBe(foreignSource);
+    expect(legacy!.frontmatter.source_hash).toBe('ffff000011112222');
+    // The new atom lands on the locator-folded slug beside it.
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    const fresh = await engine.getPage(`atoms/2026-08-26/upgrade-foreign-title-${newHash}`, { sourceId: 'default' });
     expect(fresh).not.toBeNull();
     expect(fresh!.frontmatter.source_slug).toBe(sourceSlug);
-    expect(fresh!.frontmatter.source_hash).toBe('bbbb333344445555');
+  });
+
+  test('upgrade: a pre-binding-era legacy atom (no source binding at all) is adopted and gains the binding', async () => {
+    const title = 'Upgrade unbound title';
+    const sourceSlug = 'writings/2026-08-25-unbound-page';
+    const legacyHash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+    const legacySlug = `atoms/2026-08-25/upgrade-unbound-title-${legacyHash}`;
+    await engine.putPage(legacySlug, {
+      type: 'atom',
+      title,
+      compiled_truth: 'Unbound pre-binding-era atom body.',
+      timeline: '',
+      frontmatter: { atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Unbound page', compiled_truth: 'The unbound claim, revised.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'The unbound claim, revised.', contentHash: 'eeee333344445555' }],
+      _chat: stubChat(title),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    const legacy = await engine.getPage(legacySlug, { sourceId: 'default' });
+    expect(legacy).not.toBeNull();
+    expect(legacy!.frontmatter.source_slug).toBe(sourceSlug); // binding gained
+    expect(legacy!.frontmatter.source_hash).toBe('eeee333344445555');
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    expect(await engine.getPage(`atoms/2026-08-25/upgrade-unbound-title-${newHash}`, { sourceId: 'default' })).toBeNull();
   });
 
   test('reword-still-upserts survives: same page re-extracted after a body edit updates ONE atom', async () => {
