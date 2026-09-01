@@ -338,6 +338,86 @@ describe('atom identity folds the source locator (#4733)', () => {
     expect(await engine.getPage(`atoms/2026-08-25/upgrade-unbound-title-${newHash}`, { sourceId: 'default' })).toBeNull();
   });
 
+  test("a type:'note' page squatting on the atom slug is never overwritten (fail-closed, 'atom identity conflict')", async () => {
+    // assertAtomImportBinding's non-atom arm: the deterministic slug already
+    // holds a page that is NOT an atom. The upsert would silently turn a
+    // human note into an atom — refuse, record the failure, leave it alone.
+    const title = 'Squatted atom title';
+    const sourceSlug = 'writings/2026-08-28-squatter-source';
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    const squatSlug = `atoms/2026-08-28/squatted-atom-title-${newHash}`;
+    await engine.putPage(squatSlug, {
+      type: 'note', title: 'A note, not an atom', compiled_truth: 'Human-written note body.', timeline: '',
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Squatter source', compiled_truth: 'A claim from the squatter source.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'A claim from the squatter source.', contentHash: 'abab000011112222' }],
+      _chat: stubChat(title),
+    });
+    expect(result.status).toBe('warn');
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.failures).toEqual([
+      expect.objectContaining({
+        source: sourceSlug,
+        error: expect.stringContaining('atom identity conflict'),
+      }),
+    ]);
+    const preserved = await engine.getPage(squatSlug, { sourceId: 'default' });
+    expect(preserved).not.toBeNull();
+    expect(preserved!.type).toBe('note');
+    expect(preserved!.title).toBe('A note, not an atom');
+    expect(preserved!.compiled_truth).toBe('Human-written note body.');
+    expect(preserved!.frontmatter.source_slug).toBeUndefined();
+    // No provenance edge was banked toward the squatter.
+    expect((await engine.getLinks(sourceSlug)).filter(l => l.link_source === 'atom-provenance')).toHaveLength(0);
+  });
+
+  test('upgrade: a legacy-slug atom bound via source_path (transcript origin) is NOT adopted — the new-shape slug lands beside it', async () => {
+    // resolvePageAtomSlug's other rejecting arm: a legacy title-only-hash
+    // row that carries a source_path binding belongs to a transcript file,
+    // not to this page — adopting it would repoint someone else's atom.
+    const title = 'Upgrade transcript title';
+    const sourceSlug = 'writings/2026-08-24-transcript-neighbor-page';
+    const legacyHash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+    const legacySlug = `atoms/2026-08-24/upgrade-transcript-title-${legacyHash}`;
+    const transcriptPath = '/brain/conversations/2026-08-24-telegram.md';
+    await engine.putPage(legacySlug, {
+      type: 'atom',
+      title,
+      compiled_truth: 'Atom distilled from a transcript file.',
+      timeline: '',
+      frontmatter: { source_path: transcriptPath, source_hash: 'aaaa111122223333', atom_type: 'insight' },
+    });
+    await engine.putPage(sourceSlug, {
+      type: 'note', title: 'Transcript neighbor page', compiled_truth: 'A page-derived claim.', timeline: '',
+    });
+
+    const result = await runPhaseExtractAtoms(engine, {
+      _transcripts: [],
+      _pages: [{ slug: sourceSlug, content: 'A page-derived claim.', contentHash: 'bbbb333344445555' }],
+      _chat: stubChat(title),
+    });
+    expect(result.status).toBe('ok');
+    expect(result.details?.failures).toEqual([]);
+    expect(result.details?.atoms_extracted).toBe(1);
+
+    // The transcript-bound legacy row is untouched: same path, same hash, no source_slug gained.
+    const legacy = await engine.getPage(legacySlug, { sourceId: 'default' });
+    expect(legacy!.frontmatter.source_path).toBe(transcriptPath);
+    expect(legacy!.frontmatter.source_hash).toBe('aaaa111122223333');
+    expect(legacy!.frontmatter.source_slug).toBeUndefined();
+    // The page-derived atom lands on the locator-folded slug beside it.
+    const newHash = createHash('sha256').update(`${sourceSlug}\0${title}`).digest('hex').slice(0, 8);
+    const fresh = await engine.getPage(`atoms/2026-08-24/upgrade-transcript-title-${newHash}`, { sourceId: 'default' });
+    expect(fresh).not.toBeNull();
+    expect(fresh!.frontmatter.source_slug).toBe(sourceSlug);
+    expect(fresh!.frontmatter.source_path).toBeUndefined();
+  });
+
   test('reword-still-upserts survives: same page re-extracted after a body edit updates ONE atom', async () => {
     const sourceSlug = 'writings/2026-08-27-reword-page';
     await engine.putPage(sourceSlug, {
