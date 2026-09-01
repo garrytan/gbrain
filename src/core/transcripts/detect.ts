@@ -65,19 +65,21 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
 
 /**
  * Detection order: SQLite magic is unambiguous; JSONL first-line shapes are
- * mutually exclusive (session_meta / session-header / grok system-head /
- * claude keys); the two monolithic-JSON exports are sniffed by their
- * distinguishing keys. Every adapter registers here unconditionally; any
- * format-level scoping belongs to callers.
- *
+ * mutually exclusive (session_meta / session-header / claude keys / grok
+ * system-head); the two monolithic-JSON exports are sniffed by their
+ * distinguishing keys. claude-code detects BEFORE grok: a claude session can
+ * lead with a `type:'system'` row (string content), which is grok's head
+ * shape — grok's sniff also rejects claude-family keys, so the ordering is
+ * belt-and-braces, not the only defence. Every adapter registers here
+ * unconditionally; any format-level scoping belongs to callers.
  */
 export function transcriptAdapters(): TranscriptAdapter[] {
   return [
     hermesAdapter,
-    grokAdapter,
     openclawAdapter,
     codexAdapter,
     claudeCodeAdapter,
+    grokAdapter,
     claudeExportAdapter,
     chatgptExportAdapter,
   ];

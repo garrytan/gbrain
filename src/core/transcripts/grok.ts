@@ -197,6 +197,17 @@ function identityFromPath(path: string): { sessionId?: string; cwd?: string } {
   };
 }
 
+/**
+ * Keys the claude-code family stamps on EVERY session row (including its
+ * `type:'system'` rows, whose `content` is a string). A first line carrying
+ * any of them is a claude-code session, not a grok one — without this
+ * discriminator the head sniff stole system-led claude sessions: every row
+ * then mapped to 'typed', so the session parsed to zero messages with
+ * expectedEmpty=true and was silently swallowed. Ordering is the second
+ * belt (claude-code detects before grok in transcriptAdapters()).
+ */
+const CLAUDE_FAMILY_KEYS = ['sessionId', 'parentUuid', 'uuid', 'isSidechain'];
+
 function looksLikeGrokHead(sample: Buffer): boolean {
   const firstLine = sample.toString('utf8').split('\n', 1)[0]?.trim();
   if (!firstLine || !firstLine.startsWith('{')) return false;
@@ -206,13 +217,18 @@ function looksLikeGrokHead(sample: Buffer): boolean {
       obj !== null &&
       typeof obj === 'object' &&
       obj.type === 'system' &&
-      typeof obj.content === 'string'
+      typeof obj.content === 'string' &&
+      !CLAUDE_FAMILY_KEYS.some((k) => k in obj)
     );
   } catch {
     // Truncated first line (oversized system prompt vs the 64KB sample):
     // the key sniff covers exactly that case. Observed system lines are
     // ~4–6KB, well under the sample, so this is defence-in-depth.
-    return firstLine.includes('"type":"system"') && firstLine.includes('"content"');
+    return (
+      firstLine.includes('"type":"system"') &&
+      firstLine.includes('"content"') &&
+      !CLAUDE_FAMILY_KEYS.some((k) => firstLine.includes(`"${k}"`))
+    );
   }
 }
 

@@ -649,6 +649,53 @@ describe('grokAdapter', () => {
     expect(buildStatusRows(discovered, empty, roots).find((x) => x.format === 'grok')!.gapFiles).toBe(1);
   });
 
+  test('a claude-code session led by a system row is NOT stolen by the grok head sniff', () => {
+    // Claude Code writes `type:'system'` rows (string `content`, plus the
+    // claude-family keys sessionId/uuid/parentUuid). Pre-fix the grok head
+    // sniff claimed any .jsonl whose first line was {type:'system',
+    // content:string}; every claude row then mapped to 'typed', so the
+    // session parsed to zero messages with expectedEmpty=true — silently
+    // swallowed instead of imported.
+    const d = tdir();
+    const p = join(d, 'claude-system-head.jsonl');
+    writeFileSync(
+      p,
+      [
+        JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          sessionId: 's-red-1',
+          type: 'system',
+          content: 'Session hook fired',
+          uuid: 'sys-0001',
+          timestamp: '2026-08-10T08:00:00.000Z',
+        }),
+        JSON.stringify({
+          parentUuid: 'sys-0001',
+          isSidechain: false,
+          sessionId: 's-red-1',
+          type: 'user',
+          message: { role: 'user', content: 'A real question' },
+          uuid: 'u-0001',
+          timestamp: '2026-08-10T08:00:01.000Z',
+        }),
+        JSON.stringify({
+          parentUuid: 'u-0001',
+          isSidechain: false,
+          sessionId: 's-red-1',
+          type: 'assistant',
+          message: { id: 'm-1', role: 'assistant', content: [{ type: 'text', text: 'A real answer' }] },
+          uuid: 'a-0001',
+          timestamp: '2026-08-10T08:00:02.000Z',
+        }),
+      ].join('\n') + '\n',
+    );
+    expect(grokAdapter.detect(p, readSample(p))).toBe(false);
+    const r = detectAdapter(p);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.adapter.format).toBe('claude-code');
+  });
+
   test('the grok skip is format-scoped: a bare-UUID dir in another harness root hides nothing', () => {
     // Triage rework for the adoption: an openclaw (or any non-grok) tree
     // whose path happens to contain a UUID directory segment must still
