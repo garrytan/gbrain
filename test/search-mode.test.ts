@@ -697,7 +697,7 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 26 (21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 negative-offset cache-skip gap #4358 residual; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415)', () => {
+  test('KNOBS_HASH_VERSION is 27 (…; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11)', () => {
     expect(KNOBS_HASH_VERSION).toBe(27);
   });
 

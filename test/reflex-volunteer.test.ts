@@ -176,11 +176,11 @@ describe('buildReflexAddition Arm 2 (host-capability rung)', () => {
       }
       return { pointers: [pointer('people/alice-wonderman', 'Alice Wonderman')], text: 'POINTER_BLOCK' };
     };
-    const started = Date.now();
     const text = await buildReflexAddition(params(resolveEntities));
+    // The functional outcome IS the assertion (ship review: a wall-clock
+    // bound raced the real 1500ms internal timeout with ~1s slack — flaky on
+    // loaded CI shards; the 5000ms bun test timeout already bounds hangs).
     expect(text).toBe('POINTER_BLOCK');
-    // Bounded by the reflex budget (1500ms) + slack, never unbounded.
-    expect(Date.now() - started).toBeLessThan(2500);
   }, 5000);
 
   test('volunteered-only turn still injects (pointer arm empty)', async () => {

@@ -30,6 +30,7 @@ import {
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
 import { lexicalArmsEnabled } from '../core/context/reflex.ts';
+import { VOLUNTEER_MAX_PAGES_CAP } from '../core/context/volunteer.ts';
 import { assembleTurnContext } from '../core/context/turn-context.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
 import { logTurnContextDeliveryFireAndForget } from '../core/context/volunteer-events.ts';
@@ -51,6 +52,25 @@ const NULL_BINDING: ResolveIpcBinding = { server: null, socketPath: null, close:
  * (resolveMcpStdioSourceScope) — the IPC layer rejects requests naming any
  * other source ([CX2-10]).
  */
+/**
+ * 2026-08 fix wave (ship security review): the volunteer probe claim is a
+ * WIRE FIELD, so it is honored only when the request is volunteer-SHAPED —
+ * slug-only suppression + the wide ungated pool cap volunteerStage always
+ * sends. A normal pointer resolve stamping probe:'volunteer' to evade
+ * delivery telemetry keeps logging. Exported for direct unit testing.
+ */
+export function isVolunteerProbeShaped(req: {
+  probe?: string;
+  suppression?: string;
+  maxPointers?: number;
+} | undefined): boolean {
+  return (
+    req?.probe === 'volunteer' &&
+    req.suppression === 'slug-only' &&
+    req.maxPointers === VOLUNTEER_MAX_PAGES_CAP * 2
+  );
+}
+
 export async function bindResolveIpcForServe(
   engine: BrainEngine,
   defaultSource: string,
@@ -171,10 +191,16 @@ export async function bindResolveIpcForServe(
         // client's 250ms budget abandoned was never injected, and counting it
         // would corrupt the volunteered-vs-used precision stats (red-team).
         // Volunteer-stage PROBE resolves (wide ungated pool) are skipped for
-        // the same reason: the pool is not injected pointers; the client logs
-        // gated survivors through the volunteer-events sink (2026-08 wave).
+        // the same reason: the pool is not injected pointers. NOTE (ship
+        // security review): on the PGLite/IPC rung the gated survivors are
+        // NOT re-logged anywhere (the client has no engine handle) — openclaw
+        // volunteer events cover the direct-Postgres rung only, see
+        // reflex.ts. The probe claim is a WIRE FIELD, so it is honored only
+        // when the request is volunteer-SHAPED (slug-only suppression + the
+        // wide volunteer pool cap): a normal pointer resolve stamping
+        // probe:'volunteer' to evade delivery telemetry still logs.
         onDelivered: (block, req) => {
-          if (req?.probe === 'volunteer') return;
+          if (isVolunteerProbeShaped(req)) return;
           logDeliveredReflexPointers(engine, block.pointers);
         },
         // The hook lane's feedback loop (#2095 closed over turn_context):

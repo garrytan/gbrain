@@ -33,7 +33,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, appendFileSync } from 'node:fs';
-import { loadConfig, type GBrainConfig } from '../config.ts';
+import { loadConfig, isEnvDisabled, type GBrainConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
 import {
   extractCandidates,
@@ -128,6 +128,12 @@ export function windowTurnCount(cfg: GBrainConfig | null): number {
 }
 
 const TIMEOUT_MS = 1500; // generous per-turn ceiling; the work is usually <100ms
+/**
+ * Minimum remaining budget (ms) worth spending on the Arm 2 volunteer probe.
+ * Below this, a resolve round-trip cannot realistically complete — skip the
+ * arm rather than start work the timeout will immediately discard.
+ */
+const MIN_VOLUNTEER_BUDGET_MS = 50;
 const HEARTBEAT_PATH = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
 
 /** File-plane + env gate. Default ON. DB-plane does NOT gate (assemble() is sync). */
@@ -147,7 +153,7 @@ export function reflexEnabled(cfg: GBrainConfig | null): boolean {
  */
 export function volunteerEnabled(cfg: GBrainConfig | null): boolean {
   const env = process.env.GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER;
-  if (env != null && env !== '') return !/^(false|0|off|no)$/i.test(env.trim());
+  if (env != null && env !== '') return !isEnvDisabled(env);
   return cfg?.retrieval_reflex_volunteer !== false;
 }
 
@@ -159,10 +165,10 @@ export function volunteerEnabled(cfg: GBrainConfig | null): boolean {
  */
 export function lexicalArmsEnabled(cfg: GBrainConfig | null): boolean {
   const env = process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS;
-  // Case-insensitive + common negatives (adversarial F11): this is the
-  // incident escape hatch — an operator typing FALSE/off/no mid-incident must
-  // not get a silent no-op. (Sibling gates keep the stricter legacy parse.)
-  if (env != null && env !== '') return !/^(false|0|off|no)$/i.test(env.trim());
+  // Shared isEnvDisabled parse (adversarial F11): the incident escape hatch —
+  // an operator typing FALSE/off/no mid-incident must not get a silent no-op.
+  // (reflexEnabled/windowTurnCount keep the stricter legacy parse.)
+  if (env != null && env !== '') return !isEnvDisabled(env);
   return cfg?.retrieval_reflex_lexical_arms !== false;
 }
 
@@ -209,7 +215,7 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
     let volunteered: VolunteeredPage[] = [];
     if (windowCandidates && windowSlice && volunteerEnabled(cfg)) {
       const remaining = TIMEOUT_MS - (Date.now() - startedAt);
-      if (remaining > 50) {
+      if (remaining > MIN_VOLUNTEER_BUDGET_MS) {
         const v = await withTimeout(
           volunteerStage(
             (cands, ropts) => resolve(params, cfg, cands, ropts),
@@ -232,11 +238,17 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
 
     // Accept-side reflex-channel logging (red-team): the block survived the
     // per-turn timeout, so these pointers ARE being injected. Only the
-    // direct-Postgres rung has an engine here; the IPC rung logs server-side
-    // at delivery (probe resolves excluded — see ResolveEntitiesOpts.probe);
-    // host-injected resolvers can't log (documented gap). Volunteered
-    // survivors log through the volunteer-events sink under the in-process
-    // 'openclaw' channel (NEVER wire-claimable — see HARNESS_CHANNELS).
+    // direct-Postgres rung has an engine here; the IPC rung logs POINTER
+    // deliveries server-side (probe resolves excluded — see
+    // ResolveEntitiesOpts.probe); host-injected resolvers can't log
+    // (documented gap). Volunteered survivors log through the
+    // volunteer-events sink under the in-process 'openclaw' channel (NEVER
+    // wire-claimable — see HARNESS_CHANNELS) — on the DIRECT-POSTGRES RUNG
+    // ONLY: the PGLite/IPC rung has no engine handle client-side and the
+    // server only sees the ungated probe pool, so openclaw volunteer events
+    // are not logged there (documented gap, same class as the host-resolver
+    // one; a server-side volunteer-report IPC kind is the fix if stats ever
+    // need PGLite coverage).
     if (!params.resolveEntities && isPostgres(cfg)) {
       const engine = await getPostgresEngine(cfg);
       if (engine) {
@@ -397,8 +409,20 @@ function writeHeartbeat(cfg: GBrainConfig | null, count: number): void {
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  return Promise.race([
-    p,
-    new Promise<null>((r) => setTimeout(() => r(null), ms)),
-  ]);
+  // Clear the race timer on settle (2026-08 wave, perf review): the volunteer
+  // arm added a second instance per windowed turn, and an uncleared timer
+  // parks the event loop for up to TIMEOUT_MS after the winner settled. The
+  // LOSING promise itself is not cancelled (no AbortSignal threading through
+  // the resolver rungs yet — noted on the single-pool micro-opt TODO).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

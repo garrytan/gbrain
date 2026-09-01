@@ -2072,10 +2072,9 @@ export async function hybridSearch(
       // even under a walk; callers without an explicit cap get the widened
       // walk cap as before.
       const capFromWalk = Math.min(10, Math.max(walkDepth * 5, 5));
-      const explicitCap = dedupOpts?.maxPerPage;
       dedupOpts = {
         ...(dedupOpts ?? {}),
-        maxPerPage: explicitCap === undefined ? capFromWalk : Math.min(explicitCap, capFromWalk),
+        maxPerPage: resolveWalkDedupCap(dedupOpts?.maxPerPage, capFromWalk),
       };
     } catch {
       // Expansion is best-effort — missing edge tables or a transient
@@ -2890,6 +2889,16 @@ export function rrfFusionWeighted(
  * Each result gets score = sum(1 / (K + rank)) across all lists it appears in.
  * After accumulation: normalize to 0-1, then boost compiled_truth chunks.
  */
+/**
+ * CEO review D8 (2026-08 wave): the two-pass walk's widened per-page dedup
+ * cap must never silently override an EXPLICIT per-call maxPerPage — tightest
+ * wins. Pure + exported so the precedence rule is unit-testable without a
+ * graph-walk fixture (the walk path itself is engine-bound and default-off).
+ */
+export function resolveWalkDedupCap(explicitCap: number | undefined, capFromWalk: number): number {
+  return explicitCap === undefined ? capFromWalk : Math.min(explicitCap, capFromWalk);
+}
+
 export function rrfFusion(lists: SearchResult[][], k: number, applyBoost = true): SearchResult[] {
   const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
 

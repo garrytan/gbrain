@@ -530,6 +530,17 @@ export interface GBrainConfig {
  * thin-client install?" check used by the CLI dispatch guard, doctor
  * branch, and remote subcommands.
  */
+/**
+ * The ONE robust negative parse for boolean env kill switches (2026-08 wave
+ * DRY sweep — previously copy-pasted at four sites with cross-referencing
+ * comments): case-insensitive false/0/off/no, so an operator typing FALSE or
+ * off mid-incident never gets a silent no-op (adversarial F11). An env value
+ * that is unset or empty is NOT "disabled" — callers gate on presence first.
+ */
+export function isEnvDisabled(value: string): boolean {
+  return /^(false|0|off|no)$/i.test(value.trim());
+}
+
 export function isThinClient(config: GBrainConfig | null): boolean {
   return !!config?.remote_mcp;
 }
@@ -757,19 +768,14 @@ export function loadConfig(): GBrainConfig | null {
       : {}),
     ...(process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS
       ? {
-          // Case-insensitive + common negatives — incident escape hatch;
-          // mirrors reflex.ts:lexicalArmsEnabled (adversarial F11).
-          retrieval_reflex_lexical_arms: !/^(false|0|off|no)$/i.test(
-            process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS.trim(),
-          ),
+          // Incident escape hatch — shared isEnvDisabled parse (also used by
+          // reflex.ts:lexicalArmsEnabled/volunteerEnabled).
+          retrieval_reflex_lexical_arms: !isEnvDisabled(process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS),
         }
       : {}),
     ...(process.env.GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER
       ? {
-          // Same robust negative parse — mirrors reflex.ts:volunteerEnabled.
-          retrieval_reflex_volunteer: !/^(false|0|off|no)$/i.test(
-            process.env.GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER.trim(),
-          ),
+          retrieval_reflex_volunteer: !isEnvDisabled(process.env.GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER),
         }
       : {}),
     ...(process.env.GBRAIN_REMOTE_CLIENT_SECRET && fileConfig?.remote_mcp
@@ -1259,6 +1265,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // (crag_*). NOTE: `search.crag_think` (default off) runs `think` — an LLM
   // call — on weak-graded local queries when enabled; it respects
   // spend.posture, but enabling it is a per-query spend decision.
+  // `search.crag_escalation` (default off) also spends when enabled: the
+  // high-ceiling re-run sets expansion=true (one LLM multi-query call per
+  // weak-graded query), and unlike crag_think it is reachable by remote
+  // callers — attacker-shaped weak queries drive that spend (ship security
+  // review). See docs/operations/spend-controls.md.
   'search.adaptive_return',
   'search.adaptive_return_entity_max',
   'search.adaptive_return_other_max',

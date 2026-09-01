@@ -8470,3 +8470,25 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   sends operators debugging connectivity when the fix is `gbrain init`.
   **Context:** follow-up from v0.46.30.0 wave-k, filed by #4364's verifier;
   `src/commands/apply-migrations.ts` probe branch. **Effort:** S.
+
+## Ship-review filings (2026-09-01 eval fix wave, /ship review army)
+
+- [ ] **P3 — lazy OR-fallback rescue in hybridSearch.** **What:** the engines'
+  AND→OR keyword/title fallback query still executes on every
+  zero-strict-recall search, but its rows are discarded pre-fusion whenever
+  the vector arm is healthy (the common case after the #3617 fusion-demotion
+  fix) — one wasted FTS round-trip per zero-strict-match query. **How:** fetch
+  with orFallback:false on the hot path and re-run the lexical arms with
+  orFallback only when every vector list came back empty (the rescue case).
+  Rejected in-wave: the arms resolve before the vector arm settles, so the
+  restructure touches the fan-out ordering — not a late-wave change.
+  **Where:** `src/core/search/hybrid.ts` arm fan-out; engines unchanged.
+  **Effort:** M.
+- [ ] **P2 — Cat 35 judge-calibration hand-scoring (user-time gate).**
+  **What:** the gbrain-evals Cat 35 report's §11 kappa is `[pending]` behind
+  ~45 minutes of HUMAN hand-scoring of the 24 committed calibration pairs
+  (`docs/benchmarks/2026-08-16-brainbench-cat35-transcript-distill/judge-calibration-2026-08-25.json`),
+  then `--judge-calibration` computes agreement and the STATUS banner drops.
+  Agents cannot do this — it exists to calibrate the judge against a human.
+  **Where:** gbrain-evals repo. **Priority:** P2 (publication-quality gate,
+  not a number gate).

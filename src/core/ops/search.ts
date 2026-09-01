@@ -491,7 +491,9 @@ const query: Operation = {
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
       // v0.41.33 — agent-explicit adaptive return-sizing. Omitted = off
-      // (config default applies). hybridSearchCached skips the cache when on.
+      // (config default applies). 2026-08 wave (E5b): adaptive-on calls now
+      // CACHE — the gate params + resolved intent class key the semantic
+      // cache via the KNOBS_HASH v=27 fold (the old skip-when-on is gone).
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
       // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
       // reranked modes). `false` forces the full top-K.

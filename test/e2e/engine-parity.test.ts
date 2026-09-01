@@ -158,12 +158,32 @@ describeBoth('Engine parity — Postgres vs PGLite', () => {
     expect(pgliteStrict).toHaveLength(0);
     const pgRelaxed = await pgEngine.searchKeyword(q, { limit: 5, orFallback: true });
     const pgliteRelaxed = await pgliteEngine.searchKeyword(q, { limit: 5, orFallback: true });
+    // Non-empty FIRST (ship-review: without this, fixture-vocabulary drift
+    // makes every assertion below pass vacuously on empty arrays).
+    expect(pgRelaxed.length).toBeGreaterThan(0);
+    expect(pgliteRelaxed.length).toBeGreaterThan(0);
     expect(pgRelaxed.map((r: SearchResult) => r.keyword_relaxed === true)).toEqual(
       pgRelaxed.map(() => true),
     );
     expect(pgliteRelaxed.map((r: SearchResult) => r.keyword_relaxed === true)).toEqual(
       pgliteRelaxed.map(() => true),
     );
+    expect(new Set(pgRelaxed.map((r: SearchResult) => r.slug))).toEqual(
+      new Set(pgliteRelaxed.map((r: SearchResult) => r.slug)),
+    );
+  });
+
+  test('searchTitles orFallback: relaxed title rows tagged on BOTH engines (title-arm parity)', async () => {
+    // Title tokens that never co-occur in one title: strict title recall is
+    // zero, the title arm's always-on OR fallback fires, and BOTH engines
+    // must return the tagged shape — hybrid's titleFusionList reads the flag.
+    const q = 'outline founder';
+    const pgRelaxed = await pgEngine.searchTitles(q, { limit: 5 });
+    const pgliteRelaxed = await pgliteEngine.searchTitles(q, { limit: 5 });
+    expect(pgRelaxed.length).toBeGreaterThan(0);
+    expect(pgliteRelaxed.length).toBeGreaterThan(0);
+    for (const r of pgRelaxed as SearchResult[]) expect(r.keyword_relaxed).toBe(true);
+    for (const r of pgliteRelaxed as SearchResult[]) expect(r.keyword_relaxed).toBe(true);
     expect(new Set(pgRelaxed.map((r: SearchResult) => r.slug))).toEqual(
       new Set(pgliteRelaxed.map((r: SearchResult) => r.slug)),
     );

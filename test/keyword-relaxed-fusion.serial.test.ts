@@ -113,6 +113,22 @@ describe('engine tagging (PGLite; Postgres pinned by the engine-parity e2e)', ()
   });
 });
 
+describe('title-arm tagging (PGLite — same fallback class as the keyword arm)', () => {
+  test('zero-strict title recall → OR fallback rows tagged; strict title match → untagged', async () => {
+    // No single title carries both terms ('zephyr-report' / 'walrus-log'),
+    // so strict websearch recall is zero and the always-on OR fallback fires.
+    // A missing tag here silently re-opens the outvote bug through the TITLE
+    // arm even with the keyword arm fixed (titleFusionList reads the flag).
+    const relaxed = await engine.searchTitles('zephyr walrus', { limit: 10 });
+    expect(relaxed.length).toBeGreaterThan(0);
+    for (const r of relaxed) expect(r.keyword_relaxed).toBe(true);
+    // Strict match ('zephyr-report' title carries both tokens): no fallback.
+    const strict = await engine.searchTitles('zephyr report', { limit: 10 });
+    expect(strict.length).toBeGreaterThan(0);
+    for (const r of strict) expect(r.keyword_relaxed).toBeUndefined();
+  });
+});
+
 describe('hybrid fusion demotion', () => {
   test('healthy vector arm → relaxed rows are dropped pre-fusion (no keyword_relaxed row survives)', async () => {
     // Prove the relaxed pool EXISTS for this query first…
