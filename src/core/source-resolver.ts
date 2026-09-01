@@ -480,6 +480,33 @@ export async function assessDefaultWriteGuard(
   }
 }
 
+/**
+ * Once-per-process memo of assessDefaultWriteGuard, keyed on the engine.
+ * The assessment is an unindexed full-`pages` aggregate whose inputs are
+ * process-stable (the brain's page distribution, the env escape hatch), so
+ * in-process callers that run many unscoped writes — runImport under the
+ * sync_brain MCP op, the autopilot daemon, minion sync — pay for it ONCE per
+ * engine rather than on every call. Mirrors the stdio advisory latch
+ * (createDefaultWriteAdvisory in mcp/server.ts): the memo arms on the first
+ * completed assessment regardless of verdict. Fail-open like the underlying
+ * assessment. A WeakMap so a disconnected engine never pins its entry.
+ */
+let defaultWriteAssessments = new WeakMap<BrainEngine, Promise<DefaultWriteAssessment>>();
+
+export function assessDefaultWriteGuardOnce(engine: BrainEngine): Promise<DefaultWriteAssessment> {
+  let pending = defaultWriteAssessments.get(engine);
+  if (!pending) {
+    pending = assessDefaultWriteGuard(engine);
+    defaultWriteAssessments.set(engine, pending);
+  }
+  return pending;
+}
+
+/** Test seam: forget every memoized assessment (e.g. after reseeding a shared engine). */
+export function __resetDefaultWriteGuardMemo(): void {
+  defaultWriteAssessments = new WeakMap();
+}
+
 /** True when the operator opted into unscoped 'default' writes for this process. */
 export function defaultWriteAllowedByEnv(): boolean {
   return process.env[GBRAIN_ALLOW_DEFAULT_WRITE_ENV] === '1';

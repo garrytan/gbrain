@@ -303,7 +303,7 @@ export async function runImport(
       resolveSourceWithTier,
       formatSoleNonDefaultNudge,
       defaultWriteAllowedByEnv,
-      assessDefaultWriteGuard,
+      assessDefaultWriteGuardOnce,
       formatDefaultWriteWarning,
     } = await import('../core/source-resolver.ts');
     const resolved = await resolveSourceWithTier(engine, null);
@@ -330,8 +330,10 @@ export async function runImport(
       // routing, and runImport also runs in-process (sync_brain MCP op,
       // autopilot daemon, minion sync), where aborting takes the host down
       // mid-call. The CLI escape is the source-id flag; scripted pipelines
-      // set GBRAIN_ALLOW_DEFAULT_WRITE=1.
-      const assessment = await assessDefaultWriteGuard(engine);
+      // set GBRAIN_ALLOW_DEFAULT_WRITE=1. The assessment (an unindexed
+      // full-`pages` aggregate) is memoized per engine for the process — the
+      // in-process callers above run runImport many times on one engine.
+      const assessment = await assessDefaultWriteGuardOnce(engine);
       if (assessment.shouldGuard) {
         console.error(formatDefaultWriteWarning(assessment, '--source-id'));
       }
