@@ -30,12 +30,26 @@ describe('embeddingDimsForModel — per-model dims (#2051)', () => {
     expect(embeddingDimsForModel(ollama, 'ollama:bge-m3')).toBe(1024);
   });
 
+  // #3904/#4650 — `qwen3-embedding:8b` (landed in v0.46.35.0) is the first
+  // model_dims key in any recipe carrying its own embedded colon.
+  // embeddingDimsForModel() now tries the id exactly as given before
+  // assuming a leading `provider:` separator, so both the qualified form
+  // (`ollama:qwen3-embedding:8b`) and the bare form (`qwen3-embedding:8b`,
+  // which itself contains a colon) resolve to the model's true 4096 dims
+  // instead of the earlier naive first-colon strip truncating the bare form
+  // down to `8b` and silently falling back to default_dims (768).
+  test('qualified id with an embedded colon in the model tag resolves correctly', () => {
+    expect(embeddingDimsForModel(ollama, 'ollama:qwen3-embedding:8b')).toBe(4096);
+  });
+
   test.each([
     ['nomic-embed-text', 768],
     ['mxbai-embed-large', 1024],
     ['all-minilm', 384],
-    ['qwen3-embed-8b', 4096],
-    ['snowflake-arctic-embed-l-v2', 1024],
+    ['qwen3-embed-8b', 4096], // legacy spelling — never a pullable ollama tag; kept for back-compat
+    ['snowflake-arctic-embed-l-v2', 1024], // legacy spelling — never a pullable ollama tag; kept for back-compat
+    ['snowflake-arctic-embed2', 1024], // real pullable tag, landed v0.46.35.0
+    ['qwen3-embedding:8b', 4096], // real pullable tag, bare form with its own embedded colon, landed v0.46.35.0
   ])('%s resolves to %i', (model, dims) => {
     expect(embeddingDimsForModel(ollama, model as string)).toBe(dims as number);
   });
