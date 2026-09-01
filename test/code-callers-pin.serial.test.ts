@@ -24,6 +24,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runCodeCallers } from '../src/commands/code-callers.ts';
 import { runCodeCallees } from '../src/commands/code-callees.ts';
+import { importCodeFile } from '../src/core/import-file.ts';
 
 let engine: PGLiteEngine;
 let origCwd: string;
@@ -242,4 +243,108 @@ describe('code-callers / code-callees — .gbrain-source pin (CLI wiring)', () =
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+// ── Shared-resolver arms that only code-def / code-refs pinned so far ────────
+// resolveCliCodeScope is ONE helper for all four code-* commands; these arms
+// (conflicting flags, unknown/flag-shaped --source, inline --source=<id>,
+// value-flag positional skipping, code-less-source widening) were covered on
+// def/refs but never on callers/callees, so a regression in either wrapper's
+// wiring would have gone unnoticed here.
+function envelopeOf(logs: string[]): Record<string, unknown> {
+  return JSON.parse(logs.join('\n')) as Record<string, unknown>;
+}
+
+const COMMANDS: Array<[string, (e: PGLiteEngine, a: string[]) => Promise<void>]> = [
+  ['code-callers', runCodeCallers],
+  ['code-callees', runCodeCallees],
+];
+
+describe('code-callers / code-callees — shared-resolver arms (parity with code-def / code-refs)', () => {
+  for (const [name, run] of COMMANDS) {
+    test(`${name}: --source together with --all-sources is a usage error (conflicting_source_scope)`, async () => {
+      await addSource('repo-a', '/fake/a');
+      const { logs, exitCode } = await capture(() =>
+        run(engine, ['someSym', '--source', 'repo-a', '--all-sources', '--json']));
+      expect(exitCode).toBe(2);
+      expect((envelopeOf(logs).error as Record<string, unknown>).code).toBe('conflicting_source_scope');
+    });
+
+    test(`${name}: an unregistered --source errors (unknown_source) instead of an empty exit-0 result`, async () => {
+      await addSource('repo-a', '/fake/a');
+      const { logs, exitCode } = await capture(() =>
+        run(engine, ['someSym', '--source', 'repo-typo', '--json']));
+      expect(exitCode).toBe(2);
+      expect((envelopeOf(logs).error as Record<string, unknown>).code).toBe('unknown_source');
+    });
+
+    test(`${name}: a flag-shaped --source value errors (missing_source_value) instead of becoming the id`, async () => {
+      await addSource('repo-a', '/fake/a');
+      const { logs, exitCode } = await capture(() => run(engine, ['someSym', '--source', '--json']));
+      expect(exitCode).toBe(2);
+      expect((envelopeOf(logs).error as Record<string, unknown>).code).toBe('missing_source_value');
+    });
+
+    test(`${name}: the inline --source=<id> spelling scopes the lookup (envelope source_id)`, async () => {
+      await addSource('repo-a', '/fake/a');
+      await addSource('repo-b', '/fake/b');
+      const dir = pinnedDir('repo-a');
+      process.chdir(dir);
+      try {
+        const { logs, exitCode } = await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+          capture(() => run(engine, ['someSym', '--source=repo-b', '--json'])));
+        expect(exitCode).toBeNull();
+        const env = envelopeOf(logs);
+        expect(env.source_id).toBe('repo-b');
+        expect(env.scope).toBe('single');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test(`${name}: a value flag's argument is not taken as the symbol (--limit 5 sym)`, async () => {
+      await addSource('repo-a', '/fake/a');
+      await addSource('repo-b', '/fake/b');
+      const dir = pinnedDir('repo-a');
+      process.chdir(dir);
+      try {
+        const { logs, exitCode } = await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+          capture(() => run(engine, ['--limit', '5', 'mySymbol', '--json'])));
+        expect(exitCode).toBeNull();
+        const env = envelopeOf(logs);
+        // Pre-shared-resolver, positional[0] was '5'.
+        expect(env.symbol).toBe('mySymbol');
+        expect(env.source_id).toBe('repo-a');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test(`${name}: an implicitly-resolved code-less source widens to scope all`, async () => {
+      // The vault+code shape: the pinned source carries no code, a sibling does.
+      await addSource('vault', '/fake/vault');
+      await addSource('code-src', '/fake/code');
+      await importCodeFile(engine, 'src/widen.ts', `export function widenTarget(seed: number): number {
+  const scaled = seed * 5 + 11;
+  console.log('widen target computing', scaled);
+  if (scaled > 5_000) throw new Error('widenTarget overflow');
+  return scaled;
+}
+`, { noEmbed: true, sourceId: 'code-src' });
+      const dir = pinnedDir('vault');
+      process.chdir(dir);
+      try {
+        const { logs, errs, exitCode } = await withEnv({ GBRAIN_SOURCE: undefined }, () =>
+          capture(() => run(engine, ['widenTarget', '--json'])));
+        expect(exitCode).toBeNull();
+        const env = envelopeOf(logs);
+        expect(env.scope).toBe('all');
+        expect(env.source_id).toBeNull();
+        // The widening is announced, not silent.
+        expect(errs.join('\n')).toContain('holds no code');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  }
 });

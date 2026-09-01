@@ -21,7 +21,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, pushSourcePredicate } from './code-scope.ts';
 
 export interface CodeRefResult {
   slug: string;
@@ -46,11 +46,7 @@ export async function findCodeRefs(
     params.push(opts.language);
     whereLang = `AND cc.language = $${params.length}`;
   }
-  let whereSource = '';
-  if (!opts.allSources && opts.sourceId) {
-    params.push(opts.sourceId);
-    whereSource = `AND p.source_id = $${params.length}`;
-  }
+  const whereSource = pushSourcePredicate(params, opts);
   params.push(limit);
   const rows = await engine.executeRaw<{
     slug: string; file: string | null; language: string | null;

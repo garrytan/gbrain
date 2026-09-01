@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { errorFor, serializeError } from '../core/errors.ts';
 import { resolveCodeReadiness, readinessHint } from '../core/code-graph-readiness.ts';
-import { resolveCliCodeScope, positionalArgs, parseFlag } from './code-scope.ts';
+import { resolveCliCodeScope, positionalArgs, parseFlag, pushSourcePredicate } from './code-scope.ts';
 
 export interface CodeDefResult {
   slug: string;
@@ -55,11 +55,7 @@ export async function findCodeDef(
     params.push(opts.language);
     whereLang = `AND cc.language = $${params.length}`;
   }
-  let whereSource = '';
-  if (!opts.allSources && opts.sourceId) {
-    params.push(opts.sourceId);
-    whereSource = `AND p.source_id = $${params.length}`;
-  }
+  const whereSource = pushSourcePredicate(params, opts);
   params.push(limit);
   // Deterministic ordering: exact type matches first (functions before
   // export_statement wrappers), then page slug, then line number.
@@ -120,11 +116,7 @@ export async function probeFilteredSymbolTypes(
   }
   // Scoped with the main lookup: an unscoped probe would claim "the symbol IS
   // indexed, just filtered" on the strength of a different repo's chunks.
-  let whereSource = '';
-  if (!opts.allSources && opts.sourceId) {
-    params.push(opts.sourceId);
-    whereSource = `AND p.source_id = $${params.length}`;
-  }
+  const whereSource = pushSourcePredicate(params, opts);
   const rows = await engine.executeRaw<{ symbol_type: string | null }>(
     `SELECT DISTINCT cc.symbol_type
      FROM content_chunks cc

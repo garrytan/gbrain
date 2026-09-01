@@ -62,6 +62,22 @@ export function parseFlag(args: string[], name: string): string | undefined {
   return inline ? inline.slice(name.length + 1) : undefined;
 }
 
+/**
+ * Source-scope SQL predicate shared by the code-def / code-refs lookups (and
+ * code-def's filtered-types probe): appends the source id to `params` and
+ * returns the `AND p.source_id = $N` fragment, or '' when spanning every
+ * source. Numbered off `params.length` so it composes with any number of
+ * optional predicates before it (a fixed `$2` broke the moment --lang joined).
+ */
+export function pushSourcePredicate(
+  params: unknown[],
+  opts: { sourceId?: string; allSources?: boolean },
+): string {
+  if (opts.allSources || !opts.sourceId) return '';
+  params.push(opts.sourceId);
+  return `AND p.source_id = $${params.length}`;
+}
+
 export interface CodeScope {
   allSources: boolean;
   sourceId?: string;
