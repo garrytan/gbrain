@@ -78,6 +78,29 @@ describe('recipe: zhipu', () => {
     expect(r.touchpoints.chat!.supports_prompt_cache).toBe(false);
   });
 
+  test('gbrain#4727 — GLM-4.5+/5.x declare thinking_by_default; older GLM ids do not', async () => {
+    // GLM-4.5+ and the GLM-5.x series reason by default and bill reasoning
+    // as output tokens. Without thinking_by_default, supportsThinking is
+    // false and think caps max_tokens at 4000 instead of 16000 — the whole
+    // budget is spent reasoning and think returns truncated/empty JSON.
+    const { getProviderCapabilities } = await import('../../src/core/ai/capabilities.ts');
+    expect(getProviderCapabilities('zhipu:glm-5.3-flash').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('zhipu:glm-5.3').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('zhipu:glm-5.1').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('zhipu:glm-4.6').supportsThinking).toBe(true);
+    expect(getProviderCapabilities('zhipu:glm-4.5').supportsThinking).toBe(true);
+    // Pre-4.5 ids keep the conservative default (no reasoning-by-default).
+    expect(getProviderCapabilities('zhipu:glm-4').supportsThinking).toBe(false);
+    expect(getProviderCapabilities('zhipu:glm-4-plus').supportsThinking).toBe(false);
+    expect(getProviderCapabilities('zhipu:glm-3-turbo').supportsThinking).toBe(false);
+  });
+
+  test('gbrain#4727 — informational models list carries the current glm-5.3 family', () => {
+    const r = getRecipe('zhipu')!;
+    expect(r.touchpoints.chat!.models).toContain('glm-5.3');
+    expect(r.touchpoints.chat!.models).toContain('glm-5.3-flash');
+  });
+
   test('zhipu:glm-5.1 passes the subagent capability gate (degraded:no_caching, not refused)', async () => {
     // Pre-fix: getProviderCapabilities threw "does not offer a chat touchpoint"
     // and classifyCapabilities returned 'unknown' → subagent submit refused.
