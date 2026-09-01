@@ -161,16 +161,16 @@ const get_page: Operation = {
     // Scope: federated grants consult only granted sources' alias rows, so an
     // out-of-grant alias behaves exactly like a missing page; a scalar scope
     // consults that source (the remote '__all__' literal matches no real
-    // source and fail-closes); the trusted UNSCOPED read consults every
-    // source, matching the unscoped getPage it fronts. The redirect target
-    // composes with the same excludePrivate gate as the exact read.
+    // source and fail-closes); the trusted UNSCOPED read consults every LIVE
+    // source (archived sources are excluded everywhere else in the ladder; their
+    // alias rows count only when include_deleted asks for retired material).
     if (!page) {
       try {
         const aliasScope: string | readonly string[] = sourceOpts.sourceIds?.length
           ? sourceOpts.sourceIds
           : sourceOpts.sourceId !== undefined
             ? sourceOpts.sourceId
-            : (await ctx.engine.listAllSources({ includeArchived: true })).map(s => s.id);
+            : (await ctx.engine.listAllSources({ includeArchived: includeDeleted })).map(s => s.id);
         const canonical = await ctx.engine.resolveSlugWithAlias(slug, aliasScope);
         if (canonical !== slug) {
           const aliasPage = await ctx.engine.getPage(canonical, { includeDeleted, ...sourceOpts });

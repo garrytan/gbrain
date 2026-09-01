@@ -603,3 +603,99 @@ describe('#2555 get_chunks federated scope', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// #4275 ship-review follow-ups — the alias hop's scope and precedence.
+//   - the trusted UNSCOPED hop consulted listAllSources({includeArchived:true})
+//     while archived sources are excluded everywhere else in the ladder; it
+//     now consults live sources only, unless include_deleted asks for
+//     retired material;
+//   - include_deleted returns the soft-deleted shell at the requested slug
+//     (restore workflows need the shell, not a redirect);
+//   - alias resolution runs BEFORE fuzzy (the alias table is authoritative);
+//   - sourceIds[] (federated grant) beats the scalar ctx.sourceId in the
+//     alias scope, exactly as it does for the exact read.
+// ---------------------------------------------------------------------------
+describe('#4275 alias hop scope: archived sources, include_deleted, fuzzy precedence, grant precedence', () => {
+  async function seedArchivedGamma() {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, archived) VALUES ('gamma', 'gamma', '/tmp/gamma', true) ON CONFLICT (id) DO NOTHING`,
+    );
+    await engine.putPage('shared/gamma-doc', {
+      type: 'note', title: 'Gamma doc', compiled_truth: 'gamma content', frontmatter: {},
+    }, { sourceId: 'gamma' });
+    await engine.executeRaw(
+      `INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug, notes)
+       VALUES ('gamma', 'legacy/gamma-doc', 'shared/gamma-doc', 'archived alias')`,
+    );
+  }
+
+  test('trusted unscoped read does NOT follow an alias that lives only in an ARCHIVED source', async () => {
+    await seedArchivedGamma();
+    await expect(
+      get_page.handler(ctxOf({ remote: false, sourceId: undefined }), { slug: 'legacy/gamma-doc' }),
+    ).rejects.toBeInstanceOf(OperationError);
+  });
+
+  test('include_deleted opts the archived source alias rows back in (retired material was asked for)', async () => {
+    await seedArchivedGamma();
+    const page: any = await get_page.handler(ctxOf({ remote: false, sourceId: undefined }), {
+      slug: 'legacy/gamma-doc', include_deleted: true,
+    });
+    expect(page.slug).toBe('shared/gamma-doc');
+    expect(page.resolved_slug).toBe('shared/gamma-doc');
+  });
+
+  test('include_deleted returns the soft-deleted shell at the requested slug — no redirect', async () => {
+    await engine.putPage('legacy/alpha-doc', {
+      type: 'note', title: 'Retired shell', compiled_truth: 'old body', frontmatter: {},
+    }, { sourceId: 'alpha' });
+    await engine.softDeletePage('legacy/alpha-doc', { sourceId: 'alpha' });
+
+    const shell: any = await get_page.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
+      slug: 'legacy/alpha-doc', include_deleted: true,
+    });
+    expect(shell.slug).toBe('legacy/alpha-doc');
+    expect(shell.title).toBe('Retired shell');
+    expect(shell.deleted_at).not.toBeNull();
+    expect(shell.resolved_slug).toBeUndefined();
+
+    // Without include_deleted the retired slug is a miss → the alias redirect wins.
+    const redirected: any = await get_page.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
+      slug: 'legacy/alpha-doc',
+    });
+    expect(redirected.slug).toBe('shared/alpha-doc');
+    expect(redirected.resolved_slug).toBe('shared/alpha-doc');
+  });
+
+  test('alias resolution beats fuzzy: fuzzy:true + a registered alias returns the canonical page', async () => {
+    // A second alpha page whose slug CONTAINS the requested slug — the fuzzy
+    // probe (slug substring match) would find it and either return it or
+    // report ambiguous_slug. The alias table is authoritative and runs first,
+    // so the canonical page wins deterministically.
+    await engine.putPage('archive/legacy/alpha-doc-v1', {
+      type: 'note', title: 'Fuzzy decoy', compiled_truth: 'decoy', frontmatter: {},
+    }, { sourceId: 'alpha' });
+    const page: any = await get_page.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {
+      slug: 'legacy/alpha-doc', fuzzy: true,
+    });
+    expect(page.slug).toBe('shared/alpha-doc');
+    expect(page.resolved_slug).toBe('shared/alpha-doc');
+    expect(page.title).toBe('Alpha doc');
+  });
+
+  test('sourceIds[] (federated grant) beats the scalar ctx.sourceId in the alias scope', async () => {
+    // Scalar says alpha, the grant says beta: the grant wins, so the beta
+    // alias resolves and the alpha alias behaves like a missing page.
+    const ctx = ctxOf({
+      remote: true, sourceId: 'alpha',
+      auth: { token: 't', clientId: 'c', scopes: [], allowedSources: ['beta'] } as any,
+    });
+    const page: any = await get_page.handler(ctx, { slug: 'legacy/beta-doc' });
+    expect(page.slug).toBe('secret/beta-doc');
+    expect(page.resolved_slug).toBe('secret/beta-doc');
+    await expect(
+      get_page.handler(ctx, { slug: 'legacy/alpha-doc' }),
+    ).rejects.toBeInstanceOf(OperationError);
+  });
+});
