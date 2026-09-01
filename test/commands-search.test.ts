@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runSearch } from '../src/commands/search.ts';
+import { MODES_REPORT_PER_CALL_NOTE } from '../src/core/search/modes-report.ts';
 import { recordSearchTelemetry, _resetTelemetryWriterForTest, getTelemetryWriter, TELEMETRY_COVERAGE_CAVEAT } from '../src/core/search/telemetry.ts';
 import type { HybridSearchMeta } from '../src/core/types.ts';
 
@@ -90,6 +91,19 @@ describe('gbrain search modes (read-only dashboard)', () => {
     expect(out).toContain('tokenmax');
     expect(out).toContain('conservative');
     expect(out).toContain('balanced');
+  });
+
+  test('#4604: text output carries the per-call caveat verbatim under a Note: label', async () => {
+    // The dashboard resolves config overrides + the mode bundle; per-call
+    // SearchOpts overrides on individual searches are invisible to it. The
+    // text renderer must say so with the SAME string the JSON report exposes
+    // as `per_call_note`, so the two surfaces can't drift.
+    await engine.setConfig('search.mode', 'balanced');
+    const out = await captureRun(() => runSearch(engine, ['modes']));
+    expect(out).toContain('Note:');
+    expect(out).toContain(MODES_REPORT_PER_CALL_NOTE);
+    const json = JSON.parse(await captureRun(() => runSearch(engine, ['modes', '--json'])));
+    expect(json.per_call_note).toBe(MODES_REPORT_PER_CALL_NOTE);
   });
 });
 
