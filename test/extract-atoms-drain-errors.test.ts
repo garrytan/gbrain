@@ -19,6 +19,7 @@ import {
   runExtractAtomsDrain,
   MAX_DRAIN_FAILURE_RECORDS,
   MAX_DRAIN_FAILURE_REASON_CHARS,
+  MAX_DRAIN_FAILURE_SOURCE_CHARS,
   type ExtractAtomsDrainDeps,
 } from '../src/core/cycle/extract-atoms-drain.ts';
 
@@ -78,6 +79,102 @@ describe('extract_atoms drain error surfacing (#4539)', () => {
     expect(result.stopped).toBe('no_progress');
     expect(result.failure_count).toBe(5);
     expect(result.last_error).toBe('pages/x: provider 400');
+  });
+});
+
+// Review follow-ups on #4539/#4730: every operator-facing string — including
+// the count-only adapter's `firstError` — routes through the sanitizer, and
+// the numeric inputs are normalized instead of trusted.
+describe('extract_atoms drain failure inputs are normalized + sanitized', () => {
+  const oneBatch = (batch: Awaited<ReturnType<ExtractAtomsDrainDeps['runBatch']>>) =>
+    runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 1,
+        runBatch: async () => batch,
+        now: () => 0,
+      },
+      { windowMs: 1_000_000, maxBatches: 1 },
+    );
+
+  for (const [label, raw, expected] of [
+    ['NaN', Number.NaN, 0],
+    ['Infinity', Number.POSITIVE_INFINITY, 0],
+    ['negative', -3, 0],
+    ['fractional', 2.7, 2],
+  ] as Array<[string, number, number]>) {
+    it(`failureCount ${label} (${raw}) normalizes to ${expected}`, async () => {
+      const result = await oneBatch({ extracted: 1, skipped: 0, failureCount: raw });
+      expect(result.failure_count).toBe(expected);
+      expect(result.omitted_failure_count).toBe(expected);
+      expect(result.failures).toEqual([]);
+    });
+  }
+
+  it('records present + count absent → failure_count derives from the records', async () => {
+    const result = await oneBatch({
+      extracted: 1,
+      skipped: 0,
+      failures: [
+        { source: 'pages/a', reason: 'one' },
+        { source: 'pages/b', reason: 'two' },
+      ],
+    });
+    expect(result.failure_count).toBe(2);
+    expect(result.omitted_failure_count).toBe(0);
+    expect(result.failures.map((f) => f.source)).toEqual(['pages/a', 'pages/b']);
+  });
+
+  it('source locators are bounded to MAX_DRAIN_FAILURE_SOURCE_CHARS', async () => {
+    const result = await oneBatch({
+      extracted: 1,
+      skipped: 0,
+      failureCount: 1,
+      failures: [{ source: 'pages/' + 'l'.repeat(2000), reason: 'x' }],
+    });
+    expect(result.failures[0]!.source.length).toBeLessThanOrEqual(MAX_DRAIN_FAILURE_SOURCE_CHARS);
+    // last_error is derived from the same sanitized pieces.
+    expect(result.last_error!.length).toBeLessThanOrEqual(
+      MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
+    );
+  });
+
+  it('an API key and a DSN password in a reason appear in neither records nor last_error', async () => {
+    const key = 'sk-' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0';
+    const dsn = 'postgres://gbrain:hunter2secret@db.example.internal:5432/brain';
+    const result = await oneBatch({
+      extracted: 1,
+      skipped: 0,
+      failureCount: 1,
+      failures: [{ source: 'pages/leaky', reason: `provider 401 with key ${key}; retried via ${dsn}` }],
+    });
+    const blob = JSON.stringify(result);
+    expect(blob).not.toContain(key);
+    expect(blob).not.toContain('hunter2secret');
+    expect(result.failures[0]!.reason).not.toContain(key);
+    expect(result.last_error).not.toContain(key);
+    expect(result.last_error).not.toContain('hunter2secret');
+  });
+
+  it('the count-only fallback (#4539 shape) sanitizes firstError before it becomes last_error', async () => {
+    // Pre-fix `r.firstError` was copied verbatim, bypassing sanitizeFailureText.
+    const key = 'sk-' + 'Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4J3i2H1g0';
+    const dsn = 'postgres://gbrain:hunter2secret@db.example.internal:5432/brain';
+    const result = await oneBatch({
+      extracted: 0,
+      skipped: 0,
+      failureCount: 1,
+      firstError: `pages/x:\n\n  provider 401 with key ${key}   (dsn ${dsn}) ` + 'y'.repeat(2000),
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.failure_count).toBe(1);
+    expect(result.last_error).not.toBeNull();
+    expect(result.last_error).not.toContain(key);
+    expect(result.last_error).not.toContain('hunter2secret');
+    expect(result.last_error).not.toMatch(/\n/);
+    expect(result.last_error!.length).toBeLessThanOrEqual(
+      MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
+    );
   });
 });
 

@@ -215,10 +215,15 @@ export async function runExtractAtomsDrain(
         lastError =
           `${sanitizeFailureText(representative.source, MAX_DRAIN_FAILURE_SOURCE_CHARS)}: ` +
           `${sanitizeFailureText(representative.reason, MAX_DRAIN_FAILURE_REASON_CHARS)}`;
-      } else if (r.firstError) {
+      } else if (typeof r.firstError === 'string' && r.firstError.trim()) {
         // #4539 compatibility: count-only adapters still surface their
-        // representative error.
-        lastError = r.firstError;
+        // representative error — through the SAME sanitizer as the typed
+        // records (secret/DSN redaction, whitespace collapse, bounded), so a
+        // provider payload cannot ride the fallback path into --json output.
+        lastError = sanitizeFailureText(
+          r.firstError,
+          MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
+        );
       }
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
