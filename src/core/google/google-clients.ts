@@ -210,13 +210,19 @@ export function extractBody(part: RawGmailPart | undefined): { text: string; isH
 }
 
 /**
- * iCalendar method for a message, or null when it carries no calendar part.
+ * iCalendar method for a message: the METHOD of its `text/calendar` /
+ * `application/ics` MIME part ('' when the part carries no parsable method),
+ * or null when the message has no calendar MIME part at all — including the
+ * bare-.ics-filename-attachment shape, which is a human forwarding an invite
+ * file, not Calendar system mail.
  *
  * Structural, not textual: Google Calendar attaches a `text/calendar` part
  * (`method=REQUEST|REPLY|CANCEL`) to every invitation, update, response and
  * cancellation, so this identifies calendar system mail without matching on
  * subject wording or sender address — both of which are wrong signals, since
- * the mail arrives FROM the colleague's real address.
+ * the mail arrives FROM the colleague's real address. Only a NON-EMPTY method
+ * classifies as system mail (isCalendarSystemMail); '' and null both fall to
+ * the anchored subject-prefix fallback.
  */
 export function extractCalendarMethod(part: RawGmailPart | undefined): string | null {
   if (!part) return null;
@@ -228,7 +234,11 @@ export function extractCalendarMethod(part: RawGmailPart | undefined): string | 
       const m = /method\s*=\s*"?([a-z]+)"?/i.exec(p.mimeType ?? '');
       return (m?.[1] ?? '').toUpperCase();
     }
-    if ((p.filename ?? '').toLowerCase().endsWith('.ics')) return '';
+    // A bare `.ics` FILENAME with a non-calendar MIME type claims nothing:
+    // that shape is a human attaching an invite file, not Calendar system
+    // mail, and short-circuiting '' here used to suppress the whole message
+    // from loop detection. Keep scanning — a real text/calendar part
+    // elsewhere in the tree still wins.
     if (p.parts) stack.push(...p.parts);
   }
   return null;

@@ -23,12 +23,58 @@ import type {
 } from '../src/core/creds/vault.ts';
 import {
   CalendarClient,
+  extractCalendarMethod,
   GmailClient,
   GoogleApiClient,
   GoogleCursorExpiredError,
   PeopleClient,
   type FetchImpl,
 } from '../src/core/google/google-clients.ts';
+
+// ── extractCalendarMethod (pure) ─────────────────────────────────────────────
+
+describe('extractCalendarMethod', () => {
+  test('text/calendar part with a method → the METHOD, uppercased', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [{ mimeType: 'text/calendar; charset="UTF-8"; method=REQUEST' }],
+      }),
+    ).toBe('REQUEST');
+  });
+
+  test('bare .ics FILENAME with a non-calendar MIME type claims NOTHING (human attachment)', () => {
+    // Pre-fix this returned '' and isCalendarSystemMail treated '' as system
+    // mail, so a human email attaching an invite file could neither open nor
+    // close loops.
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'text/plain', body: { data: 'aGk=' } },
+          { mimeType: 'application/octet-stream', filename: 'team-sync.ics' },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  test('a real text/calendar part elsewhere in the tree still wins over an .ics filename', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'application/octet-stream', filename: 'invite.ics' },
+          { mimeType: 'text/calendar; method=CANCEL' },
+        ],
+      }),
+    ).toBe('CANCEL');
+  });
+
+  test('no calendar part at all → null', () => {
+    expect(extractCalendarMethod({ mimeType: 'text/plain' })).toBeNull();
+    expect(extractCalendarMethod(undefined)).toBeNull();
+  });
+});
 
 // ── In-memory vault (no filesystem, no token-refresh HTTP unless scripted) ──
 

@@ -44,12 +44,15 @@ export function isNoiseSender(fromAddress: string): boolean {
  * measured audit these notices were a large fraction of all open loops, every
  * one of them a "reply owed" that no human ever expected an answer to.
  *
- * PRIMARY signal is structural: `calendarMethod` is non-null when the message
- * carries a `text/calendar` part or an `.ics` attachment, which Calendar
- * attaches to all of these and which ordinary human mail never has.
+ * PRIMARY signal is structural: a NON-EMPTY `calendarMethod`
+ * (REQUEST/REPLY/CANCEL), which Calendar stamps on all of these and which
+ * ordinary human mail never has. An EMPTY method ('' — an .ics-ish part was
+ * seen but no iCalendar METHOD was found, e.g. a human attaching an invite
+ * file) is deliberately NOT system mail: classifying it as system silenced
+ * genuine human questions, which could then neither open nor close loops.
  *
- * The subject prefix is a deliberate FALLBACK, reached only when no MIME
- * information was captured for the message. It is anchored to the start of the
+ * The subject prefix is a deliberate FALLBACK, reached when no usable MIME
+ * method was captured for the message. It is anchored to the start of the
  * subject and refuses anything carrying a Re:/Fwd: prefix, so a human forward
  * that happens to begin "Invitation: ..." still opens a loop.
  */
@@ -72,7 +75,7 @@ const REPLY_OR_FORWARD_PREFIX = /^\s*((re|fwd?|aw|sv|vs)\s*:\s*)+/i;
 export function isCalendarSystemMail(
   msg: { calendarMethod?: string | null; subject?: string },
 ): boolean {
-  if (msg.calendarMethod !== null && msg.calendarMethod !== undefined) return true;
+  if (msg.calendarMethod) return true; // non-empty method only; '' falls through
   const subject = (msg.subject ?? '').trim();
   // A human reply/forward is never Calendar system mail, whatever it is titled.
   if (REPLY_OR_FORWARD_PREFIX.test(subject)) return false;

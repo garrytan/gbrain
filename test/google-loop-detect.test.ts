@@ -622,6 +622,47 @@ describe('google calendar system mail', () => {
     expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
   });
 
+  test("a human email attaching a bare .ics (calendarMethod '') still opens a loop", () => {
+    // calendarMethod '' means "an .ics-ish thing was present but NO iCalendar
+    // METHOD was found" — that is a human attaching an invite file, not
+    // Calendar system mail. Pre-fix, '' classified as system mail and the
+    // question below could neither open nor close a loop.
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Venue contract and invite file',
+        body: 'Attached the invite file — can you confirm the venue works?',
+        calendarMethod: '',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+    expect(v.open[0].counterpartyEmail).toBe('alice@example.com');
+  });
+
+  test("a reply carrying a bare .ics (calendarMethod '') still CLOSES my outbound loop", () => {
+    const v = detect([
+      msg({
+        from: 'me@example.com',
+        to: ['alice@example.com'],
+        ageHours: 200,
+        sent: true,
+        body: 'Can you send over the invite file?',
+      }),
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Re: invite file',
+        body: 'Here it is.',
+        calendarMethod: '',
+      }),
+    ]);
+    // Alice's human reply is her turn: nothing stays open on my side.
+    expect(v.open.map((o) => o.loopType)).not.toContain('unanswered_outbound');
+  });
+
   test('a human subject merely containing the word invitation still opens a loop', () => {
     const v = detect([
       msg({
