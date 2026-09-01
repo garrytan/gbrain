@@ -137,7 +137,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
-        '[--history-days <n>] [--dir <path>]   (connect first: gbrain google connect)\n' +
+        '[--history-days <n>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
     );
     process.exit(2);
@@ -168,6 +168,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gTokenEnv: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
+  let gCalendarId = 'primary';
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -218,6 +219,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         process.exit(2);
       }
       gHistoryDays = v;
+      continue;
+    }
+    if (a === '--calendar-id') {
+      const v = (args[++i] ?? '').trim();
+      if (!v) {
+        console.error('--calendar-id needs a value (see: gbrain google calendars).');
+        process.exit(2);
+      }
+      gCalendarId = v;
       continue;
     }
     if (a === '--scope') {
@@ -286,22 +296,40 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`Error: unknown --services entries: ${bad.join(', ')}. Valid: gmail, calendar, contacts`);
       process.exit(2);
     }
-    // Duplicate-account guard: a second source for the same account would
-    // duplicate every page/loop in federated reads and coalesce the two
-    // sources' loops_extract jobs. Warn loudly (not refuse — split-window
-    // setups are conceivable) so the duplication is a choice, not a surprise.
+    // Duplicate-account guard: a second source for the same account AND the
+    // same services would duplicate every page/loop in federated reads and
+    // coalesce the two sources' loops_extract jobs. Warn loudly (not refuse —
+    // split-window setups are conceivable) so the duplication is a choice,
+    // not a surprise. Scoped to OVERLAPPING services: a second source for the
+    // same account that syncs a DIFFERENT slice (e.g. a secondary calendar
+    // via --calendar-id, or calendar-only next to gmail-only) is the
+    // supported topology, not duplication.
     try {
       const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
         `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
         [],
       );
+      let overlapNote = '';
       const dup = dupRows.find((r) => {
         const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
-        return c.kind === 'google' && c.g_account === gAccount;
+        if (c.kind !== 'google' || c.g_account !== gAccount) return false;
+        const existingServices =
+          typeof c.g_services === 'string'
+            ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+            : ['gmail', 'calendar', 'contacts'];
+        let overlap = gServices.filter((s) => existingServices.includes(s));
+        // Two calendar sources pointing at DIFFERENT calendars never collide —
+        // one calendar per source is how secondary calendars are ingested.
+        const existingCal =
+          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : 'primary';
+        if (existingCal !== gCalendarId) overlap = overlap.filter((s) => s !== 'calendar');
+        if (overlap.length === 0) return false;
+        overlapNote = overlap.join(', ');
+        return true;
       });
       if (dup) {
         console.error(
-          `Warning: source "${dup.id}" already syncs ${gAccount} — a second source for the same account duplicates its pages and loops in federated reads.`,
+          `Warning: source "${dup.id}" already syncs ${gAccount} (${overlapNote}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
         );
       }
     } catch { /* preflight is best-effort */ }
@@ -400,6 +428,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             account: gAccount!,
             services: gServices,
             historyDays: gHistoryDays,
+            calendarId: gCalendarId,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
             access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
             tokenCommand: gTokenCommand,

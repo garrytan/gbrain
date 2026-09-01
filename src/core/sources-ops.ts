@@ -187,6 +187,8 @@ export interface AddSourceOpts {
     services: string[];
     /** Backfill/reconcile window in days. */
     historyDays: number;
+    /** Calendar swept by this source (default 'primary'). */
+    calendarId?: string;
     /** Managed dir where pages are materialized. */
     dir: string;
     /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
@@ -617,6 +619,11 @@ export async function addSource(
       g_account: opts.google.account,
       g_services: opts.google.services.join(','),
       g_history_days: opts.google.historyDays,
+      // Only written when non-default so every existing source's config keeps
+      // its exact shape ('primary' stays the parse-time fallback).
+      ...(opts.google.calendarId && opts.google.calendarId !== 'primary'
+        ? { g_calendar_id: opts.google.calendarId }
+        : {}),
       // Non-vault access (v0.47): 'command' runs g_token_command locally at
       // sync time (same trust class as recipe health_check argv — the google
       // kind is hard-rejected on remote sources_add and these keys are not

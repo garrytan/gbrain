@@ -268,3 +268,59 @@ describe('sources add --kind google vault mode (default)', () => {
     expect(await sourceConfig('gvault-missing2')).toBeNull();
   });
 });
+
+describe('sources add --kind google --calendar-id', () => {
+  test('a secondary calendar id lands in g_calendar_id; the default writes no key', async () => {
+    const secondary = await addGoogle(
+      'gcal2',
+      ['--services', 'calendar', '--calendar-id', 'family0123456789@group.calendar.google.com'],
+      { seed: seedVault },
+    );
+    expect(secondary.exitCalled).toBeUndefined();
+    expect(secondary.out).toContain('Created source "gcal2"');
+    const cfg = (await sourceConfig('gcal2'))!;
+    expect(cfg.g_calendar_id).toBe('family0123456789@group.calendar.google.com');
+
+    // The default keeps the config shape every existing source already has.
+    const primary = await addGoogle('gcal-primary', ['--services', 'calendar'], { seed: seedVault });
+    expect(primary.exitCalled).toBeUndefined();
+    expect('g_calendar_id' in (await sourceConfig('gcal-primary'))!).toBe(false);
+  });
+
+  test('an empty --calendar-id exits 2 with the discovery hint', async () => {
+    const r = await addGoogle('gcal-empty', ['--calendar-id', ''], { seed: seedVault });
+    expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain('--calendar-id needs a value');
+    expect(r.err).toContain('gbrain google calendars');
+    expect(await sourceConfig('gcal-empty')).toBeNull();
+  });
+
+  test('duplicate-account warning is scoped: a second source for a DIFFERENT calendar does not warn', async () => {
+    const first = await addGoogle('gdup-a', ['--services', 'gmail,contacts'], { seed: seedVault });
+    expect(first.exitCalled).toBeUndefined();
+
+    // Different slice of the same account — the supported secondary-calendar
+    // topology, not duplication.
+    const cal = await addGoogle(
+      'gdup-b',
+      ['--services', 'calendar', '--calendar-id', 'family0123456789@group.calendar.google.com'],
+      { seed: seedVault },
+    );
+    expect(cal.exitCalled).toBeUndefined();
+    expect(cal.err).not.toContain('already syncs');
+
+    // Overlapping services on the same account DO warn.
+    const overlap = await addGoogle('gdup-c', ['--services', 'gmail'], { seed: seedVault });
+    expect(overlap.exitCalled).toBeUndefined();
+    expect(overlap.err).toContain('already syncs alice@example.com (gmail)');
+
+    // Two sources pointing at the SAME calendar warn too.
+    const sameCal = await addGoogle(
+      'gdup-d',
+      ['--services', 'calendar', '--calendar-id', 'family0123456789@group.calendar.google.com'],
+      { seed: seedVault },
+    );
+    expect(sameCal.exitCalled).toBeUndefined();
+    expect(sameCal.err).toContain('already syncs alice@example.com (calendar)');
+  });
+});

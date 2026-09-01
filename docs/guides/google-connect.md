@@ -99,6 +99,24 @@ Repeat `gbrain google connect --account work@yourco.com` per account; each
 account becomes its own source (`gbrain sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
+## Secondary calendars
+
+The calendar sweep reads ONE calendar per source (so each keeps its own
+incremental sync token) and defaults to the account's primary calendar.
+Shared, subscribed, and secondary calendars the granted `calendar.readonly`
+scope already covers are ingested by pointing an additional source at them:
+
+```bash
+gbrain google calendars                 # list every calendar the account can
+                                        # read (* marks the primary), with ids
+gbrain sources add family-cal --kind google --account you@example.com \
+  --services calendar --calendar-id "family0123456789@group.calendar.google.com"
+```
+
+**Say to your agent:** *"list the calendars my google account can read"* —
+*"ingest my family calendar into the brain"* (your agent runs
+`gbrain google calendars`, then `gbrain sources add … --calendar-id <id>`).
+
 ## Continuous sync
 
 Google sources are ordinary gbrain sources: `gbrain sync --source <id>`,
