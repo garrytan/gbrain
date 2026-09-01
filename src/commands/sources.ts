@@ -52,6 +52,7 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
+import { DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -168,7 +169,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gTokenEnv: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
-  let gCalendarId = 'primary';
+  let gCalendarId: string = DEFAULT_CALENDAR_ID;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -321,7 +322,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         // Two calendar sources pointing at DIFFERENT calendars never collide —
         // one calendar per source is how secondary calendars are ingested.
         const existingCal =
-          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : 'primary';
+          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
         if (existingCal !== gCalendarId) overlap = overlap.filter((s) => s !== 'calendar');
         if (overlap.length === 0) return false;
         overlapNote = overlap.join(', ');

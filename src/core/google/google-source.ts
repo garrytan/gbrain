@@ -53,6 +53,7 @@ import {
 } from './google-render.ts';
 import {
   ALL_GOOGLE_SERVICES,
+  DEFAULT_CALENDAR_ID,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
@@ -92,7 +93,7 @@ export function parseGoogleSourceConfig(
   const calendarId =
     typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
       ? config.g_calendar_id.trim()
-      : 'primary';
+      : DEFAULT_CALENDAR_ID;
   const dir =
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =

@@ -53,6 +53,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
+import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -187,7 +188,7 @@ export interface AddSourceOpts {
     services: string[];
     /** Backfill/reconcile window in days. */
     historyDays: number;
-    /** Calendar swept by this source (default 'primary'). */
+    /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). */
     calendarId?: string;
     /** Managed dir where pages are materialized. */
     dir: string;
@@ -620,8 +621,8 @@ export async function addSource(
       g_services: opts.google.services.join(','),
       g_history_days: opts.google.historyDays,
       // Only written when non-default so every existing source's config keeps
-      // its exact shape ('primary' stays the parse-time fallback).
-      ...(opts.google.calendarId && opts.google.calendarId !== 'primary'
+      // its exact shape (DEFAULT_CALENDAR_ID stays the parse-time fallback).
+      ...(opts.google.calendarId && opts.google.calendarId !== DEFAULT_CALENDAR_ID
         ? { g_calendar_id: opts.google.calendarId }
         : {}),
       // Non-vault access (v0.47): 'command' runs g_token_command locally at

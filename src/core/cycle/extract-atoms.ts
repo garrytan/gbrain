@@ -1406,14 +1406,24 @@ async function resolvePageAtomSlug(
   if (await engine.getPage(slug, { sourceId })) return slug;
   const legacySlug = atomSlug(title, sourcePageSlug);
   const legacy = await engine.getPage(legacySlug, { sourceId });
-  if (legacy && legacy.type === 'atom') {
-    const fm = (legacy.frontmatter ?? {}) as Record<string, unknown>;
-    const compatible =
-      fm.source_slug === sourcePageSlug ||
-      (fm.source_slug == null && fm.source_path == null);
-    if (compatible) return legacySlug;
+  if (legacy && legacy.type === 'atom' && isCompatibleAtomBinding(legacy.frontmatter, sourcePageSlug)) {
+    return legacySlug;
   }
   return slug;
+}
+
+/**
+ * Is an existing atom's stored binding compatible with an import from
+ * `sourcePageSlug`? True when it is bound to THIS source page, or carries no
+ * source binding at all (pre-binding era — adoption, not a clobber). A
+ * `source_path`-bound row (a legacy transcript-origin atom) or a different
+ * `source_slug` is a different origin. Shared by the legacy-slug adoption
+ * (resolvePageAtomSlug) and the fail-closed guard (assertAtomImportBinding)
+ * so the two can never disagree about what "compatible" means.
+ */
+function isCompatibleAtomBinding(frontmatter: unknown, sourcePageSlug: string): boolean {
+  const fm = (frontmatter ?? {}) as Record<string, unknown>;
+  return fm.source_slug === sourcePageSlug || (fm.source_slug == null && fm.source_path == null);
 }
 
 /**
@@ -1435,15 +1445,11 @@ async function assertAtomImportBinding(
 ): Promise<void> {
   const existing = await engine.getPage(slug, { sourceId });
   if (!existing) return;
-  const fm = (existing.frontmatter ?? {}) as Record<string, unknown>;
   // A pre-binding-era atom (no source_slug/source_path at all) is not bound
   // to a different source — claiming it is the legacy-adoption upsert path
-  // (resolvePageAtomSlug), not a clobber.
-  if (
-    existing.type === 'atom' &&
-    (fm.source_slug === expectedSourceSlug ||
-      (fm.source_slug == null && fm.source_path == null))
-  ) return;
+  // (resolvePageAtomSlug), not a clobber. Anything that is not an atom (a
+  // note squatting on the slug) or is bound elsewhere is refused.
+  if (existing.type === 'atom' && isCompatibleAtomBinding(existing.frontmatter, expectedSourceSlug)) return;
   throw new Error(
     `atom identity conflict for ${slug}: existing page is bound to a different source; ` +
     'refusing to overwrite it',

@@ -10,6 +10,9 @@ export type GoogleService = 'gmail' | 'calendar' | 'contacts';
 
 export const ALL_GOOGLE_SERVICES: readonly GoogleService[] = ['gmail', 'calendar', 'contacts'];
 
+/** The account's primary calendar — the Calendar API's own alias, and the default a google source sweeps. */
+export const DEFAULT_CALENDAR_ID = 'primary';
+
 export interface GoogleSourceConfig {
   /** Account email — vault credential pointer in vault mode; identity only
    *  (From/To matching, deep-link authuser) in command/env modes. */
@@ -17,7 +20,7 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
-  /** Calendar swept by this source (default 'primary'). One calendar per
+  /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). One calendar per
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */
   calendarId: string;

@@ -17,6 +17,7 @@ import { apiEnableLink } from '../creds/providers/google.ts';
 import { parseRetryAfterMs } from '../github-source.ts';
 import {
   bareAddress,
+  DEFAULT_CALENDAR_ID,
   splitAddressList,
   type CalendarEventData,
   type ContactData,
@@ -391,14 +392,14 @@ export class CalendarClient extends GoogleApiClient {
       timeMinIso?: string;
       timeMaxIso?: string;
       signal?: AbortSignal;
-      /** Calendar to sweep. Defaults to 'primary'. A secondary calendar id is
+      /** Calendar to sweep. Defaults to DEFAULT_CALENDAR_ID. A secondary calendar id is
        *  an address like `...@group.calendar.google.com`; each calendar gets
        *  its OWN gbrain source so their sync tokens never collide. */
       calendarId?: string;
     },
   ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null }> {
     let nextSyncToken: string | null = null;
-    const calId = encodeURIComponent(opts.calendarId?.trim() || 'primary');
+    const calId = encodeURIComponent(opts.calendarId?.trim() || DEFAULT_CALENDAR_ID);
     const base = `${CALENDAR_BASE}/calendars/${calId}/events?maxResults=250&singleEvents=true`;
     const raw = await this.drainPages<RawCalendarEvent>(
       (t) => {

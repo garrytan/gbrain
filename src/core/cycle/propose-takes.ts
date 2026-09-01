@@ -47,6 +47,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
+import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -470,8 +471,6 @@ export function isWellFormedEmptyExtraction(raw: string): boolean {
   }
 }
 
-/** Canonical extractor kind vocabulary — matches the takes-fence enum. */
-const EXTRACTOR_KINDS: ReadonlySet<string> = new Set(['fact', 'take', 'bet', 'hunch']);
 
 /**
  * #4736: kinds the pre-fix EXTRACT_TAKES_PROMPT asked for. Cached and
@@ -533,7 +532,7 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     const claim_text = typeof r.claim_text === 'string' ? r.claim_text.trim() : '';
     if (!claim_text || claim_text.length > 500) continue;
     const kindRaw = typeof r.kind === 'string' ? r.kind.trim().toLowerCase() : '';
-    const kind = EXTRACTOR_KINDS.has(kindRaw)
+    const kind = TAKE_KIND_VALUES.has(kindRaw)
       ? (kindRaw as ProposedTake['kind'])
       : (LEGACY_EXTRACTOR_KIND_MAP[kindRaw] ?? 'take');
     const holder = typeof r.holder === 'string' && r.holder.length > 0 ? r.holder : 'brain';
