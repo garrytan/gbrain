@@ -757,6 +757,44 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
   });
 });
 
+// ─── #4730: --drain --dry-run --json payload shape ─────────────────────
+//
+// The dry-run preview never runs the drain loop, so it hand-builds the
+// result envelope. It must carry the SAME #4730 keys as a real drain
+// (`failures`, `omitted_failure_count`) so a `--json` consumer can parse
+// both shapes with one schema.
+
+describe('runDream — --drain --dry-run --json payload (#4730)', () => {
+  test('carries failures: [] and omitted_failure_count: 0 alongside the legacy counters', async () => {
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Empty brain → remaining 0 → no EXIT_DRAIN_INCOMPLETE exit.
+      await runDream(engine, ['--drain', '--dry-run', '--json']);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    const line = lines.find(l => l.trim().startsWith('{'));
+    expect(line).toBeDefined();
+    const payload = JSON.parse(line!);
+    expect(payload).toMatchObject({
+      phase: 'extract_atoms',
+      status: 'ok',
+      dry_run: true,
+      extracted: 0,
+      remaining: 0,
+      failure_count: 0,
+      failures: [],
+      omitted_failure_count: 0,
+      last_error: null,
+    });
+    expect(Array.isArray(payload.failures)).toBe(true);
+    expect(payload.failure_count).toBe(payload.failures.length + payload.omitted_failure_count);
+  }, 300_000);
+});
+
 // ─── v0.41.13 D5: end-to-end dream → checkCycleFreshness parity ───────
 //
 // Closes the column-rename drift class: if a future PR renames
