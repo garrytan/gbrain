@@ -245,13 +245,80 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;
         const staleIso = Number.isFinite(stalest) ? new Date(stalest).toISOString() : 'unknown';
         const stale = Number.isFinite(stalest) && Date.now() - stalest > PUSH_STALE_MS;
+        // Can the staleness verdict be safely attributed to `ws` — the only
+        // workspace this check actually probes? Only when there's exactly
+        // ONE tracked push-status target, and it's either legacy-shaped (no
+        // repoRoot field) or explicitly `ws` itself. With multiple targets,
+        // "clean" on `ws` says nothing about whichever OTHER root is
+        // actually the stale one — per-root files [D13]: the WORST entry
+        // decides, so an ambiguous multi-root stale must never be
+        // downgraded to ok on the strength of a different root's clean tree.
+        const targetMatchesWs =
+          pushStatuses.length === 1 && (pushStatuses[0]!.repoRoot === undefined || pushStatuses[0]!.repoRoot === ws);
+        // `dirty` also covers commits ahead of origin (a clean working tree
+        // with committed-but-unpushed commits is still unpushed work) — the
+        // same two-dimensional definition `treeNeedsPush` uses for the
+        // per-turn push [hook.ts]. `known` distinguishes "verified clean"
+        // from "couldn't verify" (no receipt/workspace, or the git probe
+        // itself failed): unverified must NOT be treated as clean below.
         let dirty = false;
+        let known = false;
         if (ws) {
           try {
-            dirty = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
+            const statusOut = execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
               stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-            }).toString().trim() !== '';
-          } catch { dirty = false; }
+            }).toString();
+            if (statusOut.trim() !== '') {
+              dirty = true;
+              known = true;
+            } else {
+              const branchOut = execFileSync('git', ['-C', ws, 'branch', '--show-current'], {
+                stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+              }).toString().trim();
+              if (branchOut) {
+                try {
+                  const aheadOut = execFileSync(
+                    'git', ['-C', ws, 'rev-list', '--count', `origin/${branchOut}..HEAD`],
+                    { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
+                  ).toString().trim();
+                  dirty = (parseInt(aheadOut, 10) || 0) > 0;
+                  known = true;
+                } catch {
+                  // origin/<branch> doesn't resolve — e.g. never pushed. Any
+                  // local commit on top of an empty tree still counts as
+                  // needing a push (this fallback only applies to a NAMED
+                  // branch with no upstream; see the detached-HEAD branch
+                  // below for why the same trick is unsafe there). Mirrors
+                  // treeNeedsPush's [hook.ts] existing "never pushed" fallback
+                  // as-is: a topic branch already fully contained in another
+                  // remote branch (e.g. origin/main) but never itself fetched
+                  // as origin/<branch> can over-report as dirty here — an
+                  // inherited, pre-existing edge case, left as a false FAIL
+                  // rather than a false OK, which is the safer direction for
+                  // this specific check.
+                  const haveOut = execFileSync('git', ['-C', ws, 'rev-list', '--count', 'HEAD'], {
+                    stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+                  }).toString().trim();
+                  dirty = (parseInt(haveOut, 10) || 0) > 0;
+                  known = true;
+                }
+              } else {
+                // Detached HEAD: `rev-list --count HEAD` counts ALL history
+                // reachable from HEAD, not just unpushed commits, so it is
+                // NOT a safe "never pushed" fallback here (unlike the named-
+                // branch case above) — it would flag any non-trivial repo as
+                // dirty even when HEAD is already contained by origin. If
+                // `@{u}` doesn't resolve, tree state is simply unverifiable.
+                try {
+                  const aheadOut = execFileSync('git', ['-C', ws, 'rev-list', '--count', '@{u}..HEAD'], {
+                    stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
+                  }).toString().trim();
+                  dirty = (parseInt(aheadOut, 10) || 0) > 0;
+                  known = true;
+                } catch { known = false; }
+              }
+            }
+          } catch { dirty = false; known = false; }
         }
         if (stale && dirty) {
           checks.push({
@@ -259,8 +326,31 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
             status: 'fail',
             message: `last successful push ${staleIso} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]. Run \`gbrain sources push --path ${ws}\`.`,
           });
+        } else if (stale && !targetMatchesWs) {
+          // Multiple tracked push targets (or the one target names a
+          // different repoRoot than `ws`) — the stale entry can't be
+          // attributed to the workspace just probed, so a clean `ws` proves
+          // nothing about the actually-stale root. Stay warn, same as the
+          // pre-this-fix behavior for every stale case.
+          checks.push({
+            name: 'bootstrap_push_health',
+            status: 'warn',
+            message: `last successful push ${staleIso} (>48h ago) across ${pushStatuses.length} tracked workspace(s) — can't attribute the stale entry to a single tree; check each with \`gbrain sources status\``,
+          });
+        } else if (stale && known) {
+          // Stale push + VERIFIED clean tree (no local changes, not ahead of
+          // origin) is benign: nothing to push, no action needed. The dirty
+          // case above (fail) and the unverified/ambiguous cases (warn) are
+          // the states that name a real fix.
+          checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `no push activity since ${staleIso}; tree confirmed clean, nothing to push` });
         } else if (stale) {
-          checks.push({ name: 'bootstrap_push_health', status: 'warn', message: `last successful push ${staleIso} (>48h ago); tree clean — likely just idle` });
+          checks.push({
+            name: 'bootstrap_push_health',
+            status: 'warn',
+            message: ws
+              ? `last successful push ${staleIso} (>48h ago); workspace tree state unverified (the git probe failed) — check ${ws} manually, or run \`gbrain sources push --path ${ws}\` to be safe`
+              : `last successful push ${staleIso} (>48h ago); workspace tree state unverified (no bootstrap receipt on this machine names a workspace to check) — check the workspace manually`,
+          });
         } else {
           checks.push({ name: 'bootstrap_push_health', status: 'ok', message: `last push ok (${staleIso})` });
         }
