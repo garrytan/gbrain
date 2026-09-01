@@ -218,6 +218,52 @@ describe('runLoopsExtract', () => {
     }
   });
 
+  test('a muted counterparty who wrote EARLIER in the thread suppresses too (participants, not just last sender)', async () => {
+    // The suppression check used to test only fm.from — the LAST message's
+    // sender — so muting a counterparty who wrote earlier in the thread let
+    // the extraction sail through to the model. The rendered thread page
+    // carries every participant; all of them gate the lane.
+    const slug = 'emails/2026/08/2026-08-24-earlier-muted-77665544.md';
+    await engine.putPage(
+      slug,
+      {
+        type: 'email',
+        title: 'Re: intro thread',
+        compiled_truth:
+          'Muted: Can you review this?\nMe: sure.\nInnocent: bumping this thread.\n',
+        frontmatter: {
+          thread_id: 'thread-77665544',
+          date: '2026-08-24T10:00:00Z',
+          // LAST sender is NOT muted — only the earlier participant is.
+          from: 'Innocent Person <innocent@example.com>',
+          participants: [
+            'Muted Counterparty <muted-counterparty@example.com>',
+            'innocent@example.com',
+            'me@example.com',
+          ],
+        },
+        effective_date: new Date('2026-08-24T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+    await engine.executeRaw(
+      `INSERT INTO loop_suppressions (source_id, kind, value) VALUES ($1, 'sender', $2)`,
+      [SRC, 'muted-counterparty@example.com'],
+    );
+    try {
+      const before = chatCalls;
+      const r = await runLoopsExtract(engine, { slug, sourceId: SRC });
+      expect(r.status).toBe('skipped');
+      expect(r.reason).toBe('suppressed');
+      expect(chatCalls).toBe(before);
+    } finally {
+      await engine.executeRaw(
+        `DELETE FROM loop_suppressions WHERE source_id = $1 AND kind = 'sender' AND value = $2`,
+        [SRC, 'muted-counterparty@example.com'],
+      );
+    }
+  });
+
   test('gateway unavailable → skipped llm_unavailable', async () => {
     chatAvailable = false;
     const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });

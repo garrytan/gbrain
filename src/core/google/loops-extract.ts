@@ -271,11 +271,23 @@ export async function runLoopsExtract(
   // guarded deterministic opens, so the LLM lane could recreate a commitment
   // or decision for a sender/thread the operator had explicitly suppressed.
   // Check before provider availability and before any model/facts/edge write.
+  // Sender mutes cover EVERY thread participant, not just fm.from — that is
+  // only the NEWEST message's author, so a muted counterparty who wrote
+  // earlier in the thread used to sail straight through to the model. The
+  // rendered thread page carries all participants (senders + recipients).
   const suppressions = await loadSuppressions(engine, payload.sourceId);
-  const lastSender = typeof fm.from === 'string' ? bareAddress(fm.from) : '';
+  const participantAddresses = new Set<string>();
+  if (typeof fm.from === 'string' && fm.from.trim() !== '') {
+    participantAddresses.add(bareAddress(fm.from));
+  }
+  if (Array.isArray(fm.participants)) {
+    for (const p of fm.participants) {
+      if (typeof p === 'string' && p.trim() !== '') participantAddresses.add(bareAddress(p));
+    }
+  }
   if (
     suppressions.threads.has(threadId.toLowerCase()) ||
-    (lastSender !== '' && suppressions.senders.has(lastSender))
+    [...participantAddresses].some((a) => suppressions.senders.has(a))
   ) {
     return { ...empty, reason: 'suppressed' };
   }
