@@ -32,6 +32,7 @@ import type {
 } from '../src/core/creds/vault.ts';
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
+import { __setChatTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   LOOPS_EXTRACT_ENQUEUE_CEILING,
   LOOPS_EXTRACT_MAX_PER_SWEEP,
@@ -847,6 +848,62 @@ describe('syncToken 410 recovery', () => {
 // ── loops_extract enqueue completeness ───────────────────────────────────────
 
 describe('loops_extract enqueue completeness', () => {
+  // The sweep only enqueues when a chat provider is available (a job the
+  // handler can never run would complete as a no-work row and consume the
+  // thread's revision slot). The gateway test seam makes chat "available" for
+  // every test here; the dedicated test below clears it again.
+  const chatStub = async () => {
+    throw new Error('chat transport must not be called by the sweep');
+  };
+  beforeEach(() => __setChatTransportForTests(chatStub));
+  afterAll(() => {
+    // Shard hygiene (same as facts-extract-junk-filter.test.ts): a reset
+    // gateway must not leak a dimensionless config into later files.
+    __setChatTransportForTests(null);
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { ...process.env },
+    });
+  });
+
+  test('chat provider unavailable (keyless install / outage) → 0 jobs enqueued, one stderr line names the reason', async () => {
+    // Ship-review fix: a job enqueued with no chat provider ran to
+    // `llm_unavailable`, completed, and its revision-keyed idempotency row
+    // blocked re-enqueue until the thread changed — every eligible thread
+    // swept during the outage was silently never extracted. Gate at enqueue.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-nochat-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee88000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff88000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Nochat topic ${i}` },
+          body: `Nochat body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      resetGateway();
+      __setChatTransportForTests(null); // no transport stub, no config → isAvailable('chat') === false
+      await withHome(async () => {
+        const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault));
+        expect(res.added).toBe(2); // pages still import — only the LLM lane is skipped
+        const jobs = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(Number(jobs[0].n)).toBe(0);
+        expect(err).toContain('loops_extract: chat provider unavailable');
+        expect(err).toContain('2 eligible thread(s)');
+        expect(err).not.toContain('loops_extract: enqueued');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} eligible threads → EVERY one is queued exactly once`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cap-'));
     const fx = emptyFx();

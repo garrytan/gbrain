@@ -54,6 +54,7 @@ const { runLoopsExtract, isLoopsExtractionEnabled } = await import(
   '../src/core/google/loops-extract.ts'
 );
 const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts');
+const { MinionQueue } = await import('../src/core/minions/queue.ts');
 
 const SRC = 'g1';
 const EMAIL_SLUG = 'emails/2026/08/2026-08-20-test-thread-abcd1234.md';
@@ -315,12 +316,58 @@ describe('runLoopsExtract', () => {
     }
   });
 
-  test('gateway unavailable → skipped llm_unavailable', async () => {
+  test('gateway unavailable → THROWS a retryable error (never a completed no-work row)', async () => {
+    // Ship-review fix: returning `skipped/llm_unavailable` completed the job,
+    // and a completed row holds its revision-keyed idempotency slot for good —
+    // every thread swept during an outage / on a not-yet-keyed install was
+    // silently never extracted. A throw hands the outcome to the queue's
+    // attempt/backoff machinery instead (dead rows free the slot).
     chatAvailable = false;
-    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
-    expect(r.status).toBe('skipped');
-    expect(r.reason).toBe('llm_unavailable');
-    chatAvailable = true;
+    try {
+      await expect(runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC })).rejects.toThrow(
+        /chat provider unavailable/,
+      );
+    } finally {
+      chatAvailable = true;
+    }
+  });
+
+  test('llm_unavailable leaves the revision RE-ENQUEUEABLE once chat is back (idempotency slot not consumed)', async () => {
+    const queue = new MinionQueue(engine);
+    await queue.ensureSchema();
+    const key = `loops:${SRC}:${EMAIL_SLUG}:1756112400000`;
+    const payload = { slug: EMAIL_SLUG, sourceId: SRC, threadId: THREAD_ID };
+    const first = await queue.add('loops_extract', payload, { idempotency_key: key, max_attempts: 1 });
+    expect(first.coalesced).not.toBe(true);
+
+    // Drive the worker's state machine by hand: claim → run handler → record
+    // the outcome exactly as worker.ts does (resolve → completeJob; throw with
+    // attempts exhausted → failJob 'dead').
+    const lockToken = 'test-lock-1';
+    const claimed = await queue.claim(lockToken, 60_000, 'default', ['loops_extract']);
+    expect(claimed?.id).toBe(first.id);
+    chatAvailable = false;
+    try {
+      try {
+        const r = await runLoopsExtract(engine, payload);
+        await queue.completeJob(first.id, lockToken, r as unknown as Record<string, unknown>);
+      } catch (e) {
+        await queue.failJob(first.id, lockToken, e instanceof Error ? e.message : String(e), 'dead');
+      }
+    } finally {
+      chatAvailable = true;
+    }
+
+    // Provider is back: the SAME revision key must insert a fresh job, not
+    // coalesce onto the spent row.
+    const second = await queue.add('loops_extract', payload, { idempotency_key: key });
+    expect(second.coalesced).not.toBe(true);
+    expect(second.id).not.toBe(first.id);
+    expect(second.status).toBe('waiting');
+    // The spent attempt is still visible for audit (dead, with the reason).
+    const spent = await queue.getJob(first.id);
+    expect(spent?.status).toBe('dead');
+    expect(spent?.error_text ?? '').toContain('chat provider unavailable');
   });
 
   test("TRANSIENT failures THROW (retryable): stopReason 'length', provider outage; 'refusal' stays skipped", async () => {

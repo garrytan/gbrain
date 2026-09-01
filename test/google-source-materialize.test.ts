@@ -26,6 +26,7 @@ import type {
 } from '../src/core/creds/vault.ts';
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
+import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import {
   googleStateFile,
   myAddressSet,
@@ -1119,6 +1120,12 @@ describe('google-source materialize', () => {
         body: 'Looks good, shipping it this week.',
       }),
     );
+    // The sweep enqueues only while a chat provider is available (a job the
+    // handler cannot run would burn the thread's revision slot); the gateway
+    // test seam makes chat "available" without a key or network.
+    __setChatTransportForTests(async () => {
+      throw new Error('chat transport must not be called by the sweep');
+    });
     try {
       await insertGoogleSource(dir);
       await withHome(async () => {
@@ -1143,6 +1150,7 @@ describe('google-source materialize', () => {
         expect(jobs2[0].id).toBe(jobs1[0].id);
       });
     } finally {
+      __setChatTransportForTests(null);
       rmSync(dir, { recursive: true, force: true });
     }
   });

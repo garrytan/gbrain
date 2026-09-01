@@ -506,6 +506,20 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
   try {
     const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_ENQUEUE_CEILING } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) return;
+    // No chat provider (keyless install, outage) → enqueue NOTHING. A job the
+    // handler cannot run would fail-and-die and burn its revision-keyed
+    // idempotency slot for nothing; the eligible threads stay unconsumed and
+    // re-candidate on their next touch or on `sync --full` once a provider is
+    // configured. One line per sweep names the reason — never silent.
+    const { isAvailable } = await import('../ai/gateway.ts');
+    if (!isAvailable('chat')) {
+      deps.log(
+        `[google] loops_extract: chat provider unavailable (no configured chat model / API key) — ` +
+          `skipped enqueue of ${deps.extractCandidates.length} eligible thread(s); they are queued on ` +
+          `their next touch (or \`gbrain sync --source ${deps.sourceId} --full\`) once a provider is configured`,
+      );
+      return;
+    }
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
     // EVERY eligible candidate is enqueued (up to a generous safety ceiling).

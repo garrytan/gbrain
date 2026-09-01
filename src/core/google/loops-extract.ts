@@ -260,6 +260,26 @@ export interface LoopsExtractResult {
   loop_ids: number[];
 }
 
+/**
+ * A TRANSIENT outcome (provider unavailable, truncated or malformed model
+ * output) — thrown, never returned. A returned `skipped` would complete the
+ * minion job "successfully" and permanently consume the revision-keyed
+ * idempotency slot (`loops:<src>:<slug>:<newestMs>` only regenerates when the
+ * thread is touched again), silently never extracting that revision. Throwing
+ * hands the outcome to the queue's attempt/backoff machinery; once attempts are
+ * exhausted the DEAD row frees the slot, so the next sweep that sees the thread
+ * (`sync --full` re-candidates every in-window thread) can enqueue it afresh.
+ */
+export class LoopsExtractRetryableError extends Error {
+  constructor(
+    readonly reason: 'llm_unavailable' | 'truncated' | 'parse_barrier',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'LoopsExtractRetryableError';
+  }
+}
+
 export async function runLoopsExtract(
   engine: BrainEngine,
   payload: LoopsExtractPayload,
@@ -303,7 +323,15 @@ export async function runLoopsExtract(
   }
 
   const { isAvailable, chat } = await import('../ai/gateway.ts');
-  if (!isAvailable('chat')) return { ...empty, reason: 'llm_unavailable' };
+  // Keyless install / provider outage: NOT a skip. The sweep already refuses to
+  // enqueue while chat is unavailable; a job that reaches here mid-outage must
+  // fail visibly and retry, or its revision is never extracted (see the class).
+  if (!isAvailable('chat')) {
+    throw new LoopsExtractRetryableError(
+      'llm_unavailable',
+      'loops_extract: chat provider unavailable (no configured chat model / API key) — retryable',
+    );
+  }
 
   // Injection hardening: same sanitation the facts extractor applies.
   const { INJECTION_PATTERNS } = await import('../think/sanitize.ts');
@@ -335,7 +363,10 @@ export async function runLoopsExtract(
     // (`loops:<src>:<slug>:<newestMs>` only regenerates when the thread is
     // touched again), silently never extracting that revision's commitments.
     if (res.stopReason === 'length') {
-      throw new Error('loops_extract: model output truncated (stopReason=length) — retryable');
+      throw new LoopsExtractRetryableError(
+        'truncated',
+        'loops_extract: model output truncated (stopReason=length) — retryable',
+      );
     }
     text = res.text;
   } catch (err) {
@@ -344,7 +375,10 @@ export async function runLoopsExtract(
 
   const extraction = parseLoopsJson(text);
   if (extraction === null) {
-    throw new Error('loops_extract: model response failed the all-or-nothing parse barrier — retryable');
+    throw new LoopsExtractRetryableError(
+      'parse_barrier',
+      'loops_extract: model response failed the all-or-nothing parse barrier — retryable',
+    );
   }
 
   // Evidence quotes render as receipts (`> "…"`) on the trusted-local waiting
