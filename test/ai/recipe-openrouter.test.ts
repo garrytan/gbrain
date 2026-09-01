@@ -346,4 +346,57 @@ describe('recipe: openrouter', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('19. non-JSON body + marker: body forwarded unchanged, marker stripped, and the reasoning_content promote still composes', async () => {
+    // Fail-open request path: a body the shim cannot parse is sent as-is
+    // (the provider surfaces its own error), the in-process marker header
+    // must STILL never leave the process, and the response-side promote is
+    // composed regardless of the request-side parse failure (#4753).
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ init?: RequestInit }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'x' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const rawBody = 'this is not json {';
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: { [OPENROUTER_CACHE_HEADER]: '1', 'content-length': String(rawBody.length) },
+        body: rawBody,
+      });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].init!.body).toBe(rawBody);
+      const forwarded = new Headers(calls[0].init!.headers as any);
+      expect(forwarded.has(OPENROUTER_CACHE_HEADER)).toBe(false);
+      // Body untouched → the caller's content-length is still truthful and kept.
+      expect(forwarded.get('content-length')).toBe(String(rawBody.length));
+      expect((await res.json()).choices[0].message.content).toBe('x');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('20. marker without any body (GET-shaped init) still strips the marker and promotes', async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ init?: RequestInit }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ init });
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'x' } }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const res = await openrouterCompatFetch('https://openrouter.ai/api/v1/chat/completions', {
+        headers: { [OPENROUTER_CACHE_HEADER]: '1' },
+      });
+      expect(calls[0].init!.body).toBeUndefined();
+      expect(new Headers(calls[0].init!.headers as any).has(OPENROUTER_CACHE_HEADER)).toBe(false);
+      expect((await res.json()).choices[0].message.content).toBe('x');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
