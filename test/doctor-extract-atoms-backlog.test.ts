@@ -126,6 +126,25 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     expect((check.details as { backlog_by_source: Array<{ source_id: string; backlog: number }> }).backlog_by_source)
       .toEqual([{ source_id: 'gbrain-raw', backlog: 11 }]);
   });
+
+  it('multi-source fix hint folds the declare suggestion INTO the trailing parenthetical (exactly one closing paren)', async () => {
+    await addSource(engine, { id: 'src-alpha' });
+    await addSource(engine, { id: 'src-beta' });
+    for (let i = 0; i < 6; i++) await seedArticle(`alpha-article-${i}`, 'src-alpha');
+    for (let i = 0; i < 6; i++) await seedArticle(`beta-article-${i}`, 'src-beta');
+
+    const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME }, () =>
+      computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    const fix = (check.details as { fix_hint: string }).fix_hint;
+    expect(fix).toContain('--source src-alpha --window 120 (repeat for backlog source(s): src-alpha, src-beta;');
+    expect(fix).toContain('or declare extract_atoms in your active schema pack');
+    // The fold replaces the closing paren instead of appending a second
+    // parenthetical: "…; or declare …)" — one trailing ')', never "))" or ") (".
+    expect(fix).toMatch(/[^)]\)$/);
+    expect(fix).not.toContain(') (or declare');
+    expect(check.message).toContain(fix);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -238,6 +257,27 @@ describe('computeExtractAtomsBacklogCheck — declared branch verifies a runner 
     expect(check.status).toBe('ok');
     expect(check.message).toContain('active pack runs extract_atoms each cycle');
     expect((check.details as { cycle_evidence?: string }).cycle_evidence).toBe('unavailable');
+  });
+
+  it("implicit-default lane: a source WITHOUT local_path routed via sources.default makes the shape stampable → 'never' WARNs", async () => {
+    // brainShapeCanCarryCycleStamps's SECOND lane. The sibling test seeds a
+    // local_path source, so the FIRST lane already answers true there; here
+    // there are zero local_path sources and only the #4700 implicit-default
+    // lane (sources.default → a non-'default' source) can make 'never'
+    // meaningful. Without the config the same shape reads ok/'unavailable'.
+    for (let i = 0; i < 11; i++) await seedArticle(`declared-implicit-only-${i}`);
+    await addSource(engine, { id: 'vault' }); // pure DB source: no local_path
+    expect(await engine.listAllSources({ localPathOnly: true })).toHaveLength(0);
+
+    const before = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(before.status).toBe('ok');
+    expect((before.details as { cycle_evidence?: string }).cycle_evidence).toBe('unavailable');
+
+    await engine.setConfig('sources.default', 'vault');
+    const check = await withEnv(PACK_ENV, () => computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('no full cycle has ever completed');
+    expect((check.details as { cycle_evidence: string }).cycle_evidence).toBe('never');
   });
 
   it('still WARNs on that shape once an implicit default exists (sources.default routes the canonical cycle)', async () => {

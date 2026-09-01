@@ -18,6 +18,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test'
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 let engine: PGLiteEngine;
 
@@ -162,6 +163,37 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(d.drifted).toBe(2);
     expect(d.oldest_drifted_days).toBeGreaterThanOrEqual(9.5);
     expect(d.oldest_drifted_days).toBeLessThanOrEqual(10.5);
+  });
+
+  it('stays ok when the count floor is met but the ratio is under 10% (26 drifted of 300)', async () => {
+    // Both thresholds must trip: 26 >= MIN_DRIFTED (25) but 26/300 = 8.7% is
+    // under WARN_RATIO (0.1) — a large, mostly-healthy brain mid-cycle.
+    await seedSource('src-r', 'original body');
+    const live = await hashOf('src-r');
+    for (let i = 0; i < 274; i++) {
+      await seedAtom(`atoms/2026-01-01/r-${String(i).padStart(6, '0')}`, 'src-r', live);
+    }
+    for (let i = 0; i < 26; i++) {
+      await seedAtom(`atoms/2026-01-01/rd-${String(i).padStart(6, '0')}`, 'src-r', 'deadbeefdeadbeef');
+    }
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    const d = c.details as Record<string, number>;
+    expect(d.total_atoms).toBe(300);
+    expect(d.drifted).toBe(26);
+    expect(d.drift_pct).toBeCloseTo(8.7, 1);
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('below warn threshold');
+  }, 120_000);
+
+  it('a throwing executeRaw degrades to a warn that names the check — never throws, never fails doctor', async () => {
+    const broken = {
+      executeRaw: async () => { throw new Error('relation "pages" does not exist'); },
+    } as unknown as BrainEngine;
+    const c = await computeAtomProvenanceDriftCheck(broken);
+    expect(c.name).toBe('atom_provenance_drift');
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('atom_provenance_drift check failed');
+    expect(c.message).toContain('relation "pages" does not exist');
   });
 
   it('warns once both the ratio and the count are exceeded', async () => {
