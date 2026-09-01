@@ -15,6 +15,7 @@ import { describe, test, expect } from 'bun:test';
 import {
   parseLoopsJson,
   LOOPS_EXTRACT_JOB,
+  LOOPS_EXTRACT_ENQUEUE_CEILING,
   LOOPS_EXTRACT_MAX_PER_SWEEP,
   LOOPS_EXTRACT_WINDOW_DAYS,
 } from '../src/core/google/loops-extract.ts';
@@ -250,9 +251,14 @@ describe('parseLoopsJson — injection attempts survive as inert data', () => {
 });
 
 describe('loops-extract constants', () => {
-  test('job name + enqueue-side caps hold their contract values', () => {
+  test('job name + window + batch + ceiling hold their contract values', () => {
     expect(LOOPS_EXTRACT_JOB).toBe('loops_extract');
     expect(LOOPS_EXTRACT_MAX_PER_SWEEP).toBe(50);
     expect(LOOPS_EXTRACT_WINDOW_DAYS).toBe(30);
+    // The generous safety valve replaced the tight per-sweep cap — it must
+    // stay an order of magnitude above the batch size, or it degenerates
+    // back into the silent-drop cap it replaced.
+    expect(LOOPS_EXTRACT_ENQUEUE_CEILING).toBe(500);
+    expect(LOOPS_EXTRACT_ENQUEUE_CEILING).toBeGreaterThanOrEqual(LOOPS_EXTRACT_MAX_PER_SWEEP * 10);
   });
 });

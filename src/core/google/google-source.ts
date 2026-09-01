@@ -58,7 +58,7 @@ import {
   type GoogleSourceConfig,
   type GoogleSourceState,
 } from './types.ts';
-import { LOOPS_EXTRACT_WINDOW_DAYS } from './loops-extract.ts';
+import { LOOPS_EXTRACT_WINDOW_DAYS, loopExtractionEligibility } from './loops-extract.ts';
 
 export type { GoogleSourceConfig } from './types.ts';
 
@@ -174,6 +174,13 @@ interface GoogleSyncSummary {
   embedded: number;
   pagesAffected: string[];
   threadsSeen: number;
+  /**
+   * Why each in-window thread was or was not sent to the extractor, keyed by
+   * the machine reason from loopExtractionEligibility. Counts only — no
+   * addresses, subjects or body text — so a sweep can be audited for
+   * over-filtering without leaking mail content into logs.
+   */
+  extractEligibility: Record<string, number>;
   failedFiles: number;
 }
 
@@ -457,26 +464,50 @@ async function processThread(
   const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
   const windowMs = LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000;
   if (newestMs > 0 && Date.now() - newestMs <= windowMs) {
-    deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    // Structural eligibility, not "everything recent": bulk mail the owner
+    // never joined would otherwise both pay for model calls AND crowd real
+    // threads out of the sweep.
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry));
+    summary.extractEligibility[verdict.reason] =
+      (summary.extractEligibility[verdict.reason] ?? 0) + 1;
+    if (verdict.eligible) {
+      deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    }
   }
   return thread;
 }
 
-/** Enqueue capped loops_extract jobs for this sweep's candidates. */
+/** Enqueue loops_extract jobs for every eligible candidate in this sweep. */
 async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
   if (deps.extractCandidates.length === 0) return;
   try {
-    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_MAX_PER_SWEEP } = await import('./loops-extract.ts');
+    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_ENQUEUE_CEILING } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) return;
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
-    // Newest first: the freshest threads carry the most actionable loops.
-    const picked = [...deps.extractCandidates]
-      .sort((a, b) => b.newestMs - a.newestMs)
-      .slice(0, LOOPS_EXTRACT_MAX_PER_SWEEP);
-    const dropped = deps.extractCandidates.length - picked.length;
+    // EVERY eligible candidate is enqueued (up to a generous safety ceiling).
+    // The queue is the backlog; the worker's concurrency is the rate limit.
+    //
+    // This used to keep only the newest LOOPS_EXTRACT_MAX_PER_SWEEP and log
+    // the rest as "deferring … (they re-candidate on next touch)". That was
+    // silent data loss, not deferral: a thread only re-candidates when the
+    // thread CHANGES, so a dropped thread that nobody writes to again was
+    // never extracted at all. `maxWaiting` was a second, subtler leak — the
+    // queue evaluates it AFTER the idempotency-key lookup, so a brand-new key
+    // could be coalesced onto some unrelated thread's waiting job and return
+    // a row its own payload was never registered against.
+    //
+    // Newest first only orders the enqueue, so the freshest threads reach the
+    // worker first. The ceiling (10x the old cap) is a spend backstop for
+    // pathological sweeps; when it binds, the drop is logged as a DROP.
+    const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
+    const picked = ordered.slice(0, LOOPS_EXTRACT_ENQUEUE_CEILING);
+    const dropped = ordered.length - picked.length;
     if (dropped > 0) {
-      deps.log(`[google] loops_extract cap: enqueuing ${picked.length}, deferring ${dropped} (they re-candidate on next touch)`);
+      deps.log(
+        `[google] loops_extract safety ceiling (${LOOPS_EXTRACT_ENQUEUE_CEILING}): enqueuing ${picked.length}, ` +
+          `DROPPING ${dropped} oldest eligible thread(s) — a dropped thread is not extracted until it changes`,
+      );
     }
     for (const c of picked) {
       await queue.add(
@@ -484,12 +515,14 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
         { slug: c.slug, sourceId: deps.sourceId, threadId: c.threadId },
         {
           priority: 5,
-          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op.
+          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op,
+          // and this is now the ONLY dedupe mechanism in play (no maxWaiting —
+          // its cap-hit coalesce loses brand-new keys, see above).
           idempotency_key: `loops:${deps.sourceId}:${c.slug}:${c.newestMs}`,
-          maxWaiting: LOOPS_EXTRACT_MAX_PER_SWEEP * 2,
         },
       );
     }
+    deps.log(`[google] loops_extract: enqueued ${picked.length} eligible thread(s)`);
   } catch (e) {
     deps.log(`[google] loops_extract enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -880,6 +913,7 @@ export async function runGoogleSync(
     embedded: 0,
     pagesAffected: [],
     threadsSeen: 0,
+    extractEligibility: {},
     failedFiles: 0,
   };
   const countedSlugs = new Set<string>();
@@ -981,6 +1015,15 @@ export async function runGoogleSync(
     if (!opts.signal?.aborted) {
       await runExtractAndEmbed(deps, summary);
       await enqueueLoopsExtraction(deps);
+      // Auditable per-reason counts (loopExtractionEligibility) — no
+      // addresses, subjects or body text ever reach the log.
+      if (Object.keys(summary.extractEligibility).length > 0) {
+        log(
+          `[google] loops_extract eligibility: ${Object.entries(summary.extractEligibility)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ')}`,
+        );
+      }
     }
 
     // Commitment-loop staleness pass (v1 close semantics): overdue >14d or

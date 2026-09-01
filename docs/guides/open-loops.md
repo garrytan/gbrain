@@ -59,10 +59,46 @@ decisions. One extractor, three projections per item:
 - a typed edge thread-page → person-page (`owes_to` / `awaiting_reply_from`)
   — so relational search can traverse it
 
-Guardrails: injection-hardened input, ALL-or-nothing parse barrier (a
-malformed model response writes nothing), 50 threads/sweep cap, only the
-last 30 days of mail (the deep backfill is never extracted), kill switch
-`gbrain config set loops.extraction_enabled false`.
+Guardrails: injection-hardened input (the model sees the NEWEST 12k of the
+thread, so the latest reply is always visible to the judge), ALL-or-nothing
+parse barrier (a malformed model response writes nothing), only the last 30
+days of mail (the deep backfill is never extracted), kill switch
+`gbrain config set loops.extraction_enabled false`. Sender/thread
+suppressions are shared by both detectors: `loops mute` also stops the LLM
+lane from recreating a commitment or decision for a muted sender/thread,
+while leaving the underlying email page searchable.
+
+**Which threads reach the extractor.** A structural eligibility gate runs
+first (`loopExtractionEligibility`), so bulk mail neither pays for model
+calls nor crowds real correspondence out of the sweep:
+
+| shape | eligible |
+|---|---|
+| `SPAM` / `TRASH` | no — whoever wrote them |
+| any message the account owner wrote (`SENT` label or a known owner address) | **yes, overriding every rule below** |
+| pure noise senders / pure calendar notices | no |
+| `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` | no, unless the owner joined in |
+| `List-Unsubscribe` bulk | no, unless the owner joined in |
+| `CATEGORY_UPDATES` | **yes** — invoices, contracts and document requests live there |
+| ordinary human correspondence | yes |
+
+The owner-participated rule is the load-bearing one: your own outbound
+message is exactly where your commitment lives, so "I'll send this by Friday"
+written in reply to a bulk-labelled thread stays reachable. Every rule is
+structural — Gmail labels, `List-Unsubscribe`, calendar part, who wrote the
+message — with no sender, domain, subject or body matching, so there is no
+vendor list to maintain. The sweep logs per-reason counts
+(`loops_extract eligibility:`) so a run can be audited for over-filtering
+without mail content reaching the logs.
+
+**Every eligible thread is queued** (newest first — ordering only, nothing is
+dropped for being older). The MinionQueue is the backlog and the worker's
+concurrency is the rate limit; the old tight per-sweep cap silently lost
+threads (a thread only re-candidates when it changes). Jobs are keyed by page
+revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
+thread is a no-op and that key is the only dedupe in play. A generous safety
+ceiling (500/sweep) remains purely as a spend backstop for pathological
+sweeps; when it binds, the log names the drop honestly.
 
 ## The surfaces
 

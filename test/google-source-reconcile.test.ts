@@ -677,10 +677,10 @@ describe('syncToken 410 recovery', () => {
   });
 });
 
-// ── loops_extract enqueue cap ────────────────────────────────────────────────
+// ── loops_extract enqueue completeness ───────────────────────────────────────
 
-describe('loops_extract enqueue cap', () => {
-  test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} recent threads → exactly ${LOOPS_EXTRACT_MAX_PER_SWEEP} jobs + the drop log`, async () => {
+describe('loops_extract enqueue completeness', () => {
+  test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} eligible threads → EVERY one is queued exactly once`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cap-'));
     const fx = emptyFx();
     const vault = makeVault();
@@ -699,27 +699,110 @@ describe('loops_extract enqueue cap', () => {
       await withHome(async () => {
         const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault));
         expect(res.added).toBe(total);
-        // Exactly the cap, newest-first; the overflow defers (re-candidates
-        // on next touch) with an honest drop log.
+        // The old cap kept only the newest 50 and logged the rest as
+        // "deferring … (they re-candidate on next touch)". That was silent
+        // loss: a thread only re-candidates when it CHANGES, so an untouched
+        // overflow thread was never extracted at all.
         const jobs = await engine.executeRaw<{ data: unknown }>(
           `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
         );
-        expect(jobs).toHaveLength(LOOPS_EXTRACT_MAX_PER_SWEEP);
-        expect(err).toContain(
-          `loops_extract cap: enqueuing ${LOOPS_EXTRACT_MAX_PER_SWEEP}, deferring ${total - LOOPS_EXTRACT_MAX_PER_SWEEP}`,
-        );
-        // Newest-first pick: the three OLDEST threads (topics 50..52, hours
-        // 51..53 ago) are the deferred ones.
+        expect(jobs).toHaveLength(total);
+        expect(err).toContain(`loops_extract: enqueued ${total} eligible thread(s)`);
         const slugs = jobs
           .map((j) => (typeof j.data === 'string' ? JSON.parse(j.data) : j.data) as { slug: string })
           .map((p) => p.slug);
-        for (const dropped of ['recent-topic-50', 'recent-topic-51', 'recent-topic-52']) {
-          expect(slugs.some((s) => s.includes(dropped))).toBe(false);
+        // The previously-dropped tail is present, and so is the newest.
+        for (const kept of ['recent-topic-50', 'recent-topic-51', 'recent-topic-52', 'recent-topic-0']) {
+          expect(slugs.some((s) => s.includes(kept))).toBe(true);
         }
-        expect(slugs.some((s) => s.includes('recent-topic-0'))).toBe(true);
+        // Every slug distinct — one job per thread, no duplicates.
+        expect(new Set(slugs).size).toBe(total);
         // NOTE (item 1e): runGoogleSync writes NO heartbeat.jsonl rows — the
         // connect funnel is a commands-layer concern; see
         // test/google-connect-cmd.serial.test.ts for those assertions.
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a repeated sweep re-touching unchanged threads adds no duplicate jobs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-dup-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const total = 5;
+    const threadIds: string[] = [];
+    for (let i = 0; i < total; i++) {
+      const tid = `17ee11000000${(0x100 + i).toString(16)}`;
+      threadIds.push(tid);
+      fx.messages.push(
+        gmsg(`18ff11000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Dup topic ${i}` },
+          body: `Dup body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await capturedStderr(() => sweep(dir, fx, vault));
+        const after1 = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        // Second sweep RE-TOUCHES every thread via the history delta with
+        // unchanged content — the revision-keyed idempotency key is now the
+        // ONLY dedupe in play (no maxWaiting), so it must hold on its own.
+        fx.history.push([...threadIds]);
+        fx.historyResponseId = '2000';
+        await capturedStderr(() => sweep(dir, fx, vault));
+        const after2 = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(Number(after1[0].n)).toBe(total);
+        expect(Number(after2[0].n)).toBe(total);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('bulk mail the owner never answered is filtered before the queue', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-elig-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18ff220000000001', '17ee220000000001', hoursAgoMs(2), {
+        headers: {
+          From: 'Peer Example <peer@example.com>',
+          To: 'a@example.com',
+          Subject: 'Real question',
+          'List-Unsubscribe': '<https://example.com/u>',
+        },
+        body: 'Newsletter body.',
+      }),
+    );
+    fx.messages.push(
+      gmsg('18ff220000000002', '17ee220000000002', hoursAgoMs(3), {
+        headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Human topic' },
+        body: 'A real message.',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const jobs = await engine.executeRaw<{ data: unknown }>(
+          `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        const slugs = jobs
+          .map((j) => (typeof j.data === 'string' ? JSON.parse(j.data) : j.data) as { slug: string })
+          .map((p) => p.slug);
+        expect(slugs.some((s) => s.includes('human-topic'))).toBe(true);
+        expect(slugs.some((s) => s.includes('real-question'))).toBe(false);
+        // Auditable counts, no mail content: one filtered, one queued.
+        expect(err).toContain('loops_extract eligibility:');
+        expect(err).toContain('list_mail=1');
+        expect(err).toContain('human_correspondence=1');
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

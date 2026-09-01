@@ -16,19 +16,114 @@
  *   - injection-hardened: INJECTION_PATTERNS sanitation + <thread> DATA wrap
  *   - ALL-or-nothing parse barrier: a malformed batch writes NOTHING
  *   - kill switch: config loops.extraction_enabled (default ON for google
- *     sources), enqueue-side cap LOOPS_EXTRACT_MAX_PER_SWEEP
+ *     sources); structural eligibility gate in front of the queue, generous
+ *     LOOPS_EXTRACT_ENQUEUE_CEILING safety valve instead of a tight cap
+ *   - suppression parity: `loops mute` gates this lane too, checked before
+ *     any model call
  *   - spend honesty: runs on trickle + a bounded recent window; the
  *     historical backfill is never extracted unless opted in
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
-import { sha8 } from './google-render.ts';
+import { loadSuppressions, upsertOpenLoop, type LoopType } from '../loops/loops-store.ts';
+import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
+import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
+/**
+ * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
+ * queued (up to the generous safety ceiling below) and the worker's
+ * concurrency sets the rate. Kept as the documented in-flight batch
+ * expectation.
+ */
 export const LOOPS_EXTRACT_MAX_PER_SWEEP = 50;
+/**
+ * Generous per-sweep enqueue safety valve (10x the old cap) — a spend
+ * backstop for pathological sweeps, NOT a rate limit. Overflow is dropped
+ * LOUDLY: the log names it a drop, because a dropped thread only
+ * re-candidates when the thread itself changes.
+ */
+export const LOOPS_EXTRACT_ENQUEUE_CEILING = 500;
 /** Only threads whose newest message is within this window get extracted. */
 export const LOOPS_EXTRACT_WINDOW_DAYS = 30;
+
+/** Gmail categories that are bulk by construction. */
+const BULK_CATEGORY_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS'];
+
+export interface ExtractEligibility {
+  eligible: boolean;
+  /** Stable machine reason — safe to count and log, carries no message text. */
+  reason:
+    | 'owner_participated'
+    | 'human_correspondence'
+    | 'spam_or_trash'
+    | 'no_substantive_messages'
+    | 'bulk_category'
+    | 'list_mail';
+}
+
+/**
+ * Should this thread be sent to the extractor at all?
+ *
+ * Before this gate every rendered page under the recency window became a
+ * candidate, which was wrong in both directions at once: newsletters and
+ * promotions were paying for model calls, and because the sweep then kept
+ * only the newest N, real threads were pushed out by that same bulk mail.
+ *
+ * The rules are structural — Gmail labels and message shape — and deliberately
+ * contain no sender, domain, subject or body matching, so no vendor list has
+ * to be maintained and nobody's mail is special-cased.
+ *
+ * The load-bearing rule is `owner_participated`: a thread carrying ANY message
+ * from the account owner stays eligible whatever its labels say, because the
+ * owner's own outbound message is exactly where their commitment lives. That
+ * is what makes "I'll send this by Friday", written in reply to a bulk-labelled
+ * thread, still reachable.
+ *
+ * CATEGORY_UPDATES is deliberately NOT excluded: invoices, contracts and
+ * document requests land there, and they carry real obligations.
+ */
+export function loopExtractionEligibility(
+  thread: GmailThreadData,
+  myAddresses: Set<string> = new Set(),
+): ExtractEligibility {
+  const messages = thread.messages;
+  if (messages.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
+
+  const labels = new Set<string>();
+  for (const m of messages) for (const l of m.labelIds) labels.add(l);
+
+  // Deleted or spam mail is never an obligation, whoever wrote it.
+  if (labels.has('SPAM') || labels.has('TRASH')) {
+    return { eligible: false, reason: 'spam_or_trash' };
+  }
+
+  // The owner's own message is where their promise is. This beats every
+  // exclusion below — replying to a newsletter makes the thread real.
+  const ownerWrote = (m: GmailMessageMeta): boolean =>
+    m.labelIds.includes('SENT') || myAddresses.has(m.fromAddress);
+  if (messages.some(ownerWrote)) return { eligible: true, reason: 'owner_participated' };
+
+  // Machine mail carries no commitments: pure noise senders, and Calendar's
+  // invitation/response notices (which come FROM a real colleague, so the
+  // sender check alone cannot see them).
+  const substantive = messages.filter(
+    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
+  );
+  if (substantive.length === 0) return { eligible: false, reason: 'no_substantive_messages' };
+
+  // Bulk by Gmail's own classification, and the owner never joined in.
+  if (BULK_CATEGORY_LABELS.some((l) => labels.has(l))) {
+    return { eligible: false, reason: 'bulk_category' };
+  }
+
+  // Bulk by RFC 2369, and the owner never joined in.
+  if (substantive.every((m) => m.listUnsubscribe)) {
+    return { eligible: false, reason: 'list_mail' };
+  }
+
+  return { eligible: true, reason: 'human_correspondence' };
+}
 
 export async function isLoopsExtractionEnabled(engine: BrainEngine): Promise<boolean> {
   try {
@@ -172,12 +267,29 @@ export async function runLoopsExtract(
   const threadId =
     payload.threadId ?? (typeof fm.thread_id === 'string' ? fm.thread_id : payload.slug);
 
+  // `loops mute` is one policy surface for both detectors. Previously it only
+  // guarded deterministic opens, so the LLM lane could recreate a commitment
+  // or decision for a sender/thread the operator had explicitly suppressed.
+  // Check before provider availability and before any model/facts/edge write.
+  const suppressions = await loadSuppressions(engine, payload.sourceId);
+  const lastSender = typeof fm.from === 'string' ? bareAddress(fm.from) : '';
+  if (
+    suppressions.threads.has(threadId.toLowerCase()) ||
+    (lastSender !== '' && suppressions.senders.has(lastSender))
+  ) {
+    return { ...empty, reason: 'suppressed' };
+  }
+
   const { isAvailable, chat } = await import('../ai/gateway.ts');
   if (!isAvailable('chat')) return { ...empty, reason: 'llm_unavailable' };
 
   // Injection hardening: same sanitation the facts extractor applies.
   const { INJECTION_PATTERNS } = await import('../think/sanitize.ts');
-  let content = (page.compiled_truth ?? '').slice(0, 12_000);
+  // Open-loop extraction is recency-sensitive: the newest outer messages can
+  // fulfil an older promise or add a fresh one. Keeping the oldest 12k silently
+  // hid the latest reply on long threads. Bound the same payload size, but keep
+  // the tail so the newest evidence is always visible to the judge.
+  let content = (page.compiled_truth ?? '').slice(-12_000);
   for (const p of INJECTION_PATTERNS) content = content.replace(p.rx, p.replacement);
 
   let text: string;
