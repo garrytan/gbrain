@@ -378,13 +378,19 @@ function writeBackfilledState(dir: string): void {
   );
 }
 
-/** Seed N waiting loops_extract jobs carrying the real payload shape for one source. */
-async function seedWaitingLoopsJobs(sourceId: string, n: number, keyPrefix: string): Promise<void> {
+/** Seed N pending loops_extract jobs carrying the real payload shape for one source. */
+async function seedWaitingLoopsJobs(
+  sourceId: string,
+  n: number,
+  keyPrefix: string,
+  status: 'waiting' | 'delayed' | 'active' = 'waiting',
+): Promise<void> {
   await engine.executeRaw(
-    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key)
-     SELECT 'loops_extract', 'default', 'waiting', jsonb_build_object('sourceId', $2::text), $3::text || '-' || i
+    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, delay_until)
+     SELECT 'loops_extract', 'default', $4::text, jsonb_build_object('sourceId', $2::text), $3::text || '-' || i,
+            CASE WHEN $4::text = 'delayed' THEN now() + interval '10 minutes' END
        FROM generate_series(1, $1) AS i`,
-    [n, sourceId, keyPrefix],
+    [n, sourceId, keyPrefix, status],
   );
 }
 
@@ -964,6 +970,40 @@ describe('loops_extract enqueue completeness', () => {
     }
   }, 120_000);
 
+  test('a DELAYED (retry-backoff) backlog counts against the budget too — a flapping provider cannot stack past the ceiling', async () => {
+    // Ship-review fix: the depth probe counted status='waiting' only. During a
+    // provider outage every claimed job fails and parks as 'delayed' (backoff),
+    // so the probe read ~0 and each sweep stacked another ceiling's worth of
+    // jobs on top of the backlog. Pending = waiting + delayed + active.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-delayed-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee77000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff77000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Delayed topic ${i}` },
+          body: `Delayed body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await seedWaitingLoopsJobs('gsrc', LOOPS_EXTRACT_ENQUEUE_CEILING, 'delayedseed', 'delayed');
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const fresh = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs
+            WHERE name = 'loops_extract' AND idempotency_key NOT LIKE 'delayedseed-%'`,
+        );
+        expect(Number(fresh[0].n)).toBe(0);
+        expect(err).toContain('deferring 2');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test("another source's waiting backlog does NOT starve this source's budget (per-source depth)", async () => {
     // Pre-fix the probe counted EVERY waiting loops_extract job brain-wide,
     // so one Google account's stalled backlog drove every other source's
@@ -1018,7 +1058,7 @@ describe('loops_extract enqueue completeness', () => {
       await withHome(async () => {
         const { err } = await capturedStderr(() => sweep(dir, fx, vault));
         expect(err).toContain('deferring 2');
-        expect(err).toContain(`${LOOPS_EXTRACT_ENQUEUE_CEILING - 1} already waiting`);
+        expect(err).toContain(`${LOOPS_EXTRACT_ENQUEUE_CEILING - 1} already pending`);
         const fresh = await engine.executeRaw<{ data: unknown }>(
           `SELECT data FROM minion_jobs
             WHERE name = 'loops_extract' AND idempotency_key NOT LIKE 'partialseed-%'`,

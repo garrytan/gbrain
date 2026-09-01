@@ -533,11 +533,15 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     // writes): a brain-wide count let one Google account's stalled backlog
     // pin every other source's budget at 0 forever.
     const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
+    // Depth = every PENDING row, not just 'waiting': during a provider outage
+    // each claimed job fails and parks as 'delayed' (retry backoff), and rows
+    // in flight are 'active'. Counting 'waiting' alone read ~0 mid-outage and
+    // let every sweep stack another ceiling's worth of jobs on the backlog.
     let waitingDepth = 0;
     try {
       const rows = await deps.engine.executeRaw<{ n: string }>(
         `SELECT count(*)::text AS n FROM minion_jobs
-          WHERE name = $1 AND status = 'waiting' AND data->>'sourceId' = $2`,
+          WHERE name = $1 AND status IN ('waiting', 'delayed', 'active') AND data->>'sourceId' = $2`,
         [LOOPS_EXTRACT_JOB, deps.sourceId],
       );
       waitingDepth = parseInt(rows[0]?.n ?? '0', 10) || 0;
@@ -550,7 +554,7 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     if (dropped > 0) {
       deps.log(
         `[google] loops_extract enqueue budget (ceiling ${LOOPS_EXTRACT_ENQUEUE_CEILING}, ` +
-          `${waitingDepth} already waiting): enqueuing ${picked.length}, ` +
+          `${waitingDepth} already pending): enqueuing ${picked.length}, ` +
           `deferring ${dropped} oldest eligible thread(s) — a deferred thread is next ` +
           `enqueued when it changes, so a persistent backlog needs worker attention`,
       );
