@@ -606,6 +606,22 @@ async function runCorpusIngestPass(
   const { runFactsPipeline } = await import('./facts/backstop.ts');
   const { isDreamOutput } = await import('./cycle/transcript-discovery.ts');
 
+  // Ambient-writeback turn files (`.wb-` basenames) ride this pass as the
+  // batch backstop when serve/IPC was away (OV2-11) — but they answer to the
+  // AUTHORITATIVE `memory.auto_writeback` gate, resolved once per pass: off ⇒
+  // terminal sidecar (operator intent beats a leftover hook-side bank), on ⇒
+  // extracted with the lane's own provenance + salient notability filter.
+  const { parseWbFileName, writebackOffSidecarJson } = await import('./context/corpus-segments.ts');
+  const { resolveWritebackConfig } = await import('./facts/writeback-config.ts');
+  const { loadConfig: loadFileCfg } = await import('./config.ts');
+  const { isValidSourceId } = await import('./source-id.ts');
+  // Gate semantics: never extract on a last-known-good ENABLED bundle — an
+  // operator's off wins even during a DB blip; read_error, plane drift (DB
+  // row absent + file mirror enabled = failed dual-write, not intent), and
+  // an unrecognized mode value all skip wb files WITHOUT a terminal sidecar
+  // so the next sweep retries them once the config is coherent.
+  const wbCfg = await resolveWritebackConfig(engine, loadFileCfg(), { gate: true });
+
   for (let i = 0; i < candidates.length; i++) {
     if (overBudget()) {
       skip('budget_exhausted:corpus', candidates.length - i);
@@ -632,6 +648,24 @@ async function runCorpusIngestPass(
         continue;
       }
 
+      const wbMeta = parseWbFileName(name);
+      if (wbMeta && wbCfg.read_error) {
+        skip('writeback_gate_unreadable');
+        continue; // no sidecar — retry next sweep once the config is readable
+      }
+      if (wbMeta && !wbCfg.enabled && (wbCfg.plane_drift || !wbCfg.mode_valid)) {
+        // Diverged planes / unrecognized mode value ≠ operator intent: no
+        // terminal sidecar — the file survives until the config re-coheres
+        // (doctor names the re-sync command).
+        skip(wbCfg.plane_drift ? 'writeback_plane_drift' : 'writeback_mode_invalid');
+        continue;
+      }
+      if (wbMeta && !wbCfg.enabled) {
+        await writeFile(full + CORPUS_INGESTED_SUFFIX, writebackOffSidecarJson());
+        skip('writeback_off');
+        continue;
+      }
+
       const raw = await readFile(full, 'utf-8');
 
       // Anti-loop: never ingest dream-generated outputs. Marking them
@@ -646,17 +680,28 @@ async function runCorpusIngestPass(
         continue;
       }
 
+      // Source fidelity (adversarial review, this wave): wb files bank the
+      // session's GBRAIN_SOURCE in their NAME, so the sweep fallback files
+      // the turn into the SAME source the prompt-time IPC lane would have —
+      // never the pass's source. Validated before use (source-isolation
+      // invariant); a legacy/invalid segment falls back to the pass source.
+      const wbSourceId = wbMeta?.sourceId && isValidSourceId(wbMeta.sourceId)
+        ? wbMeta.sourceId
+        : sourceId;
       const r = await runFactsPipeline(raw, {
         engine,
-        sourceId,
-        sessionId: `sweep:corpus:${name}`,
+        sourceId: wbMeta ? wbSourceId : sourceId,
+        sessionId: wbMeta ? wbMeta.sessionId : `sweep:corpus:${name}`,
         // Provenance tag outside FactsBackstopCtx's enumerated writers —
         // facts.source is free text at the DB layer; the cast only
-        // side-steps the ctx union, which predates the sweep.
-        source: 'sweep:corpus' as FactsBackstopCtx['source'],
+        // side-steps the ctx union, which predates the sweep. Writeback turn
+        // files keep their lane's provenance + salient notability filter so
+        // batch-extracted turns are indistinguishable from prompt-harvested.
+        source: wbMeta ? 'hook:writeback' : ('sweep:corpus' as FactsBackstopCtx['source']),
         mode: 'inline',
         remote: false,
         abortSignal: signal,
+        ...(wbMeta && wbCfg.mode === 'salient' ? { notabilityFilter: 'medium-and-up' as const } : {}),
         // visibility deliberately unset → resolveDefaultVisibility [ENG-8]
       });
 
@@ -713,6 +758,10 @@ async function runCorpusIngestPass(
           ingested_at: new Date().toISOString(),
           facts_inserted: r.inserted,
           facts_duplicate: r.duplicate,
+          // Honesty: the sweep is the LAST attempt (the harvest lane already
+          // declined to sidecar on this), so a non-transport extraction skip
+          // is terminal HERE — record why instead of a silent zero-count.
+          ...(r.skipped_reason ? { skipped: r.skipped_reason } : {}),
           ...(linksBanked ? { links_banked: linksBanked } : {}),
         }) + '\n',
       );
