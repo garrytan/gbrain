@@ -66,6 +66,21 @@ import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
+import type { ResolvedPack } from '../schema-pack/registry.ts';
+import {
+  prepareAtomSource,
+  resolveAtomInputProfile,
+  type PreparedAtomSource,
+} from '../schema-pack/source-input-profile.ts';
+import {
+  ATOM_TYPES,
+  CONCEPT_LABEL_RE,
+  bindProfileToPreparedSource,
+  buildExtractionProfile,
+  invalidEvidenceRefs,
+  type AtomExtractionProfile,
+  type ExtractedAtom,
+} from './atom-extraction-profile.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -74,6 +89,7 @@ const DEFAULT_BUDGET_USD = 0.3;
 // Exported so tests pin the defaults instead of re-hardcoding the literals.
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS = 4096;
+export const ATOM_OUTPUT_CONTRACT_VERSION = 'gbrain.extract_atoms.output.v1';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -89,13 +105,6 @@ export const MAX_DETERMINISTIC_FAILURES = 3;
  */
 const TRANSIENT_EXTRACT_ERROR_RE =
   /timeout|timed out|\b429\b|rate.?limit|\b5\d\d\b|ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|fetch failed|\bnetwork\b|socket|overloaded/i;
-
-// v0.42+ TODO: read atom_type enum from active pack manifest at runtime.
-const ATOM_TYPES = [
-  'insight', 'anecdote', 'quote', 'framework', 'statistic',
-  'story_angle', 'strategy_angle', 'strategy', 'endorsement',
-  'critique', 'collection',
-] as const;
 
 // v0.41.2.1 (D2): brain-page discovery constants.
 //
@@ -141,14 +150,38 @@ export function unionExtractableTypes(packExtractable: Iterable<string>): string
  * gbrain-base via the legacy-floor union. Fail-soft: any pack-load error falls
  * back to the legacy floor.
  */
-async function resolveExtractableTypes(): Promise<string[]> {
-  let packExtractable: Iterable<string> = [];
+async function resolveExtractionPack(
+  engine?: BrainEngine,
+  sourceId = 'default',
+): Promise<ResolvedPack | null> {
   try {
     const { loadConfig } = await import('../config.ts');
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
+    const perSourceName = engine
+      ? await engine.getConfig(`schema_pack.source.${sourceId}`)
+      : null;
+    const dbConfig = engine ? await engine.getConfig('schema_pack') : null;
+    const perSourceDb = perSourceName
+      ? new Map<string, string>([[sourceId, perSourceName]])
+      : undefined;
+    return await loadActivePack({
+      cfg: loadConfig(),
+      remote: false,
+      sourceId,
+      perSourceDb,
+      dbConfig: dbConfig ?? undefined,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function resolveExtractableTypes(pack?: ResolvedPack | null): Promise<string[]> {
+  let packExtractable: Iterable<string> = [];
+  try {
     const { extractableTypesFromPack } = await import('../schema-pack/extractable.ts');
-    const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
-    packExtractable = extractableTypesFromPack(resolved.manifest);
+    const resolved = pack ?? await resolveExtractionPack();
+    if (resolved) packExtractable = extractableTypesFromPack(resolved.manifest);
   } catch {
     // Pack unavailable (test seams, bootstrap) — legacy floor only.
   }
@@ -174,7 +207,9 @@ export interface ExtractAtomsOpts {
    * Mirrors _transcripts shape. `undefined` triggers discovery; `[]`
    * explicitly suppresses page discovery (for transcript-only tests).
    */
-  _pages?: Array<{ slug: string; content: string; contentHash: string }>;
+  _pages?: Array<{ slug: string; content: string; contentHash: string; pageType?: string }>;
+  /** Test seam: pre-resolved active pack, including declaration origins. */
+  _resolvedPack?: ResolvedPack | null;
   /**
    * v0.41.19.0 (T3): cooperative yield hook fired from inside the work
    * loop on a 30s throttle AND immediately after every `await chat()`
@@ -196,51 +231,9 @@ export interface ExtractAtomsOpts {
   progress?: ProgressReporter;
 }
 
-interface ExtractedAtom {
-  title: string;
-  atom_type: typeof ATOM_TYPES[number];
-  body: string;
-  source_quote?: string;
-  lesson?: string;
-  /**
-   * 1-3 kebab-case topic labels for concept clustering. Consumed by
-   * synthesize_concepts (groups atoms by `frontmatter.concepts`; only
-   * labels shared by >=2 atoms materialize a concept page, so the prompt
-   * biases reuse-over-coinage). #2123.
-   */
-  concepts?: string[];
-  virality_score?: number;
-  emotional_register?: string;
-}
-
-/** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
-const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
-const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
-
-An atom is a single-source, self-contained idea that could become a tweet,
-quote, or short essay angle. Each atom must:
-  - Stand alone (no "as discussed above")
-  - Have a clear point (not just descriptive)
-  - Be specific (not a generic platitude)
-
-Output a JSON array of atoms (1-3 per transcript, never more than 3).
-Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
-source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
-(1-3 topic labels), virality_score (0-100), emotional_register (one of:
-shocking, inspiring, funny, sobering, practical, controversial)}.
-
-atom_type MUST be one of: ${ATOM_TYPES.join(', ')}.
-
-concepts are kebab-case English TOPIC labels used to cluster atoms into
-concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
-entity or brand names. Use the same label for the same topic across atoms;
-prefer a label you already used over coining a near-synonym.
-
-Output ONLY the JSON array, no prose.`;
-
 interface DiscoveredPage {
   slug: string;
+  pageType: string;
   content: string;
   contentHash: string;
 }
@@ -271,10 +264,19 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
+  profileOptions?: {
+    pack?: ResolvedPack | null;
+    profilesByType: Readonly<Record<string, string>>;
+    legacyCompatibleTypes?: ReadonlyArray<string>;
+  },
 ): Promise<DiscoveredPage[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+  const profileAware = profileOptions !== undefined;
+  const profileParam = profileAware ? '$5' : null;
+  const affectedParam = profileAware ? '$7' : '$5';
   const sql = `
     SELECT p.slug,
+           p.type,
            p.compiled_truth,
            p.content_hash
     FROM pages p
@@ -286,14 +288,27 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND length(COALESCE(p.compiled_truth, '')) >= $3
-      AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      AND NOT (
+        COALESCE(p.frontmatter->>'atoms_scan_hash', '') = substring(p.content_hash from 1 for 16)
+        ${profileAware ? `AND (
+          p.frontmatter->>'atoms_scan_profile' = COALESCE((${profileParam}::jsonb)->>p.type, '')
+          OR (p.type = ANY($6::text[]) AND NOT (p.frontmatter ? 'atoms_scan_profile'))
+        )` : ''}
+      )
+      ${hasFilter ? `AND p.slug = ANY(${affectedParam}::text[])` : ''}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
         WHERE atom.type = 'atom'
           AND atom.source_id = $1
           AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+          ${profileAware ? `AND (
+            COALESCE(
+              atom.frontmatter->>'extraction_policy_sha256',
+              atom.frontmatter->>'extraction_profile_sha256'
+            ) = COALESCE((${profileParam}::jsonb)->>p.type, '')
+            OR (p.type = ANY($6::text[]) AND NOT (atom.frontmatter ? 'extraction_profile_sha256'))
+          )` : ''}
           AND atom.deleted_at IS NULL
       )
     ORDER BY p.updated_at DESC
@@ -301,20 +316,26 @@ export async function discoverExtractablePages(
   `;
   const params: unknown[] = [
     sourceId,
-    await resolveExtractableTypes(),
+    await resolveExtractableTypes(profileOptions?.pack),
     MIN_PAGE_CHARS_FOR_EXTRACTION,
     limit,
   ];
+  if (profileAware) {
+    params.push(JSON.stringify(profileOptions.profilesByType));
+    params.push([...(profileOptions.legacyCompatibleTypes ?? [])]);
+  }
   if (hasFilter) params.push(affectedSlugs);
 
   try {
     const rows = await engine.executeRaw<{
       slug: string;
+      type: string;
       compiled_truth: string;
       content_hash: string;
     }>(sql, params);
     return rows.map((r) => ({
       slug: r.slug,
+      pageType: r.type,
       content: r.compiled_truth,
       contentHash: r.content_hash,
     }));
@@ -345,13 +366,45 @@ export async function countExtractAtomsBacklog(
   sourceId?: string,
 ): Promise<number | null> {
   try {
+    if (sourceId === undefined) {
+      const sources = await engine.executeRaw<{ id: string }>(
+        `SELECT id FROM sources ORDER BY id`,
+      );
+      let total = 0;
+      for (const source of sources) {
+        const count = await countExtractAtomsBacklog(engine, source.id);
+        if (count === null) return null;
+        total += count;
+      }
+      return total;
+    }
+    const model = await resolveExtractAtomsModel(engine);
+    const pack = await resolveExtractionPack(engine, sourceId);
+    const types = await resolveExtractableTypes(pack);
+    const profileHashes: Record<string, string> = {};
+    const legacyCompatibleTypes: string[] = [];
+    if (pack) {
+      const { resolveExtractablePrompt } = await import('../schema-pack/prompt-template.ts');
+      for (const pageType of types) {
+        const lens = resolveExtractablePrompt(pack, pageType);
+        const inputProfile = resolveAtomInputProfile(pack, pageType);
+        profileHashes[pageType] = buildExtractionProfile(
+          pageType, model, pack, lens, inputProfile,
+        ).extraction_policy_sha256;
+        if (!lens && !inputProfile) legacyCompatibleTypes.push(pageType);
+      }
+    } else {
+      for (const pageType of types) {
+        profileHashes[pageType] = buildExtractionProfile(pageType, model, null, null)
+          .extraction_policy_sha256;
+        legacyCompatibleTypes.push(pageType);
+      }
+    }
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
     // (doctor — matches the conversation-facts check's cross-source posture).
     // The atom must live in the SAME source as the page either way, so the
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
-    const scoped = sourceId !== undefined;
-    const sql = scoped
-      ? `SELECT COUNT(*) AS cnt FROM pages p
+    const sql = `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
            AND p.type = ANY($2::text[])
            AND p.deleted_at IS NULL
@@ -360,33 +413,29 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND length(COALESCE(p.compiled_truth, '')) >= $3
-           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
+           AND NOT (
+             COALESCE(p.frontmatter->>'atoms_scan_hash', '') = substring(p.content_hash from 1 for 16)
+             AND (
+               p.frontmatter->>'atoms_scan_profile' = COALESCE(($4::jsonb)->>p.type, '')
+               OR (p.type = ANY($5::text[]) AND NOT (p.frontmatter ? 'atoms_scan_profile'))
+             )
+           )
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
                AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND atom.deleted_at IS NULL
-           )`
-      : `SELECT COUNT(*) AS cnt FROM pages p
-         WHERE p.type = ANY($1::text[])
-           AND p.deleted_at IS NULL
-           AND p.content_hash IS NOT NULL
-           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND length(COALESCE(p.compiled_truth, '')) >= $2
-           AND COALESCE(p.frontmatter->>'atoms_scan_hash', '') <> substring(p.content_hash from 1 for 16)
-           AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = p.source_id
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+               AND (
+                 COALESCE(
+                   atom.frontmatter->>'extraction_policy_sha256',
+                   atom.frontmatter->>'extraction_profile_sha256'
+                 ) = COALESCE(($4::jsonb)->>p.type, '')
+                 OR (p.type = ANY($5::text[]) AND NOT (atom.frontmatter ? 'extraction_profile_sha256'))
+               )
                AND atom.deleted_at IS NULL
            )`;
-    const extractableTypes = await resolveExtractableTypes();
-    const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
-    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params);
+    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, [
+      sourceId, types, MIN_PAGE_CHARS_FOR_EXTRACTION, JSON.stringify(profileHashes), legacyCompatibleTypes,
+    ]);
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -497,6 +546,69 @@ export async function runPhaseExtractAtoms(
   const sourceId = opts.sourceId ?? 'default';
   const chat = opts._chat ?? gatewayChat;
 
+  let extractModel = resolveTierDefault('utility');
+  let budgetCap = DEFAULT_BUDGET_USD;
+  let maxInputChars = DEFAULT_EXTRACT_MAX_INPUT_CHARS;
+  let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
+  let pacingMs = 0;
+  try {
+    extractModel = await resolveExtractAtomsModel(engine);
+    const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
+    if (configuredBudget) {
+      const n = Number(configuredBudget);
+      if (Number.isFinite(n) && n > 0) budgetCap = n;
+    }
+    const configuredMaxSourceChars = await engine.getConfig('cycle.extract_atoms.max_source_chars');
+    if (configuredMaxSourceChars) {
+      const n = Number(configuredMaxSourceChars);
+      if (Number.isFinite(n) && n >= 500) maxInputChars = Math.floor(n);
+    }
+    const configuredMaxInput = await engine.getConfig('cycle.extract_atoms.max_input_chars');
+    if (configuredMaxInput) {
+      const n = Number(configuredMaxInput);
+      if (Number.isFinite(n) && n >= 1_000) maxInputChars = Math.floor(n);
+    }
+    const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
+    if (configuredMaxOutput) {
+      const n = Number(configuredMaxOutput);
+      if (Number.isFinite(n) && n >= 256) maxOutputTokens = Math.floor(n);
+    }
+    const configuredPacing = await engine.getConfig('cycle.extract_atoms.pacing_ms');
+    if (configuredPacing) {
+      const n = Number(configuredPacing);
+      if (Number.isFinite(n) && n > 0) pacingMs = Math.min(60_000, Math.floor(n));
+    }
+  } catch {
+    // Keep key-aware utility model and safe extraction defaults.
+  }
+
+  const resolvedPack = opts._resolvedPack === undefined
+    ? await resolveExtractionPack(engine, sourceId)
+    : opts._resolvedPack;
+  const profileByType = new Map<string, AtomExtractionProfile>();
+  const profileHashesByType: Record<string, string> = {};
+  const legacyCompatibleTypes: string[] = [];
+  const extractableTypes = await resolveExtractableTypes(resolvedPack);
+  if (resolvedPack) {
+    const { resolveExtractablePrompt } = await import('../schema-pack/prompt-template.ts');
+    for (const pageType of extractableTypes) {
+      const lens = resolveExtractablePrompt(resolvedPack, pageType);
+      const inputProfile = resolveAtomInputProfile(resolvedPack, pageType);
+      const profile = buildExtractionProfile(pageType, extractModel, resolvedPack, lens, inputProfile);
+      profileByType.set(pageType, profile);
+      profileHashesByType[pageType] = profile.extraction_policy_sha256;
+      if (!lens && !inputProfile) legacyCompatibleTypes.push(pageType);
+    }
+  } else {
+    for (const pageType of extractableTypes) {
+      const profile = buildExtractionProfile(pageType, extractModel, null, null);
+      profileByType.set(pageType, profile);
+      profileHashesByType[pageType] = profile.extraction_policy_sha256;
+      legacyCompatibleTypes.push(pageType);
+    }
+  }
+  const transcriptProfile = buildExtractionProfile('transcript', extractModel, null, null);
+
   // 1a. Get transcripts (test seam OR production discovery).
   //     v0.41.2.1: config loader switched to loadConfigWithEngine() so the
   //     dream.* DB-plane merge from Phase 1 reaches this phase.
@@ -539,7 +651,7 @@ export async function runPhaseExtractAtoms(
   // 1b. Get pages (test seam OR production discovery).
   //     _pages === undefined triggers discovery; _pages: [] suppresses it
   //     deliberately (transcript-only regression tests).
-  let pages: Array<{ slug: string; content: string; contentHash: string }>;
+  let pages: Array<{ slug: string; content: string; contentHash: string; pageType?: string }>;
   if (opts._pages !== undefined) {
     pages = opts._pages;
   } else {
@@ -548,6 +660,7 @@ export async function runPhaseExtractAtoms(
       sourceId,
       opts.affectedSlugs,
       await resolvePageDiscoveryLimit(engine),
+      { pack: resolvedPack, profilesByType: profileHashesByType, legacyCompatibleTypes },
     );
   }
 
@@ -595,21 +708,24 @@ export async function runPhaseExtractAtoms(
   //    the cap — `--drain` can no longer report the same backlog number
   //    forever while atoms keep getting extracted from transcripts.
   type WorkItem =
-    | { kind: 'transcript'; filePath: string; content: string; contentHash: string }
-    | { kind: 'page'; slug: string; content: string; contentHash: string };
+    | { kind: 'transcript'; filePath: string; content: string; contentHash: string; profile: AtomExtractionProfile }
+    | { kind: 'page'; slug: string; content: string; contentHash: string; pageType: string; profile: AtomExtractionProfile };
 
   const seenHashes = new Set<string>();
   const transcriptItems: WorkItem[] = [];
   for (const t of transcriptsLive) {
     if (seenHashes.has(t.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(t.contentHash);
-    transcriptItems.push({ kind: 'transcript', ...t });
+    transcriptItems.push({ kind: 'transcript', ...t, profile: transcriptProfile });
   }
   const pageItems: WorkItem[] = [];
   for (const p of pages) {
     if (seenHashes.has(p.contentHash)) { duplicatesSkipped++; continue; }
     seenHashes.add(p.contentHash);
-    pageItems.push({ kind: 'page', ...p });
+    const pageType = p.pageType ?? 'unknown-page';
+    const profile = profileByType.get(pageType)
+      ?? buildExtractionProfile(pageType, extractModel, resolvedPack, null);
+    pageItems.push({ kind: 'page', ...p, pageType, profile });
   }
   const work: WorkItem[] = [];
   const maxPoolLen = Math.max(transcriptItems.length, pageItems.length);
@@ -652,59 +768,6 @@ export async function runPhaseExtractAtoms(
   const failures: Array<{ source: string; error: string }> = [];
   let estimatedSpendUsd = 0;
   let budgetExhausted = false;
-  // #3813: key-aware tier default, not a hardcoded Anthropic model — an
-  // OPENAI_API_KEY-only install must not route to an unservable provider.
-  // Pre-computed so a config-read failure inside the try below (caught, see
-  // "Keep safe defaults" comment) still leaves extractModel on this default,
-  // matching the pre-refactor fail-soft behavior exactly.
-  let extractModel = resolveTierDefault('utility');
-  let budgetCap = DEFAULT_BUDGET_USD;
-  // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
-  // maxTokens: 4096). Operators on small-context or thinking models need to
-  // shrink/grow both without a code change; defaults are unchanged.
-  let maxInputChars = DEFAULT_EXTRACT_MAX_INPUT_CHARS;
-  let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
-  let pacingMs = 0;
-  try {
-    extractModel = await resolveExtractAtomsModel(engine);
-    const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
-    if (configuredBudget) {
-      const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) budgetCap = n;
-    }
-    // #4529: legacy input-cap key (its own floor of 500 chars, as landed).
-    // Read FIRST so the newer #4540 max_input_chars key below wins when
-    // both are set — they name the same knob.
-    const configuredMaxSourceChars = await engine.getConfig('cycle.extract_atoms.max_source_chars');
-    if (configuredMaxSourceChars) {
-      const n = Number(configuredMaxSourceChars);
-      if (Number.isFinite(n) && n >= 500) maxInputChars = Math.floor(n);
-    }
-    const configuredMaxInput = await engine.getConfig('cycle.extract_atoms.max_input_chars');
-    if (configuredMaxInput) {
-      const n = Number(configuredMaxInput);
-      // Floor of 1000 chars: below that the extractor sees a fragment too
-      // small to yield atoms and every page burns budget for nothing.
-      if (Number.isFinite(n) && n >= 1_000) maxInputChars = Math.floor(n);
-    }
-    const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
-    if (configuredMaxOutput) {
-      const n = Number(configuredMaxOutput);
-      // Floor of 256 tokens mirrors dream.triage.max_tokens: a smaller cap
-      // truncates every response into the malformed-output failure path.
-      if (Number.isFinite(n) && n >= 256) maxOutputTokens = Math.floor(n);
-    }
-    // Optional per-item pacing sleep (ms) so a large backlog doesn't hammer
-    // a local/self-hosted provider back-to-back. 0 (default) = no pacing.
-    const configuredPacing = await engine.getConfig('cycle.extract_atoms.pacing_ms');
-    if (configuredPacing) {
-      const n = Number(configuredPacing);
-      if (Number.isFinite(n) && n > 0) pacingMs = Math.min(60_000, Math.floor(n));
-    }
-  } catch {
-    // Keep safe defaults on any config-read failure: key-aware utility-tier
-    // model, $0.30 cap, default input cap (max_input_chars).
-  }
   // A cost cap is only meaningful for a model the tracker can price.
   // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
   // when the model is absent from the pricing maps AND a cap is set; with no cap
@@ -760,14 +823,82 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
 
+  async function callAtoms(system: string, content: string): Promise<AtomsParseOutcome> {
+    const result = await chat({
+      model: extractModel,
+      system,
+      messages: [{ role: 'user', content }],
+      maxTokens: maxOutputTokens,
+    });
+    await maybeYield();
+    llmHalt.reset();
+    if (pacingMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, pacingMs));
+    return parseAtomsOutcome(result.text);
+  }
+
+  async function extractItemAtoms(
+    item: WorkItem,
+    originLabel: string,
+    prepared: PreparedAtomSource | null,
+  ): Promise<AtomsParseOutcome> {
+    if (!prepared) {
+      return callAtoms(
+        item.profile.prompt,
+        `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
+      );
+    }
+    const candidates: ExtractedAtom[] = [];
+    for (const window of prepared.windows) {
+      const outcome = await callAtoms(
+        item.profile.prompt,
+        `Source: ${originLabel}\n` +
+          `Selected source SHA-256: ${prepared.source_section_sha256}\n` +
+          `Window: ${window.index + 1}/${prepared.windows.length}\n` +
+          `Source character range: [${window.start}, ${window.end})\n` +
+          `Window SHA-256: ${window.sha256}\n` +
+          `Available evidence anchors: ${window.evidence_anchors.join(', ') || '(none)'}\n\n---\n\n` +
+          window.text,
+      );
+      if (!outcome.ok) {
+        return { ok: false, reason: `window ${window.index + 1}/${prepared.windows.length}: ${outcome.reason}` };
+      }
+      const invalid = invalidEvidenceRefs(outcome.atoms, new Set(window.evidence_anchors));
+      if (invalid) return { ok: false, reason: `window ${window.index + 1}: ${invalid}` };
+      candidates.push(...outcome.atoms);
+    }
+    if (prepared.windows.length === 1 || candidates.length === 0) {
+      return { ok: true, atoms: candidates };
+    }
+    const reconciliationSystem =
+      `${item.profile.prompt}\n\nYou are reconciling leads extracted from complete, overlapping windows ` +
+      `of one parent page. Return only the strongest non-duplicative 1-3 atoms. Preserve literal ` +
+      `chronology and exact evidence_refs from the candidates; do not add evidence or claims.`;
+    const reconciliation = await callAtoms(
+      reconciliationSystem,
+      `Parent source: ${originLabel}\n` +
+        `Selected source SHA-256: ${prepared.source_section_sha256}\n` +
+        `Coverage manifest SHA-256: ${prepared.coverage_sha256}\n` +
+        `Allowed evidence anchors: ${prepared.evidence_anchors.join(', ')}\n\n` +
+        `Window candidates:\n${JSON.stringify(candidates)}`,
+    );
+    if (!reconciliation.ok) {
+      return { ok: false, reason: `parent reconciliation: ${reconciliation.reason}` };
+    }
+    const invalid = invalidEvidenceRefs(reconciliation.atoms, new Set(prepared.evidence_anchors));
+    if (invalid) return { ok: false, reason: `parent reconciliation: ${invalid}` };
+    return reconciliation;
+  }
+
   /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
-  async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
+  async function stampAtomsScanHash(item: { slug: string; contentHash: string; profile: AtomExtractionProfile }): Promise<void> {
     try {
       await engine.executeRaw(
         `UPDATE pages
-            SET frontmatter = frontmatter || jsonb_build_object('atoms_scan_hash', $1::text)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
+            SET frontmatter = frontmatter
+              || jsonb_build_object('atoms_scan_hash', $1::text)
+              || jsonb_build_object('atoms_scan_profile', $2::text)
+          WHERE source_id = $3 AND slug = $4 AND deleted_at IS NULL`,
+        [item.contentHash.slice(0, 16), item.profile.extraction_policy_sha256, sourceId, item.slug],
       );
     } catch { /* fail-soft: page stays rediscoverable */ }
   }
@@ -777,20 +908,27 @@ export async function runPhaseExtractAtoms(
    * content edit resets the streak. Returns the new consecutive count, or
    * null for transcripts / on write failure (never blocks the phase).
    */
-  async function recordPageFailureCount(item: { kind: string; slug?: string; contentHash: string }): Promise<number | null> {
+  async function recordPageFailureCount(item: {
+    kind: string;
+    slug?: string;
+    contentHash: string;
+    profile: AtomExtractionProfile;
+  }): Promise<number | null> {
     if (item.kind !== 'page' || !item.slug || opts.dryRun) return null;
     try {
       const rows = await engine.executeRaw<{ cnt: number | string }>(
         `UPDATE pages
             SET frontmatter = frontmatter
               || jsonb_build_object('atoms_fail_hash', $1::text)
+              || jsonb_build_object('atoms_fail_profile', $2::text)
               || jsonb_build_object('atoms_fail_count',
                    CASE WHEN COALESCE(frontmatter->>'atoms_fail_hash', '') = $1::text
+                         AND COALESCE(frontmatter->>'atoms_fail_profile', '') = $2::text
                         THEN COALESCE((frontmatter->>'atoms_fail_count')::int, 0) + 1
                         ELSE 1 END)
-          WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
+          WHERE source_id = $3 AND slug = $4 AND deleted_at IS NULL
           RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
+        [item.contentHash.slice(0, 16), item.profile.extraction_policy_sha256, sourceId, item.slug],
       );
       const cnt = rows[0]?.cnt;
       return cnt == null ? null : Number(cnt);
@@ -809,34 +947,18 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    const pendingSlugs: string[] = [];
     try {
-      const result = await chat({
-        model: extractModel,
-        system: EXTRACT_PROMPT,
-        messages: [
-          {
-            role: 'user',
-            // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare
-            // .slice() can split a surrogate pair at the boundary).
-            content: `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
-          },
-        ],
-        maxTokens: maxOutputTokens,
-      });
-      // Post-await yield: closes the "long LLM call past TTL" hazard
-      // codex flagged. The 30s throttle inside maybeYield bounds the
-      // actual refresh rate so this is cheap when calls are fast.
-      await maybeYield();
-      llmHalt.reset();
-      // #4540: optional per-item pacing between successful LLM calls.
-      // setTimeout (not setImmediate) so the lock-refresh interval fires.
-      if (pacingMs > 0) await new Promise<void>((r) => setTimeout(r, pacingMs));
+      const prepared = item.profile.input_profile
+        ? prepareAtomSource(item.content, item.profile.input_profile)
+        : null;
+      if (prepared) item.profile = bindProfileToPreparedSource(item.profile, prepared);
+      const parseOutcome = await extractItemAtoms(item, originLabel, prepared);
 
       estimatedSpendUsd = budgetTracker.totalSpent;
 
       // gbrain#4148: typed outcome — malformed output is a FAILURE (counted
       // toward the bounded tombstone below), never a zero-yield success.
-      const parseOutcome = parseAtomsOutcome(result.text);
       if (!parseOutcome.ok) {
         malformedOutputs++;
         hardFailureCount++;
@@ -897,7 +1019,11 @@ export async function runPhaseExtractAtoms(
         const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
-          const slug = atomSlug(atom.title, srcRef);
+          const slug = atomSlug(
+            atom.title,
+            srcRef,
+            item.kind === 'page' ? item.profile.extraction_profile_sha256 : undefined,
+          );
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
@@ -919,11 +1045,38 @@ export async function runPhaseExtractAtoms(
               ...originFrontmatter,
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
+              extraction_profile_sha256: item.profile.extraction_profile_sha256,
+              extraction_policy_sha256: item.profile.extraction_policy_sha256,
+              extraction_profile_state: 'pending',
+              extraction_page_type: item.profile.page_type,
+              extraction_pack_identity: item.profile.pack_identity,
+              extraction_declaring_pack: item.profile.declaring_pack ?? 'builtin',
+              extraction_prompt_sha256: item.profile.prompt_sha256,
+              extraction_model: item.profile.model,
+              extraction_output_contract_version: item.profile.output_contract_version,
+              ...(item.profile.source_input_profile_sha256 && {
+                extraction_input_profile_sha256: item.profile.source_input_profile_sha256,
+              }),
+              ...(item.profile.input_selector && {
+                extraction_input_selector: item.profile.input_selector,
+              }),
+              ...(item.profile.window_policy_sha256 && {
+                extraction_window_policy_sha256: item.profile.window_policy_sha256,
+              }),
+              ...(prepared && {
+                extraction_source_section_sha256: prepared.source_section_sha256,
+                extraction_source_range_start: prepared.source_start,
+                extraction_source_range_end: prepared.source_end,
+                extraction_source_window_count: prepared.windows.length,
+                extraction_source_coverage: 'complete',
+                extraction_source_coverage_sha256: prepared.coverage_sha256,
+              }),
               ...(atom.source_quote && { source_quote: atom.source_quote }),
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
+              ...(atom.evidence_refs && atom.evidence_refs.length > 0 && { evidence_refs: atom.evidence_refs }),
               extracted_at: new Date().toISOString(),
               extracted_by: 'extract_atoms-v0.41.2.1',
             },
@@ -945,14 +1098,16 @@ export async function runPhaseExtractAtoms(
               to_source_id: sourceId,
             });
           }
-          totalAtomsExtracted++;
+          pendingSlugs.push(slug);
         }
         // Completion receipt: flip provisional → real in one statement, then
         // stamp the source page. A crash between flip and stamp degrades to
         // the legacy atom-rows-mean-done semantics — safe, not lossy.
         await engine.executeRaw(
           `UPDATE pages
-              SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+              SET frontmatter = frontmatter
+                || jsonb_build_object('source_hash', $1::text)
+                || jsonb_build_object('extraction_profile_state', 'active')
             WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
           [hash16, sourceId, importedSlugs],
         );
@@ -972,8 +1127,26 @@ export async function runPhaseExtractAtoms(
           }
         }
         if (item.kind === 'page') {
+          await engine.executeRaw(
+            `UPDATE pages
+                SET deleted_at = now(),
+                    frontmatter = frontmatter
+                      || jsonb_build_object('extraction_profile_state', 'superseded')
+                      || jsonb_build_object('superseded_by_extraction_profile_sha256', $1::text)
+              WHERE source_id = $2
+                AND type = 'atom'
+                AND deleted_at IS NULL
+                AND frontmatter->>'source_slug' = $3
+                AND frontmatter->>'source_hash' = $4
+                AND COALESCE(frontmatter->>'extraction_profile_sha256', '') <> $1
+                AND NOT (slug = ANY($5::text[]))`,
+            [item.profile.extraction_profile_sha256, sourceId, item.slug, hash16, importedSlugs],
+          );
+        }
+        if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }
+        totalAtomsExtracted += atoms.length;
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
       }
@@ -983,6 +1156,16 @@ export async function runPhaseExtractAtoms(
       // Reporter rate-limits to ~1 line/sec; safe to tick every iter.
       opts.progress?.tick(1, `${totalAtomsExtracted} atoms / ${duplicatesSkipped} skipped`);
     } catch (err) {
+      if (!opts.dryRun && pendingSlugs.length > 0) {
+        try {
+          await engine.executeRaw(
+            `UPDATE pages SET deleted_at = now()
+              WHERE source_id = $1 AND type = 'atom' AND slug = ANY($2::text[])
+                AND frontmatter->>'extraction_profile_state' = 'pending'`,
+            [sourceId, pendingSlugs],
+          );
+        } catch { /* prior complete profile remains active */ }
+      }
       if (err instanceof BudgetExhausted) {
         budgetExhausted = true;
         if (item.kind === 'transcript') transcriptsSkipped++;
@@ -1102,6 +1285,19 @@ export async function runPhaseExtractAtoms(
       budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      extraction_profiles: [...profileByType.values()].map(profile => ({
+        page_type: profile.page_type,
+        pack_identity: profile.pack_identity,
+        declaring_pack: profile.declaring_pack,
+        prompt_sha256: profile.prompt_sha256,
+        model: profile.model,
+        output_contract_version: profile.output_contract_version,
+        extraction_profile_sha256: profile.extraction_profile_sha256,
+        extraction_policy_sha256: profile.extraction_policy_sha256,
+        source_input_profile_sha256: profile.source_input_profile_sha256,
+        input_selector: profile.input_selector,
+        window_policy_sha256: profile.window_policy_sha256,
+      })),
     },
   };
 }
@@ -1207,6 +1403,13 @@ function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
           : undefined,
       emotional_register:
         typeof obj.emotional_register === 'string' ? obj.emotional_register : undefined,
+      evidence_refs: (() => {
+        if (!Array.isArray(obj.evidence_refs)) return undefined;
+        const refs = obj.evidence_refs
+          .filter((ref): ref is string => typeof ref === 'string' && /^evidence-[^\s]+$/u.test(ref))
+          .slice(0, 20);
+        return refs.length > 0 ? [...new Set(refs)] : undefined;
+      })(),
     });
   }
   return atoms;
@@ -1249,7 +1452,8 @@ function sourceDate(ref: string): string {
  *   clobbers a *different* atom. Hash is over the title only (not body) so an
  *   LLM rewording the body on re-extraction still upserts rather than dupes.
  */
-function atomSlug(title: string, srcRef: string): string {
+function atomSlug(title: string, srcRef: string, extractionProfile?: string): string {
   const hash = createHash('sha256').update(title).digest('hex').slice(0, 6);
-  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
+  const profileSuffix = extractionProfile ? `-p${extractionProfile.slice(0, 8)}` : '';
+  return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}${profileSuffix}`;
 }

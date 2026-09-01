@@ -60,9 +60,13 @@ const LinkTypeSchema = z.object({
  * See plan D-EXTRACT-17/19/21/37/42/47 for the load-bearing decisions.
  */
 const ExtractableSpecSchema = z.object({
-  /** Pack-supplied LLM prompt template. Plain text; sent to gateway.chat()
-   * with NO conversation context per the v0.41.23 threat model. */
+  /** Relative path to a pack-supplied LLM prompt template. The runtime loads
+   * it only from the pack that supplied the winning page-type declaration. */
   prompt_template: z.string().optional(),
+  /** Relative path to a declarative source-selection/windowing contract.
+   * The file is trusted pack data, never executable code. Packs that omit it
+   * retain the legacy whole-page prefix behavior. */
+  input_profile: z.string().optional(),
   /** Relative path within pack root to a JSONL fixture corpus. Validated
    * against path traversal at parse + load time. */
   fixture_corpus: z.string().optional(),
