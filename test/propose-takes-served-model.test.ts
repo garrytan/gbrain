@@ -117,7 +117,42 @@ describe('defaultExtractor served-model stamp (#4737)', () => {
   });
 });
 
+describe('defaultExtractor served-model stamp — blank response model is dropped (#4737)', () => {
+  test.each([
+    ['empty string', ''],
+    ['whitespace-only', '   '],
+    ['undefined', undefined],
+  ])('a %s ChatResult.model leaves served_model unset on every take', async (_label, model) => {
+    __setChatTransportForTests(async () => chatResult(GOOD_JSON, model as unknown as string));
+    const takes = await defaultExtractor({
+      pagePath: 'companies/acme-example',
+      pageBody: 'I bet Acme doubles ARR by Q4.',
+      existingTakes: [],
+    });
+    expect(takes).toHaveLength(1);
+    expect(takes[0]!.served_model).toBeUndefined();
+    expect('served_model' in takes[0]!).toBe(false);
+  });
+});
+
 describe('runPhaseProposeTakes model_id provenance (#4737)', () => {
+  test('blank served model: persisted model_id falls back to the configured model', async () => {
+    // A transport that answers but reports no model must not stamp '' into
+    // take_proposals.model_id — the requested (configured) model is the
+    // honest fallback.
+    __setChatTransportForTests(async () => chatResult(GOOD_JSON, ''));
+    const { engine, captured } = buildMockEngine();
+    const result = await runPhaseProposeTakes(buildCtx(engine), {});
+    expect((result.details as Record<string, unknown>).proposals_inserted).toBe(1);
+
+    const inserts = captured.filter(
+      (c) => c.sql.includes('INSERT INTO take_proposals') && !c.sql.includes("'rejected'"),
+    );
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]!.params[11]).toBe(CONFIGURED_MODEL);
+    expect(inserts[0]!.params[11]).not.toBe('');
+  });
+
   test('default extractor: model_id comes from the response, not the configured model', async () => {
     __setChatTransportForTests(async () => chatResult(GOOD_JSON, SERVED_MODEL));
     const { engine, captured } = buildMockEngine();
