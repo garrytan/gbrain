@@ -39,9 +39,11 @@ export const LOOPS_EXTRACT_JOB = 'loops_extract';
 export const LOOPS_EXTRACT_MAX_PER_SWEEP = 50;
 /**
  * Generous per-sweep enqueue safety valve (10x the old cap) — a spend
- * backstop for pathological sweeps, NOT a rate limit. Overflow is dropped
- * LOUDLY: the log names it a drop, because a dropped thread only
- * re-candidates when the thread itself changes.
+ * backstop for pathological sweeps, NOT a rate limit. Applied as a
+ * WAITING-DEPTH budget: jobs already waiting count against it, so a stalled
+ * worker can never stack more than ~one ceiling of backlog across repeated
+ * sweeps. Overflow is deferred LOUDLY — the log says so, because a deferred
+ * thread is only re-enqueued when the thread itself changes.
  */
 export const LOOPS_EXTRACT_ENQUEUE_CEILING = 500;
 /** Only threads whose newest message is within this window get extracted. */

@@ -506,14 +506,32 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
     //
     // Newest first only orders the enqueue, so the freshest threads reach the
     // worker first. The ceiling (10x the old cap) is a spend backstop for
-    // pathological sweeps; when it binds, the drop is logged as a DROP.
+    // pathological sweeps — and it is a WAITING-DEPTH budget, not just a
+    // per-sweep count: with a stalled worker, repeated pathological sweeps
+    // would otherwise stack another ceiling's worth of waiting jobs each.
+    // Jobs already waiting shrink this sweep's budget; overflow is a
+    // DEFERRAL (the backlog still covers older revisions, and a deferred
+    // thread re-candidates on its next touch), logged loudly either way.
     const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
-    const picked = ordered.slice(0, LOOPS_EXTRACT_ENQUEUE_CEILING);
+    let waitingDepth = 0;
+    try {
+      const rows = await deps.engine.executeRaw<{ n: string }>(
+        `SELECT count(*)::text AS n FROM minion_jobs WHERE name = $1 AND status = 'waiting'`,
+        [LOOPS_EXTRACT_JOB],
+      );
+      waitingDepth = parseInt(rows[0]?.n ?? '0', 10) || 0;
+    } catch {
+      // Fail-open: a missing table / transient error must never block enqueue.
+    }
+    const budget = Math.max(0, LOOPS_EXTRACT_ENQUEUE_CEILING - waitingDepth);
+    const picked = ordered.slice(0, budget);
     const dropped = ordered.length - picked.length;
     if (dropped > 0) {
       deps.log(
-        `[google] loops_extract safety ceiling (${LOOPS_EXTRACT_ENQUEUE_CEILING}): enqueuing ${picked.length}, ` +
-          `DROPPING ${dropped} oldest eligible thread(s) — a dropped thread is not extracted until it changes`,
+        `[google] loops_extract enqueue budget (ceiling ${LOOPS_EXTRACT_ENQUEUE_CEILING}, ` +
+          `${waitingDepth} already waiting): enqueuing ${picked.length}, ` +
+          `deferring ${dropped} oldest eligible thread(s) — a deferred thread is next ` +
+          `enqueued when it changes, so a persistent backlog needs worker attention`,
       );
     }
     for (const c of picked) {

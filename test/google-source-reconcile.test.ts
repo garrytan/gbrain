@@ -32,7 +32,10 @@ import type {
 } from '../src/core/creds/vault.ts';
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
-import { LOOPS_EXTRACT_MAX_PER_SWEEP } from '../src/core/google/loops-extract.ts';
+import {
+  LOOPS_EXTRACT_ENQUEUE_CEILING,
+  LOOPS_EXTRACT_MAX_PER_SWEEP,
+} from '../src/core/google/loops-extract.ts';
 import {
   googleStateFile,
   parseGoogleSourceConfig,
@@ -760,6 +763,47 @@ describe('loops_extract enqueue completeness', () => {
         );
         expect(Number(after1[0].n)).toBe(total);
         expect(Number(after2[0].n)).toBe(total);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a deep waiting backlog shrinks the sweep enqueue budget (defer, not stack)', async () => {
+    // The maxWaiting removal left the per-sweep ceiling as the ONLY bound —
+    // with a stalled worker, repeated pathological sweeps could stack another
+    // 500 waiting jobs each. The sweep now counts already-waiting
+    // loops_extract jobs and shrinks this sweep's budget by that depth;
+    // overflow is a deferral (a deferred thread re-candidates on next touch).
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-depth-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee33000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff33000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Depth topic ${i}` },
+          body: `Depth body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      // Seed a waiting backlog at the ceiling — the stalled-worker shape.
+      await engine.executeRaw(
+        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key)
+         SELECT 'loops_extract', 'default', 'waiting', '{}'::jsonb, 'depthseed-' || i
+           FROM generate_series(1, $1) AS i`,
+        [LOOPS_EXTRACT_ENQUEUE_CEILING],
+      );
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const after = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract' AND status = 'waiting'`,
+        );
+        // Budget exhausted by the backlog: NOTHING new stacks on top.
+        expect(Number(after[0].n)).toBe(LOOPS_EXTRACT_ENQUEUE_CEILING);
+        expect(err).toContain('deferring 2');
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
