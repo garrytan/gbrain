@@ -83,6 +83,42 @@ describe('isJunkFact — passes durable operational knowledge', () => {
   }
 });
 
+describe('isJunkFact — the provider-error arm is anchored to the error-sentence shape', () => {
+  // Ship-review fix: the arm used to be an unanchored substring match
+  // (`\bmonthly spend limit\b`, `\brate limit exceeded\b`), so genuine
+  // knowledge that merely MENTIONS a limit was deleted as junk. The fact must
+  // BE the error message (optionally led by an error/status token or a
+  // "<step> stopped because …" narration), not just contain the words.
+  const genuine = [
+    'Alice wants a monthly spend limit of $200 on AI tools',
+    "Bob's API rate limit exceeded 1000 rpm during the launch",
+    'The team agreed to raise the monthly spend limit to $500 for Q3',
+    'acme-example raised our rate limit to 5000 rpm after the launch',
+  ];
+  for (const text of genuine) {
+    test(`survives: ${text}`, () => {
+      expect(isJunkFact(text)).toBe(false);
+      expect(isJunkFact(text, 'fact')).toBe(false);
+    });
+  }
+
+  // The provider error strings themselves — verbatim shapes from the wild —
+  // are still junk, with or without a leading status/error token.
+  const providerErrors = [
+    "You've hit your org's monthly spend limit.",
+    'Monthly spend limit reached for this organization',
+    'Rate limit exceeded. Please retry after 20 seconds.',
+    'Spend cap reached',
+    '429: rate limit hit',
+    'Error: your rate limit was exceeded',
+  ];
+  for (const text of providerErrors) {
+    test(`still junk: ${text}`, () => {
+      expect(isJunkFact(text)).toBe(true);
+    });
+  }
+});
+
 describe('isJunkFact — first-person commitments are NOT plan narration', () => {
   // The plan-narration pattern ("I'll / I will / I'm going to …") is meant to
   // catch the ASSISTANT narrating its next step. A first-person COMMITMENT is

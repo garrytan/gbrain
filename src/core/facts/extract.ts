@@ -126,12 +126,20 @@ export async function getFactsExtractionPromptAppendix(
 const PLAN_NARRATION_PATTERN =
   /^["'«]?(now,?\s+)?(let me\b|let's\b|i('| wi)ll\b|i am going to\b|i'm going to\b|next,? i\b|about to\b|proceeding to\b|offered to\b)/i;
 
+// Provider billing/rate-limit error text captured verbatim as a "fact".
+// ANCHORED to the error-sentence shape: the fact IS the error message
+// (optionally led by an error/status token, or a "<step> stopped because …"
+// narration of it). A fact that merely MENTIONS a limit — "Alice wants a
+// monthly spend limit of $200", "Bob's API rate limit exceeded 1000 rpm" — is
+// knowledge and must survive; the unanchored substring form deleted it.
+const PROVIDER_ERROR_PATTERN =
+  /^\W*(?:(?:error|warning|\d{3})\W*\s*)?(?:you'?ve hit your\b|(?:\w+\s+){0,2}(?:stopped|failed|halted|aborted)\s+because\s+(?:of\s+)?(?:the\s+|your\s+|our\s+)?(?:monthly\s+|daily\s+|api\s+)*(?:spend|rate)\s+(?:limit|cap)\b|(?:the\s+|your\s+|our\s+|provider\s+|api\s+|monthly\s+|daily\s+|org'?s\s+)*(?:spend|rate)\s+(?:limit|cap)\s+(?:was\s+|has\s+been\s+|is\s+)?(?:hit|exceeded|reached)\b)/i;
+
 export const JUNK_FACT_PATTERNS: readonly RegExp[] = [
   PLAN_NARRATION_PATTERN,
   // Meta-narration about the conversation itself.
   /^["'«]?(the user is asking|the user wants me to|another agent is\b)/i,
-  // Provider billing/rate-limit error text captured verbatim as a "fact".
-  /\b(you'?ve hit your|monthly spend limit|spend cap reached|rate limit (hit|exceeded|reached))\b/i,
+  PROVIDER_ERROR_PATTERN,
 ];
 
 /**
