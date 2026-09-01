@@ -62,8 +62,11 @@ shared Postgres brain), that is **plane drift**: extraction gates hold banked
 turns without the terminal skip (nothing is destroyed), `gbrain doctor` warns
 with the one-line re-sync (`gbrain config set memory.auto_writeback <mode>`),
 and a DB-write failure during `config set` itself exits non-zero and says the
-runtime value is unchanged. A wrong-brain hook bank remains harmless — the
-target serve's own DB gate decides.
+runtime value is unchanged. Selecting a MOUNTED brain (`--brain`,
+`GBRAIN_BRAIN_ID`, `.gbrain-mount`) writes the mount's DB row only — the
+machine-local mirror gates the host's Stop hook, so enabling a team mount
+never opts the host's own conversations into banking. A wrong-brain hook
+bank remains harmless — the target serve's own DB gate decides.
 
 ## The three activation surfaces
 

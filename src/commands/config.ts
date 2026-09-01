@@ -79,8 +79,28 @@ const BRAIN_AUDIENCE_KEY = 'brain.audience';
  * the loop. Best-effort and gated on the mirror already existing: a failed
  * stamp never breaks the DB write that persisted, and brains that never
  * touched ambient writeback don't grow a `memory` slot. */
+/** The machine-global config.json mirror belongs to the HOST brain: a
+ * `config set/unset --brain <mount>` (or GBRAIN_BRAIN_ID / .gbrain-mount)
+ * writes the MOUNT's DB row without touching the host's engine-free readers
+ * — enabling ambient writeback on a team mount must never opt the host's
+ * Stop hook into banking host conversations (codex re-review, this wave).
+ * Unresolvable brain selection also skips the mirror (fail toward not
+ * mutating host state); doctor's plane-compare names the re-sync if the
+ * HOST's own planes ever diverge. */
+async function hostBrainSelected(): Promise<boolean> {
+  try {
+    const { resolveBrainId } = await import('../core/brain-resolver.ts');
+    const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
+    const { getCliOptions } = await import('../core/cli-options.ts');
+    return resolveBrainId(getCliOptions().brain ?? null) === HOST_BRAIN_ID;
+  } catch {
+    return false;
+  }
+}
+
 async function restampVisibilityPosture(newRaw: string | null): Promise<void> {
   try {
+    if (!(await hostBrainSelected())) return; // a mount's posture never stamps the host mirror
     const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
     const { visibilityPostureFromRaw } = await import('../core/facts/writeback-config.ts');
     const cfg = loadConfigFileOnly();
@@ -239,7 +259,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       // (a previously-failed dual-write leaves the key file-only).
       const fileSwept: string[] = [];
       const dualPlaneMatches = [...MEMORY_DUAL_PLANE_KEYS, BRAIN_AUDIENCE_KEY].filter((k) => k.startsWith(prefix));
-      if (dualPlaneMatches.length > 0) {
+      // Mount selection never sweeps the host's machine-local mirror
+      // (codex re-review) — same rule as the single-key dual-plane lanes.
+      if (dualPlaneMatches.length > 0 && (await hostBrainSelected())) {
         const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
         const cfg = loadConfigFileOnly();
         if (cfg) {
@@ -283,18 +305,22 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
       const cfg = loadConfigFileOnly();
       let fileHad = false;
-      if (key === BRAIN_AUDIENCE_KEY) {
-        if (cfg?.brain && 'audience' in cfg.brain) {
-          delete cfg.brain.audience;
-          saveConfig(cfg);
-          fileHad = true;
-        }
-      } else {
-        const leaf = key.slice('memory.'.length) as (typeof MEMORY_DUAL_PLANE_LEAVES)[number];
-        if (cfg?.memory && leaf in cfg.memory) {
-          delete cfg.memory[leaf];
-          saveConfig(cfg);
-          fileHad = true;
+      // Mount selection never touches the host's machine-local mirror —
+      // same rule as the dual-plane set lane (codex re-review).
+      if (await hostBrainSelected()) {
+        if (key === BRAIN_AUDIENCE_KEY) {
+          if (cfg?.brain && 'audience' in cfg.brain) {
+            delete cfg.brain.audience;
+            saveConfig(cfg);
+            fileHad = true;
+          }
+        } else {
+          const leaf = key.slice('memory.'.length) as (typeof MEMORY_DUAL_PLANE_LEAVES)[number];
+          if (cfg?.memory && leaf in cfg.memory) {
+            delete cfg.memory[leaf];
+            saveConfig(cfg);
+            fileHad = true;
+          }
         }
       }
       let dbDeleted = 0;
@@ -486,8 +512,13 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         console.error(`[config] ${key} must be personal | shared (got '${value}'). Nothing was written.`);
         process.exit(1);
       }
-      cfg.brain = { ...(cfg.brain ?? {}), audience };
-      saveConfig(cfg);
+      const hostPlane = await hostBrainSelected();
+      if (hostPlane) {
+        cfg.brain = { ...(cfg.brain ?? {}), audience };
+        saveConfig(cfg);
+      } else {
+        console.log(`[config] mounted brain selected — the machine-local mirror belongs to the host brain and is untouched (DB row only).`);
+      }
       try {
         await engine.setConfig(key, audience);
       } catch (e) {
@@ -495,11 +526,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // authoritative for engine-backed readers — reporting success here
         // would let `config get` show the file value while runtime
         // classification still reads the old declaration.
-        console.error(`[config] ERROR: file plane written but the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
+        console.error(`[config] ERROR: ${hostPlane ? 'file plane written but ' : ''}the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
         console.error(`[config] The authoritative runtime value is UNCHANGED — re-run this command once the database is reachable.`);
         process.exit(1);
       }
-      console.log(`Set ${key} = ${audience} (file + db planes)`);
+      console.log(`Set ${key} = ${audience} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
       return;
     }
     if (MEMORY_DUAL_PLANE_KEYS.has(key)) {
@@ -553,12 +584,19 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       } catch {
         posture = posture ?? 'private';
       }
-      cfg.memory = {
-        ...(cfg.memory ?? {}),
-        [key.slice('memory.'.length)]: normalized,
-        ...(posture ? { visibility_posture: posture } : {}),
-      };
-      saveConfig(cfg);
+      const hostPlane = await hostBrainSelected();
+      if (hostPlane) {
+        cfg.memory = {
+          ...(cfg.memory ?? {}),
+          [key.slice('memory.'.length)]: normalized,
+          ...(posture ? { visibility_posture: posture } : {}),
+        };
+        saveConfig(cfg);
+      } else {
+        // The mirror gates the HOST's engine-free Stop hook — enabling a
+        // mount must not opt the host's conversations into banking.
+        console.log(`[config] mounted brain selected — the machine-local mirror belongs to the host brain and is untouched (DB row only; the mount's serve reads the DB plane).`);
+      }
       try {
         await engine.setConfig(key, normalized);
       } catch (e) {
@@ -567,11 +605,11 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         // report an off switch as flipped while every runtime surface still
         // serves the PREVIOUS value, and `config get` (file plane) would
         // corroborate the lie. Loud failure is the only honest outcome.
-        console.error(`[config] ERROR: file plane written but the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
+        console.error(`[config] ERROR: ${hostPlane ? 'file plane written but ' : ''}the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
         console.error(`[config] The authoritative runtime value is UNCHANGED (still the previous DB value) — re-run this command once the database is reachable.`);
         process.exit(1);
       }
-      console.log(`Set ${key} = ${normalized} (file + db planes)`);
+      console.log(`Set ${key} = ${normalized} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
       if (key === 'memory.auto_writeback' && normalized !== 'off') {
         console.log('Ambient writeback enabled. Running stdio serves pick it up on restart; HTTP serves on the next request.');
         console.log('To install the managed harness instruction blocks: gbrain bootstrap harness --yes');

@@ -1204,6 +1204,16 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         } else if (!t.path || ambientBody === null) {
           // Same decoupling guard as the claude lane: fail the TARGET.
           failTarget(t, 'internal: instructions target planned without a rendered block body');
+        } else if ((() => {
+          // Same registration guard as the claude lane (codex re-review):
+          // the codex MCP target is applied EARLIER in this loop (planned
+          // first), so its state is final here — a foreign-toml refusal or
+          // failed write must not leave a block directing ambient saves at
+          // a server this run never registered.
+          const codexMcp = targets.find((x) => x.host === 'codex' && x.kind === 'mcp');
+          return codexMcp !== undefined && codexMcp.state !== 'confirmed';
+        })()) {
+          failTarget(t, 'skipped: the codex MCP registration itself did not land — an instruction block without it would direct saves at a foreign server');
         } else {
           // Same [X11] lock discipline as the managed TOML block: AGENTS.md
           // is a user-global shared file.
@@ -1482,6 +1492,22 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         failTarget(pt, 'pre-approval removed after the failed smoke (its registration was rolled back)');
       } catch (e) {
         d.logError(`could not remove the pre-approval after rollback: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    // Ambient instruction blocks installed THIS run must not outlive their
+    // rolled-back registrations either (codex re-review): a confirmed block
+    // would keep ordering every new session to save through an endpoint that
+    // failed verification — or through a foreign registration a forced
+    // replacement just restored. Strip removes only OUR marker block; the
+    // file itself always stays.
+    for (const it of targets) {
+      if (it.kind !== 'instructions' || it.state !== 'confirmed' || !it.path) continue;
+      try {
+        stripAmbientWritebackBlockAt(it.path);
+        failTarget(it, 'instruction block removed after the failed smoke (its registration was rolled back)');
+      } catch (e) {
+        d.logError(`could not remove the ambient-writeback block from ${it.path} after the failed smoke: ${e instanceof Error ? e.message : String(e)}`);
+        failTarget(it, 'smoke failed and the instruction block could not be removed — run `gbrain bootstrap harness --remove` to converge');
       }
     }
     // The fresh mint was sent to an endpoint that failed verification — a

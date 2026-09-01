@@ -5,7 +5,7 @@
  * dual-plane write/unset routing (OV2-5).
  */
 import { describe, test, expect, spyOn, afterEach } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -430,6 +430,24 @@ describe('config set/unset memory.* — dual-plane routing (OV2-5)', () => {
       expect(db.has('memory.auto_writeback')).toBe(false);
       const after = JSON.parse(readFileSync(cfgPath, 'utf8')) as { memory?: { auto_writeback?: string } };
       expect(after.memory?.auto_writeback).toBeUndefined();
+    });
+  });
+
+  test('mount selection never writes the host mirror: set on a mounted brain is DB-only (codex re-review)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-wbcfg9-'));
+    const db = new Map<string, string>();
+    const engine = {
+      getConfig: async (k: string) => db.get(k) ?? null,
+      setConfig: async (k: string, v: string) => { db.set(k, v); },
+      unsetConfig: async (k: string) => (db.delete(k) ? 1 : 0),
+    } as unknown as BrainEngine;
+    await withEnv({ GBRAIN_HOME: parent, GBRAIN_BRAIN_ID: 'someteam' }, async () => {
+      const out = await captureLog(() => runConfig(engine, ['set', 'memory.auto_writeback', 'salient']));
+      // The mount's DB row lands; the HOST's engine-free Stop hook must not
+      // be opted in by a team-mount enable.
+      expect(db.get('memory.auto_writeback')).toBe('salient');
+      expect(out).toContain('db plane only — mounted brain');
+      expect(existsSync(join(parent, '.gbrain', 'config.json'))).toBe(false);
     });
   });
 

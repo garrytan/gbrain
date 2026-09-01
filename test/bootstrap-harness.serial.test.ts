@@ -1110,6 +1110,36 @@ describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () =>
     expect(f.out.join('\n')).toContain(agentsPath(f));
   });
 
+  test('a failed MCP registration blocks THAT host\'s instruction install; the other host proceeds (codex re-review)', async () => {
+    const f = makeFake({ mcpAddCode: 1 }); // claude `mcp add` fails; codex toml write succeeds
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    const code = await applyHarness(flags(), deps);
+    expect(code).toBe(1);
+    // No block may direct ambient saves through a registration that never
+    // landed — the claude lane skips; codex (whose registration landed)
+    // still converges normally.
+    expect(existsSync(memoryPath(f))).toBe(false);
+    const targets = instrTargets(f.home);
+    const claude = targets.find((t) => t.host === 'claude-code');
+    expect(claude?.state).toBe('failed');
+    expect(String(claude?.error)).toContain('did not land');
+  });
+
+  test('a failed smoke rolls the instruction blocks back too — no block outlives its unverified registration (codex re-review)', async () => {
+    const f = makeFake({ probeOk: false }); // apply succeeds, final smoke fails (auth)
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    const code = await applyHarness(flags(), deps);
+    expect(code).toBe(1);
+    for (const path of [memoryPath(f), agentsPath(f)]) {
+      if (!existsSync(path)) continue; // stripped block may leave an empty-of-ours file
+      expect(readFileSync(path, 'utf8')).not.toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+    }
+    for (const t of instrTargets(f.home)) {
+      expect(t.state).toBe('failed');
+      expect(String(t.error)).toContain('failed smoke');
+    }
+  });
+
   test('registrar mode (non-loopback --url): NO instruction blocks even with local writeback on — the remote brain never opted in (adversarial review)', async () => {
     const f = makeFake();
     const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
