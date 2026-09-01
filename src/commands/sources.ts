@@ -52,7 +52,7 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
-import { DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
+import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -291,7 +291,6 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(2);
   }
   if (gKind) {
-    const { ALL_GOOGLE_SERVICES } = await import('../core/google/types.ts');
     const bad = gServices.filter((s) => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(s));
     if (bad.length > 0) {
       console.error(`Error: unknown --services entries: ${bad.join(', ')}. Valid: gmail, calendar, contacts`);
