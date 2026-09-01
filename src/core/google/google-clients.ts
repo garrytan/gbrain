@@ -156,6 +156,7 @@ interface RawGmailHeader {
 
 interface RawGmailPart {
   mimeType?: string;
+  filename?: string;
   body?: { data?: string; size?: number };
   parts?: RawGmailPart[];
 }
@@ -206,6 +207,31 @@ export function extractBody(part: RawGmailPart | undefined): { text: string; isH
   // Single-part messages sometimes carry data at the top level with no mimeType match.
   if (part.body?.data) return { text: decodeB64Url(part.body.data), isHtml: false };
   return { text: '', isHtml: false };
+}
+
+/**
+ * iCalendar method for a message, or null when it carries no calendar part.
+ *
+ * Structural, not textual: Google Calendar attaches a `text/calendar` part
+ * (`method=REQUEST|REPLY|CANCEL`) to every invitation, update, response and
+ * cancellation, so this identifies calendar system mail without matching on
+ * subject wording or sender address — both of which are wrong signals, since
+ * the mail arrives FROM the colleague's real address.
+ */
+export function extractCalendarMethod(part: RawGmailPart | undefined): string | null {
+  if (!part) return null;
+  const stack: RawGmailPart[] = [part];
+  while (stack.length > 0) {
+    const p = stack.shift()!;
+    const mime = (p.mimeType ?? '').toLowerCase();
+    if (mime.startsWith('text/calendar') || mime === 'application/ics') {
+      const m = /method\s*=\s*"?([a-z]+)"?/i.exec(p.mimeType ?? '');
+      return (m?.[1] ?? '').toUpperCase();
+    }
+    if ((p.filename ?? '').toLowerCase().endsWith('.ics')) return '';
+    if (p.parts) stack.push(...p.parts);
+  }
+  return null;
 }
 
 export class GmailClient extends GoogleApiClient {
@@ -298,6 +324,7 @@ export class GmailClient extends GoogleApiClient {
         internalDateMs,
         labelIds: m.labelIds ?? [],
         listUnsubscribe: header(m, 'List-Unsubscribe') !== '',
+        calendarMethod: extractCalendarMethod(m.payload),
         bodyText,
       };
     });

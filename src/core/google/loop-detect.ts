@@ -11,6 +11,9 @@
  * pinned by the labeled fixture corpus in test/google-loop-detect.test.ts —
  * every new false-positive class gets a fixture before its fix.
  *  - noise senders never open loops (noreply/notifications/…)
+ *  - Google Calendar system mail (text/calendar part) neither opens nor
+ *    closes loops — it comes FROM a real colleague, so no mute could
+ *    exclude it without silencing that person's genuine email
  *  - list mail (List-Unsubscribe) never opens loops
  *  - self-threads (all participants are my addresses) never open loops
  *  - CC-only inbound does not owe a reply (must be in To:)
@@ -31,7 +34,7 @@ import {
   type LoopEvidence,
   type SuppressionSet,
 } from '../loops/loops-store.ts';
-import { isNoiseSender } from './google-render.ts';
+import { isCalendarSystemMail, isNoiseSender } from './google-render.ts';
 import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const INBOUND_GRACE_HOURS = 24;
@@ -86,9 +89,20 @@ export function detectThreadLoop(
   const messages = thread.messages.filter((m) => m.internalDateMs > 0);
   if (messages.length === 0) return { open: [], close: [] };
 
-  // Substantive = not from a noise sender. Noise threads carry no loops —
-  // and can't close any either (no turn flip is observable).
-  const substantive = messages.filter((m) => !isNoiseSender(m.fromAddress));
+  // Substantive = not from a noise sender, and not Google Calendar system
+  // mail. Noise threads carry no loops — and can't close any either (no turn
+  // flip is observable).
+  //
+  // Calendar notices are excluded HERE, alongside noise, rather than at the
+  // open gates, for two reasons. They must not open a loop: an
+  // `Invitation:`/`Accepted:` notice is machine mail nobody expects a reply
+  // to, and it arrives from the colleague's real address so no sender mute
+  // could exclude it without silencing that person entirely. And they must
+  // not CLOSE one either: a calendar invite is not a reply, so letting it
+  // flip the turn would silently answer a real outbound loop.
+  const substantive = messages.filter(
+    (m) => !isNoiseSender(m.fromAddress) && !isCalendarSystemMail(m),
+  );
   if (substantive.length === 0) return { open: [], close: [] };
 
   const last = substantive[substantive.length - 1];

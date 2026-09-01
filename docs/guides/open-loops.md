@@ -33,6 +33,20 @@ self-threads, and muted senders/threads never open loops. Sent-mail
 ingestion is what makes "unanswered" honest — your own replies are the
 negative filter.
 
+**Google Calendar system mail is excluded structurally.** `Invitation:`,
+`Updated invitation:`, `Accepted:`, `Declined:`, `Tentative:` and
+`Canceled event:` notices are sent by Calendar ON BEHALF OF a human, so they
+arrive from your colleague's real address — `isNoiseSender` cannot see them
+and `loops mute sender` would silence that person's genuine email along with
+them. They are identified by the `text/calendar` part (or `.ics` attachment)
+Gmail carries on every one of them and on no ordinary human mail; the subject
+prefix is a fallback for messages whose MIME was not captured, anchored to
+the start of the subject and refusing anything with a Re:/Fwd: prefix so a
+human forward of an invite thread still opens a loop. These notices neither
+OPEN nor CLOSE a loop — an invite is not a reply, and letting it flip the
+turn would silently answer a real outbound loop. They still ingest as normal
+searchable pages and still feed calendar/meeting context.
+
 **2. The LLM commitment extractor** (`src/core/google/loops-extract.ts`, one
 model call per recent thread, default ON for google sources). Extracts
 commitments with direction ("I'll send the deck by Friday" →

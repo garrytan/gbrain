@@ -87,6 +87,15 @@ export interface GmailMessageMeta {
   internalDateMs: number;
   labelIds: string[];
   listUnsubscribe: boolean;
+  /**
+   * iCalendar method when the message carries a `text/calendar` part or an
+   * `.ics` attachment — 'REQUEST' | 'REPLY' | 'CANCEL' | 'COUNTER' | '' when a
+   * calendar part is present without an explicit method. `null`/absent means
+   * no calendar part was seen. Google Calendar attaches one to every
+   * invitation, update, response and cancellation, which is what makes this a
+   * structural signal rather than a subject guess.
+   */
+  calendarMethod?: string | null;
   /** Extracted, HTML-stripped, quote-trimmed, capped body text. */
   bodyText: string;
 }
