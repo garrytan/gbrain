@@ -89,4 +89,27 @@ describe('real-PGLite guard SQL', () => {
     expect(a.shouldGuard).toBe(false);
     expect(a.nonDefaultPages).toBe(0);
   });
+
+  test('soft-deleted pages are excluded from the distribution (review fix)', async () => {
+    // Live content: default-dominant (3 live in default vs 2 live outside).
+    await addSource('vault', '/tmp/test-vault');
+    await addSource('gstack', '/tmp/gstack-vault');
+    await seedPage('d/one', 'default');
+    await seedPage('d/two', 'default');
+    await seedPage('d/three', 'default');
+    await seedPage('v/live', 'vault');
+    await seedPage('g/live', 'gstack');
+    // Graveyard: 5 soft-deleted pages in vault. Counting them would flip the
+    // verdict to shouldGuard=true (nonDefault 7 > default 3) — every sibling
+    // predicate in this brain filters deleted_at IS NULL, and so must this.
+    for (let i = 0; i < 5; i++) await seedPage(`v/dead-${i}`, 'vault');
+    await engine.executeRaw(
+      `UPDATE pages SET deleted_at = NOW() WHERE source_id = 'vault' AND slug LIKE 'v/dead-%'`,
+    );
+
+    const a = await assessDefaultWriteGuard(engine);
+    expect(a.defaultPages).toBe(3);
+    expect(a.nonDefaultPages).toBe(2);
+    expect(a.shouldGuard).toBe(false);
+  });
 });

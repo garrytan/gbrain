@@ -454,11 +454,17 @@ export async function assessDefaultWriteGuard(
       non_default_pages: number | string | bigint | null;
       non_default_sources: number | string | bigint | null;
     }>(
+      // deleted_at IS NULL (review fix): soft-deleted pages skewed the
+      // distribution both directions — a graveyard outside 'default' could
+      // fire the guard on a live default-dominant brain, and a graveyard in
+      // 'default' could mask a live non-default-dominant one. Every sibling
+      // predicate in this module filters live rows; so does this.
       `SELECT
          COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages,
          COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages,
          COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources
-       FROM pages`,
+       FROM pages
+       WHERE deleted_at IS NULL`,
     );
     const r = rows[0];
     if (!r) return empty;
