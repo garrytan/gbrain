@@ -2040,3 +2040,122 @@ describeBoth('Engine parity — open_loops loops-store round-trip', () => {
     expect(pg.doneAfterCount).toBe(1);
   });
 });
+
+describeBoth('Engine parity — facts TTL read-time validity (WP5)', () => {
+  let pgEngine: BrainEngine;
+  let pgliteEngine: PGLiteEngine;
+
+  beforeAll(async () => {
+    pgEngine = await setupDB();
+    pgliteEngine = new PGLiteEngine();
+    await pgliteEngine.connect({});
+    await pgliteEngine.initSchema();
+  }, 90_000);
+
+  afterAll(async () => {
+    await pgliteEngine.disconnect();
+    await teardownDB();
+  }, 30_000);
+
+  const HOUR = 60 * 60 * 1000;
+  const SRC = 'ttlparity';
+  const ENTITY = 'people/ttl-parity-example';
+  const EMB_ENTITY = 'people/ttl-parity-embed';
+  const SESSION = 'ttl-parity-session';
+
+  const texts = (rows: Array<{ fact: string }>) => rows.map(r => r.fact).sort();
+
+  // Runs the WP5 scenario on one engine and returns a normalized summary —
+  // the parity assert compares the two summaries wholesale, then pins
+  // absolute expectations so both engines can't be identically wrong.
+  async function roundTrip(eng: BrainEngine) {
+    const past = new Date(Date.now() - HOUR);
+    const future = new Date(Date.now() + 24 * HOUR);
+    await eng.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ($1, $1, '{}'::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [SRC],
+    );
+    await eng.insertFact(
+      { fact: 'ttl lapsed fact', kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION, valid_until: past },
+      { source_id: SRC },
+    );
+    await eng.insertFact(
+      { fact: 'ttl future fact', kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION, valid_until: future },
+      { source_id: SRC },
+    );
+    await eng.insertFact(
+      { fact: 'ttl durable fact', kind: 'fact', entity_slug: ENTITY, source: 'test', source_session: SESSION },
+      { source_id: SRC },
+    );
+    // Embedding-branch pair (separate entity keeps the recency-branch counts clean).
+    const emb = basisEmbedding(101);
+    await eng.insertFact(
+      { fact: 'ttl embed lapsed', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', valid_until: past, embedding: emb },
+      { source_id: SRC },
+    );
+    await eng.insertFact(
+      { fact: 'ttl embed live', kind: 'fact', entity_slug: EMB_ENTITY, source: 'test', embedding: emb },
+      { source_id: SRC },
+    );
+    // Ontology-writer-style supersession: valid_until close + superseded_by,
+    // expired_at stays NULL (--asof time-travel intact).
+    const oldRow = await eng.insertFact(
+      { fact: 'ttl superseded old', kind: 'fact', entity_slug: ENTITY, source: 'test' },
+      { source_id: SRC },
+    );
+    const newRow = await eng.insertFact(
+      { fact: 'ttl superseded new', kind: 'fact', entity_slug: ENTITY, source: 'test' },
+      { source_id: SRC },
+    );
+    await eng.executeRaw(
+      `UPDATE facts SET valid_until = now() - interval '1 hour', superseded_by = $1 WHERE id = $2`,
+      [newRow.id, oldRow.id],
+    );
+
+    const since = new Date(Date.now() - 24 * HOUR);
+    const health = await eng.getFactsHealth(SRC);
+    return {
+      byEntity: texts(await eng.listFactsByEntity(SRC, ENTITY)),
+      bySince: texts(await eng.listFactsSince(SRC, since, { entitySlug: ENTITY })),
+      bySession: texts(await eng.listFactsBySession(SRC, SESSION)),
+      dupRecency: texts(await eng.findCandidateDuplicates(SRC, ENTITY, 'ttl lapsed fact')),
+      dupEmbedding: texts(await eng.findCandidateDuplicates(SRC, EMB_ENTITY, 'ttl embed lapsed', { embedding: emb })),
+      history: texts(await eng.listFactsByEntity(SRC, ENTITY, { activeOnly: false })),
+      supersessions: texts(await eng.listSupersessions(SRC)),
+      health: {
+        total_active: health.total_active,
+        total_expired: health.total_expired,
+        top: health.top_entities.map(t => `${t.entity_slug}:${t.count}`).sort(),
+      },
+      backlog: await eng.countUnconsolidatedFacts(SRC),
+    };
+  }
+
+  test('active reads filter lapsed valid_until identically; history + health agree', async () => {
+    const pg = await roundTrip(pgEngine);
+    const pglite = await roundTrip(pgliteEngine);
+    expect(pg).toEqual(pglite);
+
+    // Absolute expectations (not just cross-engine equality):
+    const activeEntity = ['ttl durable fact', 'ttl future fact', 'ttl superseded new'];
+    expect(pg.byEntity).toEqual(activeEntity);
+    expect(pg.bySince).toEqual(activeEntity);
+    expect(pg.bySession).toEqual(['ttl durable fact', 'ttl future fact']);
+    expect(pg.dupRecency).toEqual(activeEntity);
+    // Lapsed row is not a dedup candidate → a re-stated fact re-inserts fresh.
+    expect(pg.dupEmbedding).toEqual(['ttl embed live']);
+    // History (activeOnly:false) still shows every row.
+    expect(pg.history).toEqual([
+      'ttl durable fact', 'ttl future fact', 'ttl lapsed fact',
+      'ttl superseded new', 'ttl superseded old',
+    ]);
+    // The valid_until-closed superseded row stays visible to listSupersessions.
+    expect(pg.supersessions).toContain('ttl superseded old');
+    // Health: 4 validity-live actives; lapsed + closed rows count expired-style.
+    expect(pg.health.total_active).toBe(4);
+    expect(pg.health.total_expired).toBe(3);
+    expect(pg.health.top).toEqual([`${ENTITY}:3`, `${EMB_ENTITY}:1`].sort());
+    // Backlog counter matches what the consolidator's active read can see.
+    expect(pg.backlog).toBe(4);
+  });
+});

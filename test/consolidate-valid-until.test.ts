@@ -208,12 +208,20 @@ describe('R4a — chronological valid_until writeback', () => {
 describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new takes (Codex F4 fix)', () => {
   test('semantic upsert: second consolidate on identical state produces zero NEW takes', async () => {
     await seedPage('cdx4-idempo-1');
+    // WP5 read-time TTL validity: the chronological valid_until writeback
+    // closes older facts at the NEXT fact's valid_from. If every valid_from
+    // were in the past, run 1's closes would validity-lapse the older rows
+    // and the second consolidate's active read (listFactsByEntity) would no
+    // longer see them — skipping the bucket instead of exercising the F4
+    // semantic-upsert path this test pins. Keep the oldest fact 30h old
+    // (satisfies the age gate) and the rest in the FUTURE so run 1's closes
+    // stay validity-live across the re-run.
     const oldDate = new Date(Date.now() - 30 * 60 * 60 * 1000);
     for (let i = 0; i < 4; i++) {
       await insertFact({
         entity_slug: 'cdx4-idempo-1',
         text: 'stable claim',
-        valid_from: new Date(oldDate.getTime() + i * 60 * 60 * 1000),
+        valid_from: i === 0 ? oldDate : new Date(Date.now() + i * 60 * 60 * 1000),
       });
     }
 

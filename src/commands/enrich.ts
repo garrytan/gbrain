@@ -267,6 +267,7 @@ async function retrieveEvidence(
     const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
       `SELECT fact, context FROM facts
         WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
+          AND (valid_until IS NULL OR valid_until > now())
         ORDER BY confidence DESC, id DESC
         LIMIT $3`,
       [sourceId, slug, FACT_LIMIT],
