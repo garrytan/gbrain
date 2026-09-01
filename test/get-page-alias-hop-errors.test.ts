@@ -17,6 +17,8 @@ import { operations, OperationError, type OperationContext } from '../src/core/o
 const get_page = operations.find((o) => o.name === 'get_page')!;
 
 let engine: PGLiteEngine;
+/** A pre-v104 shape: same engine class, slug_aliases table dropped. */
+let preV104: PGLiteEngine;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -27,10 +29,15 @@ beforeAll(async () => {
     { type: 'person', title: 'Alice Example', compiled_truth: 'a page', frontmatter: {} },
     { sourceId: 'default' },
   );
+  preV104 = new PGLiteEngine();
+  await preV104.connect({});
+  await preV104.initSchema();
+  await preV104.executeRaw(`DROP TABLE IF EXISTS slug_aliases CASCADE`);
 }, 60_000);
 
 afterAll(async () => {
   await engine.disconnect();
+  await preV104.disconnect();
 });
 
 function failingAliasEngine(err: Error): PGLiteEngine {
@@ -85,23 +92,15 @@ describe('get_page alias hop error propagation', () => {
   test('a missing slug_aliases table (pre-v104 brain) still degrades gracefully to page_not_found', async () => {
     // The ENGINE owns this tolerance (interface contract: null when the table
     // predates v104) — a real pre-v104 shape, not a stub that throws.
-    const old = new PGLiteEngine();
-    await old.connect({});
-    await old.initSchema();
+    let caught: unknown = null;
     try {
-      await old.executeRaw(`DROP TABLE IF EXISTS slug_aliases CASCADE`);
-      let caught: unknown = null;
-      try {
-        await get_page.handler(ctxOf(old), { slug: 'people/retired-slug' });
-      } catch (e) {
-        caught = e;
-      }
-      expect(caught instanceof OperationError).toBe(true);
-      expect((caught as OperationError).code).toBe('page_not_found');
-    } finally {
-      await old.disconnect();
+      await get_page.handler(ctxOf(preV104), { slug: 'people/retired-slug' });
+    } catch (e) {
+      caught = e;
     }
-  }, 60_000);
+    expect(caught instanceof OperationError).toBe(true);
+    expect((caught as OperationError).code).toBe('page_not_found');
+  });
 
   test('a live page at the requested slug never consults the alias table (exact read wins)', async () => {
     const eng = failingAliasEngine(new Error('must not be called'));
