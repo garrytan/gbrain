@@ -93,7 +93,8 @@ The `--restore-only` flag:
 
 - Resolves repoPath via the chain `--repo` → typed `sources.getDefault()` → hard error.
   Never falls through to the current directory.
-- Only exports pages that match `db_only` patterns AND are missing from disk.
+- Only exports pages that match `db_only` patterns or declare
+  `storage_tier: db_only` in frontmatter AND are missing from disk.
 - Ideal for container restart recovery and fresh clones.
 
 ### 3. `gbrain storage status` — storage-tier health dashboard

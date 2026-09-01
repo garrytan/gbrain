@@ -225,6 +225,20 @@ if (!hasDatabase()) {
           expect(p.slug.startsWith('media/x/')).toBe(true);
         }
 
+        await engine.putPage('notes/frontmatter-db-only', {
+          type: 'note',
+          title: 'Frontmatter DB only',
+          compiled_truth: 'frontmatter-declared body',
+          timeline: '',
+          frontmatter: { storage_tier: 'db_only' },
+        });
+        const frontmatterResults = await engine.listPages({
+          frontmatterStorageTier: 'db_only',
+          sourceId: 'default',
+          limit: 200,
+        });
+        expect(frontmatterResults.map((p) => p.slug)).toEqual(['notes/frontmatter-db-only']);
+
         // Path-segment risk: slugPrefix 'media/x' (no /) would match
         // 'media/xerox' if any existed. The engine treats slugPrefix as a
         // literal string prefix; trailing-/ semantics are the matcher's
