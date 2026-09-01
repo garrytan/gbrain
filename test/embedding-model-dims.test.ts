@@ -89,6 +89,24 @@ describe('case-folded model_dims lookup (#4123 init-time twin)', () => {
     expect(embeddingDimsForModel(ollama, 'Qwen3-Embed-8B')).toBe(4096);
   });
 
+  // #4646 / #3904 — the colon-bearing pullable tag, CASED. The exact-match
+  // pass misses, the case-fold must find the whole `qwen3-embedding:8b` key
+  // (never the first-colon-stripped `8b` remainder).
+  test.each([
+    ['ollama:Qwen3-Embedding:8B', 4096],
+    ['QWEN3-EMBEDDING:8B', 4096],
+    ['Ollama:QWEN3-Embedding:8b', 4096],
+  ])('cased colon-tag id %s resolves to %i', (model, dims) => {
+    expect(embeddingDimsForModel(ollama, model)).toBe(dims);
+  });
+
+  test('an unknown colon-bearing tag falls back to default dims, not to a truncated partial match', () => {
+    // `unknown-embed:7b` → exact miss, then the provider-strip yields `7b`
+    // — which must ALSO miss (no key is `7b`), landing on default_dims.
+    expect(embeddingDimsForModel(ollama, 'unknown-embed:7b')).toBe(768);
+    expect(embeddingDimsForModel(ollama, 'ollama:unknown-embed:7b')).toBe(768);
+  });
+
   test('cased table keys resolve too (user-editable recipes carry cased keys — both sides fold)', () => {
     const recipe = {
       ...ollama,
