@@ -1,5 +1,78 @@
 # TODOS
 
+## Community fix wave follow-ups (filed 2026-09-01, v0.47.10.0 wave)
+
+- [ ] **P1 — Fix-wave 2: the 27 deferred M-effort verified issues.**
+  **What:** the v0.47.10.0 community fix wave triaged every open issue; 22
+  were fixed in-wave and 27 verified M-effort issues were deferred to a
+  second wave. Full triage records (verdict, rationale, fix sketch, key
+  files per issue) live in `.context/fix-wave-triage.json` (gitignored —
+  wave working state, not repo content). Deferred issue numbers: #4744
+  #4741 #4738 #4732 #4729 #4728 #4696 #4684 #4679 #4653 #4652 #4649 #4620
+  #4616 #4609 #4606 #4605 #4603 #4601 #4597 #4589 #4588 #4586 #4578 #4563
+  #4558 #4359. (#4636 and #4564 were also triaged M but got fixed in-wave —
+  #4636 by the #4279 adoption, #4564 by the #4583 default-write guard.)
+  **How:** same discipline as wave 1 — red-proven regression test per fix,
+  themed trains, per-train targeted sweeps.
+- [ ] **P2 — Enforce pack vocabulary at the put_page choke point, not
+  per-surface.** **What:** #4655's write-time vocabulary enforcement
+  (`src/core/schema-pack/write-vocabulary.ts`) is wired at three surfaces
+  (capture op, add_link op, `gbrain capture` CLI). Any OTHER write path
+  that sets an explicit page type (put_page with frontmatter `type`,
+  future verbs) bypasses it, and each new surface must remember to opt in.
+  **Right altitude:** validate once where every page write converges
+  (put_page / import-file boundary), with the same "no resolvable pack =
+  no enforcement" fail-open contract and an explicit carve-out for the
+  sync importer (existing repo content must never be refused on re-import).
+  **Where:** `src/core/ops/pages.ts`, `src/core/import-file.ts`,
+  `src/core/schema-pack/write-vocabulary.ts`.
+- [ ] **P2 — Default-write guard at the dispatch choke point.** **What:**
+  the #4583 guard (`assessDefaultWriteGuard`) is called per-command:
+  `sync` refuses, `import` warns, MCP stdio prints a once-per-process
+  advisory. Each future write-capable command needs its own call site, and
+  the three surfaces already phrase/latch the warning differently.
+  **Right altitude:** assess once where source resolution converges (the
+  seed_default tier of the resolution ladder in `source-resolver.ts` /
+  op-context scope resolution) and let callers choose refuse-vs-warn
+  policy, not re-implement detection. **Where:**
+  `src/core/source-resolver.ts`, `src/commands/sync.ts`,
+  `src/commands/import.ts`, `src/mcp/server.ts`.
+- [ ] **P2 — Transcript adapter contract methods instead of per-format
+  special cases in discover.ts.** **What:** discovery carries grok-specific
+  knowledge inline (the grok-sidecar filter scoped to proven grok trees,
+  the session-dir shape); the hermes and openclaw adapters have their own
+  inline carve-outs (`.checkpoint.*.jsonl`, wal/shm sidecars). Every new
+  harness grows discover.ts. **Right altitude:** extend the
+  `TranscriptAdapter` contract with `isSessionFile(path)` /
+  `sessionIdMatchesPath(id, path)` (names indicative) so each adapter owns
+  its own layout knowledge and discover.ts just asks. **Where:**
+  `src/core/transcripts/types.ts`, `discover.ts`, `detect.ts`, each
+  adapter.
+- [ ] **P3 — Derive the transcripts `--format` allowlist from the adapter
+  registry.** **What:** `src/commands/transcripts.ts` hand-maintains
+  `FORMATS` (`claude-code`, `codex`, `openclaw`, `hermes`, `grok`,
+  `chatgpt`, `claude-export`) parallel to the registry in
+  `src/core/transcripts/detect.ts` — adding grok touched both, and the next
+  adapter will too. Export the format ids from the registry and derive the
+  CLI allowlist (and its error-message enumeration) from it. **Where:**
+  `src/commands/transcripts.ts`, `src/core/transcripts/detect.ts`.
+- [ ] **P3 — Doctor checks call the runtime resolvers instead of
+  mirroring them.** **What:** two wave fixes stopped active drift but left
+  mirrors in place: `subagent_capability` (#4575) now walks a shared
+  exported precedence LIST from model-config.ts rather than calling
+  `resolveModelDetailed` itself (a future resolver behavior change — env
+  handling, alias mapping — that isn't expressible as list order drifts
+  again), and the `default_source_local_path` gathering wrapper
+  re-implements the #2018 write-through collision predicate ("sync.repo_path
+  is another source's own working tree") rather than importing the one
+  `resolvePageWriteTarget` uses. Mirrors drift; resolvers don't.
+  **Right altitude:** call `resolveModelDetailed` (or a read-only wrapper)
+  from the check, and export the #2018 collision predicate from
+  write-through.ts for the doctor wrapper. **Where:**
+  `src/commands/doctor/checks/search-eval.ts` (checkSubagentCapability),
+  `src/commands/doctor/checks/default-source-path.ts`,
+  `src/core/model-config.ts`, `src/core/write-through.ts`.
+
 ## Eval write-path fix wave follow-ups (filed 2026-08-31; the five CEO-review-deferred items — wave receipt: gbrain-evals Cat 35 bracketing runs, pre-wave baseline dream 70.2% / quote fidelity 54.2% / emission 16/20 at aa820c7f)
 
 - [ ] **P3 — E2: chunk-boundary overlap window in splitTranscriptByBudget.**
@@ -5028,7 +5101,7 @@ contributor traps.
 
 - [x] **OpenRouter Anthropic subagent loop.** Anthropic routes (`openrouter:anthropic/…`) now declare `supports_subagent_loop` via a per-id predicate. `isAnthropicProvider` stays false (Messages SDK cannot speak OR); the handler auto-routes those jobs through `gateway.toolLoop()` when `agent.use_gateway_loop` is off. Live abort/retry: `test/e2e/openrouter-anthropic-subagent-replay.live.test.ts` (skip-gated on `OPENROUTER_API_KEY`). Other OR families stay refused.
 
-- [ ] **v0.37.x: Live-test non-Anthropic OpenRouter families (DeepSeek / OpenAI / Gemini) for the subagent loop.** Same abort/retry pin as Anthropic-via-OR before flipping the predicate wider.
+- [x] **DeepSeek DONE (v0.47.10.0 wave, #4672): Live-test non-Anthropic OpenRouter families for the subagent loop.** DeepSeek routes now drive the subagent loop with a live abort/retry pin (`test/e2e/openrouter-deepseek-subagent-replay.live.test.ts`); supported families are declared once in `src/core/ai/openrouter-families.ts`. REMAINING: OpenAI / Gemini families stay refused until each gets the same abort/retry pin before the predicate widens further.
 
 - [ ] **v0.37.x: Quarterly OR catalog refresh.** v0.37.6.0 ships 8 curated chat slugs (gpt-5.2, gpt-5.2-chat, gpt-5.5, claude-haiku-4.5, claude-sonnet-4.6, claude-opus-4.7, gemini-3-flash-preview, deepseek-chat) with `price_last_verified: '2026-05-20'`. OR's catalog churns weekly; specific slugs get deprecated, renamed, or merged. Refresh cadence: every 90 days, walk https://openrouter.ai/models, prune deprecated slugs, add new frontier IDs that match the recipe's curation logic (frontier-tier + cheap-routing entry points). Bump `price_last_verified`. The shape-test regression in `test/ai/recipe-openrouter.test.ts` (`MODEL_SHAPE` regex) means typos surface immediately; the catalog refresh is about discovery, not validation.
 
