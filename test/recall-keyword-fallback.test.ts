@@ -132,3 +132,39 @@ describe('#4720 recall bare positional — fact-text fallback', () => {
     expect(JSON.parse(shown.stdout).total).toBe(1);
   });
 });
+
+describe('#4720 fallback never crosses the source boundary', () => {
+  test('a fact in ANOTHER source is not returned for the default source, and IS returned with --source other', async () => {
+    // TWO non-default sources: with exactly one, the resolver's
+    // sole_non_default tier would auto-route an unqualified recall to it and
+    // the test would measure routing, not the fallback's source scope.
+    for (const id of ['other', 'another']) {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, local_path) VALUES ($1, $1, '/nonexistent/' || $1) ON CONFLICT (id) DO NOTHING`,
+        [id],
+      );
+    }
+    await engine.insertFact(
+      {
+        fact: 'The style guide forbids commas before conjunctions.',
+        kind: 'fact',
+        entity_slug: 'people/example',
+        source: 'chat',
+      },
+      { source_id: 'other' },
+    );
+
+    // Default source: the entity arm misses AND the text fallback stays inside
+    // 'default' — the other source's fact must not leak across.
+    const scoped = await captureRecall(['commas', '--json']);
+    expect(JSON.parse(scoped.stdout).total).toBe(0);
+    expect(scoped.stderr).not.toContain('matched');
+
+    // Explicitly targeting the other source finds it through the fallback.
+    const other = await captureRecall(['commas', '--source', 'other', '--json']);
+    const payload = JSON.parse(other.stdout);
+    expect(payload.total).toBe(1);
+    expect(payload.facts[0].fact).toContain('commas');
+    expect(other.stderr).toContain("no facts for entity 'commas'");
+  });
+});
