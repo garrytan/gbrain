@@ -43,7 +43,7 @@ import {
 } from './embedding-context.ts';
 import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
-import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHash, contentHashLegacy } from './utils.ts';
+import { isUndefinedTableError, warnOncePerProcess, validateSlug, contentHash, contentHashLegacy, ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
@@ -417,6 +417,12 @@ export async function importFromContent(
     delete parsed.frontmatter[QUARANTINE_KEY];
     delete parsed.frontmatter[CONTENT_FLAG_KEY];
     delete parsed.frontmatter[EMBED_SKIP_KEY];
+    // #1699 part 2: the extract_atoms completion marker is phase-owned. A
+    // remote writer planting a matching marker would suppress atom mining
+    // for the page (a silent extraction bypass); planting a stale one is
+    // harmless but still not the caller's to set. Trusted local sync/export
+    // round-trips (remote unset/false) preserve it.
+    delete parsed.frontmatter[ATOMS_SCAN_HASH_KEY];
   }
 
   // Vendor-neutral guardrail seam (observe-only, fail-open). Runs AFTER
