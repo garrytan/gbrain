@@ -4735,17 +4735,17 @@ See also:
 
   // #4583 (fixes #4564's misrouted-write symptom): refuse an unscoped
   // single-source sync that would silently land in 'default' on a
-  // bulk-non-default brain. `--all` iterates every source (not an
-  // unscoped-to-default write) and is exempt. Escape: `--source default`
-  // (resolves as tier 'flag', never seed_default) or
-  // GBRAIN_ALLOW_DEFAULT_WRITE=1. Fail-open assessment: a query error never
-  // blocks a legitimate sync.
+  // bulk-non-default brain. Exempt: `--all` (iterates every source, not an
+  // unscoped-to-default write) and `--dry-run` (writes nothing — the preview
+  // runs and the guard only WARNS that a real run would be refused). Escape:
+  // `--source default` (tier 'flag', never seed_default) or
+  // GBRAIN_ALLOW_DEFAULT_WRITE=1. Fail-open: a query error never blocks a sync.
   if (resolved.tier === 'seed_default' && !syncAll && !defaultWriteAllowedByEnv()) {
     const { assessDefaultWriteGuard, formatDefaultWriteRefusal } = await import('../core/source-resolver.ts');
     const assessment = await assessDefaultWriteGuard(engine);
     if (assessment.shouldGuard) {
-      console.error(formatDefaultWriteRefusal('sync', assessment));
-      process.exit(1);
+      console.error((dryRun ? '[dry-run] a real run would be refused:\n' : '') + formatDefaultWriteRefusal('sync', assessment));
+      if (!dryRun) process.exit(1);
     }
   }
 
