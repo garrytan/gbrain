@@ -536,7 +536,17 @@ const query: Operation = {
         ctx.engine.getConfig('search.crag_escalation').catch(() => null),
         ctx.engine.getConfig('search.crag_think').catch(() => null),
       ]);
-      if (shouldEscalateRetrieval(grade, { enabled: escalationCfg === 'true' })) {
+      // #4610: pass the documented guard inputs. `callerExpanded: expand`
+      // implements the long-documented high-ceiling skip — a first pass that
+      // already ran with expansion (the default) doesn't pay for a second
+      // expansion LLM call + rerank over a near-identical query. Escalation
+      // now fires for callers that explicitly opted out of expansion (the
+      // shape where the forced-expansion re-run has something new to find).
+      if (shouldEscalateRetrieval(grade, {
+        enabled: escalationCfg === 'true',
+        alreadyEscalated: false,
+        callerExpanded: expand,
+      })) {
         try {
           let escalatedMeta: HybridSearchMeta | null = null;
           const escalated = await hybridSearchCached(ctx.engine, queryText, {
@@ -570,11 +580,17 @@ const query: Operation = {
             embeddingColumn: embeddingColumnParam,
             onMeta: (m) => { escalatedMeta = m; },
           });
+          // Grade the FULL escalated sweep (rank-1 is what the grader reads),
+          // then adopt only the caller-visible window. #4610: the re-run is
+          // deliberately wide (limit >= 50, autocut off), but `limit` is the
+          // caller's row contract — pre-fix, an adopted escalation handed the
+          // whole uncut sweep back (14-18 rows for a limit:10 request), and
+          // bumpLastRetrievedAt + eval capture recorded the oversized set.
           const regraded = gradeRetrievalConfidence(escalated);
           crag.escalated = true;
           crag.escalated_confidence = regraded.level;
           if (confidenceRank(regraded.level) > confidenceRank(grade.level)) {
-            results = escalated;
+            results = escalated.slice(0, (p.limit as number) || 20);
             capturedMeta = escalatedMeta;
             grade = regraded;
             crag.confidence = regraded.level;

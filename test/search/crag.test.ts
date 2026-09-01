@@ -78,6 +78,19 @@ describe('shouldEscalateRetrieval / confidenceRank (#1663)', () => {
     expect(shouldEscalateRetrieval(strong, { enabled: true })).toBe(false);
   });
 
+  test('#4610: callerExpanded gates the re-run (the documented high-ceiling skip)', () => {
+    const weak = gradeRetrievalConfidence([]);
+    // First pass already ran with expansion → the re-run would re-pay the
+    // expansion LLM call + rerank for a near-identical query. Skip it.
+    expect(shouldEscalateRetrieval(weak, { enabled: true, callerExpanded: true })).toBe(false);
+    // Caller explicitly opted out of expansion → the forced-expansion re-run
+    // has something new to find. Fire.
+    expect(shouldEscalateRetrieval(weak, { enabled: true, callerExpanded: false })).toBe(true);
+    expect(shouldEscalateRetrieval(weak, {
+      enabled: true, alreadyEscalated: false, callerExpanded: false,
+    })).toBe(true);
+  });
+
   test('rank ordering: strong > moderate > weak', () => {
     expect(confidenceRank('strong')).toBeGreaterThan(confidenceRank('moderate'));
     expect(confidenceRank('moderate')).toBeGreaterThan(confidenceRank('weak'));
