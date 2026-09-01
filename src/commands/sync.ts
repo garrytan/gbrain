@@ -104,7 +104,6 @@ import {
   hasOriginRemote,
   isDetachedHead,
   unique,
-  resolveSlugByPathOrSourcePath,
   resolveSlugsForRemovedPaths,
   resolveRemovedPathSlug,
   refusedRemovedPathMessage,
@@ -2708,10 +2707,17 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
 
     // T4: pre-resolve ALL `from` slugs in batches before iterating. Falls
-    // back to per-path resolveSlugByPathOrSourcePath when sourceId is
-    // unset (matches the delete loop's legacy posture). For large rename
-    // commits (rare but possible: prefix sweep, reorganization), this drops
-    // the slug-resolve round-trips from O(renames) to O(renames/500).
+    // back to the guarded per-path resolver when sourceId is unset. For
+    // large rename commits (rare but possible: prefix sweep, reorganization),
+    // this drops the slug-resolve round-trips from O(renames) to O(renames/500).
+    //
+    // #3942: routed through resolveSlugsForRemovedPaths (same guarded
+    // resolver the delete lane uses) instead of a raw resolveSlugsByPaths +
+    // unguarded resolveSlugForPath fallback — a re-slugified fallback can
+    // name a page whose recorded origin is a DIFFERENT file (e.g. a
+    // trailing-hyphen collision). A refused from-path gets no entry in
+    // fromSlugByPath, so the rename below skips the cheap updateSlug and
+    // falls through to add + reconcile instead of repointing that page.
     const fromSlugByPath = new Map<string, string>();
     if (opts.sourceId) {
       const sid = opts.sourceId;
@@ -2722,15 +2728,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           return await partial('timeout');
         }
         const batch = fromPaths.slice(i, i + DELETE_BATCH_SIZE);
-        let m: Map<string, string>;
-        try {
-          m = await engine.resolveSlugsByPaths(batch, { sourceId: sid });
-        } catch {
-          m = new Map();
-        }
-        for (const p of batch) {
-          fromSlugByPath.set(p, m.get(p) ?? resolveSlugForPath(p));
-        }
+        const resolution = await resolveSlugsForRemovedPaths(engine, batch, sid);
+        for (const r of resolution.refused) serr(refusedRemovedPathMessage(r));
+        for (const [p, s] of resolution.slugs) fromSlugByPath.set(p, s);
       }
     }
 
@@ -2753,10 +2753,21 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         progress.finish();
         return await partial('timeout');
       }
-      // T4: the batch-resolved slug for `from` (see fromSlugByPath above).
+      // T4: the batch-resolved slug for `from` (see fromSlugByPath above). A
+      // refused/unresolved from-path has no entry, so this is undefined
+      // rather than falling back to an unverified derived slug.
+      //
+      // #3942: the no-sourceId lane is scoped to DEFAULT_SOURCE_ID (not
+      // left unscoped) — updateSlug below only ever touches the
+      // default-scoped row (renameOpts is undefined here, and updateSlug
+      // defaults its own sourceId to 'default'), so the read that decides
+      // what to rename must agree with that scope. An unscoped resolve
+      // could otherwise return a DIFFERENT source's row sharing this
+      // source_path, licensing the wrong (or a foreign) slug for a
+      // default-scoped rename.
       const oldSlug = opts.sourceId
-        ? (fromSlugByPath.get(from) ?? resolveSlugForPath(from))
-        : await resolveSlugByPathOrSourcePath(engine, from, undefined);
+        ? fromSlugByPath.get(from)
+        : await resolveRemovedPathSlug(engine, from, DEFAULT_SOURCE_ID, serr);
       // The new path doesn't yet have a row, so resolve from path only.
       const newSlug = resolveSlugForPath(to);
       // #3056: the cheap rename is OBSERVED, not assumed. A zero-row UPDATE
@@ -2765,7 +2776,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // the row at the new path while the old row stayed behind live. Both
       // shapes now fall through to the reconcile below.
       let renameApplied = false;
-      if (oldSlug !== '') {
+      if (oldSlug !== undefined) {
         try {
           renameApplied = (await engine.updateSlug(oldSlug, newSlug, renameOpts)) > 0;
         } catch {
