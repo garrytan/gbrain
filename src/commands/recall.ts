@@ -358,6 +358,28 @@ async function runRecallOnce(
     }>(raw);
     rows = unpacked.facts.map(remoteFactToRow);
     pendingCount = unpacked.pending_consolidation_count;
+
+    // #4720: thin-client mirror of the local entity→text fallback (see
+    // fetchRowsLocal). A bare positional that matched no facts by entity is
+    // retried as a fact-text grep so a literal word from fact text still
+    // recalls over the wire.
+    if (rows.length === 0 && flags.entity && !flags.grep && !flags.supersessions && !flags.sessionId) {
+      const fbParams: Record<string, unknown> = { ...params, grep: flags.entity.toLowerCase() };
+      delete fbParams.entity;
+      const fbRaw = await callRemoteTool(cfg!, 'recall', fbParams, { timeoutMs: 30_000 });
+      const fb = unpackToolResult<{
+        facts: Array<Record<string, unknown>>;
+        total: number;
+        pending_consolidation_count?: number;
+      }>(fbRaw);
+      if (fb.facts.length > 0) {
+        process.stderr.write(
+          `[recall] no facts for entity '${flags.entity}'; matched ${fb.facts.length} fact(s) by text — use --grep to force text matching.\n`,
+        );
+        rows = fb.facts.map(remoteFactToRow);
+        pendingCount = fb.pending_consolidation_count ?? pendingCount;
+      }
+    }
   } else {
     rows = await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (flags.pending) {
@@ -415,11 +437,36 @@ async function fetchRowsLocal(
   }
   if (flags.entity) {
     const slug = (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity;
-    return engine.listFactsByEntity(sourceId, slug, {
+    const rows = await engine.listFactsByEntity(sourceId, slug, {
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
       excludeAuditRows: true,
     });
+    // #4720: the bare positional is entity-first, but keyless/casual usage
+    // treats it as a literal word from fact text (`gbrain recall commas`).
+    // resolveEntitySlug never returns null for non-empty input (slugify is
+    // the floor), so an unknown term becomes a phantom slug that matches
+    // nothing and recall reports zero results while `recall --all` and
+    // `--grep` both find the fact. When the entity arm comes up empty, fall
+    // back to the SQL-level fact-text grep (the same pre-limit arm --grep
+    // uses) with a stderr note. Explicit --grep callers keep exact
+    // semantics (their filter already ran; no fallback surprise).
+    if (rows.length === 0 && !flags.grep) {
+      const textRows = await engine.listFactsSince(sourceId, new Date(0), {
+        eventTime: true,
+        activeOnly: !flags.includeExpired,
+        limit: flags.limit,
+        grep: flags.entity.toLowerCase(),
+        excludeAuditRows: true,
+      });
+      if (textRows.length > 0) {
+        process.stderr.write(
+          `[recall] no facts for entity '${flags.entity}'; matched ${textRows.length} fact(s) by text — use --grep to force text matching.\n`,
+        );
+        return textRows;
+      }
+    }
+    return rows;
   }
   if (flags.sessionId) {
     return engine.listFactsBySession(sourceId, flags.sessionId, {
