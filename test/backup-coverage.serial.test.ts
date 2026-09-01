@@ -361,7 +361,7 @@ describe('computeBackupCoverage — db_content and empty brain', () => {
 // ── Bootstrap workspace via the receipt ─────────────────────────────────────
 
 describe('computeBackupCoverage — bootstrap workspace', () => {
-  test('receipt without repo_url → bootstrap_workspace no_remote with bootstrap repo fix', async () => {
+  test('receipt without repo_url → bootstrap_workspace no_remote names both bootstrap repo and attach, fix_argv null', async () => {
     const ws = join(tmp, 'ws');
     mkdirSync(ws, { recursive: true });
     writeReceipt(ws);
@@ -372,7 +372,16 @@ describe('computeBackupCoverage — bootstrap workspace', () => {
     expect(asset).toBeDefined();
     expect(asset?.id).toBe(ws);
     expect(asset?.state).toBe('no_remote');
-    expect(asset?.fix_argv).toEqual(['gbrain', 'bootstrap', 'repo']);
+    // This check is file-plane only (no git subprocess) so it can't tell an
+    // empty/unconfigured origin (needs `bootstrap repo`) from an
+    // already-pushed out-of-band one (needs `bootstrap attach`, since
+    // `bootstrap repo` guaranteed-refuses with ORIGIN_NOT_EMPTY there — see
+    // src/core/bootstrap/repo.ts). fix_argv stays null rather than advertise
+    // a command that's wrong in the out-of-band case; the message names both.
+    expect(asset?.fix_argv).toBeNull();
+    expect(asset?.detail).toContain('no private repo yet');
+    expect(asset?.detail).toContain('bootstrap repo');
+    expect(asset?.detail).toContain('bootstrap attach');
     expect(s.overall).toBe('warn');
     expect(s.totals.no_remote).toBe(1);
   });

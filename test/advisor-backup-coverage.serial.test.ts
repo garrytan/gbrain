@@ -359,7 +359,7 @@ function writeReceipt(ws: string, extra: Record<string, unknown> = {}): void {
 }
 
 describe('collectBackupCoverage local — workspace and db_only findings', () => {
-  test('receipt without repo_url → backup_workspace_no_repo warn with the bootstrap-repo fix', async () => {
+  test('receipt without repo_url → backup_workspace_no_repo warn, no single-command fix (ambiguous between repo/attach)', async () => {
     const ws = join(tmp, 'ws-no-repo');
     mkdirSync(ws, { recursive: true });
     writeReceipt(ws); // no repo_url → bootstrap_workspace no_remote asset
@@ -373,7 +373,10 @@ describe('collectBackupCoverage local — workspace and db_only findings', () =>
     expect(f.severity).toBe('warn');
     expect(f.title).toContain('workspace has no private repo');
     expect(f.detail).toContain('no private repo yet');
-    expect(f.fix.command_argv).toEqual(['gbrain', 'bootstrap', 'repo']);
+    // No default fallback: this check can't tell an empty origin (needs
+    // `bootstrap repo`) from an already-pushed out-of-band one (needs
+    // `bootstrap attach`) without a git subprocess — see coverage.ts.
+    expect(f.fix.command_argv).toBeNull();
     expect(f.ask_user).toBe(true);
     expect(f.collector).toBe('backup-coverage');
   });

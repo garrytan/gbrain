@@ -165,8 +165,16 @@ export async function computeBackupCoverage(
           kind: 'bootstrap_workspace',
           id: receipt.workspace_dir,
           state: 'no_remote',
-          detail: 'bootstrap workspace has no private repo yet',
-          fix_argv: ['gbrain', 'bootstrap', 'repo'],
+          detail:
+            'bootstrap workspace has no private repo yet — run `gbrain bootstrap repo` to create one ' +
+            '(this is the right command for a truly empty/unconfigured origin). If this workspace was ' +
+            'already pushed to an existing repo out-of-band, `bootstrap repo` will refuse — run ' +
+            '`gbrain bootstrap attach` instead to reconcile the receipt.',
+          // No single command is correct here without a git subprocess (coverage.ts is deliberately
+          // file-plane only): an empty/unconfigured origin needs `bootstrap repo`, an already-pushed
+          // one needs `bootstrap attach`, and this check can't tell which case it's in. Leave fix_argv
+          // null rather than advertise a command that's wrong in the out-of-band-adopted case.
+          fix_argv: null,
         });
       } else {
         // THIS workspace's own push status only — a failing entry from some

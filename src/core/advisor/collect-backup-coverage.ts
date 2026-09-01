@@ -71,7 +71,13 @@ export const collectBackupCoverage: AdvisorCollector = {
           severity: 'warn',
           title: 'Your agent workspace has no private repo yet — a disk loss loses skills, memory, and identity.',
           detail: a.detail,
-          fix: { command_argv: a.fix_argv ?? ['gbrain', 'bootstrap', 'repo'] },
+          // No default fallback here (matches source_repo above): coverage.ts
+          // deliberately leaves fix_argv null for this kind since it can't
+          // tell an empty origin (bootstrap repo) from an already-pushed
+          // out-of-band one (bootstrap attach) without a git subprocess — a
+          // hardcoded ['gbrain','bootstrap','repo'] fallback would reintroduce
+          // the same wrong-command-in-the-out-of-band-case bug this exists to fix.
+          fix: { command_argv: a.fix_argv ?? null },
           collector: 'backup-coverage',
           ask_user: true,
         });
