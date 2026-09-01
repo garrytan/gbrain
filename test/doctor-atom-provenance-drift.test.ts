@@ -115,6 +115,55 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.status).toBe('ok'); // 1 drifted < MIN_DRIFTED
   });
 
+  it('tolerates a malformed extracted_at (one bad row must not abort the whole check)', async () => {
+    // Review fix: the unguarded ::timestamptz cast made ONE hand-edited /
+    // truncated extracted_at value abort the entire aggregate, permanently
+    // degrading the check to a spurious "check failed" warn.
+    await seedSource('src-m', 'original body');
+    await engine.putPage('atoms/2026-01-01/m-000000', {
+      type: 'atom',
+      title: 'm',
+      compiled_truth: 'claim body',
+      frontmatter: {
+        type: 'atom',
+        source_slug: 'src-m',
+        source_hash: await hashOf('src-m'),
+        extracted_at: 'not-a-timestamp',
+      },
+    });
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.message).not.toContain('check failed');
+    expect(c.status).toBe('ok');
+    expect((c.details as Record<string, number>).total_atoms).toBe(1);
+    expect((c.details as Record<string, number>).drifted).toBe(0);
+  });
+
+  it('still reports oldest_drifted_days from the well-formed rows when a malformed one exists', async () => {
+    await seedSource('src-n', 'original body');
+    // Drifted atom with a good timestamp ~10 days ago.
+    await engine.putPage('atoms/2026-01-01/n-000000', {
+      type: 'atom', title: 'n0', compiled_truth: 'claim body',
+      frontmatter: {
+        type: 'atom', source_slug: 'src-n', source_hash: 'deadbeefdeadbeef',
+        extracted_at: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+      },
+    });
+    // Drifted atom with a garbage timestamp — must not abort or win "oldest".
+    await engine.putPage('atoms/2026-01-01/n-000001', {
+      type: 'atom', title: 'n1', compiled_truth: 'claim body',
+      frontmatter: {
+        type: 'atom', source_slug: 'src-n', source_hash: 'deadbeefdeadbeef',
+        extracted_at: 'unknown',
+      },
+    });
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.message).not.toContain('check failed');
+    const d = c.details as Record<string, number>;
+    expect(d.drifted).toBe(2);
+    expect(d.oldest_drifted_days).toBeGreaterThanOrEqual(9.5);
+    expect(d.oldest_drifted_days).toBeLessThanOrEqual(10.5);
+  });
+
   it('warns once both the ratio and the count are exceeded', async () => {
     // 30 drifted out of 30 → over MIN_DRIFTED (25) and over WARN_RATIO (0.1).
     await seedSource('src-f', 'original body');

@@ -737,13 +737,21 @@ export async function computeAtomProvenanceDriftCheck(
     const rows = await engine.executeRaw<{
       total: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
-      oldest_days: string | number | null;
+      oldest_ext: string | null;
     }>(
+      // extracted_at stays TEXT end to end (review fix): an unguarded
+      // ::timestamptz cast let ONE malformed frontmatter value (hand edit,
+      // truncation) abort the whole aggregate and permanently degrade this
+      // check to a spurious "check failed" warn. The ISO-shape regex drops
+      // garbage from the min(); the age math happens in TS where Date
+      // parsing can never throw (semantically-invalid dates become NaN →
+      // metric omitted, verdict untouched).
       `WITH atom AS (
          SELECT a.source_id,
                 a.frontmatter->>'source_hash' AS sh,
                 a.frontmatter->>'source_slug' AS ss,
-                (a.frontmatter->>'extracted_at')::timestamptz AS ext
+                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                     THEN a.frontmatter->>'extracted_at' END AS ext
            FROM pages a
           WHERE a.type = 'atom'
             AND a.deleted_at IS NULL
@@ -768,8 +776,9 @@ export async function computeAtomProvenanceDriftCheck(
               count(*) FILTER (WHERE drifted) AS drifted,
               count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
               count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
-              max(extract(epoch FROM now() - ext) / 86400.0)
-                FILTER (WHERE drifted) AS oldest_days
+              -- lexicographic min of ISO-shaped strings ≈ chronological min
+              -- (oldest); informational only, never verdict-bearing
+              min(ext) FILTER (WHERE drifted) AS oldest_ext
          FROM drift`,
       [],
     );
@@ -781,7 +790,10 @@ export async function computeAtomProvenanceDriftCheck(
     const drifted = num(r.drifted);
     const sourceChanged = num(r.source_changed);
     const sourceGone = num(r.source_gone);
-    const oldestDays = r.oldest_days == null ? null : Math.round(Number(r.oldest_days) * 10) / 10;
+    const oldestExtMs = r.oldest_ext ? new Date(String(r.oldest_ext)).getTime() : NaN;
+    const oldestDays = Number.isFinite(oldestExtMs)
+      ? Math.round(((Date.now() - oldestExtMs) / 86_400_000) * 10) / 10
+      : null;
     const ratio = total > 0 ? drifted / total : 0;
     const details = {
       total_atoms: total,
