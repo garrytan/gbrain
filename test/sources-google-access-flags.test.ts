@@ -295,6 +295,37 @@ describe('sources add --kind google --calendar-id', () => {
     expect(await sourceConfig('gcal-empty')).toBeNull();
   });
 
+  test('a legacy google row without g_services/g_calendar_id is treated as all three services on the primary calendar', async () => {
+    // Pre-#4698 sources carry neither key. They synced everything against
+    // calendars/primary, so the overlap guard must read them that way.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('glegacy', 'glegacy', '{"kind":"google","g_account":"alice@example.com"}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+    );
+
+    // gmail overlaps the implicit full-service legacy row.
+    const gmail = await addGoogle('gnew-gmail', ['--services', 'gmail'], { seed: seedVault });
+    expect(gmail.exitCalled).toBeUndefined();
+    expect(gmail.err).toContain('source "glegacy" already syncs alice@example.com (gmail)');
+
+    // calendar on the default (primary) calendar overlaps too — the legacy
+    // row is implicitly 'primary'.
+    const primaryCal = await addGoogle('gnew-cal', ['--services', 'calendar'], { seed: seedVault });
+    expect(primaryCal.exitCalled).toBeUndefined();
+    expect(primaryCal.err).toContain('source "glegacy" already syncs alice@example.com (calendar)');
+
+    // A SECONDARY calendar is a different slice: no warning against the legacy row.
+    const secondaryCal = await addGoogle(
+      'gnew-cal2',
+      ['--services', 'calendar', '--calendar-id', 'family0123456789@group.calendar.google.com'],
+      { seed: seedVault },
+    );
+    expect(secondaryCal.exitCalled).toBeUndefined();
+    expect(secondaryCal.err).not.toContain('already syncs');
+    expect((await sourceConfig('gnew-cal2'))!.g_calendar_id).toBe('family0123456789@group.calendar.google.com');
+  });
+
   test('duplicate-account warning is scoped: a second source for a DIFFERENT calendar does not warn', async () => {
     const first = await addGoogle('gdup-a', ['--services', 'gmail,contacts'], { seed: seedVault });
     expect(first.exitCalled).toBeUndefined();
