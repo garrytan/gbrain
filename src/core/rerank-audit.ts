@@ -31,7 +31,12 @@ import { createAuditWriter, computeIsoWeekFilename } from './audit/audit-writer.
  * `sunset_short_circuit` (#3657) is written ONCE per process per model by the
  * gateway itself (not per query by applyReranker): the reranker's hosted API
  * passed its announced shutdown date, so calls are skipped without HTTP and
- * results pass through unreranked. */
+ * results pass through unreranked.
+ * `empty_result_set` / `malformed_shape` (#4648): the provider answered
+ * SUCCESSFULLY (HTTP 200) but with an empty or non-array result set for a
+ * non-empty document batch, so applyReranker passed the input through in raw
+ * RRF order with no rerank_score — previously the one pass-through that left
+ * no trace anywhere. */
 export type RerankFailureReason =
   | 'auth'
   | 'rate_limit'
@@ -40,6 +45,8 @@ export type RerankFailureReason =
   | 'budget'
   | 'payload_too_large'
   | 'sunset_short_circuit'
+  | 'empty_result_set'
+  | 'malformed_shape'
   | 'unknown';
 
 export interface RerankFailureEvent {

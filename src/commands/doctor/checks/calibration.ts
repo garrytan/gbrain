@@ -637,6 +637,21 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       };
     }
 
+    // #4648: success-shaped pass-throughs — the provider answered 200 with an
+    // empty/malformed result set, so searches returned raw RRF order with no
+    // rerank_score. The reranker "runs" (logs grow, latency paid) but has
+    // zero effect; the response-shape mismatch is the usual culprit.
+    const passThroughFails = failures.filter(
+      (f) => f.reason === 'empty_result_set' || f.reason === 'malformed_shape',
+    );
+    if (passThroughFails.length >= 3) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${passThroughFails.length} reranker empty/malformed-response pass-through(s) in last 7 days — those searches returned raw RRF order unscored. Fix: verify the rerank endpoint answers {results:[{index, relevance_score}]} for a non-empty documents array (check \`search.reranker.model\` and the endpoint's response shape).`,
+      };
+    }
+
     // Historical #2059 rows were logged as `unknown` before missing reranker
     // auth was classified at the gateway. Surface repeated unknowns instead of
     // reporting "ok" while every rerank fails open.

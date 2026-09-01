@@ -1790,6 +1790,11 @@ export interface EvalCaptureFailure {
  *                        it was the primary recall arm (vector unavailable)
  *   cache_prestamp     — served from a cache row written before the
  *                        degradation stamp existed; cleanliness unprovable
+ *   rerank_passthrough — the reranker was enabled and the provider answered
+ *                        SUCCESSFULLY but with an empty/malformed result set,
+ *                        so results passed through in raw RRF order with no
+ *                        rerank_score (#4648 — distinguishes "reranker off"
+ *                        from "reranker died silently")
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1802,6 +1807,7 @@ export const DEGRADED_STAGES = [
   'budget_truncated',
   'keyword_zero',
   'cache_prestamp',
+  'rerank_passthrough',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1818,6 +1824,9 @@ export const DEGRADED_REASONS = [
   'variant_embed_failed',
   'original_embed_failed',
   'first_result_truncated',
+  // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
+  'empty_result_set',
+  'malformed_shape',
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 

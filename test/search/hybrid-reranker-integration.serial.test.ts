@@ -294,4 +294,48 @@ describe('hybridSearch — fail-open contract end-to-end', () => {
     // Same items, same order — applyReranker fail-open.
     expect(reranked.map(r => r.slug)).toEqual(baseline.map(r => r.slug));
   });
+
+  test('#4648: empty rerank result set stamps degraded[] with rerank_passthrough', async () => {
+    const auditDir = mkdtempSync(join(tmpdir(), 'gbrain-rerank-meta-'));
+    const prevAudit = process.env.GBRAIN_AUDIT_DIR;
+    process.env.GBRAIN_AUDIT_DIR = auditDir;
+    try {
+      let degraded: Array<{ stage: string; reason?: string }> = [];
+      const out = await hybridSearch(engine, 'alpha keyword', {
+        limit: 10,
+        reranker: {
+          enabled: true,
+          topNIn: 30,
+          topNOut: null,
+          // HTTP 200 with `{"results":[]}` — the issue's live-verified shape.
+          rerankerFn: async () => [],
+        },
+        onMeta: (meta) => { degraded = meta.degraded ?? []; },
+      });
+      expect(out.length).toBeGreaterThan(0);
+      // Raw RRF order, no scores — and, post-#4648, a visible stamp.
+      expect(out.every(r => r.rerank_score === undefined)).toBe(true);
+      expect(degraded).toContainEqual({ stage: 'rerank_passthrough', reason: 'empty_result_set' });
+    } finally {
+      if (prevAudit === undefined) delete process.env.GBRAIN_AUDIT_DIR;
+      else process.env.GBRAIN_AUDIT_DIR = prevAudit;
+      rmSync(auditDir, { recursive: true, force: true });
+    }
+  });
+
+  test('#4648 contrast: reranker DISABLED pass-through does NOT stamp degraded[]', async () => {
+    let degraded: Array<{ stage: string; reason?: string }> = [];
+    const out = await hybridSearch(engine, 'alpha keyword', {
+      limit: 10,
+      reranker: {
+        enabled: false,
+        topNIn: 30,
+        topNOut: null,
+        rerankerFn: async () => [],
+      },
+      onMeta: (meta) => { degraded = meta.degraded ?? []; },
+    });
+    expect(out.length).toBeGreaterThan(0);
+    expect(degraded.some(d => d.stage === 'rerank_passthrough')).toBe(false);
+  });
 });

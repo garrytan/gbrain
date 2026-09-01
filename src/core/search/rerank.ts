@@ -22,6 +22,10 @@ import type { SearchResult } from '../types.ts';
 import { rerank as gatewayRerank, RerankError, type RerankInput, type RerankResult } from '../ai/gateway.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { warnOncePerProcess } from '../utils.ts';
+
+/** #4648: the two audited success-shaped pass-through causes. */
+export type RerankPassThroughReason = 'empty_result_set' | 'malformed_shape';
 
 export interface RerankerOpts {
   enabled: boolean;
@@ -33,6 +37,15 @@ export interface RerankerOpts {
   model?: string;
   /** Per-call timeout in ms (default 5000 — propagates to gateway.rerank). */
   timeoutMs?: number;
+  /**
+   * #4648: fired when the provider answered SUCCESSFULLY but with an
+   * empty/malformed result set for a non-empty document batch, so the
+   * results passed through in raw RRF order unscored. hybridSearch uses it
+   * to stamp the response meta's degraded[] channel so callers can tell
+   * "reranker off" from "reranker died silently". Best-effort: a throwing
+   * callback never breaks search.
+   */
+  onPassThrough?: (reason: RerankPassThroughReason) => void;
   /**
    * Test seam — when set, applyReranker calls this instead of gateway.rerank.
    * Production must NEVER set this.
@@ -116,8 +129,44 @@ export async function applyReranker(
     return results;
   }
 
-  // Defensive: if the reranker returned a malformed shape, pass through.
-  if (!Array.isArray(reranked) || reranked.length === 0) return results;
+  // Defensive: if the reranker returned a malformed shape, pass through —
+  // but never silently (#4648). A provider that answers HTTP 200 with an
+  // empty/malformed result set for a non-empty batch (verified live against
+  // an OpenAI-shaped endpoint answering `{"results":[]}`) previously took
+  // this branch with NO audit row while the throw path above was audited —
+  // so an empty failure log falsely implied every search was reranked.
+  // Same fail-open posture as the catch: audit + one stderr note per
+  // process per reason, then return the input unchanged.
+  if (!Array.isArray(reranked) || reranked.length === 0) {
+    const reason: RerankPassThroughReason = Array.isArray(reranked)
+      ? 'empty_result_set'
+      : 'malformed_shape';
+    try {
+      logRerankFailure({
+        model: opts.model ?? 'unknown',
+        reason,
+        query_hash: hashQuery(query),
+        doc_count: documents.length,
+        error_summary: reason === 'empty_result_set'
+          ? `provider answered successfully with an empty result set for ${documents.length} document(s); results passed through unreranked`
+          : 'provider answered successfully with a non-array result shape; results passed through unreranked',
+      });
+    } catch {
+      // Audit logging must never break search.
+    }
+    warnOncePerProcess(
+      `rerank-passthrough:${reason}`,
+      `[gbrain] reranker returned ${reason === 'empty_result_set' ? 'an empty result set' : 'a malformed shape'} — ` +
+        'results passed through in RRF order unscored (audited to rerank-failures; further occurrences this process are silent). ' +
+        'Check the rerank endpoint and `gbrain doctor`.',
+    );
+    try {
+      opts.onPassThrough?.(reason);
+    } catch {
+      // Meta stamping must never break search.
+    }
+    return results;
+  }
 
   // Build the reordered head. We keep ONLY indices the reranker returned
   // (so a top_n response with fewer items than head.length naturally

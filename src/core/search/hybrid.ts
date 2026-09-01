@@ -2106,8 +2106,19 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
+  // #4648: a success-shaped pass-through (provider answered 200 with an
+  // empty/malformed result set) stamps the degraded[] channel so callers can
+  // tell "reranker off for this call" from "reranker died silently" —
+  // results come back in raw RRF order with no rerank_score either way.
   const reranked = rerankerOpts.enabled
-    ? await applyReranker(query, deduped, rerankerOpts as any)
+    ? await applyReranker(query, deduped, {
+        ...(rerankerOpts as any),
+        onPassThrough: (reason: 'empty_result_set' | 'malformed_shape') => {
+          pushDegraded(degraded, 'rerank_passthrough', reason);
+          // Chain a per-call callback if the caller supplied one.
+          (rerankerOpts as { onPassThrough?: (r: string) => void }).onPassThrough?.(reason);
+        },
+      })
     : deduped;
 
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
