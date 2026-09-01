@@ -250,29 +250,48 @@ const list_link_sources: Operation = {
  */
 const TRAVERSE_DEPTH_CAP = 10;
 
+/**
+ * Default depth for the remote no-direction call. #4666 made that call
+ * bidirectional, and traversePaths' `both` branch is an uncapped
+ * path-enumerating recursive CTE (no LIMIT) — on an entity hub with 10^2-10^3
+ * edges the legacy depth-5 default is combinatorial, on the per-agent-turn
+ * path. Two hops covers the realistic relationship query ("people who
+ * attended meetings with Alice"); a caller that wants more passes `depth`
+ * explicitly (still honored up to TRAVERSE_DEPTH_CAP).
+ */
+const REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH = 2;
+const DEFAULT_TRAVERSE_DEPTH = 5;
+
 const traverse_graph: Operation = {
   name: 'traverse_graph',
-  description: 'Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]); trusted local no-filter callers keep the legacy node shape.',
+  description: `Traverse link graph from a page. Remote callers default to bidirectional edges (GraphPath[]) at depth ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (pass depth explicitly for deeper walks); trusted local no-filter callers keep the legacy node shape at depth ${DEFAULT_TRAVERSE_DEPTH}.`,
   params: {
     slug: { type: 'string', required: true, description: "Slug of the page to start the traversal from, e.g. 'people/alice-example'. This is the start-node param — there is no `start` or `root` param." },
-    depth: { type: 'number', description: `Max traversal depth (default 5, capped at ${TRAVERSE_DEPTH_CAP})` },
+    depth: { type: 'number', description: `Max traversal depth (capped at ${TRAVERSE_DEPTH_CAP}). Default ${DEFAULT_TRAVERSE_DEPTH}, except a remote call that lets direction default to 'both' uses ${REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH} (bidirectional path enumeration is combinatorial on hubs); an explicit depth is always honored up to the cap.` },
     link_type: { type: 'string', description: 'Filter to one link type (per-edge filter, traversal only follows matching edges)' },
     direction: { type: 'string', enum: ['in', 'out', 'both'], description: "Traversal direction ('in', 'out', or 'both'). Remote callers default to 'both'; trusted local no-filter callers keep the legacy outgoing-node output." },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
-    const requestedDepth = (p.depth as number) || 5;
-    if (requestedDepth > TRAVERSE_DEPTH_CAP) {
-      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
-    }
-    const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     const linkType = p.link_type as string | undefined;
     // #4666: remote callers (ctx.remote !== false — fail-closed) default to
     // direction=both, so a node with only INBOUND typed edges stops reading
     // as nodes=1/links=0 (indistinguishable from edge absence). An explicit
     // direction param still wins for callers that want outbound-only.
     const requestedDirection = p.direction as 'in' | 'out' | 'both' | undefined;
-    const direction = requestedDirection ?? (ctx.remote !== false ? 'both' : undefined);
+    const directionDefaultedToBoth = requestedDirection === undefined && ctx.remote !== false;
+    const direction = requestedDirection ?? (directionDefaultedToBoth ? 'both' : undefined);
+    // Depth default follows the direction default: a remote call that did not
+    // ask for a direction (so walks `both`) AND did not ask for a depth gets
+    // the conservative bidirectional default; everything else keeps 5.
+    const depthRequested = typeof p.depth === 'number' && p.depth > 0;
+    const requestedDepth = depthRequested
+      ? (p.depth as number)
+      : directionDefaultedToBoth ? REMOTE_BIDIRECTIONAL_DEFAULT_DEPTH : DEFAULT_TRAVERSE_DEPTH;
+    if (requestedDepth > TRAVERSE_DEPTH_CAP) {
+      ctx.logger.warn(`[gbrain] traverse_graph depth clamped from ${requestedDepth} to ${TRAVERSE_DEPTH_CAP}`);
+    }
+    const depth = Math.max(1, Math.min(requestedDepth, TRAVERSE_DEPTH_CAP));
     // v0.34.1 (#861 — P0 leak seal): thread caller's source scope so graph
     // walks stay within the auth'd client's accessible sources. Pre-fix,
     // traverseGraph / traversePaths happily followed edges into pages from

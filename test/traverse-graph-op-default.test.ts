@@ -115,3 +115,93 @@ describe('#4666 traverse_graph operation defaults', () => {
     ]);
   });
 });
+
+/**
+ * Ship-review follow-up to #4666: the remote no-direction call is
+ * bidirectional AND traversePaths' `both` branch is an uncapped
+ * path-enumerating recursive CTE, so the legacy depth-5 default was
+ * combinatorial on entity hubs. When BOTH direction and depth are defaulted
+ * for a remote caller the walk stops at depth 2; an explicit depth is still
+ * honored (up to the cap); and an omitted `remote` key is fail-closed remote.
+ */
+async function seedInboundChain() {
+  // e3 → e2 → e1 → target: three inbound hops into the start node.
+  for (const slug of ['knowledge/kcs/target', 'notes/e1', 'notes/e2', 'notes/e3']) {
+    await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '', frontmatter: {} });
+  }
+  await engine.addLink('notes/e1', 'knowledge/kcs/target', '', 'supports', 'manual');
+  await engine.addLink('notes/e2', 'notes/e1', '', 'supports', 'manual');
+  await engine.addLink('notes/e3', 'notes/e2', '', 'supports', 'manual');
+}
+
+type Edge = { from_slug: string; to_slug: string; depth: number };
+
+describe('remote traverse_graph default depth follows the bidirectional default', () => {
+  test('remote no-filter default returns inbound edges at depth <= 2 only', async () => {
+    await seedInboundChain();
+
+    const result = await operationsByName.traverse_graph.handler(ctx(), {
+      slug: 'knowledge/kcs/target',
+    }) as Edge[];
+
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e1', to_slug: 'knowledge/kcs/target', depth: 1,
+    }));
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e2', to_slug: 'notes/e1', depth: 2,
+    }));
+    // The depth-3 hop is beyond the conservative remote default.
+    expect(result.some(e => e.from_slug === 'notes/e3')).toBe(false);
+    expect(Math.max(...result.map(e => e.depth))).toBeLessThanOrEqual(2);
+  });
+
+  test('an explicit depth is honored past the remote default (depth 4 reaches the third hop)', async () => {
+    await seedInboundChain();
+
+    const result = await operationsByName.traverse_graph.handler(ctx(), {
+      slug: 'knowledge/kcs/target',
+      depth: 4,
+    }) as Edge[];
+
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e3', to_slug: 'notes/e2', depth: 3,
+    }));
+  });
+
+  test('an omitted `remote` key is fail-closed remote: GraphPath[] with the inbound edge, depth <= 2', async () => {
+    await seedInboundChain();
+
+    const noRemoteKey = ctx();
+    delete (noRemoteKey as { remote?: boolean }).remote;
+    const result = await operationsByName.traverse_graph.handler(noRemoteKey, {
+      slug: 'knowledge/kcs/target',
+    }) as Edge[];
+
+    // Edge shape (not the legacy GraphNode shape) …
+    expect(result.length).toBeGreaterThan(0);
+    expect(result.every(e => typeof e.from_slug === 'string' && typeof e.to_slug === 'string')).toBe(true);
+    expect(result).toContainEqual(expect.objectContaining({
+      from_slug: 'notes/e1', to_slug: 'knowledge/kcs/target', depth: 1,
+    }));
+    // … at the conservative bidirectional default depth.
+    expect(result.some(e => e.from_slug === 'notes/e3')).toBe(false);
+  });
+
+  test('a trusted local no-filter call keeps the legacy depth-5 node walk', async () => {
+    await seedInboundChain();
+    // Outbound chain so the legacy outgoing-node walk has something to follow
+    // past depth 2: target → o1 → o2 → o3.
+    for (const slug of ['notes/o1', 'notes/o2', 'notes/o3']) {
+      await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: slug, timeline: '', frontmatter: {} });
+    }
+    await engine.addLink('knowledge/kcs/target', 'notes/o1', '', 'mentions', 'manual');
+    await engine.addLink('notes/o1', 'notes/o2', '', 'mentions', 'manual');
+    await engine.addLink('notes/o2', 'notes/o3', '', 'mentions', 'manual');
+
+    const nodes = await operationsByName.traverse_graph.handler(ctx({ remote: false }), {
+      slug: 'knowledge/kcs/target',
+    }) as Array<{ slug: string }>;
+
+    expect(nodes.map(n => n.slug)).toContain('notes/o3');
+  });
+});
