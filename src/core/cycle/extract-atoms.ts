@@ -13,11 +13,15 @@
 //      the page — see the write site below and #2163.
 //
 // Idempotency (per-atom, via deterministic slug):
-//   Each atom's slug is `atoms/<source-date>/<stem>-<title-hash>` — built from
-//   the SOURCE date (the transcript's own date / the page slug), NOT the run
-//   date, plus a 6-char hash of the title. Re-extracting the same atom resolves
-//   to the SAME slug, so the import upserts in place instead of minting a
-//   duplicate. This closes three bugs in one scheme:
+//   Each atom's slug is `atoms/<source-date>/<stem>-<identity-hash>` — built
+//   from the SOURCE date (the transcript's own date / the page slug), NOT the
+//   run date, plus a short identity hash. For page-derived atoms the hash
+//   folds the SOURCE-PAGE SLUG in with the title (#4733: two same-date source
+//   pages emitting the same atom title used to alias one slug, and the
+//   canonical upsert silently overwrote the first atom's binding); transcript
+//   atoms keep the legacy title-only 6-char hash. Re-extracting the same atom
+//   from the same source resolves to the SAME slug, so the import upserts in
+//   place instead of minting a duplicate. This closes three bugs in one scheme:
 //     - PR #1414's page-side re-extraction.
 //     - The cross-day transcript duplicate: append-only transcripts grow daily,
 //       so a run-date prefix (`atoms/<today>/…`) used to re-mint the same atom
@@ -890,18 +894,26 @@ export async function runPhaseExtractAtoms(
         const hash16 = item.contentHash.slice(0, 16);
         const importedSlugs: string[] = [];
         // #3961: provenance edges source-page → atom, accumulated during the
-        // atom loop and flushed AFTER the completion-receipt flip so a
-        // partially-failed item never banks edges for atoms whose receipt
-        // never flipped. Page-kind items only — transcripts are files, not
+        // atom loop and flushed BEFORE the completion-receipt flip (see the
+        // write below). Page-kind items only — transcripts are files, not
         // pages, so there is no from-endpoint to link.
         const provenanceLinks: LinkBatchInput[] = [];
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
-          const slug = atomSlug(atom.title, srcRef);
+          const slug = atomSlug(
+            atom.title,
+            srcRef,
+            item.kind === 'page' ? item.slug : undefined,
+          );
           const originFrontmatter =
             item.kind === 'transcript'
               ? { source_path: item.filePath }
               : { source_slug: item.slug };
+          // #4733 fail-closed: never let the upsert repoint an atom that is
+          // bound to a DIFFERENT source page (pre-#4733 rows / hash collision).
+          if (item.kind === 'page') {
+            await assertAtomImportBinding(engine, slug, sourceId, item.slug);
+          }
           // Serialize to markdown and import via the canonical pipeline so
           // the atom is chunked (+ embedded when a provider is configured).
           // engine.putPage is a bare page-row upsert that never chunks, so
@@ -947,30 +959,28 @@ export async function runPhaseExtractAtoms(
           }
           totalAtomsExtracted++;
         }
-        // Completion receipt: flip provisional → real in one statement, then
-        // stamp the source page. A crash between flip and stamp degrades to
-        // the legacy atom-rows-mean-done semantics — safe, not lossy.
+        // #3961: bank the provenance edges so `gbrain backlinks <source-page>`
+        // and the graph surface atom lineage. ON CONFLICT-deduped by the
+        // batch write, so a retry after either this write or the completion
+        // flip converges instead of duplicating. #4733: this MUST precede the
+        // flip — discovery treats the final source_hash as complete, so
+        // swallowing a provenance failure after that point would strand a
+        // completed page with no edges forever. A failure here throws to the
+        // item catch: the provisional hashes keep the item discoverable and
+        // the deterministic slugs make the retry converge.
+        if (provenanceLinks.length > 0) {
+          await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
+        }
+        // Completion receipt: flip provisional → real in one statement (only
+        // after every atom AND provenance edge persisted), then stamp the
+        // source page. A crash between flip and stamp degrades to the legacy
+        // atom-rows-mean-done semantics — safe, not lossy.
         await engine.executeRaw(
           `UPDATE pages
               SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
             WHERE source_id = $2 AND type = 'atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`,
           [hash16, sourceId, importedSlugs],
         );
-        // #3961: bank the provenance edges so `gbrain backlinks <source-page>`
-        // and the graph surface atom lineage. ON CONFLICT-deduped by the
-        // batch write, so the deterministic-slug re-run path upserts instead
-        // of duplicating. Best-effort: a link failure must not fail the item
-        // (the receipt already flipped — atoms are safe) but it logs loudly.
-        if (provenanceLinks.length > 0) {
-          try {
-            await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.extract_atoms.provenance' }); // gbrain-allow-direct-insert: atom-provenance edges derived from the extraction itself (no markdown body to reconcile from)
-          } catch (linkErr) {
-            console.error(
-              `[extract_atoms] atom-provenance link batch failed for ${item.kind === 'page' ? item.slug : 'item'}: ` +
-              `${(linkErr as Error).message}`,
-            );
-          }
-        }
         if (item.kind === 'page') {
           await stampAtomsScanHash(item);
         }
@@ -1240,16 +1250,55 @@ function sourceDate(ref: string): string {
 }
 
 /**
- * Deterministic per-atom slug: `atoms/<source-date>/<stem>-<title-hash>`.
+ * Deterministic per-atom slug: `atoms/<source-date>/<stem>-<identity-hash>`.
  * - Date comes from the SOURCE, not the run date, so re-extracting an
  *   append-only transcript on a later day yields the SAME slug → putPage
  *   upserts instead of minting a cross-day duplicate.
- * - The 6-char title hash keeps two distinct atoms whose titles share the
- *   first 60 chars on separate slugs, so a deterministic slug never silently
- *   clobbers a *different* atom. Hash is over the title only (not body) so an
- *   LLM rewording the body on re-extraction still upserts rather than dupes.
+ * - #4733: for PAGE-derived atoms the identity hash folds the source-page
+ *   slug in with the title (8 chars, NUL-separated so `a`+`bc` can't equal
+ *   `ab`+`c`), so two same-date source pages emitting the same atom title get
+ *   DISTINCT slugs instead of aliasing one — pre-fix the second import
+ *   silently overwrote the first atom's source binding. The source CONTENT
+ *   hash is deliberately NOT folded in: an edited/reworded source page must
+ *   re-resolve to the same slug and upsert rather than mint a duplicate atom
+ *   set on every body edit (the reword-still-upserts property).
+ * - Transcript atoms keep the legacy title-only 6-char hash (their locator is
+ *   a file path, not page identity; changing their persisted slugs would
+ *   re-mint every transcript atom on upgrade for no correctness gain).
+ * - The hash suffix keeps two distinct atoms whose titles share the first 60
+ *   chars on separate slugs, so a deterministic slug never silently clobbers
+ *   a *different* atom.
  */
-function atomSlug(title: string, srcRef: string): string {
-  const hash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+function atomSlug(title: string, srcRef: string, sourcePageSlug?: string): string {
+  const hash = sourcePageSlug !== undefined
+    ? createHash('sha256').update(`${sourcePageSlug}\0${title}`).digest('hex').slice(0, 8)
+    : createHash('sha256').update(title).digest('hex').slice(0, 6);
   return `atoms/${sourceDate(srcRef)}/${atomSlugStem(title)}-${hash}`;
+}
+
+/**
+ * #4733 fail-closed identity guard: refuse to reuse a deterministic atom slug
+ * for a DIFFERENT source locator. The canonical importer is an upsert, so
+ * without this precondition a slug collision (a pre-#4733 title-only-hash row,
+ * or an 8-char hash collision) silently replaces the prior atom's body and
+ * binding. Same-locator writes pass regardless of stored source_hash — a
+ * re-extraction after a source edit (final hash moved) and a retry of this
+ * run (`pending:<hash>`) are both the deliberate upsert path; the completion
+ * flip owns the hash. Everything else throws and leaves the row untouched
+ * (the item records a failure and stays discoverable for a human/repair).
+ */
+async function assertAtomImportBinding(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+  expectedSourceSlug: string,
+): Promise<void> {
+  const existing = await engine.getPage(slug, { sourceId });
+  if (!existing) return;
+  const fm = (existing.frontmatter ?? {}) as Record<string, unknown>;
+  if (existing.type === 'atom' && fm.source_slug === expectedSourceSlug) return;
+  throw new Error(
+    `atom identity conflict for ${slug}: existing page is bound to a different source; ` +
+    'refusing to overwrite it',
+  );
 }
