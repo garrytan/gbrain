@@ -589,8 +589,10 @@ export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
  * round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of throwing
  * `TypeError: Do not know how to serialize a BigInt`. Shared by cli.ts's
  * local-result normalizer and the commands that stringify results themselves
- * (`gbrain call`, `extract --explain --json`) — commands import it from here,
- * never from the dispatcher.
+ * (`gbrain call`, the extract explain JSON view) — commands import it from
+ * here, never from the dispatcher. NOTE: no double-dash flag literals in this
+ * comment — the flag-registry generator harvests them from every module a
+ * command transitively imports, and utils.ts is imported by nearly all.
  */
 export function bigintToStringReplacer(_key: string, value: unknown): unknown {
   return typeof value === 'bigint' ? value.toString() : value;
