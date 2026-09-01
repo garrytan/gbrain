@@ -172,6 +172,11 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     tools: buildToolDefs(await stdioVisibleTools(engine, surfacedOps), { strictParams }),
   })));
 
+  // #4583 (fixes #4564's misrouted-write symptom): latch so the "unscoped
+  // default write on a multi-source brain" warning fires at most once per
+  // serve process (avoids log spam per call).
+  let warnedDefaultWrite = false;
+
   // Dispatch tool calls via shared dispatch.ts (parity with HTTP transport).
   // MCP stdio callers are remote/untrusted; dispatch defaults remote=true.
   // The MCP SDK's response type widened in 1.29 to allow a managed-task wrapper;
@@ -197,6 +202,24 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
     const sessionId = typeof rawMetaSession === 'string' && rawMetaSession.length > 0
       ? rawMetaSession
       : undefined;
+    // #4583 rework: warn (once per process) when a MUTATING call's RESOLVED
+    // source scope actually lands in 'default' (tier seed_default) on a
+    // bulk-non-default brain. Keyed on the already-computed resolution tier —
+    // NOT on raw GBRAIN_SOURCE presence — so dotfile / local_path /
+    // brain_default pins never false-positive. No `--source` flag exists on
+    // this transport, so warn instead of refusing the agent's write; skipped
+    // under --source-guard (the opt-in fail-closed guard owns that lane).
+    if (!warnedDefaultWrite && !opts.sourceGuard) {
+      const op = operations.find(o => o.name === name);
+      try {
+        const { maybeWarnUnscopedDefaultWrite } = await import('../core/source-resolver.ts');
+        const warning = await maybeWarnUnscopedDefaultWrite(engine, sourceScope.tier, op?.mutating === true);
+        if (warning) {
+          process.stderr.write(warning + '\n');
+          warnedDefaultWrite = true;
+        }
+      } catch { /* advisory; never block a write */ }
+    }
     return dispatchToolCall(engine, name, params, {
       remote: true,
       // #1061: mark the transport so whoami can report {transport: 'stdio'}
