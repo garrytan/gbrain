@@ -339,6 +339,22 @@ test files, 11 of them new.
   boundary and to mirror over the thin client (#4720); `reranker_health`
   warns at three or more audited pass-throughs (#4648).
 
+- **Open-loop extraction resilience (red-team round).** With no chat
+  provider configured (a keyless install or a provider outage) the sweep
+  enqueues no extraction jobs and says so once on stderr; the threads are
+  picked up on their next touch, or by `gbrain sync --source <id> --full`
+  once a provider exists. A job that finds the provider unavailable fails
+  visibly and retries instead of completing empty, so the thread stays
+  re-enqueueable (#4724). Eligibility requires a substantive owner-written
+  message: an RSVP to a calendar invite no longer pays for a model call, and
+  the per-source enqueue budget counts every pending job (waiting, delayed,
+  active). The junk-fact gate's provider-error pattern is anchored to the
+  error-sentence shape, so genuine spend-limit and rate-limit facts survive
+  (#3852). `get_page`'s alias hop surfaces a transport error instead of
+  degrading to not-found (#4275). The overlapping-path guard behind
+  `sources add` and `sources set-path` compares real paths, so a symlink
+  into another source's tree is refused unless `--force` (#4739).
+
 With thanks to every contributor whose pull request this wave adopts:
 @1kuna, @avs-io, @chrispaterson, @danwiggins, @DarkNightForge, @Grimnoth,
 @javieraldape, @jcnouwens, @jonathanlesh, @jpark43, @Masashi-Ono0611,

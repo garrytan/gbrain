@@ -67,7 +67,13 @@ Guardrails: injection-hardened input (the model sees the NEWEST 12k of the
 thread, so the latest reply is always visible to the judge), ALL-or-nothing
 parse barrier (a malformed model response writes nothing), only the last 30
 days of mail (the deep backfill is never extracted), kill switch
-`gbrain config set loops.extraction_enabled false`. Sender/thread
+`gbrain config set loops.extraction_enabled false`. With no chat provider
+configured (a keyless install, or an outage) the sweep enqueues no
+extraction jobs and logs one line saying so — the email pages still import,
+and the threads are extracted on their next touch or by
+`gbrain sync --source <id> --full` once a provider exists; a job that hits
+the outage mid-flight retries and, if it dies, frees its slot rather than
+completing empty. Sender/thread
 suppressions are shared by both detectors: `loops mute` also stops the LLM
 lane from recreating a commitment or decision for a muted sender/thread,
 while leaving the underlying email page searchable. A sender mute gates on
@@ -84,7 +90,7 @@ calls nor crowds real correspondence out of the sweep:
 | shape | eligible |
 |---|---|
 | `SPAM` / `TRASH` | no — whoever wrote them |
-| any message the account owner wrote (`SENT` label or a known owner address) | **yes, overriding every rule below** |
+| a substantive message the account owner wrote (`SENT` label or a known owner address; a calendar RSVP or other noise does not count) | **yes, overriding every rule below** |
 | pure noise senders / pure calendar notices | no |
 | `CATEGORY_PROMOTIONS` / `CATEGORY_SOCIAL` / `CATEGORY_FORUMS` | no, unless the owner joined in |
 | `List-Unsubscribe` bulk | no, unless the owner joined in |
