@@ -127,6 +127,7 @@ function emptyState(): GoogleSourceState {
     gmail_backfill_done: false,
     gmail_newest_ms: null,
     calendar_sync_token: null,
+    calendar_id: null,
     contacts_sync_token: null,
     last_full_at: null,
   };
@@ -404,6 +405,17 @@ async function sweepCalendar(
     timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
     timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
   };
+  // The stored token is bound to the calendar it was minted for (legacy state
+  // without calendar_id predates secondary calendars, so it was primary's).
+  // A re-pointed source starts a fresh window; pairing the NEW calendar with
+  // the OLD cursor would silently import a foreign delta.
+  const tokenCalendarId = state.calendar_id ?? DEFAULT_CALENDAR_ID;
+  if (state.calendar_sync_token && tokenCalendarId !== deps.cfg.calendarId) {
+    deps.log(
+      `[google] calendar changed (${tokenCalendarId} → ${deps.cfg.calendarId}); discarding its sync token, windowed re-list`,
+    );
+    state.calendar_sync_token = null;
+  }
   let result;
   try {
     result = await calendar.listEvents(deps.cfg.account, {
@@ -442,7 +454,10 @@ async function sweepCalendar(
     }
     await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
   }
-  if (result.nextSyncToken) state.calendar_sync_token = result.nextSyncToken;
+  if (result.nextSyncToken) {
+    state.calendar_sync_token = result.nextSyncToken;
+    state.calendar_id = deps.cfg.calendarId;
+  }
 }
 
 // ── Gmail sweep ──────────────────────────────────────────────────────────────

@@ -701,6 +701,108 @@ describe('syncToken 410 recovery', () => {
     }
   });
 
+  test('calendar: the stored sync token is bound to its calendar id — re-pointing g_calendar_id discards it and re-lists windowed', async () => {
+    // Ship-review fix: the persisted token was not bound to the calendar it
+    // was minted for, so changing g_calendar_id paired the NEW calendar with
+    // the OLD token (a foreign delta cursor) instead of a fresh window.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calrebind-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const secondary = 'family0123456789@group.calendar.google.com';
+    fx.calendarEvents = [
+      {
+        id: 'evt00000000000003',
+        status: 'confirmed',
+        summary: 'Family dinner',
+        start: { dateTime: new Date(daysAgoMs(1)).toISOString() },
+        end: { dateTime: new Date(daysAgoMs(1) + 3_600_000).toISOString() },
+        organizer: { email: 'a@example.com' },
+        attendees: [{ email: 'a@example.com', self: true, responseStatus: 'accepted' }],
+      },
+    ];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        // State minted against PRIMARY, then the source is re-pointed.
+        writeFileSync(
+          googleStateFile(dir),
+          JSON.stringify({
+            gmail_history_id: null,
+            gmail_backfill_floor_ms: null,
+            gmail_backfill_done: false,
+            gmail_newest_ms: null,
+            calendar_sync_token: 'cal-sync-stale-primary',
+            calendar_id: 'primary',
+            contacts_sync_token: null,
+            last_full_at: null,
+          }),
+          'utf-8',
+        );
+        const { result: res, err } = await capturedStderr(() =>
+          sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_calendar_id: secondary } }),
+        );
+        expect(res.status).not.toBe('partial');
+        expect(res.added).toBe(1);
+        // Fresh window: no syncToken on the wire, exactly one windowed list.
+        const calendarCalls = fx.calls.filter((c) => c.includes('/calendars/'));
+        expect(calendarCalls.length).toBe(1);
+        expect(calendarCalls[0]).not.toContain('syncToken=');
+        expect(fx.calendarWindowedLists).toBe(1);
+        // Token rebound to the calendar it now belongs to; the switch is logged.
+        const state = readGoogleState(dir);
+        expect(state.calendar_sync_token).toBe('cal-sync-w1');
+        expect(state.calendar_id).toBe(secondary);
+        expect(err).toContain('[google] calendar changed');
+        expect(err).toContain(secondary);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("calendar: a legacy token with no calendar_id is primary's — primary keeps its delta, a secondary re-lists windowed", async () => {
+    const legacyState = {
+      gmail_history_id: null,
+      gmail_backfill_floor_ms: null,
+      gmail_backfill_done: false,
+      gmail_newest_ms: null,
+      calendar_sync_token: 'cal-sync-legacy',
+      contacts_sync_token: null,
+      last_full_at: null,
+    };
+    const dirA = mkdtempSync(join(tmpdir(), 'gsrc-callegacy-a-'));
+    const dirB = mkdtempSync(join(tmpdir(), 'gsrc-callegacy-b-'));
+    try {
+      await withHome(async () => {
+        // A: still primary → the legacy token is used as a delta cursor and
+        // gets bound to primary on the way out.
+        const fxA = emptyFx();
+        await insertGoogleSource(dirA);
+        writeFileSync(googleStateFile(dirA), JSON.stringify(legacyState), 'utf-8');
+        await sweep(dirA, fxA, makeVault(), {}, 'calendar');
+        expect(fxA.calendarWindowedLists).toBe(0);
+        expect(fxA.calls.filter((c) => c.includes('/calendars/'))[0]).toContain('syncToken=cal-sync-legacy');
+        const stateA = readGoogleState(dirA);
+        expect(stateA.calendar_sync_token).toBe('cal-sync-delta');
+        expect(stateA.calendar_id).toBe('primary');
+
+        // B: re-pointed at a secondary → the primary token is discarded.
+        const fxB = emptyFx();
+        await engine.executeRaw(`DELETE FROM sources WHERE id = 'gsrc'`);
+        await insertGoogleSource(dirB);
+        writeFileSync(googleStateFile(dirB), JSON.stringify(legacyState), 'utf-8');
+        const secondary = 'family0123456789@group.calendar.google.com';
+        await sweep(dirB, fxB, makeVault(), {}, 'calendar', { cfg: { g_calendar_id: secondary } });
+        expect(fxB.calendarWindowedLists).toBe(1);
+        expect(fxB.calls.filter((c) => c.includes('/calendars/'))[0]).not.toContain('syncToken=');
+        expect(readGoogleState(dirB).calendar_id).toBe(secondary);
+      });
+    } finally {
+      rmSync(dirA, { recursive: true, force: true });
+      rmSync(dirB, { recursive: true, force: true });
+    }
+  });
+
   test('contacts: an expired syncToken re-lists in full and stores the fresh token', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl410-'));
     const fx = emptyFx();

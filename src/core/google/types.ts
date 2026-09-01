@@ -60,6 +60,14 @@ export interface GoogleSourceState {
    */
   gmail_fail_counts?: Record<string, number>;
   calendar_sync_token: string | null;
+  /**
+   * Calendar id `calendar_sync_token` was minted for. A token is only valid
+   * against its own calendar: when g_calendar_id changes, the sweep discards
+   * the token and re-lists windowed instead of pairing the new calendar with
+   * the old cursor. Absent on legacy state, which predates secondary
+   * calendars and was therefore always primary's.
+   */
+  calendar_id?: string | null;
   contacts_sync_token: string | null;
   last_full_at: string | null;
 }
