@@ -111,6 +111,31 @@ describe('rrfFusion', () => {
     expect(results.find((r) => r.slug === 'title-only')?.score).toBe(1);
   });
 
+  // #4256 / #3695 boundary: the synthetic-title-row predicate is
+  // `chunk_id === 0 AND chunk_text blank`. Only that exact pair is a
+  // chunkless placeholder — a real chunk that happens to be chunk 0, or an
+  // empty-text row with a real chunk_id, must keep the boost. A single-row
+  // list normalizes to 1.0, so the fused score reads 2 (boosted) or 1 (not).
+  test.each([
+    ['chunk_id 0 + real text', 0, 'real compiled text', true],
+    ['nonzero chunk_id + empty text', 42, '', true],
+    ['chunk_id 0 + whitespace-only text', 0, '   ', false],
+    ['chunk_id 0 + undefined text', 0, undefined, false],
+    ['chunk_id 0 + empty text', 0, '', false],
+  ])('compiled-truth boost predicate: %s → boosted=%p', (_label, chunkId, chunkText, boosted) => {
+    const row = makeResult({
+      slug: 'boundary',
+      chunk_id: chunkId,
+      chunk_text: chunkText as unknown as string,
+      chunk_source: 'compiled_truth',
+    });
+    const fused = rrfFusion([[row]], 60);
+    expect(fused).toHaveLength(1);
+    expect(fused[0].score).toBe(boosted ? 2 : 1);
+    const weighted = rrfFusionWeighted([{ list: [row], k: 60 }]);
+    expect(weighted[0].score).toBe(boosted ? 2 : 1);
+  });
+
   test('returns empty for empty lists', () => {
     expect(rrfFusion([], 60)).toEqual([]);
     expect(rrfFusion([[]], 60)).toEqual([]);
