@@ -51,6 +51,7 @@ import {
   checkFederationHealth,
   checkSelfUpgradeHealth,
   multiSourceDriftGitRootSkipNote,
+  computeExtractAtomsBacklogCheck,
 } from '../doctor.ts';
 import {
   checkSchemaPackActive,
@@ -382,6 +383,12 @@ export async function doctorReportRemote(
   // Postgres brains are exactly who can't otherwise see the extraction backlog.
   // Brain-wide here (remote --source scoping is a separate TODO, like orphan_ratio).
   checks.push(await checkLinksExtractionLag(engine));
+
+  // #4576 (related gap): extract_atoms_backlog was absent from the
+  // thin-client surface, so an MCP-only caller couldn't see the backlog at
+  // all. SQL counts + pack/config reads on the server side — the env that
+  // actually runs (or fails to run) the cycle.
+  checks.push(await computeExtractAtomsBacklogCheck(engine));
 
   // v0.39 T7 + T9 — schema-pack health checks (3 checks per v0.38 plan):
   //   schema_pack_active        — active pack resolves cleanly

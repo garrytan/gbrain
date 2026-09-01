@@ -526,18 +526,71 @@ async function countExtractAtomsBacklogBySource(
   }
 }
 
+function buildExtractAtomsDrainCommand(
+  bySource: Array<{ source_id: string; backlog: number }> | null,
+): string {
+  if (!bySource || bySource.length === 0) {
+    return `gbrain dream --phase extract_atoms --drain --source <source-id> --window 120`;
+  }
+  if (bySource.length === 1) {
+    return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120`;
+  }
+  const sources = bySource.map((row) => row.source_id).join(', ');
+  return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources})`;
+}
+
 function buildExtractAtomsBacklogFixHint(
   bySource: Array<{ source_id: string; backlog: number }> | null,
 ): string {
-  const suffix = '(or declare extract_atoms in your active schema pack)';
-  if (!bySource || bySource.length === 0) {
-    return `gbrain dream --phase extract_atoms --drain --source <source-id> --window 120 ${suffix}`;
+  const drain = buildExtractAtomsDrainCommand(bySource);
+  if (bySource && bySource.length > 1) {
+    // Multi-source form already ends in a parenthetical — fold the
+    // declare-suggestion into it.
+    return drain.replace(/\)$/, '; or declare extract_atoms in your active schema pack)');
   }
-  if (bySource.length === 1) {
-    return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 ${suffix}`;
+  return `${drain} (or declare extract_atoms in your active schema pack)`;
+}
+
+/**
+ * #4576 — evidence that a full routine cycle actually completes on this host.
+ * Reads the most recent `last_full_cycle_at` across local_path sources — the
+ * canonical "this whole cycle completed" stamp runCycle's exit hook writes
+ * and `cycle_freshness` reads. Freshness window is the same
+ * GBRAIN_CYCLE_FRESHNESS_WARN_HOURS knob (default 6h) cycle_freshness warns
+ * at. `unknown` (sources unreadable) is fail-open: callers must not warn on it.
+ */
+type FullCycleEvidence =
+  | { state: 'fresh' | 'stale'; latestIso: string; ageHours: number; warnHours: number }
+  | { state: 'never'; latestIso: null; warnHours: number }
+  | { state: 'unknown' };
+
+async function latestFullCycleEvidence(
+  engine: BrainEngine,
+  nowMs = Date.now(),
+): Promise<FullCycleEvidence> {
+  const warnHours = _resolveSyncFreshnessHours('GBRAIN_CYCLE_FRESHNESS_WARN_HOURS', 6);
+  try {
+    const sources = await engine.listAllSources({ localPathOnly: true });
+    let latest = Number.NEGATIVE_INFINITY;
+    let latestIso: string | null = null;
+    for (const src of sources) {
+      const raw = src.config?.last_full_cycle_at;
+      if (typeof raw !== 'string') continue;
+      const t = new Date(raw).getTime();
+      if (Number.isFinite(t) && t > latest) {
+        latest = t;
+        latestIso = raw;
+      }
+    }
+    if (latestIso === null) return { state: 'never', latestIso: null, warnHours };
+    const ageHours = Math.max(0, Math.floor((nowMs - latest) / 3_600_000));
+    // Future timestamps (clock skew) count as fresh — cycle_freshness owns
+    // the clock-skew signal; this check only needs "does anything run?".
+    const state = nowMs - latest <= warnHours * 3_600_000 ? 'fresh' : 'stale';
+    return { state, latestIso, ageHours, warnHours };
+  } catch {
+    return { state: 'unknown' };
   }
-  const sources = bySource.map((row) => row.source_id).join(', ');
-  return `gbrain dream --phase extract_atoms --drain --source ${bySource[0]!.source_id} --window 120 (repeat for backlog source(s): ${sources}; or declare extract_atoms in your active schema pack)`;
 }
 
 /**
@@ -592,7 +645,38 @@ export async function computeExtractAtomsBacklogCheck(
     }
 
     if (declared) {
-      // Pack runs it; the routine cycle drains in bounded batches. Informational.
+      // #4576: "the pack runs it each cycle" is only reassurance when
+      // something actually RUNS the cycle. Gate the OK on evidence — on a
+      // host with no autopilot/cron install nothing runs the phase, the
+      // backlog grows forever, and this branch used to report ok the whole
+      // time (the same silent-backlog failure mode #1678 closed for the
+      // !declared branch, reopened through a different door).
+      const evidence = backlog > 10 ? await latestFullCycleEvidence(engine) : null;
+      if (evidence && (evidence.state === 'never' || evidence.state === 'stale')) {
+        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+        const drain = buildExtractAtomsDrainCommand(backlogBySource);
+        const since = evidence.state === 'never'
+          ? 'no full cycle has ever completed'
+          : `no full cycle has completed in ${evidence.ageHours}h (warn window ${evidence.warnHours}h)`;
+        return {
+          name, status: 'warn',
+          message:
+            `${backlog} page(s) pending and the active pack declares extract_atoms, but ${since} — ` +
+            `nothing appears to run the cycle. Install the scheduler: gbrain autopilot --install. ` +
+            `Or drain now: ${drain}`,
+          details: {
+            backlog,
+            backlog_by_source: backlogBySource ?? undefined,
+            pack_declares_phase: true,
+            cycle_evidence: evidence.state,
+            last_full_cycle_at: evidence.latestIso ?? undefined,
+            fix_hint: drain,
+            known_approximation: approx,
+          },
+        };
+      }
+      // Pack runs it AND a cycle completed recently (or the backlog is small,
+      // or evidence is unreadable — fail-open). Informational.
       return {
         name, status: 'ok',
         message: `${backlog} page(s) pending; active pack runs extract_atoms each cycle`,
