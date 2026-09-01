@@ -26,7 +26,7 @@
  * refuses to fabricate provenance).
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { HostSpecTarget } from '../bootstrap/host-specs.ts';
 import type {
@@ -98,6 +98,41 @@ export function isGrokSessionSidecar(path: string): boolean {
   if (segs.some((s) => GROK_UUID_RE.test(s))) return true;
   if (GROK_CWD_SIDECARS.has(base)) return true;
   return base === 'session_search.sqlite';
+}
+
+/**
+ * Evidence-checked variant of isGrokSessionSidecar for EXPLICIT user paths
+ * (`gbrain transcripts ingest <path>`). The bare-UUID/basename heuristics
+ * above are deliberately broad and FORMAT-SCOPED: discovery applies them only
+ * under the grok root. Explicit paths carry no format scope, so this variant
+ * only claims a path as a grok sidecar when a real grok session log is
+ * actually present — a `chat_history.jsonl` inside the UUID path segment that
+ * matched, or (for the per-cwd sidecars like prompt_history.jsonl) inside a
+ * sibling `<uuid>/` directory. Without the evidence check, an explicit
+ * session file under ANY UUID-named directory was silently dropped from
+ * ingestion.
+ */
+export function isGrokSessionSidecarStrict(path: string): boolean {
+  if (!isGrokSessionSidecar(path)) return false;
+  const segs = path.split(/[/\\]/);
+  for (let i = segs.length - 2; i >= 0; i--) {
+    if (!GROK_UUID_RE.test(segs[i])) continue;
+    if (existsSync(join(segs.slice(0, i + 1).join('/'), GROK_CHAT_HISTORY))) return true;
+  }
+  const base = basename(path);
+  if (GROK_CWD_SIDECARS.has(base) || base === 'session_search.sqlite') {
+    try {
+      const dir = dirname(path);
+      for (const entry of readdirSync(dir)) {
+        if (GROK_UUID_RE.test(entry) && existsSync(join(dir, entry, GROK_CHAT_HISTORY))) {
+          return true;
+        }
+      }
+    } catch {
+      // Unreadable directory — not provably a grok tree; keep the file.
+    }
+  }
+  return false;
 }
 
 function textFromUserContent(content: unknown): string {

@@ -20,7 +20,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
-import { isGrokSessionSidecar } from '../core/transcripts/grok.ts';
+import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
 
 interface RecentOpts {
   days?: number;
@@ -239,9 +239,13 @@ const IMPORTABLE_EXTENSIONS = ['.jsonl', '.db', '.json'];
  * metadata, editor backups, READMEs) becomes a permanent per-file error that
  * breaks cleanScan on every run, silently killing the since-last resume for
  * directory scopes. Checkpoint snapshots and Grok session sidecars
- * (updates.jsonl, summary.json, prompt_history.jsonl, …) are never imported.
+ * (updates.jsonl, summary.json, prompt_history.jsonl, …) are never imported —
+ * via the STRICT (evidence-checked) grok predicate: these are user-supplied
+ * paths with no format scope, and the broad bare-UUID heuristic silently
+ * dropped explicit sessions that merely lived under a UUID-named directory.
+ * Exported for tests.
  */
-async function expandPaths(specs: string[]): Promise<string[]> {
+export async function expandPaths(specs: string[]): Promise<string[]> {
   const { statSync } = await import('node:fs');
   const { homedir } = await import('node:os');
   const out: string[] = [];
@@ -274,7 +278,9 @@ async function expandPaths(specs: string[]): Promise<string[]> {
       out.push(spec);
     }
   }
-  return [...new Set(out)].filter((p) => !isOpenclawCheckpointFile(p) && !isGrokSessionSidecar(p));
+  return [...new Set(out)].filter(
+    (p) => !isOpenclawCheckpointFile(p) && !isGrokSessionSidecarStrict(p),
+  );
 }
 
 export function fmtSummary(r: TranscriptsIngestResult): string {
