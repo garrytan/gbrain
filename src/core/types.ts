@@ -319,6 +319,13 @@ export interface PageFilters {
    */
   slugPrefix?: string;
   /**
+   * Filter to pages whose frontmatter explicitly declares a storage tier.
+   * Used by restore/status paths so per-page `storage_tier: db_only` pages
+   * can be enumerated even when their slug sits outside a configured tier
+   * directory.
+   */
+  frontmatterStorageTier?: 'db_tracked' | 'db_only' | 'unspecified';
+  /**
    * v0.26.5: include soft-deleted pages (rows with `deleted_at IS NOT NULL`).
    * Default false: hides soft-deleted pages from `list_pages` so agents see the
    * same set search returns. Set true to enumerate the recoverable set during

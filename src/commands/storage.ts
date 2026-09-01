@@ -153,7 +153,7 @@ export async function getStorageStatus(
   });
 
   for (const page of pages) {
-    const tier = config ? getStorageTier(page.slug, config) : 'unspecified';
+    const tier = config ? getStorageTier(page.slug, config, page.frontmatter) : 'unspecified';
     pagesByTier[tier]++;
     if (!repoPath) continue;
     const entry = fileMap.get(page.slug);
