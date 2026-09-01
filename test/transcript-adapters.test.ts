@@ -602,6 +602,94 @@ describe('grokAdapter', () => {
     expect(r.pages.planned).toBeGreaterThan(0);
   });
 
+  test('a malformed summary.json is ignored: sessionId from the UUID dir, no summary title/model, mtime provenance', async () => {
+    const p = writeGrokTree(tdir(), { summary: null });
+    writeFileSync(join(p, '..', 'summary.json'), '{"info": {"id": "should-not-win", ');
+    const mtimeIso = statSync(p).mtime.toISOString();
+    const { sessions, diag } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(1);
+    const s = sessions[0];
+    expect(s.meta.sessionId).toBe(GROK_SESSION_ID);
+    expect(s.meta.title).toBeUndefined();
+    expect(s.meta.model).toBeUndefined();
+    // Nothing from the broken sidecar leaks into the times: the log's own
+    // mtime is used and STAMPED as such (never presented as a summary time).
+    expect(s.meta.raw?.timestamp_source).toBe('file_mtime');
+    expect(s.meta.startedAt).toBe(mtimeIso);
+    expect(diag.sessions).toBe(1);
+    expect(diag.expectedEmpty).toBe(false);
+  });
+
+  test("created_at 'yesterday' is never parsed into a fabricated timestamp", async () => {
+    // With a valid last_active_at, that real source time owns the session.
+    const withLast = writeGrokTree(tdir(), {
+      summary: {
+        info: { id: GROK_SESSION_ID, cwd: '/tmp' },
+        created_at: 'yesterday',
+        last_active_at: '2026-08-08T11:05:00.000Z',
+      },
+    });
+    const a = (await drain(grokAdapter.parse(withLast))).sessions[0];
+    expect(a.meta.startedAt).toBe('2026-08-08T11:05:00.000Z');
+    expect(a.meta.raw?.timestamp_source).toBe('summary.json');
+    for (const m of a.messages) {
+      expect(m.timestamp).toBe('2026-08-08T11:05:00.000Z');
+      expect(Number.isNaN(new Date(m.timestamp).getTime())).toBe(false);
+    }
+
+    // With ONLY the unparseable created_at, no summary time exists at all →
+    // file-mtime provenance, never 'Invalid Date' / NaN.
+    const onlyBad = writeGrokTree(tdir(), {
+      summary: { info: { id: GROK_SESSION_ID, cwd: '/tmp' }, created_at: 'yesterday' },
+    });
+    const mtimeIso = statSync(onlyBad).mtime.toISOString();
+    const b = (await drain(grokAdapter.parse(onlyBad))).sessions[0];
+    expect(b.meta.startedAt).toBe(mtimeIso);
+    expect(b.meta.raw?.timestamp_source).toBe('file_mtime');
+    expect(b.messages.every((m) => m.timestamp === mtimeIso)).toBe(true);
+    expect(JSON.stringify(b)).not.toContain('Invalid Date');
+  });
+
+  test('an oversized (70k) system head still detects via the truncated-line sniff; a claude-family key in it → false', () => {
+    const d = tdir();
+    const big = 'a'.repeat(70_000);
+    const rest =
+      '\n' +
+      JSON.stringify({ type: 'user', content: [{ type: 'text', text: 'hello' }] }) +
+      '\n' +
+      JSON.stringify({ type: 'assistant', content: 'hi', model_id: 'grok-4.6-build' }) +
+      '\n';
+    // Not named chat_history.jsonl and no UUID segment → the head sniff is
+    // the only signal; the 64KB sample truncates the first line mid-string.
+    const grokPath = join(d, 'exported-session.jsonl');
+    writeFileSync(grokPath, JSON.stringify({ type: 'system', content: big }) + rest);
+    const sample = readSample(grokPath);
+    expect(sample.length).toBeLessThan(70_000);
+    expect(grokAdapter.detect(grokPath, sample)).toBe(true);
+
+    const claudePath = join(d, 'claude-led-session.jsonl');
+    writeFileSync(
+      claudePath,
+      JSON.stringify({ type: 'system', sessionId: 'abc-123', content: big }) + rest,
+    );
+    expect(grokAdapter.detect(claudePath, readSample(claudePath))).toBe(false);
+  });
+
+  test('a percent-encoded cwd segment that fails decodeURIComponent → cwd undefined, sessionId still set', async () => {
+    const d = tdir();
+    const badEncoded = '%E0%A4%A'; // truncated multibyte escape → URIError
+    expect(() => decodeURIComponent(badEncoded)).toThrow();
+    const sessionDir = join(d, badEncoded, GROK_SESSION_ID);
+    mkdirSync(sessionDir, { recursive: true });
+    const p = join(sessionDir, 'chat_history.jsonl');
+    writeFileSync(p, readFileSync(GROK_FIXTURE, 'utf8'));
+    const { sessions } = await drain(grokAdapter.parse(p));
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].meta.sessionId).toBe(GROK_SESSION_ID);
+    expect(sessions[0].meta.cwd).toBeUndefined();
+    expect(sessions[0].meta.raw?.cwd).toBeNull();
+  });
+
   test('a summary-less session outside a UUID dir gets a stable path-hash id, not the literal "chat_history"', async () => {
     const d = tdir();
     const body =
