@@ -310,6 +310,13 @@ describe('renderThreadPage', () => {
     );
   });
 
+  test('senders lists only message AUTHORS (never To/Cc recipients), sorted', () => {
+    // twoMessageThread: charlie wrote the first message, a@ the second; dana
+    // is Cc-only. The loops lane mutes SENDERS, so recipients must not appear.
+    const md = renderThreadPage(twoMessageThread())!.markdown;
+    expect(md).toContain('senders: \n  - "a@example.com"\n  - "charlie@example.com"\nlabels:');
+  });
+
   test('per-message sections carry code-built Gmail deep links', () => {
     const md = renderThreadPage(twoMessageThread())!.markdown;
     expect(md).toContain('[Source: email "Zephyr roadmap", 2026-08-10](https://mail.google.com/mail/u/?authuser=a%40example.com#inbox/18c2f4a9b3d21e01)');

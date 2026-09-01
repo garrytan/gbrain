@@ -218,11 +218,12 @@ describe('runLoopsExtract', () => {
     }
   });
 
-  test('a muted counterparty who wrote EARLIER in the thread suppresses too (participants, not just last sender)', async () => {
+  test('a muted counterparty who wrote EARLIER in the thread suppresses too (senders, not just last sender)', async () => {
     // The suppression check used to test only fm.from — the LAST message's
     // sender — so muting a counterparty who wrote earlier in the thread let
     // the extraction sail through to the model. The rendered thread page
-    // carries every participant; all of them gate the lane.
+    // carries every SENDER (`senders`, the message authors); all of them
+    // gate the lane.
     const slug = 'emails/2026/08/2026-08-24-earlier-muted-77665544.md';
     await engine.putPage(
       slug,
@@ -236,6 +237,11 @@ describe('runLoopsExtract', () => {
           date: '2026-08-24T10:00:00Z',
           // LAST sender is NOT muted — only the earlier participant is.
           from: 'Innocent Person <innocent@example.com>',
+          senders: [
+            'Muted Counterparty <muted-counterparty@example.com>',
+            'innocent@example.com',
+            'me@example.com',
+          ],
           participants: [
             'Muted Counterparty <muted-counterparty@example.com>',
             'innocent@example.com',
@@ -260,6 +266,51 @@ describe('runLoopsExtract', () => {
       await engine.executeRaw(
         `DELETE FROM loop_suppressions WHERE source_id = $1 AND kind = 'sender' AND value = $2`,
         [SRC, 'muted-counterparty@example.com'],
+      );
+    }
+  });
+
+  test('CC-ing a muted address does NOT suppress: mutes gate SENDERS, never recipients', async () => {
+    // Ship-review fix: the check used to span every participant (senders AND
+    // recipients/CC), so muting Alice hid Bob's commitments in any group
+    // thread she was CC'd on, and an outside sender could dodge extraction by
+    // CC'ing a known-muted address. Only addresses that AUTHORED a message
+    // count.
+    const slug = 'emails/2026/08/2026-08-25-muted-cc-only-88776655.md';
+    await engine.putPage(
+      slug,
+      {
+        type: 'email',
+        title: 'Re: group thread',
+        compiled_truth: 'Bob: I will send the deck Friday.\nMe: thanks.\n',
+        frontmatter: {
+          thread_id: 'thread-88776655',
+          date: '2026-08-25T10:00:00Z',
+          from: 'Bob Example <bob@example.com>',
+          to: ['me@example.com'],
+          cc: ['muted-cc@example.com'],
+          senders: ['bob@example.com', 'me@example.com'],
+          participants: ['bob@example.com', 'me@example.com', 'muted-cc@example.com'],
+        },
+        effective_date: new Date('2026-08-25T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+    await engine.executeRaw(
+      `INSERT INTO loop_suppressions (source_id, kind, value) VALUES ($1, 'sender', $2)`,
+      [SRC, 'muted-cc@example.com'],
+    );
+    chatAvailable = true;
+    chatImpl = async () => ({ text: '{"commitments":[],"decisions_pending":[]}', stopReason: 'end' });
+    try {
+      const before = chatCalls;
+      const r = await runLoopsExtract(engine, { slug, sourceId: SRC });
+      expect(r.reason).not.toBe('suppressed');
+      expect(chatCalls).toBe(before + 1); // the thread reached the model
+    } finally {
+      await engine.executeRaw(
+        `DELETE FROM loop_suppressions WHERE source_id = $1 AND kind = 'sender' AND value = $2`,
+        [SRC, 'muted-cc@example.com'],
       );
     }
   });

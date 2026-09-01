@@ -273,23 +273,26 @@ export async function runLoopsExtract(
   // guarded deterministic opens, so the LLM lane could recreate a commitment
   // or decision for a sender/thread the operator had explicitly suppressed.
   // Check before provider availability and before any model/facts/edge write.
-  // Sender mutes cover EVERY thread participant, not just fm.from — that is
-  // only the NEWEST message's author, so a muted counterparty who wrote
-  // earlier in the thread used to sail straight through to the model. The
-  // rendered thread page carries all participants (senders + recipients).
+  // Sender mutes cover every SENDER in the thread — `fm.senders`, the message
+  // authors the renderer stamps — not just fm.from (the NEWEST author), so a
+  // muted counterparty who wrote earlier still gates the lane. Senders ONLY:
+  // recipients/CC never count, or muting one person would hide everyone
+  // else's commitments in a group thread, and an outside sender could dodge
+  // extraction by CC'ing a known-muted address. Pages rendered before
+  // `senders` existed fall back to fm.from alone.
   const suppressions = await loadSuppressions(engine, payload.sourceId);
-  const participantAddresses = new Set<string>();
+  const senderAddresses = new Set<string>();
   if (typeof fm.from === 'string' && fm.from.trim() !== '') {
-    participantAddresses.add(bareAddress(fm.from));
+    senderAddresses.add(bareAddress(fm.from));
   }
-  if (Array.isArray(fm.participants)) {
-    for (const p of fm.participants) {
-      if (typeof p === 'string' && p.trim() !== '') participantAddresses.add(bareAddress(p));
+  if (Array.isArray(fm.senders)) {
+    for (const s of fm.senders) {
+      if (typeof s === 'string' && s.trim() !== '') senderAddresses.add(bareAddress(s));
     }
   }
   if (
     suppressions.threads.has(threadId.toLowerCase()) ||
-    [...participantAddresses].some((a) => suppressions.senders.has(a))
+    [...senderAddresses].some((a) => suppressions.senders.has(a))
   ) {
     return { ...empty, reason: 'suppressed' };
   }

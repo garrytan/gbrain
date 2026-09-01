@@ -232,8 +232,12 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
   const subject = first.subject || '(no subject)';
   const signature = thread.messages.some((m) => isSignatureRequest(m.subject, m.from));
   const participants = new Set<string>();
+  // Message AUTHORS only — `loops mute sender` gates on these, never on
+  // recipients, so muting one person cannot silence a whole group thread.
+  const senders = new Set<string>();
   for (const m of thread.messages) {
     participants.add(m.fromAddress);
+    if (m.fromAddress) senders.add(m.fromAddress);
     for (const a of [...m.to, ...m.cc]) participants.add(a);
   }
 
@@ -252,6 +256,7 @@ export function renderThreadPage(thread: GmailThreadData): RenderedPage | null {
     `first_message_date: ${yamlStr(first.dateIso)}`,
     `message_count: ${thread.messages.length}`,
     `participants: ${yamlList([...participants].sort())}`,
+    `senders: ${yamlList([...senders].sort())}`,
     `labels: ${yamlList([...new Set(thread.messages.flatMap((m) => m.labelIds))].sort())}`,
     ...(signature ? [`noise: signature-request`] : []),
     '---',
