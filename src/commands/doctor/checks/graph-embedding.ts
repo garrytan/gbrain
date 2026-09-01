@@ -664,6 +664,17 @@ export const JUNK_HUB_MAX_CHUNKS = 2;
  * accretion; this check finds hubs that predate those gates so the owner
  * can review/merge/delete them deliberately.
  *
+ * The shape this heuristic looks for — near-empty content, many inbound
+ * edges — is also the intended shape of a deliberately thin index/hub page
+ * (e.g. external tooling that creates a `topic/X` page via `capture`/
+ * `put_page` specifically to aggregate mentions across many member pages).
+ * Callers that mint such pages on purpose can opt them out with
+ * `junk_hub_exempt: true` in frontmatter (optionally paired with a
+ * `junk_hub_exempt_reason` string) — same "flag by default, let the owner
+ * declare intent" idea as the `raw_trace_exempt` / `raw_trace_exempt_reason`
+ * escape hatch `rawProvenanceCheck` (#1978) uses, though that one exempts on
+ * key *presence* while this one requires the value `true` specifically.
+ *
  * `opts` exists for tests (small corpora can't reach 1000 edges); the
  * production call site uses the exported defaults.
  */
@@ -699,6 +710,7 @@ export async function checkJunkEntityHubs(
        JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
        LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
        WHERE COALESCE(cc.chunks, 0) <= $2
+         AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
        ORDER BY ec.edges DESC
        LIMIT 20`,
       [edgeThreshold, maxChunks],
@@ -723,7 +735,8 @@ export async function checkJunkEntityHubs(
         `("Will", "Info") minted by an extractor and inflated by mention auto-links:\n${list}\n` +
         `Review each page and merge/delete deliberately (nothing is auto-deleted). ` +
         `New accretion is already gated: enrichEntity refuses generic single-token mints and ` +
-        `buildGazetteer drops single-generic-token person titles.`,
+        `buildGazetteer drops single-generic-token person titles. If a page is an intentional thin ` +
+        `hub/index page, opt it out with junk_hub_exempt: true in frontmatter.`,
       details: {
         hubs: rows.map(r => ({
           slug: r.slug,
