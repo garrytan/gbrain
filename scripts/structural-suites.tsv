@@ -100,6 +100,7 @@ test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — structu
 test/doctor-orphan-ratio.test.ts	cross-surface parity contract	3	doctor-source-helper,readFileSync
 test/doctor-orphan-ratio.test.ts	runOrphanRatioCheck — thin-client surface (D11)	1	readFileSync
 test/doctor-schema-column-diff.test.ts	doctor schema_version wires the column diff (#4421)	1	doctor-source-helper
+test/doctor-skills-dir.test.ts	doctor --skills-dir (#4673)	3	readFileSync
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — honors the recorded pid_file (custom --pid-file)	2	doctor-source-helper
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — pid_file fallback (source-grep)	1	doctor-source-helper
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync

@@ -5,7 +5,7 @@ import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport } from '../core/dry-fix.ts';
-import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
+import { parseFlags as parseSkillsDirFlags, resolveSkillsDir } from './check-resolvable.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
@@ -707,13 +707,17 @@ export async function buildChecks(
   //
   // We also skip `--fix` execution under scope=brain because --fix
   // exclusively targets DRY violations inside SKILL.md files. Use the same
-  // auto-detect as `check-resolvable` so doctor sees a workspace/skills dir
-  // reachable via $OPENCLAW_WORKSPACE or ~/.openclaw/workspace, not just a
-  // `skills/` walked up from cwd. Read-only variant adds the install-path
-  // fallback so a hosted-CLI install run from `~` (e.g., `bun install -g
-  // github:garrytan/gbrain && cd ~ && gbrain doctor`) can still find the
-  // bundled skills/ dir without warning.
-  const detected = scope === 'all' ? autoDetectSkillsDirReadOnly() : { dir: null, source: 'none' as const };
+  // resolution as `check-resolvable` (#4673: flag-first — doctor accepted
+  // `--skills-dir` and silently ignored it, so every skill check graded the
+  // auto-detected workspace and `--fix` could write SKILL.md edits into a
+  // workspace the operator explicitly steered away from). Sharing
+  // check-resolvable's exported resolveSkillsDir keeps the three skills-dir
+  // commands (doctor, check-resolvable, routing-eval) on one precedence:
+  // --skills-dir → $GBRAIN_SKILLS_DIR / $OPENCLAW_WORKSPACE / walk-up →
+  // install-path read-only fallback. `source: 'explicit'` correctly bypasses
+  // the install_path --fix refusal below — an explicit flag is exactly the
+  // operator signal that gate wants.
+  const detected = scope === 'all' ? resolveSkillsDir(parseSkillsDirFlags(args)) : { dir: null, source: 'none' as const };
   const skillsDir = detected.dir;
   if (scope === 'all' && skillsDir) {
 
