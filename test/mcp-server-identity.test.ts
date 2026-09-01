@@ -30,6 +30,22 @@ describe('resolveMcpInstructions', () => {
     ).toEndWith('Deployment identity:\nCompany brain');
   });
 
+  test('an empty or whitespace-only env value is unset — it does NOT blank a configured identity', () => {
+    // A shell that exports GBRAIN_MCP_INSTRUCTIONS='' (or '   ') has not set
+    // an identity; the file config must still win instead of the env
+    // shadowing it into the bare canonical contract.
+    for (const blank of ['', '   ', '\n\t']) {
+      expect(
+        resolveMcpInstructions(
+          { mcp: { instructions: 'Personal brain' } },
+          { GBRAIN_MCP_INSTRUCTIONS: blank },
+        ),
+      ).toEndWith('Deployment identity:\nPersonal brain');
+    }
+    // And with nothing configured either, a blank env is still byte-identical.
+    expect(resolveMcpInstructions({}, { GBRAIN_MCP_INSTRUCTIONS: '' })).toBe(GBRAIN_MCP_INSTRUCTIONS);
+  });
+
   test('blank or absent identity keeps the canonical contract byte-identical', () => {
     expect(resolveMcpInstructions({ mcp: { instructions: '   ' } }, {})).toBe(
       GBRAIN_MCP_INSTRUCTIONS,

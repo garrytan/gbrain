@@ -30,7 +30,11 @@ export function resolveMcpInstructions(
   config: Pick<GBrainConfig, 'mcp'> | null | undefined,
   env: Env = process.env,
 ): string {
-  const deploymentIdentity = (env.GBRAIN_MCP_INSTRUCTIONS ?? config?.mcp?.instructions)?.trim();
+  // An empty / whitespace-only env value is UNSET, not an override: with `??`
+  // an exported-but-blank GBRAIN_MCP_INSTRUCTIONS='' shadowed a configured
+  // mcp.instructions and silently blanked the deployment identity.
+  const fromEnv = env.GBRAIN_MCP_INSTRUCTIONS?.trim();
+  const deploymentIdentity = fromEnv || config?.mcp?.instructions?.trim();
   if (!deploymentIdentity) return GBRAIN_MCP_INSTRUCTIONS;
   return `${GBRAIN_MCP_INSTRUCTIONS}\n\nDeployment identity:\n${deploymentIdentity}`;
 }
