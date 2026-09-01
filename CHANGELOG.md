@@ -2,6 +2,80 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.0.0] - 2026-09-01
+
+The eval retrieval fix wave. Honest re-baselining against the public
+LongMemEval benchmark caught a serious unpublished regression in hybrid
+search and fixed it, and the OpenClaw context lane caught up to the
+volunteer layer Claude Code users already had. Measured, receipted, and
+republished in gbrain-evals alongside this release.
+
+### Fixed
+
+- **Hybrid search no longer lets keyword-fallback noise outvote your real
+  results.** Since the AND→OR keyword fallback shipped, a search whose exact
+  words didn't co-occur in any one chunk could bury the semantically right
+  answers under loose word matches. Measured on LongMemEval's official
+  `recall_all@5`: hybrid scored 51.3% while pure vector scored 93.8% on the
+  same corpus — after this fix, hybrid scores **93.2%** (201 questions
+  gained, 4 lost, out of 470). The fallback keeps its rescue role: it still
+  carries the answer when embeddings are unavailable (keyless installs,
+  provider outages, keyword-only setups). Multi-answer questions ("all the
+  doctors I saw") and temporal questions recover the most. Adversarial
+  review hardened the edges before ship: on cross-modal `both` searches the
+  image arm alone never mutes the keyword rescue (text-side health decides);
+  search meta now reports how many fallback rows were muted
+  (`relaxed_dropped`); and a transitional result set that leaned on fallback
+  rows mid embed-backfill takes the short cache TTL instead of pinning noise
+  for an hour.
+- **`GBRAIN_RETRIEVAL_REFLEX=off` now actually disables the reflex.** The
+  master switch only understood `false`/`0` while its child switches
+  accepted the full negative family (`off`, `no`, any case) — an operator
+  reaching for the incident lever got a silent no-op. All three reflex
+  switches now parse negatives identically.
+
+### Added
+
+- **Your OpenClaw now volunteers relevant pages mid-conversation, not just
+  the ones you explicitly mention.** The reflex lane gained the same
+  volunteer arm the Claude Code hook lane has had since v0.43: when the
+  conversation makes a page clearly relevant (0.7 confidence gate, up to 3
+  pages), it's offered alongside the entity pointers. BrainBench push recall
+  on the OpenClaw seam: 0.9063 → **1.0000** at precision 1.0 — every one of
+  the 9 previously-missed turns was a 4-entity turn the 3-pointer budget
+  couldn't cover. Kill switch: `retrieval_reflex_volunteer: false` in
+  `~/.gbrain/config.json` or `GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER=false`.
+- **The adaptive-return and autocut knobs are now real config keys.**
+  `gbrain config set search.adaptive_return true` (and the `_entity_max` /
+  `_other_max` / `_min_keep` caps, the four `search.autocut*` knobs, and
+  `search.crag_escalation` / `search.crag_think`) previously rejected —
+  the documented config plane was a silent no-op. Adaptive-on searches also
+  now use the semantic cache (previously always cache-cold). Note:
+  both CRAG knobs spend LLM calls per weak query when enabled — see
+  `docs/operations/spend-controls.md`.
+- **`gbrain/core/skillopt` is now a public export** (`runSkillOpt`,
+  `scoreSkillOnTasks`, `loadHeldOut`) so downstream eval harnesses stop
+  reaching through `node_modules` paths that break under non-hoisting
+  installs. This closes the last open finding from the gbrain-evals
+  2026-08-31 suite audit (237/237).
+
+### Changed
+
+- **One-time search-cache reset on upgrade** (cache key version 26 → 27):
+  the first repeat of a cached query re-runs once, then caches normally.
+  This carries the adaptive-return cache keying and the hybrid fusion fix
+  so pre-fix cached results can never be served post-fix.
+
+**Say to your agent:** *"search my brain for everything about X"* — multi-
+answer recall is dramatically better on hybrid search. — *"turn on adaptive
+return sizing"* — your agent runs `gbrain config set search.adaptive_return
+true`, now a real knob.
+
+To take advantage of v0.48.0.0: upgrade and re-run `gbrain doctor`. No
+migration needed; the search-cache reset is automatic and self-heals on
+first use. OpenClaw users get the volunteer arm immediately (default on,
+kill-switchable as above).
+
 ## [0.47.9.0] - 2026-08-31
 
 Optional Memorable integration, adopted from community PR #4537 (thank you
