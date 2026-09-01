@@ -121,6 +121,11 @@ gbrain loops unmute sender <email>   undo a mute — the detector may open new
 gbrain loops unmute thread <id>      loops for it again
 ```
 
+**Say to your agent:** *"Mute this sender's loops"* / *"unmute them"* — your
+agent runs `gbrain loops mute sender <email>` to stop tracking a sender and
+`gbrain loops unmute sender <email>` to undo it (no skill trigger backs
+mute/unmute; the agent reaches for the command directly).
+
 `gbrain waiting` and `gbrain loops list` read across **every source in the
 brain** by default (loops live in google sources, not `default` — a
 default-scoped read would say "all clean" while people wait); `--source <id>`

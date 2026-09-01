@@ -3851,7 +3851,7 @@ LINKS
         [--link-type T] [--link-source S]   filter which edges to remove
   link-sources                       List provenances in use, with edge counts
   backlinks <slug>                   Incoming links
-  graph <slug> [--depth N]           Traverse link graph (returns nodes)
+  graph <slug> [--depth N]           Traverse link graph (nodes locally; remote MCP defaults to bidirectional edges)
   graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
         [--depth N] [--direction in|out|both]
 
