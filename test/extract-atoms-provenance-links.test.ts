@@ -103,18 +103,21 @@ describe('atom provenance backlinks (#3961)', () => {
 
 describe('atom identity folds the source locator (#4733)', () => {
   test('two same-date source pages emitting the same atom title get DISTINCT atoms', async () => {
+    // Quotes are verbatim substrings of each source's own body, so the #4706
+    // extraction-time quote verification keeps them AND each atom's quote
+    // proves which source it came from.
     const sources = [
       {
         slug: 'writings/2026-08-29-alpha-brief',
         content: 'Alpha source body with an independently attributable claim.',
         contentHash: '1111111111111111',
-        quote: 'Alpha keeps its exact source quote.',
+        quote: 'Alpha source body with an independently attributable claim.',
       },
       {
         slug: 'research/2026-08-29-beta-brief',
         content: 'Beta source body with a separately attributable claim.',
         contentHash: '2222222222222222',
-        quote: 'Beta keeps its exact source quote.',
+        quote: 'Beta source body with a separately attributable claim.',
       },
     ] as const;
     for (const s of sources) {

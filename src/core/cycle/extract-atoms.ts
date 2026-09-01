@@ -70,6 +70,7 @@ import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
+import { normalizeForGrounding } from './synthesize-verify.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -219,6 +220,72 @@ interface ExtractedAtom {
 
 /** kebab-case validator for concept labels ("captive-portal", "channel-pricing"). */
 const CONCEPT_LABEL_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/**
+ * #4706 — locate a model-returned quote inside the text it was extracted from.
+ *
+ * This is the provenance step, and it runs at EXTRACTION because the
+ * alternative — matching a stored quote back to its source LATER — is not
+ * solvable: a passage and its negation ("would not improve" vs "would
+ * improve") are ~99% similar, so no after-the-fact matcher can tell which one
+ * an atom came from, and picking wrong writes a reversed claim into the
+ * brain. At extraction there is no such ambiguity: we know exactly which text
+ * was sent to the model, so the question collapses to "is this string in the
+ * text we just handed it?" — a fact rather than a guess.
+ *
+ * Folding rides `normalizeForGrounding` — the v0.47.8.0 quote-repair core in
+ * synthesize-verify.ts (the "ONE folding core" invariant: this module must
+ * mean the same thing by "normalized substring" as the repair ladder does).
+ * Everything is decided in FOLDED space, including uniqueness: a typographic
+ * twin ('“go now”' vs '"go now"') is only visible there, and returning an
+ * offset that might name the wrong passage is worse than returning none.
+ *
+ * Fail-closed on ambiguity: candidates are validated by a round-trip re-fold
+ * (folding is lossy and one-to-many — '…' → '...' — so a folded hit can land
+ * part-way through one original character), THEN counted. Zero or 2+ valid
+ * passages → null; a truncated scan (MAX_CANDIDATES exhausted with hits
+ * pending) is UNPROVEN uniqueness → null.
+ *
+ * Returns ORIGINAL-text offsets, or null when the model paraphrased.
+ */
+export function locateQuote(
+  content: string,
+  quote: string,
+): { start: number; end: number } | null {
+  if (!quote || !content) return null;
+  const c = normalizeForGrounding(content);
+  const q = normalizeForGrounding(quote);
+  if (!q.norm) return null;
+
+  // Enumerate every folded hit, keep those that survive the round-trip
+  // boundary check, THEN judge ambiguity. Order matters: rejecting on raw
+  // hit-count first would let an INVALID partial-character match veto a
+  // genuinely unique valid one ("No. First. No… not ever" has two folded
+  // hits for "no." but only the first is character-aligned).
+  const valid: Array<{ start: number; end: number }> = [];
+  const MAX_CANDIDATES = 8; // pathological input shouldn't scan a whole book
+  let at = c.norm.indexOf(q.norm);
+  let seen = 0;
+  while (at !== -1 && seen < MAX_CANDIDATES) {
+    seen++;
+    const start = c.map[at]!;
+    const end = c.map[at + q.norm.length - 1]! + 1;
+    if (
+      normalizeForGrounding(content.slice(start, end)).norm === q.norm &&
+      !valid.some(v => v.start === start && v.end === end)
+    ) {
+      valid.push({ start, end });
+    }
+    // Step by one, not by length: overlapping hits are distinct passages
+    // for ambiguity purposes.
+    at = c.norm.indexOf(q.norm, at + 1);
+  }
+  // Cap exhausted with hits still pending: uniqueness UNPROVEN → fail closed.
+  if (at !== -1) return null;
+  // Exactly one surviving passage, or we cannot say which the atom used.
+  if (valid.length !== 1) return null;
+  return valid[0]!;
+}
 
 const EXTRACT_PROMPT = `You extract atomic content nuggets from a transcript.
 
@@ -813,6 +880,12 @@ export async function runPhaseExtractAtoms(
     }
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
+    // #4706: bind the cut ONCE. This is the exact text the model receives,
+    // and quote provenance is verified against THIS rather than the full
+    // item, so a quote can only verify against text the model actually saw.
+    // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare .slice()
+    // can split a surrogate pair at the boundary).
+    const promptContent = truncateUtf8(item.content, maxInputChars);
     try {
       const result = await chat({
         model: extractModel,
@@ -820,9 +893,7 @@ export async function runPhaseExtractAtoms(
         messages: [
           {
             role: 'user',
-            // #4529/#4540: configurable input cap, cut UTF-8-safely (a bare
-            // .slice() can split a surrogate pair at the boundary).
-            content: `Source: ${originLabel}\n\n---\n\n${truncateUtf8(item.content, maxInputChars)}`,
+            content: `Source: ${originLabel}\n\n---\n\n${promptContent}`,
           },
         ],
         maxTokens: maxOutputTokens,
@@ -914,6 +985,27 @@ export async function runPhaseExtractAtoms(
           if (item.kind === 'page') {
             await assertAtomImportBinding(engine, slug, sourceId, item.slug);
           }
+          // #4706: pin the quote to its origin, or don't claim one. Located:
+          // store the ORIGINAL characters (not the model's rendering, so
+          // typographic drift can't accumulate) + [start, end) offsets into
+          // promptContent — valid against the full item too, because the cut
+          // is a prefix. Not located: the model paraphrased; drop the quote
+          // rather than persist an unverifiable one (an atom without a
+          // quotation is honest; one with a fabricated quote is not, and
+          // body/lesson/concepts stay useful either way). Verified against
+          // ONLY what the model received: searching the whole item would let
+          // a hallucinated quote that happens to appear beyond the input cap
+          // be stamped as verified provenance.
+          const loc = locateQuote(promptContent, atom.source_quote ?? '');
+          const quoteFields = atom.source_quote
+            ? (loc
+                ? {
+                    source_quote: promptContent.slice(loc.start, loc.end),
+                    source_quote_offset: [loc.start, loc.end],
+                    source_quote_verified: true,
+                  }
+                : { quote_unverified: 'model paraphrased; not present in source' })
+            : {};
           // Serialize to markdown and import via the canonical pipeline so
           // the atom is chunked (+ embedded when a provider is configured).
           // engine.putPage is a bare page-row upsert that never chunks, so
@@ -931,7 +1023,7 @@ export async function runPhaseExtractAtoms(
               ...originFrontmatter,
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
-              ...(atom.source_quote && { source_quote: atom.source_quote }),
+              ...quoteFields,
               ...(atom.lesson && { lesson: atom.lesson }),
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),

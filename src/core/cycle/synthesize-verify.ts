@@ -174,6 +174,10 @@ function foldForGrounding(s: string, withMap: boolean): { norm: string; map: num
     if (ch === '‘' || ch === '’' || ch === 'ʼ') ch = "'";
     else if (ch === '“' || ch === '”') ch = '"';
     else if (ch === '–' || ch === '—' || ch === '−') ch = '-';
+    // #4706: models render '…' as three dots; fold so quote provenance and
+    // grounding agree. One-to-many like the toLowerCase expansions below —
+    // every emitted unit maps to the ellipsis' original index.
+    else if (ch === '…') ch = '...';
     if (pendingSpace) {
       out.push(' ');
       if (withMap) map.push(map.length > 0 ? map[map.length - 1] : i);
