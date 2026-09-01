@@ -1681,6 +1681,20 @@ export async function buildChecks(
     // unparseable config.json lands here and skips, same fail-open posture).
   }
 
+  // 3a-bis. default_source_local_path (#4739, narrowed). A null
+  // default.local_path is the DESIGNED fallback topology (pages nest under
+  // sync.repo_path), so this only warns when that fallback demonstrably
+  // fails: file-backed default pages with no resolvable root, or a
+  // sync.repo_path the #2018 leak guard silently skips. Logic lives in
+  // doctor/checks/default-source-path.ts (module-dir rule).
+  if (engine !== null) try {
+    const { defaultSourceLocalPathCheck } = await import('./doctor/checks/default-source-path.ts');
+    const dspCheck = await defaultSourceLocalPathCheck(engine!);
+    if (dspCheck) checks.push(dspCheck);
+  } catch {
+    // Best-effort. A broken sources table should not stop doctor.
+  }
+
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
   // Pre-v0.30.3 putPage misrouted multi-source writes to (default, slug).
   // For each non-default source with local_path set, walk the FS and surface
