@@ -217,7 +217,7 @@ jobs:
           # above already run this same workflow, plus live-key token
           # spenders (this job carries no provider keys, so they would
           # self-skip anyway — the list makes the spend guarantee explicit).
-          EXCLUDE='test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/engine-parity.test.ts test/e2e/serve-http-multi-agent.test.ts test/e2e/postgres-bootstrap.test.ts test/e2e/sync-delegation-under-serve.serial.test.ts test/e2e/dream-synthesize-pglite.test.ts test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts test/e2e/voyage-rerank-live.test.ts test/e2e/voyage-multimodal.test.ts'
+          EXCLUDE='test/e2e/op-checkpoint-jsonb-parity.test.ts test/e2e/jsonb-roundtrip.test.ts test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts test/e2e/engine-parity.test.ts test/e2e/serve-http-multi-agent.test.ts test/e2e/postgres-bootstrap.test.ts test/e2e/sync-delegation-under-serve.serial.test.ts test/e2e/dream-synthesize-pglite.test.ts test/e2e/skills.test.ts test/e2e/zeroentropy-live.test.ts test/e2e/voyage-rerank-live.test.ts test/e2e/voyage-multimodal.test.ts'
           : > /tmp/run.txt
           while IFS= read -r f; do
             [ -z "$f" ] && continue
@@ -290,7 +290,15 @@ jobs:
       - name: Run Tier 1 E2E tests
         # job-isolation rides tier1 deliberately: e2e.yml runs only explicitly
         # NAMED files (no glob) — an unwired e2e file is silent coverage loss.
-        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts
+        # sync-reconcile-postgres joins for the same reason (#4568): it only
+        # ran nightly via the coverage-full-e2e schedule-only glob, so a
+        # regression in the reconcile's real-Postgres array-parameter
+        # binding path could reach master with every PR lane green. It
+        # already uses the same setupDB/teardownDB TRUNCATE-reset pattern
+        # (test/e2e/helpers.ts) as the other DB-backed files on this line.
+        # Also added to the selected-e2e EXCLUDE list above so a PR
+        # touching sync.ts doesn't run it a second time there.
+        run: bun test --timeout=60000 test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/job-isolation.test.ts test/e2e/sync-reconcile-postgres.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
           # #3485 preload guard: this job intentionally tests against a DB.
