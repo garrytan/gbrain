@@ -103,3 +103,84 @@ describe('lmstudio recipe', () => {
     expect(isModelPriceable('llama-server:some-local-embedding-model', 'embed')).toBe(true);
   });
 });
+
+/**
+ * Ephemeral local OpenAI-compatible stub: answers every request with `body`
+ * and records the request paths. Hermetic — a real listener on an OS-picked
+ * port, no global fetch monkeypatch, so the shared-process parallel runner's
+ * other files are untouched (test-isolation rule R1).
+ */
+function serveModels(body: unknown): { baseUrl: string; paths: string[]; stop: () => void } {
+  const paths: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch(req) {
+      paths.push(new URL(req.url).pathname);
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}/v1`,
+    paths,
+    stop: () => { server.stop(true); },
+  };
+}
+
+describe('lmstudio recipe — probe shape, base URL precedence, auth', () => {
+  test('reached but /v1/models returns an unexpected shape → ready:false, hint says so', async () => {
+    const stub = serveModels({ hello: 'world' });
+    try {
+      const result = await getRecipe('lmstudio')!.probe!(stub.baseUrl);
+      expect(result.ready).toBe(false);
+      expect(result.hint).toContain('unexpected shape');
+      expect(stub.paths).toEqual(['/v1/models']);
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test('a valid OpenAI-compatible list ({object:"list", data:[]}) → ready:true', async () => {
+    const stub = serveModels({ object: 'list', data: [] });
+    try {
+      const result = await getRecipe('lmstudio')!.probe!(stub.baseUrl);
+      expect(result.ready).toBe(true);
+      expect(result.hint).toBeUndefined();
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test('an explicit baseURL argument beats LMSTUDIO_BASE_URL', async () => {
+    const stub = serveModels({ object: 'list', data: [] });
+    try {
+      // env names a guaranteed-unreachable port; only the explicit arg can succeed.
+      const result = await withEnv({ LMSTUDIO_BASE_URL: 'http://127.0.0.1:1/v1' }, () =>
+        getRecipe('lmstudio')!.probe!(stub.baseUrl));
+      expect(result.ready).toBe(true);
+      expect(stub.paths).toEqual(['/v1/models']);
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test('LMSTUDIO_BASE_URL is honored when no explicit baseURL is passed', async () => {
+    const stub = serveModels({ object: 'list', data: [] });
+    try {
+      const result = await withEnv({ LMSTUDIO_BASE_URL: stub.baseUrl }, () => getRecipe('lmstudio')!.probe!());
+      expect(result.ready).toBe(true);
+      expect(stub.paths).toEqual(['/v1/models']);
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test('auth: LMSTUDIO_API_KEY → "Bearer <key>"; only LMSTUDIO_BASE_URL → "Bearer unauthenticated"', () => {
+    const recipe = getRecipe('lmstudio')!;
+    expect(defaultResolveAuth(recipe, { LMSTUDIO_API_KEY: 'lm-secret' }, 'embedding').token).toBe('Bearer lm-secret');
+    // URL-shaped optional envs belong to cfg.base_urls, never to auth.
+    const urlOnly = defaultResolveAuth(recipe, { LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234/v1' }, 'embedding');
+    expect(urlOnly.headerName).toBe('Authorization');
+    expect(urlOnly.token).toBe('Bearer unauthenticated');
+  });
+});
