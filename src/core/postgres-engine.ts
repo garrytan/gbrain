@@ -1583,7 +1583,13 @@ export class PostgresEngine implements BrainEngine {
     // link-extraction, eval) keep the strict-AND contract.
     if (rows.length === 0 && opts?.orFallback) {
       const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) rows = await runKeyword(orQuery);
+      if (orQuery) {
+        rows = await runKeyword(orQuery);
+        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
+        // fusion can demote them — an OR-of-common-terms match must not
+        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
+        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+      }
     }
     return rows.map(rowToSearchResult);
   }
@@ -1720,7 +1726,12 @@ export class PostgresEngine implements BrainEngine {
     let rows = await runTitles(params[0] as string);
     if (rows.length === 0) {
       const orQuery = buildOrFallbackWebsearchQuery(params[0] as string);
-      if (orQuery) rows = await runTitles(boundWebsearchQuery(orQuery));
+      if (orQuery) {
+        rows = await runTitles(boundWebsearchQuery(orQuery));
+        // 2026-09 (#3617 follow-up): same relaxed-row tagging as the keyword
+        // arm — see SearchResult.keyword_relaxed.
+        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+      }
     }
     return rows.map(rowToSearchResult);
   }

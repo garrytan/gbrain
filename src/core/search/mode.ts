@@ -1187,6 +1187,11 @@ export function knobsHash(
     `sal=${ctx?.salience ?? 'off'}`,
     `rec=${ctx?.recency ?? 'off'}`,
     `ipat=${ctx?.intentPatterns ?? 'none'}`,
+    // v=27 ALSO covers a same-knobs behavioral change shipped in the same
+    // release (#3617 follow-up): OR-relaxed keyword/title rows no longer
+    // vote in RRF when the vector arm is non-empty, so a pre-fix cache row
+    // (relaxed junk fused in) must not serve post-fix lookups — the version
+    // bump invalidates them wholesale (one-bump-per-wave rule).
     // v=27 additions (2026-08 fix wave, E5b + outside-voice F11, append-only):
     // adaptive-return gate params + the query's resolved intent class. An
     // adaptive-on write (intent-capped result set) must never serve an

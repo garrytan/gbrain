@@ -773,6 +773,22 @@ export interface SearchResult {
    */
   content_flag?: { reason: string; detail: string };
   /**
+   * 2026-09 fix wave (#3617 follow-up): true when this row came from the
+   * keyword/title arm's AND→OR zero-strict-recall fallback rather than a
+   * strict websearch match. Stamped by the ENGINES inside the fallback
+   * branch (both engines, keyword + title arms — parity-pinned). hybridSearch
+   * reads it at fusion time: relaxed rows only vote in RRF when EVERY vector
+   * list is empty (the fallback's designed rescue case — keyword-only /
+   * keyless / degraded paths). When the vector arm is healthy, relaxed rows
+   * are dropped pre-fusion: OR-of-common-terms matches carry noise-shaped
+   * rank evidence, and letting them vote at full RRF weight demonstrably
+   * outvotes correct semantic results (LongMemEval receipt: hybrid
+   * recall_all@5 51.3% with them voting vs vector-only 93.8%; disabling the
+   * fallback restored gold to ranks 0-2 on probed questions). Absent on
+   * strict-match rows.
+   */
+  keyword_relaxed?: boolean;
+  /**
    * Extraction quarantine lane (issue #160): true when the result's page is
    * an unverified auto-extracted entity stub (frontmatter
    * `provenance: 'auto-extracted'` + `status: 'unverified'`). Such pages are

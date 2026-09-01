@@ -1952,6 +1952,25 @@ export async function hybridSearch(
   const imageRrfK = effectiveRrfK(baseRrfK, resolvedMode.cross_modal_both_image_weight);
   const isBothMode = effectiveModality === 'both' && vectorLists.length >= 2;
 
+  // 2026-09 fix wave (#3617 follow-up): OR-relaxed lexical rows only vote in
+  // RRF when EVERY vector list came back empty — the fallback's designed
+  // rescue case (keyword-only mode, keyless installs, embedding outages; the
+  // noEmbed and vector-failure paths above keep them unconditionally). When
+  // the vector arm is healthy, relaxed rows are dropped pre-fusion: they are
+  // OR-of-common-terms matches whose rank evidence is noise-shaped, and at
+  // full RRF weight they demonstrably outvote correct semantic results
+  // (LongMemEval fresh-pin receipt: hybrid recall_all@5 51.3% vs vector-only
+  // 93.8%; per-question probe shows gold at vector ranks 0-2 sinking to
+  // fused ranks 14-17 under relaxed-arm votes, and recovering exactly on
+  // kof-off). Strict-match keyword/title rows are unaffected.
+  const vectorArmNonEmpty = vectorLists.some((l) => l.length > 0);
+  const keywordFusionList = vectorArmNonEmpty
+    ? keywordResults.filter((r) => !r.keyword_relaxed)
+    : keywordResults;
+  const titleFusionList = vectorArmNonEmpty
+    ? titleResults.filter((r) => !r.keyword_relaxed)
+    : titleResults;
+
   const allLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
     ? [
       // Last list in vectorLists is the image branch (we appended it above).
@@ -1959,11 +1978,11 @@ export async function hybridSearch(
       // get textRrfK. Image branch gets imageRrfK.
       ...vectorLists.slice(0, -1).map(list => ({ list, k: textRrfK })),
       { list: vectorLists[vectorLists.length - 1], k: imageRrfK },
-      { list: keywordResults, k: keywordK },
+      { list: keywordFusionList, k: keywordK },
     ]
     : [
       ...vectorLists.map(list => ({ list, k: vectorK })),
-      { list: keywordResults, k: keywordK },
+      { list: keywordFusionList, k: keywordK },
     ];
 
   // D1 fix (fix/title-retrieval-arm) — title candidate arm as a third
@@ -1971,8 +1990,8 @@ export async function hybridSearch(
   // lexical-evidence class, no new tunable). Mirrors the keyword list's
   // inclusion rules: fetch was gated on earlyModality, so no extra modality
   // check here. Empty for non-matching queries → pure no-op.
-  if (titleResults.length > 0) {
-    allLists.push({ list: titleResults, k: keywordK });
+  if (titleFusionList.length > 0) {
+    allLists.push({ list: titleFusionList, k: keywordK });
   }
 
   // v0.43 — relational recall arm (fourth RRF arm), built above so it also
