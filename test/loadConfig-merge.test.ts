@@ -578,4 +578,38 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.cycle).toBeUndefined();
     });
   });
+
+  // #4702 — content_sanity.disabled_patterns is a REAL config key: without
+  // this DB-plane resolution, `gbrain config set content_sanity.disabled_patterns`
+  // wrote a row nothing ever read while every sibling knob resolved
+  // env > file > DB.
+  describe('#4702 content_sanity.disabled_patterns DB-plane resolution', () => {
+    test('comma-separated DB value resolves to a string array', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': 'access_denied, error_title',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['access_denied', 'error_title']);
+    });
+
+    test('JSON-array DB value resolves to a string array', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '["access_denied"]',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['access_denied']);
+    });
+
+    test('file plane wins over the DB value (same precedence as sibling knobs)', async () => {
+      const base: GBrainConfig = {
+        engine: 'pglite',
+        content_sanity: { disabled_patterns: ['error_title'] },
+      };
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': 'access_denied',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['error_title']);
+    });
+  });
 });

@@ -516,6 +516,13 @@ export async function importFromContent(
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
       extra_literals,
+      // #4702 `content_sanity.disabled_patterns`: turn off individual
+      // built-in junk patterns without junk_patterns_enabled (all patterns)
+      // or the kill-switch (which also drops the size gates). Defensive
+      // Array.isArray: the file plane is hand-edited JSON.
+      disabled_patterns: Array.isArray(cs.disabled_patterns)
+        ? cs.disabled_patterns
+        : undefined,
     });
 
     if (sanityDisabled) {

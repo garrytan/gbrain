@@ -72,6 +72,24 @@ Body content.`;
     expect(junk!.message).toContain('cloudflare_attention_required');
   });
 
+  test('#4702 disabled_patterns turns one pattern off without the kill-switch', () => {
+    const content = MINIMAL_FRONTMATTER + 'Access denied\n\nYou do not have permission.';
+    // Default: fires. With the pattern disabled: silent — matching import's
+    // resolution so lint never reports as junk what import lets through.
+    expect(
+      lintContent(content, 'test.md').find((i) => i.rule === 'scraper-junk'),
+    ).toBeDefined();
+    const issues = lintContent(content, 'test.md', {
+      contentSanity: { disabled_patterns: ['access_denied'] },
+    });
+    expect(issues.find((i) => i.rule === 'scraper-junk')).toBeUndefined();
+    // Not the kill-switch: the size gate stays live under the same opts.
+    const huge = lintContent(MINIMAL_FRONTMATTER + 'a'.repeat(60_000), 'test.md', {
+      contentSanity: { disabled_patterns: ['access_denied'] },
+    });
+    expect(huge.find((i) => i.rule === 'huge-page')).toBeDefined();
+  });
+
   test('fires on access_denied body pattern', () => {
     const content = MINIMAL_FRONTMATTER + 'Access denied\n\nYou do not have permission.';
     const issues = lintContent(content, 'test.md');

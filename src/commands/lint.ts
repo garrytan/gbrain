@@ -88,6 +88,8 @@ export interface LintContentOpts {
     max_markup_ratio?: number;
     prose_check_enabled?: boolean;
     operator_literals?: ReadonlyArray<OperatorLiteral>;
+    /** #4702: built-in junk-pattern names to skip (see content-sanity.ts). */
+    disabled_patterns?: string[];
   };
 }
 
@@ -258,6 +260,12 @@ export function lintContent(content: string, filePath: string, opts: LintContent
       prose_check_enabled: cs.prose_check_enabled,
       page_kind: parsed.type,
       extra_literals: operator_literals,
+      // #4702: same resolution as import — lint and import disagreeing about
+      // which patterns are live would make lint report a page as junk that
+      // import is configured to let through.
+      disabled_patterns: Array.isArray(cs.disabled_patterns)
+        ? cs.disabled_patterns
+        : undefined,
     });
     // Rule: huge-page fires for both oversize_warn (over warn threshold)
     // AND oversize_block (over block threshold). Operator sees the same

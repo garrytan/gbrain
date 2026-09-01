@@ -358,6 +358,15 @@ export interface GBrainConfig {
     /** Master switch for the built-in junk-pattern set. Default: true.
      *  Env override: `GBRAIN_NO_JUNK_PATTERNS=1` flips to false. */
     junk_patterns_enabled?: boolean;
+    /** #4702 — built-in junk-pattern names to skip individually (e.g.
+     *  `['access_denied']` for a brain whose pages quote that error rather
+     *  than being it). Finer than `junk_patterns_enabled: false` (the
+     *  coarser knob, which drops EVERY pattern) and than the `disabled`
+     *  kill-switch (which also drops the load-bearing size gates). Unknown
+     *  names are ignored. DB plane accepts a JSON array or a comma-
+     *  separated list: `gbrain config set content_sanity.disabled_patterns
+     *  access_denied,error_title`. */
+    disabled_patterns?: string[];
     /** Master kill-switch for all sanity checks. When true, ingest emits
      *  loud stderr per page but lets everything through. Default: false.
      *  Env override: `GBRAIN_NO_SANITY=1` flips to true. */
@@ -978,6 +987,25 @@ export async function loadConfigWithEngine(
   const dbJunkDisposition = await dbStr('content_sanity.junk_disposition');
   const dbMaxMarkupRatioStr = await dbStr('content_sanity.max_markup_ratio');
   const dbProseCheckEnabled = await dbBool('content_sanity.prose_check_enabled');
+  // #4702: per-pattern opt-out. Accepts a JSON array ('["access_denied"]')
+  // or a comma-separated list ('access_denied,error_title'); malformed JSON
+  // falls back to the comma parse so a hand-typed value still lands.
+  const dbDisabledPatternsStr = await dbStr('content_sanity.disabled_patterns');
+  let dbDisabledPatterns: string[] | undefined;
+  if (dbDisabledPatternsStr !== undefined) {
+    const raw = dbDisabledPatternsStr.trim();
+    if (raw.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          dbDisabledPatterns = parsed.filter((x): x is string => typeof x === 'string');
+        }
+      } catch { /* fall through to comma parse */ }
+    }
+    if (dbDisabledPatterns === undefined) {
+      dbDisabledPatterns = raw.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  }
 
   const existingCS = merged.content_sanity ?? {};
   const mergedCS: NonNullable<GBrainConfig['content_sanity']> = { ...existingCS };
@@ -1005,6 +1033,9 @@ export async function loadConfigWithEngine(
   }
   if (mergedCS.prose_check_enabled === undefined && dbProseCheckEnabled !== undefined) {
     mergedCS.prose_check_enabled = dbProseCheckEnabled;
+  }
+  if (mergedCS.disabled_patterns === undefined && dbDisabledPatterns !== undefined) {
+    mergedCS.disabled_patterns = dbDisabledPatterns;
   }
   if (Object.keys(mergedCS).length > 0) {
     merged.content_sanity = mergedCS;
@@ -1370,6 +1401,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'content_sanity.junk_disposition',
   'content_sanity.max_markup_ratio',
   'content_sanity.prose_check_enabled',
+  // #4702: per-pattern opt-out (JSON array or comma-separated names) —
+  // finer than junk_patterns_enabled (all patterns) / disabled (kill-switch).
+  'content_sanity.disabled_patterns',
   // MCP skill-catalog publishing (PR1)
   'mcp.publish_skills',
   'mcp.publish_skills_prompted',
