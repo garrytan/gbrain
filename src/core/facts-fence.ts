@@ -340,7 +340,12 @@ export function renderFactsTable(facts: ParsedFact[]): string {
     const valueCell = f.claimValue === undefined ? '' : String(f.claimValue);
     return `${base} ${escapeFenceCell(f.claimMetric ?? '')} | ${escapeFenceCell(valueCell)} | ${escapeFenceCell(f.claimUnit ?? '')} | ${escapeFenceCell(f.claimPeriod ?? '')} |`;
   });
-  const inner = ['', header, separator, ...rows, ''].join('\n');
+  // #4615: the leading double-'' emits a BLANK LINE between the begin marker
+  // and the header. The marker is an HTML block; with only one newline after
+  // it, GFM parsers (Obsidian 1.3.2+, GitHub, VS Code) treat the pipe rows as
+  // a paragraph continuation and show raw pipes instead of a table. The
+  // parser skips blank lines, so this is round-trip safe.
+  const inner = ['', '', header, separator, ...rows, ''].join('\n');
   return `${FACTS_FENCE_BEGIN}${inner}${FACTS_FENCE_END}`;
 }
 

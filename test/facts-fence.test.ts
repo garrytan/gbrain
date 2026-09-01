@@ -344,6 +344,19 @@ describe('renderFactsTable', () => {
     expect(out).toContain('| 0.85 |');
     expect(out).toContain('| 0.5 |');
   });
+
+  test('emits a blank line between the begin marker and the header — GFM/Obsidian need it to render a table (#4615)', () => {
+    // The begin marker is an HTML block; with only ONE newline after it, GFM
+    // parsers (Obsidian 1.3.2+, GitHub, VS Code) treat the pipe rows as a
+    // paragraph continuation and show raw pipes instead of a table. The
+    // parser skips blank lines, so the extra newline is parse-safe.
+    const out = renderFactsTable([minimalFact(1)]);
+    expect(out).toMatch(/facts:begin -->\n\n\|/);
+    // Round-trip stays clean.
+    const reparsed = parseFactsFence(out);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.facts).toHaveLength(1);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────

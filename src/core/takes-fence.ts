@@ -450,7 +450,11 @@ export function renderTakesFence(takes: ParsedTake[]): string {
     const by         = t.resolvedBy       ? safe(t.resolvedBy)              : '';
     return `${baseCells} ${resolved} | ${quality} | ${evidence} | ${value} | ${unit} | ${by} |`;
   });
-  const inner = ['', header, separator, ...rows, ''].join('\n');
+  // #4615: the leading double-'' emits a BLANK LINE between the begin marker
+  // and the header — GFM parsers (Obsidian 1.3.2+, GitHub, VS Code) need it
+  // to render the fence as a table (same fix as renderFactsTable). The
+  // parser skips blank lines, so this is round-trip safe.
+  const inner = ['', '', header, separator, ...rows, ''].join('\n');
   return `${TAKES_FENCE_BEGIN}${inner}${TAKES_FENCE_END}`;
 }
 
