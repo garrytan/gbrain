@@ -399,11 +399,13 @@ export async function extractFactsFromTurnWithOutcome(
   // because those reuse `extractorSystem`. Read AFTER the availability gate —
   // a chat_unavailable early return must not pay config round-trips (#4298
   // resolved the model/gate ordering; these reads sit behind it).
-  const promptAppendix = await getFactsExtractionPromptAppendix(input.engine);
+  const [promptAppendix, junkFilterOn] = await Promise.all([
+    getFactsExtractionPromptAppendix(input.engine),
+    isJunkFilterEnabled(input.engine),
+  ]);
   const extractorSystem = promptAppendix
     ? `${buildExtractorSystem(admitsLow)}\n\n${promptAppendix}`
     : buildExtractorSystem(admitsLow);
-  const junkFilterOn = await isJunkFilterEnabled(input.engine);
   const userContent = `<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
     input.entityHints && input.entityHints.length
       ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`
