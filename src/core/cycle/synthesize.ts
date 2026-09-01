@@ -2822,10 +2822,16 @@ function findLegacyCompletion(
  * couldn't enumerate generated pages and a later put_page write-through
  * (which re-renders from the DB row) silently erased the marker.
  *
- * Plain UPDATE through executeRawJsonb (raw object bound to $3::jsonb —
+ * Plain UPDATE through executeRawJsonb (raw object bound to $4::jsonb —
  * never JSON.stringify into a ::jsonb cast; engine-parity safe, no new
  * engine method). Best-effort per row: a stamp failure never kills the
  * phase (the render-time override still covers the file).
+ *
+ * #4337: reruns preserve the FIRST dream cycle date. `dream_cycle_date`
+ * stays the stable back-compat query key and `dream_created_cycle_date`
+ * is its explicit immutable mirror — an existing value of either (created
+ * mirror wins) beats this run's cycleDate, so a re-synthesis pass can't
+ * rewrite a page's provenance to the maintenance run's date.
  */
 async function stampDreamProvenance(
   engine: BrainEngine,
@@ -2843,15 +2849,21 @@ async function stampDreamProvenance(
       await executeRawJsonb(
         engine,
         `UPDATE pages
-            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb) || $3::jsonb
+            SET frontmatter = COALESCE(frontmatter, '{}'::jsonb)
+                              || $4::jsonb
+                              || jsonb_build_object(
+                                   'dream_cycle_date',
+                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3),
+                                   'dream_created_cycle_date',
+                                   COALESCE(NULLIF(frontmatter->>'dream_created_cycle_date', ''), NULLIF(frontmatter->>'dream_cycle_date', ''), $3)
+                                 )
           WHERE slug = $1 AND source_id = $2`,
-        [slug, source_id],
+        [slug, source_id, cycleDate],
         // #1978 raw-source persistence: record the transcript path the
         // synthesis was derived from, so `gbrain doctor` (raw_provenance
         // check) can verify every generated page carries a raw trace.
         [{
           dream_generated: true,
-          dream_cycle_date: cycleDate,
           ...(raw_source ? { raw_source } : {}),
         }],
       );
@@ -2918,15 +2930,37 @@ export function renderPageToMarkdown(page: Page, tags: string[]): string {
   // serializePageToMarkdown helper in markdown.ts; this wrapper passes
   // the dream-specific overrides. Future markdown-shape changes happen
   // in one place.
+  //
+  // #4337: preserve the DB-stamped first cycle date (stampDreamProvenance
+  // runs before the reverse-write). Falling back to today() is only for
+  // legacy callers rendering an unstamped page for the first time — the
+  // pre-fix today() default rewrote every rerendered page's provenance to
+  // the maintenance run's date.
+  const createdCycleDate = page.frontmatter?.dream_created_cycle_date;
+  const legacyCycleDate = page.frontmatter?.dream_cycle_date;
+  const stableCycleDate = typeof createdCycleDate === 'string' && createdCycleDate
+    ? createdCycleDate
+    : typeof legacyCycleDate === 'string' && legacyCycleDate
+      ? legacyCycleDate
+      : today();
   return serializePageToMarkdown(page, tags, {
     frontmatterOverrides: {
       dream_generated: true,
-      dream_cycle_date: today(),
+      dream_cycle_date: stableCycleDate,
+      dream_created_cycle_date: stableCycleDate,
     },
   });
 }
 
 // ── Summary index page ───────────────────────────────────────────────
+
+/**
+ * #4337: cap the summary's wikilink list. An unbounded list turned the
+ * summary into a graph hub (thousands of edges on a large cycle) and an
+ * oversized file, even though every child already carries queryable
+ * provenance (`dream_generated` + `dream_cycle_date` frontmatter).
+ */
+const SUMMARY_LINK_SAMPLE_LIMIT = 20;
 
 async function writeSummaryPage(
   engine: BrainEngine,
@@ -2949,12 +2983,29 @@ async function writeSummaryPage(
   lines.push(`**Pages written:** ${writtenSlugs.length}.`);
   lines.push('');
   if (writtenSlugs.length > 0) {
-    lines.push('## Pages');
-    lines.push('');
-    for (const s of writtenSlugs) {
-      lines.push(`- [[${s}]]`);
+    // #4337: deterministic, lexicographically sorted sample — small cycles
+    // stay fully linked; large cycles list exactly SUMMARY_LINK_SAMPLE_LIMIT
+    // links while keeping exact totals above. The full child set stays
+    // recoverable via per-page provenance frontmatter (pointer below).
+    const sampledSlugs = [...writtenSlugs].sort().slice(0, SUMMARY_LINK_SAMPLE_LIMIT);
+    lines.push(
+      writtenSlugs.length > SUMMARY_LINK_SAMPLE_LIMIT
+        ? `## Page sample (${sampledSlugs.length} of ${writtenSlugs.length})`
+        : '## Pages',
+      '',
+      ...sampledSlugs.map(slug => `- [[${slug}]]`),
+      '',
+    );
+    if (writtenSlugs.length > SUMMARY_LINK_SAMPLE_LIMIT) {
+      lines.push(
+        '## Full output provenance',
+        '',
+        `The complete ${writtenSlugs.length}-page set is recoverable in this source by querying page frontmatter for ` +
+          `\`dream_generated: true\` and \`dream_cycle_date: ${summaryDate}\`, excluding \`${summarySlug}\`. ` +
+          'Every child page carries those provenance fields; this summary intentionally links only the deterministic sample above.',
+        '',
+      );
     }
-    lines.push('');
   }
 
   const body = lines.join('\n');
@@ -2965,6 +3016,10 @@ async function writeSummaryPage(
     {
       dream_generated: true,
       dream_cycle_date: summaryDate,
+      // #4337: immutable mirror — reruns preserve the first cycle date via
+      // stampDreamProvenance/renderPageToMarkdown; the summary is per-date so
+      // both keys are simply the summary's own date.
+      dream_created_cycle_date: summaryDate,
       // #1978: deterministic index page — no source document of its own;
       // raw traces live on the listed pages. Explicit exemption keeps the
       // doctor raw_provenance check quiet.
