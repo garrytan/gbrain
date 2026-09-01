@@ -447,6 +447,62 @@ describe('atom identity folds the source locator (#4733)', () => {
   });
 });
 
+/**
+ * #4733/#4734 ship-review gap: the locator fold applies to PAGE-derived atoms
+ * only. Transcript atoms (locator = a file path, not page identity) keep the
+ * legacy title-only 6-char hash so an upgrade never re-mints every transcript
+ * atom, and a re-extraction of the same transcript (edited → new content
+ * hash, so the source_hash short-circuit does not apply) upserts the SAME
+ * slug instead of minting a duplicate.
+ */
+describe('transcript atoms keep the legacy title-only 6-char slug (#4733)', () => {
+  test('slug is atoms/<source-date>/<stem>-<sha256(title)[0:6]> and a second run upserts it (atom count stays 1)', async () => {
+    const title = 'Transcript legacy slug title';
+    const filePath = '/fake/conversations/2026-08-20-standup.md';
+    const legacyHash = createHash('sha256').update(title).digest('hex').slice(0, 6);
+    const expectedSlug = `atoms/2026-08-20/transcript-legacy-slug-title-${legacyHash}`;
+
+    const first = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath, content: 'standup transcript, take one', contentHash: 'aaaa000000000001' }],
+      _pages: [],
+      _chat: stubChat(title),
+    });
+    expect(first.status).toBe('ok');
+    expect(first.details?.atoms_extracted).toBe(1);
+
+    const atom = await engine.getPage(expectedSlug, { sourceId: 'default' });
+    expect(atom).not.toBeNull();
+    expect(atom!.type).toBe('atom');
+    // Title-only 6-char suffix — NOT the 8-char locator-folded page shape.
+    expect(expectedSlug).toMatch(/-[0-9a-f]{6}$/);
+    const foldedHash = createHash('sha256').update(`${filePath}\0${title}`).digest('hex').slice(0, 8);
+    expect(await engine.getPage(`atoms/2026-08-20/transcript-legacy-slug-title-${foldedHash}`, { sourceId: 'default' })).toBeNull();
+    // Transcript binding: source_path, never source_slug.
+    expect(atom!.frontmatter.source_path).toBe(filePath);
+    expect(atom!.frontmatter.source_slug).toBeUndefined();
+    expect(atom!.frontmatter.source_hash).toBe('aaaa000000000001');
+
+    // The transcript grew (append-only corpus → new content hash, same title):
+    // the run re-extracts and UPSERTS the same slug.
+    const second = await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath, content: 'standup transcript, take one, plus a later addendum', contentHash: 'aaaa000000000002' }],
+      _pages: [],
+      _chat: stubChat(title),
+    });
+    expect(second.status).toBe('ok');
+    expect(second.details?.atoms_extracted).toBe(1);
+
+    const atoms = await engine.executeRaw<{ slug: string; source_hash: string }>(
+      `SELECT slug, frontmatter->>'source_hash' AS source_hash
+         FROM pages WHERE type = 'atom' AND frontmatter->>'source_path' = $1 AND deleted_at IS NULL`,
+      [filePath],
+    );
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.slug).toBe(expectedSlug);
+    expect(atoms[0]!.source_hash).toBe('aaaa000000000002');
+  });
+});
+
 describe('provenance edges are banked BEFORE the completion flip (#4733)', () => {
   test('a provenance write failure leaves the item discoverable; the retry converges to one edge', async () => {
     const sourceSlug = 'meetings/2026-08-30-provenance-retry';
