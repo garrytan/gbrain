@@ -239,8 +239,11 @@ Each stage is testable in isolation. Each stage is replaceable. The whole pipeli
 ## How to verify on your own brain
 
 ```bash
-# Run the public LongMemEval benchmark
-gbrain eval longmemeval datasets/longmemeval_s.jsonl
+# Self-check on the public LongMemEval benchmark (cleaned S split, published cutoff k=5)
+# at the release default: reranker on when VOYAGE_API_KEY is set; --by-type prints any-hit recall
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json --retrieval-only --top-k 5 --by-type --no-trajectory
+# The receipted strict recall_all@5 (reranker and autocut pinned off) comes from the gbrain-evals runner:
+#   bash eval/runner/longmemeval-batch.sh --adapters hybrid --embedding-model openai:text-embedding-3-large --embedding-dims 1536
 
 # Capture your own queries and replay against retrieval changes
 export GBRAIN_CONTRIBUTOR_MODE=1
@@ -252,5 +255,7 @@ gbrain eval replay --against before.ndjson
 # A/B retrieval strategies on a labeled fixture
 gbrain eval --qrels labels.tsv --config balanced.json
 ```
+
+The current measured LongMemEval result (93.19% session-level `recall_all@5`, cleaned S split, 470 scored questions, k=5, measured 2026-09-02 at gbrain v0.48.2.0), its per-type table, and the pending reranker-on arms live in [`docs/eval-bench.md`](../eval-bench.md#public-benchmarks-longmemeval).
 
 Methodology + metric glossary in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](../eval/SEARCH_MODE_METHODOLOGY.md).

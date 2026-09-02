@@ -42,8 +42,63 @@ No Voyage key and no wish to rerank: `gbrain config set search.reranker.enabled 
   the switch command.
 - The paired rerank A/B (balanced on vs off, and the autocut floor) on
   LongMemEval, NamedThingBench, cat13b and world-v1 is pre-registered in the
-  ranker wave that follows this release; there is no new quality number in
-  this entry, and the results publish there, wins and losses.
+  ranker wave that follows this release; the reranker-off row below is a
+  reproduction of v0.48.0.0, not a new result, and the reranker-on rows
+  publish there, wins and losses.
+
+### Measured
+
+Reranker-off retrieval on the public LongMemEval benchmark, re-run at this
+release so the reranker flip has a baseline it can be judged against.
+Metric: LongMemEval's official session-level `recall_all@5` (every gold
+session inside the top-5 distinct retrieved sessions; retrieval only, no
+reader model). Dataset: `longmemeval_s`, cleaned September 2025 revision,
+500 questions, 30 abstention questions excluded, 470 scored. Run on
+2026-09-02 at gbrain v0.48.2.0 (commit 172df271, PR #4792), search mode
+`balanced` pinned with reranker OFF and autocut OFF, embedder
+`openai:text-embedding-3-large` at 1536 dims, k=5, single run.
+
+| Arm | recall_all@5 | recall_any@5 | Notes |
+|---|---|---|---|
+| hybrid (reranker off) | **93.19%** (438/470) | 98.72% | nDCG_any@5 93.32%; distinct sessions in the top 5: 5 on 422 questions, 4 on 47, 3 on 1 (mean 4.90); p50 3.7 s / p99 6.3 s per question; 0 errors |
+| hybrid + LLM multi-query expansion | pending, run in progress | pending, run in progress | v0.48.0.0 receipt: 49.6% at k=5, filed as harmful at small k |
+| hybrid, session-diverse (3x over-fetch, top-5 distinct sessions) | pending, run in progress | pending, run in progress | |
+| hybrid + rerank (`voyage:rerank-2.5`, this release's default) | pending, run in progress | pending, run in progress | |
+| hybrid, session-diverse + rerank | pending, run in progress | pending, run in progress | |
+
+By question type, hybrid with reranker off (`recall_all@5`): knowledge-update
+98.6% (71/72), multi-session 92.6% (112/121), single-session-assistant 100%
+(56/56), single-session-preference 96.7% (29/30), single-session-user 98.4%
+(63/64), temporal-reasoning 84.3% (107/127).
+
+- **Identical to v0.48.0.0.** 438/470 matches the v0.48.0.0 receipt (PR
+  #4787) exactly, per type as well as in total: the reranker succession does
+  not change reranker-off retrieval.
+- **The bracket below the fix, disclosed.** Between v0.28.8 (83.40%
+  `recall_all@5`, May 2026; the 97.66% any-hit figure that led the May report
+  is a diagnostic only) and v0.48.0.0, an unpublished keyword-fallback fusion
+  regression dropped hybrid to 51.3%. Re-measured on 2026-09-02 at the
+  v0.47.8.0 evals pin (2a56b512), same 470 questions: 51.39% `recall_all@5`.
+  v0.48.0.0 fixed it (93.19%). The ceiling at k=5 is 99.4%, because 3
+  questions carry 6 gold sessions; pure vector on the same corpus scored
+  93.8% (v0.48.0.0 receipt), so hybrid is roughly neutral on this benchmark.
+- **Strict vs loose, in one line.** `recall_all@5` counts a question only when
+  every gold session is in the top 5; `recall_any@5` counts it when any one is.
+  The 98.72% any-hit number is the loose diagnostic and is the one that sits
+  beside most published "LongMemEval retrieval" scores; the 93.19% strict
+  number says nothing about answer accuracy (gbrain has published no
+  LLM-judged answer-accuracy run).
+
+Receipts, per-question rows, and the arm table as it fills in:
+[gbrain-evals `docs/benchmarks/2026-05-07-longmemeval-s.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
+
+**Say to your agent:** *"Run the public LongMemEval benchmark against my
+brain"* — your agent runs
+`gbrain eval longmemeval <path-to-longmemeval_s_cleaned.json> --retrieval-only --top-k 5 --by-type --no-trajectory`
+(the CLI's `--by-type` summary is any-hit recall, and it runs the release
+default, reranker on when `VOYAGE_API_KEY` is set; the strict `recall_all@5`
+receipt comes from the gbrain-evals runner, which pins reranker and autocut
+off: `bash eval/runner/longmemeval-batch.sh --adapters hybrid --embedding-model openai:text-embedding-3-large --embedding-dims 1536`).
 
 ### To take advantage of v0.48.2.0
 

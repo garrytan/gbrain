@@ -17,7 +17,7 @@ If you want to know how a mode behaves on YOUR brain, run `gbrain search stats -
 
 ## 2. Datasets and sizes
 
-- **LongMemEval** — public split, `n=500` questions. Downloaded from [Hugging Face](https://huggingface.co/datasets/xiaowu0162/longmemeval). The corpus + answer keys are pinned to a specific commit; recorded in every per-run record.
+- **LongMemEval** — public S split, cleaned September 2025 revision (`longmemeval_s_cleaned.json` from [Hugging Face `xiaowu0162/longmemeval-cleaned`](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)). `n=500` questions, of which the 30 abstention (`_abs`) questions are excluded from every recall denominator as the official `print_retrieval_metrics.py` does, so `n=470` are scored. The corpus + answer keys are pinned to a specific commit; recorded in every per-run record.
 - **Replay captures** — NDJSON from the sibling `gbrain-evals` repo, `n=200` queries. Each query carries a `retrieved_slugs` baseline + a `latency_ms` measurement from the original production run.
 - **BrainBench v1** — `n=1240` documents / `n=350` qrels (binary relevance judgments). Lives in the sibling [`gbrain-evals`](https://github.com/garrytan/gbrain-evals) repo, SHA-pinned at every run.
 
@@ -63,7 +63,7 @@ Honest list. We name what would let a critic dismiss the numbers.
 - **LongMemEval skews English + technical.** The questions are software-engineering and consumer-product flavored. Performance on a brain rich in non-English / non-technical content (writing, art history, etc.) may differ.
 - **BrainBench is small** (1240 docs) relative to a production brain (10K-100K pages). Absolute scores aren't predictive of your hit rate; the _delta_ between modes is.
 - **char/4 token heuristic.** Token-budget enforcement and cost estimates use a character-count / 4 heuristic. Accurate within ~5-10% for English with the OpenAI tiktoken family; off worse for Voyage (we don't use Voyage in chat retrieval, so it doesn't bias the reported numbers, but if you do, your budget caps will be approximate).
-- **Expansion's quality lift varies by query distribution.** The eval data shows ~97.6% relative quality with LLM expansion vs without (i.e., barely measurable lift) on the LongMemEval corpus. On rarer-entity / longer-tail queries, the lift can be larger. We report the corpus we measured; YMMV.
+- **Expansion's quality lift varies by query distribution.** On LongMemEval-S (cleaned, 470 scored, k=5) LLM multi-query expansion measured 49.6% `recall_all@5` against 93.19% without it (v0.48.0.0 receipt), so expansion is off in `conservative`/`balanced`; the lift on rarer-entity / longer-tail queries is unmeasured here. We report the corpus we measured; YMMV.
 - **Paired bootstrap assumes question-level independence.** Multi-hop questions within the same conversation thread aren't independent; the bootstrap CI is slightly tighter than reality.
 - **Single brain instance per benchmark.** The benchmark spins up an in-memory PGLite per question. Cache hit rate measured here doesn't reflect a long-running production brain's cache state.
 

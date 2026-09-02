@@ -360,24 +360,122 @@ Existing `eval_candidates` rows stay until you `gbrain eval prune
 
 ## Public benchmarks: LongMemEval
 
-`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval)
+`gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned)
 benchmark directly against gbrain's hybrid retrieval. Different evaluation
 axis from `eval replay`: public dataset with ground-truth labels, end-to-end
 question-answer pipeline, hermetic per-question brains.
 
-```bash
-# Download the dataset (visit the HF page in a browser; gated/manual download).
-# Place longmemeval_oracle.json (or _s.json) somewhere local.
+**Say to your agent:** *"Run the public LongMemEval benchmark against my
+gbrain retrieval"* (no skill backs this; your agent runs
+`gbrain eval longmemeval <dataset> --retrieval-only --top-k 5 --by-type --no-trajectory`,
+a self-check at the release default. The receipted strict number below comes
+from the gbrain-evals runner, which pins reranker and autocut off; see
+"Download and run").
 
-# Retrieval-only (no LLM answer-gen, fastest path, no Anthropic key needed):
-gbrain eval longmemeval ./longmemeval_oracle.json --limit 50 --retrieval-only \
-  > /tmp/hypothesis.jsonl
+### Current measured result
+
+**93.19% session-level `recall_all@5` (438/470)**: LongMemEval's official
+retrieval metric. A question counts only when EVERY gold session appears
+among the top-5 distinct retrieved sessions. Retrieval only, no reader model.
+Any-hit `recall_any@5` (at least one gold session in the top 5) is 98.72%
+and is a diagnostic, not the headline; nDCG_any@5 is 93.32%.
+
+- **Dataset:** `longmemeval_s`, the cleaned September 2025 revision of the S
+  split (`xiaowu0162/longmemeval-cleaned`). 500 questions; the 30 abstention
+  (`_abs`) questions are excluded from the recall denominator, as the
+  official `print_retrieval_metrics.py` does, so 470 are scored. The ceiling
+  at k=5 is 99.4%: 3 questions carry 6 gold sessions and cannot fit in a
+  top-5 list.
+- **Measured:** 2026-09-02 at gbrain v0.48.2.0 (commit `172df271`, PR #4792),
+  single run, k=5, search mode `balanced`, reranker off, autocut off,
+  embedder `openai:text-embedding-3-large` at 1536 dimensions. Harness:
+  the gbrain-evals runner (`main` at `29e9ac9`, gbrain pin bumped to that
+  commit); the official metric is recomputed from the per-question rows by
+  `eval/runner/longmemeval-aggregate.ts`. p50 3.7 s / p99 6.3 s per question,
+  0 errors. Distinct sessions in the top 5: 5 on 422 questions, 4 on 47, 3 on
+  1 (mean 4.90).
+- **Reproduces the v0.48.0.0 receipt exactly** (PR #4787: 93.19%, identical
+  per-type numbers). The reranker succession shipped in v0.48.2.0 does not
+  change reranker-off retrieval.
+
+| Question type | `recall_all@5` | n |
+|---|---|---|
+| single-session-assistant | 100.0% | 56/56 |
+| knowledge-update | 98.6% | 71/72 |
+| single-session-user | 98.4% | 63/64 |
+| single-session-preference | 96.7% | 29/30 |
+| multi-session | 92.6% | 112/121 |
+| temporal-reasoning | 84.3% | 107/127 |
+| **all scored** | **93.19%** | **438/470** |
+
+Arms from the same 2026-09-02 run that have not finished (no number is
+published until the rows land; the evals report gets the receipt first):
+
+| Arm | Status |
+|---|---|
+| hybrid + LLM multi-query expansion (`--expansion`) | pending, run in progress. The v0.48.0.0 receipt measured 49.6% `recall_all@5` at k=5 and filed expansion as harmful at small k. |
+| hybrid-sessdiv (over-fetch 3x, keep top-5 distinct sessions) | pending, run in progress |
+| hybrid + rerank (`voyage:rerank-2.5`, the default of this release) | pending, run in progress |
+| hybrid-sessdiv + rerank | pending, run in progress |
+
+History, kept public on purpose. May 2026 at v0.28.8: 83.40% `recall_all@5`
+(the May headline was any-hit 97.66%, now a diagnostic only). An unpublished
+keyword-fallback fusion regression then dropped hybrid to 51.3% between
+v0.28.8 and v0.48.0.0 (re-measured 2026-09-02 at the old evals pin
+`2a56b512`, gbrain v0.47.8.0: 51.39%); v0.48.0.0 fixed it (93.19%). Pure
+vector on the same corpus scored 93.8% (v0.48.0.0 receipt), so the hybrid
+layer is roughly neutral on THIS benchmark and earns its keep elsewhere.
+
+How to read other systems' numbers. On the strict metric on this dataset we
+found no published score above 93.19%. The closest strict comparisons are
+our own recomputations from MemPalace's committed rankings (85.7% raw,
+90.0% with an LLM reranker; MemPalace publishes only any-hit, 96.6% and
+98.4%) and ContextFit's self-reported 87.45% All@5 (its rerank layer reads
+gold labels, so loosely comparable). The 90-96% figures from Mem0, Mastra,
+MemCog, Zep, Hindsight, ByteRover and Supermemory are LLM-judged answer
+accuracy, a different quantity that moves with the reader and judge model;
+gbrain has published no answer-accuracy run on LongMemEval. Full report,
+comparison table, and receipts:
+[gbrain-evals `docs/benchmarks/2026-05-07-longmemeval-s.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
+
+### Download and run
+
+```bash
+# Download the cleaned (September 2025) revision of the S split. The HF
+# dataset may ask you to accept its terms in a browser first.
+mkdir -p ~/datasets/longmemeval
+curl -Lo ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
+
+# The embedder is not a per-run flag: it resolves from the `embedding_model`
+# config key (`<provider>:<model>`; new-install default `voyage:voyage-4`,
+# existing brains keep their configured model) or the
+# GBRAIN_EMBEDDING_MODEL / GBRAIN_EMBEDDING_DIMENSIONS env overrides. The
+# measured result above used openai:text-embedding-3-large at 1536 dims.
+export GBRAIN_EMBEDDING_MODEL=openai:text-embedding-3-large
+export GBRAIN_EMBEDDING_DIMENSIONS=1536
+
+# Self-check, retrieval-only at the published cutoff (no LLM answer-gen;
+# --no-trajectory skips the per-session Haiku claim-extractor call, so no
+# chat key is needed):
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  --retrieval-only --top-k 5 --by-type --no-trajectory \
+  --output /tmp/lme-hybrid.jsonl
+# Two caveats make this a self-check, not a like-for-like reproduction. The
+# in-repo `--by-type` summary reports ANY-HIT recall only, and the command
+# runs the release default: the `balanced` bundle turns the reranker and
+# autocut on whenever VOYAGE_API_KEY is set, and the CLI has no switch to pin
+# them off (the benchmark brain is isolated, so `gbrain config set` does not
+# reach it). The receipted 93.19% recall_all@5 comes from the gbrain-evals
+# runner, which pins reranker and autocut off and emits scorable per-question
+# rows (470 scored, the 30 `_abs` questions dropped):
+#   bash eval/runner/longmemeval-batch.sh --adapters hybrid --embedding-model openai:text-embedding-3-large --embedding-dims 1536
 
 # Full pipeline (Anthropic key required for answer-gen):
-gbrain eval longmemeval ./longmemeval_oracle.json --limit 50 \
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json --limit 50 \
   > /tmp/hypothesis.jsonl
 
-# Score with LongMemEval's published evaluate_qa.py (not bundled — needs
+# Score with LongMemEval's published evaluate_qa.py (not bundled; needs
 # OpenAI gpt-4o per their spec):
 python evaluate_qa.py /tmp/hypothesis.jsonl
 ```
@@ -408,9 +506,14 @@ python evaluate_qa.py /tmp/hypothesis.jsonl
 | `--retrieval-only` | off | Emit retrieved chunks; no LLM answer-gen |
 | `--keyword-only` | off | Disable vector path (debug retrieval issues) |
 | `--expansion` | **off** | Multi-query expansion. Off by default for determinism (no per-query Haiku call). Pass to opt in. |
-| `--top-k K` | 10 | Retrieval depth |
+| `--top-k K` | 8 | Retrieval depth (the published result uses `--top-k 5`) |
+| `--mode M` | config | Search mode `conservative`, `balanced`, or `tokenmax`, resolved through `src/core/search/mode.ts`; `tokenmax` implies `--expansion` |
 | `--model M` | resolved | Default resolves through `resolveModel()` 6-tier chain (`models.eval.longmemeval` config key) |
 | `--output FILE` | stdout | Write hypothesis JSONL to file instead of stdout |
+| `--resume-from FILE` | off | Skip `question_id`s already present in FILE (usually the same path as `--output`, which then appends) |
+| `--no-trajectory` | off | Skip the trajectory claim extractor and per-question intent routing (A/B baseline) |
+| `--by-type` | off | Append a `by_type_summary` JSON line with per-question-type any-hit R@k |
+| `--by-type-floor F` | off | Exit non-zero if any question type's rate is below F in [0, 1]; implies `--by-type` |
 
 ### Numbers
 
