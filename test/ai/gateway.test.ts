@@ -17,6 +17,7 @@ import {
   VoyageResponseTooLargeError,
 } from '../../src/core/ai/gateway.ts';
 import { OutboundGateError, assertOutboundChatAllowed, assertOutboundImageEmbeddingAllowed, scanOutboundText } from '../../src/core/ai/outbound-gate.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 // v0.39.x ship-wave fix: gateway module is process-scoped. Without an
 // afterAll cleanup, the last test's configureGateway({env: {OPENAI_API_KEY:
@@ -95,16 +96,11 @@ describe('outbound embedding gate', () => {
     const highEntropy = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-';
     expect(scanOutboundText(highEntropy)).toEqual({ ok: true });
 
-    const previous = process.env.GBRAIN_OUTBOUND_ENTROPY_GATE;
-    process.env.GBRAIN_OUTBOUND_ENTROPY_GATE = '1';
-    try {
+    await withEnv({ GBRAIN_OUTBOUND_ENTROPY_GATE: '1' }, () => {
       const result = scanOutboundText(highEntropy);
       expect(result.ok).toBe(false);
       expect((result as { ruleId: string }).ruleId).toBe('high-entropy-token');
-    } finally {
-      if (previous === undefined) delete process.env.GBRAIN_OUTBOUND_ENTROPY_GATE;
-      else process.env.GBRAIN_OUTBOUND_ENTROPY_GATE = previous;
-    }
+    });
   });
 
   test('placeholders in an Authorization header are not credentials', () => {
@@ -146,40 +142,34 @@ describe('outbound embedding gate', () => {
     expect((caught as OutboundGateError).textIndex).toBe(1);
   });
 
-  test('GATE_REQUIRED mode cannot be switched off', () => {
-    const prev = {
-      required: process.env.GBRAIN_OUTBOUND_GATE_REQUIRED,
-      allowImage: process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE,
-    };
-    process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = '1';
-    process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE = '1';
-    try {
-      // The image escape hatch is exactly what an operator reaches for when a
-      // backfill stalls; under REQUIRED it must not be reachable.
-      let caught: unknown;
-      try {
-        assertOutboundImageEmbeddingAllowed(['image']);
-      } catch (error) {
-        caught = error;
-      }
-      expect(caught).toBeInstanceOf(OutboundGateError);
-    } finally {
-      if (prev.required === undefined) delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
-      else process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = prev.required;
-      if (prev.allowImage === undefined) delete process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE;
-      else process.env.GBRAIN_OUTBOUND_ALLOW_IMAGE = prev.allowImage;
-    }
+  test('GATE_REQUIRED mode cannot be switched off', async () => {
+    await withEnv(
+      {
+        GBRAIN_OUTBOUND_GATE_REQUIRED: '1',
+        GBRAIN_OUTBOUND_ALLOW_IMAGE: '1',
+      },
+      () => {
+        // The image escape hatch is exactly what an operator reaches for when a
+        // backfill stalls; under REQUIRED it must not be reachable.
+        let caught: unknown;
+        try {
+          assertOutboundImageEmbeddingAllowed(['image']);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(OutboundGateError);
+      },
+    );
   });
 
-  test('the chat surface is closed under GATE_REQUIRED', () => {
-    const prev = process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
+  test('the chat surface is closed under GATE_REQUIRED', async () => {
     // Outside the ingest child the chat surface stays open — this guard is
     // about the process that holds an embedding key, not about gbrain at large.
-    delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
-    expect(() => assertOutboundChatAllowed('generateText')).not.toThrow();
+    await withEnv({ GBRAIN_OUTBOUND_GATE_REQUIRED: undefined }, () => {
+      expect(() => assertOutboundChatAllowed('generateText')).not.toThrow();
+    });
 
-    process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = '1';
-    try {
+    await withEnv({ GBRAIN_OUTBOUND_GATE_REQUIRED: '1' }, () => {
       let caught: unknown;
       try {
         assertOutboundChatAllowed('generateText');
@@ -188,10 +178,7 @@ describe('outbound embedding gate', () => {
       }
       expect(caught).toBeInstanceOf(OutboundGateError);
       expect((caught as OutboundGateError).ruleId).toBe('chat-surface-closed:generateText');
-    } finally {
-      if (prev === undefined) delete process.env.GBRAIN_OUTBOUND_GATE_REQUIRED;
-      else process.env.GBRAIN_OUTBOUND_GATE_REQUIRED = prev;
-    }
+    });
   });
 
   test('the block message does not name the disable switch', () => {
@@ -201,11 +188,11 @@ describe('outbound embedding gate', () => {
 
   test('ordinary vault prose is not blocked', () => {
     for (const text of [
-      'task-goal-oriented-planning 문서',
+      'task-goal-oriented-planning doc',
       'NEXT-SESSION-2026-08-10-decision-journal-capture-closed',
       'risk-user-story-mapping-and-desk-research',
-      'xoxb-workspace-token 이라는 플레이스홀더',
-      'sk-or-v1-... 형식으로 넣으세요',
+      'a placeholder called xoxb-workspace-token',
+      'paste it in the sk-or-v1-... format',
     ]) {
       expect(scanOutboundText(text)).toEqual({ ok: true });
     }
