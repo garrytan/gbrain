@@ -344,8 +344,15 @@ export function buildPrompt(task: string, dimensions: string[], output: string):
  * wraps it in. Case-insensitive; tolerates whitespace inside the tag. The
  * text stays human-readable for the judge — it just stops being a delimiter.
  */
-function neutralizeClosingTag(text: string, tag: string): string {
-  return text.replace(new RegExp(`<\\s*/\\s*(${tag})`, 'gi'), '<\\/$1');
+type BoundaryTag = 'task_to_grade' | 'candidate_output';
+// Literal patterns per boundary tag: no RegExp is ever built from a string,
+// so the pattern can neither come from nor be shaped by untrusted text.
+const CLOSING_TAG_PATTERNS: Record<BoundaryTag, RegExp> = {
+  task_to_grade: /<\s*\/\s*(task_to_grade)/gi,
+  candidate_output: /<\s*\/\s*(candidate_output)/gi,
+};
+function neutralizeClosingTag(text: string, tag: BoundaryTag): string {
+  return text.replace(CLOSING_TAG_PATTERNS[tag], '<\\/$1');
 }
 
 /** Exported for the prompt-pinning test. */

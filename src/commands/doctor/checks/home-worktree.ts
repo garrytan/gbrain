@@ -35,6 +35,7 @@ import type { Check } from '../../doctor.ts';
 export function isValidGitMarker(gitPath: string): boolean {
   try {
     const st = statSync(gitPath);
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- gitPath is a `.git` marker under the operator's own $HOME walk; existence probe only
     if (st.isDirectory()) return existsSync(join(gitPath, 'HEAD'));
     if (st.isFile()) return readFileSync(gitPath, 'utf-8').trimStart().startsWith('gitdir:');
   } catch {
@@ -53,7 +54,9 @@ export function buildHomeDirInWorktreeCheck(
   // compare against '/home/user//', which never matches, so a brain that WAS
   // inside a worktree silently graded ok. resolve() strips trailing
   // separators and collapses `.`/`..` without touching the filesystem.
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- $GBRAIN_HOME from the operator's own environment; resolve() only normalizes the spelling for a containment comparison
   const gbrainHome = rawGbrainHome ? resolve(rawGbrainHome) : rawGbrainHome;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- $HOME from the operator's own environment; same normalization
   const home = rawHome ? resolve(rawHome) : rawHome;
   let worktreeRoot: string | null = null;
   if (gbrainHome && home && gbrainHome.startsWith(home + '/')) {
@@ -62,6 +65,7 @@ export function buildHomeDirInWorktreeCheck(
     // isn't a containing-worktree, it would be a brain repo cloned there.
     let cur = dirname(gbrainHome);
     while (cur && cur.length >= home.length) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- cur walks up from $GBRAIN_HOME and stops at $HOME (both operator env); read-only doctor probe
       if (isValidGitMarker(join(cur, '.git'))) {
         worktreeRoot = cur;
         break;

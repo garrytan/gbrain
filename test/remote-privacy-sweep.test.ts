@@ -335,6 +335,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   // required for loops_close; loops_mute denied outside caller scope).
   loops_close: 'error',
   loops_mute: 'error',
+  loops_unmute: 'error',
   sources_remove: 'error',
   submit_job: 'error',
   get_job: 'error',

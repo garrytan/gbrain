@@ -77,6 +77,7 @@ describe('#3734 — CRAG think escalation wires embedQuestion (source pin)', () 
   // embedQuestion (same cheap-pin pattern as the repo's other residual
   // source-text guards).
   test('ops/search.ts CRAG runThink call passes embedQuestion', () => {
+    // test-reads-source-ok: the CRAG escalation runThink site is unreachable hermetically (needs a full engine, a weak search result, and search.crag_escalate_think), so the #3734 wiring pin reads the call site itself.
     const src = readFileSync(join(import.meta.dir, '../src/core/ops/search.ts'), 'utf8');
     const callSite = src.slice(src.indexOf('escalate_to_think = true'));
     const runThinkBlock = callSite.slice(callSite.indexOf('runThink(ctx.engine'), callSite.indexOf('});'));
