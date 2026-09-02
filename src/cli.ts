@@ -1132,8 +1132,8 @@ function parseTypedOpArg(
   if (type === 'number') return Number(raw);
   if (type !== 'object' && type !== 'array') return raw;
   // Array-valued ops predate JSON CLI input and document comma-delimited
-  // strings (`--types person,company`, `--slugs a,b`). Preserve that wire
-  // shape unless the operator explicitly supplies a JSON array. Individual
+  // flag values. Preserve that wire shape unless the operator explicitly
+  // supplies a JSON array. Individual
   // operation boundaries remain responsible for accepting or rejecting the
   // legacy string form.
   if (type === 'array' && !raw.trimStart().startsWith('[')) {
