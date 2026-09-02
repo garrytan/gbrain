@@ -29,8 +29,14 @@ export const zhipu: Recipe = {
     chat: {
       // Informational list (openai-compat tier: assertTouchpoint doesn't
       // enforce it), so newer GLM ids pass without a recipe edit.
-      models: ['glm-5.1', 'glm-4.6', 'glm-4.5'],
+      models: ['glm-5.3', 'glm-5.3-flash', 'glm-5.1', 'glm-4.6', 'glm-4.5'],
       supports_tools: true,
+      // GLM-4.5+ and the GLM-5.x series reason by default and bill that
+      // reasoning as output tokens (gbrain#4727) — the exact semantic
+      // thinking_by_default documents (see deepseek.ts). Predicate scoped to
+      // 4.5+ ids so older GLM ids routed through this recipe (glm-4,
+      // glm-4-plus, glm-3-turbo) keep the conservative output caps.
+      thinking_by_default: (modelId) => /glm-(4\.[5-9]|[5-9])/i.test(modelId),
       // gbrain-side stable tool ids (v0.38 D11) decoupled the loop from
       // Anthropic response formats; GLM tool calling is stable through the
       // OpenAI-compat path, same as deepseek/groq.

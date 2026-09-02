@@ -150,13 +150,16 @@ let mockNow = 0;
 function freezeClock(at: number) { mockNow = at; }
 function advanceClock(deltaMs: number) { mockNow += deltaMs; }
 
-async function startTest(cfg: FakeEngineConfig & { lruCap?: number; ipLimit?: number; tokenLimit?: number; corsOrigin?: string; bodyCap?: number; trustProxy?: boolean } = {}): Promise<TestServer> {
+async function startTest(cfg: FakeEngineConfig & { lruCap?: number; ipLimit?: number; tokenLimit?: number; corsOrigin?: string; bodyCap?: number; trustProxy?: boolean; mcpInstructions?: string } = {}): Promise<TestServer> {
   if (cfg.corsOrigin) process.env.GBRAIN_HTTP_CORS_ORIGIN = cfg.corsOrigin;
   else delete process.env.GBRAIN_HTTP_CORS_ORIGIN;
   if (cfg.bodyCap) process.env.GBRAIN_HTTP_MAX_BODY_BYTES = String(cfg.bodyCap);
   else delete process.env.GBRAIN_HTTP_MAX_BODY_BYTES;
   if (cfg.trustProxy) process.env.GBRAIN_HTTP_TRUST_PROXY = '1';
   else delete process.env.GBRAIN_HTTP_TRUST_PROXY;
+  // #4748: deployment identity via the env override plane.
+  if (cfg.mcpInstructions) process.env.GBRAIN_MCP_INSTRUCTIONS = cfg.mcpInstructions;
+  else delete process.env.GBRAIN_MCP_INSTRUCTIONS;
 
   const engine = makeFakeEngine(cfg);
   const clock = () => mockNow || Date.now();
@@ -229,6 +232,35 @@ describe('http-transport: auth', () => {
     expect(r.status).toBe(200);
     const body = await r.json() as { result?: { instructions?: string } };
     expect(body.result?.instructions).toBe(GBRAIN_MCP_INSTRUCTIONS);
+  });
+
+  test('initialize appends the deployment identity to the canonical contract (#4748)', async () => {
+    const identityServer = await startTest({
+      validTokens: new Map([[hash(VALID_TOKEN), { id: 'tok-1', name: 'test' }]]),
+      mcpInstructions: 'COMPANY BRAIN — shared business memory.',
+    });
+    try {
+      const r = await fetch(`${identityServer.url}/mcp`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${VALID_TOKEN}`, 'Content-Type': 'application/json' },
+        body: rpc('initialize', {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'deployment-identity-test', version: '1.0.0' },
+        }),
+      });
+      expect(r.status).toBe(200);
+      const body = await r.json() as { result?: { instructions?: string } };
+      // Append-only: the canonical safety contract is preserved verbatim
+      // and the identity rides UNDER it.
+      expect(body.result?.instructions).toStartWith(GBRAIN_MCP_INSTRUCTIONS);
+      expect(body.result?.instructions).toEndWith(
+        'Deployment identity:\nCOMPANY BRAIN — shared business memory.',
+      );
+    } finally {
+      identityServer.stop();
+      delete process.env.GBRAIN_MCP_INSTRUCTIONS;
+    }
   });
 
   test('2. missing Authorization header → 401', async () => {

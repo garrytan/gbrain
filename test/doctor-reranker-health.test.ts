@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — doctor `reranker_health` resolves enablement + model through the
+ * v0.48.2 — doctor `reranker_health` resolves enablement + model through the
  * mode plane and reports readiness (key present / sunset / skip rows).
  *
  * Stub engine: `getConfig` from a Map (loadSearchModeConfig reads per key);
@@ -42,7 +42,7 @@ function gw(env: Record<string, string>, extra: Record<string, unknown> = {}): v
 beforeEach(() => resetGateway());
 afterAll(() => resetGateway());
 
-describe('reranker_health (v0.47.11 readiness-aware)', () => {
+describe('reranker_health (v0.48.2 readiness-aware)', () => {
   test('balanced default (no rows), VOYAGE_API_KEY absent → warn naming the key and the disable command', async () => {
     await inFreshAudit({ VOYAGE_API_KEY: undefined, GBRAIN_HOME: emptyHome() }, async () => {
       gw({});

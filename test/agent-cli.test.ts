@@ -437,12 +437,17 @@ describe('#2922: submit-time source resolution', () => {
           await runAgentRun(engine, ['--detach', '--source', 'does-not-exist', 'write', 'a', 'page']);
           throw new Error('expected runAgentRun to reject');
         } catch (e: any) {
-          // New contract: the resolver throws the actionable error; the CLI's
-          // central catch prints it and sets verdict 1 (no in-handler exit).
-          expect(e.message).toMatch(/not found or is archived/);
-          expect(e.message).toMatch(/gbrain sources list/);
+          // The resolver's `not found or is archived.` wording is a USER error
+          // (mirrors dream.ts): the handler classifies it via the shared
+          // isResolverUserError predicate, prints one stderr line, exits 1 —
+          // never propagates as a stack trace.
+          expect(e.message).toBe('EXIT');
         }
       });
+      expect(spy).toHaveBeenCalledWith(1);
+      const errOut = errSpy.mock.calls.flat().join(' ');
+      expect(errOut).toMatch(/gbrain agent run: Source "does-not-exist" not found or is archived/);
+      expect(errOut).toMatch(/gbrain sources list/);
       const rows = await engine.executeRaw<{ id: number }>(
         `SELECT id FROM minion_jobs WHERE name = 'subagent'`,
       );
@@ -463,10 +468,13 @@ describe('#2922: submit-time source resolution', () => {
           await runAgentRun(engine, ['--detach', '--source', 'corporate', 'write', 'a', 'page']);
           throw new Error('expected runAgentRun to reject');
         } catch (e: any) {
-          expect(e.message).toMatch(/not found or is archived/);
-          expect(e.message).toMatch(/restore|sources list/);
+          expect(e.message).toBe('EXIT');
         }
       });
+      expect(spy).toHaveBeenCalledWith(1);
+      const errOut = errSpy.mock.calls.flat().join(' ');
+      expect(errOut).toMatch(/gbrain agent run: Source "corporate" not found or is archived/);
+      expect(errOut).toMatch(/restore|sources list/);
       const rows = await engine.executeRaw<{ id: number }>(
         `SELECT id FROM minion_jobs WHERE name = 'subagent'`,
       );

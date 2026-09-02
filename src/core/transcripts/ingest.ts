@@ -396,12 +396,13 @@ export async function runTranscriptsIngest(
       if (step.done && step.value) {
         const diag = step.value;
         fileOutcome.skippedLines = diag.skippedLines;
-        if (diag.bytesRead > 0 && diag.sessions === 0) {
+        if (diag.bytesRead > 0 && diag.sessions === 0 && !diag.expectedEmpty) {
           fileOutcome.drift = true;
           result.driftFiles++;
           // A drifting file may hold sessions a fixed parser will surface
           // later (torn hermes copy, transient format break) — the shared
-          // watermark must not advance past it.
+          // watermark must not advance past it. expectedEmpty (a grok
+          // tool/reasoning-only session) is understood, not drifted.
           result.cleanScan = false;
         }
         if (diag.skippedLines > 0) {

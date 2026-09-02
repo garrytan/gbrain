@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — init's reranker-default write against the live voyage default.
+ * v0.48.2 — init's reranker-default write against the live voyage default.
  *
  * Truth table (stub engine records setConfig calls):
  *   VOYAGE key present, any keyed embedding pick   → NO write (bundle default resolves to it)
@@ -39,7 +39,7 @@ async function quiet<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe('writeNewInstallRerankerDefault (v0.47.11)', () => {
+describe('writeNewInstallRerankerDefault (v0.48.2)', () => {
   test('VOYAGE key present + voyage embedding pick → no write', async () => {
     await withEnv({ VOYAGE_API_KEY: 'pa-test' }, async () => {
       const { engine, writes } = stubEngine();

@@ -578,4 +578,85 @@ describe('loadConfigWithEngine (Phase 4 / F3)', () => {
       expect(merged?.cycle).toBeUndefined();
     });
   });
+
+  // #4702 — content_sanity.disabled_patterns is a REAL config key: without
+  // this DB-plane resolution, `gbrain config set content_sanity.disabled_patterns`
+  // wrote a row nothing ever read while every sibling knob resolved
+  // env > file > DB.
+  describe('#4702 content_sanity.disabled_patterns DB-plane resolution', () => {
+    test('comma-separated DB value resolves to a string array', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': 'access_denied, error_title',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['access_denied', 'error_title']);
+    });
+
+    test('JSON-array DB value resolves to a string array', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '["access_denied"]',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['access_denied']);
+    });
+
+    test('file plane wins over the DB value (same precedence as sibling knobs)', async () => {
+      const base: GBrainConfig = {
+        engine: 'pglite',
+        content_sanity: { disabled_patterns: ['error_title'] },
+      };
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': 'access_denied',
+      });
+      const merged = await loadConfigWithEngine(engine, base);
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['error_title']);
+    });
+
+    // Ship-review gap: the DB-plane parser's lenient arms. A hand-typed value
+    // must still land (never throw, never silently disable the knob), and
+    // nothing that is not a string may ever be accepted as a pattern name.
+    test('malformed JSON falls back to the comma parse instead of throwing or dropping the value', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '[access_denied',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      // Pinned current behavior: the unparseable text is taken verbatim as one
+      // comma-separated entry (harmless — it matches no pattern id), rather
+      // than disabling the knob or crashing config load.
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['[access_denied']);
+    });
+
+    test('a JSON array keeps only its string elements (numbers / null are not pattern names)', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '["a", 1, null]',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['a']);
+    });
+
+    test('a JSON object element is never accepted as a pattern name', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '["access_denied", {"name": "error_title"}, ["error_title"]]',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual(['access_denied']);
+    });
+
+    test('an empty DB value is treated as unset (no disabled_patterns, no content_sanity container)', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': '',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toBeUndefined();
+      expect(merged?.content_sanity).toBeUndefined();
+    });
+
+    test('a whitespace-and-commas value resolves to an EMPTY list (set, but disables nothing)', async () => {
+      const engine = makeEngine({
+        'content_sanity.disabled_patterns': ' , ,',
+      });
+      const merged = await loadConfigWithEngine(engine, { engine: 'pglite' });
+      expect(merged?.content_sanity?.disabled_patterns).toEqual([]);
+    });
+  });
 });

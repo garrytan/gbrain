@@ -63,6 +63,14 @@ function writePushStatus(home: string, body: string): void {
   writeFileSync(join(home, 'bootstrap', 'push-status.json'), body);
 }
 
+/** A per-root push-status file (`push-status-<12 hex>.json`) — the shape
+ * `readPushStatuses` prefers when present, and the only way to get more than
+ * one tracked target in a single test (the legacy file above is singular). */
+function writePushStatusRoot(home: string, hash12hex: string, body: string): void {
+  mkdirSync(join(home, 'bootstrap'), { recursive: true });
+  writeFileSync(join(home, 'bootstrap', `push-status-${hash12hex}.json`), body);
+}
+
 /** A valid v1 install receipt pointing at `ws` (or a receipt-shaped blob). */
 function writeReceipt(home: string, ws: string): void {
   mkdirSync(join(home, 'bootstrap'), { recursive: true });
@@ -87,13 +95,51 @@ function writeVerifyRun(home: string, name: string, body: string): void {
   writeFileSync(join(home, 'bootstrap', name), body);
 }
 
-/** A workspace dir; `dirty: true` makes it a git repo with an untracked file. */
-function makeWorkspace(opts: { dirty?: boolean } = {}): string {
+/**
+ * A workspace dir. `dirty: true` makes it a git repo with an untracked file
+ * (uncommitted changes). `clean: true` makes it a git repo with one commit
+ * and a fake `origin/<branch>` ref pointing at HEAD (verified clean, in sync
+ * — no real remote/fetch needed). `ahead: true` is like `clean` but the
+ * `origin/<branch>` ref is left one commit behind HEAD (committed but
+ * unpushed — clean working tree, still needs a push). `detached: true` is
+ * like `clean` but checked out at a detached HEAD with NO remote-tracking
+ * ref at all (no `origin/<branch>` line to key off, and `@{u}` can't
+ * resolve) — the working tree is genuinely clean, but push-ahead status
+ * can't be verified this way. `neverPushed: true` is a NAMED branch with a
+ * commit but NO `origin/<branch>` ref at all (never pushed). With no options
+ * the dir is a plain non-git directory.
+ */
+function makeWorkspace(opts: { dirty?: boolean; clean?: boolean; ahead?: boolean; detached?: boolean; neverPushed?: boolean } = {}): string {
   const ws = mkdtempSync(join(tmpdir(), 'gb-bdc-ws-'));
   tmpDirs.push(ws);
   if (opts.dirty) {
     execFileSync('git', ['init', '-q', ws], { stdio: 'ignore' });
     writeFileSync(join(ws, 'unpushed-note.md'), 'recent agent memory\n');
+  } else if (opts.clean || opts.ahead || opts.detached || opts.neverPushed) {
+    const g = (...args: string[]) =>
+      execFileSync('git', ['-C', ws, ...args], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    execFileSync('git', ['init', '-q', ws], { stdio: 'ignore' });
+    g('config', 'user.email', 'test@example.com');
+    g('config', 'user.name', 'Test');
+    writeFileSync(join(ws, 'note.md'), 'settled\n');
+    g('add', '-A');
+    g('commit', '-q', '-m', 'origin-state');
+    const branch = g('branch', '--show-current');
+    const originSha = g('rev-parse', 'HEAD'); // real ancestor of HEAD in both cases
+    if (opts.ahead) {
+      // Commit once more, unpushed: origin/<branch> stays at originSha, one
+      // commit behind HEAD — clean working tree, still needs a push.
+      writeFileSync(join(ws, 'note2.md'), 'more\n');
+      g('add', '-A');
+      g('commit', '-q', '-m', 'local-advance');
+    }
+    if (opts.detached) {
+      g('checkout', '-q', '--detach', originSha); // no branch, no origin/<branch> ref at all
+    } else if (!opts.neverPushed) {
+      // `opts.clean`: origin/<branch> === HEAD (nothing to push).
+      // `opts.neverPushed` skips this: a named branch with NO origin ref.
+      execFileSync('git', ['-C', ws, 'update-ref', `refs/remotes/origin/${branch}`, originSha], { stdio: 'ignore' });
+    }
   }
   return ws;
 }
@@ -316,17 +362,67 @@ describe('bootstrap_push_health', () => {
     expect(c?.message).toContain('push_failed');
   }, T);
 
-  test('>48h stale + CLEAN tree → warn only (likely just idle)', async () => {
+  test('>48h stale + no receipt/workspace (state unverified) → warn, not ok', async () => {
     const { parent, home } = makeHome();
-    // No receipt → ws is null → dirty stays false: the stale-only branch.
+    // No receipt → ws is null → tree state can't be probed at all.
+    // Unverified must stay warn, never silently become ok.
     writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
     const c = byName(await run(parent), 'bootstrap_push_health');
     expect(c?.status).toBe('warn');
-    expect(c?.message).toContain('>48h');
-    expect(c?.message).toContain('idle');
+    expect(c?.message).toContain('unverified');
   }, T);
 
-  test('>48h stale + DIRTY workspace tree → fail [B4]', async () => {
+  test('>48h stale + git-VERIFIED clean tree (in sync with origin) → ok', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ clean: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('ok');
+    expect(c?.message).toContain('confirmed clean');
+  }, T);
+
+  test('>48h stale + clean working tree but AHEAD of origin (committed, unpushed) → fail [B4]', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace({ ahead: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toContain(ws);
+  }, T);
+
+  test('>48h stale + clean but DETACHED HEAD with no origin ref (unverifiable) → warn, never a false fail', async () => {
+    const { parent, home } = makeHome();
+    // Working tree IS clean here, but `rev-list --count HEAD` would count
+    // ALL history (not just unpushed commits) if used as a naive fallback —
+    // this regression-tests that detached HEAD does NOT take that fallback
+    // and does NOT get reported as a false 'fail' for a repo that is not
+    // actually dirty.
+    const ws = makeWorkspace({ detached: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('unverified');
+  }, T);
+
+  test('>48h stale across TWO tracked workspaces, receipt ws verified clean → warn, NOT ok (can\'t attribute the stale entry to a single tree)', async () => {
+    const { parent, home } = makeHome();
+    // The receipt workspace is genuinely clean — but there are two tracked
+    // push targets, so a clean `ws` says nothing about the OTHER (possibly
+    // dirty) root that might be the actually-stale one. Per-root files
+    // [D13]: the WORST entry decides — ambiguous must never resolve to ok.
+    const ws = makeWorkspace({ clean: true });
+    writeReceipt(home, ws);
+    writePushStatusRoot(home, 'aaaaaaaaaaaa', JSON.stringify({ ts: STALE_TS, ok: true, repoRoot: ws }));
+    writePushStatusRoot(home, 'bbbbbbbbbbbb', JSON.stringify({ ts: new Date().toISOString(), ok: true, repoRoot: makeWorkspace() }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('2 tracked workspace');
+  }, T);
+
+  test('>48h stale + DIRTY workspace tree (uncommitted changes) → fail [B4]', async () => {
     const { parent, home } = makeHome();
     const ws = makeWorkspace({ dirty: true });
     writeReceipt(home, ws);
@@ -350,6 +446,44 @@ describe('bootstrap_push_health', () => {
     const c = byName(await run(parent), 'bootstrap_push_health');
     expect(c?.status).toBe('warn');
     expect(c?.message).toContain('unreadable');
+  }, T);
+
+  test('>48h stale + NAMED branch with a commit but NO origin/<branch> ref (never pushed) → fail, loud over silent', async () => {
+    const { parent, home } = makeHome();
+    // `rev-list origin/<branch>..HEAD` cannot resolve; the named-branch
+    // fallback counts local commits instead (mirrors treeNeedsPush) — any
+    // commit on a never-pushed branch is unpushed work.
+    const ws = makeWorkspace({ neverPushed: true });
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('fail');
+    expect(c?.message).toContain('DIRTY');
+    expect(c?.message).toContain(ws);
+  }, T);
+
+  test('>48h stale + receipt naming a NON-git dir → warn "git probe failed", never ok', async () => {
+    const { parent, home } = makeHome();
+    const ws = makeWorkspace(); // plain directory, no git init → every probe fails
+    writeReceipt(home, ws);
+    writePushStatus(home, JSON.stringify({ ts: STALE_TS, ok: true }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('git probe failed');
+    expect(c?.message).toContain(ws);
+  }, T);
+
+  test('>48h stale + a SINGLE tracked target whose repoRoot is NOT the receipt ws → warn naming 1 tracked workspace', async () => {
+    const { parent, home } = makeHome();
+    // The receipt workspace is verified clean, but the one tracked push
+    // target is a DIFFERENT root — the clean probe says nothing about the
+    // stale entry, so it must not resolve to ok.
+    const ws = makeWorkspace({ clean: true });
+    writeReceipt(home, ws);
+    writePushStatusRoot(home, 'cccccccccccc', JSON.stringify({ ts: STALE_TS, ok: true, repoRoot: makeWorkspace() }));
+    const c = byName(await run(parent), 'bootstrap_push_health');
+    expect(c?.status).toBe('warn');
+    expect(c?.message).toContain('1 tracked workspace');
   }, T);
 });
 

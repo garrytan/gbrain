@@ -189,19 +189,34 @@ describe('extractTimelineFromContent', () => {
   });
 
   it('does not split on hyphens inside markdown link targets', () => {
-    const content = `- **2025-03-18** | Referenced in [Alice](../people/alice-example.md)`;
+    const content = `- **2025-03-18** | Mentioned in [Alice](../people/alice-example.md)`;
     const entries = extractTimelineFromContent(content, 'companies/acme-example');
     expect(entries).toHaveLength(1);
     expect(entries[0].source).toBe('markdown');
-    expect(entries[0].summary).toBe('Referenced in [Alice](../people/alice-example.md)');
+    expect(entries[0].summary).toBe('Mentioned in [Alice](../people/alice-example.md)');
   });
 
   it('does not split on spaced dashes inside link labels', () => {
-    const content = `- **2025-03-18** | Referenced in [Deals — Q1 Review](../deals/q1-review.md)`;
+    const content = `- **2025-03-18** | Mentioned in [Deals — Q1 Review](../deals/q1-review.md)`;
     const entries = extractTimelineFromContent(content, 'companies/acme-example');
     expect(entries).toHaveLength(1);
     expect(entries[0].source).toBe('markdown');
-    expect(entries[0].summary).toBe('Referenced in [Deals — Q1 Review](../deals/q1-review.md)');
+    expect(entries[0].summary).toBe('Mentioned in [Deals — Q1 Review](../deals/q1-review.md)');
+  });
+
+  it('skips generated backlink receipts because their dates are not entity events (#4277)', () => {
+    const content = `- **2025-03-18** | Referenced in [Alice](../people/alice-example.md)`;
+    expect(extractTimelineFromContent(content, 'companies/acme-example')).toHaveLength(0);
+  });
+
+  it('keeps a Source — Summary bullet whose summary merely mentions Referenced in', () => {
+    // The receipt guard fires only when the bullet's rest STARTS with the
+    // generated marker — a write-through rendered bullet (`source — summary`)
+    // must keep round-tripping even when its summary carries the phrase.
+    const content = `- **2025-03-18** | inbox — Referenced in [Alice](../people/alice-example.md) — follow up`;
+    const entries = extractTimelineFromContent(content, 'companies/acme-example');
+    expect(entries).toHaveLength(1);
+    expect(entries[0].source).toBe('inbox');
   });
 
   it('splits on the first spaced dash outside links', () => {

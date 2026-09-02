@@ -125,13 +125,18 @@ export interface CragMetaBlock {
  * Retrieval-side escalation only pays off when a better index sweep could
  * plausibly contain the answer — which is true for BOTH shapes, but the
  * op only re-runs when the first pass didn't already use the high-ceiling
- * knobs (callerExpanded) — otherwise the re-run would be a no-op re-query.
+ * knobs (`callerExpanded`) — otherwise the re-run would pay a second
+ * query-expansion LLM call + a second rerank pass over a near-identical
+ * candidate set (#4610: this guard was documented here long before it was
+ * implemented; the production call site now passes the resolved expand
+ * flag, so default-shape `query` callers — expand on unless explicitly
+ * disabled — no longer double-spend on every weak grade).
  */
 export function shouldEscalateRetrieval(
   grade: ConfidenceGrade,
-  opts: { enabled: boolean; alreadyEscalated?: boolean },
+  opts: { enabled: boolean; alreadyEscalated?: boolean; callerExpanded?: boolean },
 ): boolean {
-  return opts.enabled && !opts.alreadyEscalated && grade.level === 'weak';
+  return opts.enabled && !opts.alreadyEscalated && !opts.callerExpanded && grade.level === 'weak';
 }
 
 /** Rank a grade for better-of-two comparison after an escalated re-run. */

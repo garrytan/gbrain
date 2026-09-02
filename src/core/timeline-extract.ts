@@ -33,14 +33,20 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
   const entries: ExtractedTimelineEntry[] = [];
 
   // Format 1: Bullet — - **YYYY-MM-DD** | Source — Summary
-  // The delimiter search is link-aware (see findDelimiterOutsideLinks); a
-  // bullet with no delimiter (e.g. an auto-generated backlink line
-  // `- **date** | Referenced in [X](y.md)`) is kept whole as the summary
-  // rather than dropped or fragmented.
+  // The delimiter search is link-aware (see findDelimiterOutsideLinks): a
+  // no-delimiter bullet is kept whole as the summary rather than fragmented.
   const bulletPattern = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|\s*(.+)$/gm;
   let match;
   while ((match = bulletPattern.exec(content)) !== null) {
     const rest = match[2].trim();
+    // #4277: dated auto-generated backlink receipts
+    // (`- **date** | Referenced in [X](y.md)`) are graph-maintenance noise —
+    // the date is the backlink write's, not an entity event's. Skip them.
+    // Pre-split guard (rest must START with the marker) mirrors
+    // parseTimelineEntries in link-extraction.ts so FS- and DB-side
+    // extraction stay in lockstep, and leaves write-through rendered
+    // `source — summary` bullets that merely mention the phrase intact.
+    if (/^Referenced in\s+\[/i.test(rest)) continue;
     const at = findDelimiterOutsideLinks(rest);
     if (at >= 0) {
       entries.push({ slug, date: match[1], source: rest.slice(0, at).trim(), summary: rest.slice(at + 1).trim() });

@@ -773,6 +773,22 @@ export interface SearchResult {
    */
   content_flag?: { reason: string; detail: string };
   /**
+   * 2026-09 fix wave (#3617 follow-up): true when this row came from the
+   * keyword/title arm's AND→OR zero-strict-recall fallback rather than a
+   * strict websearch match. Stamped by the ENGINES inside the fallback
+   * branch (both engines, keyword + title arms — parity-pinned). hybridSearch
+   * reads it at fusion time: relaxed rows only vote in RRF when EVERY vector
+   * list is empty (the fallback's designed rescue case — keyword-only /
+   * keyless / degraded paths). When the vector arm is healthy, relaxed rows
+   * are dropped pre-fusion: OR-of-common-terms matches carry noise-shaped
+   * rank evidence, and letting them vote at full RRF weight demonstrably
+   * outvotes correct semantic results (LongMemEval receipt: hybrid
+   * recall_all@5 51.3% with them voting vs vector-only 93.8%; disabling the
+   * fallback restored gold to ranks 0-2 on probed questions). Absent on
+   * strict-match rows.
+   */
+  keyword_relaxed?: boolean;
+  /**
    * Extraction quarantine lane (issue #160): true when the result's page is
    * an unverified auto-extracted entity stub (frontmatter
    * `provenance: 'auto-extracted'` + `status: 'unverified'`). Such pages are
@@ -1794,6 +1810,19 @@ export interface EvalCaptureFailure {
  *                        reason `no_key` (provider key absent) or
  *                        `sunset_short_circuit` (provider dead past its
  *                        announced date); results are in RRF order
+ *   rerank_passthrough — the reranker was enabled and the provider answered
+ *                        SUCCESSFULLY but with an empty/malformed result set,
+ *                        so results passed through in raw RRF order with no
+ *                        rerank_score (#4648 — distinguishes "reranker off"
+ *                        from "reranker died silently")
+ *   keyword_relaxed_carried — OR-relaxed lexical rows VOTED in fusion because
+ *                        every text vector list came back empty on a
+ *                        vector-enabled run (e.g. mid embed-backfill). The
+ *                        result set leans on noise-shaped rank evidence, so
+ *                        the cache write takes the degraded (short) TTL —
+ *                        otherwise a transitional relaxed-carried row would
+ *                        shadow the recovered pipeline for the full TTL
+ *                        under the same knobs hash (2026-09 red-team).
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1807,6 +1836,8 @@ export const DEGRADED_STAGES = [
   'keyword_zero',
   'cache_prestamp',
   'reranker_skipped',
+  'rerank_passthrough',
+  'keyword_relaxed_carried',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1825,6 +1856,9 @@ export const DEGRADED_REASONS = [
   'first_result_truncated',
   'no_key',
   'sunset_short_circuit',
+  // #4648 — rerank_passthrough reasons (mirror RerankPassThroughReason).
+  'empty_result_set',
+  'malformed_shape',
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 
@@ -1838,6 +1872,18 @@ export interface DegradedStageEntry {
  * only its order is not what the mode promised. Consumers that reason about
  * "was recall impaired?" (empty-result copy, the short degraded cache TTL)
  * skip these; consumers that report "what did not run" keep them.
+ *
+ * Membership is a deliberate list, not "anything reranker-shaped":
+ *   - `reranker_skipped` IS ranking-only: it is a CONFIG state (no key / dead
+ *     provider) that a short TTL cannot fix, so the cache keeps the full TTL.
+ *   - `rerank_passthrough` (#4648) is NOT listed on purpose: the provider
+ *     answered 200 with an empty/malformed set — a TRANSIENT fault where the
+ *     short degraded TTL lets the next query recover a reranked result set
+ *     (master's v0.48.1.0 behavior, kept at the merge). It never reaches the
+ *     empty-result copy because a pass-through implies a non-empty batch.
+ *   - `keyword_relaxed_carried` is recall-shaped by definition (see above).
+ * Pinned by test/degraded-stages-recall.test.ts; a new fail-open stage must be
+ * classified here in the same commit that adds it.
  */
 export const RANKING_ONLY_DEGRADED_STAGES: ReadonlySet<DegradedStage> = new Set<DegradedStage>(['reranker_skipped']);
 export function affectsRecall(d: { stage?: string; reason?: string } | undefined | null): boolean {
@@ -1916,6 +1962,17 @@ export interface HybridSearchMeta {
    * existed (surfaced as `cache_prestamp` at hit time).
    */
   degraded?: DegradedStageEntry[];
+  /**
+   * 2026-09 fix wave (#3617 follow-up): count of OR-relaxed lexical rows
+   * fetched but EXCLUDED from RRF fusion because the text vector arm was
+   * healthy (the designed demotion). NOT a degraded stage — muting relaxed
+   * noise on a healthy run is normal operation and common (any query with
+   * zero strict lexical matches), so it must not shorten the cache TTL —
+   * but without this field `_meta` implies the lexical arms voted when they
+   * contributed nothing, hiding the demotion from an operator debugging a
+   * miss. Omitted when zero.
+   */
+  relaxed_dropped?: number;
   /**
    * WP2/T3 — pre-budget hit count: how many results retrieval produced for
    * this page BEFORE token-budget enforcement. Lets a consumer distinguish

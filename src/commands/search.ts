@@ -63,7 +63,7 @@ function formatModesText(report: SearchModesReport): string {
     const value = String(attr.value ?? '(undefined)');
     lines.push(`  ${knob.padEnd(28)} = ${value.padEnd(12)} [${attr.source_detail}]`);
   }
-  // v0.47.11 — one runtime line answering "is my reranker actually running?"
+  // v0.48.2 — one runtime line answering "is my reranker actually running?"
   const rr = report.reranker_readiness;
   if (rr) {
     lines.push('');
@@ -90,6 +90,9 @@ function formatModesText(report: SearchModesReport): string {
   for (const [k, desc] of Object.entries(KNOB_DESCRIPTIONS)) {
     lines.push(`  ${k.padEnd(28)} ${desc}`);
   }
+  // #4604: the dashboard shows brain-level resolution only.
+  lines.push('');
+  lines.push(`Note: ${report.per_call_note}`);
   return lines.join('\n');
 }
 

@@ -71,6 +71,49 @@ function makeChatStub(scoresBySlot: Record<string, number[]>) {
   });
 }
 
+describe('gbrain eval cross-modal — judge call shape (#4338 data boundary)', () => {
+  test('callSlot sends EVALUATOR_SYSTEM_PROMPT as `system` and the data-bounded prompt as the user turn', async () => {
+    const seen: Array<{ system?: string; messages?: Array<{ role: string; content: string }> }> = [];
+    const chatStub = mock(async (opts: { model?: string; system?: string; messages?: Array<{ role: string; content: string }> }) => {
+      seen.push({ system: opts.system, messages: opts.messages });
+      const model = opts.model ?? '';
+      return {
+        text: JSON.stringify({ scores: { goal: { score: 8 }, depth: { score: 8 } }, overall: 8, improvements: ['1. x'] }),
+        blocks: [],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model,
+        providerId: model.split(':')[0]!,
+      };
+    });
+    mock.module('../../src/core/ai/gateway.ts', () => ({
+      chat: chatStub,
+      configureGateway,
+      isAvailable: () => true,
+    }));
+
+    const { runEval, EVALUATOR_SYSTEM_PROMPT } = await import('../../src/core/cross-modal-eval/runner.ts');
+    await runEval({
+      task: 'sample task',
+      output: 'sample output content',
+      slug: 'demo-shape',
+      receiptDir: tempDir,
+      cycles: 1,
+    });
+
+    expect(seen.length).toBeGreaterThan(0);
+    for (const call of seen) {
+      // The hardened grading-function contract rides in `system`, never
+      // inlined into the user turn where candidate text could shadow it.
+      expect(call.system).toBe(EVALUATOR_SYSTEM_PROMPT);
+      expect(call.messages).toHaveLength(1);
+      expect(call.messages![0]!.role).toBe('user');
+      expect(call.messages![0]!.content).toContain('<task_to_grade>');
+      expect(call.messages![0]!.content).toContain('<candidate_output>\nsample output content\n</candidate_output>');
+    }
+  });
+});
+
 describe('gbrain eval cross-modal — runner verdict contract', () => {
   test('PASS: 3 happy responses, all dims >=7', async () => {
     const chatStub = makeChatStub({

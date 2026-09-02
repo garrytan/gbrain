@@ -1,7 +1,7 @@
 /**
  * Pure reranker readiness — the ONE predicate behind "is the reranker actually
  * running?" for `gbrain search modes`, `gbrain doctor`'s `reranker_health`
- * check, and init's reranker-default write (v0.47.11).
+ * check, and init's reranker-default write (v0.48.2).
  *
  * Why a leaf: init cannot use the gateway (it runs before `configureGateway`)
  * and must not pull provider SDKs; doctor and the modes dashboard want the

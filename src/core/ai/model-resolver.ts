@@ -139,9 +139,12 @@ export function knownProviderIds(): string[] {
  * user-provided-model recipes declare `default_dims: 0` to force an explicit
  * `--embedding-dimensions`), so callers keep their existing falsy checks.
  *
- * Accepts a bare model id (`bge-m3`) or a qualified one (`ollama:bge-m3`);
- * the provider prefix is stripped before lookup so call sites can pass
- * whichever they hold.
+ * Accepts a bare model id (`bge-m3`, or one that itself contains a colon
+ * like Ollama's pullable tag `qwen3-embedding:8b`) or a qualified one
+ * (`ollama:bge-m3`, `ollama:qwen3-embedding:8b`); the id is tried as-is
+ * first, then with a leading `provider:` prefix stripped, so call sites can
+ * pass whichever they hold without a bare model-internal colon being
+ * mistaken for the provider separator (#3904).
  *
  * Fixes #2051: a recipe-wide default silently picked 768 for every Ollama
  * model, so `init --embedding-model ollama:bge-m3` built a 768-wide column
@@ -154,22 +157,37 @@ export function embeddingDimsForModel(
   const tp = recipe.touchpoints.embedding;
   if (!tp) return 0;
   if (!modelId) return tp.default_dims ?? 0;
-  // Strip a leading `provider:` so both forms resolve. Slash-form ids
-  // (openrouter nested) are left intact — they're the model id.
-  const colon = modelId.indexOf(':');
-  const bare = colon === -1 ? modelId : modelId.slice(colon + 1);
-  // #4123: fold BOTH sides — configured ids arrive cased (`ollama:Qwen3-Embed-8B`)
-  // and user-editable recipe model_dims tables can carry cased keys too.
-  // Exact match first (zero behavior change for today's all-lowercase
-  // tables), then a case-insensitive scan. Without this, a cased id fell
-  // through to default_dims and `gbrain init` built a wrong-width column.
-  let declared = tp.model_dims?.[bare];
-  if (typeof declared !== 'number' && tp.model_dims) {
-    const bareFolded = bare.toLowerCase();
-    for (const [k, v] of Object.entries(tp.model_dims)) {
-      if (k.toLowerCase() === bareFolded) { declared = v; break; }
-    }
+  // Try the id exactly as given first. This covers bare model ids that
+  // themselves contain a colon (e.g. Ollama's `qwen3-embedding:8b` pullable
+  // tag) — stripping the FIRST colon unconditionally would mistake the
+  // model's own colon for a `provider:` separator and truncate it.
+  let declared = lookupDims(tp.model_dims, modelId);
+  if (typeof declared !== 'number') {
+    // Strip a leading `provider:` so the qualified form also resolves.
+    // Slash-form ids (openrouter nested) are left intact — they're the model id.
+    const colon = modelId.indexOf(':');
+    const bare = colon === -1 ? modelId : modelId.slice(colon + 1);
+    declared = lookupDims(tp.model_dims, bare);
   }
   if (typeof declared === 'number' && declared > 0) return declared;
   return tp.default_dims ?? 0;
+}
+
+// #4123: fold BOTH sides — configured ids arrive cased (`ollama:Qwen3-Embed-8B`)
+// and user-editable recipe model_dims tables can carry cased keys too.
+// Exact match first (zero behavior change for today's all-lowercase
+// tables), then a case-insensitive scan. Without this, a cased id fell
+// through to default_dims and `gbrain init` built a wrong-width column.
+function lookupDims(
+  table: Record<string, number> | undefined,
+  key: string,
+): number | undefined {
+  if (!table) return undefined;
+  const exact = table[key];
+  if (typeof exact === 'number') return exact;
+  const keyFolded = key.toLowerCase();
+  for (const [k, v] of Object.entries(table)) {
+    if (k.toLowerCase() === keyFolded) return v;
+  }
+  return undefined;
 }

@@ -33,6 +33,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { makeGitFixture, type GitFixture } from './helpers/git-fixture.ts';
 import { runDream } from '../src/commands/dream.ts';
+import { ALL_PHASES, SOURCE_FRESHNESS_PHASES } from '../src/core/cycle.ts';
 
 // ─── Shared fixtures (built once; reset per test) ──────────────────
 
@@ -411,6 +412,17 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     return typeof raw === 'string' ? raw : null;
   }
 
+  function phaseByName(report: any, name: string): any {
+    return report?.phases?.find((p: any) => p.phase === name);
+  }
+
+  function expectNoImplicitSourceExclusions(report: any): void {
+    expect(report?.phases.map((p: any) => p.phase)).toEqual(ALL_PHASES);
+    for (const p of report.phases) {
+      expect(p.details?.reason).not.toBe('excluded_from_implicit_source_cycle');
+    }
+  }
+
   // ─── parseArgs: --source missing / conflict / repetition ────────────
 
   test('--source with no value exits 2 with usage hint', async () => {
@@ -521,9 +533,13 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     } catch (e: any) {
       thrown = e.message;
     }
-    // New contract: resolver throws the actionable error (central catch
-    // prints + verdict 1); accept either the throw or the legacy exit path.
-    const errOut = errSpy.mock.calls.flat().join(' ') + ' ' + thrown;
+    // Review fix: assertSourceExists now says "not found or is archived." —
+    // dream's isResolverUserError must match BOTH wordings (like
+    // code-callers/code-callees) so the resolver's user error surfaces as a
+    // clean stderr line + exit 1, never a propagated stack trace.
+    expect(thrown).toBe('EXIT');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errOut = errSpy.mock.calls.flat().join(' ');
     expect(errOut).toMatch(/Source "no-such-source" not found/);
     expect(errOut).toMatch(/gbrain sources list/);
     exitSpy.mockRestore();
@@ -597,6 +613,100 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     expect(await readLastFullCycleAt('beta')).toBeNull();
   }, 300_000);
 
+  // ─── #4700: bare dream against a default-like source runs the FULL cycle ─
+
+  test('bare dream runs the full cycle for a non-default sources.default target (#4700)', async () => {
+    await seedSource('primary');
+    await engine.setConfig('sources.default', 'primary');
+    await engine.setConfig('sync.repo_path', repo);
+
+    const report = await runDream(engine, ['--dry-run', '--json']);
+    expect(report).toBeTruthy();
+    expectNoImplicitSourceExclusions(report);
+  }, 300_000);
+
+  test('bare dream runs the full cycle for the sole non-default source (#4700)', async () => {
+    await seedSource('solo');
+    await engine.setConfig('sync.repo_path', repo);
+
+    const report = await runDream(engine, ['--dry-run', '--json']);
+    expect(report).toBeTruthy();
+    expectNoImplicitSourceExclusions(report);
+  }, 300_000);
+
+  test('bare dream survives a stale sources.default: warns and falls back to the sole non-default source (#4700 review fix)', async () => {
+    await seedSource('solo');
+    // sources.default points at a source that no longer exists (deleted or
+    // never restored) — the tier-5 fail-open posture treats it as absent.
+    await engine.setConfig('sources.default', 'ghost-gone');
+    await engine.setConfig('sync.repo_path', repo);
+
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    let report: any;
+    let errOut = '';
+    try {
+      report = await runDream(engine, ['--dry-run', '--json']);
+      errOut = errSpy.mock.calls.flat().join(' ');
+    } finally {
+      errSpy.mockRestore();
+    }
+    expect(report).toBeTruthy();
+    expectNoImplicitSourceExclusions(report); // fell back to 'solo' as the implicit default
+    expect(errOut).toMatch(/ghost-gone/);
+    expect(errOut).toMatch(/sources\.default/);
+  }, 300_000);
+
+  test('explicit --source remains a freshness-only source cycle even when it is sources.default', async () => {
+    await seedSource('primary');
+    await engine.setConfig('sources.default', 'primary');
+
+    const report = await runDream(engine, ['--source', 'primary', '--dry-run', '--json']);
+    expect(report).toBeTruthy();
+    const synthesize = phaseByName(report, 'synthesize');
+    expect(synthesize?.details?.reason).toBe('excluded_from_implicit_source_cycle');
+    for (const phase of SOURCE_FRESHNESS_PHASES) {
+      expect(phaseByName(report, phase)?.details?.reason).not.toBe('excluded_from_implicit_source_cycle');
+    }
+  }, 300_000);
+
+  // ─── #4700 path-derived arm (#4745 ship-review gap): a `--dir` run derives
+  // its source from the checkout; when that source IS the brain's default-like
+  // source the run is still the canonical default cycle (full phase set), and
+  // when it is some OTHER source it stays a freshness-only source cycle.
+  // Two non-default sources with distinct local_paths so sole-non-default
+  // routing cannot be what decides it — only sources.default can.
+
+  test('--dir on the default-like source (sources.default) keeps the FULL implicit cycle', async () => {
+    await seedSource('primary'); // local_path = repo → derived from --dir
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('other', 'other', '/somewhere/else', '{}'::jsonb, false, NOW())`,
+    );
+    await engine.setConfig('sources.default', 'primary');
+
+    const report = await runDream(engine, ['--dir', repo, '--dry-run', '--json']);
+    expect(report).toBeTruthy();
+    expectNoImplicitSourceExclusions(report);
+  }, 300_000);
+
+  test('--dir on a NON-default-like source stays freshness-only even though sources.default names another source', async () => {
+    await seedSource('other'); // local_path = repo → derived from --dir
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path, config, archived, created_at)
+       VALUES ('primary', 'primary', '/somewhere/else', '{}'::jsonb, false, NOW())`,
+    );
+    await engine.setConfig('sources.default', 'primary');
+
+    const report = await runDream(engine, ['--dir', repo, '--dry-run', '--json']);
+    expect(report).toBeTruthy();
+    // Freshness-only: the brain-wide phases are recorded as excluded...
+    expect(phaseByName(report, 'synthesize')?.details?.reason).toBe('excluded_from_implicit_source_cycle');
+    // ...while the per-source freshness phases still run.
+    for (const phase of SOURCE_FRESHNESS_PHASES) {
+      expect(phaseByName(report, phase)?.details?.reason).not.toBe('excluded_from_implicit_source_cycle');
+    }
+  }, 300_000);
+
   // ─── --source-id alias equivalence (D3) ─────────────────────────────
 
   test('--source-id <existing> is equivalent to --source (writes timestamp)', async () => {
@@ -645,6 +755,44 @@ describe('runDream — --source / --source-id (v0.41.13)', () => {
     }
     expect(restored).toBe(true);
   });
+});
+
+// ─── #4730: --drain --dry-run --json payload shape ─────────────────────
+//
+// The dry-run preview never runs the drain loop, so it hand-builds the
+// result envelope. It must carry the SAME #4730 keys as a real drain
+// (`failures`, `omitted_failure_count`) so a `--json` consumer can parse
+// both shapes with one schema.
+
+describe('runDream — --drain --dry-run --json payload (#4730)', () => {
+  test('carries failures: [] and omitted_failure_count: 0 alongside the legacy counters', async () => {
+    const lines: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Empty brain → remaining 0 → no EXIT_DRAIN_INCOMPLETE exit.
+      await runDream(engine, ['--drain', '--dry-run', '--json']);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    const line = lines.find(l => l.trim().startsWith('{'));
+    expect(line).toBeDefined();
+    const payload = JSON.parse(line!);
+    expect(payload).toMatchObject({
+      phase: 'extract_atoms',
+      status: 'ok',
+      dry_run: true,
+      extracted: 0,
+      remaining: 0,
+      failure_count: 0,
+      failures: [],
+      omitted_failure_count: 0,
+      last_error: null,
+    });
+    expect(Array.isArray(payload.failures)).toBe(true);
+    expect(payload.failure_count).toBe(payload.failures.length + payload.omitted_failure_count);
+  }, 300_000);
 });
 
 // ─── v0.41.13 D5: end-to-end dream → checkCycleFreshness parity ───────

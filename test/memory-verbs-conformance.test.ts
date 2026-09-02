@@ -231,6 +231,17 @@ describe('remember — contract behavior', () => {
     expect(body.suggestion).toContain('30d');
   });
 
+  it('treats a null-like entity STRING ("null") as absent — never entity_slug=\'null\' (#4755)', async () => {
+    // LLM callers emit the literal token "null" for subjectless statements;
+    // it means what omitting the param means.
+    const { isError, body } = await callRemote('remember', {
+      fact: 'a gap statement with no subject', provenance: 'test', entity: 'null',
+    });
+    expect(isError).toBe(false);
+    expect(body.status).toBe('inserted');
+    expect(body.entity_slug).toBe(null);
+  });
+
   it('accepts duration ttl and returns a future ISO valid_until; echoes null entity_slug', async () => {
     const { isError, body } = await callRemote('remember', {
       fact: 'expiring fact with ttl', provenance: 'test', ttl: '30d',
@@ -404,6 +415,84 @@ describe('entity — card, arms, zero LLM', () => {
     const { body } = await callRemote('entity', { name: 'people/fence-test' });
     expect(body.found).toBe(true);
     expect(JSON.stringify(body.card.open_threads)).not.toContain('PRIVATE-SENTINEL');
+  });
+
+  it('active_fact_count is exact beyond the fetch cap, source-scoped, and visibility-scoped', async () => {
+    // Pre-fix, active_fact_count was facts.length under a 100-row fetch cap,
+    // so entities with more facts silently reported 100.
+    await seedEntityPage('people/count-truth-test', 'Count Truth Test Person');
+    await engine.executeRaw(
+      `INSERT INTO facts
+         (source_id, entity_slug, fact, kind, visibility, notability, valid_from, source, confidence, created_at)
+       SELECT 'default', 'people/count-truth-test', 'world fact ' || gs::text,
+              'fact', 'world', 'medium', NOW(), 'conformance-seed', 1.0, NOW()
+         FROM generate_series(1, 125) gs`,
+      [],
+    );
+    await engine.insertFact(
+      {
+        fact: 'PRIVATE-COUNT-SENTINEL fact',
+        kind: 'fact',
+        entity_slug: 'people/count-truth-test',
+        visibility: 'private',
+        source: 'conformance-seed',
+      },
+      { source_id: 'default' },
+    );
+    // A same-slug fact in a foreign source must never inflate the count.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('other', 'other-tenant', '{}'::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [],
+    );
+    await engine.insertFact(
+      {
+        fact: 'FOREIGN-SOURCE-SENTINEL fact',
+        kind: 'fact',
+        entity_slug: 'people/count-truth-test',
+        visibility: 'world',
+        source: 'conformance-seed',
+      },
+      { source_id: 'other' },
+    );
+
+    // Remote: world-only — the 125 seeded world facts, exactly.
+    const remote = await callRemote('entity', { name: 'people/count-truth-test' });
+    expect(remote.body.card.active_fact_count).toBe(125);
+
+    // Local: private rows count too (126); foreign source never does.
+    const local = await operationsByName.entity.handler(localCtx(), { name: 'people/count-truth-test' });
+    expect((local as { card: { active_fact_count: number } }).card.active_fact_count).toBe(126);
+  });
+
+  it('timeline dates honor the string|null card contract in-process (PGLite returns Date objects)', async () => {
+    // The frozen RESPONSE_SCHEMAS type last_timeline_date and thread dates as
+    // string|null, but PGLite returns a Date object for the DATE column. The
+    // JSON wire hides this (Date.toJSON), so pin the IN-PROCESS card that
+    // local consumers (loops, CLI rendering) read directly.
+    await seedEntityPage('people/date-contract-test', 'Date Contract Test Person');
+    await engine.addTimelineEntry(
+      'people/date-contract-test',
+      {
+        date: new Date().toISOString().slice(0, 10),
+        source: 'conformance-seed',
+        summary: 'Recent event inside the open-thread window',
+      },
+      { sourceId: 'default' },
+    );
+
+    const res = await operationsByName.entity.handler(localCtx(), { name: 'people/date-contract-test' }) as {
+      card: {
+        last_touched: { last_timeline_date: unknown };
+        open_threads: Array<{ kind: string; date: unknown }>;
+      };
+    };
+    expect(typeof res.card.last_touched.last_timeline_date).toBe('string');
+    const recent = res.card.open_threads.find(t => t.kind === 'recent_event');
+    expect(recent).toBeDefined();
+    for (const t of res.card.open_threads) {
+      expect(t.date === null || typeof t.date === 'string').toBe(true);
+    }
   });
 });
 

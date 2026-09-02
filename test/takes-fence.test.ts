@@ -306,6 +306,18 @@ ${TAKES_FENCE_END}\n`;
     expect(rendered).not.toContain('resolved');
   });
 
+  test('renderer: blank line between the begin marker and the header — GFM/Obsidian need it to render a table (#4615)', () => {
+    // Same jam as the facts fence: the HTML-comment begin marker plus a
+    // single newline makes GFM parsers read the pipe rows as a paragraph.
+    // parseTakesFence skips blank lines, so the extra newline is parse-safe.
+    const { takes } = parseTakesFence(SAMPLE_BODY);
+    const rendered = renderTakesFence(takes);
+    expect(rendered).toMatch(/takes:begin -->\n\n\|/);
+    const reparsed = parseTakesFence(rendered);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.takes).toHaveLength(takes.length);
+  });
+
   test('renderer: any resolved row triggers wide 13-column shape', () => {
     const { takes } = parseTakesFence(SAMPLE_BODY);
     // Mutate one row to have resolution data.

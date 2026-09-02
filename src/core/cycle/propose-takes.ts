@@ -47,6 +47,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup, classifyRunStop } from '../extract/rollup-writer.ts';
 import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
+import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -56,7 +57,7 @@ import type { PhaseStatus, CyclePhase } from '../cycle.ts';
  * verdicts in `take_proposals` (composite key includes prompt_version) stay
  * valid as audit history; new runs re-spend LLM tokens on every page.
  */
-export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15';
+export const PROPOSE_TAKES_PROMPT_VERSION = 'v0.36.1.0-tuned-cat15-kinds4736';
 
 /**
  * Sentinel claim_text for the tombstone row written when a page extracts
@@ -90,8 +91,15 @@ export const EMPTY_EXTRACTION_TOMBSTONE_TEXT = '(no gradeable claims)';
  *     (pure facts, direct quotes, restatements).
  *   - conviction inference rules anchored to specific hedging language
  *     ("I bet"/"strong conviction"=0.7-0.85, "I think"/"moderate"=0.5-0.7).
- *   - kind enum kept narrow ('prediction'|'judgment'|'bet') — the v1
- *     stub's 4-tag enum bled into noise classification.
+ *   - kind enum kept narrow — three tags; the v1 stub's 4-tag enum bled
+ *     into noise classification. #4736: the tags now use the fence
+ *     vocabulary parseExtractorOutput accepts ('take'|'bet'|'hunch'); the
+ *     tuned prompt asked for prediction|judgment|bet, which the parser
+ *     allowlist (fact|take|bet|hunch) coerced wholesale to 'take',
+ *     destroying kind provenance on every extraction. Label-only change:
+ *     what counts as gradeable is untouched, so the cat15 F1 numbers above
+ *     still describe the extraction behavior. prediction/judgment stay
+ *     mapped in the parser for cached/old-model outputs.
  *
  * Replaces the v0.36.1.0-stub. If you re-tune, run cat15 against the
  * fixtures before bumping PROPOSE_TAKES_PROMPT_VERSION; the train-holdout
@@ -101,10 +109,11 @@ export const EXTRACT_TAKES_PROMPT = `Extract gradeable claims from the prose bel
 
 A "gradeable claim" is a prediction, recommendation, or interpretive judgment
 that could turn out wrong over time. Examples:
-- "X company will hit ARR milestone by Q3" (prediction)
-- "Y founder is going to struggle with execution" (judgment)
-- "Z market will compress in 18 months" (prediction)
+- "X company will hit ARR milestone by Q3" (take: a prediction)
+- "Y founder is going to struggle with execution" (take: a judgment)
+- "Z market will compress in 18 months" (take: a prediction)
 - "I bet alice wins the round" (bet)
+- "Maybe DTC is quietly coming back" (hunch)
 
 NOT gradeable (do NOT extract these):
 - Pure facts ("X was founded in 2020")
@@ -113,7 +122,7 @@ NOT gradeable (do NOT extract these):
 
 For each gradeable claim, output a JSON object with:
 - claim_text   (string, <=200 chars, paraphrase or near-verbatim from prose)
-- kind         ('prediction' | 'judgment' | 'bet')
+- kind         ('take' = prediction or interpretive judgment | 'bet' = explicit wager language | 'hunch' = low-conviction guess)
 - holder       ('world' | 'people/<slug>' | 'companies/<slug>' | 'brain' — default 'brain' when author asserts the claim)
 - weight       (number 0..1 inferred from hedging language: 'I bet'/'strong conviction'=0.7-0.85,
                 'I think'/'moderate conviction'=0.5-0.7, 'maybe'/'I'd guess'=0.3-0.5)
@@ -136,6 +145,14 @@ export interface ProposedTake {
   holder: string;
   weight: number;
   domain?: string;
+  /**
+   * #4737: 'provider:modelId' of the model that ACTUALLY answered the
+   * extraction call (ChatResult.model — alias/provider-recipe resolution
+   * can differ from the configured string). Stamped by defaultExtractor;
+   * optional so injected test extractors need not care. When present it
+   * wins over the requested model for take_proposals.model_id provenance.
+   */
+  served_model?: string;
 }
 
 /** Extractor function signature — injected for tests; production calls gateway. */
@@ -420,7 +437,11 @@ export async function defaultExtractor(
   if (takes.length === 0 && !isWellFormedEmptyExtraction(result.text)) {
     throw new Error('propose_takes extractor: no parseable takes JSON (transient — retry)');
   }
-  return takes;
+  // #4737: model_id provenance comes from the RESPONSE, not the request —
+  // ChatResult.model is the 'provider:modelId' that actually answered.
+  const servedModel =
+    typeof result.model === 'string' && result.model.trim() !== '' ? result.model : undefined;
+  return servedModel ? takes.map((t) => ({ ...t, served_model: servedModel })) : takes;
 }
 
 /**
@@ -450,11 +471,25 @@ export function isWellFormedEmptyExtraction(raw: string): boolean {
   }
 }
 
+
+/**
+ * #4736: kinds the pre-fix EXTRACT_TAKES_PROMPT asked for. Cached and
+ * old-model outputs still emit them; map them onto the fence vocabulary
+ * deterministically so their provenance classifies instead of relying on
+ * the blind coerce-to-'take' default.
+ */
+const LEGACY_EXTRACTOR_KIND_MAP: Record<string, ProposedTake['kind']> = {
+  prediction: 'take',
+  judgment: 'take',
+};
+
 /**
  * Parse extractor output into ProposedTake[]. Handles common LLM output
  * sins (markdown fence wrapping, leading/trailing prose, single-object
  * instead of array). Returns [] on any unrecoverable parse error rather
- * than throwing.
+ * than throwing. Kind tokens are case/whitespace-normalized, matched
+ * against the fence vocabulary (with the #4736 legacy mapping), and
+ * anything else coerces to 'take'.
  */
 export function parseExtractorOutput(raw: string): ProposedTake[] {
   if (!raw || raw.trim().length === 0) return [];
@@ -496,9 +531,10 @@ export function parseExtractorOutput(raw: string): ProposedTake[] {
     const r = raw as Record<string, unknown>;
     const claim_text = typeof r.claim_text === 'string' ? r.claim_text.trim() : '';
     if (!claim_text || claim_text.length > 500) continue;
-    const kind = ['fact', 'take', 'bet', 'hunch'].includes(r.kind as string)
-      ? (r.kind as ProposedTake['kind'])
-      : 'take';
+    const kindRaw = typeof r.kind === 'string' ? r.kind.trim().toLowerCase() : '';
+    const kind = TAKE_KIND_VALUES.has(kindRaw)
+      ? (kindRaw as ProposedTake['kind'])
+      : (LEGACY_EXTRACTOR_KIND_MAP[kindRaw] ?? 'take');
     const holder = typeof r.holder === 'string' && r.holder.length > 0 ? r.holder : 'brain';
     const weightRaw = typeof r.weight === 'number' ? r.weight : 0.5;
     const weight = Math.max(0, Math.min(1, weightRaw));
@@ -887,7 +923,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
             p.weight,
             p.domain ?? null,
             JSON.stringify(existingTakes),
-            modelId,
+            // #4737: prefer the response-derived model (what actually
+            // answered) over the requested one for provenance.
+            p.served_model ?? modelId,
           ],
         );
         result.proposals_inserted += inserted.length;

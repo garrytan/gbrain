@@ -20,7 +20,7 @@ import { detectZeExposure, renderZeActionRequired } from '../src/core/ze-exposur
 
 /** Stub engine: healthy brain with no rows. getConfig(null) → search-mode
  *  resolution falls through to the balanced bundle, whose reranker is the
- *  LIVE voyage default since v0.47.11 — NOT an exposure. Use
+ *  LIVE voyage default since v0.48.2 — NOT an exposure. Use
  *  zeRerankerEngine() for the explicit-ZE reranker case. */
 function stubEngine(overrides?: Partial<Pick<BrainEngine, 'getConfig' | 'executeRaw'>>): BrainEngine {
   return {
@@ -109,7 +109,7 @@ describe('detectZeExposure — embedding axis (resolution, not evidence)', () =>
 });
 
 describe('detectZeExposure — reranker + custom-column axes', () => {
-  test('implicit bundle reranker (nothing configured) is the live voyage default → NOT an exposure (v0.47.11)', async () => {
+  test('implicit bundle reranker (nothing configured) is the live voyage default → NOT an exposure (v0.48.2)', async () => {
     const cfg = { embedding_model: 'voyage:voyage-4' } as GBrainConfig;
     const e = await detectZeExposure(stubEngine(), cfg, CLEAN_ENV);
     expect(e.zeReranker).toBe(false);

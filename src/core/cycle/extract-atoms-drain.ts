@@ -17,12 +17,52 @@
  *    knows whether to run again.
  *
  * Pure over injected deps: no DB, no LLM, no lock primitive imported here, so
- * the loop logic is unit-testable. The wiring helper `runExtractAtomsDrainForSource`
- * (below) builds the real deps; it uses DYNAMIC imports so this module's static
- * graph stays empty and the pure-loop unit tests don't drag in db-lock / cycle.
+ * the loop logic is unit-testable. Its only static imports are pure text
+ * sanitizers (#4730). The wiring helper `runExtractAtomsDrainForSource`
+ * (below) builds the real deps; it uses DYNAMIC imports so the pure-loop unit
+ * tests don't drag in db-lock / cycle.
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
+import { redactFindings } from '../secret-scan.ts';
+import { ensureWellFormed, truncateUtf8 } from '../text-safe.ts';
+
+/** #4730: bounded operator-facing failure detail; totals stay exact above the cap. */
+export const MAX_DRAIN_FAILURE_RECORDS = 25;
+/** Matches the repo's audit/error-summary privacy cap. */
+export const MAX_DRAIN_FAILURE_SOURCE_CHARS = 256;
+export const MAX_DRAIN_FAILURE_REASON_CHARS = 200;
+
+/**
+ * #4730: one preserved per-item failure. `failure_count` remains the exact
+ * total; `failures` holds up to MAX_DRAIN_FAILURE_RECORDS of these in batch
+ * order, and `omitted_failure_count` reconciles the difference — the cap is
+ * reported, never silently applied.
+ */
+export interface ExtractAtomsDrainFailure {
+  /** One-based batch number within this bounded drain window. */
+  batch: number;
+  /** Stable page slug / transcript locator emitted by runPhaseExtractAtoms (sanitized). */
+  source: string;
+  /** Bounded, sanitized failure reason (secrets/connection info redacted). */
+  reason: string;
+}
+
+/**
+ * Sanitize operator-facing failure text: secret + connection-string redaction,
+ * well-formed UTF-8, collapsed whitespace, bounded length. Locators and
+ * reasons both route through here so neither can carry an unbounded provider
+ * payload or credentials into `--json` output / job results.
+ */
+function sanitizeFailureText(raw: string, maxChars: number): string {
+  const secretRedacted = redactFindings(raw, { highEntropy: true }).text;
+  const connectionRedacted = redactConnectionInfo(secretRedacted);
+  return truncateUtf8(
+    ensureWellFormed(connectionRedacted).replace(/\s+/g, ' ').trim(),
+    maxChars,
+  );
+}
 
 export interface ExtractAtomsDrainDeps {
   /**
@@ -42,8 +82,11 @@ export interface ExtractAtomsDrainDeps {
    *
    * #4539: `failureCount` (per-item failures in this batch) and `firstError`
    * (a representative failure message) let the drain surface WHY a run
-   * stopped/underperformed — pre-fix the phase's failures[] was collapsed to
-   * bare counts and the operator saw only `stopped: no_progress`.
+   * stopped/underperformed. #4730: `failures` preserves the phase's per-item
+   * `{source, reason}` records so a mixed-failure batch is fully
+   * reconcilable from `--json` — pre-#4730 everything but ONE representative
+   * error was dropped and the operator had to re-run the work to see the
+   * other reasons.
    */
   runBatch: () => Promise<{
     extracted: number;
@@ -51,6 +94,7 @@ export interface ExtractAtomsDrainDeps {
     providerFailure?: boolean;
     failureCount?: number;
     firstError?: string;
+    failures?: Array<{ source: string; reason: string }>;
   }>;
   /** Count remaining eligible-but-unextracted pages, or null on query error. */
   countRemaining: () => Promise<number | null>;
@@ -92,8 +136,20 @@ export interface ExtractAtomsDrainResult {
    */
   failure_count: number;
   /**
+   * #4730: bounded per-item failure details, in batch order, capped at
+   * MAX_DRAIN_FAILURE_RECORDS. Locators and reasons are sanitized (secret +
+   * connection-info redaction, bounded length). Rides `--json` verbatim.
+   */
+  failures: ExtractAtomsDrainFailure[];
+  /**
+   * #4730: failures beyond the record cap (or reported by count only, with
+   * no per-item detail). `failure_count === failures.length +
+   * omitted_failure_count` always holds, so the cap is visible, never silent.
+   */
+  omitted_failure_count: number;
+  /**
    * #4539: representative failure message from the most recent batch that
-   * reported one (`source: error`), or null for a clean run.
+   * reported one (`source: reason`), or null for a clean run.
    */
   last_error: string | null;
 }
@@ -115,6 +171,8 @@ export async function runExtractAtomsDrain(
     let providerFailure = false;
     // #4539: accumulate per-item failure visibility across batches.
     let failureCount = 0;
+    // #4730: bounded typed per-item records (batch order, sanitized).
+    const failures: ExtractAtomsDrainFailure[] = [];
     let lastError: string | null = null;
 
     while (deps.now() < deadline) {
@@ -127,8 +185,46 @@ export async function runExtractAtomsDrain(
       extracted += r.extracted;
       skipped += r.skipped;
       batches++;
-      if (typeof r.failureCount === 'number' && r.failureCount > 0) failureCount += r.failureCount;
-      if (r.firstError) lastError = r.firstError;
+      // #4730: preserve typed per-item records (bounded, sanitized) while
+      // keeping failure_count exact and reconcilable — count-only adapters
+      // (the #4539 shape) still contribute to the total via failureCount.
+      const batchFailures = Array.isArray(r.failures)
+        ? r.failures.filter(
+            (f): f is { source: string; reason: string } =>
+              f != null &&
+              typeof f === 'object' &&
+              typeof f.source === 'string' &&
+              typeof f.reason === 'string',
+          )
+        : [];
+      const reportedFailureCount =
+        typeof r.failureCount === 'number' && Number.isFinite(r.failureCount) && r.failureCount > 0
+          ? Math.floor(r.failureCount)
+          : 0;
+      failureCount += Math.max(reportedFailureCount, batchFailures.length);
+      for (const f of batchFailures) {
+        if (failures.length >= MAX_DRAIN_FAILURE_RECORDS) break;
+        failures.push({
+          batch: batches,
+          source: sanitizeFailureText(f.source, MAX_DRAIN_FAILURE_SOURCE_CHARS),
+          reason: sanitizeFailureText(f.reason, MAX_DRAIN_FAILURE_REASON_CHARS),
+        });
+      }
+      const representative = batchFailures[0];
+      if (representative) {
+        lastError =
+          `${sanitizeFailureText(representative.source, MAX_DRAIN_FAILURE_SOURCE_CHARS)}: ` +
+          `${sanitizeFailureText(representative.reason, MAX_DRAIN_FAILURE_REASON_CHARS)}`;
+      } else if (typeof r.firstError === 'string' && r.firstError.trim()) {
+        // #4539 compatibility: count-only adapters still surface their
+        // representative error — through the SAME sanitizer as the typed
+        // records (secret/DSN redaction, whitespace collapse, bounded), so a
+        // provider payload cannot ride the fallback path into --json output.
+        lastError = sanitizeFailureText(
+          r.firstError,
+          MAX_DRAIN_FAILURE_SOURCE_CHARS + 2 + MAX_DRAIN_FAILURE_REASON_CHARS,
+        );
+      }
       deps.onBatch?.({ batch: batches, extracted: r.extracted, remaining: before });
 
       // issue #3218: every item this batch attempted failed (0 succeeded, >=1
@@ -172,6 +268,8 @@ export async function runExtractAtomsDrain(
       batches,
       stopped,
       failure_count: failureCount,
+      failures,
+      omitted_failure_count: failureCount - failures.length,
       last_error: lastError,
     };
   });
@@ -247,21 +345,25 @@ export async function runExtractAtomsDrainForSource(
         const failures = Array.isArray(d.failures) ? d.failures : [];
         const itemsSucceeded =
           Number(d.transcripts_processed ?? 0) + Number(d.pages_processed ?? 0);
-        // #4539: carry a representative failure up to the drain result instead
-        // of collapsing failures[] to bare counts — pre-fix a failing drain
-        // reported only `stopped: no_progress` and the operator had no way to
-        // see the underlying provider/parse error without re-running the
-        // phase by hand.
-        const first = failures[0] as { source?: unknown; error?: unknown } | undefined;
-        const firstError = first
-          ? `${typeof first.source === 'string' ? `${first.source}: ` : ''}${typeof first.error === 'string' ? first.error : JSON.stringify(first.error)}`
-          : undefined;
+        // #4730: carry EVERY per-item failure up as a typed {source, reason}
+        // record (the pure loop bounds + sanitizes them) instead of the
+        // #4539 collapse to count + one representative error — a mixed
+        // three-failure batch used to be unrecoverable from `--json`.
+        const typedFailures = failures
+          .filter(
+            (f): f is { source: string; error: string } =>
+              f != null &&
+              typeof f === 'object' &&
+              typeof (f as { source?: unknown }).source === 'string' &&
+              typeof (f as { error?: unknown }).error === 'string',
+          )
+          .map(({ source, error }) => ({ source, reason: error }));
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
-          ...(firstError ? { firstError } : {}),
+          failures: typedFailures,
         };
       },
       countRemaining: () => countExtractAtomsBacklog(engine, extractionSourceId),

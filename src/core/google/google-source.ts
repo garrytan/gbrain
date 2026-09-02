@@ -53,12 +53,13 @@ import {
 } from './google-render.ts';
 import {
   ALL_GOOGLE_SERVICES,
+  DEFAULT_CALENDAR_ID,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
   type GoogleSourceState,
 } from './types.ts';
-import { LOOPS_EXTRACT_WINDOW_DAYS } from './loops-extract.ts';
+import { LOOPS_EXTRACT_WINDOW_DAYS, loopExtractionEligibility } from './loops-extract.ts';
 
 export type { GoogleSourceConfig } from './types.ts';
 
@@ -89,6 +90,10 @@ export function parseGoogleSourceConfig(
     config.g_history_days > 0
       ? Math.min(3650, Math.floor(config.g_history_days))
       : 90;
+  const calendarId =
+    typeof config.g_calendar_id === 'string' && config.g_calendar_id.trim().length > 0
+      ? config.g_calendar_id.trim()
+      : DEFAULT_CALENDAR_ID;
   const dir =
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =
@@ -97,6 +102,7 @@ export function parseGoogleSourceConfig(
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
     historyDays,
+    calendarId,
     dir,
     access,
     ...(typeof config.g_token_command === 'string' && config.g_token_command.trim()
@@ -121,6 +127,7 @@ function emptyState(): GoogleSourceState {
     gmail_backfill_done: false,
     gmail_newest_ms: null,
     calendar_sync_token: null,
+    calendar_id: null,
     contacts_sync_token: null,
     last_full_at: null,
   };
@@ -174,6 +181,13 @@ interface GoogleSyncSummary {
   embedded: number;
   pagesAffected: string[];
   threadsSeen: number;
+  /**
+   * Why each in-window thread was or was not sent to the extractor, keyed by
+   * the machine reason from loopExtractionEligibility. Counts only — no
+   * addresses, subjects or body text — so a sweep can be audited for
+   * over-filtering without leaking mail content into logs.
+   */
+  extractEligibility: Record<string, number>;
   failedFiles: number;
 }
 
@@ -391,9 +405,21 @@ async function sweepCalendar(
     timeMinIso: new Date(now - deps.cfg.historyDays * 86_400_000).toISOString(),
     timeMaxIso: new Date(now + 60 * 86_400_000).toISOString(),
   };
+  // The stored token is bound to the calendar it was minted for (legacy state
+  // without calendar_id predates secondary calendars, so it was primary's).
+  // A re-pointed source starts a fresh window; pairing the NEW calendar with
+  // the OLD cursor would silently import a foreign delta.
+  const tokenCalendarId = state.calendar_id ?? DEFAULT_CALENDAR_ID;
+  if (state.calendar_sync_token && tokenCalendarId !== deps.cfg.calendarId) {
+    deps.log(
+      `[google] calendar changed (${tokenCalendarId} → ${deps.cfg.calendarId}); discarding its sync token, windowed re-list`,
+    );
+    state.calendar_sync_token = null;
+  }
   let result;
   try {
     result = await calendar.listEvents(deps.cfg.account, {
+      calendarId: deps.cfg.calendarId,
       ...(deps.opts.full || !state.calendar_sync_token ? windowOpts : { syncToken: state.calendar_sync_token }),
       ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
     });
@@ -402,6 +428,7 @@ async function sweepCalendar(
       deps.log('[google] calendar syncToken expired; windowed re-list');
       state.calendar_sync_token = null;
       result = await calendar.listEvents(deps.cfg.account, {
+        calendarId: deps.cfg.calendarId,
         ...windowOpts,
         ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
       });
@@ -427,7 +454,10 @@ async function sweepCalendar(
     }
     await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
   }
-  if (result.nextSyncToken) state.calendar_sync_token = result.nextSyncToken;
+  if (result.nextSyncToken) {
+    state.calendar_sync_token = result.nextSyncToken;
+    state.calendar_id = deps.cfg.calendarId;
+  }
 }
 
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
@@ -457,26 +487,91 @@ async function processThread(
   const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
   const windowMs = LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000;
   if (newestMs > 0 && Date.now() - newestMs <= windowMs) {
-    deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    // Structural eligibility, not "everything recent": bulk mail the owner
+    // never joined would otherwise both pay for model calls AND crowd real
+    // threads out of the sweep.
+    const verdict = loopExtractionEligibility(thread, myAddressSet(deps.entry));
+    summary.extractEligibility[verdict.reason] =
+      (summary.extractEligibility[verdict.reason] ?? 0) + 1;
+    if (verdict.eligible) {
+      deps.extractCandidates.push({ slug, threadId: thread.threadId, newestMs });
+    }
   }
   return thread;
 }
 
-/** Enqueue capped loops_extract jobs for this sweep's candidates. */
+/** Enqueue loops_extract jobs for every eligible candidate in this sweep. */
 async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
   if (deps.extractCandidates.length === 0) return;
   try {
-    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_MAX_PER_SWEEP } = await import('./loops-extract.ts');
+    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_ENQUEUE_CEILING } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) return;
+    // No chat provider (keyless install, outage) → enqueue NOTHING. A job the
+    // handler cannot run would fail-and-die and burn its revision-keyed
+    // idempotency slot for nothing; the eligible threads stay unconsumed and
+    // re-candidate on their next touch or on `sync --full` once a provider is
+    // configured. One line per sweep names the reason — never silent.
+    const { isAvailable } = await import('../ai/gateway.ts');
+    if (!isAvailable('chat')) {
+      deps.log(
+        `[google] loops_extract: chat provider unavailable (no configured chat model / API key) — ` +
+          `skipped enqueue of ${deps.extractCandidates.length} eligible thread(s); they are queued on ` +
+          `their next touch (or \`gbrain sync --source ${deps.sourceId} --full\`) once a provider is configured`,
+      );
+      return;
+    }
     const { MinionQueue } = await import('../minions/queue.ts');
     const queue = new MinionQueue(deps.engine);
-    // Newest first: the freshest threads carry the most actionable loops.
-    const picked = [...deps.extractCandidates]
-      .sort((a, b) => b.newestMs - a.newestMs)
-      .slice(0, LOOPS_EXTRACT_MAX_PER_SWEEP);
-    const dropped = deps.extractCandidates.length - picked.length;
+    // EVERY eligible candidate is enqueued (up to a generous safety ceiling).
+    // The queue is the backlog; the worker's concurrency is the rate limit.
+    //
+    // This used to keep only the newest LOOPS_EXTRACT_MAX_PER_SWEEP and log
+    // the rest as "deferring … (they re-candidate on next touch)". That was
+    // silent data loss, not deferral: a thread only re-candidates when the
+    // thread CHANGES, so a dropped thread that nobody writes to again was
+    // never extracted at all. `maxWaiting` was a second, subtler leak — the
+    // queue evaluates it AFTER the idempotency-key lookup, so a brand-new key
+    // could be coalesced onto some unrelated thread's waiting job and return
+    // a row its own payload was never registered against.
+    //
+    // Newest first only orders the enqueue, so the freshest threads reach the
+    // worker first. The ceiling (10x the old cap) is a spend backstop for
+    // pathological sweeps — and it is a WAITING-DEPTH budget, not just a
+    // per-sweep count: with a stalled worker, repeated pathological sweeps
+    // would otherwise stack another ceiling's worth of waiting jobs each.
+    // Jobs already waiting shrink this sweep's budget; overflow is a
+    // DEFERRAL (the backlog still covers older revisions, and a deferred
+    // thread re-candidates on its next touch), logged loudly either way.
+    //
+    // The depth is PER SOURCE (payload `sourceId`, the key this enqueue
+    // writes): a brain-wide count let one Google account's stalled backlog
+    // pin every other source's budget at 0 forever.
+    const ordered = [...deps.extractCandidates].sort((a, b) => b.newestMs - a.newestMs);
+    // Depth = every PENDING row, not just 'waiting': during a provider outage
+    // each claimed job fails and parks as 'delayed' (retry backoff), and rows
+    // in flight are 'active'. Counting 'waiting' alone read ~0 mid-outage and
+    // let every sweep stack another ceiling's worth of jobs on the backlog.
+    let waitingDepth = 0;
+    try {
+      const rows = await deps.engine.executeRaw<{ n: string }>(
+        `SELECT count(*)::text AS n FROM minion_jobs
+          WHERE name = $1 AND status IN ('waiting', 'delayed', 'active') AND data->>'sourceId' = $2`,
+        [LOOPS_EXTRACT_JOB, deps.sourceId],
+      );
+      waitingDepth = parseInt(rows[0]?.n ?? '0', 10) || 0;
+    } catch {
+      // Fail-open: a missing table / transient error must never block enqueue.
+    }
+    const budget = Math.max(0, LOOPS_EXTRACT_ENQUEUE_CEILING - waitingDepth);
+    const picked = ordered.slice(0, budget);
+    const dropped = ordered.length - picked.length;
     if (dropped > 0) {
-      deps.log(`[google] loops_extract cap: enqueuing ${picked.length}, deferring ${dropped} (they re-candidate on next touch)`);
+      deps.log(
+        `[google] loops_extract enqueue budget (ceiling ${LOOPS_EXTRACT_ENQUEUE_CEILING}, ` +
+          `${waitingDepth} already pending): enqueuing ${picked.length}, ` +
+          `deferring ${dropped} oldest eligible thread(s) — a deferred thread is next ` +
+          `enqueued when it changes, so a persistent backlog needs worker attention`,
+      );
     }
     for (const c of picked) {
       await queue.add(
@@ -484,12 +579,14 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
         { slug: c.slug, sourceId: deps.sourceId, threadId: c.threadId },
         {
           priority: 5,
-          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op.
+          // Page-revision keyed: a re-sweep of an unchanged thread is a no-op,
+          // and this is now the ONLY dedupe mechanism in play (no maxWaiting —
+          // its cap-hit coalesce loses brand-new keys, see above).
           idempotency_key: `loops:${deps.sourceId}:${c.slug}:${c.newestMs}`,
-          maxWaiting: LOOPS_EXTRACT_MAX_PER_SWEEP * 2,
         },
       );
     }
+    deps.log(`[google] loops_extract: enqueued ${picked.length} eligible thread(s)`);
   } catch (e) {
     deps.log(`[google] loops_extract enqueue failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -880,6 +977,7 @@ export async function runGoogleSync(
     embedded: 0,
     pagesAffected: [],
     threadsSeen: 0,
+    extractEligibility: {},
     failedFiles: 0,
   };
   const countedSlugs = new Set<string>();
@@ -981,6 +1079,15 @@ export async function runGoogleSync(
     if (!opts.signal?.aborted) {
       await runExtractAndEmbed(deps, summary);
       await enqueueLoopsExtraction(deps);
+      // Auditable per-reason counts (loopExtractionEligibility) — no
+      // addresses, subjects or body text ever reach the log.
+      if (Object.keys(summary.extractEligibility).length > 0) {
+        log(
+          `[google] loops_extract eligibility: ${Object.entries(summary.extractEligibility)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ')}`,
+        );
+      }
     }
 
     // Commitment-loop staleness pass (v1 close semantics): overdue >14d or

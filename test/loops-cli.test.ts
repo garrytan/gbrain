@@ -27,6 +27,8 @@ import {
   _resetCliExitVerdictForTests,
 } from '../src/core/cli-force-exit.ts';
 import {
+  addSuppression,
+  listOpenLoops,
   loadSuppressions,
   upsertOpenLoop,
   type OpenLoopUpsert,
@@ -87,6 +89,7 @@ interface Captured {
 async function captured(fn: () => Promise<void>): Promise<Captured> {
   const outOrig = process.stdout.write.bind(process.stdout);
   const errOrig = process.stderr.write.bind(process.stderr);
+  const cerrOrig = console.error;
   const exitOrig = process.exit;
   const prevExitCode = process.exitCode;
   const outChunks: string[] = [];
@@ -101,6 +104,11 @@ async function captured(fn: () => Promise<void>): Promise<Captured> {
     errChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8'));
     return true;
   }) as typeof process.stderr.write;
+  // Bun's console.error does NOT route through the process.stderr.write
+  // swap; the usage / source-resolution refusals in loops.ts use it.
+  console.error = (...a: unknown[]) => {
+    errChunks.push(a.map(String).join(' ') + '\n');
+  };
   process.exit = ((code?: number) => {
     exitCalled = code ?? 0;
     throw new Error('__exit__');
@@ -111,6 +119,7 @@ async function captured(fn: () => Promise<void>): Promise<Captured> {
     if ((e as Error).message !== '__exit__') throw e;
   } finally {
     process.exit = exitOrig;
+    console.error = cerrOrig;
     process.stdout.write = outOrig;
     process.stderr.write = errOrig;
   }
@@ -362,6 +371,103 @@ describe('runLoops', () => {
     expect(r.exitCalled).toBe(2);
   });
 
+  test('unmute removes the row the mute wrote, matching case-insensitively', async () => {
+    await captured(() => runLoops(engine, ['mute', 'sender', 'Bob@Example.com']));
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender', 'BOB@example.COM']));
+    expect(r.out).toContain('Unmuted sender BOB@example.COM');
+    expect(r.verdict).toBe(0);
+    expect((await loadSuppressions(engine, 'default')).senders.has('bob@example.com')).toBe(false);
+  });
+
+  test('a repeated unmute is a no-op that still exits 0', async () => {
+    await captured(() => runLoops(engine, ['mute', 'sender', 'bob@example.com']));
+    const first = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    const second = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    expect(first.out).toContain('Unmuted');
+    expect(second.out).toContain('had no suppression');
+    // The idempotency contract: a retried unmute must not look like a failure.
+    expect(second.verdict).toBe(0);
+  });
+
+  test('unmute --json envelope reports ok:true with removed true then false', async () => {
+    await captured(() => runLoops(engine, ['mute', 'thread', '18C2F4A9B3D21E07']));
+    const hit = await captured(() => runLoops(engine, ['unmute', 'thread', '18C2F4A9B3D21E07', '--json']));
+    const a = JSON.parse(hit.out) as { ok: boolean; status: string; removed: boolean; value: string };
+    expect(a.ok).toBe(true);
+    expect(a.status).toBe('unmuted');
+    expect(a.removed).toBe(true);
+    expect(a.value).toBe('18c2f4a9b3d21e07');
+    const miss = await captured(() => runLoops(engine, ['unmute', 'thread', '18C2F4A9B3D21E07', '--json']));
+    const b = JSON.parse(miss.out) as { ok: boolean; status: string; removed: boolean };
+    expect(b.ok).toBe(true);
+    expect(b.status).toBe('not_muted');
+    expect(b.removed).toBe(false);
+  });
+
+  test('unmute leaves existing loops exactly as they were', async () => {
+    await upsertOpenLoop(engine, loop({ counterpartyEmail: 'bob@example.com' }));
+    await addSuppression(engine, 'default', 'sender', 'bob@example.com');
+    const before = await listOpenLoops(engine, { sourceIds: ['default'], status: 'open' });
+    await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    const after = await listOpenLoops(engine, { sourceIds: ['default'], status: 'open' });
+    expect(after.length).toBe(before.length);
+    expect(after[0].id).toBe(before[0].id);
+    expect(after[0].status).toBe('open');
+  });
+
+  test('unmute without kind/value hard-exits with usage code 2', async () => {
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender']));
+    expect(r.exitCalled).toBe(2);
+  });
+
+  test('unmute with ZERO google sources exits 2 naming the unmute (not the mute) as the thing to scope', async () => {
+    // Flip 'default' back to a plain source: no google source anywhere.
+    await engine.executeRaw(`UPDATE sources SET config = '{}'::jsonb WHERE id = 'default'`);
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain('No google source found');
+    expect(r.err).toContain('scope the unmute');
+    expect(r.err).not.toContain('scope the mute');
+    expect(r.out).toBe('');
+  });
+
+  test('unmute with TWO google sources exits 2 listing both ids', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ('g1', 'g1', '{"kind":"google"}'::jsonb, now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    const r = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com']));
+    expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain('Multiple google sources');
+    expect(r.err).toContain('default');
+    expect(r.err).toContain('g1');
+    expect(r.out).toBe('');
+  });
+
+  test('--source g2 lands the mute AND the unmute in g2 only (never the default google source)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ('g2', 'g2', '{"kind":"google"}'::jsonb, now())
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // With two google sources an unqualified mute would refuse; --source
+    // resolves it and the row must land in g2 and nowhere else.
+    const muted = await captured(() => runLoops(engine, ['mute', 'sender', 'Bob@Example.com', '--source', 'g2']));
+    expect(muted.exitCalled).toBeUndefined();
+    expect(muted.verdict).toBe(0);
+    expect((await loadSuppressions(engine, 'g2')).senders.has('bob@example.com')).toBe(true);
+    expect((await loadSuppressions(engine, 'default')).senders.has('bob@example.com')).toBe(false);
+
+    // Unmute scoped the same way removes the g2 row; a stray default row is untouched.
+    await addSuppression(engine, 'default', 'sender', 'bob@example.com');
+    const unmuted = await captured(() => runLoops(engine, ['unmute', 'sender', 'bob@example.com', '--source', 'g2']));
+    expect(unmuted.exitCalled).toBeUndefined();
+    expect(unmuted.out).toContain('Unmuted sender bob@example.com');
+    expect((await loadSuppressions(engine, 'g2')).senders.has('bob@example.com')).toBe(false);
+    expect((await loadSuppressions(engine, 'default')).senders.has('bob@example.com')).toBe(true);
+  });
+
   test('--help paths answer without touching loops', async () => {
     const w = await captured(() => runWaiting(engine, ['--help']));
     expect(w.out).toContain('gbrain waiting');
@@ -369,6 +475,7 @@ describe('runLoops', () => {
     const l = await captured(() => runLoops(engine, ['--help']));
     expect(l.out).toContain('gbrain loops');
     expect(l.out).toContain('mute');
+    expect(l.out).toContain('unmute');
     expect(w.verdict).toBe(0);
     expect(l.verdict).toBe(0);
   });

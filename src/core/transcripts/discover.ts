@@ -10,9 +10,10 @@
  * listPages walk, client-side transcript_import filtering, distinct
  * session ids) — durable truth that catches late-arriving sessions no
  * watermark can. File↔session matching for the gap column uses the
- * session-id-in-filename property of the three JSONL harnesses; the Hermes
- * store is one file holding many sessions, so its gap is reported at
- * session granularity only.
+ * session-id-in-filename property of the JSONL harnesses (and the parent
+ * directory UUID for Grok, whose basename is always `chat_history.jsonl`);
+ * the Hermes store is one file holding many sessions, so its gap is
+ * reported at session granularity only.
  */
 
 import { lstatSync, readdirSync } from 'node:fs';
@@ -21,6 +22,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
 import { isOpenclawCheckpointFile } from './openclaw.ts';
+import { isGrokChatHistoryFile } from './grok.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
 
 export interface DiscoveredFile {
@@ -84,6 +86,12 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
     for (const p of files) {
       if (!p.endsWith(extension)) continue;
       if (isOpenclawCheckpointFile(p)) continue;
+      // Grok: only chat_history.jsonl is a session; updates/events/rewind
+      // JSONL next to it would otherwise inflate found-counts and freeze
+      // the watermark as host-format drift. SCOPED to the grok root — a
+      // bare-UUID directory segment in another harness's tree must never
+      // hide that harness's legitimate sessions.
+      if (format === 'grok' && !isGrokChatHistoryFile(p)) continue;
       // #4472: skip gbrain's own claude-cli subprocess sessions (see
       // DiscoverOpts.includeSelf) — the scratch-cwd fingerprint survives
       // Claude Code's project-dir slugification.
@@ -141,6 +149,27 @@ export async function indexImportedSessions(
   return { byHarness, pagesScanned };
 }
 
+/**
+ * JSONL harnesses name the session in the file basename (claude-code /
+ * openclaw uuid.jsonl, codex rollout-<id>.jsonl). Grok does not: the
+ * basename is always `chat_history.jsonl` and the session id is the parent
+ * directory UUID (or summary.json `info.id`, which matches that UUID).
+ */
+function pathMatchesImportedSession(path: string, sessionIds: Set<string>): boolean {
+  const segs = path.split(/[/\\]/);
+  const base = segs[segs.length - 1] ?? '';
+  // Fast path: for claude-code/openclaw the basename stem IS the session id
+  // — a Set hit avoids the O(ids) substring scan.
+  const stem = base.replace(/\.jsonl$/, '');
+  if (sessionIds.has(stem)) return true;
+  const parent = segs[segs.length - 2] ?? '';
+  if (sessionIds.has(parent)) return true;
+  for (const id of sessionIds) {
+    if (id && base.includes(id)) return true;
+  }
+  return false;
+}
+
 export interface StatusRow {
   format: TranscriptFormat;
   /** Files (stores, for hermes) found under the harness root. */
@@ -165,17 +194,7 @@ export function buildStatusRows(
     const sessionIds = imported.byHarness.get(format) ?? new Set<string>();
     let gapFiles: number | null = null;
     if (format !== 'hermes') {
-      gapFiles = files.filter((f) => {
-        const base = f.path.split('/').pop() ?? '';
-        // Fast path: for claude-code/openclaw the basename stem IS the
-        // session id — a Set hit avoids the O(ids) substring scan.
-        const stem = base.replace(/\.jsonl$/, '');
-        if (sessionIds.has(stem)) return false;
-        for (const id of sessionIds) {
-          if (id && base.includes(id)) return false;
-        }
-        return true;
-      }).length;
+      gapFiles = files.filter((f) => !pathMatchesImportedSession(f.path, sessionIds)).length;
     }
     return { format, found: files.length, importedSessions: sessionIds.size, gapFiles };
   });

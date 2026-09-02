@@ -1,30 +1,18 @@
 /**
  * Ollama library-tag dims — coverage for the pullable-tag catalog refresh.
  *
- * The ollama recipe gained the REAL Ollama library spellings
- * (`qwen3-embedding:8b`, `snowflake-arctic-embed2`) alongside the legacy
- * never-pullable spellings (`qwen3-embed-8b`, `snowflake-arctic-embed-l-v2`).
  * `qwen3-embedding:8b` is the first colon-bearing model tag in any recipe's
  * models list, which makes it the first tag to exercise
  * `embeddingDimsForModel()`'s strip-the-leading-`provider:`-prefix logic with
- * a colon INSIDE the model id.
- *
- * Contract pinned here:
- *   - Qualified form (`ollama:qwen3-embedding:8b`) strips only the FIRST
- *     colon, so the tag survives and resolves to its declared 4096. This is
- *     the form every live caller passes (init verbose path, `gbrain
- *     embedding-migrate --to ...` — which rejects non-qualified input).
- *   - Bare colon-bearing form (`qwen3-embedding:8b`) has its `qwen3-embedding`
- *     head eaten by the prefix strip and falls back to default_dims (768).
- *     That is the documented strip-first-colon contract, NOT the tag's native
- *     width — colon-bearing library tags MUST be passed provider-qualified.
- *     If this pin ever fails because the strip became provider-aware, update
- *     it to 4096 and delete the caveat.
+ * a colon INSIDE the model id. Both the qualified form
+ * (`ollama:qwen3-embedding:8b`) and the bare form (`qwen3-embedding:8b`)
+ * resolve to the declared 4096 — the lookup tries the id exactly as given
+ * before assuming a leading `provider:` separator (#3904).
  */
 
 import { describe, expect, test } from 'bun:test';
 import { getRecipe } from '../../src/core/ai/recipes/index.ts';
-import { embeddingDimsForModel } from '../../src/core/ai/model-resolver.ts';
+import { embeddingDimsForModel, resolveRecipe } from '../../src/core/ai/model-resolver.ts';
 import { resolveMigrationTarget } from '../../src/core/embedding-migration.ts';
 
 describe('ollama library-tag dims — new pullable tags', () => {
@@ -39,12 +27,18 @@ describe('ollama library-tag dims — new pullable tags', () => {
     expect(embeddingDimsForModel(ollama, 'ollama:qwen3-embedding:8b')).toBe(4096);
   });
 
-  test('CAVEAT: bare qwen3-embedding:8b falls back to default_dims — colon tags require the qualified form', () => {
-    // The strip-first-colon contract treats `qwen3-embedding` as a provider
-    // prefix and looks up `8b`, which is unlisted → default_dims (768).
-    // Live callers never hit this: init's verbose path passes the full
-    // `ollama:...` string and resolveMigrationTarget() requires it.
-    expect(embeddingDimsForModel(ollama, 'qwen3-embedding:8b')).toBe(768);
+  test('bare qwen3-embedding:8b resolves to its true 4096', () => {
+    // embeddingDimsForModel() now tries the id exactly as given (an exact
+    // model_dims lookup) before assuming a leading `provider:` separator,
+    // so the bare colon-bearing form resolves correctly instead of silently
+    // falling back to default_dims (768).
+    expect(embeddingDimsForModel(ollama, 'qwen3-embedding:8b')).toBe(4096);
+  });
+
+  test('resolver output preserves the colon-bearing tag for dimension lookup', () => {
+    const { parsed, recipe } = resolveRecipe('ollama:qwen3-embedding:8b');
+    expect(parsed.modelId).toBe('qwen3-embedding:8b');
+    expect(embeddingDimsForModel(recipe, parsed.modelId)).toBe(4096);
   });
 
   test('legacy spellings keep validating at their declared dims', () => {

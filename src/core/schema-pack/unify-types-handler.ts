@@ -131,7 +131,13 @@ export async function runUnifyTypes(
   try {
     // Partition mapping_rules by kind
     const explicitRetypeRules: RetypeRule[] = [];
-    let catchAllRule: { to_type: string; subtype?: string; subtype_field?: string } | null = null;
+    let catchAllRule: {
+      to_type: string;
+      subtype?: string;
+      subtype_field?: string;
+      path_filter?: string;
+      slug_filter?: string;
+    } | null = null;
     const pageToLinkRules: PageToLinkRule[] = [];
     const pageToAliasRules: PageToAliasRule[] = [];
     for (const rule of targetPack.manifest.mapping_rules as PackMappingRule[]) {
@@ -144,6 +150,12 @@ export async function runUnifyTypes(
             to_type: rule.to_type,
             subtype: rule.subtype,
             subtype_field: rule.subtype_field,
+            // #4651: carry the disambiguation filters through — dropping
+            // them silently widened the catch-all's selection to every page
+            // of an unknown type (the explicit-rule path below always
+            // copied them).
+            path_filter: rule.path_filter,
+            slug_filter: rule.slug_filter,
           };
         } else {
           explicitRetypeRules.push({
@@ -223,6 +235,10 @@ export async function runUnifyTypes(
           subtype: catchAllRule!.subtype === ORIGINAL_TYPE_SENTINEL
             ? ut
             : catchAllRule!.subtype,
+          // #4651: runRetypeCore honors both filters for explicit rules;
+          // synthesized catch-all rules must respect the same boundaries.
+          path_filter: catchAllRule!.path_filter,
+          slug_filter: catchAllRule!.slug_filter,
         }));
         const result = await runRetypeCore(ctx, { rules: synthesized, apply, sourceId });
         retypeCatchAll = {

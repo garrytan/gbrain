@@ -62,11 +62,12 @@ users own. This skill makes it first-class brain content instead of a JSON
 blob in a downloads folder.
 
 **A native importer now exists: `gbrain transcripts ingest`.** It parses
-agent session logs (Claude Code, Codex, OpenClaw, Hermes) AND extracted
-consumer exports (ChatGPT `conversations.json`, Claude.ai export) directly:
-detection, secret redaction, imessage-slack rendering, long-session
-splitting, and idempotent re-runs are all native. Prefer it over the manual
-procedure whenever the source is one of those six formats:
+agent session logs (Claude Code, Codex, OpenClaw, Hermes, Grok Build) AND
+extracted consumer exports (ChatGPT `conversations.json`, Claude.ai export)
+directly: detection, secret redaction, imessage-slack rendering,
+long-session splitting, and idempotent re-runs are all native. Prefer it
+over the manual procedure whenever the source is one of those seven
+formats:
 
 ```
 gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first

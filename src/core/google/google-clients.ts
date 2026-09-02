@@ -17,6 +17,7 @@ import { apiEnableLink } from '../creds/providers/google.ts';
 import { parseRetryAfterMs } from '../github-source.ts';
 import {
   bareAddress,
+  DEFAULT_CALENDAR_ID,
   splitAddressList,
   type CalendarEventData,
   type ContactData,
@@ -155,7 +156,12 @@ interface RawGmailHeader {
 }
 
 interface RawGmailPart {
+  /** BARE media type ('text/calendar') — Gmail strips the Content-Type
+   *  parameters from this field; they live on `headers[]` (format=full). */
   mimeType?: string;
+  filename?: string;
+  /** Per-part MIME headers (Content-Type with its params, Content-Disposition, …). */
+  headers?: RawGmailHeader[];
   body?: { data?: string; size?: number };
   parts?: RawGmailPart[];
 }
@@ -165,7 +171,7 @@ interface RawGmailMessage {
   threadId: string;
   labelIds?: string[];
   internalDate?: string;
-  payload?: RawGmailPart & { headers?: RawGmailHeader[] };
+  payload?: RawGmailPart;
 }
 
 interface RawGmailThread {
@@ -174,10 +180,17 @@ interface RawGmailThread {
   messages?: RawGmailMessage[];
 }
 
-function header(msg: RawGmailMessage, name: string): string {
-  const h = msg.payload?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
+function partHeader(part: RawGmailPart | undefined, name: string): string {
+  const h = part?.headers?.find((x) => x.name.toLowerCase() === name.toLowerCase());
   return h?.value ?? '';
 }
+
+function header(msg: RawGmailMessage, name: string): string {
+  return partHeader(msg.payload, name);
+}
+
+/** iCalendar METHOD parameter of a Content-Type value (quoted or bare). */
+const CALENDAR_METHOD_RE = /method\s*=\s*"?([a-z]+)"?/i;
 
 function decodeB64Url(data: string): string {
   try {
@@ -206,6 +219,49 @@ export function extractBody(part: RawGmailPart | undefined): { text: string; isH
   // Single-part messages sometimes carry data at the top level with no mimeType match.
   if (part.body?.data) return { text: decodeB64Url(part.body.data), isHtml: false };
   return { text: '', isHtml: false };
+}
+
+/**
+ * iCalendar method for a message: the METHOD of its `text/calendar` /
+ * `application/ics` MIME part ('' when the part carries no parsable method),
+ * or null when the message has no calendar MIME part at all — including the
+ * bare-.ics-filename-attachment shape, which is a human forwarding an invite
+ * file, not Calendar system mail.
+ *
+ * Structural, not textual: Google Calendar attaches a `text/calendar` part
+ * (`method=REQUEST|REPLY|CANCEL`) to every invitation, update, response and
+ * cancellation, so this identifies calendar system mail without matching on
+ * subject wording or sender address — both of which are wrong signals, since
+ * the mail arrives FROM the colleague's real address. Only a NON-EMPTY method
+ * classifies as system mail (isCalendarSystemMail); '' and null both fall to
+ * the anchored subject-prefix fallback.
+ */
+export function extractCalendarMethod(part: RawGmailPart | undefined): string | null {
+  if (!part) return null;
+  const stack: RawGmailPart[] = [part];
+  while (stack.length > 0) {
+    const p = stack.shift()!;
+    const mime = (p.mimeType ?? '').toLowerCase();
+    if (mime.startsWith('text/calendar') || mime === 'application/ics') {
+      // Gmail's MessagePart.mimeType is the BARE media type; the `method=`
+      // parameter lives in the part's own Content-Type header (format=full
+      // carries headers on nested parts). Read that first — a parser that
+      // only looked at mimeType read '' for every real invite, which silently
+      // downgraded the structural signal to the subject-prefix fallback. A
+      // mimeType that still carries the params (other providers / fixtures)
+      // remains the fallback parse.
+      const contentType = partHeader(p, 'Content-Type');
+      const m = CALENDAR_METHOD_RE.exec(contentType) ?? CALENDAR_METHOD_RE.exec(p.mimeType ?? '');
+      return (m?.[1] ?? '').toUpperCase();
+    }
+    // A bare `.ics` FILENAME with a non-calendar MIME type claims nothing:
+    // that shape is a human attaching an invite file, not Calendar system
+    // mail, and short-circuiting '' here used to suppress the whole message
+    // from loop detection. Keep scanning — a real text/calendar part
+    // elsewhere in the tree still wins.
+    if (p.parts) stack.push(...p.parts);
+  }
+  return null;
 }
 
 export class GmailClient extends GoogleApiClient {
@@ -298,6 +354,7 @@ export class GmailClient extends GoogleApiClient {
         internalDateMs,
         labelIds: m.labelIds ?? [],
         listUnsubscribe: header(m, 'List-Unsubscribe') !== '',
+        calendarMethod: extractCalendarMethod(m.payload),
         bodyText,
       };
     });
@@ -335,10 +392,15 @@ export class CalendarClient extends GoogleApiClient {
       timeMinIso?: string;
       timeMaxIso?: string;
       signal?: AbortSignal;
+      /** Calendar to sweep. Defaults to DEFAULT_CALENDAR_ID. A secondary calendar id is
+       *  an address like `...@group.calendar.google.com`; each calendar gets
+       *  its OWN gbrain source so their sync tokens never collide. */
+      calendarId?: string;
     },
   ): Promise<{ events: CalendarEventData[]; nextSyncToken: string | null }> {
     let nextSyncToken: string | null = null;
-    const base = `${CALENDAR_BASE}/calendars/primary/events?maxResults=250&singleEvents=true`;
+    const calId = encodeURIComponent(opts.calendarId?.trim() || DEFAULT_CALENDAR_ID);
+    const base = `${CALENDAR_BASE}/calendars/${calId}/events?maxResults=250&singleEvents=true`;
     const raw = await this.drainPages<RawCalendarEvent>(
       (t) => {
         const params = new URLSearchParams();
@@ -382,6 +444,39 @@ export class CalendarClient extends GoogleApiClient {
       account,
     }));
     return { events, nextSyncToken };
+  }
+
+  /**
+   * Enumerate every calendar the account can read (calendarList). Discovery
+   * only — the sweep still reads ONE calendar per source, so this exists to
+   * find the id you pass to `sources add --calendar-id`.
+   */
+  async listCalendars(opts: { signal?: AbortSignal } = {}): Promise<
+    Array<{ id: string; summary: string; primary: boolean; accessRole: string }>
+  > {
+    const base = `${CALENDAR_BASE}/users/me/calendarList?maxResults=250`;
+    const raw = await this.drainPages<{
+      id?: string;
+      summary?: string;
+      primary?: boolean;
+      accessRole?: string;
+    }>(
+      (t) => (t ? `${base}&pageToken=${encodeURIComponent(t)}` : base),
+      (body) => ({
+        items: (body.items as Array<Record<string, unknown>> | undefined) ?? [],
+        nextPageToken: (body.nextPageToken as string | undefined) ?? null,
+      }),
+      'calendar-json',
+      opts,
+    );
+    return raw
+      .filter((c) => typeof c.id === 'string' && c.id.length > 0)
+      .map((c) => ({
+        id: c.id as string,
+        summary: c.summary ?? '(no name)',
+        primary: Boolean(c.primary),
+        accessRole: c.accessRole ?? 'unknown',
+      }));
   }
 }
 

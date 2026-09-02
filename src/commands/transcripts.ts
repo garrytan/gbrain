@@ -4,8 +4,8 @@
  *
  *   gbrain transcripts recent   — dream-corpus .txt reader (v0.29 surface).
  *   gbrain transcripts ingest   — import dead session logs (Claude Code,
- *                                 Codex, OpenClaw, Hermes) and consumer chat
- *                                 exports (ChatGPT, Claude.ai) into
+ *                                 Codex, OpenClaw, Hermes, Grok) and consumer
+ *                                 chat exports (ChatGPT, Claude.ai) into
  *                                 conversation pages. Local-only, explicit
  *                                 paths are trusted CLI input; embedding is
  *                                 OFF by default (bulk imports defer to the
@@ -15,11 +15,13 @@
  * `gbrain serve` holds the single-writer lock — the lock error names the PID.
  */
 
+import { homedir } from 'node:os';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
+import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
 
 interface RecentOpts {
   days?: number;
@@ -54,6 +56,7 @@ const FORMATS: readonly TranscriptFormat[] = [
   'codex',
   'openclaw',
   'hermes',
+  'grok',
   'chatgpt',
   'claude-export',
 ];
@@ -192,12 +195,12 @@ long sessions split into searchable parts). Re-runs are free (content-hash
 skip). Embedding is OFF by default; run the embed backfill later or opt in.
 
   --all             Import every session log discovered under the harness
-                    roots (claude/codex/openclaw projects + the hermes store)
+                    roots (claude/codex/openclaw/grok projects + the hermes store)
   --include-self    Also discover gbrain's OWN claude-cli subprocess sessions
                     (recorded by Claude Code for the provider's scratch cwds;
                     excluded by default to avoid a self-ingestion loop)
-  --format F        claude-code | codex | openclaw | hermes | chatgpt |
-                    claude-export (auto-detected when omitted)
+  --format F        claude-code | codex | openclaw | hermes | grok |
+                    chatgpt | claude-export (auto-detected when omitted)
   --dry-run         Parse + redact + report; writes nothing
   --limit N         Max sessions this run
   --since T         Only sessions newer than ISO time T; the word "last"
@@ -212,7 +215,7 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     fresh --since last scope (caps are part of the
                     checkpoint fingerprint). Adapters differ over budget:
                     codex degrades to a bounded head+tail read, while
-                    claude-code, openclaw and hermes reject the file
+                    claude-code, openclaw, hermes and grok reject the file
                     outright — so LOWERING this can drop those formats
   --json            Machine-readable result
   --quiet           Suppress the human summary
@@ -236,12 +239,30 @@ const IMPORTABLE_EXTENSIONS = ['.jsonl', '.db', '.json'];
  * without the filter, every stray file in a real directory (macOS Finder
  * metadata, editor backups, READMEs) becomes a permanent per-file error that
  * breaks cleanScan on every run, silently killing the since-last resume for
- * directory scopes. Checkpoint snapshots are never imported.
+ * directory scopes. Checkpoint snapshots and Grok session sidecars
+ * (updates.jsonl, summary.json, prompt_history.jsonl, …) are never imported —
+ * via the STRICT (evidence-checked) grok predicate: these are user-supplied
+ * paths with no format scope, and the broad bare-UUID heuristic silently
+ * dropped explicit sessions that merely lived under a UUID-named directory.
+ * Exported for tests.
  */
-async function expandPaths(specs: string[]): Promise<string[]> {
+/**
+ * Shell-style tilde expansion for a user path spec: a bare `~` or a leading
+ * `~/` (or `~\\`) resolves against the home dir. `~user` forms and a `~`
+ * anywhere else in the string are left untouched (they are literal path
+ * characters). Exported for tests.
+ */
+export function expandTilde(raw: string): string {
+  if (raw === '~') return homedir();
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) return homedir() + raw.slice(1);
+  return raw;
+}
+
+export async function expandPaths(specs: string[]): Promise<string[]> {
   const { statSync } = await import('node:fs');
   const out: string[] = [];
-  for (const spec of specs) {
+  for (const raw of specs) {
+    const spec = expandTilde(raw);
     let matched = false;
     try {
       if (statSync(spec).isFile()) {
@@ -268,7 +289,9 @@ async function expandPaths(specs: string[]): Promise<string[]> {
       out.push(spec);
     }
   }
-  return [...new Set(out)].filter((p) => !isOpenclawCheckpointFile(p));
+  return [...new Set(out)].filter(
+    (p) => !isOpenclawCheckpointFile(p) && !isGrokSessionSidecarStrict(p),
+  );
 }
 
 export function fmtSummary(r: TranscriptsIngestResult): string {
@@ -344,7 +367,7 @@ async function runIngest(engine: BrainEngine, args: string[]): Promise<void> {
       : [...parsed.paths].map((p) => resolve(p)).sort();
 
   // No paths: discovery. Without the all flag, show what WOULD be imported
-  // and stop (a safe default for a command that can touch four harness
+  // and stop (a safe default for a command that can touch five harness
   // histories); with it, import the discovered set.
   if (parsed.paths.length === 0) {
     const { discoverTranscriptFiles } = await import('../core/transcripts/discover.ts');

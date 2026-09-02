@@ -21,6 +21,7 @@
  */
 
 import type { ConfigReader } from './config-snapshot.ts';
+import { openrouterModelSupportsSubagentLoop } from './ai/openrouter-families.ts';
 import { splitProviderModelId } from './model-id.ts';
 import type { GBrainConfig } from './config.ts';
 import { loadConfig } from './config.ts';
@@ -324,6 +325,19 @@ export function isOpenRouterAnthropic(modelString: string): boolean {
     && model.toLowerCase().startsWith('anthropic/');
 }
 
+/**
+ * `openrouter:<family>/…` where the family has a live abort/retry pin for the
+ * subagent loop (anthropic/, deepseek/ — see src/core/ai/openrouter-families.ts).
+ * The subagent handler auto-enables the gateway loop for these, because the
+ * legacy Anthropic-direct pin would otherwise refuse them when
+ * `agent.use_gateway_loop` is off.
+ */
+export function isOpenRouterSubagentFamily(modelString: string): boolean {
+  if (!modelString) return false;
+  const { provider, model } = splitProviderModelId(modelString);
+  return provider?.trim().toLowerCase() === 'openrouter' && openrouterModelSupportsSubagentLoop(model);
+}
+
 const _subagentTierWarningsEmitted = new Set<string>();
 
 // Module-level set of deprecated config keys we've already warned about.
@@ -344,6 +358,22 @@ function emitDeprecationWarning(oldKey: string, newKey: string, ignored: boolean
     );
   }
 }
+
+/**
+ * #4575 — the config-key precedence the subagent tier resolves through at
+ * runtime (`resolveModelDetailed` with configKey 'models.subagent' + tier
+ * 'subagent': steps 2 → 4 → 5 below). Doctor's `subagent_capability` check
+ * iterates THIS list so the check and the runtime cannot drift again —
+ * #3873 hoisted `models.tier.<tier>` above `models.default` in the runtime
+ * and the check kept the pre-fix order, producing an unclearable false
+ * positive whose own suggested fix (set models.tier.subagent) was the key
+ * the check read last.
+ */
+export const SUBAGENT_CONFIG_KEY_PRECEDENCE = [
+  'models.subagent',
+  'models.tier.subagent',
+  'models.default',
+] as const;
 
 /** Which step of the resolution chain produced the model. */
 export type ResolveSource =

@@ -89,12 +89,17 @@ describe('alias_resolved boost stage', () => {
 });
 
 describe('KNOBS_HASH_VERSION', () => {
-  it('is 26 (20→21 recency fallback re-key #895; 21→22 result-stamp/injection epoch #1663 #3995 #3783 #4220; 22→23 excludePrivate posture fold #4352; 23→24 negative-offset cache-skip gap #4358 residual; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415)', () => {
+  it('is 28 (…; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256)', () => {
     // mw2: 21→22 result-stamp/injection epoch (#1663 #3995 #3783 #4220).
     // #4352 follow-up: 22→23 private-visibility posture fold (xp=).
     // #4358 residual: 23→24 negative-offset cache-skip gap.
     // 24→25: kof= (keyword AND→OR fallback knob) joins the key.
     // 25→26: sal=/rec=/ipat= — salience/recency + intent_patterns fold (#4415).
-    expect(KNOBS_HASH_VERSION).toBe(26);
+    // 26→27: ar=/arem=/arom=/armk=/ari= adaptive-return gate + intent fold
+    // (2026-08 wave E5b/F11); also covers the same-release #3617 relaxed-row
+    // fusion-demotion behavioral change (one bump per wave).
+    // 27→28: compiledTruthBoost synthetic-row suppression (#4256/#3695) —
+    // version-only invalidation.
+    expect(KNOBS_HASH_VERSION).toBe(28);
   });
 });

@@ -50,7 +50,7 @@ export const NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 /**
  * Recommended reranker (v0.46.3) — Voyage rerank-2.5 rides the same
  * VOYAGE_API_KEY as the new-install embedding default. The migration playbook
- * names it for migrating users, and since v0.47.11 it is ALSO the runtime /
+ * names it for migrating users, and since v0.48.2 it is ALSO the runtime /
  * mode-bundle default below, so init no longer writes it as an explicit
  * `search.reranker.model` row (an explicit row equal to the bundle value
  * would only earn a doctor `search_mode` reset nag).
@@ -62,7 +62,7 @@ export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
  * what the three mode bundles (`src/core/search/mode.ts`
  * MODE_BUNDLES.*.reranker_model) and the gateway's runtime fallback
  * (`src/core/ai/gateway.ts`) resolve to when no explicit
- * `search.reranker.model` is configured. v0.47.11 flipped it from the
+ * `search.reranker.model` is configured. v0.48.2 flipped it from the
  * sunsetting ZeroEntropy zerank-2 to Voyage rerank-2.5 ahead of the
  * 2026-09-04 hosted shutdown. Keyless brains fail open per search
  * (`RerankError('no_key')`, one audit row per process, no stderr) — see

@@ -17,6 +17,7 @@ import {
   listOpenLoops,
   loadSuppressions,
   markStaleLoops,
+  removeSuppression,
   upsertOpenLoop,
   type OpenLoopUpsert,
 } from '../src/core/loops/loops-store.ts';
@@ -502,5 +503,50 @@ describe('suppressions', () => {
       `SELECT COUNT(*) AS n FROM loop_suppressions WHERE source_id = 'g1'`,
     );
     expect(Number(raw[0].n)).toBe(2);
+  });
+
+  test('remove deletes exactly the matching row, with the same lowercasing', async () => {
+    await addSuppression(engine, 'g1', 'sender', 'Bob@Example.com');
+    await addSuppression(engine, 'g1', 'thread', '18C2F4A9B3D21E07');
+
+    // Mixed case on the way out must match the lower-cased row the insert wrote.
+    expect(await removeSuppression(engine, 'g1', 'sender', 'BOB@example.COM')).toBe(1);
+
+    const set = await loadSuppressions(engine, 'g1');
+    expect([...set.senders]).toEqual([]);
+    expect([...set.threads]).toEqual(['18c2f4a9b3d21e07']);
+  });
+
+  test('remove is exact: a sibling source, kind or value is untouched', async () => {
+    await addSuppression(engine, 'g1', 'sender', 'bob@example.com');
+    await addSuppression(engine, 'g2', 'sender', 'bob@example.com');
+    await addSuppression(engine, 'g1', 'thread', 'bob@example.com');
+    await addSuppression(engine, 'g1', 'sender', 'carol@example.com');
+
+    expect(await removeSuppression(engine, 'g1', 'sender', 'bob@example.com')).toBe(1);
+
+    // The same value under another source and under another kind both survive.
+    expect((await loadSuppressions(engine, 'g2')).senders.has('bob@example.com')).toBe(true);
+    const g1 = await loadSuppressions(engine, 'g1');
+    expect(g1.threads.has('bob@example.com')).toBe(true);
+    expect(g1.senders.has('carol@example.com')).toBe(true);
+    expect(g1.senders.has('bob@example.com')).toBe(false);
+  });
+
+  test('a repeated remove is idempotent and reports 0, not an error', async () => {
+    await addSuppression(engine, 'g1', 'sender', 'bob@example.com');
+    expect(await removeSuppression(engine, 'g1', 'sender', 'bob@example.com')).toBe(1);
+    expect(await removeSuppression(engine, 'g1', 'sender', 'bob@example.com')).toBe(0);
+    // Never muted at all is the same answer.
+    expect(await removeSuppression(engine, 'g1', 'sender', 'nobody@example.com')).toBe(0);
+  });
+
+  test('removing a suppression does not touch existing loops', async () => {
+    await upsertOpenLoop(engine, loop({ counterpartyEmail: 'bob@example.com' }));
+    await addSuppression(engine, 'g1', 'sender', 'bob@example.com');
+    await removeSuppression(engine, 'g1', 'sender', 'bob@example.com');
+    const open = await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' });
+    expect(open.length).toBe(1);
+    expect(open[0].counterparty_email).toBe('bob@example.com');
   });
 });

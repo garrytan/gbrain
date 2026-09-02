@@ -572,7 +572,7 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      "no events" as "broken" when reranker is simply not in use.
  *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
  *   3) Auth failures (key present but rejected): ANY single one warns.
- *      v0.47.11: enablement + model resolve through the mode plane; a
+ *      v0.48.2: enablement + model resolve through the mode plane; a
  *      reranker that is enabled but NOT ready (key absent / provider past
  *      sunset / unknown model) warns with the paste-ready fix BEFORE any
  *      audit read, and `no_key` / `sunset_short_circuit` skip rows warn.
@@ -591,7 +591,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
     const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
     const { describeRerankerFix } = await import('../../../core/ai/reranker-readiness.ts');
     const { rerankerReadinessForEngine } = await import('../../../core/ai/reranker-readiness-engine.ts');
-    // v0.47.11: resolve enablement + model through the SAME plane search
+    // v0.48.2: resolve enablement + model through the SAME plane search
     // reranks with (per-key config → mode bundle), not the raw
     // `search.reranker.enabled` row — balanced/tokenmax enable the reranker
     // with no row at all, and the default model is keyed on VOYAGE_API_KEY.
@@ -643,7 +643,7 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
       };
     }
     // Only the RESOLVED model's rows count: audit rows for a retired default
-    // (e.g. the pre-v0.47.11 ZeroEntropy model) must not make a healthy Voyage
+    // (e.g. the pre-v0.48.2 ZeroEntropy model) must not make a healthy Voyage
     // reranker warn — or send the operator to verify the wrong key.
     const allRows = readRecentRerankFailures(7).filter((f) => f.model === model);
     // Skip rows (no_key / sunset_short_circuit) describe processes that ran
@@ -708,6 +708,21 @@ export async function checkRerankerHealth(engine: BrainEngine, now: Date = new D
         name: 'reranker_health',
         status: 'warn',
         message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check the provider's status page if persistent.`,
+      };
+    }
+
+    // #4648: success-shaped pass-throughs — the provider answered 200 with an
+    // empty/malformed result set, so searches returned raw RRF order with no
+    // rerank_score. The reranker "runs" (logs grow, latency paid) but has
+    // zero effect; the response-shape mismatch is the usual culprit.
+    const passThroughFails = failures.filter(
+      (f) => f.reason === 'empty_result_set' || f.reason === 'malformed_shape',
+    );
+    if (passThroughFails.length >= 3) {
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `${passThroughFails.length} reranker empty/malformed-response pass-through(s) in last 7 days — those searches returned raw RRF order unscored. Fix: verify the rerank endpoint answers {results:[{index, relevance_score}]} for a non-empty documents array (check \`search.reranker.model\` and the endpoint's response shape).`,
       };
     }
 

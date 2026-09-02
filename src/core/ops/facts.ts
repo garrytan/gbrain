@@ -14,7 +14,7 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError, verbError } from './contract.ts';
-import { sourceScopeOpts, stampEvidenceSafe } from './context.ts';
+import { federatedSearchScope, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
@@ -370,7 +370,12 @@ const recall: Operation = {
     let searchResults: SearchResult[] = [];
     let searchDegraded: string | undefined;
     if (queryText) {
-      const searchScope = sourceScopeOpts(ctx);
+      // #3242 parity (#4707): the page-search arm widens an unqualified
+      // no-grant caller across the transport-computed federated set, exactly
+      // like search/query/get_page/list_pages/resolve_slugs. sourceScopeOpts
+      // alone pinned this arm to the scalar source, so a `federated: true`
+      // source was invisible to recall while visible to every sibling read op.
+      const searchScope = federatedSearchScope(ctx);
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers (matches the facts arms' world-only filter above).
       const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');

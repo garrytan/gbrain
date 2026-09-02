@@ -32,7 +32,11 @@ import type {
 } from '../src/core/creds/vault.ts';
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
-import { LOOPS_EXTRACT_MAX_PER_SWEEP } from '../src/core/google/loops-extract.ts';
+import { __setChatTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import {
+  LOOPS_EXTRACT_ENQUEUE_CEILING,
+  LOOPS_EXTRACT_MAX_PER_SWEEP,
+} from '../src/core/google/loops-extract.ts';
 import {
   googleStateFile,
   parseGoogleSourceConfig,
@@ -198,7 +202,7 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       });
     }
 
-    if (u.pathname.includes('/calendars/primary/events')) {
+    if (/\/calendars\/[^/]+\/events$/.test(u.pathname)) {
       if (u.searchParams.get('syncToken')) {
         if (fx.calendarExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
         return json({ items: fx.calendarDelta, nextSyncToken: 'cal-sync-delta' });
@@ -303,13 +307,14 @@ async function sweep(
   vault: FakeVault,
   opts: Partial<SyncOpts> = {},
   services = 'gmail',
+  extra: { cfg?: Record<string, unknown>; engine?: PGLiteEngine } = {},
 ) {
   const cfg = parseGoogleSourceConfig(
-    { kind: 'google', g_account: 'a@example.com', g_services: services, g_history_days: 90, g_dir: dir },
+    { kind: 'google', g_account: 'a@example.com', g_services: services, g_history_days: 90, g_dir: dir, ...extra.cfg },
     dir,
   );
   return runGoogleSync(
-    engine,
+    extra.engine ?? engine,
     'gsrc',
     cfg,
     { sourceId: 'gsrc', noEmbed: true, noExtract: true, ...opts },
@@ -371,6 +376,22 @@ function writeBackfilledState(dir: string): void {
       last_full_at: null,
     }),
     'utf-8',
+  );
+}
+
+/** Seed N pending loops_extract jobs carrying the real payload shape for one source. */
+async function seedWaitingLoopsJobs(
+  sourceId: string,
+  n: number,
+  keyPrefix: string,
+  status: 'waiting' | 'delayed' | 'active' = 'waiting',
+): Promise<void> {
+  await engine.executeRaw(
+    `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, delay_until)
+     SELECT 'loops_extract', 'default', $4::text, jsonb_build_object('sourceId', $2::text), $3::text || '-' || i,
+            CASE WHEN $4::text = 'delayed' THEN now() + interval '10 minutes' END
+       FROM generate_series(1, $1) AS i`,
+    [n, sourceId, keyPrefix, status],
   );
 }
 
@@ -642,6 +663,153 @@ describe('syncToken 410 recovery', () => {
     }
   });
 
+  test('calendar: a 410 re-list stays on the SECONDARY calendar the source is bound to', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-cal410sec-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const secondary = 'family0123456789@group.calendar.google.com';
+    fx.calendarEvents = [
+      {
+        id: 'evt00000000000002',
+        status: 'confirmed',
+        summary: 'Family dinner',
+        start: { dateTime: new Date(daysAgoMs(1)).toISOString() },
+        end: { dateTime: new Date(daysAgoMs(1) + 3_600_000).toISOString() },
+        organizer: { email: 'a@example.com' },
+        attendees: [{ email: 'a@example.com', self: true, responseStatus: 'accepted' }],
+      },
+    ];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const cfg = { g_calendar_id: secondary };
+        const res1 = await sweep(dir, fx, vault, {}, 'calendar', { cfg });
+        expect(res1.added).toBe(1);
+        expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-w1');
+
+        fx.calendarExpireSyncToken = true;
+        const res2 = await sweep(dir, fx, vault, {}, 'calendar', { cfg });
+        expect(res2.status).not.toBe('partial');
+        expect(readGoogleState(dir).calendar_sync_token).toBe('cal-sync-w2');
+        expect(fx.calendarWindowedLists).toBe(2);
+
+        // Every calendar call — initial window, the 410'd syncToken attempt,
+        // and the windowed re-list — addressed the secondary; none fell back
+        // to primary.
+        const calendarCalls = fx.calls.filter((c) => c.includes('/calendars/'));
+        expect(calendarCalls.length).toBe(3);
+        for (const c of calendarCalls) {
+          expect(c).toContain(`/calendars/${encodeURIComponent(secondary)}/events`);
+          expect(c).not.toContain('/calendars/primary/');
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('calendar: the stored sync token is bound to its calendar id — re-pointing g_calendar_id discards it and re-lists windowed', async () => {
+    // Ship-review fix: the persisted token was not bound to the calendar it
+    // was minted for, so changing g_calendar_id paired the NEW calendar with
+    // the OLD token (a foreign delta cursor) instead of a fresh window.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-calrebind-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const secondary = 'family0123456789@group.calendar.google.com';
+    fx.calendarEvents = [
+      {
+        id: 'evt00000000000003',
+        status: 'confirmed',
+        summary: 'Family dinner',
+        start: { dateTime: new Date(daysAgoMs(1)).toISOString() },
+        end: { dateTime: new Date(daysAgoMs(1) + 3_600_000).toISOString() },
+        organizer: { email: 'a@example.com' },
+        attendees: [{ email: 'a@example.com', self: true, responseStatus: 'accepted' }],
+      },
+    ];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        // State minted against PRIMARY, then the source is re-pointed.
+        writeFileSync(
+          googleStateFile(dir),
+          JSON.stringify({
+            gmail_history_id: null,
+            gmail_backfill_floor_ms: null,
+            gmail_backfill_done: false,
+            gmail_newest_ms: null,
+            calendar_sync_token: 'cal-sync-stale-primary',
+            calendar_id: 'primary',
+            contacts_sync_token: null,
+            last_full_at: null,
+          }),
+          'utf-8',
+        );
+        const { result: res, err } = await capturedStderr(() =>
+          sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_calendar_id: secondary } }),
+        );
+        expect(res.status).not.toBe('partial');
+        expect(res.added).toBe(1);
+        // Fresh window: no syncToken on the wire, exactly one windowed list.
+        const calendarCalls = fx.calls.filter((c) => c.includes('/calendars/'));
+        expect(calendarCalls.length).toBe(1);
+        expect(calendarCalls[0]).not.toContain('syncToken=');
+        expect(fx.calendarWindowedLists).toBe(1);
+        // Token rebound to the calendar it now belongs to; the switch is logged.
+        const state = readGoogleState(dir);
+        expect(state.calendar_sync_token).toBe('cal-sync-w1');
+        expect(state.calendar_id).toBe(secondary);
+        expect(err).toContain('[google] calendar changed');
+        expect(err).toContain(secondary);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("calendar: a legacy token with no calendar_id is primary's — primary keeps its delta, a secondary re-lists windowed", async () => {
+    const legacyState = {
+      gmail_history_id: null,
+      gmail_backfill_floor_ms: null,
+      gmail_backfill_done: false,
+      gmail_newest_ms: null,
+      calendar_sync_token: 'cal-sync-legacy',
+      contacts_sync_token: null,
+      last_full_at: null,
+    };
+    const dirA = mkdtempSync(join(tmpdir(), 'gsrc-callegacy-a-'));
+    const dirB = mkdtempSync(join(tmpdir(), 'gsrc-callegacy-b-'));
+    try {
+      await withHome(async () => {
+        // A: still primary → the legacy token is used as a delta cursor and
+        // gets bound to primary on the way out.
+        const fxA = emptyFx();
+        await insertGoogleSource(dirA);
+        writeFileSync(googleStateFile(dirA), JSON.stringify(legacyState), 'utf-8');
+        await sweep(dirA, fxA, makeVault(), {}, 'calendar');
+        expect(fxA.calendarWindowedLists).toBe(0);
+        expect(fxA.calls.filter((c) => c.includes('/calendars/'))[0]).toContain('syncToken=cal-sync-legacy');
+        const stateA = readGoogleState(dirA);
+        expect(stateA.calendar_sync_token).toBe('cal-sync-delta');
+        expect(stateA.calendar_id).toBe('primary');
+
+        // B: re-pointed at a secondary → the primary token is discarded.
+        const fxB = emptyFx();
+        await engine.executeRaw(`DELETE FROM sources WHERE id = 'gsrc'`);
+        await insertGoogleSource(dirB);
+        writeFileSync(googleStateFile(dirB), JSON.stringify(legacyState), 'utf-8');
+        const secondary = 'family0123456789@group.calendar.google.com';
+        await sweep(dirB, fxB, makeVault(), {}, 'calendar', { cfg: { g_calendar_id: secondary } });
+        expect(fxB.calendarWindowedLists).toBe(1);
+        expect(fxB.calls.filter((c) => c.includes('/calendars/'))[0]).not.toContain('syncToken=');
+        expect(readGoogleState(dirB).calendar_id).toBe(secondary);
+      });
+    } finally {
+      rmSync(dirA, { recursive: true, force: true });
+      rmSync(dirB, { recursive: true, force: true });
+    }
+  });
+
   test('contacts: an expired syncToken re-lists in full and stores the fresh token', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl410-'));
     const fx = emptyFx();
@@ -677,10 +845,66 @@ describe('syncToken 410 recovery', () => {
   });
 });
 
-// ── loops_extract enqueue cap ────────────────────────────────────────────────
+// ── loops_extract enqueue completeness ───────────────────────────────────────
 
-describe('loops_extract enqueue cap', () => {
-  test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} recent threads → exactly ${LOOPS_EXTRACT_MAX_PER_SWEEP} jobs + the drop log`, async () => {
+describe('loops_extract enqueue completeness', () => {
+  // The sweep only enqueues when a chat provider is available (a job the
+  // handler can never run would complete as a no-work row and consume the
+  // thread's revision slot). The gateway test seam makes chat "available" for
+  // every test here; the dedicated test below clears it again.
+  const chatStub = async () => {
+    throw new Error('chat transport must not be called by the sweep');
+  };
+  beforeEach(() => __setChatTransportForTests(chatStub));
+  afterAll(() => {
+    // Shard hygiene (same as facts-extract-junk-filter.test.ts): a reset
+    // gateway must not leak a dimensionless config into later files.
+    __setChatTransportForTests(null);
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-large',
+      embedding_dimensions: 1536,
+      env: { ...process.env },
+    });
+  });
+
+  test('chat provider unavailable (keyless install / outage) → 0 jobs enqueued, one stderr line names the reason', async () => {
+    // Ship-review fix: a job enqueued with no chat provider ran to
+    // `llm_unavailable`, completed, and its revision-keyed idempotency row
+    // blocked re-enqueue until the thread changed — every eligible thread
+    // swept during the outage was silently never extracted. Gate at enqueue.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-nochat-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee88000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff88000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Nochat topic ${i}` },
+          body: `Nochat body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      resetGateway();
+      __setChatTransportForTests(null); // no transport stub, no config → isAvailable('chat') === false
+      await withHome(async () => {
+        const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault));
+        expect(res.added).toBe(2); // pages still import — only the LLM lane is skipped
+        const jobs = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(Number(jobs[0].n)).toBe(0);
+        expect(err).toContain('loops_extract: chat provider unavailable');
+        expect(err).toContain('2 eligible thread(s)');
+        expect(err).not.toContain('loops_extract: enqueued');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} eligible threads → EVERY one is queued exactly once`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cap-'));
     const fx = emptyFx();
     const vault = makeVault();
@@ -699,27 +923,291 @@ describe('loops_extract enqueue cap', () => {
       await withHome(async () => {
         const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault));
         expect(res.added).toBe(total);
-        // Exactly the cap, newest-first; the overflow defers (re-candidates
-        // on next touch) with an honest drop log.
+        // The old cap kept only the newest 50 and logged the rest as
+        // "deferring … (they re-candidate on next touch)". That was silent
+        // loss: a thread only re-candidates when it CHANGES, so an untouched
+        // overflow thread was never extracted at all.
         const jobs = await engine.executeRaw<{ data: unknown }>(
           `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
         );
-        expect(jobs).toHaveLength(LOOPS_EXTRACT_MAX_PER_SWEEP);
-        expect(err).toContain(
-          `loops_extract cap: enqueuing ${LOOPS_EXTRACT_MAX_PER_SWEEP}, deferring ${total - LOOPS_EXTRACT_MAX_PER_SWEEP}`,
-        );
-        // Newest-first pick: the three OLDEST threads (topics 50..52, hours
-        // 51..53 ago) are the deferred ones.
+        expect(jobs).toHaveLength(total);
+        expect(err).toContain(`loops_extract: enqueued ${total} eligible thread(s)`);
         const slugs = jobs
           .map((j) => (typeof j.data === 'string' ? JSON.parse(j.data) : j.data) as { slug: string })
           .map((p) => p.slug);
-        for (const dropped of ['recent-topic-50', 'recent-topic-51', 'recent-topic-52']) {
-          expect(slugs.some((s) => s.includes(dropped))).toBe(false);
+        // The previously-dropped tail is present, and so is the newest.
+        for (const kept of ['recent-topic-50', 'recent-topic-51', 'recent-topic-52', 'recent-topic-0']) {
+          expect(slugs.some((s) => s.includes(kept))).toBe(true);
         }
-        expect(slugs.some((s) => s.includes('recent-topic-0'))).toBe(true);
+        // Every slug distinct — one job per thread, no duplicates.
+        expect(new Set(slugs).size).toBe(total);
         // NOTE (item 1e): runGoogleSync writes NO heartbeat.jsonl rows — the
         // connect funnel is a commands-layer concern; see
         // test/google-connect-cmd.serial.test.ts for those assertions.
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a repeated sweep re-touching unchanged threads adds no duplicate jobs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-dup-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const total = 5;
+    const threadIds: string[] = [];
+    for (let i = 0; i < total; i++) {
+      const tid = `17ee11000000${(0x100 + i).toString(16)}`;
+      threadIds.push(tid);
+      fx.messages.push(
+        gmsg(`18ff11000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Dup topic ${i}` },
+          body: `Dup body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await capturedStderr(() => sweep(dir, fx, vault));
+        const after1 = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        // Second sweep RE-TOUCHES every thread via the history delta with
+        // unchanged content — the revision-keyed idempotency key is now the
+        // ONLY dedupe in play (no maxWaiting), so it must hold on its own.
+        fx.history.push([...threadIds]);
+        fx.historyResponseId = '2000';
+        await capturedStderr(() => sweep(dir, fx, vault));
+        const after2 = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        expect(Number(after1[0].n)).toBe(total);
+        expect(Number(after2[0].n)).toBe(total);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a deep waiting backlog shrinks the sweep enqueue budget (defer, not stack)', async () => {
+    // The maxWaiting removal left the per-sweep ceiling as the ONLY bound —
+    // with a stalled worker, repeated pathological sweeps could stack another
+    // 500 waiting jobs each. The sweep now counts already-waiting
+    // loops_extract jobs and shrinks this sweep's budget by that depth;
+    // overflow is a deferral (a deferred thread re-candidates on next touch).
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-depth-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee33000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff33000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Depth topic ${i}` },
+          body: `Depth body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      // Seed a waiting backlog at the ceiling — the stalled-worker shape.
+      // Real loops_extract payloads carry the enqueuing source's id.
+      await seedWaitingLoopsJobs('gsrc', LOOPS_EXTRACT_ENQUEUE_CEILING, 'depthseed');
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const after = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract' AND status = 'waiting'`,
+        );
+        // Budget exhausted by the backlog: NOTHING new stacks on top.
+        expect(Number(after[0].n)).toBe(LOOPS_EXTRACT_ENQUEUE_CEILING);
+        expect(err).toContain('deferring 2');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a DELAYED (retry-backoff) backlog counts against the budget too — a flapping provider cannot stack past the ceiling', async () => {
+    // Ship-review fix: the depth probe counted status='waiting' only. During a
+    // provider outage every claimed job fails and parks as 'delayed' (backoff),
+    // so the probe read ~0 and each sweep stacked another ceiling's worth of
+    // jobs on top of the backlog. Pending = waiting + delayed + active.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-delayed-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee77000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff77000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Delayed topic ${i}` },
+          body: `Delayed body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await seedWaitingLoopsJobs('gsrc', LOOPS_EXTRACT_ENQUEUE_CEILING, 'delayedseed', 'delayed');
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const fresh = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs
+            WHERE name = 'loops_extract' AND idempotency_key NOT LIKE 'delayedseed-%'`,
+        );
+        expect(Number(fresh[0].n)).toBe(0);
+        expect(err).toContain('deferring 2');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("another source's waiting backlog does NOT starve this source's budget (per-source depth)", async () => {
+    // Pre-fix the probe counted EVERY waiting loops_extract job brain-wide,
+    // so one Google account's stalled backlog drove every other source's
+    // budget to 0 forever — nothing new was ever enqueued for them.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-otherdepth-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    for (let i = 0; i < 2; i++) {
+      const tid = `17ee44000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff44000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Other depth topic ${i}` },
+          body: `Other depth body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await seedWaitingLoopsJobs('google-other-account', LOOPS_EXTRACT_ENQUEUE_CEILING, 'otherseed');
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const mine = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs
+            WHERE name = 'loops_extract' AND status = 'waiting' AND data->>'sourceId' = 'gsrc'`,
+        );
+        expect(Number(mine[0].n)).toBe(2);
+        expect(err).toContain('loops_extract: enqueued 2 eligible thread(s)');
+        expect(err).not.toContain('deferring');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('partial budget keeps the NEWEST thread and logs the deferral count', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-partial-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    // Three threads, ages 1h/2h/3h — only ONE slot is left in the budget.
+    for (let i = 0; i < 3; i++) {
+      const tid = `17ee55000000${(0x100 + i).toString(16)}`;
+      fx.messages.push(
+        gmsg(`18ff55000000${(0x200 + i).toString(16)}`, tid, hoursAgoMs(i + 1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: `Partial topic ${i}` },
+          body: `Partial body ${i}.`,
+        }),
+      );
+    }
+    try {
+      await insertGoogleSource(dir);
+      await seedWaitingLoopsJobs('gsrc', LOOPS_EXTRACT_ENQUEUE_CEILING - 1, 'partialseed');
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        expect(err).toContain('deferring 2');
+        expect(err).toContain(`${LOOPS_EXTRACT_ENQUEUE_CEILING - 1} already pending`);
+        const fresh = await engine.executeRaw<{ data: unknown }>(
+          `SELECT data FROM minion_jobs
+            WHERE name = 'loops_extract' AND idempotency_key NOT LIKE 'partialseed-%'`,
+        );
+        expect(fresh).toHaveLength(1);
+        const payload = (typeof fresh[0].data === 'string' ? JSON.parse(fresh[0].data) : fresh[0].data) as { slug: string; sourceId: string };
+        expect(payload.slug).toContain('partial-topic-0'); // the 1h-old thread, not 2h/3h
+        expect(payload.sourceId).toBe('gsrc');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('a failing waiting-depth probe fails OPEN — the sweep still enqueues', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-probefail-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    const tid = '17ee66000000a100';
+    fx.messages.push(
+      gmsg('18ff66000000b200', tid, hoursAgoMs(1), {
+        headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Probe topic' },
+        body: 'Probe body.',
+      }),
+    );
+    // Only the depth probe (`… AS n FROM minion_jobs …`) throws; queue.add and
+    // every other query reach the real engine.
+    const probeFailing = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'executeRaw') {
+          return (sql: string, params?: unknown[]) => {
+            if (/AS n FROM minion_jobs/.test(sql)) throw new Error('probe unavailable');
+            return target.executeRaw(sql, params);
+          };
+        }
+        const v = Reflect.get(target, prop, target);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    }) as PGLiteEngine;
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'gmail', { engine: probeFailing }));
+        expect(err).toContain('loops_extract: enqueued 1 eligible thread(s)');
+        expect(err).not.toContain('enqueue failed');
+        const jobs = await engine.executeRaw<{ n: string }>(
+          `SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract' AND data->>'sourceId' = 'gsrc'`,
+        );
+        expect(Number(jobs[0].n)).toBe(1);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test('bulk mail the owner never answered is filtered before the queue', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-elig-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.messages.push(
+      gmsg('18ff220000000001', '17ee220000000001', hoursAgoMs(2), {
+        headers: {
+          From: 'Peer Example <peer@example.com>',
+          To: 'a@example.com',
+          Subject: 'Real question',
+          'List-Unsubscribe': '<https://example.com/u>',
+        },
+        body: 'Newsletter body.',
+      }),
+    );
+    fx.messages.push(
+      gmsg('18ff220000000002', '17ee220000000002', hoursAgoMs(3), {
+        headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Human topic' },
+        body: 'A real message.',
+      }),
+    );
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const { err } = await capturedStderr(() => sweep(dir, fx, vault));
+        const jobs = await engine.executeRaw<{ data: unknown }>(
+          `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
+        );
+        const slugs = jobs
+          .map((j) => (typeof j.data === 'string' ? JSON.parse(j.data) : j.data) as { slug: string })
+          .map((p) => p.slug);
+        expect(slugs.some((s) => s.includes('human-topic'))).toBe(true);
+        expect(slugs.some((s) => s.includes('real-question'))).toBe(false);
+        // Auditable counts, no mail content: one filtered, one queued.
+        expect(err).toContain('loops_extract eligibility:');
+        expect(err).toContain('list_mail=1');
+        expect(err).toContain('human_correspondence=1');
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

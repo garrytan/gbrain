@@ -78,15 +78,29 @@ describe('query op — CRAG gate (#1663)', () => {
     expect(crag.escalate_to_think).toBe(true);
   });
 
-  test('weak result + search.crag_escalation=true: one high-ceiling re-run fires', async () => {
+  test('weak result + search.crag_escalation=true: one high-ceiling re-run fires (expand:false caller)', async () => {
     await engine.setConfig('search.crag_escalation', 'true');
     const { ctx, meta } = ctxWithMeta();
-    await operationsByName.query.handler(ctx, { query: 'zxqv nonexistent quux' });
+    // #4610: the callerExpanded guard means the re-run only fires when the
+    // first pass did NOT already use the expansion knob.
+    await operationsByName.query.handler(ctx, { query: 'zxqv nonexistent quux', expand: false });
     const crag = cragOf(meta);
     // Keyless corpus with no match: escalation ran and honestly stayed weak.
     expect(crag.escalated).toBe(true);
     expect(crag.escalated_confidence).toBe('weak');
     expect(crag.confidence).toBe('weak');
+    expect(crag.escalate_to_think).toBe(true);
+  }, 30000);
+
+  test('#4610: default-shape caller (expand on) skips the re-run — the documented callerExpanded guard', async () => {
+    await engine.setConfig('search.crag_escalation', 'true');
+    const { ctx, meta } = ctxWithMeta();
+    // No expand param → expand defaults to true → the first pass already
+    // used the high-ceiling expansion knob → no redundant re-query.
+    await operationsByName.query.handler(ctx, { query: 'zxqv nonexistent quux' });
+    const crag = cragOf(meta);
+    expect(crag.confidence).toBe('weak');
+    expect(crag.escalated).toBeUndefined();
     expect(crag.escalate_to_think).toBe(true);
   }, 30000);
 

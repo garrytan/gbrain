@@ -179,7 +179,7 @@ describe('models doctor chat probe respects the provider max-output-tokens floor
       // about the CHAT probe, and unrelated providers would contribute
       // failures the assertions below say nothing about. What remains is the
       // two zero-network config probes plus chat and expansion, so the exit
-      // code is a clean function of the thing under test. (v0.47.11: the
+      // code is a clean function of the thing under test. (v0.48.2: the
       // mode-bundle reranker default is voyage:rerank-2.5, so voyage joins
       // the skip list — this env has no VOYAGE_API_KEY by design.)
       const doctor = await runCli(

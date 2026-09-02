@@ -26,6 +26,7 @@ import type {
 } from '../src/core/creds/vault.ts';
 import type { FetchImpl } from '../src/core/google/google-clients.ts';
 import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
+import { __setChatTransportForTests } from '../src/core/ai/gateway.ts';
 import {
   googleStateFile,
   myAddressSet,
@@ -192,7 +193,9 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       });
     }
 
-    if (u.pathname.includes('/calendars/primary/events')) {
+    // Any calendar id — the real API serves /calendars/<id>/events for every
+    // calendar the account can read, not just 'primary'.
+    if (/\/calendars\/[^/]+\/events/.test(u.pathname)) {
       if (u.searchParams.get('syncToken')) {
         if (fx.calendarExpireSyncToken) return json({ error: { code: 410, message: 'Sync token expired' } }, 410);
         return json({ items: fx.calendarDelta, nextSyncToken: 'cal-sync-2' });
@@ -1117,6 +1120,12 @@ describe('google-source materialize', () => {
         body: 'Looks good, shipping it this week.',
       }),
     );
+    // The sweep enqueues only while a chat provider is available (a job the
+    // handler cannot run would burn the thread's revision slot); the gateway
+    // test seam makes chat "available" without a key or network.
+    __setChatTransportForTests(async () => {
+      throw new Error('chat transport must not be called by the sweep');
+    });
     try {
       await insertGoogleSource(dir);
       await withHome(async () => {
@@ -1139,6 +1148,55 @@ describe('google-source materialize', () => {
         );
         expect(jobs2.length).toBe(1);
         expect(jobs2[0].id).toBe(jobs1[0].id);
+      });
+    } finally {
+      __setChatTransportForTests(null);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── Secondary calendars (one calendar per source) ────────────────────────────
+
+describe('google-source secondary calendar', () => {
+  test('a source with g_calendar_id sweeps THAT calendar, URL-encoded, and materializes its events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-cal2-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    calendarFixture(fx);
+    const calId = 'family0123456789@group.calendar.google.com';
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const cfg = parseGoogleSourceConfig(
+          {
+            kind: 'google',
+            g_account: 'a@example.com',
+            g_services: 'calendar',
+            g_history_days: 90,
+            g_dir: dir,
+            g_calendar_id: calId,
+          },
+          dir,
+        );
+        const res = await runGoogleSync(
+          engine,
+          'gsrc',
+          cfg,
+          { sourceId: 'gsrc', noEmbed: true, noExtract: true },
+          buildFetch(fx),
+          vault,
+        );
+        expect(res.status).toBe('first_sync');
+        // The sweep hit the SECONDARY calendar's path (percent-encoded '@'),
+        // never the hardcoded primary.
+        const calCalls = fx.calls.filter((c) => c.includes('/calendars/'));
+        expect(calCalls.length).toBeGreaterThan(0);
+        for (const c of calCalls) {
+          expect(c).toContain('/calendars/family0123456789%40group.calendar.google.com/events');
+        }
+        // Its events materialized through the normal pipeline.
+        expect((await slugsWhere(`slug LIKE 'calendar/%zephyr%'`)).length).toBe(1);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });

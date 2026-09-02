@@ -2,13 +2,28 @@
  * Retrieval Reflex — per-turn orchestrator (issue #1981, Layer 1).
  *
  * Glues the pure extractor to the engine-aware resolver ladder and returns the
- * pointer markdown to append to `systemPromptAddition`. Called from the context
+ * context markdown to append to `systemPromptAddition`. Called from the context
  * engine's `assemble()` on every turn, so it is:
  *   - zero-candidate fast path: no brain touched when nothing is salient
  *   - fully fail-open: any error returns null (the turn never breaks)
  *   - time-bounded: a hard timeout caps the per-turn cost
  *
- * Resolver ladder (engine-aware — see plan D1/D9):
+ * Two arms (2026-08 fix wave — parity with turn-context's Arm A):
+ *
+ *   window/turn ─ extract ──▶ Arm 1: resolve pointers ── withTimeout(1500ms)
+ *        │                        │ (maxPointers budget, precision-biased)
+ *        │                        ▼
+ *        └──(windowed only)──▶ Arm 2: volunteerStage ── withTimeout(remaining)
+ *                                 │ (wide probe resolve → 0.7 confidence gate,
+ *                                 │  excludeSlugs = Arm 1's pointers; expiry
+ *                                 ▼  falls back to the pointer-only block)
+ *                        pointers text + volunteered section
+ *
+ * Arm 2 never wraps Arm 1's timeout: a slow volunteer resolve degrades to
+ * pointers-only (today's behavior is the fail-open floor — a volunteer stall
+ * must never discard already-resolved pointers).
+ *
+ * Resolver ladder (engine-aware — see plan D1/D9), shared by both arms:
  *   1. host-injected resolveEntities (ctx.brainQuery)   — any engine
  *   2. PGLite → serve resolve IPC socket                 — through the lock holder
  *   3. Postgres → cached direct connection              — multi-connection, safe
@@ -18,7 +33,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, appendFileSync } from 'node:fs';
-import { loadConfig, type GBrainConfig } from '../config.ts';
+import { loadConfig, isEnvDisabled, type GBrainConfig } from '../config.ts';
 import type { BrainEngine } from '../engine.ts';
 import {
   extractCandidates,
@@ -31,6 +46,11 @@ import {
   DEFAULT_MAX_POINTERS,
   type PointerBlock,
 } from './retrieval-reflex.ts';
+import {
+  volunteerStage,
+  VOLUNTEER_DEFAULT_MAX_PAGES,
+  type VolunteeredPage,
+} from './volunteer.ts';
 import { resolveViaIpc, resolveSocketPath, IPC_UNAVAILABLE } from './resolve-ipc.ts';
 
 /** Per-turn resolver options shared by every rung of the ladder. */
@@ -41,6 +61,15 @@ export interface ResolveEntitiesOpts {
   suppression?: 'slug-and-title' | 'slug-only';
   /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
   lexicalArms?: boolean;
+  /**
+   * 2026-08 fix wave: marks the volunteer stage's WIDE UNGATED pool resolve.
+   * Delivery-point loggers (the resolve-ipc binding's onDelivered) must skip
+   * probe resolves — counting the pool as injected pointers would corrupt the
+   * reflex channel's precision stats; gated survivors log once through the
+   * volunteer-events sink instead. Host resolvers may ignore it (extra field);
+   * an older serve ignores it too (accepted mixed-version stat noise, minor).
+   */
+  probe?: 'volunteer';
 }
 
 /**
@@ -99,13 +128,42 @@ export function windowTurnCount(cfg: GBrainConfig | null): number {
 }
 
 const TIMEOUT_MS = 1500; // generous per-turn ceiling; the work is usually <100ms
+/**
+ * Minimum remaining budget (ms) worth spending on the Arm 2 volunteer probe.
+ * Below this, a resolve round-trip cannot realistically complete — skip the
+ * arm rather than start work the timeout will immediately discard.
+ */
+const MIN_VOLUNTEER_BUDGET_MS = 50;
 const HEARTBEAT_PATH = join(homedir(), '.gbrain', 'integrations', 'retrieval-reflex', 'heartbeat.jsonl');
 
-/** File-plane + env gate. Default ON. DB-plane does NOT gate (assemble() is sync). */
+/**
+ * File-plane + env gate. Default ON. DB-plane does NOT gate (assemble() is sync).
+ *
+ * 2026-08 fix wave (red-team): widened from the strict legacy parse
+ * ('false'|'0' only) to the same robust negative family the child switches
+ * (volunteer, lexical arms) honor — an operator disabling the WHOLE reflex
+ * mid-incident with GBRAIN_RETRIEVAL_REFLEX=off used to get a silent no-op
+ * while the same value worked on the children. Widening a disable-parse is
+ * safe: no enabled-today value becomes disabled except intended negatives.
+ */
 export function reflexEnabled(cfg: GBrainConfig | null): boolean {
   const env = process.env.GBRAIN_RETRIEVAL_REFLEX;
-  if (env != null && env !== '') return !(env === 'false' || env === '0');
+  if (env != null && env !== '') return !isEnvDisabled(env);
   return cfg?.retrieval_reflex !== false;
+}
+
+/**
+ * 2026-08 fix wave — kill switch for the volunteer arm (Arm 2). Default ON:
+ * the volunteer layer has been default-on in the shipped claude-code
+ * turn-context lane since v0.43; this is harness parity for the OpenClaw
+ * lane, with the switch as the incident lever. Env above config (an operator
+ * mid-incident may not be able to reach config), same robust negative parse
+ * as lexicalArmsEnabled.
+ */
+export function volunteerEnabled(cfg: GBrainConfig | null): boolean {
+  const env = process.env.GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER;
+  if (env != null && env !== '') return !isEnvDisabled(env);
+  return cfg?.retrieval_reflex_volunteer !== false;
 }
 
 /**
@@ -116,10 +174,10 @@ export function reflexEnabled(cfg: GBrainConfig | null): boolean {
  */
 export function lexicalArmsEnabled(cfg: GBrainConfig | null): boolean {
   const env = process.env.GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS;
-  // Case-insensitive + common negatives (adversarial F11): this is the
-  // incident escape hatch — an operator typing FALSE/off/no mid-incident must
-  // not get a silent no-op. (Sibling gates keep the stricter legacy parse.)
-  if (env != null && env !== '') return !/^(false|0|off|no)$/i.test(env.trim());
+  // Shared isEnvDisabled parse (adversarial F11): the incident escape hatch —
+  // an operator typing FALSE/off/no mid-incident must not get a silent no-op.
+  // (reflexEnabled/windowTurnCount keep the stricter legacy parse.)
+  if (env != null && env !== '') return !isEnvDisabled(env);
   return cfg?.retrieval_reflex_lexical_arms !== false;
 }
 
@@ -142,9 +200,9 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
     // current-turn-only behavior exactly (including suppression mode).
     const windowN = windowTurnCount(cfg);
     const windowed = windowN > 1 && (params.windowTurns?.length ?? 0) > 0;
-    const candidates: EntityCandidate[] = windowed
-      ? extractCandidatesFromWindow(params.windowTurns!.slice(-windowN))
-      : extractCandidates(params.currentUserText);
+    const windowSlice = windowed ? params.windowTurns!.slice(-windowN) : null;
+    const windowCandidates = windowSlice ? extractCandidatesFromWindow(windowSlice) : null;
+    const candidates: EntityCandidate[] = windowCandidates ?? extractCandidates(params.currentUserText);
     // Zero-candidate fast path: regex passes only, no brain touch.
     if (!candidates.length) return null;
 
@@ -154,26 +212,103 @@ export async function buildReflexAddition(params: ReflexParams): Promise<string 
       suppression: windowed ? 'slug-only' : 'slug-and-title',
       lexicalArms: lexicalArmsEnabled(cfg),
     };
+    const startedAt = Date.now();
     const block = await withTimeout(resolve(params, cfg, candidates, opts), TIMEOUT_MS);
-    if (!block || !block.pointers.length) return null;
+    const pointers = block?.pointers ?? [];
 
-    // Accept-side reflex-channel logging (red-team): the block survived the
-    // per-turn timeout, so these pointers ARE being injected. Only the
-    // direct-Postgres rung has an engine here; the IPC rung logs server-side
-    // at delivery; host-injected resolvers can't log (documented gap).
-    if (!params.resolveEntities && isPostgres(cfg)) {
-      const engine = await getPostgresEngine(cfg);
-      if (engine) {
-        const { logDeliveredReflexPointers } = await import('./retrieval-reflex.ts');
-        logDeliveredReflexPointers(engine, block.pointers);
+    // Arm 2 (2026-08 fix wave): volunteer stage — windowed lanes only (the
+    // gate needs window occurrence metadata). Same shared primitive the
+    // claude-code turn-context lane and the BrainBench openclaw adapter run.
+    // REMAINING-budget timeout, never a shared wrapper: expiry falls back to
+    // the pointer-only block instead of discarding resolved pointers.
+    let volunteered: VolunteeredPage[] = [];
+    if (windowCandidates && windowSlice && volunteerEnabled(cfg)) {
+      const remaining = TIMEOUT_MS - (Date.now() - startedAt);
+      if (remaining > MIN_VOLUNTEER_BUDGET_MS) {
+        // Own try/catch, NOT just the timeout race (codex adversarial,
+        // 2026-09): a non-timeout REJECTION of the volunteer resolve would
+        // otherwise propagate through Promise.race to the outer catch and
+        // return null — destroying Arm 1's already-resolved pointer block, a
+        // floor regression vs the pointer-only lane. Arm 2 fails open to the
+        // pointer-only block on ANY failure mode, not just expiry.
+        try {
+          const v = await withTimeout(
+            volunteerStage(
+              (cands, ropts) => resolve(params, cfg, cands, ropts),
+              windowCandidates,
+              windowSlice.length,
+              {
+                excludeSlugs: new Set(pointers.map((p) => p.slug)),
+                priorContextText: params.priorContextText,
+                lexicalArms: opts.lexicalArms,
+                maxPages: VOLUNTEER_DEFAULT_MAX_PAGES,
+              },
+            ),
+            remaining,
+          );
+          volunteered = v ?? [];
+        } catch {
+          volunteered = [];
+        }
       }
     }
 
-    writeHeartbeat(cfg, block.pointers.length);
-    return block.text;
+    if (!pointers.length && !volunteered.length) return null;
+
+    // Accept-side reflex-channel logging (red-team): the block survived the
+    // per-turn timeout, so these pointers ARE being injected. Only the
+    // direct-Postgres rung has an engine here; the IPC rung logs POINTER
+    // deliveries server-side (probe resolves excluded — see
+    // ResolveEntitiesOpts.probe); host-injected resolvers can't log
+    // (documented gap). Volunteered survivors log through the
+    // volunteer-events sink under the in-process 'openclaw' channel (NEVER
+    // wire-claimable — see HARNESS_CHANNELS) — on the DIRECT-POSTGRES RUNG
+    // ONLY: the PGLite/IPC rung has no engine handle client-side and the
+    // server only sees the ungated probe pool, so openclaw volunteer events
+    // are not logged there (documented gap, same class as the host-resolver
+    // one; a server-side volunteer-report IPC kind is the fix if stats ever
+    // need PGLite coverage).
+    if (!params.resolveEntities && isPostgres(cfg)) {
+      const engine = await getPostgresEngine(cfg);
+      if (engine) {
+        if (pointers.length) {
+          const { logDeliveredReflexPointers } = await import('./retrieval-reflex.ts');
+          logDeliveredReflexPointers(engine, pointers);
+        }
+        if (volunteered.length) {
+          const { volunteerEventRowsFrom, logVolunteerEventsFireAndForget } = await import('./volunteer-events.ts');
+          logVolunteerEventsFireAndForget(
+            engine,
+            volunteerEventRowsFrom(volunteered, { channel: 'openclaw' }),
+          );
+        }
+      }
+    }
+
+    writeHeartbeat(cfg, pointers.length + volunteered.length);
+    return renderReflexAddition(block?.text ?? null, volunteered);
   } catch {
     return null; // fail-open: the live-context block still ships
   }
+}
+
+/**
+ * Compose the final markdown: Arm 1's pointer block (pre-rendered) plus the
+ * volunteered section in turn-context's exact idiom (the two lanes must not
+ * drift in wire shape).
+ */
+export function renderReflexAddition(
+  pointerText: string | null,
+  volunteered: VolunteeredPage[],
+): string | null {
+  if (!volunteered.length) return pointerText;
+  const lines: string[] = pointerText ? [pointerText, ''] : [];
+  lines.push('## Brain pages the brain volunteers');
+  for (const v of volunteered) {
+    const syn = v.synopsis ? ` — ${v.synopsis}` : '';
+    lines.push(`- **${v.display}** → \`${v.slug}\` (${v.confidence.toFixed(2)}, ${v.rationale})${syn}`);
+  }
+  return lines.join('\n');
 }
 
 async function resolve(
@@ -293,8 +428,20 @@ function writeHeartbeat(cfg: GBrainConfig | null, count: number): void {
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  return Promise.race([
-    p,
-    new Promise<null>((r) => setTimeout(() => r(null), ms)),
-  ]);
+  // Clear the race timer on settle (2026-08 wave, perf review): the volunteer
+  // arm added a second instance per windowed turn, and an uncleared timer
+  // parks the event loop for up to TIMEOUT_MS after the winner settled. The
+  // LOSING promise itself is not cancelled (no AbortSignal threading through
+  // the resolver rungs yet — noted on the single-pool micro-opt TODO).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<null>((r) => {
+        timer = setTimeout(() => r(null), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

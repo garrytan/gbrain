@@ -1,11 +1,12 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from '../core/embed-skip.ts';
+import { quarantineFilterFragment } from '../core/quarantine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import * as db from '../core/db.ts';
 import { LATEST_VERSION, getIdleBlockers } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport } from '../core/dry-fix.ts';
-import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
+import { parseFlags as parseSkillsDirFlags, resolveSkillsDir } from './check-resolvable.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
 import { compareVersions } from './migrations/index.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
@@ -14,8 +15,8 @@ import { rankIssues, type RankedIssue } from '../core/doctor-cause-rank.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { gbrainPath, loadConfig } from '../core/config.ts';
-import { dirname, join } from 'path';
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 import { resolveEnvNumber, resolveHoursEnv } from '../core/env-number.ts';
 import { computeEffectiveDate } from '../core/effective-date.ts';
 import { parseFrontmatter } from '../core/backfill-effective-date.ts';
@@ -32,6 +33,8 @@ import { multiSourceDriftAdvice, multiSourceDriftGitRootSkipNote } from './docto
 import { bootstrapDoctorChecks } from './doctor/bootstrap-checks.ts';
 import { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
 export { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
+import { buildHomeDirInWorktreeCheck } from './doctor/checks/home-worktree.ts';
+export { buildHomeDirInWorktreeCheck, isValidGitMarker } from './doctor/checks/home-worktree.ts';
 import { buildMemoryWritebackCheck } from './doctor/checks/memory-writeback.ts';
 export { buildMemoryWritebackCheck } from './doctor/checks/memory-writeback.ts';
 import {
@@ -130,6 +133,7 @@ export {
   checkUndeclaredDbOnlyPages,
   checkDbOnlyCollectorCollision,
   computeExtractAtomsBacklogCheck,
+  computeAtomProvenanceDriftCheck,
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
@@ -215,6 +219,7 @@ import {
   checkUndeclaredDbOnlyPages,
   checkDbOnlyCollectorCollision,
   computeExtractAtomsBacklogCheck,
+  computeAtomProvenanceDriftCheck,
   computeExtractHealthCheck,
   checkSyncFreshness,
 } from './doctor/checks/extraction-sync.ts';
@@ -705,13 +710,17 @@ export async function buildChecks(
   //
   // We also skip `--fix` execution under scope=brain because --fix
   // exclusively targets DRY violations inside SKILL.md files. Use the same
-  // auto-detect as `check-resolvable` so doctor sees a workspace/skills dir
-  // reachable via $OPENCLAW_WORKSPACE or ~/.openclaw/workspace, not just a
-  // `skills/` walked up from cwd. Read-only variant adds the install-path
-  // fallback so a hosted-CLI install run from `~` (e.g., `bun install -g
-  // github:garrytan/gbrain && cd ~ && gbrain doctor`) can still find the
-  // bundled skills/ dir without warning.
-  const detected = scope === 'all' ? autoDetectSkillsDirReadOnly() : { dir: null, source: 'none' as const };
+  // resolution as `check-resolvable` (#4673: flag-first — doctor accepted
+  // `--skills-dir` and silently ignored it, so every skill check graded the
+  // auto-detected workspace and `--fix` could write SKILL.md edits into a
+  // workspace the operator explicitly steered away from). Sharing
+  // check-resolvable's exported resolveSkillsDir keeps the three skills-dir
+  // commands (doctor, check-resolvable, routing-eval) on one precedence:
+  // --skills-dir → $GBRAIN_SKILLS_DIR / $OPENCLAW_WORKSPACE / walk-up →
+  // install-path read-only fallback. `source: 'explicit'` correctly bypasses
+  // the install_path --fix refusal below — an explicit flag is exactly the
+  // operator signal that gate wants.
+  const detected = scope === 'all' ? resolveSkillsDir(parseSkillsDirFlags(args)) : { dir: null, source: 'none' as const };
   const skillsDir = detected.dir;
   if (scope === 'all' && skillsDir) {
 
@@ -1472,6 +1481,13 @@ export async function buildChecks(
     } catch {
       // Best-effort; backlog query failure shouldn't stop doctor.
     }
+    // The mirror of the backlog check: atoms whose source_hash no longer
+    // resolves to any live page (#4566). Same best-effort posture.
+    try {
+      checks.push(await computeAtomProvenanceDriftCheck(engine));
+    } catch {
+      // Best-effort; provenance query failure shouldn't stop doctor.
+    }
   }
 
   // 3d.3 v0.41.13.0 — conversation_format_coverage. Peeled to
@@ -1553,65 +1569,16 @@ export async function buildChecks(
     // Best-effort; audit-log read failure shouldn't stop doctor.
   }
 
-  // 3e. home_dir_in_worktree (v0.35.8.0). Walks up from `gbrainPath()`
-  // looking for a `.git` directory OR file. If found, warns: `~/.gbrain/`
-  // lives inside a git worktree, so an accidental `git add` from the
-  // worktree root could stage the brain. Pairs with the retroactive
-  // `~/.gbrain/.gitignore` (single-line `*`) laid down by saveConfig +
-  // post-upgrade. Honest scope: the .gitignore covers casual `git add`
-  // but NOT already-tracked files, screenshots, backups, or `git add -f`.
-  //
-  // Walk termination: stops at $HOME (don't keep walking into / on a user
-  // who set GBRAIN_HOME=/tmp/something). Handles `.git` as both a directory
-  // (main repo) and a file (linked worktree pointing at parent's worktrees/).
+  // 3e. home_dir_in_worktree (v0.35.8.0; peeled to doctor/checks/home-worktree.ts).
+  // Walks up from `gbrainPath()` toward $HOME looking for a VALIDATED `.git`
+  // marker (#4683: an empty/invalid `.git` git itself rejects no longer warns).
   // Honors GBRAIN_HOME via gbrainPath().
   try {
-    const gbrainHome = gbrainPath();
-    const home = process.env.HOME || '';
-    let worktreeRoot: string | null = null;
-    if (gbrainHome && home && gbrainHome.startsWith(home + '/')) {
-      // Walk up from gbrainHome's parent toward $HOME, stopping at $HOME.
-      // We don't check gbrainHome itself: a `.git` directly inside ~/.gbrain
-      // isn't a containing-worktree, it would be a brain repo cloned there.
-      let cur = dirname(gbrainHome);
-      while (cur && cur.length >= home.length) {
-        const gitPath = join(cur, '.git');
-        try {
-          const st = statSync(gitPath);
-          // Either a directory (main repo) or a file (linked worktree pointer).
-          if (st.isDirectory() || st.isFile()) {
-            worktreeRoot = cur;
-            break;
-          }
-        } catch {
-          // No .git at this level; continue.
-        }
-        if (cur === home) break;
-        const parent = dirname(cur);
-        if (parent === cur) break;
-        cur = parent;
-      }
-    }
-    if (worktreeRoot) {
-      const homeEnvHint = process.env.GBRAIN_HOME
-        ? `# Or move \`~/.gbrain\` outside the worktree by setting GBRAIN_HOME elsewhere.`
-        : `# Fix: \`export GBRAIN_HOME=/some/path/outside/the/worktree\` (gbrain appends \`.gbrain\`).`;
-      checks.push({
-        name: 'home_dir_in_worktree',
-        status: 'warn',
-        message:
-          `~/.gbrain lives inside git worktree at ${worktreeRoot}. ` +
-          `Config + brain DB could be committed by accident. ` +
-          `A retroactive ~/.gbrain/.gitignore blocks casual \`git add\`, but does NOT cover ` +
-          `already-tracked files, screenshots, backups, or \`git add -f\`. ${homeEnvHint}`,
-      });
-    } else {
-      checks.push({
-        name: 'home_dir_in_worktree',
-        status: 'ok',
-        message: 'gbrain home is outside any enclosing git worktree.',
-      });
-    }
+    checks.push(buildHomeDirInWorktreeCheck(
+      gbrainPath(),
+      process.env.HOME || '',
+      Boolean(process.env.GBRAIN_HOME),
+    ));
   } catch {
     // Best-effort filesystem-hygiene check; never block doctor.
   }
@@ -1688,6 +1655,20 @@ export async function buildChecks(
   } catch {
     // Best-effort filesystem-hygiene check; never block doctor (a missing/
     // unparseable config.json lands here and skips, same fail-open posture).
+  }
+
+  // 3a-bis. default_source_local_path (#4739, narrowed). A null
+  // default.local_path is the DESIGNED fallback topology (pages nest under
+  // sync.repo_path), so this only warns when that fallback demonstrably
+  // fails: file-backed default pages with no resolvable root, or a
+  // sync.repo_path the #2018 leak guard silently skips. Logic lives in
+  // doctor/checks/default-source-path.ts (module-dir rule).
+  if (engine !== null) try {
+    const { defaultSourceLocalPathCheck } = await import('./doctor/checks/default-source-path.ts');
+    const dspCheck = await defaultSourceLocalPathCheck(engine!);
+    if (dspCheck) checks.push(dspCheck);
+  } catch {
+    // Best-effort. A broken sources table should not stop doctor.
   }
 
   // 3b-multi-source. Multi-source drift (v0.31.8 — D8 + D17 + OV12 + OV13).
@@ -2548,7 +2529,9 @@ export async function buildChecks(
       // warn about coverage on pages the rest of the system treats as gone.
       // buildGazetteer (src/core/by-mention.ts) already filters this way, so
       // without it the two disagree about whether entity pages exist at all.
-      "SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization')",
+      // #4280: quarantined shells are excluded too — parity with onboard's
+      // VISIBLE_ENTITY_PREDICATE, which never counted them.
+      `SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization') AND ${quarantineFilterFragment('pages')}`,
     ))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
@@ -2566,6 +2549,7 @@ export async function buildChecks(
         SELECT id FROM pages
         WHERE deleted_at IS NULL
           AND type IN ('entity','person','company','organization')
+          AND ${quarantineFilterFragment('pages')}
           AND slug NOT LIKE 'tools/gbrain/test/%'
           AND slug <> 'templates/new-person'
       )

@@ -24,7 +24,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { resolveCandidateSources } from '../src/commands/extract.ts';
+import { resolveCandidateSources, resolveLinkFallbackDefault } from '../src/commands/extract.ts';
 import { isCrossSourceLinksEnabled } from '../src/core/link-extraction.ts';
 import type { LinkCandidate } from '../src/core/link-extraction.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -139,6 +139,70 @@ describe('#2589 resolveCandidateSources — cross-source targets', () => {
       cand('people/alice-example'), 'comms/msg-1', 'comms', allSlugs, slugToSources, false, { crossSource: true },
     );
     expect(on).toEqual({ ok: true, fromSlug: 'comms/msg-1', fromSourceId: 'comms', toSourceId: 'default' });
+  });
+});
+
+describe('#4611 configured sources.default drives the fallback lane', () => {
+  test('renamed default source: target-side fallback follows opts.defaultSourceId', () => {
+    // The brain's default source was renamed to 'main-vault' via
+    // `sources.default`. Pre-#4611 the fallback compared against the LITERAL
+    // 'default' and silently dropped this candidate.
+    const { allSlugs, slugToSources } = maps({
+      'people/alice-example': ['main-vault'],
+      'comms/msg-1': ['comms'],
+    });
+    const r = resolveCandidateSources(
+      cand('people/alice-example'), 'comms/msg-1', 'comms', allSlugs, slugToSources, true,
+      { defaultSourceId: 'main-vault' },
+    );
+    expect(r).toEqual({ ok: true, fromSlug: 'comms/msg-1', fromSourceId: 'comms', toSourceId: 'main-vault' });
+  });
+
+  test('renamed default source: from-side fallback follows opts.defaultSourceId', () => {
+    // fromSlug lives only in the renamed default; the origin page's own
+    // source doesn't hold it. Pre-#4611 fromSourceId fell to fromSources[0]
+    // only via the arbitrary-first branch; the configured default now wins.
+    const { allSlugs, slugToSources } = maps({
+      'people/alice-example': ['zz-other', 'main-vault'],
+      'comms/msg-1': ['comms'],
+    });
+    const r = resolveCandidateSources(
+      cand('people/alice-example', 'people/alice-example'), 'comms/msg-1', 'comms',
+      allSlugs, slugToSources, true, { defaultSourceId: 'main-vault' },
+    );
+    expect(r).toEqual({
+      ok: true,
+      fromSlug: 'people/alice-example',
+      fromSourceId: 'main-vault',
+      toSourceId: 'main-vault',
+    });
+  });
+
+  test("omitted defaultSourceId keeps the literal 'default' (back-compat)", () => {
+    const { allSlugs, slugToSources } = maps({
+      'people/alice-example': ['default'],
+      'comms/msg-1': ['comms'],
+    });
+    const r = resolveCandidateSources(
+      cand('people/alice-example'), 'comms/msg-1', 'comms', allSlugs, slugToSources, true,
+    );
+    expect(r).toEqual({ ok: true, fromSlug: 'comms/msg-1', fromSourceId: 'comms', toSourceId: 'default' });
+  });
+
+  test("resolveLinkFallbackDefault: configured value wins, invalid/unset/error fall back to 'default'", async () => {
+    const engineWith = (v: string | null, throws = false) =>
+      ({
+        getConfig: async () => {
+          if (throws) throw new Error('boom');
+          return v;
+        },
+      }) as unknown as BrainEngine;
+    expect(await resolveLinkFallbackDefault(engineWith('main-vault'))).toBe('main-vault');
+    expect(await resolveLinkFallbackDefault(engineWith(null))).toBe('default');
+    // Invalid shape (legacy underscore id) falls through, mirroring the
+    // source-resolver tier-5 silent-fallback posture.
+    expect(await resolveLinkFallbackDefault(engineWith('Bad_Source!'))).toBe('default');
+    expect(await resolveLinkFallbackDefault(engineWith(null, true))).toBe('default');
   });
 });
 

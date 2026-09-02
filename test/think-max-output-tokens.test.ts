@@ -78,6 +78,10 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     // model-name regex, so provider renames keep the headroom.
     expect(maxOutputTokensFor('deepseek:deepseek-v4-flash')).toBe(16000);
     expect(maxOutputTokensFor('deepseek:deepseek-v4-pro')).toBe(16000);
+    // OpenRouter DeepSeek hosts think by default too (#4758) — same recipe
+    // capability, so the OR route gets the same headroom as native deepseek:.
+    expect(maxOutputTokensFor('openrouter:deepseek/deepseek-v4-flash')).toBe(16000);
+    expect(maxOutputTokensFor('openrouter:deepseek/deepseek-v4-flash-0731')).toBe(16000);
     // Retired alias still routes to a thinking v4 model at the provider.
     expect(maxOutputTokensFor('deepseek:deepseek-reasoner')).toBe(16000);
     // Recipes without the capability keep the conservative default.
@@ -86,6 +90,21 @@ describe('maxOutputTokensFor — thinking-default headroom', () => {
     // Unknown provider strings fail open to the default, never throw.
     expect(maxOutputTokensFor('nonexistent-provider:whatever')).toBe(4000);
     expect(maxOutputTokensFor('voyage:voyage-4')).toBe(4000); // chat-less recipe
+  });
+
+  test('gbrain#4727 — Zhipu GLM-4.5+/5.x get 16000 via the capability layer; older GLM ids keep 4000', () => {
+    // GLM-4.5+ and the GLM-5.x series reason by default and bill reasoning
+    // against max_tokens, same as DeepSeek v4: at 4000 the whole budget is
+    // spent reasoning and think returns truncated/empty JSON.
+    expect(maxOutputTokensFor('zhipu:glm-5.3-flash')).toBe(16000);
+    expect(maxOutputTokensFor('zhipu:glm-5.3')).toBe(16000);
+    expect(maxOutputTokensFor('zhipu:glm-5.1')).toBe(16000);
+    expect(maxOutputTokensFor('zhipu:glm-4.6')).toBe(16000);
+    expect(maxOutputTokensFor('zhipu:glm-4.5')).toBe(16000);
+    // Pre-4.5 ids don't reason by default — conservative cap stands.
+    expect(maxOutputTokensFor('zhipu:glm-4')).toBe(4000);
+    expect(maxOutputTokensFor('zhipu:glm-4-plus')).toBe(4000);
+    expect(maxOutputTokensFor('zhipu:glm-3-turbo')).toBe(4000);
   });
 });
 

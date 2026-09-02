@@ -49,7 +49,7 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
 
   test('returns the mode-bundle default when no override is set (balanced enables voyage:rerank-2.5)', async () => {
     // balanced mode bundle has reranker_enabled: true + reranker_model:
-    // 'voyage:rerank-2.5' baked in (v0.47.11 flip). Pre-fix this case
+    // 'voyage:rerank-2.5' baked in (v0.48.2 flip). Pre-fix this case
     // returned undefined; post-fix doctor sees what search actually uses.
     configureGateway({ env: {} });
     const engine = makeEngineStub({});
@@ -93,7 +93,7 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     const resolved = await resolveLiveRerankerModel(engine);
     // balanced mode bundle is the safety fallback when search.mode is unset
     // (and here, every config read failed) — and balanced enables
-    // voyage:rerank-2.5 by default (v0.47.11).
+    // voyage:rerank-2.5 by default (v0.48.2).
     expect(resolved).toBe('voyage:rerank-2.5');
   });
 });

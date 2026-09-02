@@ -16,6 +16,11 @@
  *   - audit union: reason 'error' is a first-class abort reason (typed, no
  *     `as never`), so the catch-all no longer has to lie with 'sigint'.
  *   - RunReceipt carries abort_reason/abort_detail fields (type-level).
+ *   - classifyAbortError: a real (not string-faked) BudgetExhausted correctly
+ *     classifies as outcome='aborted'/abort_reason='budget_exhausted' — the
+ *     #3516-adjacent gap where the catch block's own string sniff could
+ *     never match any of budget-tracker.ts's actual throw messages, so every
+ *     cost-cap/no-pricing abort silently fell through to outcome='errored'.
  */
 
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
@@ -25,7 +30,9 @@ import * as path from 'node:path';
 import { withEnv } from '../helpers/with-env.ts';
 import { parseFlags } from '../../src/commands/skillopt.ts';
 import { estimateCost, formatPreflightReport, preflight } from '../../src/core/skillopt/preflight.ts';
-import { BudgetTracker, _resetBudgetTrackerWarningsForTest } from '../../src/core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted, _resetBudgetTrackerWarningsForTest } from '../../src/core/budget/budget-tracker.ts';
+import { BudgetExhausted as MinionsBudgetExhausted } from '../../src/core/minions/budget-tracker.ts';
+import { classifyAbortError } from '../../src/core/skillopt/orchestrator.ts';
 import {
   _resetAuditWriterForTests,
   currentAuditFilename,
@@ -185,5 +192,103 @@ describe('#3516 — RunReceipt carries abort_reason / abort_detail', () => {
     const parsed = JSON.parse(JSON.stringify(receipt));
     expect(parsed.abort_reason).toBe('error');
     expect(parsed.abort_detail).toBe('provider exploded: 500');
+  });
+});
+
+describe('classifyAbortError — real BudgetExhausted instances (not string-faked)', () => {
+  // Every message shape matches an ACTUAL throw site in budget-tracker.ts
+  // (reserve's cost-cap denial, reserve's no_pricing hard-fail, record's
+  // post-hoc cost overage) — none contain the literal substrings the old
+  // string sniff checked for, which is exactly why every real
+  // BudgetExhausted fell through to the generic catch-all pre-fix.
+  test('reason=cost classifies as aborted/budget_exhausted', () => {
+    const err = new BudgetExhausted(
+      'skillopt:widget: projected cost $1.5000 exceeds --max-cost $1.00 (cumulative $0.0000 + outstanding $0.0000 + this call $1.5000)',
+      { reason: 'cost', spent: 0, cap: 1.0, modelId: 'anthropic:claude-opus-4-7' },
+    );
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('aborted');
+    expect(r.abortReason).toBe('budget_exhausted');
+    expect(r.abortDetail).toBe(err.message);
+  });
+
+  test('reason=no_pricing classifies as aborted/budget_exhausted', () => {
+    const err = new BudgetExhausted('no pricing data available for openrouter:some-model', {
+      reason: 'no_pricing', spent: 0, cap: 1.0, modelId: 'openrouter:some-model',
+    });
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('aborted');
+    expect(r.abortReason).toBe('budget_exhausted');
+  });
+
+  test('reason=runtime classifies as aborted/runtime_exceeded (distinct from budget_exhausted)', () => {
+    // Not reachable from orchestrator.ts's own tracker today (constructed
+    // without maxRuntimeMs) — pinned anyway so the mapping stays correct if
+    // that ever changes, and so this reason isn't silently merged into
+    // budget_exhausted by a future edit.
+    const err = new BudgetExhausted('skillopt:widget: wall-clock 45.0s exceeded --max-runtime 30.0s', {
+      reason: 'runtime', spent: 45000, cap: 30000,
+    });
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('aborted');
+    expect(r.abortReason).toBe('runtime_exceeded');
+  });
+
+  test('a BudgetExhausted from the UNRELATED minions/budget-tracker.ts class is not misclassified as budget_exhausted', () => {
+    // Two distinct BudgetExhausted classes exist in this repo (core/budget,
+    // used here, and core/minions, a differently-shaped job-cost tracker
+    // with an unrelated (owner_id, balance_cents) constructor) — instanceof
+    // is nominal, not structural, so an instance of the wrong one must NOT
+    // satisfy this check. Guards against a future refactor importing the
+    // wrong one and silently reintroducing this exact bug class.
+    const wrongClassErr = new MinionsBudgetExhausted(42, 0);
+    const r = classifyAbortError(wrongClassErr, { maxRuntimeMin: 30 });
+    expect(r.abortReason).not.toBe('budget_exhausted');
+    expect(r.outcome).toBe('errored');
+  });
+
+  test('skillopt_runtime_exceeded (plain Error, the orchestrator wall-clock deadline) still classifies correctly', () => {
+    const err = new Error('skillopt_runtime_exceeded');
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('aborted');
+    expect(r.abortReason).toBe('runtime_exceeded');
+    expect(r.abortDetail).toBe('exceeded --max-runtime-min 30');
+  });
+
+  test('SIGINT (plain Error) still classifies correctly', () => {
+    const err = new Error('received SIGINT, aborting run');
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('aborted');
+    expect(r.abortReason).toBe('sigint');
+  });
+
+  test('an unrelated provider error still classifies as the truthful catch-all (#3516 behavior preserved)', () => {
+    const err = new Error('provider exploded: 500');
+    const r = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(r.outcome).toBe('errored');
+    expect(r.abortReason).toBe('error');
+    expect(r.abortDetail).toBe('provider exploded: 500');
+  });
+
+  test('negative control: replaying the exact pre-fix string-sniff against a real BudgetExhausted misclassifies it (proves this is a real regression, not a hypothetical)', () => {
+    function preFixClassify(err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('BudgetExhausted') || msg.includes('budget_exhausted')) {
+        return { outcome: 'aborted' as const, abortReason: 'budget_exhausted' as const };
+      } else if (msg.includes('skillopt_runtime_exceeded')) {
+        return { outcome: 'aborted' as const, abortReason: 'runtime_exceeded' as const };
+      } else if (msg.includes('SIGINT')) {
+        return { outcome: 'aborted' as const, abortReason: 'sigint' as const };
+      }
+      return { outcome: 'errored' as const, abortReason: 'error' as const };
+    }
+    const err = new BudgetExhausted('skillopt:widget: projected cost $1.5000 exceeds --max-cost $1.00', {
+      reason: 'cost', spent: 0, cap: 1.0,
+    });
+    const old = preFixClassify(err);
+    const fixed = classifyAbortError(err, { maxRuntimeMin: 30 });
+    expect(old.outcome).toBe('errored'); // the bug: pre-fix logic misses it
+    expect(fixed.outcome).toBe('aborted'); // this fix: correctly classified
+    expect(old).not.toEqual({ outcome: fixed.outcome, abortReason: fixed.abortReason });
   });
 });

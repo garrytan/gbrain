@@ -49,6 +49,24 @@ exclusions — these are VOLATILE): `active_sessions.lock`, `active_sessions.jso
 leader daemon socket; `--leader-socket <PATH>` overrides). The tripwire hashes ONLY
 `config.toml` + credential-class files, never the volatile set.
 
+## Session store — OBSERVED (2026-08-30)
+
+Layout under `<GROK_HOME|~/.grok>/sessions/` (not in the volatile tripwire
+set — this is the durable chat archive the transcripts importer reads):
+
+- `<url-encoded-cwd>/prompt_history.jsonl` — per-cwd prompt index (not a session)
+- `<url-encoded-cwd>/<uuid>/chat_history.jsonl` — the session log (one file = one session)
+- sibling `summary.json` (`info.{id,cwd}`, `created_at`, `last_active_at`,
+  `generated_title`, `current_model_id`, `chat_format_version: 1`)
+- sibling sidecars that are NOT imported: `updates.jsonl`, `events.jsonl`,
+  `rewind_points.jsonl`, `resources_state.json`, `prompt_context.json`
+
+`chat_history.jsonl` line `type`s observed: `system`, `user`, `assistant`,
+`reasoning`, `tool_result`, `backend_tool_call`. User `content` is a
+`[{type:"text", text}]` block list; assistant `content` is a string (empty
+when the row is tool-only). No per-message timestamps in the JSONL.
+`session_search.sqlite` at the sessions root is an index — ignore for ingest.
+
 ## One-shot (`-p`)
 - `grok -p "<prompt>"` (`-p, --single`) prints the response to stdout and exits.
 - `--output-format plain|json|streaming-json|streaming-messages-json` (default plain;

@@ -40,6 +40,8 @@ interface MsgSpec {
   body?: string;
   subject?: string;
   listUnsub?: boolean;
+  /** iCalendar method — non-null marks Google Calendar system mail. */
+  calendarMethod?: string | null;
   /** Explicit internalDateMs override (0 = the all-zero-date case). */
   dateMs?: number;
 }
@@ -58,6 +60,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     subject: spec.subject ?? 'Quarterly plan',
     dateIso: new Date(Math.max(internalDateMs, 0)).toISOString(),
     internalDateMs,
+    calendarMethod: spec.calendarMethod ?? null,
     labelIds: spec.sent ? ['SENT'] : ['INBOX'],
     listUnsubscribe: spec.listUnsub ?? false,
     bodyText: spec.body ?? 'Can you review the plan?',
@@ -484,5 +487,223 @@ describe('detectThreadLoop precision corpus', () => {
       NOW,
     );
     expect(verdict.open[0].evidence[0].quote?.length).toBe(200);
+  });
+});
+
+describe('google calendar system mail', () => {
+  const detect = (messages: GmailMessageMeta[]): ThreadLoopVerdict =>
+    detectThreadLoop(thread(messages), MY, NOW);
+
+  // Structural: Calendar attaches a text/calendar part to every one of these.
+  // The address is the colleague's REAL address in each case — that is the
+  // whole point, and why a sender mute is not an available fix.
+  const CAL = [
+    { method: 'REQUEST', subject: 'Invitation: Team sync @ Fri Aug 21, 2026 1pm' },
+    { method: 'REQUEST', subject: 'Updated invitation: Team sync @ Fri Aug 21, 2026 1pm' },
+    { method: 'REPLY', subject: 'Accepted: 1:1 Alice / Bob' },
+    { method: 'REPLY', subject: 'Declined: 1:1 Alice / Bob' },
+    { method: 'REPLY', subject: 'Tentative: 1:1 Alice / Bob' },
+    { method: 'CANCEL', subject: 'Canceled event: Alice / Bob @ Fri Jun 26' },
+  ];
+
+  for (const c of CAL) {
+    test(`${c.subject.split(':')[0]} (method=${c.method}) opens no inbound loop`, () => {
+      const v = detect([
+        msg({
+          from: 'alice@example.com',
+          to: ['me@example.com'],
+          ageHours: 100,
+          subject: c.subject,
+          calendarMethod: c.method,
+        }),
+      ]);
+      expect(v.open).toEqual([]);
+    });
+  }
+
+  test('my own calendar response opens no outbound loop even with a question mark', () => {
+    const v = detect([
+      msg({
+        from: 'me@example.com',
+        to: ['alice@example.com'],
+        ageHours: 200,
+        sent: true,
+        subject: 'Accepted: Team sync',
+        body: 'Does this time still work?',
+        calendarMethod: 'REPLY',
+      }),
+    ]);
+    expect(v.open).toEqual([]);
+  });
+
+  test('a calendar invite does NOT close a real outbound loop', () => {
+    // A colleague sending an invite has not answered my question. If the
+    // invite were treated as their turn, it would silently close the loop.
+    const v = detect([
+      msg({
+        from: 'me@example.com',
+        to: ['alice@example.com'],
+        ageHours: 200,
+        sent: true,
+        body: 'Can you confirm the budget?',
+      }),
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Invitation: Budget sync',
+        calendarMethod: 'REQUEST',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_outbound']);
+    expect(v.close).toEqual(['unanswered_inbound']);
+  });
+
+  test('a real human email from the SAME colleague still opens a loop', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Invitation: Team sync',
+        calendarMethod: 'REQUEST',
+      }),
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 50,
+        subject: 'Budget question',
+        body: 'Can you approve the Q3 number?',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+    expect(v.open[0].counterpartyEmail).toBe('alice@example.com');
+  });
+
+  test('subject fallback applies when MIME was not captured', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Updated invitation: Team sync @ Fri Aug 21',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open).toEqual([]);
+  });
+
+  test('a localized calendar subject is covered by the fallback', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Приглашение: Team sync',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open).toEqual([]);
+  });
+
+  test('a human "Notification: ..." email with no calendar part still opens a loop', () => {
+    // 'Notification:' is a generic vendor/human prefix, not a Calendar header —
+    // classifying it as system mail dropped real inbound questions from BOTH
+    // detectors (ship-review fix).
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Notification: your invoice is ready',
+        body: 'Can you confirm receipt?',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  test('an unrecognised MIME method is not trusted as a Calendar stamp', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Quarterly plan',
+        body: 'Can you review the plan?',
+        calendarMethod: 'BOGUS',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  test('a forwarded human question is NOT lost just because it says Invitation', () => {
+    // The fallback refuses anything carrying a Re:/Fwd: prefix, so a human
+    // forward of an invite thread still owes a reply.
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Fwd: Invitation: Team sync',
+        body: 'Should I accept this on your behalf?',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  test("a human email attaching a bare .ics (calendarMethod '') still opens a loop", () => {
+    // calendarMethod '' means "an .ics-ish thing was present but NO iCalendar
+    // METHOD was found" — that is a human attaching an invite file, not
+    // Calendar system mail. Pre-fix, '' classified as system mail and the
+    // question below could neither open nor close a loop.
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Venue contract and invite file',
+        body: 'Attached the invite file — can you confirm the venue works?',
+        calendarMethod: '',
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+    expect(v.open[0].counterpartyEmail).toBe('alice@example.com');
+  });
+
+  test("a reply carrying a bare .ics (calendarMethod '') still CLOSES my outbound loop", () => {
+    const v = detect([
+      msg({
+        from: 'me@example.com',
+        to: ['alice@example.com'],
+        ageHours: 200,
+        sent: true,
+        body: 'Can you send over the invite file?',
+      }),
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Re: invite file',
+        body: 'Here it is.',
+        calendarMethod: '',
+      }),
+    ]);
+    // Alice's human reply is her turn: nothing stays open on my side.
+    expect(v.open.map((o) => o.loopType)).not.toContain('unanswered_outbound');
+  });
+
+  test('a human subject merely containing the word invitation still opens a loop', () => {
+    const v = detect([
+      msg({
+        from: 'alice@example.com',
+        to: ['me@example.com'],
+        ageHours: 100,
+        subject: 'Your invitation: what should we do about the venue?',
+        calendarMethod: null,
+      }),
+    ]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
   });
 });

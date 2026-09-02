@@ -262,7 +262,7 @@ describe('v0.42.3.0 — autocut in --explain', () => {
   });
 });
 
-describe('formatDegradedSummary — v0.47.11 skipped-stage line', () => {
+describe('formatDegradedSummary — v0.48.2 skipped-stage line', () => {
   test('null when the run was clean', () => {
     expect(formatDegradedSummary(undefined)).toBeNull();
     expect(formatDegradedSummary([])).toBeNull();

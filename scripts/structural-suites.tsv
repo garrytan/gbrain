@@ -33,6 +33,10 @@ test/book-mirror.test.ts	gbrain book-mirror — source file invariants	7	readFil
 test/bootstrap-codex-door.test.ts	Codex door — rendered AGENTS.md pull protocol (Gate 3)	2	readFileSync
 test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFileSync
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
+test/brain-durability-hook.serial.test.ts	#4682 — push-lock timeout is fail-loud for the helper only	1	readFileSync
+test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4	readFileSync
+test/brain-durability-hook.serial.test.ts	durability schedule (installCron:true) [D2/D12]	0	readFileSync
+test/brain-durability-hook.serial.test.ts	post-commit hook (D9 local, D7 self-contained)	4	readFileSync
 test/brain-repo-durability.serial.test.ts	hardenBrainRepo	16	readFileSync
 test/brain-score-breakdown.test.ts	Bug 11 — BrainHealth type shape	1	bun-file
 test/brain-score-breakdown.test.ts	Bug 11 — doctor renders brain_score breakdown	1	doctor-source-helper
@@ -96,12 +100,13 @@ test/doctor-frontmatter-partial.test.ts	doctor frontmatter_integrity — structu
 test/doctor-orphan-ratio.test.ts	cross-surface parity contract	3	doctor-source-helper,readFileSync
 test/doctor-orphan-ratio.test.ts	runOrphanRatioCheck — thin-client surface (D11)	1	readFileSync
 test/doctor-schema-column-diff.test.ts	doctor schema_version wires the column diff (#4421)	1	doctor-source-helper
+test/doctor-skills-dir.test.ts	doctor --skills-dir (#4673)	6	readFileSync
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — honors the recorded pid_file (custom --pid-file)	2	doctor-source-helper
 test/doctor-supervisor-singleton-pidfile.test.ts	doctor supervisor_singleton — pid_file fallback (source-grep)	1	doctor-source-helper
 test/doctor-volunteer-channels.test.ts	checkVolunteerChannels	9	doctor-source-helper,readFileSync
 test/doctor-wedged-queue.test.ts	issue #1801 fix #3 — remote queue_health state→status regression	1	doctor-source-helper
 test/doctor.test.ts	BUG 4 — in-progress sync via live lock, not stale freshness	8	doctor-source-helper
-test/doctor.test.ts	doctor command	34	doctor-source-helper
+test/doctor.test.ts	doctor command	37	doctor-source-helper
 test/doctor.test.ts	issue #972 — link_resolution_opportunity check	8	doctor-source-helper
 test/doctor.test.ts	stub_guard_24h check (v0.34.5)	5	doctor-source-helper
 test/doctor.test.ts	supervisor crash classifier wiring (v0.35.x)	4	bun-file,doctor-source-helper
@@ -115,7 +120,7 @@ test/doctor.test.ts	v0.42 (#1699) — quarantined_pages + flagged_pages checks	1
 test/dream-cli-flags.test.ts	--drain wiring	4	readFileSync
 test/dream-cli-flags.test.ts	--once wiring (issue #2860)	5	readFileSync
 test/dream-cli-flags.test.ts	--source / --source-id wiring (v0.41.13)	9	readFileSync
-test/dream-cli-flags.test.ts	dream CLI flag wiring	9	readFileSync
+test/dream-cli-flags.test.ts	dream CLI flag wiring	10	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
 test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync
@@ -133,6 +138,7 @@ test/eval-synthesize-concepts-routing.test.ts	dispatch-layer source pins (routin
 test/eval-synthesize-concepts-routing.test.ts	subprocess smoke — end-to-end routing	1	readFileSync
 test/eval-takes-bootstrap.test.ts	corpus integrity	4	readFileSync
 test/exit-classification.test.ts	consumer wire-up — helper used by all 3 sites (no inline filters left)	5	doctor-source-helper,readFileSync
+test/extract-atoms-drain-errors.test.ts	runExtractAtomsDrainForSource forwards typed per-item failures (#4730)	1	readFileSync
 test/extract-atoms-drain.test.ts	extract-atoms-drain Minion handler retries on provider_failure (issue #3218)	2	readFileSync
 test/extract-atoms-drain.test.ts	shared wiring helper holds the cycle lock (5A)	2	readFileSync
 test/extract-workers.test.ts	extract.ts → workers wiring (T7)	10	readFileSync
@@ -140,7 +146,7 @@ test/facts-backstop-remedy-verb.test.ts	facts backstop thin-client-fallback reme
 test/features.test.ts	CLI routing	2	bun-file
 test/fence-extraction.test.ts	Layer 8 D2 — markdown fence extraction	18	readFileSync
 test/files.test.ts	collectFiles (production import)	9	readFileSync
-test/files.test.ts	files upload-raw git-storage branch (#2297)	3	readFileSync
+test/files.test.ts	files upload-raw git-storage branch (#2297)	5	readFileSync
 test/files.test.ts	files verify git lane (per-source root resolution)	1	readFileSync
 test/files.test.ts	storage precondition — the silent-no-op class (#4022)	3	readFileSync
 test/filing-rules-resolution.serial.test.ts	per-source filing-rules resolution	3	readFileSync
@@ -218,7 +224,7 @@ test/regression-strict-source-id.test.ts	utils.ts no longer carries an inline pe
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	readFileSync
 test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	10	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
-test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.47.11)	5	readFileSync
+test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	5	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/retrieval-reflex-recipe-routing.test.ts	retrieval-reflex recipe routing is MECE with the query skill (#4292)	5	readFileSync
@@ -268,6 +274,8 @@ test/template-repo-generator.test.ts	renderTemplateReadme	5	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — scratch-DB additions (jobs partial dispatch + config refusal)	5	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — v0.32 REFUSE additions stay in the table	4	readFileSync
 test/thin-client-routing-audit.test.ts	thin-client routing audit — v0.32 ROUTE additions wire callRemoteTool	4	readFileSync
+test/think-embed-question-wiring.serial.test.ts	#3734 — CRAG think escalation wires embedQuestion (source pin)	1	readFileSync
+test/think-embed-question-wiring.serial.test.ts	#3734 — synthesize verb wires embedQuestion into runThink	1	readFileSync
 test/timing-safe.test.ts	extraction contract	1	readFileSync
 test/tool-catalog.test.ts	freshness guard	2	readFileSync
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync

@@ -99,3 +99,46 @@ describe('resolveSlugWithAlias', () => {
     expect(result).toBe('wiki/concepts/canonical');
   });
 });
+
+// Ship-review fix: consumers that go on to READ the canonical page need the
+// OWNING source of the alias row (a federated getPage prefers the anchor
+// source, so an unrelated live page at the canonical slug in another granted
+// source would shadow the alias owner's page). resolveSlugWithAlias stays the
+// `.canonical_slug ?? slug` projection of this method.
+describe('resolveSlugWithAliasDetailed', () => {
+  it('returns null when no alias matches (and for an empty scope)', async () => {
+    await insertAlias('default', 'old-name', 'canonical-a');
+    expect(await engine.resolveSlugWithAliasDetailed('wiki/concepts/unknown', 'default')).toBeNull();
+    expect(await engine.resolveSlugWithAliasDetailed('old-name', [])).toBeNull();
+  });
+
+  it('returns the canonical slug WITH the owning source_id (scalar + array scope)', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('alt', 'alt') ON CONFLICT DO NOTHING`);
+    await insertAlias('alt', 'old-name', 'wiki/concepts/canonical');
+    expect(await engine.resolveSlugWithAliasDetailed('old-name', 'alt')).toEqual({
+      canonical_slug: 'wiki/concepts/canonical', source_id: 'alt',
+    });
+    expect(await engine.resolveSlugWithAliasDetailed('old-name', ['default', 'alt'])).toEqual({
+      canonical_slug: 'wiki/concepts/canonical', source_id: 'alt',
+    });
+    // Out-of-scope owner: no match.
+    expect(await engine.resolveSlugWithAliasDetailed('old-name', ['default'])).toBeNull();
+  });
+
+  it('multi-source: the owning source follows the array order, and the wrapper agrees', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('alt', 'alt') ON CONFLICT DO NOTHING`);
+    await insertAlias('default', 'shared-alias', 'canonical-default');
+    await insertAlias('alt', 'shared-alias', 'canonical-alt');
+    const orig = console.warn;
+    console.warn = () => {};
+    try {
+      const altFirst = await engine.resolveSlugWithAliasDetailed('shared-alias', ['alt', 'default']);
+      expect(altFirst).toEqual({ canonical_slug: 'canonical-alt', source_id: 'alt' });
+      expect(await engine.resolveSlugWithAlias('shared-alias', ['alt', 'default'])).toBe(altFirst!.canonical_slug);
+      const defaultFirst = await engine.resolveSlugWithAliasDetailed('shared-alias', ['default', 'alt']);
+      expect(defaultFirst).toEqual({ canonical_slug: 'canonical-default', source_id: 'default' });
+    } finally {
+      console.warn = orig;
+    }
+  });
+});

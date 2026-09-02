@@ -6,6 +6,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
   rrfFusion,
+  rrfFusionWeighted,
   cosineSimilarity,
   applyBacklinkBoost,
   applySalienceBoost,
@@ -72,6 +73,67 @@ describe('rrfFusion', () => {
     const results = rrfFusion([list], 60);
     // Top result: normalized to 1.0, no boost (timeline = 1.0x)
     expect(results[0].score).toBe(1.0);
+  });
+
+  test('synthetic chunkless title rows do not receive the compiled-truth boost (#3695)', () => {
+    // The title arm COALESCEs a page with no text chunk into a synthetic row
+    // (chunk_id 0, empty chunk_text, chunk_source 'compiled_truth' — both
+    // engines' searchTitles). It has no real compiled_truth chunk, so it must
+    // not gain chunk authority: pre-fix the 2x boost let an embed_skip page
+    // ride to #1 with an empty snippet on the keyword-only / no-provider
+    // paths where cosineReScore never runs.
+    const synthetic = makeResult({
+      slug: 'title-only',
+      chunk_id: 0,
+      chunk_text: '',
+      chunk_source: 'compiled_truth',
+    });
+    const real = makeResult({ slug: 'real-page', chunk_id: 42, chunk_text: 'real content' });
+
+    const results = rrfFusion([[synthetic, real]], 60);
+
+    expect(results[0].slug).toBe('real-page');
+    expect(results.find((r) => r.slug === 'title-only')?.score).toBe(1);
+  });
+
+  test('rrfFusionWeighted also skips the boost for synthetic chunkless title rows (#3695)', () => {
+    const synthetic = makeResult({
+      slug: 'title-only',
+      chunk_id: 0,
+      chunk_text: '',
+      chunk_source: 'compiled_truth',
+    });
+    const real = makeResult({ slug: 'real-page', chunk_id: 42, chunk_text: 'real content' });
+
+    const results = rrfFusionWeighted([{ list: [synthetic, real], k: 60 }]);
+
+    expect(results[0].slug).toBe('real-page');
+    expect(results.find((r) => r.slug === 'title-only')?.score).toBe(1);
+  });
+
+  // #4256 / #3695 boundary: the synthetic-title-row predicate is
+  // `chunk_id === 0 AND chunk_text blank`. Only that exact pair is a
+  // chunkless placeholder — a real chunk that happens to be chunk 0, or an
+  // empty-text row with a real chunk_id, must keep the boost. A single-row
+  // list normalizes to 1.0, so the fused score reads 2 (boosted) or 1 (not).
+  test.each([
+    ['chunk_id 0 + real text', 0, 'real compiled text', true],
+    ['nonzero chunk_id + empty text', 42, '', true],
+    ['chunk_id 0 + whitespace-only text', 0, '   ', false],
+    ['chunk_id 0 + undefined text', 0, undefined, false],
+    ['chunk_id 0 + empty text', 0, '', false],
+  ])('compiled-truth boost predicate: %s → boosted=%p', (_label, chunkId, chunkText, boosted) => {
+    const row = makeResult({
+      slug: 'boundary',
+      chunk_id: chunkId,
+      chunk_text: chunkText as unknown as string,
+      chunk_source: 'compiled_truth',
+    });
+    const fused = rrfFusion([[row]], 60);
+    expect(fused).toHaveLength(1);
+    expect(fused[0].score).toBe(boosted ? 2 : 1);
+    const weighted = rrfFusionWeighted([{ list: [row], k: 60 }]);
+    expect(weighted[0].score).toBe(boosted ? 2 : 1);
   });
 
   test('returns empty for empty lists', () => {

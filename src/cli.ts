@@ -42,6 +42,7 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta }
 import { maybePromptForUpgrade } from './core/thin-client-upgrade-prompt.ts';
 import { CLI_FLAG_REGISTRY } from './core/cli-flag-registry.generated.ts';
 import { VERSION } from './version.ts';
+import { bigintToStringReplacer } from './core/utils.ts';
 
 // db-availability loop: best-effort brain-id for the GBRAIN_DB_ACCESS marker,
 // so a MOUNT's DB failure reads as `brain=<id>` instead of masquerading as a
@@ -64,15 +65,10 @@ for (const op of operations) {
   }
 }
 
-/**
- * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
- * comes back as a string on the routed path). Lets the local-engine output
- * normalizer round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of
- * throwing `TypeError: Do not know how to serialize a BigInt`.
- */
-export function bigintToStringReplacer(_key: string, value: unknown): unknown {
-  return typeof value === 'bigint' ? value.toString() : value;
-}
+// bigint → string JSON replacer: defined in core/utils.ts (commands must not
+// reach into the dispatcher for it); re-exported here so existing importers
+// and tests keep their surface. (#2450)
+export { bigintToStringReplacer };
 
 // ENG-2 renderer parity: round-trip a local-engine op's return value so
 // renderers see the same shape the routed path produces. Bigint-safe via
@@ -1121,6 +1117,12 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
+// #4602: the ONE definition of "a literal true/false value token" — shared by
+// parseOpArgs (consume it as the boolean flag's value) and findUnknownOpFlag
+// (mirror the traversal so the token counts as consumed) so the parser and
+// the validator can never disagree on what a boolean flag swallows.
+const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1163,15 +1165,24 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
-        params[key] = true;
+        // #4602: a boolean flag followed by the word false used to set the
+        // flag TRUE (silent intent inversion, exit 0) and leave the literal
+        // 'false' to bind to the next unfilled positional slot (data
+        // corruption on multi-positional ops). A LITERAL true/false following
+        // a boolean flag is that flag's value — consume it, matching the
+        // inline `=false` spelling that already worked. Any OTHER following
+        // token keeps the old semantics (flag = true, token stays positional).
+        params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (key === 'json' || key === 'dry_run') {
         // CLI-local booleans, intentionally NOT on the operation contract
         // exposed over MCP/tools: json is the formatter flag; dry_run feeds
-        // makeContext's ctx.dryRun. Both must never consume a value token —
+        // makeContext's ctx.dryRun. Neither consumes an ARBITRARY value token —
         // pre-fix, `gbrain delete x --dry-run` (trailing) set NOTHING, so
         // ctx.dryRun stayed false and the REAL delete ran despite the
         // rehearsal request (the resurrected #2185 class the red team caught).
-        params[key] = true;
+        // #4602: a literal true/false is the one exception — it is this
+        // flag's value (never a plausible positional), same as above.
+        params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (i + 1 < args.length) {
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
@@ -1443,13 +1454,20 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
     //   dry-run — makeContext's ctx.dryRun projection.
     // Pre-fix, rejecting these broke documented invocations
     // (`gbrain search "x" --source y`, `gbrain put x --dry-run`).
-    if (rawKey === 'json') continue;
+    if (rawKey === 'json') {
+      // #4602: parseOpArgs consumes a literal true/false as this boolean's
+      // value — mirror the traversal so the token counts as consumed here too.
+      if (m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
+      continue;
+    }
     if ((rawKey === 'explain' || rawKey === 'help') && m[2] === undefined) continue;
     if (rawKey === 'source' || rawKey === 'dry-run') {
       // Non-boolean-style CLI-locals consume the next token as their value
       // in parseOpArgs (source does; dry-run is boolean-read) — mirror the
-      // parser: source consumes a value when not inline-`=`.
+      // parser: source consumes a value when not inline-`=`; dry-run
+      // consumes only a literal true/false (#4602).
       if (rawKey === 'source' && m[2] === undefined) i++;
+      if (rawKey === 'dry-run' && m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
       continue;
     }
     if (rawKey.startsWith('no-')) {
@@ -1460,8 +1478,10 @@ export function findUnknownOpFlag(op: Operation, args: string[]): string | null 
     const paramDef = op.params[key];
     if (paramDef) {
       // Non-boolean flags consume the next token as their value unless
-      // provided inline via `=` — exactly like parseOpArgs.
+      // provided inline via `=` — exactly like parseOpArgs. Boolean flags
+      // consume only a literal true/false value token (#4602).
       if (paramDef.type !== 'boolean' && m[2] === undefined) i++;
+      else if (paramDef.type === 'boolean' && m[2] === undefined && isBooleanLiteral(args[i + 1])) i++;
       continue;
     }
     return `--${rawKey}`;
@@ -1679,6 +1699,12 @@ export function maybePrintConceptNudge(opName: string, params: Record<string, un
   if (nudge) process.stderr.write(nudge + '\n');
 }
 
+/**
+ * Characters of `compiled_truth` the human `history` table previews per
+ * version row. `--json` returns the untruncated rows.
+ */
+const VERSION_TRUTH_PREVIEW_CHARS = 60;
+
 export function formatResult(
   opName: string,
   result: unknown,
@@ -1734,7 +1760,7 @@ export function formatResult(
         // Lazy import keeps formatResult's startup hot path narrow for
         // the common non-explain case.
         const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
-        // v0.47.11: thread the captured retrieval meta so the header lines
+        // v0.48.2: thread the captured retrieval meta so the header lines
         // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
         return formatResultsExplain(results, lastRetrievalMeta ?? undefined);
       }
@@ -1814,10 +1840,23 @@ export function formatResult(
     }
     case 'get_versions': {
       const versions = result as any[];
+      // `--json` is legal on every op lane (findUnknownOpFlag exempts it,
+      // parseOpArgs populates params.json), and every other data-returning
+      // verb consumes it. This one silently dropped it and printed the human
+      // table instead. Same `params.json === true` shape as search/query
+      // rather than the process.argv probe: it honors the `--json=false`
+      // spelling parseOpArgs already supports and keeps the formatter free
+      // of process globals.
+      if (params.json === true) return JSON.stringify(versions, null, 2) + '\n';
       if (versions.length === 0) return 'No versions.\n';
-      return versions.map(v =>
-        `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${v.compiled_truth?.slice(0, 60) || ''}...`,
-      ).join('\n') + '\n';
+      return versions.map(v => {
+        // Only elide when something was actually dropped — an unconditional
+        // ellipsis renders an 11-char body as `Short body....`.
+        const truth = v.compiled_truth ?? '';
+        const head = truth.slice(0, VERSION_TRUTH_PREVIEW_CHARS);
+        const elided = truth.length > VERSION_TRUTH_PREVIEW_CHARS ? '...' : '';
+        return `#${v.id}  ${v.snapshot_at?.toString().slice(0, 19) || '?'}  ${head}${elided}`;
+      }).join('\n') + '\n';
     }
     // MEMORY_VERBS v1 [F-E]: human-readable by default; trailing `--json`
     // escapes to the raw envelope (parseOpArgs ignores an unmatched trailing
@@ -3808,7 +3847,7 @@ LINKS
         [--link-type T] [--link-source S]   filter which edges to remove
   link-sources                       List provenances in use, with edge counts
   backlinks <slug>                   Incoming links
-  graph <slug> [--depth N]           Traverse link graph (returns nodes)
+  graph <slug> [--depth N]           Traverse link graph (nodes locally; remote MCP defaults to bidirectional edges)
   graph-query <slug> [--type T]      Edge-based traversal with type/direction filters
         [--depth N] [--direction in|out|both]
 
@@ -3907,7 +3946,7 @@ JOBS (Minions)
 ADMIN
   stats                              Brain statistics
   health                             Brain health dashboard
-  history <slug>                     Page version history
+  history <slug> [--json]            Page version history
   revert <slug> <version-id>         Revert to version
   features [--json] [--auto-fix]     Scan usage + recommend unused features
   autopilot [--repo] [--interval N]  Self-maintaining brain daemon

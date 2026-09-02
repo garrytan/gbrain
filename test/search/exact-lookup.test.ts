@@ -176,14 +176,22 @@ describe('applyExactLookupTier (#1663)', () => {
     expect(out.length).toBe(3);
   });
 
-  test('promotes (does not duplicate) an identity match already in the set', async () => {
+  test('promotes and collapses an identity match repeated by chunk results', async () => {
     await engine.putPage('people/alice-example', {
       type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
     });
-    const organic = [res('notes/unrelated', 0.9), res('people/alice-example', 0.2)];
+    // Search is chunk-grained: dedup allows 2 chunks/page, so an exact
+    // identity lookup could return the canonical page twice on the wire.
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.2, { chunk_text: 'best page chunk' }),
+      res('people/alice-example', 0.1, { chunk_text: 'weaker page chunk' }),
+    ];
     const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
     expect(out.filter((r) => r.slug === 'people/alice-example').length).toBe(1);
+    expect(out.length).toBe(2);
     expect(out[0].slug).toBe('people/alice-example');
+    expect(out[0].chunk_text).toBe('best page chunk');
     expect(out[0].exact_lookup).toBe('slug');
   });
 
@@ -191,5 +199,130 @@ describe('applyExactLookupTier (#1663)', () => {
     const organic = [res('a', 0.9), res('b', 0.8)];
     const out = await applyExactLookupTier(engine, organic, 'nonexistent/slug', { sourceId: 'default' });
     expect(out.map((r) => r.slug)).toEqual(['a', 'b']);
+  });
+});
+
+describe('applyExactLookupTier chunk-collapse — three chunks, tie, ordering, foreign source (ship-review)', () => {
+  test('three chunks of the identity page collapse to ONE (the strongest), even when the weaker chunks precede it', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.1, { chunk_id: 1, chunk_text: 'weak chunk' }),
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.3, { chunk_id: 2, chunk_text: 'medium chunk' }),
+      res('people/alice-example', 0.6, { chunk_id: 3, chunk_text: 'strong chunk' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice).toHaveLength(1);
+    expect(alice[0].chunk_text).toBe('strong chunk');
+    expect(alice[0].exact_lookup).toBe('slug');
+    expect(out.map((r) => r.slug)).toEqual(['people/alice-example', 'notes/unrelated']);
+    expect(out[1].score).toBe(0.9);
+  });
+
+  test('a three-way score tie keeps the FIRST chunk in input order', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.25, { chunk_id: 1, chunk_text: 'first' }),
+      res('people/alice-example', 0.25, { chunk_id: 2, chunk_text: 'second' }),
+      res('people/alice-example', 0.25, { chunk_id: 3, chunk_text: 'third' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice).toHaveLength(1);
+    expect(alice[0].chunk_text).toBe('first');
+    expect(out).toHaveLength(2);
+  });
+
+  test('a same-slug row from ANOTHER source (team-b) is never merged into the collapse — it survives with its score', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.1, { chunk_id: 1, chunk_text: 'default weak' }),
+      res('people/alice-example', 0.7, { source_id: 'team-b', chunk_id: 9, chunk_text: 'team-b alice' }),
+      res('people/alice-example', 0.4, { chunk_id: 2, chunk_text: 'default strong' }),
+      res('notes/unrelated', 0.2),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const teamB = out.filter((r) => r.slug === 'people/alice-example' && r.source_id === 'team-b');
+    const def = out.filter((r) => r.slug === 'people/alice-example' && r.source_id === 'default');
+    // Two in-scope chunks collapsed to one; the team-b row is a separate page.
+    expect(def).toHaveLength(1);
+    expect(def[0].chunk_text).toBe('default strong');
+    expect(def[0].exact_lookup).toBe('slug');
+    expect(teamB).toHaveLength(1);
+    expect(teamB[0].score).toBe(0.7);
+    expect(teamB[0].chunk_text).toBe('team-b alice');
+    expect(teamB[0].exact_lookup).toBeUndefined();
+    // Identity match outranks every scored row, including team-b's higher organic score.
+    expect(out[0]).toBe(def[0]);
+    expect(out).toHaveLength(3);
+  });
+});
+
+describe('applyExactLookupTier collapse — tie-break, interleaving, source isolation (#4531 review)', () => {
+  test('a score tie between two chunks of the identity page keeps the FIRST chunk', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.2, { chunk_text: 'first chunk' }),
+      res('people/alice-example', 0.2, { chunk_text: 'second chunk' }),
+      res('notes/unrelated', 0.1),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const alice = out.filter((r) => r.slug === 'people/alice-example');
+    expect(alice.length).toBe(1);
+    expect(alice[0].chunk_text).toBe('first chunk');
+    expect(out.length).toBe(2);
+  });
+
+  test('interleaved identity chunks collapse safely (highest-index-first splice keeps the others intact)', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('people/alice-example', 0.3, { chunk_text: 'weaker alice chunk' }),
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.5, { chunk_text: 'best alice chunk' }),
+      res('notes/other', 0.1),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    expect(out.map((r) => r.slug)).toEqual(['people/alice-example', 'notes/unrelated', 'notes/other']);
+    expect(out[0].chunk_text).toBe('best alice chunk');
+    expect(out[0].exact_lookup).toBe('slug');
+    // The non-identity rows survive with their scores untouched.
+    expect(out[1].score).toBe(0.9);
+    expect(out[2].score).toBe(0.1);
+  });
+
+  test('a same-slug row from ANOTHER source_id is not collapsed, promoted, or stamped', async () => {
+    await engine.putPage('people/alice-example', {
+      type: 'person', title: 'Alice Example', compiled_truth: 'Founder.',
+    });
+    const organic = [
+      res('notes/unrelated', 0.9),
+      res('people/alice-example', 0.4, { source_id: 'wiki', chunk_text: 'wiki alice chunk' }),
+      res('people/alice-example', 0.2, { chunk_text: 'default alice chunk' }),
+    ];
+    const out = await applyExactLookupTier(engine, organic, 'people/alice-example', { sourceId: 'default' });
+    const wiki = out.find((r) => r.slug === 'people/alice-example' && r.source_id === 'wiki');
+    const def = out.find((r) => r.slug === 'people/alice-example' && r.source_id === 'default');
+    expect(out.length).toBe(3);
+    // Foreign-source row untouched: same score, no identity stamp.
+    expect(wiki).toBeDefined();
+    expect(wiki!.score).toBe(0.4);
+    expect(wiki!.exact_lookup).toBeUndefined();
+    expect(wiki!.chunk_text).toBe('wiki alice chunk');
+    // The in-scope row is the one promoted to rank-1 and stamped.
+    expect(out[0]).toBe(def!);
+    expect(def!.exact_lookup).toBe('slug');
+    expect(def!.chunk_text).toBe('default alice chunk');
   });
 });

@@ -7,6 +7,7 @@
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
 import {
   gradeRetrievalConfidence,
@@ -34,6 +35,22 @@ import {
   maybeCaptureSearch,
   thinkSourceScopeOpts,
 } from './context.ts';
+
+/**
+ * The caller's effective row contract for the `query` op's non-hybrid legs
+ * (#4356 image branch, #4610 CRAG escalation slice): an explicit `limit` wins;
+ * omitted/0 resolves the mode-derived searchLimit (10/25/50 or the configured
+ * `search.searchLimit` override) through the SAME trust-gated chain
+ * hybridSearch applies — `resolvePerCallMode` ignores a remote caller's
+ * `mode`, so a remote client can't select the tokenmax row count. Resolved
+ * lazily by the callers (the config reads only run on the paths that need it).
+ */
+async function resolveEffectiveLimit(ctx: OperationContext, p: Record<string, unknown>): Promise<number> {
+  const perCallMode = resolvePerCallMode(ctx, p.mode);
+  const modeInput = await loadSearchModeConfig(ctx.engine);
+  const resolved = resolveSearchMode({ mode: perCallMode ?? modeInput.mode, overrides: modeInput.overrides });
+  return (p.limit as number) || resolved.searchLimit;
+}
 
 // --- Search ---
 
@@ -278,12 +295,13 @@ const query: Operation = {
     // similarity branch below it) — none of which support a literal
     // empty-result request today; introducing that only here would be a
     // new, undocumented asymmetry rather than a limit-consistency fix.
-    // (`search_by_image`, a separate op in src/core/ops/image.ts, has the
-    // same convention but isn't "in this file".) The image-similarity path
-    // (`image` param) is unaffected by this change and still hard-defaults
-    // to 20 regardless of mode — out of scope here, tracked separately
-    // (#4356 Problem 2).
-    limit: { type: 'number', description: 'Max results. For text queries, omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override). For image-similarity queries (`image` param), always defaults to 20 regardless of mode.' },
+    // (`search_by_image`, a separate op in src/core/ops/image.ts, keeps its
+    // own independent flat-20 default — different public contract, out of
+    // scope here.) #4356 Problem 2: the image-similarity path (`image`
+    // param) below now resolves the SAME mode-derived searchLimit as the
+    // text path (was a hard `|| 20` regardless of mode, the last search arm
+    // in this op that didn't honor conservative/balanced/tokenmax).
+    limit: { type: 'number', description: 'Max results. Omitted or 0 resolves from the active search mode (10 conservative / 25 balanced / 50 tokenmax by default, or the configured `search.searchLimit` override) — for both text queries and image-similarity queries (`image` param).' },
     offset: { type: 'number', description: 'Skip first N results (for pagination)' },
     // #3985: multi-type filter (plumbing shipped v0.33; exposed here).
     types: { type: 'array', items: { type: 'string' }, description: TYPES_PARAM_DESCRIPTION },
@@ -413,8 +431,12 @@ const query: Operation = {
       // hybridSearch and calls searchVector directly, so it needs its
       // own thread of the source scope. Pre-fix, this branch leaked
       // image pages across sources independent of the text path's fix.
+      // #4356 Problem 2: the image path also bypasses hybridSearch's mode
+      // resolution, so its default limit didn't honor the active search
+      // mode. resolveEffectiveLimit applies the same chain (and the same
+      // remote trust gate) hybridSearch does.
       const results = await ctx.engine.searchVector(vec, {
-        limit: (p.limit as number) || 20,
+        limit: await resolveEffectiveLimit(ctx, p),
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         excludePrivate,
@@ -491,7 +513,9 @@ const query: Operation = {
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
       // v0.41.33 — agent-explicit adaptive return-sizing. Omitted = off
-      // (config default applies). hybridSearchCached skips the cache when on.
+      // (config default applies). 2026-08 wave (E5b): adaptive-on calls now
+      // CACHE — the gate params + resolved intent class key the semantic
+      // cache via the KNOBS_HASH v=27 fold (the old skip-when-on is gone).
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
       // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
       // reranked modes). `false` forces the full top-K.
@@ -521,11 +545,26 @@ const query: Operation = {
         ctx.engine.getConfig('search.crag_escalation').catch(() => null),
         ctx.engine.getConfig('search.crag_think').catch(() => null),
       ]);
-      if (shouldEscalateRetrieval(grade, { enabled: escalationCfg === 'true' })) {
+      // #4610: pass the documented guard inputs. `callerExpanded: expand`
+      // implements the long-documented high-ceiling skip — a first pass that
+      // already ran with expansion (the default) doesn't pay for a second
+      // expansion LLM call + rerank over a near-identical query. Escalation
+      // now fires for callers that explicitly opted out of expansion (the
+      // shape where the forced-expansion re-run has something new to find).
+      if (shouldEscalateRetrieval(grade, {
+        enabled: escalationCfg === 'true',
+        alreadyEscalated: false,
+        callerExpanded: expand,
+      })) {
         try {
+          // The caller's effective row contract (shared with the image
+          // branch — NOT a hardcoded 20, which over-delivered on conservative
+          // and under-delivered on tokenmax). Resolved here, not earlier, so
+          // the config reads only run on the rare escalation path.
+          const effectiveLimit = await resolveEffectiveLimit(ctx, p);
           let escalatedMeta: HybridSearchMeta | null = null;
           const escalated = await hybridSearchCached(ctx.engine, queryText, {
-            limit: Math.max((p.limit as number) || 20, 50),
+            limit: Math.max(effectiveLimit, 50),
             offset: (p.offset as number) || 0,
             expansion: true,
             expandFn: expandQuery,
@@ -555,11 +594,17 @@ const query: Operation = {
             embeddingColumn: embeddingColumnParam,
             onMeta: (m) => { escalatedMeta = m; },
           });
+          // Grade the FULL escalated sweep (rank-1 is what the grader reads),
+          // then adopt only the caller-visible window. #4610: the re-run is
+          // deliberately wide (limit >= 50, autocut off), but `limit` is the
+          // caller's row contract — pre-fix, an adopted escalation handed the
+          // whole uncut sweep back (14-18 rows for a limit:10 request), and
+          // bumpLastRetrievedAt + eval capture recorded the oversized set.
           const regraded = gradeRetrievalConfidence(escalated);
           crag.escalated = true;
           crag.escalated_confidence = regraded.level;
           if (confidenceRank(regraded.level) > confidenceRank(grade.level)) {
-            results = escalated;
+            results = escalated.slice(0, effectiveLimit);
             capturedMeta = escalatedMeta;
             grade = regraded;
             crag.confidence = regraded.level;
@@ -577,6 +622,7 @@ const query: Operation = {
         if (thinkCfg === 'true' && ctx.remote === false) {
           try {
             const { runThink } = await import('../think/index.ts');
+            const { embedQuery } = await import('../embedding.ts');
             const thinkScope = thinkSourceScopeOpts(ctx);
             const t = await runThink(ctx.engine, {
               question: queryText,
@@ -584,6 +630,8 @@ const query: Operation = {
               until: typeof p.until === 'string' ? p.until : undefined,
               ...thinkScope,
               remote: false,
+              // #3734: activate takes' vector retrieval arm for CRAG think escalation.
+              embedQuestion: (q) => embedQuery(q),
             });
             crag.think = {
               answer: t.answer,
@@ -698,10 +746,12 @@ const search_stats: Operation = {
 const search_modes: Operation = {
   name: 'search_modes',
   description:
-    'Read-only search-mode dashboard: active mode, per-knob resolved value with attribution ' +
-    '(mode default vs config override), the three frozen bundles, and a reranker_readiness ' +
-    'verdict (whether the resolved reranker will actually run; remote callers get the verdict ' +
-    'without the host key inventory). Never mutates; to change modes, tell the user to set the ' +
+    'Read-only search-mode dashboard: active mode, EVERY mode-bundle knob resolved with ' +
+    'attribution (mode default vs config override), the three frozen bundles, and a ' +
+    'reranker_readiness verdict (whether the resolved reranker will actually run; remote ' +
+    'callers get the verdict without the host key inventory). Brain-level planes only — ' +
+    'per-call SearchOpts overrides on individual searches are not shown (per_call_note in ' +
+    'the payload spells this out). Never mutates; to change modes, tell the user to set the ' +
     'search.mode config key on the brain host.',
   params: {},
   scope: 'read',

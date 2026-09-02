@@ -88,13 +88,13 @@ import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, b
 import { privatePagesFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
-import { DELETE_BATCH_SIZE } from './engine-constants.ts';
+import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
-import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { QUARANTINE_FILTER_FRAGMENT, quarantineFilterFragment } from './quarantine.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
 import { applyPostgresForwardReferenceBootstrap } from './postgres-engine/forward-reference-bootstrap.ts';
 import * as factsImpl from './postgres-engine/facts.ts';
@@ -1583,7 +1583,13 @@ export class PostgresEngine implements BrainEngine {
     // link-extraction, eval) keep the strict-AND contract.
     if (rows.length === 0 && opts?.orFallback) {
       const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) rows = await runKeyword(orQuery);
+      if (orQuery) {
+        rows = await runKeyword(orQuery);
+        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
+        // fusion can demote them — an OR-of-common-terms match must not
+        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
+        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+      }
     }
     return rows.map(rowToSearchResult);
   }
@@ -1668,7 +1674,8 @@ export class PostgresEngine implements BrainEngine {
     // chunkless pages retrievable (the extreme D1 case: a title with no
     // body) with the alias-hop row shape (chunk_id 0, empty chunk_text).
     // Accepted limitations (Reviewer F5/F6): the synthetic chunkless row
-    // inherits the compiled-truth RRF boost and dedups on empty chunk_text;
+    // dedups on empty chunk_text (fusion's compiledTruthBoost skips it since
+    // #3695 — chunk_id 0 + empty chunk_text never gains chunk authority);
     // and detail='low' filters only the REPRESENTATIVE — pages without a
     // compiled_truth chunk still surface (unlike the keyword arm's filter).
     const rawQuery = `
@@ -1720,7 +1727,12 @@ export class PostgresEngine implements BrainEngine {
     let rows = await runTitles(params[0] as string);
     if (rows.length === 0) {
       const orQuery = buildOrFallbackWebsearchQuery(params[0] as string);
-      if (orQuery) rows = await runTitles(boundWebsearchQuery(orQuery));
+      if (orQuery) {
+        rows = await runTitles(boundWebsearchQuery(orQuery));
+        // 2026-09 (#3617 follow-up): same relaxed-row tagging as the keyword
+        // arm — see SearchResult.keyword_relaxed.
+        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+      }
     }
     return rows.map(rowToSearchResult);
   }
@@ -3434,6 +3446,13 @@ export class PostgresEngine implements BrainEngine {
     slug: string,
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]> {
+    return (await this.traversePathsDetailed(slug, opts)).paths;
+  }
+
+  async traversePathsDetailed(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ paths: GraphPath[]; truncated: boolean }> {
     const sql = this.sql;
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
@@ -3497,6 +3516,7 @@ export class PostgresEngine implements BrainEngine {
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
         ORDER BY depth, from_slug, to_slug
+        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `;
     } else if (direction === 'in') {
       rows = await sql`
@@ -3524,6 +3544,7 @@ export class PostgresEngine implements BrainEngine {
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
         ORDER BY depth, from_slug, to_slug
+        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `;
     } else {
       rows = await sql`
@@ -3554,13 +3575,18 @@ export class PostgresEngine implements BrainEngine {
           ${pfScope}
           ${ptScope}
         ORDER BY depth, from_slug, to_slug
+        LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
       `;
     }
 
+    // Row cap: the LIMIT above fetched CAP + 1 rows; the probe row only tells
+    // us the walk overflowed and is dropped with everything past the cap.
+    const truncated = rows.length > TRAVERSE_PATH_ROW_CAP;
+    const bounded = (truncated ? rows.slice(0, TRAVERSE_PATH_ROW_CAP) : rows) as Record<string, unknown>[];
     // Dedup edges (same edge can appear via multiple visited paths).
     const seen = new Set<string>();
     const result: GraphPath[] = [];
-    for (const r of rows as Record<string, unknown>[]) {
+    for (const r of bounded) {
       const key = `${r.from_slug}|${r.to_slug}|${r.link_type}|${r.depth}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -3572,7 +3598,7 @@ export class PostgresEngine implements BrainEngine {
         depth: Number(r.depth),
       });
     }
-    return result;
+    return { paths: result, truncated };
   }
 
   async relationalFanout(
@@ -3851,7 +3877,7 @@ export class PostgresEngine implements BrainEngine {
     sourceId?: string;
     sourceIds?: string[];
     mode?: 'inbound' | 'islanded';
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+  }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>> {
     const sql = this.sql;
     // Soft-delete filter on BOTH sides:
     //   - candidate: p.deleted_at IS NULL — soft-deleted pages aren't orphan candidates
@@ -3888,7 +3914,9 @@ export class PostgresEngine implements BrainEngine {
       SELECT
         p.slug,
         COALESCE(p.title, p.slug) AS title,
-        p.frontmatter->>'domain' AS domain
+        p.frontmatter->>'domain' AS domain,
+        p.type,
+        (NOT ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}) AS quarantined
       FROM pages p
       WHERE p.deleted_at IS NULL
         ${sourceFilter}
@@ -3902,7 +3930,7 @@ export class PostgresEngine implements BrainEngine {
         ${outboundFilter}
       ORDER BY p.slug
     `;
-    return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
+    return rows as unknown as Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>;
   }
 
   // Tags
@@ -4955,8 +4983,12 @@ export class PostgresEngine implements BrainEngine {
         WHERE (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
       ),
       entity_pages AS (
+        -- #4280: quarantined entity shells are not served memory — keep them
+        -- out of the link/timeline coverage denominators (parity with
+        -- onboard's VISIBLE_ENTITY_PREDICATE).
         SELECT id, slug FROM scoped_pages WHERE id IN (
           SELECT id FROM pages WHERE type IN ('entity', 'person', 'company') AND deleted_at IS NULL
+            AND ${sql.unsafe(quarantineFilterFragment('pages'))}
         )
       )
       SELECT
@@ -5038,6 +5070,7 @@ export class PostgresEngine implements BrainEngine {
              )::int as link_count
       FROM pages p
       WHERE p.type IN ('entity', 'person', 'company') AND p.deleted_at IS NULL
+        AND ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}
         AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
       ORDER BY link_count DESC
       LIMIT 5
@@ -5059,8 +5092,11 @@ export class PostgresEngine implements BrainEngine {
     // linked from) a live one.
     // #4592: out-of-scope endpoints cannot rescue a page from orphan-hood —
     // the caller's graph IS its grant.
-    const pageScopeRows = await sql<{ slug: string; islanded: boolean; has_timeline: boolean }[]>`
-      SELECT p.slug,
+    // #4280: quarantined pages drop out of the linkable scope in SQL;
+    // machine leaf types (atom/conversation/source) drop out through the
+    // shared policy below via p.type.
+    const pageScopeRows = await sql<{ slug: string; type: string; islanded: boolean; has_timeline: boolean }[]>`
+      SELECT p.slug, p.type,
              (NOT EXISTS (SELECT 1 FROM links l
                           JOIN pages src ON src.id = l.from_page_id
                           WHERE l.to_page_id = p.id AND src.deleted_at IS NULL
@@ -5072,6 +5108,7 @@ export class PostgresEngine implements BrainEngine {
              EXISTS (SELECT 1 FROM timeline_entries te WHERE te.page_id = p.id) as has_timeline
       FROM pages p
       WHERE p.deleted_at IS NULL
+        AND ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}
         AND (${scope}::text[] IS NULL OR p.source_id = ANY(${scope}))
     `;
 
@@ -5085,7 +5122,8 @@ export class PostgresEngine implements BrainEngine {
           this.countStalePagesForExtraction({ sourceId: sid, versionTs: LINK_EXTRACTOR_VERSION_TS }),
         ))).reduce((a, b) => a + b, 0);
     const orphanOverrides = await loadOrphanPolicyOverrides(this);
-    const linkablePages = pageScopeRows.filter(row => !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides));
+    const linkablePages = pageScopeRows.filter(row =>
+      !shouldExcludeFromOrphanReporting(row.slug, orphanOverrides, { type: row.type }));
     const linkablePageCount = linkablePages.length;
     const orphanPages = linkablePages.filter(row => row.islanded).length;
     const linkableTimelinePages = linkablePages.filter(row => row.has_timeline).length;
@@ -5198,9 +5236,16 @@ export class PostgresEngine implements BrainEngine {
     slug: string,
     sourceOrSources: string | readonly string[],
   ): Promise<string> {
+    return (await this.resolveSlugWithAliasDetailed(slug, sourceOrSources))?.canonical_slug ?? slug;
+  }
+
+  async resolveSlugWithAliasDetailed(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<{ canonical_slug: string; source_id: string } | null> {
     const sql = this.sql;
     const sources = Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources];
-    if (sources.length === 0) return slug;
+    if (sources.length === 0) return null;
     try {
       const rows = await sql`
         SELECT canonical_slug, source_id
@@ -5209,18 +5254,18 @@ export class PostgresEngine implements BrainEngine {
           AND source_id = ANY(${sources}::text[])
         ORDER BY array_position(${sources}::text[], source_id), id
       `;
-      if (rows.length === 0) return slug;
+      if (rows.length === 0) return null;
       if (rows.length > 1) {
         warnOncePerProcess(
           `resolveSlugWithAlias:multi_match:${slug}`,
           `[resolveSlugWithAlias] multi_match: alias '${slug}' exists in ${rows.length} sources; returning first by sourceOrSources order.`,
         );
       }
-      return (rows[0].canonical_slug as string) ?? slug;
+      return { canonical_slug: rows[0].canonical_slug as string, source_id: rows[0].source_id as string };
     } catch (e) {
       // Pre-v105 brain: slug_aliases table doesn't exist yet. Defense-in-depth
       // per the engine interface contract.
-      if (isUndefinedTableError(e)) return slug;
+      if (isUndefinedTableError(e)) return null;
       throw e;
     }
   }

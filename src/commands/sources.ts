@@ -52,6 +52,7 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
+import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -137,7 +138,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
-        '[--history-days <n>] [--dir <path>]   (connect first: gbrain google connect)\n' +
+        '[--history-days <n>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
     );
     process.exit(2);
@@ -168,6 +169,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gTokenEnv: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
+  let gCalendarId: string = DEFAULT_CALENDAR_ID;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -218,6 +220,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         process.exit(2);
       }
       gHistoryDays = v;
+      continue;
+    }
+    if (a === '--calendar-id') {
+      const v = (args[++i] ?? '').trim();
+      if (!v) {
+        console.error('--calendar-id needs a value (see: gbrain google calendars).');
+        process.exit(2);
+      }
+      gCalendarId = v;
       continue;
     }
     if (a === '--scope') {
@@ -280,28 +291,45 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(2);
   }
   if (gKind) {
-    const { ALL_GOOGLE_SERVICES } = await import('../core/google/types.ts');
     const bad = gServices.filter((s) => !(ALL_GOOGLE_SERVICES as readonly string[]).includes(s));
     if (bad.length > 0) {
       console.error(`Error: unknown --services entries: ${bad.join(', ')}. Valid: gmail, calendar, contacts`);
       process.exit(2);
     }
-    // Duplicate-account guard: a second source for the same account would
-    // duplicate every page/loop in federated reads and coalesce the two
-    // sources' loops_extract jobs. Warn loudly (not refuse — split-window
-    // setups are conceivable) so the duplication is a choice, not a surprise.
+    // Duplicate-account guard: a second source for the same account AND the
+    // same services would duplicate every page/loop in federated reads and
+    // coalesce the two sources' loops_extract jobs. Warn loudly (not refuse —
+    // split-window setups are conceivable) so the duplication is a choice,
+    // not a surprise. Scoped to OVERLAPPING services: a second source for the
+    // same account that syncs a DIFFERENT slice (e.g. a secondary calendar
+    // via --calendar-id, or calendar-only next to gmail-only) is the
+    // supported topology, not duplication.
     try {
       const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
         `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
         [],
       );
+      let overlapNote = '';
       const dup = dupRows.find((r) => {
         const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
-        return c.kind === 'google' && c.g_account === gAccount;
+        if (c.kind !== 'google' || c.g_account !== gAccount) return false;
+        const existingServices =
+          typeof c.g_services === 'string'
+            ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+            : ['gmail', 'calendar', 'contacts'];
+        let overlap = gServices.filter((s) => existingServices.includes(s));
+        // Two calendar sources pointing at DIFFERENT calendars never collide —
+        // one calendar per source is how secondary calendars are ingested.
+        const existingCal =
+          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
+        if (existingCal !== gCalendarId) overlap = overlap.filter((s) => s !== 'calendar');
+        if (overlap.length === 0) return false;
+        overlapNote = overlap.join(', ');
+        return true;
       });
       if (dup) {
         console.error(
-          `Warning: source "${dup.id}" already syncs ${gAccount} — a second source for the same account duplicates its pages and loops in federated reads.`,
+          `Warning: source "${dup.id}" already syncs ${gAccount} (${overlapNote}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
         );
       }
     } catch { /* preflight is best-effort */ }
@@ -400,6 +428,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             account: gAccount!,
             services: gServices,
             historyDays: gHistoryDays,
+            calendarId: gCalendarId,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
             access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
             tokenCommand: gTokenCommand,
@@ -1822,6 +1851,8 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'tracked-branch': return runTrackedBranch(engine, rest);
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
+    // #4739 non-destructive local_path pointer repair
+    case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
     case 'audit':      return runAudit(engine, rest);
     // v0.46 github-source demo (offline, privacy-clean fixtures)
     case 'demo':       { const { runSourcesDemo } = await import('./sources-demo.ts'); return runSourcesDemo(engine, rest); }
@@ -1885,6 +1916,12 @@ Subcommands:
                                     override (v0.40.3.0). Pass "unset" or
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
+  set-path <id> <path> [--force]    Repair a source's local_path pointer
+                                    (DB column only, never touches disk).
+                                    --force skips the overlapping-path guard.
+                                    Rejects a missing source or a path that
+                                    doesn't exist. See gbrain doctor's
+                                    default_source_local_path check.
   webhook <set|show|rotate|clear> <id> [options]
                                     v0.40 — per-source webhook secret management.
                                     Run 'sources webhook --help' for subcommand detail.

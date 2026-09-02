@@ -60,6 +60,11 @@ describe('dream CLI flag wiring', () => {
     expect(dreamSrc.toLowerCase()).toContain('zero llm calls');
   });
 
+  test('help text documents local-day cycle timezone configuration (#4348)', () => {
+    expect(dreamSrc).toContain('gbrain config set cycle.timezone Asia/Kolkata');
+    expect(dreamSrc).toContain('host timezone');
+  });
+
   // v0.41.13: --source / --source-id flag wiring (supersedes PR #1559).
   // Structural-only tests; behavioral tests live in test/dream.test.ts.
   describe('--source / --source-id wiring (v0.41.13)', () => {
@@ -82,8 +87,12 @@ describe('dream CLI flag wiring', () => {
       expect(dreamSrc).toContain('resolveSourceId');
     });
 
-    test('declares isResolverUserError predicate for typed-error catch (T3 from eng review)', () => {
-      expect(dreamSrc).toContain('function isResolverUserError');
+    test('uses the shared isResolverUserError predicate for the typed-error catch (T3 from eng review)', () => {
+      // One predicate, exported from source-resolver.ts next to the messages
+      // it matches — never a local copy that can drift from the wording.
+      expect(dreamSrc).not.toContain('function isResolverUserError');
+      expect(dreamSrc).toMatch(/import \{[^}]*\bisResolverUserError\b[^}]*\} from '\.\.\/core\/source-resolver\.ts'/);
+      expect(dreamSrc).toContain('if (isResolverUserError(e))');
     });
 
     test('documents --source in --help output', () => {

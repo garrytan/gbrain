@@ -289,6 +289,17 @@ only exceptions are the operations flagged `localOnly: true` — `sync_brain`
 and the `file_*` ops among them — which are rejected over HTTP regardless of
 scope (see [Scopes and localOnly](#4-scopes-and-localonly) above).
 
+**Several brains behind one tool catalog?** Give each server an identity so a
+connected agent can tell them apart: `gbrain config set mcp.instructions
+"<identity>"` rides the initialize response of every transport (stdio, OAuth
+HTTP, legacy bearer) under a `Deployment identity:` banner, appended below the
+canonical agent contract — no transport can weaken the contract. Restart
+`gbrain serve` after setting it (the response is built once per process);
+`GBRAIN_MCP_INSTRUCTIONS` in the serve process's environment overrides the
+configured value for that process, and a blank variable falls back to it.
+**Say to your agent:** *"Tell connected agents which brain this is"* — your
+agent runs `gbrain config set mcp.instructions "<identity>"`.
+
 **Security note on file access:** the `file_*` operations being localOnly is
 the first line of defense; as defense-in-depth, `file_upload` also confines
 any caller that isn't verifiably the trusted local CLI to the working

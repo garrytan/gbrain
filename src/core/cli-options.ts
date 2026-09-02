@@ -217,14 +217,43 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
 
   const rest: string[] = [];
   const handback: string[] = [];
+  // #4557: a handed-back --explain that arrived BEFORE the command token
+  // (`gbrain --explain extract timeline`, the documented global-flag-first
+  // invocation style) must not be re-inserted at its original position —
+  // that puts it at rest[0], and cli.ts dispatches on `args[0]` as the
+  // command, so the literal string '--explain' gets treated as the command
+  // and dispatch breaks for every non-claiming command. Defer it until the
+  // command slot is emitted, then flush right after — this reproduces
+  // `<command> --explain ...` exactly as if the user had typed it there. An
+  // --explain that arrives AFTER the command (`extract --explain timeline`,
+  // already correct today) is left in its natural scanned position: moving
+  // it further (e.g. to the very end like the --timeout handback) would
+  // change its position relative to a following value token, and
+  // extract-explain.ts's kind lookup is positional
+  // (`args.indexOf('--explain') + 1`) — reordering it "just to be safe"
+  // would break the case that already works.
+  const deferredExplain: string[] = [];
+  let commandEmitted = false;
   for (const s of slots) {
     if ('plain' in s) {
       rest.push(s.plain);
+      if (s === commandSlot) {
+        commandEmitted = true;
+        if (deferredExplain.length > 0) {
+          rest.push(...deferredExplain);
+          deferredExplain.length = 0;
+        }
+      }
       continue;
     }
     if ('explainFlag' in s) {
-      if (commandClaimsExplain) cliOpts.explain = true;
-      else rest.push('--explain');
+      if (commandClaimsExplain) {
+        cliOpts.explain = true;
+      } else if (commandEmitted) {
+        rest.push('--explain');
+      } else {
+        deferredExplain.push('--explain');
+      }
       continue;
     }
     if (commandOwnsTimeout) {
@@ -240,6 +269,9 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       rest.push('--timeout', s.timeoutValue);
     }
   }
+  // No plain (command) slot was ever found — nothing to flush against, so
+  // any deferred --explain(s) go at the end (there's no command to garble).
+  rest.push(...deferredExplain);
   rest.push(...handback);
 
   return { cliOpts, rest };

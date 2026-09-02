@@ -283,7 +283,7 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
   });
 
-  test('v0.47.11: rerank kind for the voyage:rerank-2.5 default prices from the embedding table (no TX2 throw under --max-cost)', () => {
+  test('v0.48.2: rerank kind for the voyage:rerank-2.5 default prices from the embedding table (no TX2 throw under --max-cost)', () => {
     const t = new BudgetTracker({ maxCostUsd: 0.001, label: 'test', auditPath });
     expect(() =>
       t.reserve({ modelId: 'voyage:rerank-2.5', estimatedInputTokens: 3000, maxOutputTokens: 0, kind: 'rerank' }),

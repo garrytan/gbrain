@@ -197,6 +197,29 @@ export function buildEventBlock(opts: CaptureFrontmatterOpts): Record<string, un
 }
 
 /**
+ * #4655 — surface the EXPLICIT page type a capture carries, if any: the
+ * `--type` flag / `type` param wins, else a non-empty string `type:` in
+ * the body's existing frontmatter. Returns undefined when neither is
+ * present (the default-'note' path — deliberately NOT a vocabulary-check
+ * target, so bare `gbrain capture` can never start failing under a pack
+ * that omits 'note') and when the frontmatter is malformed
+ * (`mergeCaptureFrontmatter` surfaces that error downstream unchanged).
+ */
+export function explicitCaptureType(rawBody: string, explicit?: string): string | undefined {
+  if (typeof explicit === 'string' && explicit.length > 0) return explicit;
+  const trimmedStart = rawBody.replace(/^﻿/, '');
+  if (!/^---\r?\n/.test(trimmedStart)) return undefined;
+  let parsed: matter.GrayMatterFile<string>;
+  try {
+    parsed = matter(rawBody);
+  } catch {
+    return undefined;
+  }
+  const t = ((parsed.data ?? {}) as Record<string, unknown>).type;
+  return typeof t === 'string' && t.length > 0 ? t : undefined;
+}
+
+/**
  * v0.39.3.0 (BUG-1): merge capture's auto-stamped fields with any existing
  * frontmatter in `rawBody`, rather than always prepending a second
  * frontmatter block. The pre-fix code stamped its own `---` block on top

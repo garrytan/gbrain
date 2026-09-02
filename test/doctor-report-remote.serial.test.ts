@@ -77,6 +77,18 @@ describe('doctorReportRemote', () => {
     expect(q!.message).toContain('PGLite');
   });
 
+  test('extract_atoms_backlog is on the remote surface: ok on a fresh brain, message never leaks GBRAIN_HOME (#4576)', async () => {
+    const report = await doctorReportRemote(engine);
+    const check = report.checks.find(c => c.name === 'extract_atoms_backlog');
+    expect(check).toBeDefined();
+    expect(check!.status).toBe('ok');
+    expect(check!.message).toContain('no pages awaiting atom extraction');
+    // The thin-client message is read by remote callers — never a server path.
+    expect(check!.message).not.toContain(tmpHome);
+    expect(JSON.stringify(check!.details ?? {})).not.toContain(tmpHome);
+    expect((check!.details as Record<string, unknown>).backlog).toBe(0);
+  });
+
   test('full report on healthy brain is "healthy" status', async () => {
     const report = await doctorReportRemote(engine);
     expect(report.status).toMatch(/healthy|warnings/);

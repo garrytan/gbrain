@@ -70,6 +70,9 @@ import { withRetry, isRetryableConnError } from '../core/retry.ts';
 export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
 import { buildGazetteer, findMentionedEntities } from '../core/by-mention.ts';
+// #4611: the cross-source link fallback follows the configured
+// `sources.default` (validated shape) instead of the literal 'default'.
+import { isValidSourceId } from '../core/source-id.ts';
 import {
   loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
 } from '../core/op-checkpoint.ts';
@@ -222,10 +225,35 @@ function refsWithSnapshotStamps(
  * lexicographically smallest matching source (deterministic, so repeated
  * extracts and both engines converge on the same edge under the
  * (source_id, slug) composite key) instead of dropping with 'cross_source'.
+ *
+ * #4611: the fallback lane compares against `opts.defaultSourceId` (the
+ * configured `sources.default`, resolved once per run by the callers via
+ * resolveLinkFallbackDefault) instead of the LITERAL string 'default'.
+ * Renaming the brain's default source no longer silently kills the
+ * cross-source fallback. Omitted → 'default' (back-compat).
  */
 export type CandidateSourceResolution =
   | { ok: true; fromSlug: string; fromSourceId: string; toSourceId: string }
   | { ok: false; reason: 'missing_target' | 'missing_from' | 'cross_source' };
+
+/**
+ * #4611: resolve the source id the cross-source link fallback compares
+ * against. Reads the operator-configured `sources.default` (same key the
+ * write-routing ladder in source-resolver.ts tier 5 reads), silently
+ * falling back to the seeded literal 'default' on unset/invalid/config
+ * errors — extraction must never fail on a bad config row.
+ */
+export async function resolveLinkFallbackDefault(
+  engine: Pick<BrainEngine, 'getConfig'>,
+): Promise<string> {
+  try {
+    const v = await engine.getConfig('sources.default');
+    if (v && isValidSourceId(v)) return v;
+  } catch {
+    // Best-effort read; the seeded literal below is the safe terminal.
+  }
+  return 'default';
+}
 
 export function resolveCandidateSources(
   c: LinkCandidate,
@@ -234,7 +262,7 @@ export function resolveCandidateSources(
   allSlugs: Set<string>,
   slugToSources: Map<string, string[]>,
   allowCrossSource: boolean,
-  opts: { crossSource?: boolean } = {},
+  opts: { crossSource?: boolean; defaultSourceId?: string } = {},
 ): CandidateSourceResolution {
   const fromSlug = c.fromSlug ?? pageSlug;
   if (!allSlugs.has(c.targetSlug)) return { ok: false, reason: 'missing_target' };
@@ -249,13 +277,15 @@ export function resolveCandidateSources(
     }
     return { ok: true, fromSlug, fromSourceId: pageSourceId, toSourceId: pageSourceId };
   }
+  // #4611: follow the CONFIGURED default source, not the literal 'default'.
+  const defaultSourceId = opts.defaultSourceId ?? 'default';
   const fromSourceId = fromSources.includes(pageSourceId) ? pageSourceId
-    : (fromSources.includes('default') ? 'default' : fromSources[0]);
+    : (fromSources.includes(defaultSourceId) ? defaultSourceId : fromSources[0]);
   let toSourceId: string;
   if (targetSources.includes(fromSourceId)) {
     toSourceId = fromSourceId;
-  } else if (targetSources.includes('default')) {
-    toSourceId = 'default';
+  } else if (targetSources.includes(defaultSourceId)) {
+    toSourceId = defaultSourceId;
   } else if (targetSources.length > 0) {
     // #2589: the target exists ONLY in other sources. Historically this was
     // a silent null (indistinguishable from a missing endpoint — multi-source
@@ -1659,6 +1689,8 @@ async function extractLinksFromDB(
   // Issue #2589: opt-in cross-source edges (deterministic to_source_id pick);
   // off, cross-source-only candidates are counted, never silently dropped.
   const crossSource = await isCrossSourceLinksEnabled(engine);
+  // #4611: resolve the configured default source ONCE per run.
+  const linkDefaultSourceId = await resolveLinkFallbackDefault(engine);
   // v0.32.8: listAllPageRefs enumerates (slug, source_id) so we can thread
   // sourceId to getPage AND build a cross-source resolution map for link
   // disambiguation. Pre-fix used getAllSlugs() which collapsed
@@ -1764,7 +1796,8 @@ async function extractLinksFromDB(
       // non-origin/non-default source) so the two don't get counted as one;
       // the #3908 crossSource flag resolves the edge instead of dropping it.
       const resolved = resolveCandidateSources(
-        c, slug, source_id, allSlugs, slugToSources, federatedSourceIds.has(source_id), { crossSource },
+        c, slug, source_id, allSlugs, slugToSources, federatedSourceIds.has(source_id),
+        { crossSource, defaultSourceId: linkDefaultSourceId },
       );
       if (!resolved.ok) {
         if (resolved.reason === 'cross_source') skippedCrossSource++;
@@ -2028,6 +2061,8 @@ export async function extractStaleFromDB(
   const pack = (await loadActivePackForLocalEngine(engine))?.manifest ?? null;
   // Issue #2589: mirrors extractLinksFromDB (see resolveCandidateSources).
   const crossSource = await isCrossSourceLinksEnabled(engine);
+  // #4611: mirrors extractLinksFromDB — configured default, resolved once.
+  const linkDefaultSourceId = await resolveLinkFallbackDefault(engine);
   const allRefs = await engine.listAllPageRefs();
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
@@ -2079,7 +2114,8 @@ export async function extractStaleFromDB(
       for (const c of extracted.candidates) {
         const r = resolveCandidateSources(
           c, page.slug, page.source_id, allSlugs, slugToSources,
-          federatedSourceIds.has(page.source_id), { crossSource },
+          federatedSourceIds.has(page.source_id),
+          { crossSource, defaultSourceId: linkDefaultSourceId },
         );
         if (!r.ok) {
           if (r.reason === 'cross_source') skippedCrossSource++;

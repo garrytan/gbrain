@@ -16,7 +16,7 @@
       "write-back"
     ]
   },
-  "justification": "Identity-resolution wave (lowercase-alias + surname lexical arms) + claude-code production seam, re-banked after merging master's expanded fixture corpus (v0.46.12.3–v0.46.14.0 waves): kta 0.1452→0 on all three harnesses, push_recall 0.8125/0.6667/0.4583→0.9063/1.0/0.5521 on the 96-gold corpus.",
+  "justification": "2026-08 eval fix wave: openclaw volunteer-arm fusion (Arm 2 via shared volunteerStage primitive, parity with the claude-code turn-context lane) — push_recall 0.9063→1.0 (9 budget-crowded 4-entity turns flipped; itemization receipt in wave PR) at precision 1.0; kta/false-fire/isolation hold at 0 on all seams; codex+claude-code rows byte-unchanged (adapter arm is additive, E3 non-regression)",
   "cells": {
     "claude-code/continuity": {
       "avg_injected_tokens": 59.9167,
@@ -66,15 +66,15 @@
       "source_isolation_violations": 0
     },
     "openclaw/know-to-ask": {
-      "avg_injected_tokens": 38.2752,
+      "avg_injected_tokens": 44.2617,
       "false_fire_rate": 0,
       "know_to_ask_failure_rate": 0,
       "source_isolation_violations": 0
     },
     "openclaw/push": {
-      "avg_injected_tokens": 50.0841,
+      "avg_injected_tokens": 58.4206,
       "push_precision": 1,
-      "push_recall": 0.9063,
+      "push_recall": 1,
       "source_isolation_violations": 0
     },
     "openclaw/write-back": {
@@ -125,7 +125,7 @@
     },
     "openclaw/push": {
       "gold_total": 96,
-      "gold_failed": 9
+      "gold_failed": 0
     },
     "openclaw/write-back": {
       "gold_total": 58,

@@ -28,7 +28,7 @@
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { buildToolDefs } from './tool-defs.ts';
-import { buildMcpInstructions } from './instructions.ts';
+import { resolveMcpInstructions } from './instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { operations } from '../core/operations.ts';
 import type { AuthInfo } from '../core/operations.ts';
@@ -434,7 +434,8 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               protocolVersion: '2025-03-26',
               serverInfo: { name: 'gbrain', version: VERSION },
               capabilities: { tools: {} },
-              instructions: buildMcpInstructions({
+              // #4748: contract (+ opt-in writeback section) + deployment identity.
+              instructions: resolveMcpInstructions(fileConfig, process.env, {
                 writeback: ambientOptsFrom(writeback, {
                   remember: surfaceAllowedOps ? surfaceAllowedOps.has('remember') : true,
                   extractFacts: surfaceAllowedOps ? surfaceAllowedOps.has('extract_facts') : true,

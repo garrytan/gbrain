@@ -297,7 +297,10 @@ async function listRegisteredLocalPathSources(
   }
 }
 
-async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | null> {
+async function pickSoleNonDefaultSource(
+  engine: BrainEngine,
+  opts: { quiet?: boolean } = {},
+): Promise<string | null> {
   // archived column was added in v34 (v0.26.5). Older brains may not have
   // it — fall back to the un-archived query in that case via try/catch.
   let rows: Array<{ id: string }>;
@@ -321,7 +324,7 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
       // every bare command away from the sole side-source, and the user
       // hunts for "lost" writes. One stderr line names both sides so the
       // misroute is diagnosable; same suppression knob as the routing nudge.
-      if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
+      if (!opts.quiet && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
         console.error(
           `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
         );
@@ -334,6 +337,47 @@ async function pickSoleNonDefaultSource(engine: BrainEngine): Promise<string | n
     // resolution outright.
   }
   return rows[0].id;
+}
+
+/**
+ * Once-per-process (per stale id) latch for the stale `sources.default`
+ * warning below, so bulk callers don't spam stderr. Reset seam exported via
+ * `__testing.resetStaleImplicitDefaultWarnings`.
+ */
+const warnedStaleImplicitDefaults = new Set<string>();
+
+/**
+ * Source id that represents the brain's implicit default target for a bare
+ * local command (#4700). Unlike resolveSourceWithTier(), this deliberately
+ * ignores env, dotfile, cwd, and local_path tiers so callers can distinguish
+ * the canonical default-like source from an explicit/path-scoped source cycle.
+ *
+ * Fail-open on a STALE `sources.default` (the configured source was deleted
+ * or archived after the config row was set): tier-5 posture, same as
+ * resolveSourceId's brain_default tier being silent-fallback and
+ * resolveLinkFallbackDefault never throwing. The stale value is treated as
+ * absent — one stderr warning names it — and resolution falls through to the
+ * legacy sole-non-default routing. Genuine engine failures still propagate.
+ */
+export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promise<string | null> {
+  const globalDefault = await engine.getConfig('sources.default');
+  if (globalDefault && isValidSourceId(globalDefault)) {
+    try {
+      await assertSourceExists(engine, globalDefault);
+      return globalDefault;
+    } catch (e) {
+      if (!(e instanceof SourceTargetError)) throw e;
+      if (!warnedStaleImplicitDefaults.has(globalDefault)) {
+        warnedStaleImplicitDefaults.add(globalDefault);
+        console.error(
+          `[gbrain] config sources.default points at '${globalDefault}', which is not an active source — ` +
+          `ignoring it for this run. Fix with \`gbrain config set sources.default <id>\` ` +
+          `(see \`gbrain sources list\`) or restore it: \`gbrain sources restore ${globalDefault}\`.`,
+        );
+      }
+    }
+  }
+  return pickSoleNonDefaultSource(engine, { quiet: true });
 }
 
 /**
@@ -350,6 +394,220 @@ export function formatSoleNonDefaultNudge(sourceId: string): string | null {
   return `[gbrain] routing to source '${sourceId}' (sole non-default source registered; pass --source to override).`;
 }
 
+// ---------------------------------------------------------------------------
+// #4583 (fixes #4564's misrouted-write symptom) — write-time guard for the
+// seed_default tier.
+//
+// `sole_non_default` (tier 5.5) only auto-routes when EXACTLY one non-default
+// source with a local_path is registered. On a brain with 2+ non-default
+// sources (or a sole one whose local_path is NULL), an unscoped mutating op
+// still falls through to `seed_default` and silently lands in source_id
+// 'default' — re-opening the cross-source duplicate-slug class (#1434 /
+// PR #707), which can silently produce thousands of duplicates.
+//
+// The guard fires only when the brain's real content lives OUTSIDE 'default'
+// (non-default sources hold the bulk of pages). A fresh brain, or a legacy
+// brain whose content legitimately still sits in 'default', is left untouched.
+// This is the ADVISORY sibling of the opt-in fail-closed serve-time guard
+// (`sourceGuardBlocksWrite` / WRITE_SAFE_SOURCE_TIERS below).
+// ---------------------------------------------------------------------------
+
+/** Env escape hatch: scripted pipelines that intend to write to 'default'. */
+export const GBRAIN_ALLOW_DEFAULT_WRITE_ENV = 'GBRAIN_ALLOW_DEFAULT_WRITE';
+
+export interface DefaultWriteAssessment {
+  /** True when an unscoped write to 'default' should be guarded (refused/warned). */
+  shouldGuard: boolean;
+  /** Pages currently held by source_id = 'default'. */
+  defaultPages: number;
+  /** Pages held across all non-default sources. */
+  nonDefaultPages: number;
+  /** Count of distinct non-default source_ids with at least one page. */
+  nonDefaultSources: number;
+  /**
+   * True when the page-distribution aggregate FAILED and the verdict above is
+   * the fail-open default rather than a measurement. A caller that caches or
+   * latches on an assessment must not treat a failed one as settled.
+   */
+  failed?: true;
+}
+
+/**
+ * Assess whether an unscoped write that resolved to source 'default' should be
+ * guarded. Call ONLY after resolution returned tier `seed_default` (explicit /
+ * env / dotfile / local_path / brain_default / sole_non_default writers have
+ * stated intent and must never be guarded).
+ *
+ * Fires when non-default sources hold the bulk of the brain's pages, i.e.
+ * `nonDefaultPages > defaultPages` with at least one non-default source.
+ *
+ * Fail-open: any query error (e.g. a half-migrated brain with no `pages`
+ * table) returns `shouldGuard=false`. A guard must never be the reason a
+ * legitimate write fails.
+ */
+export async function assessDefaultWriteGuard(
+  engine: BrainEngine,
+): Promise<DefaultWriteAssessment> {
+  const empty: DefaultWriteAssessment = {
+    shouldGuard: false,
+    defaultPages: 0,
+    nonDefaultPages: 0,
+    nonDefaultSources: 0,
+  };
+  try {
+    const rows = await engine.executeRaw<{
+      default_pages: number | string | bigint | null;
+      non_default_pages: number | string | bigint | null;
+      non_default_sources: number | string | bigint | null;
+    }>(
+      // deleted_at IS NULL (review fix): soft-deleted pages skewed the
+      // distribution both directions — a graveyard outside 'default' could
+      // fire the guard on a live default-dominant brain, and a graveyard in
+      // 'default' could mask a live non-default-dominant one. Every sibling
+      // predicate in this module filters live rows; so does this.
+      `SELECT
+         COALESCE(SUM(CASE WHEN source_id = 'default' THEN 1 ELSE 0 END), 0) AS default_pages,
+         COALESCE(SUM(CASE WHEN source_id <> 'default' THEN 1 ELSE 0 END), 0) AS non_default_pages,
+         COUNT(DISTINCT source_id) FILTER (WHERE source_id <> 'default') AS non_default_sources
+       FROM pages
+       WHERE deleted_at IS NULL`,
+    );
+    const r = rows[0];
+    if (!r) return empty;
+    const defaultPages = Number(r.default_pages) || 0;
+    const nonDefaultPages = Number(r.non_default_pages) || 0;
+    const nonDefaultSources = Number(r.non_default_sources) || 0;
+    // Strict `>` keeps a default-dominant (fresh / legacy) brain un-guarded:
+    // with nonDefaultPages 0, the condition is false and 'default' stays valid.
+    const shouldGuard = nonDefaultSources >= 1 && nonDefaultPages > defaultPages;
+    return { shouldGuard, defaultPages, nonDefaultPages, nonDefaultSources };
+  } catch {
+    return { ...empty, failed: true };
+  }
+}
+
+/**
+ * Once-per-process memo of assessDefaultWriteGuard, keyed on the engine.
+ * The assessment is an unindexed full-`pages` aggregate whose inputs are
+ * process-stable (the brain's page distribution, the env escape hatch), so
+ * in-process callers that run many unscoped writes — runImport under the
+ * sync_brain MCP op, the autopilot daemon, minion sync — pay for it ONCE per
+ * engine rather than on every call. Mirrors the stdio advisory latch
+ * (createDefaultWriteAdvisory in mcp/server.ts): the memo arms on the first
+ * SUCCESSFUL assessment, whatever its verdict. A FAILED assessment (the
+ * fail-open `failed: true` shape) is returned to its caller but forgotten,
+ * so one transient query error cannot pin "no guard" for the rest of the
+ * process — the next caller retries. Concurrent callers share the in-flight
+ * attempt. A WeakMap so a disconnected engine never pins its entry.
+ */
+let defaultWriteAssessments = new WeakMap<BrainEngine, Promise<DefaultWriteAssessment>>();
+
+export function assessDefaultWriteGuardOnce(engine: BrainEngine): Promise<DefaultWriteAssessment> {
+  const memo = defaultWriteAssessments;
+  let pending = memo.get(engine);
+  if (!pending) {
+    const attempt: Promise<DefaultWriteAssessment> = assessDefaultWriteGuard(engine).then(a => {
+      if (a.failed && memo.get(engine) === attempt) memo.delete(engine);
+      return a;
+    });
+    pending = attempt;
+    memo.set(engine, attempt);
+  }
+  return pending;
+}
+
+/** Test seam: forget every memoized assessment (e.g. after reseeding a shared engine). */
+export function __resetDefaultWriteGuardMemo(): void {
+  defaultWriteAssessments = new WeakMap();
+}
+
+/** True when the operator opted into unscoped 'default' writes for this process. */
+export function defaultWriteAllowedByEnv(): boolean {
+  return process.env[GBRAIN_ALLOW_DEFAULT_WRITE_ENV] === '1';
+}
+
+/**
+ * Multi-line refusal shown when a CLI mutating op (sync / import) would write
+ * to 'default' on a bulk-non-default brain. `command` is the bare subcommand
+ * (e.g. `sync`, `import <dir>`). `sourceFlag` is the flag that scopes THIS
+ * command (source for sync, source-id for import). Escape hatches are spelled
+ * out inline.
+ *
+ * NOTE: never spell a NEW CLI flag with its leading double dash anywhere in
+ * this file. scripts/generate-flag-registry.ts scans this module one level
+ * deep from nearly every command and harvests such literals, which would
+ * grant that flag to all ~90 commands in the generated registry — they would
+ * then accept and silently ignore it. The `sourceFlag` default below is the
+ * UNIVERSAL source flag (already legal everywhere); callers with a different
+ * flag pass it in from their own module.
+ */
+export function formatDefaultWriteRefusal(
+  command: string,
+  a: DefaultWriteAssessment,
+  sourceFlag: string = '--source',
+): string {
+  return [
+    `[gbrain] Refusing unscoped ${command}: it would write to source 'default'.`,
+    `  This brain keeps its content in ${a.nonDefaultSources} non-default source(s) ` +
+      `(${a.nonDefaultPages} pages); 'default' holds ${a.defaultPages}.`,
+    `  An unscoped write to 'default' re-creates cross-source duplicate slugs.`,
+    `  Choose a target:`,
+    `    gbrain ${command} ${sourceFlag} <id>      route to a real source (see: gbrain sources list)`,
+    `    gbrain ${command} ${sourceFlag} default   write to 'default' on purpose (escape hatch)`,
+    `    ${GBRAIN_ALLOW_DEFAULT_WRITE_ENV}=1 gbrain ${command}  allow, for scripted pipelines`,
+  ].join('\n');
+}
+
+/**
+ * One-line warning for surfaces where refusing would be worse than writing
+ * (the tokenless MCP stdio pipe; in-process import callers). Non-fatal: the
+ * write proceeds, but the operator is told how to scope future writes.
+ */
+export function formatDefaultWriteWarning(a: DefaultWriteAssessment, sourceFlag?: string): string {
+  const escape = sourceFlag
+    ? `Pass ${sourceFlag} <id>`
+    : `Set ${'GBRAIN_SOURCE'}=<id>`;
+  return (
+    `[gbrain] WARNING: writing to source 'default' on a multi-source brain ` +
+    `(${a.nonDefaultSources} non-default source(s), ${a.nonDefaultPages} pages). ` +
+    `${escape} to scope writes and avoid cross-source duplicate slugs.`
+  );
+}
+
+/**
+ * #4583 rework for the stdio MCP lane: decide the once-per-process advisory
+ * warning from the ALREADY-RESOLVED source tier, not from raw env presence.
+ * Master's stdio dispatch runs the full ambient chain
+ * (resolveMcpStdioSourceScope), so a dotfile / local_path / brain_default pin
+ * resolves a REAL source — warning there would be a false positive. Only the
+ * `seed_default` tier actually lands the write in 'default'. Returns the
+ * warning line (null when nothing should be printed) plus `assessed`: true
+ * when the decision is settled for the process (a successful assessment, a
+ * non-writing tier, or the process-stable env escape hatch), false when the
+ * aggregate FAILED — the null is fail-open for this write only and the caller
+ * must not latch on it. Never throws.
+ */
+export async function assessUnscopedDefaultWrite(
+  engine: BrainEngine,
+  tier: SourceTier,
+  mutating: boolean,
+): Promise<{ warning: string | null; assessed: boolean }> {
+  if (!mutating || tier !== 'seed_default') return { warning: null, assessed: true };
+  if (defaultWriteAllowedByEnv()) return { warning: null, assessed: true };
+  const assessment = await assessDefaultWriteGuard(engine);
+  if (assessment.failed) return { warning: null, assessed: false };
+  return { warning: assessment.shouldGuard ? formatDefaultWriteWarning(assessment) : null, assessed: true };
+}
+
+/** The warning-only projection of assessUnscopedDefaultWrite. */
+export async function maybeWarnUnscopedDefaultWrite(
+  engine: BrainEngine,
+  tier: SourceTier,
+  mutating: boolean,
+): Promise<string | null> {
+  return (await assessUnscopedDefaultWrite(engine, tier, mutating)).warning;
+}
+
 async function assertSourceExists(engine: BrainEngine, id: string): Promise<void> {
   const rows = await engine.executeRaw<{ id: string }>(
     `SELECT id FROM sources WHERE id = $1 AND archived = false`,
@@ -362,6 +620,28 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
       `or create/restore "${id}" before retrying.`,
     );
   }
+}
+
+/**
+ * Predicate: is this error one of THIS module's user-facing throws (an
+ * unknown / archived source from `assertSourceExists`, or an invalid
+ * `--source` / `GBRAIN_SOURCE` value from the resolve chain) that a CLI
+ * command should surface as a clean stderr line + exit 1?
+ *
+ * Lives next to the messages it matches so the wordings cannot drift apart
+ * again — three commands (dream, agent, the code-* scope resolver) once
+ * carried their own copies, and one of them missed the fail-closed
+ * ` not found or is archived.` wording, so an archived source escaped as a
+ * stack trace. Anything else (TypeError / connection failures / genuine
+ * bugs) is deliberately NOT matched and keeps propagating.
+ */
+export function isResolverUserError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return (m.startsWith('Source "')
+      && (m.includes(' not found.') || m.includes(' not found or is archived.')))
+    || m.startsWith('Invalid --source value')
+    || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
 
 /**
@@ -741,4 +1021,7 @@ export function __resetSourceGuardQueryShape(): void {
 export const __testing = {
   readDotfileWalk,
   SOURCE_ID_RE,
+  resetStaleImplicitDefaultWarnings(): void {
+    warnedStaleImplicitDefaults.clear();
+  },
 };

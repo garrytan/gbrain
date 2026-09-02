@@ -142,7 +142,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
       const colDim = await readContentChunksEmbeddingDim(engine);
       expect(colDim.exists).toBe(true);
       expect(colDim.dims).toBe(NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS);
-      // v0.47.11: the mode-bundle default IS voyage:rerank-2.5 — a Voyage-keyed
+      // v0.48.2: the mode-bundle default IS voyage:rerank-2.5 — a Voyage-keyed
       // init writes NO explicit row; the RESOLVED reranker is the default.
       expect(await engine.getConfig('search.reranker.model')).toBeNull();
       {
@@ -327,7 +327,7 @@ describe('E2E: fresh gbrain init --pglite → import → embed works end-to-end'
       const engine = new PGLiteEngine();
       await engine.connect({ database_path: cfg.database_path, engine: 'pglite' });
       try {
-        // v0.47.11: the mode-bundle default IS voyage:rerank-2.5 — a Voyage-keyed
+        // v0.48.2: the mode-bundle default IS voyage:rerank-2.5 — a Voyage-keyed
         // init writes NO explicit row; the RESOLVED reranker is the default.
         expect(await engine.getConfig('search.reranker.model')).toBeNull();
         {

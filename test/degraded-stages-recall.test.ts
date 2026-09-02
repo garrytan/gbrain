@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — ranking-only degraded stages never count as recall impairment.
+ * v0.48.2 — ranking-only degraded stages never count as recall impairment.
  * `affectsRecall` is the ONE predicate behind the short degraded cache TTL
  * (hybridSearchCached), the MCP empty-result block (dispatch.ts) and the CLI
  * "clean miss" copy (cli.ts); pin it here so a regression to a length check
@@ -28,5 +28,16 @@ describe('affectsRecall', () => {
     expect([{ stage: 'reranker_skipped' }].some(affectsRecall)).toBe(false);
     expect(affectsRecall(undefined)).toBe(false);
     expect(affectsRecall({})).toBe(false);
+  });
+
+  test("master's transient stages stay recall-affecting on purpose (merge-time taxonomy decision)", () => {
+    // rerank_passthrough: provider answered 200 with an empty/malformed set — a
+    // transient fault; the short degraded TTL is what lets the next query recover.
+    expect(affectsRecall({ stage: 'rerank_passthrough', reason: 'empty_result_set' })).toBe(true);
+    expect(affectsRecall({ stage: 'rerank_passthrough', reason: 'malformed_shape' })).toBe(true);
+    // keyword_relaxed_carried: OR-relaxed rows voted in fusion — recall-shaped.
+    expect(affectsRecall({ stage: 'keyword_relaxed_carried' })).toBe(true);
+    // The ranking-only set is exactly the config-state skip.
+    expect([...RANKING_ONLY_DEGRADED_STAGES]).toEqual(['reranker_skipped']);
   });
 });

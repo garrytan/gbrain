@@ -14,7 +14,7 @@
 
 import { describe, test, expect, afterEach } from 'bun:test';
 import { __setChatTransportForTests, resetGateway } from '../../src/core/ai/gateway.ts';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
@@ -981,6 +981,7 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
     try {
       await rig.engine.setConfig('dream.synthesize.enabled', 'true');
       await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
+      await rig.engine.setConfig('cycle.timezone', 'Asia/Kolkata');
       const content = 'User: an important new idea about widget scaling\n'.repeat(120);
       const filePath = join(rig.corpusDir, '2026-08-16-widget-idea.txt');
       writeFileSync(filePath, content);
@@ -1010,9 +1011,19 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
         } as any;
       });
 
-      const result = await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
+      // #4348: the first instant projects to 2037-04-06 in Kolkata. A second
+      // read would cross another day, so this also pins one phase-start sample.
+      let clockCalls = 0;
+      const result = await runPhaseSynthesize(rig.engine, {
+        brainDir: rig.brainDir,
+        dryRun: false,
+        now: () => new Date(clockCalls++ === 0
+          ? '2037-04-05T21:30:00.000Z'
+          : '2037-04-07T21:30:00.000Z'),
+      });
       expect(result.status).toBe('ok');
       expect(oneshotCalls).toBe(1); // ONE round-trip replaced the whole loop
+      expect(clockCalls).toBe(1);
 
       const synthesis = (result.details as { synthesis: Record<string, unknown> }).synthesis;
       expect(synthesis.mode).toBe('oneshot');
@@ -1020,13 +1031,21 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       expect(synthesis.fallback_jobs).toBe(0);
       expect(synthesis.dead_jobs).toBe(0);
 
-      // Pages landed with the dream-provenance stamp.
+      // Pages landed with the dream-provenance stamp, bucketed by local day.
       const pageA = await rig.engine.getPage(slugA);
       expect(pageA).not.toBeNull();
       expect((pageA!.frontmatter as Record<string, unknown>).dream_generated).toBeTruthy();
+      expect((pageA!.frontmatter as Record<string, unknown>).dream_cycle_date).toBe('2037-04-06');
+      expect((pageA!.frontmatter as Record<string, unknown>).dream_created_cycle_date).toBe('2037-04-06');
       // Reverse-written to the brain checkout.
       const { existsSync } = require('node:fs') as typeof import('node:fs');
-      expect(existsSync(join(rig.brainDir, `${slugA}.md`))).toBe(true);
+      const reversePath = join(rig.brainDir, `${slugA}.md`);
+      expect(existsSync(reversePath)).toBe(true);
+      const reverseMarkdown = readFileSync(reversePath, 'utf8');
+      expect(reverseMarkdown).toMatch(/dream_cycle_date:\s*['"]?2037-04-06/);
+      expect(reverseMarkdown).toMatch(/dream_created_cycle_date:\s*['"]?2037-04-06/);
+      expect(reverseMarkdown).not.toContain('dream_cycle_date: 2026-08-16');
+      expect(await rig.engine.getPage('dream-cycle-summaries/2037-04-06')).not.toBeNull();
       // Deferred embeds: chunks exist and are unembedded (no embed provider here).
       const chunks = await rig.engine.executeRaw<{ n: number }>(
         `SELECT count(*)::int AS n FROM content_chunks cc JOIN pages p ON p.id = cc.page_id

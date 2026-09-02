@@ -15,7 +15,7 @@
  *
  * All fixtures live in mkdtemp dirs; no engine and no env mutation needed.
  */
-import { describe, expect, test, afterEach } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -136,6 +136,20 @@ describe('skillCurrencyCheck', () => {
 });
 
 describe('skillPreconditionsCheck', () => {
+  // Engine lifecycle in beforeAll/afterAll per the test-isolation rules
+  // (R3/R4): one engine for the live-precondition tests, disconnected so it
+  // never leaks across files in the shard process.
+  let engine: import('../src/core/pglite-engine.ts').PGLiteEngine;
+  beforeAll(async () => {
+    const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+  afterAll(async () => {
+    await engine.disconnect();
+  });
+
   test('null engine -> ok skip (no connected brain)', async () => {
     const dir = makeDir('gbrain-precond-');
     const check = await skillPreconditionsCheck(dir, null);
@@ -143,4 +157,40 @@ describe('skillPreconditionsCheck', () => {
     expect(check.status).toBe('ok');
     expect(check.message).toBe('skill preconditions not checked (no connected brain)');
   });
+
+  test('#4278 bare `source` met by a populated default-only brain', async () => {
+    // Pre-fix, the doctor wiring filtered `id <> 'default'`, so a healthy
+    // single-source brain (everything in 'default') failed `requires: source`
+    // forever — a permanent doctor WARN on real bundled skills. No other
+    // source is registered here, so the ONLY way this passes is by counting
+    // the populated default corpus.
+    await engine.putPage('notes/one', {
+      type: 'note', title: 'One', compiled_truth: 'corpus content',
+    }, { sourceId: 'default' });
+    const dir = makeDir('gbrain-precond-live-');
+    mkdirSync(join(dir, 'needs-corpus'));
+    writeFileSync(
+      join(dir, 'needs-corpus', 'SKILL.md'),
+      `---\nname: needs-corpus\ndescription: test skill\nrequires:\n  - source\n---\n\n# needs-corpus\n`,
+    );
+    const check = await skillPreconditionsCheck(dir, engine as never);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('all met');
+
+    // Regression guard for the split: `source:<id>` is an EXISTENCE
+    // contract — a registered-but-never-synced source is met. A naive
+    // shared populated-only accessor would flip this to warn.
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('newsrc', 'newsrc') ON CONFLICT (id) DO NOTHING`,
+    );
+    const dir2 = makeDir('gbrain-precond-live2-');
+    mkdirSync(join(dir2, 'needs-newsrc'));
+    writeFileSync(
+      join(dir2, 'needs-newsrc', 'SKILL.md'),
+      `---\nname: needs-newsrc\ndescription: test skill\nrequires:\n  - source:newsrc\n---\n\n# needs-newsrc\n`,
+    );
+    const check2 = await skillPreconditionsCheck(dir2, engine as never);
+    expect(check2.status).toBe('ok');
+    expect(check2.message).toContain('all met');
+  }, 60_000);
 });

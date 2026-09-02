@@ -19,22 +19,18 @@
  * postgres.js singleton. `test` only hits a remote URL and doesn't need
  * a local DB.
  */
-import { createHash, randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
-import { isUndefinedColumnError, isUndefinedTableError } from '../core/utils.ts';
+import { generateToken, isUndefinedColumnError, isUndefinedTableError } from '../core/utils.ts';
 import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, executeRawJsonb, type SqlQuery } from '../core/sql-query.ts';
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
-}
-
-function generateToken(): string {
-  return 'gbrain_' + randomBytes(32).toString('hex');
 }
 
 /**
@@ -84,7 +80,7 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       process.exit(1);
     }
   }
-  const token = generateToken();
+  const token = generateToken('gbrain_');
   const hash = hashToken(token);
 
   try {

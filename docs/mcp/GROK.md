@@ -86,6 +86,26 @@ grok -p "use the gbrain recall tool to answer: what did I import most recently?"
 
 `grok -p` (single-turn headless) prints the final answer on stdout.
 
+## Import session logs
+
+Grok Build writes one `chat_history.jsonl` per session under
+`~/.grok/sessions/<url-encoded-cwd>/<uuid>/` (`GROK_HOME` relocates the
+user dir). Those dead logs import through the same `gbrain transcripts ingest`
+lane as Claude Code / Codex / OpenClaw / Hermes:
+
+```bash
+gbrain transcripts ingest                    # discover, including ~/.grok/sessions
+gbrain transcripts ingest --all              # import every discovered harness log
+gbrain transcripts ingest ~/.grok/sessions --format grok --dry-run
+```
+
+**Say to your agent:** *"Archive my grok session transcripts"* — *"Import my Grok Build chat history into the brain."*
+
+Sidecars (`updates.jsonl`, `events.jsonl`, `summary.json`, `prompt_history.jsonl`)
+are skipped; only `chat_history.jsonl` is a session. User/assistant text
+turns land as conversation pages; system prompts, reasoning, and tool
+traffic do not.
+
 ## Headless auth + model pin
 
 For cron jobs, CI, or any non-TTY run:

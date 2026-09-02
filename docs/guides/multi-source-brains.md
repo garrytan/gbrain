@@ -225,6 +225,17 @@ Reads span federated sources by default. Writes require a resolved
 source (explicit, inferred, or default). The resolver never picks a
 source silently when ambiguous — it errors with a clear fix.
 
+Unscoped writes are also guarded against landing in the wrong place. On a
+brain with at least one other source and more pages outside `default` than
+in it, an unscoped
+`gbrain sync` refuses (pass `--source <id>` to redirect it), `gbrain import`
+warns, and MCP stdio prints a once-per-process advisory when a write actually
+resolves to the default tier. `gbrain sync --dry-run` previews the run and
+prints the same routing guidance instead of refusing;
+`GBRAIN_ALLOW_DEFAULT_WRITE=1` is the escape hatch when `default` really is
+the intended target. **Say to your agent:** *"Show me what a sync would do
+without writing anything"* — your agent runs `gbrain sync --dry-run`.
+
 ## Durability: keep a brain repo in sync (auto-harden)
 
 A long-lived agent that writes to a knowledge-wiki git repo needs three

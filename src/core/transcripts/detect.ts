@@ -22,6 +22,7 @@ import { claudeCodeAdapter } from './claude-code.ts';
 import { codexAdapter } from './codex.ts';
 import { openclawAdapter } from './openclaw.ts';
 import { hermesAdapter } from './hermes.ts';
+import { grokAdapter } from './grok.ts';
 import { chatgptExportAdapter } from './chatgpt-export.ts';
 import { claudeExportAdapter } from './claude-export.ts';
 
@@ -50,6 +51,13 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
       root: process.env.HERMES_HOME ?? join(home, '.hermes'),
       extension: '.db',
     },
+    // Grok Build keeps one chat_history.jsonl per session under
+    // <grok home>/sessions/<url-encoded-cwd>/<uuid>/ (GROK_HOME honored).
+    {
+      format: 'grok',
+      root: join(process.env.GROK_HOME ?? join(home, '.grok'), 'sessions'),
+      extension: '.jsonl',
+    },
   ];
 }
 
@@ -57,11 +65,13 @@ export function harnessRoots(overrides?: HarnessRoot[]): HarnessRoot[] {
 
 /**
  * Detection order: SQLite magic is unambiguous; JSONL first-line shapes are
- * mutually exclusive (session_meta / session-header / claude keys); the two
- * monolithic-JSON exports are sniffed by their distinguishing keys. Every
- * adapter registers here unconditionally; any format-level scoping belongs
- * to callers.
- *
+ * mutually exclusive (session_meta / session-header / claude keys / grok
+ * system-head); the two monolithic-JSON exports are sniffed by their
+ * distinguishing keys. claude-code detects BEFORE grok: a claude session can
+ * lead with a `type:'system'` row (string content), which is grok's head
+ * shape — grok's sniff also rejects claude-family keys, so the ordering is
+ * belt-and-braces, not the only defence. Every adapter registers here
+ * unconditionally; any format-level scoping belongs to callers.
  */
 export function transcriptAdapters(): TranscriptAdapter[] {
   return [
@@ -69,6 +79,7 @@ export function transcriptAdapters(): TranscriptAdapter[] {
     openclawAdapter,
     codexAdapter,
     claudeCodeAdapter,
+    grokAdapter,
     claudeExportAdapter,
     chatgptExportAdapter,
   ];

@@ -357,6 +357,22 @@ export function assessContentSanity(opts: {
    *  `~/.gbrain/junk-substrings.txt` via `src/core/content-sanity-literals.ts`.
    *  Empty array (default) means built-ins only. */
   extra_literals?: ReadonlyArray<OperatorLiteral>;
+  /** Built-in junk patterns to skip, by `name`. Resolved by the caller from
+   *  `content_sanity.disabled_patterns` (#4702).
+   *
+   *  Why per-pattern rather than the existing coarser knobs: the patterns
+   *  are aimed at scraped web content, and a brain built from mail, chat or
+   *  transcripts holds none of it — but it does hold people *writing about*
+   *  the things the patterns name. `access_denied` is a line-anchored body
+   *  match, so a page that quotes "Access Denied when I open the staging
+   *  dashboard" at the start of a line is hidden from search. Today the
+   *  escapes are `content_sanity.junk_patterns_enabled: false` (all
+   *  patterns off) or the `content_sanity.disabled` kill-switch (also drops
+   *  the load-bearing size gates); an operator who needs ONE pattern off
+   *  should not have to give up the rest. Unknown names are ignored rather
+   *  than rejected: the built-in set changes between releases and a config
+   *  naming a retired pattern must not fail an import. */
+  disabled_patterns?: ReadonlyArray<string>;
 }): ContentSanityResult {
   const bytes_warn = opts.bytes_warn ?? DEFAULT_BYTES_WARN;
   const bytes_block = opts.bytes_block ?? DEFAULT_BYTES_BLOCK;
@@ -382,8 +398,10 @@ export function assessContentSanity(opts: {
   const title = String(opts.title ?? '');
   const titleLower = title.toLowerCase();
 
+  const disabledPatterns = new Set(opts.disabled_patterns ?? []);
   const junk_pattern_matches: string[] = [];
   for (const p of BUILT_IN_JUNK_PATTERNS) {
+    if (disabledPatterns.has(p.name)) continue;
     const scope = p.applies_to ?? 'both';
     let matched = false;
     if (scope === 'title' || scope === 'both') {

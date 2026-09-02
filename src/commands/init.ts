@@ -605,7 +605,7 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
 }
 
 /**
- * v0.47.11: the mode-bundle reranker default IS `voyage:rerank-2.5` now
+ * v0.48.2: the mode-bundle reranker default IS `voyage:rerank-2.5` now
  * (`DEFAULT_RERANKER_MODEL`), so a Voyage-keyed install needs NO reranker
  * config row — an explicit `search.reranker.model` equal to the bundle value
  * would only earn doctor's `search_mode` reset nag. Keyed NON-voyage installs
@@ -2044,5 +2044,5 @@ NOTES
 `.trim());
 }
 
-/** Test-only seam (v0.47.11): the reranker-default write is pure enough to unit-test with a stub engine. */
+/** Test-only seam (v0.48.2): the reranker-default write is pure enough to unit-test with a stub engine. */
 export const _exports_for_test = { writeNewInstallRerankerDefault };

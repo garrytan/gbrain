@@ -56,6 +56,7 @@ export type CheckCategory = 'brain' | 'skill' | 'ops' | 'meta';
  */
 export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'abandoned_threads',
+  'atom_provenance_drift',
   'brain_score',
   'calibration_freshness',
   'child_table_orphans',
@@ -219,6 +220,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
  */
 export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   'cycle_phase_scope',
+  'default_source_local_path',
   'eval_capture',
   'minions_migration',
   'multi_source_drift',

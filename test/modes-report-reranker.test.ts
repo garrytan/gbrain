@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — `gbrain search modes` surfaces the reranker knobs + a readiness
+ * v0.48.2 — `gbrain search modes` surfaces the reranker knobs + a readiness
  * line, so "what reranker am I running, and is it actually running?" is
  * answerable from the dashboard (JSON and text).
  */

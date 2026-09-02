@@ -24,7 +24,7 @@ import { writeFactsToFence, lookupSourceLocalPath } from '../src/core/facts/fenc
 import type { FenceInputFact } from '../src/core/facts/fence-write.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { readRecentStubGuardEvents } from '../src/core/facts/stub-guard-audit.ts';
-import { writeSingleFact } from '../src/core/facts/write-single.ts';
+import { writeSingleFact, isNullLikeEntity } from '../src/core/facts/write-single.ts';
 import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -626,6 +626,55 @@ describe('writeFactsToFence — sync.write_through opt-out', () => {
     expect(rows.rows[0].entity_slug).toBe('people/frank-example');
     // No .md backs the row — the fence-tracking column stays null.
     expect(rows.rows[0].source_markdown_slug).toBeNull();
+  });
+});
+
+describe('writeSingleFact — null-like entity tokens (#4755)', () => {
+  // LLM extractors emit the literal STRING "null" (or "None", "N/A", …) for
+  // subjectless statements. Pre-fix that token passed the non-empty check,
+  // failed resolution, fell back to itself as the slug, and the facts landed
+  // unreachable under entity_slug='null' (stub guard fired, no page rendered
+  // them, no entity lookup could reach them).
+  test('entity "null" is treated as absent: entity_slug null, no phantom slug', async () => {
+    resetGateway(); // no embedder → degraded dedup, no network
+    const r = await writeSingleFact(engine, 'default', {
+      fact: 'some statement with no subject',
+      provenance: 'test',
+      entity: 'null',
+    });
+    expect(r.status).toBe('inserted');
+    expect(r.entity_slug).toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (engine as any).db.query(
+      'SELECT entity_slug FROM facts WHERE id = $1',
+      [r.id],
+    );
+    expect(rows.rows[0].entity_slug).toBeNull();
+    // No phantom page/tmp for the token either.
+    expect(existsSync(join(brainDir, 'null.md'))).toBe(false);
+    expect(existsSync(join(brainDir, 'null.md.tmp'))).toBe(false);
+  });
+
+  test('entity "None" (any casing) is treated as absent too', async () => {
+    resetGateway();
+    const r = await writeSingleFact(engine, 'default', {
+      fact: 'another subjectless statement',
+      provenance: 'test',
+      entity: 'None',
+    });
+    expect(r.status).toBe('inserted');
+    expect(r.entity_slug).toBeNull();
+  });
+
+  test('isNullLikeEntity: null-like tokens in any casing; real names pass', () => {
+    for (const t of ['null', 'NULL', 'Null', 'undefined', 'none', 'N/A', 'n/a', 'nil', '-', '', '  ', ' null ']) {
+      expect(isNullLikeEntity(t)).toBe(true);
+    }
+    expect(isNullLikeEntity(null)).toBe(true);
+    expect(isNullLikeEntity(undefined)).toBe(true);
+    for (const t of ['people/alice-example', 'Nullsoft', 'Noneck Labs', 'a-founder']) {
+      expect(isNullLikeEntity(t)).toBe(false);
+    }
   });
 });
 

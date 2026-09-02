@@ -55,6 +55,9 @@ const EXPECTED_EXPORTS: ExpectedExport[] = [
   { subpath: 'gbrain/ingestion', canary: ['INGESTION_SOURCE_API_VERSION', 'validateIngestionEvent', 'computeContentHash'] },
   { subpath: 'gbrain/ingestion/test-harness', canary: ['IngestionTestHarness', 'expectEvent'] },
   { subpath: 'gbrain/core/guardrails', canary: ['registerGuardrailProvider', 'runGuardrails', 'loadGuardrailProvidersFromEnv'] },
+  // 2026-08 fix wave (audit skillopt-cats-11): the surface gbrain-evals
+  // cat30–33 consume, replacing physical node_modules deep imports.
+  { subpath: 'gbrain/core/skillopt', canary: ['runSkillOpt', 'scoreSkillOnTasks', 'loadHeldOut'] },
   { subpath: 'gbrain/pglite-lock', canary: ['peekLock'] },
 ];
 
@@ -71,7 +74,8 @@ describe('public exports — package.json exports map', () => {
     // Adding new exports: increment this + add to EXPECTED_EXPORTS below.
     // Removing exports: see CLAUDE.md "Removing any of these is a
     // breaking change going forward" — bump minor and update this count.
-    expect(count).toBe(23);
+    // 23→24 (2026-08 fix wave): ./core/skillopt (audit skillopt-cats-11).
+    expect(count).toBe(24);
   });
 
   test('EXPECTED_EXPORTS list matches the exports map exactly (no drift)', () => {

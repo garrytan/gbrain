@@ -29,7 +29,7 @@ import { getFtsLanguage } from '../fts-language.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
 // #3657 seam: the runtime/mode-bundle reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
-// resolve through DEFAULT_RERANKER_MODEL (voyage:rerank-2.5 since v0.47.11).
+// resolve through DEFAULT_RERANKER_MODEL (voyage:rerank-2.5 since v0.48.2).
 import { DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
 
 /**
@@ -102,11 +102,14 @@ export interface ModeBundle {
   expansion: boolean;
   /**
    * Default `limit` for the operation layer (`src/core/operations.ts:1087`).
-   * Note: production `query` op TODAY defaults to 20. Mode bundle becomes
-   * the default ONLY when the caller omits the field — same chain semantics
-   * as model-tier resolution. See `[CDX-1+2+3]` in the plan: the original
-   * "tokenmax preserves Garry's setup" framing is wrong; tokenmax is an
-   * EXPANSION from the implicit current default (limit 20).
+   * Mode bundle becomes the default ONLY when the caller omits the field —
+   * same chain semantics as model-tier resolution. See `[CDX-1+2+3]` in the
+   * plan: the original "tokenmax preserves Garry's setup" framing is wrong;
+   * tokenmax is an EXPANSION from the implicit historical default (limit 20).
+   * (That flat-20 default no longer exists anywhere in `query`: #4360 fixed
+   * the text/hybrid path's cache-hit slice, #4356 Problem 2 fixed the
+   * image-similarity branch. `search_by_image`, a separate op with no mode
+   * param, still hard-defaults to 20 — a different public contract.)
    */
   searchLimit: number;
   /**
@@ -121,7 +124,7 @@ export interface ModeBundle {
   /**
    * Provider:model for the reranker. Bundle default is
    * `DEFAULT_RERANKER_MODEL` (ai/defaults.ts — `voyage:rerank-2.5` since
-   * v0.47.11, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
+   * v0.48.2, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
    * 2026-09-04 hosted shutdown). Rides VOYAGE_API_KEY; a brain without the
    * key fails open per search (`RerankError('no_key')`, one audit row per
    * process, no stderr — `gbrain search modes` / `gbrain doctor` say so).
@@ -295,7 +298,7 @@ export interface ModeBundle {
    * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
    * this, autocut no-ops (gap normalization by a weak top manufactures
    * spurious cliffs). Scale-dependent on the reranker — tuned on zerank-2's
-   * score scale; the v0.47.11 voyage default is measured against it by the
+   * score scale; the v0.48.2 voyage default is measured against it by the
    * pre-registered rerank A/B (rule R2) and re-tuned there if it moves.
    * Config: `search.autocut_min_top`.
    */
@@ -951,7 +954,17 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // within cache.ttl_seconds (3600s default). (Authored as 23→24 on the
 // wave-g branch; 24 and 25 were claimed by the two bumps above while it
 // was in flight, so it takes the next free number per the D8 convention.)
-export const KNOBS_HASH_VERSION = 26;
+//
+// v=27 (master, 0.48.0.0): adaptive-return gate + intent fold (see the ar=/ari=
+// key parts below). bump 27→28 (#4256, fixes #3695's fusion path): compiledTruthBoost now
+// suppresses the 2x compiled-truth authority boost for synthetic chunkless
+// title rows (chunk_id 0 + empty chunk_text) in both rrfFusion variants —
+// result ordering changes for identical knobs, so cached rows ranked under
+// the old boost must not be served under the new semantics. No new key
+// part; version-only invalidation (same class as the 13→14 detail=medium
+// boost-scope bump and the 21→22 stamp/injection epoch). One-time global
+// cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
+export const KNOBS_HASH_VERSION = 28;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -990,6 +1003,20 @@ export interface KnobsHashContext {
    * 'none' for legacy callers that don't thread excludes.
    */
   hardExcludes?: string[];
+  /**
+   * v=27 (2026-08 fix wave, E5b): the RESOLVED adaptive-return gate for this
+   * call — params + the query's resolved intent class (classifier-
+   * deterministic, computed pre-lookup by hybridSearchCached). Enabled folds
+   * all five parts; disabled/absent hashes like legacy rows. See the ar=/ari=
+   * comment in knobsHash for the cross-intent contamination rationale.
+   */
+  adaptiveReturn?: {
+    enabled: boolean;
+    entityMax: number;
+    otherMax: number;
+    minKeep: number;
+    intent: string;
+  };
   /**
    * v=16 (#3515): the EFFECTIVE detail level for this call — per-call
    * SearchOpts.detail, or the auto-detected level when the caller didn't
@@ -1175,6 +1202,27 @@ export function knobsHash(
     `sal=${ctx?.salience ?? 'off'}`,
     `rec=${ctx?.recency ?? 'off'}`,
     `ipat=${ctx?.intentPatterns ?? 'none'}`,
+    // v=27 ALSO covers a same-knobs behavioral change shipped in the same
+    // release (#3617 follow-up): OR-relaxed keyword/title rows no longer
+    // vote in RRF when the vector arm is non-empty, so a pre-fix cache row
+    // (relaxed junk fused in) must not serve post-fix lookups — the version
+    // bump invalidates them wholesale (one-bump-per-wave rule).
+    // v=27 additions (2026-08 fix wave, E5b + outside-voice F11, append-only):
+    // adaptive-return gate params + the query's resolved intent class. An
+    // adaptive-on write (intent-capped result set) must never serve an
+    // adaptive-off lookup or a different cap config — and because the
+    // semantic cache admits SIMILAR queries, an entity-intent row (cap 2)
+    // must never serve a concept-intent lookup (cap 6) either; folding the
+    // resolved intent class closes that channel (same-query lookups are
+    // classifier-deterministic; near-duplicate queries with a different
+    // class simply miss). Residual, documented: a future classifier change
+    // reclassifies queries and silently re-keys — acceptable, cache-only.
+    // Gate-off calls hash identically to legacy rows ('0'/'none' fallbacks).
+    `ar=${ctx?.adaptiveReturn?.enabled ? 1 : 0}`,
+    `arem=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.entityMax : 'none'}`,
+    `arom=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.otherMax : 'none'}`,
+    `armk=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.minKeep : 'none'}`,
+    `ari=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.intent : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));

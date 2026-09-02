@@ -23,12 +23,118 @@ import type {
 } from '../src/core/creds/vault.ts';
 import {
   CalendarClient,
+  extractCalendarMethod,
   GmailClient,
   GoogleApiClient,
   GoogleCursorExpiredError,
   PeopleClient,
   type FetchImpl,
 } from '../src/core/google/google-clients.ts';
+
+// ── extractCalendarMethod (pure) ─────────────────────────────────────────────
+
+describe('extractCalendarMethod', () => {
+  // Gmail's MessagePart.mimeType is the BARE media type ('text/calendar');
+  // the Content-Type parameters (method=, charset=) live on the part's own
+  // headers[] (format=full). Fixtures mirror that real shape — two reviewers
+  // confirmed the parameterized-mimeType fixture never occurs in production,
+  // so a mimeType-only parser read '' for every real invite.
+  const calendarPart = (contentType: string, mimeType = 'text/calendar') => ({
+    partId: '1',
+    mimeType,
+    filename: 'invite.ics',
+    headers: [
+      { name: 'Content-Type', value: contentType },
+      { name: 'Content-Transfer-Encoding', value: 'base64' },
+    ],
+    body: { size: 12, data: 'QkVHSU46VkNBTEVOREFS' },
+  });
+
+  test('real API shape: bare text/calendar mimeType + Content-Type header carrying method=REQUEST → REQUEST', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'text/plain', body: { data: 'aGk=' } },
+          calendarPart('text/calendar; charset="UTF-8"; method=REQUEST'),
+        ],
+      }),
+    ).toBe('REQUEST');
+  });
+
+  test('quoted / lowercase methods normalize to the bare uppercase METHOD', () => {
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; method="reply"; charset=utf-8')] }),
+    ).toBe('REPLY');
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; METHOD=cancel')] }),
+    ).toBe('CANCEL');
+  });
+
+  test('a text/calendar part with no method= anywhere → "" (seen, but no METHOD)', () => {
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [calendarPart('text/calendar; charset="UTF-8"')] }),
+    ).toBe('');
+    // No headers at all on the part either.
+    expect(
+      extractCalendarMethod({ mimeType: 'multipart/mixed', parts: [{ mimeType: 'text/calendar', filename: 'invite.ics' }] }),
+    ).toBe('');
+  });
+
+  test('fallback: a mimeType that still carries the Content-Type params parses too', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [{ mimeType: 'text/calendar; charset="UTF-8"; method=REQUEST' }],
+      }),
+    ).toBe('REQUEST');
+    // The header wins over the mimeType when both carry a method.
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [calendarPart('text/calendar; method=REPLY', 'text/calendar; method=REQUEST')],
+      }),
+    ).toBe('REPLY');
+  });
+
+  test('bare .ics FILENAME with a non-calendar MIME type claims NOTHING (human attachment)', () => {
+    // Pre-fix this returned '' and isCalendarSystemMail treated '' as system
+    // mail, so a human email attaching an invite file could neither open nor
+    // close loops.
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'text/plain', body: { data: 'aGk=' } },
+          { mimeType: 'application/octet-stream', filename: 'team-sync.ics' },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  test('a real text/calendar part elsewhere in the tree still wins over an .ics filename', () => {
+    expect(
+      extractCalendarMethod({
+        mimeType: 'multipart/mixed',
+        parts: [
+          { mimeType: 'application/octet-stream', filename: 'invite.ics' },
+          {
+            mimeType: 'multipart/alternative',
+            parts: [
+              { mimeType: 'text/html', body: { data: 'PHA+aGk8L3A+' } },
+              calendarPart('text/calendar; charset="UTF-8"; method=CANCEL'),
+            ],
+          },
+        ],
+      }),
+    ).toBe('CANCEL');
+  });
+
+  test('no calendar part at all → null', () => {
+    expect(extractCalendarMethod({ mimeType: 'text/plain' })).toBeNull();
+    expect(extractCalendarMethod(undefined)).toBeNull();
+  });
+});
 
 // ── In-memory vault (no filesystem, no token-refresh HTTP unless scripted) ──
 
@@ -447,6 +553,66 @@ describe('GmailClient', () => {
     expect(third.labelIds).toEqual(['SENT']);
   });
 
+  test('getThread stamps calendarMethod from a real-shape text/calendar part; plain messages get null', async () => {
+    const rawThread = {
+      id: '17aa7777eeee8888',
+      messages: [
+        {
+          id: '18c2f4a9b3d21e10',
+          threadId: '17aa7777eeee8888',
+          labelIds: [],
+          internalDate: String(Date.parse('2026-08-10T09:00:00Z')),
+          payload: {
+            mimeType: 'multipart/mixed',
+            headers: [
+              { name: 'From', value: 'Charlie Example <charlie@example.com>' },
+              { name: 'To', value: 'a@example.com' },
+              { name: 'Subject', value: 'Invitation: Team sync @ Fri Aug 21, 2026 1pm' },
+            ],
+            parts: [
+              {
+                mimeType: 'multipart/alternative',
+                parts: [
+                  { mimeType: 'text/plain', body: { data: b64url('You have been invited.') } },
+                  {
+                    // Real Gmail shape: bare media type, params on the part headers.
+                    partId: '0.1',
+                    mimeType: 'text/calendar',
+                    filename: 'invite.ics',
+                    headers: [{ name: 'Content-Type', value: 'text/calendar; charset="UTF-8"; method=REQUEST' }],
+                    body: { data: b64url('BEGIN:VCALENDAR') },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          id: '18c2f4a9b3d21e11',
+          threadId: '17aa7777eeee8888',
+          labelIds: [],
+          internalDate: String(Date.parse('2026-08-10T10:00:00Z')),
+          payload: {
+            mimeType: 'text/plain',
+            headers: [
+              { name: 'From', value: 'Dana Example <dana@example.com>' },
+              { name: 'To', value: 'a@example.com' },
+              { name: 'Subject', value: 'Re: Team sync' },
+            ],
+            body: { data: b64url('Can we move it to 2pm?') },
+          },
+        },
+      ],
+    };
+    const h = makeHarness(() => json(rawThread));
+    const gmail = new GmailClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const thread = await gmail.getThread('17aa7777eeee8888', 'a@example.com');
+    const [invite, plain] = thread.messages;
+    expect(invite.calendarMethod).toBe('REQUEST');
+    expect(invite.bodyText).toBe('You have been invited.');
+    expect(plain.calendarMethod).toBeNull();
+  });
+
   test('getThread caps bodies at 8KB with a [truncated] marker', async () => {
     const rawThread = {
       id: '17aa5555dddd6666',
@@ -552,6 +718,66 @@ describe('CalendarClient', () => {
     }
     expect(thrown).toBeInstanceOf(GoogleCursorExpiredError);
     expect((thrown as GoogleCursorExpiredError).status).toBe(410);
+  });
+
+  test('defaults to the primary calendar when no calendarId is given', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', { timeMinIso: '2026-05-01T00:00:00.000Z' });
+    expect(h.calls[0].url).toContain('/calendars/primary/events');
+  });
+
+  test('a secondary calendar id is URL-encoded into the path, not the query', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', {
+      calendarId: 'family0123456789@group.calendar.google.com',
+      timeMinIso: '2026-05-01T00:00:00.000Z',
+    });
+    // '@' must be percent-encoded so the id cannot be read as URL userinfo.
+    expect(h.calls[0].url).toContain(
+      '/calendars/family0123456789%40group.calendar.google.com/events',
+    );
+    expect(h.calls[0].url).not.toContain('/calendars/primary/');
+    // calendarId must not disturb the window params.
+    expect(new URL(h.calls[0].url).searchParams.get('timeMin')).toBe('2026-05-01T00:00:00.000Z');
+  });
+
+  test('an empty/whitespace calendarId falls back to primary', async () => {
+    const h = makeHarness(() => json({ items: [], nextSyncToken: 'cal-1' }));
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    await cal.listEvents('a@example.com', { calendarId: '   ', syncToken: 'cal-1' });
+    expect(h.calls[0].url).toContain('/calendars/primary/events');
+  });
+
+  test('listCalendars normalizes calendarList and flags the primary', async () => {
+    const h = makeHarness((u) => {
+      expect(u.pathname).toContain('/users/me/calendarList');
+      return json({
+        items: [
+          { id: 'a@example.com', summary: 'A Example', primary: true, accessRole: 'owner' },
+          {
+            id: 'family0123456789@group.calendar.google.com',
+            summary: 'Family',
+            accessRole: 'owner',
+          },
+          { summary: 'dropped — no id', accessRole: 'reader' },
+          { id: 'sub@import.calendar.google.com', accessRole: 'reader' },
+        ],
+      });
+    });
+    const cal = new CalendarClient(h.tokens, h.fetchImpl, () => {}, CLIENT_ID);
+    const cals = await cal.listCalendars();
+    // The id-less row is dropped — it cannot be passed to --calendar-id.
+    expect(cals.length).toBe(3);
+    expect(cals[0]).toEqual({
+      id: 'a@example.com',
+      summary: 'A Example',
+      primary: true,
+      accessRole: 'owner',
+    });
+    expect(cals[1].primary).toBe(false);
+    expect(cals[2].summary).toBe('(no name)');
   });
 });
 

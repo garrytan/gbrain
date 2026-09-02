@@ -45,7 +45,33 @@ beforeEach(async () => {
   brainDir = path.join(tmpRoot, 'brain');
   fs.mkdirSync(brainDir, { recursive: true });
   await engine.setConfig('sync.repo_path', brainDir);
+  // #4655: pin the active pack via the DB plane (tier-4) so the write-time
+  // vocabulary check resolves gbrain-base regardless of the host's file config.
+  await engine.setConfig('schema_pack', 'gbrain-base');
 });
+
+/** #4655: run capture expecting a process.exit(1), capturing stderr. */
+async function runCaptureExpectingExit(args: string[]): Promise<{ exitCode: number | undefined; stderr: string }> {
+  const errCaptured: string[] = [];
+  const origErr = console.error;
+  const origExit = process.exit;
+  let exitCode: number | undefined;
+  console.error = (...a: unknown[]) => errCaptured.push(a.map(String).join(' '));
+  (process.exit as unknown as (code?: number) => never) = ((code?: number) => {
+    exitCode = code ?? 0;
+    throw new Error('__EXIT__');
+  }) as never;
+  try {
+    await runCapture(engine, args);
+    throw new Error('expected capture to exit');
+  } catch (e) {
+    if (!(e instanceof Error) || e.message !== '__EXIT__') throw e;
+  } finally {
+    console.error = origErr;
+    process.exit = origExit;
+  }
+  return { exitCode, stderr: errCaptured.join('\n') };
+}
 
 describe('capture — defaultSlug helper', () => {
   test('builds inbox/YYYY-MM-DD-<hash8> shape', () => {
@@ -213,6 +239,47 @@ describe('capture — local install integration', () => {
     const page = await engine.getPage('inbox/from-file');
     expect(page).not.toBeNull();
     expect(page?.compiled_truth).toContain('body content here');
+  });
+
+  // #4655: EXPLICIT undeclared page types fail loud on the CLI surface too.
+  test('--type with an undeclared page type exits 1 before writing', async () => {
+    const { exitCode, stderr } = await runCaptureExpectingExit(
+      ['--slug', 'inbox/bad-explicit-type', '--type', 'definitely_not_a_type', '--quiet', 'body'],
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(stderr).toContain('gbrain-base');
+    // The rejection names the declared vocabulary so agents can self-correct.
+    expect(stderr).toContain('Use a declared page type');
+    expect(stderr).toContain('analysis');
+    expect(await engine.getPage('inbox/bad-explicit-type')).toBeNull();
+  });
+
+  test('--file rejects an undeclared frontmatter type before writing', async () => {
+    const file = path.join(tmpRoot, 'bad-type.md');
+    fs.writeFileSync(file, '---\ntype: definitely_not_a_type\n---\n\nbody content here');
+    const { exitCode, stderr } = await runCaptureExpectingExit(
+      ['--file', file, '--slug', 'inbox/bad-frontmatter-type', '--quiet'],
+    );
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("page type 'definitely_not_a_type' is not declared");
+    expect(await engine.getPage('inbox/bad-frontmatter-type')).toBeNull();
+    expect(fs.existsSync(path.join(brainDir, 'inbox/bad-frontmatter-type.md'))).toBe(false);
+  });
+
+  test('a declared --type still captures under an active pack', async () => {
+    const logCaptured: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => logCaptured.push(args.map(String).join(' '));
+    try {
+      await runCapture(engine, ['--slug', 'inbox/declared-type', '--type', 'meeting', '--quiet', 'a meeting note']);
+    } finally {
+      console.log = origLog;
+    }
+    const page = await engine.getPage('inbox/declared-type');
+    expect(page).not.toBeNull();
+    // put_page lifts the stamped frontmatter `type` into the type column.
+    expect(page?.type).toBe('meeting');
   });
 
   test('--json emits structured output', async () => {

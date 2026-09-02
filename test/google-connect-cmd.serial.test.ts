@@ -1,24 +1,28 @@
 /**
  * gbrain google connect (src/commands/google.ts:runGoogleConnect) —
  * command-layer orchestration of the BYO two-step paste flow, the relay
- * gates, and the connect funnel heartbeats.
+ * gates, and the connect funnel heartbeats — plus gbrain google calendars
+ * (runGoogleCalendars): account resolution, the --json envelope, and the
+ * human listing.
  *
- * Serial file: swaps globalThis.fetch in beforeEach/afterEach (runGoogleConnect
- * captures the global at call time), pins process.stdin.isTTY to non-TTY so
+ * Serial file: swaps globalThis.fetch in beforeEach/afterEach (both commands
+ * capture the global at call time), pins process.stdin.isTTY to non-TTY so
  * the paste flow deterministically takes the two-invocation agent path, and
- * stubs process.exit (handleCredError hard-exits on credential errors).
+ * stubs process.exit (handleCredError hard-exits on credential errors; the
+ * calendars account-resolution branches exit 2).
  *
  * Every test runs under a fresh GBRAIN_HOME (via withEnv), so the vault,
  * the pending-connect file, and heartbeat.jsonl are all fixture-local and the
  * developer's real ~/.gbrain is never touched. Synthetic data only.
  */
 
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach, spyOn } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runGoogleConnect } from '../src/commands/google.ts';
+import { runGoogleCalendars, runGoogleConnect } from '../src/commands/google.ts';
+import { CredentialError } from '../src/core/creds/errors.ts';
 import type { CredentialEntry, ProviderClientRecord, VaultFileShape } from '../src/core/creds/vault.ts';
 import {
   currentExitCode,
@@ -30,7 +34,7 @@ const CLIENT_ID = '123456-abcdef.apps.googleusercontent.com';
 const CLIENT_SECRET = 'GOCSPX-test-secret-0000';
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
-// ── Mock global fetch (token + userinfo + sendAs endpoints) ─────────────────
+// ── Mock global fetch (token + userinfo + sendAs + calendarList endpoints) ───
 
 interface FetchCall {
   url: string;
@@ -41,6 +45,8 @@ let fetchCalls: FetchCall[] = [];
 let userinfoEmail = 'a@example.com';
 /** When set, the fake token endpoint reports this space-delimited GRANTED scope set. */
 let tokenScope: string | undefined;
+/** Rows the fake Calendar API's calendarList returns (runGoogleCalendars). */
+let calendarListItems: Array<Record<string, unknown>> = [];
 
 const realFetch = globalThis.fetch;
 const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
@@ -70,6 +76,9 @@ const mockFetch = (async (input: string | URL | Request, init?: RequestInit): Pr
   if (u.hostname === 'gmail.googleapis.com' && u.pathname.includes('/settings/sendAs')) {
     return json({ sendAs: [{ sendAsEmail: 'a@example.com' }, { sendAsEmail: 'alias@example.com' }] });
   }
+  if (u.hostname === 'www.googleapis.com' && u.pathname === '/calendar/v3/users/me/calendarList') {
+    return json({ items: calendarListItems });
+  }
   throw new Error(`unexpected fetch in test: ${url}`);
 }) as typeof fetch;
 
@@ -77,6 +86,7 @@ beforeEach(() => {
   fetchCalls = [];
   userinfoEmail = 'a@example.com';
   tokenScope = undefined;
+  calendarListItems = [];
   globalThis.fetch = mockFetch;
   // Deterministic non-TTY: the paste flow must take the two-invocation agent
   // path even when a developer runs bun test from a live terminal.
@@ -481,6 +491,177 @@ describe('runGoogleConnect — relay gates', () => {
       expect(env.error.code).toBe('relay_disabled');
       expect(r.exitCalled).toBe(1);
       expect(fetchCalls).toHaveLength(0);
+    });
+  });
+});
+
+// ── runGoogleCalendars ───────────────────────────────────────────────────────
+
+const FAMILY_CAL_ID = 'family0123456789@group.calendar.google.com';
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+
+/**
+ * A connected account whose cached access token is still fresh (well past the
+ * provider's 5-minute refresh margin), so the Calendar client never touches
+ * the token endpoint: fetchCalls holds exactly the calendarList request.
+ */
+function googleEntry(email: string): CredentialEntry {
+  return {
+    id: `google:${email}`,
+    provider: 'google',
+    kind: 'oauth2',
+    client_ref: 'byo',
+    secret: {
+      access_token: 'ya29.cached-access',
+      refresh_token: '1//cached-refresh',
+      expiry: new Date(Date.now() + 3_600_000).toISOString(),
+    },
+    meta: {
+      account: email,
+      scopes: ['openid', 'email', CALENDAR_SCOPE],
+      client_id: CLIENT_ID,
+      connected_at: new Date().toISOString(),
+    },
+  };
+}
+
+function connectedVault(home: string, ...emails: string[]): void {
+  const credentials: Record<string, CredentialEntry> = {};
+  for (const email of emails) credentials[`google:${email}`] = googleEntry(email);
+  writeVault(home, [googleClient()], credentials);
+}
+
+interface CalendarsEnvelope {
+  ok: boolean;
+  status: string;
+  account: string;
+  calendars: Array<{ id: string; summary: string; primary: boolean; accessRole: string }>;
+  next_action?: { command?: string; user_message?: string };
+}
+
+/**
+ * Bun's console.error does NOT route through the process.stderr.write stub
+ * that `captured` installs, so the account-resolution branches (which report
+ * via console.error before exit 2) are observed through a spy instead.
+ */
+async function withConsoleErrorSpy(fn: () => Promise<void>): Promise<string> {
+  const spy = spyOn(console, 'error').mockImplementation(() => {});
+  let lines: string[] = [];
+  try {
+    await fn();
+  } finally {
+    lines = spy.mock.calls.map((call) => call.map(String).join(' '));
+    spy.mockRestore();
+  }
+  return lines.join('\n');
+}
+
+describe('runGoogleCalendars', () => {
+  beforeEach(() => {
+    calendarListItems = [
+      { id: 'a@example.com', summary: 'A Example', primary: true, accessRole: 'owner' },
+      { id: FAMILY_CAL_ID, summary: 'Family', accessRole: 'reader' },
+    ];
+  });
+
+  test('no connected Google account → exit 2 pointing at `gbrain google connect`, no API call', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      writeVault(home, [googleClient()]); // client on file, zero accounts
+      let r: Captured | undefined;
+      const errs = await withConsoleErrorSpy(async () => {
+        r = await captured(() => runGoogleCalendars(['--json']));
+      });
+      expect(r?.exitCalled).toBe(2);
+      expect(errs).toContain('No connected Google account');
+      expect(errs).toContain('gbrain google connect');
+      expect(r?.out).toBe('');
+      expect(fetchCalls).toHaveLength(0);
+    });
+  });
+
+  test('two connected accounts and no --account → exit 2 naming both', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      connectedVault(home, 'a@example.com', 'b@example.com');
+      let r: Captured | undefined;
+      const errs = await withConsoleErrorSpy(async () => {
+        r = await captured(() => runGoogleCalendars([]));
+      });
+      expect(r?.exitCalled).toBe(2);
+      expect(errs).toContain('Multiple Google accounts connected');
+      expect(errs).toContain('--account <email>');
+      expect(errs).toContain('a@example.com');
+      expect(errs).toContain('b@example.com');
+      expect(fetchCalls).toHaveLength(0);
+    });
+  });
+
+  test('--account not in the vault → CredentialError not_connected naming the normalized account, no API call', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      connectedVault(home, 'a@example.com');
+      let thrown: unknown;
+      try {
+        await captured(() => runGoogleCalendars(['--account', 'Nobody@Example.com']));
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(CredentialError);
+      const err = thrown as CredentialError;
+      expect(err.code).toBe('not_connected');
+      expect(err.problem).toContain('nobody@example.com');
+      expect(err.problem).toContain('gbrain google connect --account nobody@example.com');
+      expect(fetchCalls).toHaveLength(0);
+    });
+  });
+
+  test('--json emits the standard envelope: ok + status + account + calendars[] with the primary flagged', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      connectedVault(home, 'a@example.com');
+      const r = await captured(() => runGoogleCalendars(['--json']));
+      expect(r.exitCalled).toBeUndefined();
+      expect(r.verdict).toBe(0);
+      const env = JSON.parse(r.out) as CalendarsEnvelope;
+      // The shared Google command contract (docs/guides/google-connect.md,
+      // "For agents"): every --json response carries ok + status.
+      expect(env.ok).toBe(true);
+      expect(env.status).toBe('ok');
+      expect(env.account).toBe('a@example.com');
+      expect(env.calendars).toEqual([
+        { id: 'a@example.com', summary: 'A Example', primary: true, accessRole: 'owner' },
+        { id: FAMILY_CAL_ID, summary: 'Family', primary: false, accessRole: 'reader' },
+      ]);
+      expect(env.calendars.filter((c) => c.primary)).toHaveLength(1);
+      // The follow-on command rides in next_action so an agent needs no
+      // human-text parsing to learn how to ingest a secondary calendar.
+      expect(env.next_action?.command).toContain('gbrain sources add');
+      expect(env.next_action?.command).toContain('--account a@example.com');
+      expect(env.next_action?.command).toContain('--calendar-id');
+      // One calendarList round-trip; the cached token means no refresh call.
+      expect(fetchCalls).toHaveLength(1);
+      expect(fetchCalls[0].url).toContain('/calendar/v3/users/me/calendarList');
+    });
+  });
+
+  test('human output marks the primary with * and prints the sources add --calendar-id hint', async () => {
+    const home = freshHome();
+    await withEnv(connectEnv(home), async () => {
+      connectedVault(home, 'a@example.com');
+      const r = await captured(() => runGoogleCalendars(['--account', 'a@example.com']));
+      expect(r.exitCalled).toBeUndefined();
+      expect(r.verdict).toBe(0);
+      expect(r.out).toContain('Calendars readable by a@example.com');
+      expect(r.out).toContain('* A Example');
+      expect(r.out).not.toContain('* Family');
+      expect(r.out).toContain(`id: ${FAMILY_CAL_ID}`);
+      expect(r.out).toContain('access: reader');
+      expect(r.out).toContain('(* = primary');
+      expect(r.out).toContain(
+        'gbrain sources add <id> --kind google --account a@example.com --services calendar --calendar-id "<id>"',
+      );
+      expect(() => JSON.parse(r.out)).toThrow(); // human mode is not JSON
     });
   });
 });

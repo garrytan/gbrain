@@ -118,7 +118,7 @@ enforcement in hybrid search.
 ### Default-on with `balanced` and `tokenmax` modes
 
 The `balanced` and `tokenmax` mode bundles default
-`search.reranker.enabled = true`. Since v0.47.11 the bundle default MODEL is
+`search.reranker.enabled = true`. Since v0.48.2 the bundle default MODEL is
 `voyage:rerank-2.5`; a ZeroEntropy reranker runs only when
 `search.reranker.model` is explicitly set to `zeroentropyai:zerank-*` (with
 `ZEROENTROPY_API_KEY`), and on/after 2026-09-04 the gateway skips that dead
@@ -131,7 +131,7 @@ no stderr) and search returns RRF order, with the skip visible in
 ### Enabling reranking today
 
 `gbrain config set search.reranker.enabled true` is enough on a brain that
-never set `search.reranker.model`: since v0.47.11 the bundle default resolves
+never set `search.reranker.model`: since v0.48.2 the bundle default resolves
 to `voyage:rerank-2.5` (needs `VOYAGE_API_KEY`; without it search fails open
 in RRF order and `gbrain search modes` says so). Set `search.reranker.model`
 first only when you want a different reranker — an explicit
@@ -155,7 +155,7 @@ Two probes run for reranker:
 | Config key | Default | Notes |
 |---|---|---|
 | `search.reranker.enabled` | `true` for balanced/tokenmax, `false` for conservative | One-flip opt-in/out |
-| `search.reranker.model` | `voyage:rerank-2.5` (bundle default since v0.47.11) | Set `zeroentropyai:zerank-2` explicitly only for a self-hosted wire-compatible endpoint; the hosted API ends 2026-09-04 |
+| `search.reranker.model` | `voyage:rerank-2.5` (bundle default since v0.48.2) | Set `zeroentropyai:zerank-2` explicitly only for a self-hosted wire-compatible endpoint; the hosted API ends 2026-09-04 |
 | `search.reranker.top_n_in` | per mode: `30` conservative / `25` balanced / `50` tokenmax (tracks each bundle's `searchLimit`) | Candidates sent to reranker (caps API spend) |
 | `search.reranker.top_n_out` | `null` (no truncate) | Truncate reranked output to this many; `null` preserves full length |
 | `search.reranker.timeout_ms` | `5000` | HTTP timeout; long stalls degrade UX worse than RRF fallback |

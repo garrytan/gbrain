@@ -30,12 +30,26 @@ describe('embeddingDimsForModel — per-model dims (#2051)', () => {
     expect(embeddingDimsForModel(ollama, 'ollama:bge-m3')).toBe(1024);
   });
 
+  // #3904/#4650 — `qwen3-embedding:8b` (landed in v0.46.35.0) is the first
+  // model_dims key in any recipe carrying its own embedded colon.
+  // embeddingDimsForModel() now tries the id exactly as given before
+  // assuming a leading `provider:` separator, so both the qualified form
+  // (`ollama:qwen3-embedding:8b`) and the bare form (`qwen3-embedding:8b`,
+  // which itself contains a colon) resolve to the model's true 4096 dims
+  // instead of the earlier naive first-colon strip truncating the bare form
+  // down to `8b` and silently falling back to default_dims (768).
+  test('qualified id with an embedded colon in the model tag resolves correctly', () => {
+    expect(embeddingDimsForModel(ollama, 'ollama:qwen3-embedding:8b')).toBe(4096);
+  });
+
   test.each([
     ['nomic-embed-text', 768],
     ['mxbai-embed-large', 1024],
     ['all-minilm', 384],
-    ['qwen3-embed-8b', 4096],
-    ['snowflake-arctic-embed-l-v2', 1024],
+    ['qwen3-embed-8b', 4096], // legacy spelling — never a pullable ollama tag; kept for back-compat
+    ['snowflake-arctic-embed-l-v2', 1024], // legacy spelling — never a pullable ollama tag; kept for back-compat
+    ['snowflake-arctic-embed2', 1024], // real pullable tag, landed v0.46.35.0
+    ['qwen3-embedding:8b', 4096], // real pullable tag, bare form with its own embedded colon, landed v0.46.35.0
   ])('%s resolves to %i', (model, dims) => {
     expect(embeddingDimsForModel(ollama, model as string)).toBe(dims as number);
   });
@@ -73,6 +87,24 @@ describe('case-folded model_dims lookup (#4123 init-time twin)', () => {
   test('cased configured id resolves against the lowercase table instead of falling to default_dims', () => {
     expect(embeddingDimsForModel(ollama, 'ollama:Qwen3-Embed-8B')).toBe(4096);
     expect(embeddingDimsForModel(ollama, 'Qwen3-Embed-8B')).toBe(4096);
+  });
+
+  // #4646 / #3904 — the colon-bearing pullable tag, CASED. The exact-match
+  // pass misses, the case-fold must find the whole `qwen3-embedding:8b` key
+  // (never the first-colon-stripped `8b` remainder).
+  test.each([
+    ['ollama:Qwen3-Embedding:8B', 4096],
+    ['QWEN3-EMBEDDING:8B', 4096],
+    ['Ollama:QWEN3-Embedding:8b', 4096],
+  ])('cased colon-tag id %s resolves to %i', (model, dims) => {
+    expect(embeddingDimsForModel(ollama, model)).toBe(dims);
+  });
+
+  test('an unknown colon-bearing tag falls back to default dims, not to a truncated partial match', () => {
+    // `unknown-embed:7b` → exact miss, then the provider-strip yields `7b`
+    // — which must ALSO miss (no key is `7b`), landing on default_dims.
+    expect(embeddingDimsForModel(ollama, 'unknown-embed:7b')).toBe(768);
+    expect(embeddingDimsForModel(ollama, 'ollama:unknown-embed:7b')).toBe(768);
   });
 
   test('cased table keys resolve too (user-editable recipes carry cased keys — both sides fold)', () => {

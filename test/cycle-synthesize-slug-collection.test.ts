@@ -19,7 +19,8 @@
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { __testing } from '../src/core/cycle/synthesize.ts';
+import { __testing, renderPageToMarkdown } from '../src/core/cycle/synthesize.ts';
+import { utcDate } from '../src/core/cycle/cycle-date.ts';
 
 const { collectChildPutPageSlugs, stampDreamProvenance } = __testing;
 
@@ -183,6 +184,7 @@ describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', 
     // double-encoded string scalar.
     expect(fm.dream_generated).toBe(true);
     expect(fm.dream_cycle_date).toBe('2026-07-17');
+    expect(fm.dream_created_cycle_date).toBe('2026-07-17');
     // Merge, not replace: pre-existing frontmatter keys survive.
     expect(fm.keep_me).toBe('yes');
   });
@@ -191,6 +193,107 @@ describe('#2569: stampDreamProvenance persists the marker into DB frontmatter', 
     const refs = [{ slug: 'wiki/originals/ideas/does-not-exist', source_id: 'default' }];
     await stampDreamProvenance(engine as any, refs, '2026-07-17'); // no throw
     await stampDreamProvenance(engine as any, refs, '2026-07-17'); // idempotent
+  });
+
+  test('a rerun preserves the first dream cycle date in DB and reverse-rendered markdown (#4337)', async () => {
+    const slug = 'wiki/originals/ideas/2026-08-18-stable-cycle-date-abc123';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Stable dream provenance',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {
+        dream_generated: true,
+        dream_cycle_date: '2026-08-18',
+      },
+    });
+
+    await stampDreamProvenance(
+      engine as any,
+      [{ slug, source_id: 'default' }],
+      '2026-08-19',
+    );
+
+    const page = await engine.getPage(slug);
+    expect(page).not.toBeNull();
+    expect(page!.frontmatter.dream_cycle_date).toBe('2026-08-18');
+    expect(page!.frontmatter.dream_created_cycle_date).toBe('2026-08-18');
+    const markdown = renderPageToMarkdown(page!, []);
+    expect(markdown).toMatch(/dream_cycle_date:\s*['"]?2026-08-18/);
+    expect(markdown).toMatch(/dream_created_cycle_date:\s*['"]?2026-08-18/);
+    expect(markdown).not.toContain('dream_cycle_date: 2026-08-19');
+  });
+
+  // #4337/#2569 ship-review gap: the two ends of the cycle-date policy that
+  // the rerun test above does not reach — a page carrying NEITHER key (the
+  // legacy first-render fallback) and an EMPTY-STRING key (the SQL NULLIF
+  // arm, which must read as unstamped rather than latch '').
+  test('a page with neither cycle-date key renders with the run date, then latches on the first stamp (#4337)', async () => {
+    const slug = 'wiki/originals/ideas/unstamped-latch-abc123';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Unstamped page',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: {},
+    });
+
+    // Legacy first render of an unstamped page: falls back to utcDate() for
+    // BOTH keys (captured on either side of the call so a UTC midnight
+    // rollover mid-test cannot flake the pin).
+    const before = utcDate();
+    const md0 = renderPageToMarkdown((await engine.getPage(slug))!, []);
+    const after = utcDate();
+    const rendered = md0.match(/dream_cycle_date:\s*['"]?(\d{4}-\d{2}-\d{2})/)?.[1] ?? '(no dream_cycle_date rendered)';
+    expect([before, after]).toContain(rendered);
+    expect(md0.match(/dream_created_cycle_date:\s*['"]?(\d{4}-\d{2}-\d{2})/)?.[1]).toBe(rendered);
+    // Rendering never writes back: the DB row is still unstamped.
+    expect((await engine.getPage(slug))!.frontmatter.dream_created_cycle_date).toBeUndefined();
+
+    // First stamp: both keys take THIS cycle's date...
+    await stampDreamProvenance(engine as any, [{ slug, source_id: 'default' }], '2026-03-01');
+    const stamped = (await engine.getPage(slug))!;
+    expect(stamped.frontmatter.dream_cycle_date).toBe('2026-03-01');
+    expect(stamped.frontmatter.dream_created_cycle_date).toBe('2026-03-01');
+
+    // ...and LATCH: a later maintenance run neither moves the DB row nor the
+    // re-rendered markdown off the first cycle date.
+    await stampDreamProvenance(engine as any, [{ slug, source_id: 'default' }], '2026-03-09');
+    const relatched = (await engine.getPage(slug))!;
+    expect(relatched.frontmatter.dream_cycle_date).toBe('2026-03-01');
+    expect(relatched.frontmatter.dream_created_cycle_date).toBe('2026-03-01');
+    const md2 = renderPageToMarkdown(relatched, []);
+    expect(md2).toMatch(/dream_cycle_date:\s*['"]?2026-03-01/);
+    expect(md2).toMatch(/dream_created_cycle_date:\s*['"]?2026-03-01/);
+    expect(md2).not.toContain('2026-03-09');
+  });
+
+  test('an empty-string dream_cycle_date reads as UNSTAMPED: both keys are restamped (#4337)', async () => {
+    const slug = 'wiki/originals/ideas/empty-string-cycle-date-abc123';
+    await engine.putPage(slug, {
+      type: 'note',
+      title: 'Empty-string cycle date',
+      compiled_truth: 'body',
+      timeline: '',
+      frontmatter: { dream_generated: true, dream_cycle_date: '' },
+    });
+
+    // Render-side: '' is not a date — falls back to the run date, never emits
+    // an empty dream_cycle_date.
+    const md0 = renderPageToMarkdown((await engine.getPage(slug))!, []);
+    expect(md0).not.toMatch(/dream_cycle_date:\s*['"]{2}\s*$/m);
+    expect(md0).toMatch(/dream_cycle_date:\s*['"]?\d{4}-\d{2}-\d{2}/);
+
+    // Stamp-side: the NULLIF arm treats '' as absent, so THIS cycle's date
+    // lands on both keys instead of '' latching forever.
+    await stampDreamProvenance(engine as any, [{ slug, source_id: 'default' }], '2026-04-02');
+    const page = (await engine.getPage(slug))!;
+    expect(page.frontmatter.dream_cycle_date).toBe('2026-04-02');
+    expect(page.frontmatter.dream_created_cycle_date).toBe('2026-04-02');
+    expect(page.frontmatter.dream_generated).toBe(true);
+    const md = renderPageToMarkdown(page, []);
+    expect(md).toMatch(/dream_cycle_date:\s*['"]?2026-04-02/);
+    expect(md).toMatch(/dream_created_cycle_date:\s*['"]?2026-04-02/);
   });
 
   // #1978: raw-source persistence — the stamp carries the transcript path

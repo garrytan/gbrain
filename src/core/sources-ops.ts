@@ -36,7 +36,7 @@
  * out of the confine.
  */
 
-import { existsSync, mkdirSync, renameSync, rmSync, lstatSync } from 'fs';
+import { existsSync, mkdirSync, renameSync, rmSync, lstatSync, realpathSync } from 'fs';
 import { join, dirname, basename, resolve as resolvePath } from 'path';
 import { isPathContained, msysToNativePath } from './path-confine.ts';
 import { randomBytes } from 'crypto';
@@ -53,6 +53,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
+import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -187,6 +188,8 @@ export interface AddSourceOpts {
     services: string[];
     /** Backfill/reconcile window in days. */
     historyDays: number;
+    /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). */
+    calendarId?: string;
     /** Managed dir where pages are materialized. */
     dir: string;
     /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
@@ -374,6 +377,49 @@ export function unownedHint(
 // ── addSource ───────────────────────────────────────────────────────────────
 
 /**
+ * Overlapping-path guard shared by every surface that binds a local_path to a
+ * source (`sources add`, `sources set-path`): a path equal to, nested inside,
+ * or enclosing any OTHER source's local_path is rejected as
+ * `overlapping_path`. Overlapping trees make sync / write-through attribute
+ * files to the wrong source, so no add or repair path may skip this.
+ */
+export async function assertNoOverlappingPath(
+  engine: BrainEngine,
+  id: string,
+  path: string,
+): Promise<void> {
+  const others = await engine.executeRaw<{ id: string; local_path: string }>(
+    `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
+    [id],
+  );
+  // Compare by spelling AND by realpath: a symlink whose spelling shares no
+  // prefix with another source's tree still resolves onto that tree, and the
+  // sibling may itself be registered via a symlink. Realpath only when the
+  // path exists (a dangling/absent path keeps its spelling — the string check
+  // still applies); the stored value and the error message keep the spelling.
+  const real = (p: string): string => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const overlaps = (x: string, y: string): boolean =>
+    x === y || x.startsWith(y + '/') || y.startsWith(x + '/');
+  const realPath = real(path);
+  for (const other of others) {
+    const b = other.local_path;
+    if (overlaps(path, b) || overlaps(realPath, real(b))) {
+      throw new SourceOpError(
+        'overlapping_path',
+        `path "${path}" overlaps with existing source "${other.id}" at "${b}". ` +
+          `Overlapping sources are not allowed.`,
+      );
+    }
+  }
+}
+
+/**
  * #2707: `--path` registration used to accept any existing directory with
  * zero git validation, deferring the failure to the first `gbrain sync`
  * ("Not inside a git repository: ..."). By the time that surfaces the
@@ -479,23 +525,7 @@ export async function addSource(
   if (parsedUrl) {
     finalPath = opts.cloneDir ?? defaultCloneDir(opts.id);
   }
-  if (finalPath) {
-    const others = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources WHERE local_path IS NOT NULL AND id != $1`,
-      [opts.id],
-    );
-    for (const other of others) {
-      const a = finalPath;
-      const b = other.local_path;
-      if (a === b || a.startsWith(b + '/') || b.startsWith(a + '/')) {
-        throw new SourceOpError(
-          'overlapping_path',
-          `path "${a}" overlaps with existing source "${other.id}" at "${b}". ` +
-            `Overlapping sources are not allowed.`,
-        );
-      }
-    }
-  }
+  if (finalPath) await assertNoOverlappingPath(engine, opts.id, finalPath);
 
   // ── Path A: --url (clone + INSERT + rename) ────────────────────────────
   if (parsedUrl) {
@@ -617,6 +647,11 @@ export async function addSource(
       g_account: opts.google.account,
       g_services: opts.google.services.join(','),
       g_history_days: opts.google.historyDays,
+      // Only written when non-default so every existing source's config keeps
+      // its exact shape (DEFAULT_CALENDAR_ID stays the parse-time fallback).
+      ...(opts.google.calendarId && opts.google.calendarId !== DEFAULT_CALENDAR_ID
+        ? { g_calendar_id: opts.google.calendarId }
+        : {}),
       // Non-vault access (v0.47): 'command' runs g_token_command locally at
       // sync time (same trust class as recipe health_check argv — the google
       // kind is hard-rejected on remote sources_add and these keys are not

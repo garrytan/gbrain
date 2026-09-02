@@ -1,6 +1,6 @@
 /**
- * gbrain google — connect/status/disconnect (+ setup, wired after the source
- * kind lands) for the Google connector.
+ * gbrain google — connect/status/calendars/disconnect (+ setup, wired after
+ * the source kind lands) for the Google connector.
  *
  * Agent-first contract (docs/guides/google-connect.md):
  *  - Every subcommand supports --json and emits the envelope
@@ -810,9 +810,65 @@ Subcommands:
                --sync-budget-ms <ms>    first-sync wall-clock budget
                (+ all connect flags above)
   status       accounts, scopes, refresh probe, linked sources  [--json] [--no-probe]
+  calendars    list every calendar the account can read (ids for --calendar-id)
+               [--account <email>] [--json]
   disconnect   remove an account's tokens  <email> [--purge-client]
 
 Docs: docs/guides/google-connect.md`;
+
+/**
+ * `gbrain google calendars [--account <email>] [--json]`
+ * Lists every calendar the connected account can read, so a secondary
+ * calendar's id can be handed to `sources add --calendar-id`. Read-only.
+ * `--json` emits the shared envelope (`ok`, `status`, `next_action.command`
+ * = the `sources add` template) plus `account` and `calendars[]`.
+ */
+export async function runGoogleCalendars(args: string[]): Promise<void> {
+  let account = '';
+  let json = false;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--account') account = (args[++i] ?? '').trim().toLowerCase();
+    else if (args[i] === '--json') json = true;
+  }
+  const vault = openVault();
+  if (!account) {
+    const ids = await vault.list();
+    const g = ids.filter((e) => e.provider === GOOGLE_PROVIDER);
+    if (g.length === 0) {
+      console.error('No connected Google account — run: gbrain google connect');
+      process.exit(2);
+    }
+    if (g.length > 1) {
+      console.error(
+        `Multiple Google accounts connected — pass --account <email> (one of: ${g
+          .map((e) => String(e.account ?? e.id))
+          .join(', ')}).`,
+      );
+      process.exit(2);
+    }
+    account = String(g[0].account ?? g[0].id.replace(/^google:/, ''));
+  }
+  const entry = await vault.get(credentialId(GOOGLE_PROVIDER, account));
+  if (!entry) {
+    throw new CredentialError('not_connected', ` for ${account} — run: gbrain google connect --account ${account}`);
+  }
+  const tokens = new GoogleTokenProvider(vault, entry.id, fetch);
+  const { CalendarClient } = await import('../core/google/google-clients.ts');
+  const client = new CalendarClient(tokens, fetch, () => {}, entry.meta.client_id);
+  const cals = await client.listCalendars();
+  const addCommand = `gbrain sources add <id> --kind google --account ${account} --services calendar --calendar-id "<id>"`;
+  emit(
+    json,
+    { ok: true, status: 'ok', account, calendars: cals, next_action: { command: addCommand } },
+    [
+      `Calendars readable by ${account}:\n`,
+      ...cals.map(
+        (c) => `  ${c.primary ? '*' : ' '} ${c.summary}\n      id: ${c.id}\n      access: ${c.accessRole}`,
+      ),
+      `\n(* = primary, already synced). To ingest another:\n  ${addCommand}`,
+    ],
+  );
+}
 
 export async function runGoogle(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
@@ -822,6 +878,7 @@ export async function runGoogle(args: string[]): Promise<void> {
   }
   if (sub === 'connect') return runGoogleConnect(rest);
   if (sub === 'status') return runGoogleStatus(rest);
+  if (sub === 'calendars') return runGoogleCalendars(rest);
   if (sub === 'disconnect') return runGoogleDisconnect(rest);
   if (sub === 'setup') {
     const { runGoogleSetup } = await import('./google-setup.ts');

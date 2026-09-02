@@ -271,8 +271,92 @@ function mean(values: number[]): number {
 }
 
 /**
+ * #4608: validate + normalize ONE qrels entry before any query is billed.
+ * Pre-fix, parseQrels cast blindly and the first malformed entry crashed
+ * inside buildGradesMap (`qrel.relevant.map`) AFTER runEval had already
+ * spent a live search + rerank per entry up to that point. The validator
+ * throws with the entry index — commands/eval.ts catches and prints a
+ * clean usage error before the first provider call.
+ *
+ * Friendly aliases: the `gbrain eval gate` per-entry keys
+ * (`relevant_slugs`, `first_relevant_slug` — see bench/qrels-file.ts)
+ * map onto `relevant`, so the same file works in both commands. The gate's
+ * FEDERATED shape (`relevant: [{source_id, slug}]`) is rejected BY NAME:
+ * bare `gbrain eval` compares unqualified slugs, so accepting the object
+ * form would silently score all-zero (the issue's quieter half).
+ */
+function normalizeQrelEntry(e: unknown, i: number): EvalQrel {
+  if (!e || typeof e !== 'object' || Array.isArray(e)) {
+    throw new Error(`qrels entry ${i}: expected an object, got ${Array.isArray(e) ? 'an array' : typeof e}.`);
+  }
+  const o = e as Record<string, unknown>;
+  if (typeof o.query !== 'string' || o.query.trim().length === 0) {
+    throw new Error(`qrels entry ${i}: "query" must be a non-empty string.`);
+  }
+  let relevant = o.relevant;
+  if (relevant === undefined && Array.isArray(o.relevant_slugs)) {
+    relevant = o.relevant_slugs; // gate-shape alias
+  }
+  if (!Array.isArray(relevant)) {
+    const hint = o.relevant_slugs !== undefined
+      ? ' Found "relevant_slugs" with a non-array value.'
+      : '';
+    throw new Error(
+      `qrels entry ${i} ("${o.query}"): missing "relevant" (array of gold slug strings).${hint}`,
+    );
+  }
+  const slugs: string[] = [];
+  for (const s of relevant) {
+    if (typeof s === 'string') {
+      slugs.push(s);
+      continue;
+    }
+    if (s && typeof s === 'object' && 'slug' in (s as Record<string, unknown>)) {
+      throw new Error(
+        `qrels entry ${i} ("${o.query}"): "relevant" contains {source_id, slug} objects — that is the ` +
+          '`gbrain eval gate` federated shape. Bare `gbrain eval` compares unqualified slugs; ' +
+          'use `"relevant": ["<slug>", ...]` here, or run `gbrain eval gate --qrels` for source-qualified gold.',
+      );
+    }
+    throw new Error(`qrels entry ${i} ("${o.query}"): "relevant" must contain only slug strings.`);
+  }
+  // Gate-shape alias: fold first_relevant_slug into the gold set (bare eval
+  // has no separate top-1 metric; MRR covers it).
+  if (typeof o.first_relevant_slug === 'string' && o.first_relevant_slug.length > 0 && !slugs.includes(o.first_relevant_slug)) {
+    slugs.push(o.first_relevant_slug);
+  }
+  if (slugs.length === 0) {
+    throw new Error(`qrels entry ${i} ("${o.query}"): "relevant" is empty — every entry needs at least one gold slug.`);
+  }
+  if (o.grades !== undefined) {
+    if (typeof o.grades !== 'object' || o.grades === null || Array.isArray(o.grades)) {
+      throw new Error(`qrels entry ${i} ("${o.query}"): "grades" must be an object mapping slug -> number.`);
+    }
+    // #4608 residual: a non-numeric grade value (a string, null) survives
+    // the shape check above and the blind cast below, then produces NaN
+    // nDCG AFTER the paid searches already ran. Validate the VALUES behind
+    // the same pre-billing gate, with the same named-error + entry-index
+    // style as every other check here.
+    for (const [slug, g] of Object.entries(o.grades as Record<string, unknown>)) {
+      if (typeof g !== 'number' || !Number.isFinite(g)) {
+        throw new Error(
+          `qrels entry ${i} ("${o.query}"): "grades" value for "${slug}" must be a finite number, got ${JSON.stringify(g)}.`,
+        );
+      }
+    }
+  }
+  return {
+    ...(typeof o.id === 'string' ? { id: o.id } : {}),
+    query: o.query,
+    relevant: slugs,
+    ...(o.grades ? { grades: o.grades as Record<string, number> } : {}),
+  };
+}
+
+/**
  * Parse qrels from either a file path or an inline JSON string.
- * Returns the array of EvalQrel entries.
+ * Returns the array of EvalQrel entries. #4608: every entry is validated
+ * (and gate-shape keys normalized) here, BEFORE runEval bills any search.
  */
 export function parseQrels(input: string): EvalQrel[] {
   let raw: string;
@@ -288,9 +372,15 @@ export function parseQrels(input: string): EvalQrel[] {
 
   const parsed = JSON.parse(raw);
 
-  // Support both array format and { version, queries } format
-  if (Array.isArray(parsed)) return parsed as EvalQrel[];
-  if (parsed.queries && Array.isArray(parsed.queries)) return parsed.queries as EvalQrel[];
-
-  throw new Error('Invalid qrels format. Expected array or { version, queries } object.');
+  // Support both array format and { version, queries } / { schema_version,
+  // queries } wrappers (the latter is the gate's file shape).
+  const entries: unknown[] | null = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as { queries?: unknown }).queries)
+      ? (parsed as { queries: unknown[] }).queries
+      : null;
+  if (entries === null) {
+    throw new Error('Invalid qrels format. Expected array or { version, queries } object.');
+  }
+  return entries.map((e, i) => normalizeQrelEntry(e, i));
 }

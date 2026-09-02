@@ -49,6 +49,7 @@ async function truncateAll(): Promise<void> {
   }
   await (engine as any).db.exec(`DELETE FROM sources WHERE id <> 'default'`);
   await (engine as any).db.exec(`DELETE FROM config WHERE key = 'link_resolution.cross_source'`);
+  await (engine as any).db.exec(`DELETE FROM config WHERE key = 'sources.default'`);
 }
 
 beforeEach(async () => {
@@ -194,5 +195,69 @@ describe('#2589 extract --stale — skipped_cross_source observability + config 
 
   test('link_resolution.cross_source is a KNOWN config key (config set accepts it)', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('link_resolution.cross_source');
+  });
+});
+
+/**
+ * #4611 — the cross-source fallback lane compares against the CONFIGURED
+ * `sources.default`, not the literal 'default'. Discriminating shape: the
+ * target lives in TWO foreign sources where the configured default does NOT
+ * sort first. The fallback lane must pick the configured default
+ * ('main-vault'); the pre-fix literal comparison missed it and fell through to
+ * the deterministic lexicographic pick ('aaa-vault'). Both DB extract paths
+ * (extractLinksFromDB via `extract links --source db`, and extractStaleFromDB)
+ * resolve the configured default once per run and thread it in.
+ */
+describe('#4611 the cross-source fallback lane follows the configured sources.default', () => {
+  async function seedRenamedDefault(): Promise<void> {
+    const ids = ['comms', 'aaa-vault', 'main-vault'];
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) SELECT unnest($1::text[]), unnest($1::text[])
+       ON CONFLICT (id) DO NOTHING`, [ids],
+    );
+    // Target in both foreign sources; 'aaa-vault' sorts BEFORE 'main-vault'.
+    for (const src of ['aaa-vault', 'main-vault']) {
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+         VALUES ('people/alice-example', $1, 'person', 'Alice', 'A person page.', '')`, [src],
+      );
+    }
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('comms/msg-1', 'comms', 'note', 'Msg 1', 'Talked to [[people/alice-example]] today.', '')`,
+    );
+    await engine.setConfig('sources.default', 'main-vault');
+    await engine.setConfig('link_resolution.cross_source', 'true');
+  }
+
+  test('extractLinksFromDB (extract links --source db): the edge lands in the configured default, not the lexicographic min', async () => {
+    await seedRenamedDefault();
+    const cap = captureConsole();
+    try {
+      await runExtract(engine, ['links', '--source', 'db']);
+    } finally {
+      cap.restore();
+    }
+    expect(await edgeEndpoints()).toEqual([
+      { from_slug: 'comms/msg-1', from_sid: 'comms', to_slug: 'people/alice-example', to_sid: 'main-vault' },
+    ]);
+  });
+
+  test('extractStaleFromDB: the edge lands in the configured default, not the lexicographic min', async () => {
+    await seedRenamedDefault();
+    const cap = captureConsole();
+    let r: Awaited<ReturnType<typeof extractStaleFromDB>>;
+    try {
+      r = await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: false, includeFrontmatter: false, catchUp: false,
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(r.skippedCrossSource).toBe(0);
+    expect(r.linksCreated).toBeGreaterThanOrEqual(1);
+    expect(await edgeEndpoints()).toEqual([
+      { from_slug: 'comms/msg-1', from_sid: 'comms', to_slug: 'people/alice-example', to_sid: 'main-vault' },
+    ]);
   });
 });

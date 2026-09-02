@@ -57,6 +57,14 @@ const CLAUDE_EXPORT_FIXTURE = join(
   'transcripts',
   'claude-export.json',
 );
+const GROK_FIXTURE = join(
+  import.meta.dir,
+  '..',
+  'fixtures',
+  'transcripts',
+  'grok-session',
+  'chat_history.jsonl',
+);
 
 let engine: PGLiteEngine;
 let tmp: string;
@@ -389,7 +397,7 @@ describe('error taxonomy', () => {
   });
 });
 
-describe('all six formats travel the FULL pipeline (parse → redact → render → import)', () => {
+describe('all seven formats travel the FULL pipeline (parse → redact → render → import)', () => {
   test('claude-code: the shipped fixture imports as a page with placeholders and real timestamps', async () => {
     const r = await runTranscriptsIngest(engine, baseOpts([CLAUDE_CODE_FIXTURE]));
     expect(r.sessionsImported).toBe(1);
@@ -445,6 +453,28 @@ describe('all six formats travel the FULL pipeline (parse → redact → render 
     expect(rLimit.cleanScan).toBe(false);
     const rRest = await runTranscriptsIngest(engine, baseOpts([dbPath]));
     expect(rRest.pages.imported + rRest.pages.skipped).toBe(2);
+  });
+
+  test('grok: chat_history.jsonl imports text turns; tools/system/synthetic never land', async () => {
+    const r = await runTranscriptsIngest(engine, baseOpts([GROK_FIXTURE]));
+    expect(r.sessionsImported).toBe(1);
+    expect(r.pages.imported).toBe(1);
+    const slug = buildTranscriptSlug('grok', '2026-08-08T11:00:00.000Z', {
+      sessionId: 'grok-fixture-session-1',
+    });
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).not.toBeNull();
+    expect(page!.type).toBe('conversation');
+    const fm = page!.frontmatter as Record<string, any>;
+    expect(fm.transcript_import.harness).toBe('grok');
+    expect(fm.date).toBe('2026-08-08');
+    expect(page!.compiled_truth).toContain('Which fund led the widget-co seed');
+    expect(page!.compiled_truth).toContain('fund-a led the widget-co seed');
+    expect(page!.compiled_truth).not.toContain('SYSTEM-ONLY-TEXT');
+    expect(page!.compiled_truth).not.toContain('TOOL-OUTPUT-ONLY-TEXT');
+    expect(page!.compiled_truth).not.toContain('SYNTHETIC-ONLY-TEXT');
+    const raw = await engine.getRawData(slug, 'transcript:grok', { sourceId: 'default' });
+    expect(raw.length).toBe(1);
   });
 
   test('chatgpt export: one file → per-thread pages under conversations/chatgpt/ with title slugs', async () => {

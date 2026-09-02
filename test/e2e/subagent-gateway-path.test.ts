@@ -241,6 +241,61 @@ describe('runSubagentViaGateway (v0.38 Slice 1 — full handler path through gat
     expect(result.stop_reason).toBe('end_turn');
   });
 
+  it('openrouter:deepseek/… auto-routes through the gateway when the flag is off (#4757)', async () => {
+    // The DeepSeek family shares the anthropic-via-OR contract: the recipe
+    // predicate admits it (classifyCapabilities passes) and the handler's
+    // isOpenRouterSubagentFamily auto-enables the gateway loop — without
+    // that, the legacy Anthropic-direct pin throws "non-Anthropic but
+    // agent.use_gateway_loop is not enabled" for a model the recipe accepts.
+    await engine.unsetConfig('agent.use_gateway_loop');
+    __setChatTransportForTests(async () => ({
+      text: 'or-deepseek done',
+      blocks: [{ type: 'text', text: 'or-deepseek done' }] as ChatBlock[],
+      stopReason: 'end',
+      usage: { input_tokens: 8, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'openrouter:deepseek/deepseek-v4-flash',
+      providerId: 'openrouter',
+    } satisfies ChatResult));
+
+    const handler = buildHandler(makeStubTools([]));
+    const { ctx } = await makeFakeJob({
+      prompt: 'hello',
+      model: 'openrouter:deepseek/deepseek-v4-flash',
+    });
+    const result = await handler(ctx);
+    expect(result.result).toBe('or-deepseek done');
+    expect(result.stop_reason).toBe('end_turn');
+  });
+
+  it('openrouter:openai/… stays REFUSED when the flag is off — the auto-route is a family allowlist, not "anything on OpenRouter"', async () => {
+    // Only families with a live abort/retry replay pin (anthropic/, deepseek/)
+    // auto-enable the gateway loop. Everything else proxied through OpenRouter
+    // is refused before the transport is reached. Two gates share the
+    // allowlist (openrouter-families.ts): the recipe capability gate
+    // (`supports_subagent_loop: false`) fires first; had a family been added
+    // to the recipe predicate but not the handler's auto-route, the legacy
+    // `use_gateway_loop is not enabled` refusal would surface instead. Either
+    // way: rejected, zero transport calls.
+    await engine.unsetConfig('agent.use_gateway_loop');
+    let transportCalls = 0;
+    __setChatTransportForTests(async () => {
+      transportCalls++;
+      return {
+        text: 'must not run',
+        blocks: [{ type: 'text', text: 'must not run' }] as ChatBlock[],
+        stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'openrouter:openai/gpt-5.2',
+        providerId: 'openrouter',
+      } satisfies ChatResult;
+    });
+
+    const handler = buildHandler(makeStubTools([]));
+    const { ctx } = await makeFakeJob({ prompt: 'hello', model: 'openrouter:openai/gpt-5.2' });
+    await expect(handler(ctx)).rejects.toThrow(/supports_subagent_loop: false|use_gateway_loop is not enabled/);
+    expect(transportCalls).toBe(0);
+  });
+
   it('happy path 2-turn with tool: dispatches, persists v2 stable ID, returns final text', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {

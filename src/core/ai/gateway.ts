@@ -126,7 +126,7 @@ const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
 // is set AND no explicit reranker_model is configured. #3657 seam: the value is
 // `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with
-// the mode bundles) — `voyage:rerank-2.5` since v0.47.11.
+// the mode bundles) — `voyage:rerank-2.5` since v0.48.2.
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
@@ -1585,7 +1585,7 @@ export function _resetSunsetWarningsForTest(): void {
 }
 
 /**
- * v0.47.11 `no_key` preflight traceability. The default reranker is keyed on
+ * v0.48.2 `no_key` preflight traceability. The default reranker is keyed on
  * VOYAGE_API_KEY; a brain without it would otherwise burn one 'auth' audit
  * row PER SEARCH (the gateway's applyResolveAuth throws AIConfigError for the
  * missing key). Mirror of sunsetShortCircuitOnce MINUS the stderr line: the
@@ -4575,7 +4575,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
-  // v0.47.11 `no_key` preflight — fail-open, audit-only, once per process per
+  // v0.48.2 `no_key` preflight — fail-open, audit-only, once per process per
   // model (see noKeyOnce). A recipe without a custom resolveAuth needs every
   // `auth_env.required` key in the gateway env snapshot; when one is missing
   // there is no point issuing the HTTP call, so throw the dedicated skip

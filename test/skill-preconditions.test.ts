@@ -22,6 +22,7 @@ function fakeCtx(overrides: Partial<PreconditionContext> = {}): PreconditionCont
     countPages: async () => 0,
     countPagesInDir: async () => 0,
     listSourceIds: async () => [],
+    listPopulatedSourceIds: async () => [],
     getConfig: async () => undefined,
     ...overrides,
   };
@@ -94,13 +95,19 @@ describe('parsePrecondition', () => {
 
 describe('checkPreconditions — source', () => {
   test('bare source met when a source has content', async () => {
-    const [r] = await checkPreconditions(['source'], fakeCtx({ listSourceIds: async () => ['wiki'] }));
+    const [r] = await checkPreconditions(['source'], fakeCtx({ listPopulatedSourceIds: async () => ['wiki'] }));
     expect(r.met).toBe(true);
     expect(r.hint.length).toBeGreaterThan(0);
   });
 
+  test('#4278 bare source accepts a populated default corpus', async () => {
+    const [r] = await checkPreconditions(['source'], fakeCtx({ listPopulatedSourceIds: async () => ['default'] }));
+    expect(r.met).toBe(true);
+    expect(r.detail).toContain('default');
+  });
+
   test('bare source unmet on empty brain, with remediation hint', async () => {
-    const [r] = await checkPreconditions(['source'], fakeCtx({ listSourceIds: async () => [] }));
+    const [r] = await checkPreconditions(['source'], fakeCtx({ listPopulatedSourceIds: async () => [] }));
     expect(r.met).toBe(false);
     expect(r.hint).toContain('gbrain');
     expect(r.hint.length).toBeGreaterThan(0);
@@ -121,6 +128,19 @@ describe('checkPreconditions — source', () => {
     );
     expect(r.met).toBe(false);
     expect(r.hint.length).toBeGreaterThan(0);
+  });
+
+  test('#4278 split predicates: registered-but-unpopulated source meets source:<id> but not bare source', async () => {
+    // The naive fix (one shared populated-only accessor) silently regresses
+    // source:<id>, whose documented contract is EXISTENCE: a source the user
+    // registered but has not yet synced would flip from met to unmet.
+    const ctx = fakeCtx({
+      listSourceIds: async () => ['default', 'newsrc'],
+      listPopulatedSourceIds: async () => [],
+    });
+    const results = await checkPreconditions(['source:newsrc', 'source'], ctx);
+    expect(byRaw(results, 'source:newsrc').met).toBe(true);
+    expect(byRaw(results, 'source').met).toBe(false);
   });
 });
 
@@ -224,7 +244,7 @@ describe('checkPreconditions — unknown + ordering', () => {
     const results = await checkPreconditions(
       reqs,
       fakeCtx({
-        listSourceIds: async () => ['wiki'],
+        listPopulatedSourceIds: async () => ['wiki'],
         countPagesInDir: async () => 1,
         getConfig: async () => 'set',
         countPages: async () => 50,

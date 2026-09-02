@@ -1500,6 +1500,20 @@ export interface BrainEngine {
     opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
   ): Promise<GraphPath[]>;
   /**
+   * `traversePaths` plus its truncation signal. The final SELECT is bounded
+   * by `TRAVERSE_PATH_ROW_CAP` (engine-constants.ts) on both engines, and
+   * `truncated` is true when the walk hit it — rows past the cap (the
+   * DEEPEST edges under the ORDER BY depth contract) were dropped. The cap
+   * counts raw rows before the in-memory edge dedup, so `paths.length`
+   * alone cannot reveal truncation. `traversePaths` is the `.paths`
+   * projection; the op layer surfaces `truncated` as a stderr note so the
+   * GraphPath[] wire shape stays unchanged.
+   */
+  traversePathsDetailed(
+    slug: string,
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+  ): Promise<{ paths: GraphPath[]; truncated: boolean }>;
+  /**
    * Typed-edge relational fan-out for the relational recall arm (v0.43).
    *
    * Generalizes traversePaths to a SEED ARRAY and aggregates to ranked NODES
@@ -1633,11 +1647,23 @@ export interface BrainEngine {
    * no-inbound-only view (a page that links out but is never linked TO still
    * counts as an orphan there).
    */
+  /**
+   * #4280: rows carry `type` + `quarantined` so the shared orphan-reporting
+   * policy can exclude machine leaf types and quarantined shells that slug
+   * conventions cannot infer. The SQL stays raw (no filtering here) — policy
+   * lives in ONE place (`shouldExcludeFromOrphanReporting`).
+   */
   findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
     mode?: 'inbound' | 'islanded';
-  }): Promise<Array<{ slug: string; title: string; domain: string | null }>>;
+  }): Promise<Array<{
+    slug: string;
+    title: string;
+    domain: string | null;
+    type?: string | null;
+    quarantined?: boolean;
+  }>>;
 
   // Tags
   /**
@@ -2279,6 +2305,18 @@ export interface BrainEngine {
     slug: string,
     sourceOrSources: string | readonly string[],
   ): Promise<string>;
+  /**
+   * `resolveSlugWithAlias` plus the OWNING source of the winning alias row
+   * (same scope + precedence rules), or null when no alias matches (or the
+   * table predates v104). A consumer that goes on to READ the canonical page
+   * must scope that read to `source_id`: a federated getPage prefers the
+   * anchor source, so an unrelated live page at the canonical slug in another
+   * granted source would otherwise shadow the alias owner's page.
+   */
+  resolveSlugWithAliasDetailed(
+    slug: string,
+    sourceOrSources: string | readonly string[],
+  ): Promise<{ canonical_slug: string; source_id: string } | null>;
 
   /**
    * T3 retrieval-cathedral — free-text alias resolution for SEARCH.

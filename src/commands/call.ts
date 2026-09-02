@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { handleToolCall } from '../mcp/server.ts';
 import { resolveSourceWithTier, localFederatedSourceIds } from '../core/source-resolver.ts';
-import { bigintToStringReplacer } from '../cli.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 
 /**

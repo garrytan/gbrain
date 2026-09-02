@@ -58,6 +58,16 @@ export function validateSlug(slug: string): string {
 }
 
 /**
+ * The extract_atoms completion marker key. The phase stamps
+ * `substring(content_hash, 1, 16)` under this key when a page has been
+ * mined; eligibility is `frontmatter->>ATOMS_SCAN_HASH_KEY <> substring
+ * (content_hash, 1, 16)`. Owned by the phase (and the trusted local CLI);
+ * untrusted remote writers must not set it (import-file.ts strips it on
+ * `remote === true` so a remote put_page cannot suppress mining).
+ */
+export const ATOMS_SCAN_HASH_KEY = 'atoms_scan_hash';
+
+/**
  * Frontmatter keys excluded from the content hash. Timestamp-bearing keys
  * (`captured_at`/`ingested_at`, stamped per capture call) and gate-derived
  * sanity markers (quarantine / content_flag / embed_skip, re-derived
@@ -71,6 +81,16 @@ export const HASH_EPHEMERAL_FRONTMATTER_KEYS: readonly string[] = [
   QUARANTINE_KEY,
   CONTENT_FLAG_KEY,
   EMBED_SKIP_KEY,
+  // Same bug class as captured_at (CV8) and the gate markers (#1699):
+  // extract-atoms stamps `atoms_scan_hash` INTO the frontmatter as its
+  // completion marker, and eligibility compares that marker against
+  // substring(content_hash, 1, 16). Without this exclusion, writing the
+  // marker changes the very hash it is compared against, so every scanned
+  // page re-arms on the next export->sync and the LLM extraction re-mines
+  // the same sources into paraphrased near-duplicate atoms forever
+  // (paraphrases defeat content_hash_duplicates). The marker is re-derived
+  // deterministically from the body, so dropping it from the hash is safe.
+  ATOMS_SCAN_HASH_KEY,
 ];
 
 /**
@@ -561,4 +581,19 @@ export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
     row_num: Number(row.row_num),
     claim: String(row.claim),
   };
+}
+
+/**
+ * JSON replacer: `bigint` → string, matching the postgres.js wire shape (int8
+ * comes back as a string on the routed path). Lets any op-output serializer
+ * round-trip bigint columns (e.g. a `BIGSERIAL` `id`) instead of throwing
+ * `TypeError: Do not know how to serialize a BigInt`. Shared by cli.ts's
+ * local-result normalizer and the commands that stringify results themselves
+ * (`gbrain call`, the extract explain JSON view) — commands import it from
+ * here, never from the dispatcher. NOTE: no double-dash flag literals in this
+ * comment — the flag-registry generator harvests them from every module a
+ * command transitively imports, and utils.ts is imported by nearly all.
+ */
+export function bigintToStringReplacer(_key: string, value: unknown): unknown {
+  return typeof value === 'bigint' ? value.toString() : value;
 }

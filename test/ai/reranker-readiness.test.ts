@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — reranker readiness leaf (src/core/ai/reranker-readiness.ts).
+ * v0.48.2 — reranker readiness leaf (src/core/ai/reranker-readiness.ts).
  *
  * Pins:
  *  - the default voyage reranker is ready iff VOYAGE_API_KEY is in the

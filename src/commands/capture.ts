@@ -47,8 +47,15 @@ import {
   detectBinarySignature,
   normalizeForHash,
   deriveTitle,
+  explicitCaptureType,
   mergeCaptureFrontmatter,
 } from '../core/capture-content.ts';
+import {
+  loadActivePackForWriteVocabulary,
+  packDeclaresPageType,
+  undeclaredPageTypeMessage,
+  undeclaredPageTypeSuggestion,
+} from '../core/schema-pack/write-vocabulary.ts';
 
 export { detectBinaryNullByte, normalizeForHash, mergeCaptureFrontmatter } from '../core/capture-content.ts';
 
@@ -349,6 +356,27 @@ export async function runCapture(engine: BrainEngine | null, args: string[]): Pr
     }
   }
 
+  // #4655: fail-loud vocabulary check for an EXPLICIT page type (--type flag
+  // or a frontmatter `type:` in the input) against the active schema pack.
+  // Best-effort pack load — no resolvable pack means no check. The
+  // default-'note' path is never checked, so bare `gbrain capture` keeps
+  // working even under packs that don't declare 'note'.
+  if (!isThinClient(cfg) && engine) {
+    const explicitType = explicitCaptureType(rawBody, parsed.type);
+    if (explicitType) {
+      const activePack = await loadActivePackForWriteVocabulary({
+        engine,
+        remote: false,
+        sourceId: resolvedSourceId,
+      });
+      if (activePack && !packDeclaresPageType(activePack, explicitType)) {
+        console.error(`gbrain capture: ${undeclaredPageTypeMessage(explicitType, activePack, 'capture')}`);
+        console.error(`  ${undeclaredPageTypeSuggestion(activePack)}`);
+        process.exit(1);
+      }
+    }
+  }
+
   // CV8 (CLI side): content_hash for the RECEIPT comes from the normalized
   // rawBody, NOT the assembled fullContent which contains a timestamp.
   // The daemon's 24h LRU dedup keys on this hash; identical captures must
@@ -502,6 +530,7 @@ export const __testing = {
   buildContent,
   mergeCaptureFrontmatter,
   deriveTitle,
+  explicitCaptureType,
   parseArgs,
   detectBinaryNullByte,
   detectBinarySignature,

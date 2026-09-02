@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — end-to-end: a balanced search on a brain WITHOUT the reranker's
+ * v0.48.2 — end-to-end: a balanced search on a brain WITHOUT the reranker's
  * provider key stamps `{stage: 'reranker_skipped', reason: 'no_key'}` on
  * `HybridSearchMeta.degraded`, keeps RRF order, writes nothing to stderr;
  * with the key present the reranker runs and no skip is stamped.
@@ -103,7 +103,7 @@ async function run(query: string): Promise<{ results: SearchResult[]; meta: Hybr
   return { results, meta, stderr: captured };
 }
 
-describe('balanced search without VOYAGE_API_KEY (v0.47.11)', () => {
+describe('balanced search without VOYAGE_API_KEY (v0.48.2)', () => {
   test('stamps reranker_skipped (no_key) on meta, keeps results, prints nothing', async () => {
     configure(false);
     _resetSunsetWarningsForTest();

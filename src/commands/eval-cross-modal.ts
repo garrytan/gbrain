@@ -22,7 +22,7 @@ import { tmpdir } from 'os';
 import { createHash } from 'crypto';
 
 import { gbrainPath, loadConfig } from '../core/config.ts';
-import { configureGateway, isAvailable } from '../core/ai/gateway.ts';
+import { configureGateway, getChatModel, isAvailable } from '../core/ai/gateway.ts';
 import { runWithLimit } from '../core/worker-pool.ts';
 import { resolveCycleDefault, cycleDefaultSuffix } from '../core/eval/cycle-default.ts';
 import {
@@ -294,6 +294,43 @@ function configureGatewayForCli(): boolean {
 }
 
 /**
+ * #4636: the default slots are three DISTINCT frontier providers, which a
+ * single-provider install can never serve — the 3-slot panel misses its
+ * 2-model quorum and every nightly quality-probe run lands as a false
+ * ERROR/INCONCLUSIVE. For each slot the caller did NOT explicitly override,
+ * substitute the gateway's configured chat model when the slot default's
+ * provider is unusable (missing key / unknown recipe) AND the configured
+ * model itself is usable. Explicit `--slot-*-model` flags always win, an
+ * install with all three default providers keyed is untouched, and when no
+ * configured model is usable either the defaults stay (the run surfaces the
+ * existing no-provider error). Call only after configureGatewayForCli().
+ *
+ * Exported for the hermetic unit test (the batch DI seam skips gateway
+ * configuration entirely, so the policy is pinned at this boundary).
+ */
+export function substituteUnavailableDefaultSlots(
+  slots: SlotConfig[],
+  explicit: Record<string, string | undefined>,
+): SlotConfig[] {
+  let fallback: string | null = null;
+  try {
+    const configured = getChatModel();
+    if (isAvailable('chat', configured)) fallback = configured;
+  } catch {
+    /* gateway unconfigured — leave the defaults in place */
+  }
+  if (!fallback) return slots;
+  return slots.map(s => {
+    if (explicit[s.id] || isAvailable('chat', s.model)) return s;
+    process.stderr.write(
+      `[eval cross-modal] slot ${s.id} default ${s.model} has no usable provider here; ` +
+      `using the configured chat model ${fallback} instead (#4636).\n`,
+    );
+    return { ...s, model: fallback as string };
+  });
+}
+
+/**
  * v0.40.1.0 Track D / T3 (per D5) — DI seam for hermetic batch tests.
  * Mirrors the `runEvalLongMemEval(args, {client?})` pattern at
  * eval-longmemeval.ts:299. Default code path uses the imported runEval;
@@ -353,7 +390,7 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
   const receiptDir = parsed.receiptDir ?? gbrainPath('eval-receipts');
   const maxTokens = parsed.maxTokens ?? 4000;
 
-  const slots: SlotConfig[] = [
+  let slots: SlotConfig[] = [
     { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
     { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
     { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
@@ -373,6 +410,11 @@ export async function runEvalCrossModal(args: string[], opts: RunCrossModalOpts 
     );
     return 1;
   }
+  // #4636: swap unusable frontier defaults for the configured chat model
+  // (before the cost estimate so the banner prices what actually runs).
+  slots = substituteUnavailableDefaultSlots(slots, {
+    A: parsed.slotAModel, B: parsed.slotBModel, C: parsed.slotCModel,
+  });
 
   // Cost estimate (T11=B).
   const cost = estimateCost(slots, cycles, maxTokens);
@@ -624,7 +666,7 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   const maxTokens = parsed.maxTokens ?? 4000;
   const maxUsd = parsed.maxUsd ?? 5.0;
 
-  const slots: SlotConfig[] = [
+  let slots: SlotConfig[] = [
     { id: 'A', model: parsed.slotAModel ?? DEFAULT_SLOTS[0]!.model },
     { id: 'B', model: parsed.slotBModel ?? DEFAULT_SLOTS[1]!.model },
     { id: 'C', model: parsed.slotCModel ?? DEFAULT_SLOTS[2]!.model },
@@ -663,6 +705,26 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
   }
   if (limit < rows.length) rows = rows.slice(0, limit);
 
+  // Configure gateway (same path as single-task mode). When runEval is
+  // injected (test mode), skip the gateway availability gate — the injected
+  // function handles its own backend, so requiring an API key here would
+  // make hermetic unit tests impossible. Runs BEFORE the cost estimate so
+  // the #4636 slot substitution below prices what actually runs.
+  if (!opts.runEval) {
+    configureGatewayForCli();
+    if (!isAvailable('chat')) {
+      process.stderr.write(
+        'Error: AI gateway has no usable chat provider. ' +
+        'Configure one of OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY.\n',
+      );
+      return 1;
+    }
+    // #4636: swap unusable frontier defaults for the configured chat model.
+    slots = substituteUnavailableDefaultSlots(slots, {
+      A: parsed.slotAModel, B: parsed.slotBModel, C: parsed.slotCModel,
+    });
+  }
+
   // Pre-flight cost estimate. Refuse if over --max-usd without --yes.
   const perQuestion = estimateCost(slots, cycles, maxTokens);
   const estTotal = perQuestion.perRunMaxUSD * rows.length;
@@ -677,21 +739,6 @@ async function runBatchMode(parsed: ParsedArgs, opts: RunCrossModalOpts): Promis
       `pass --yes to proceed or lower --limit / --cycles.\n`,
     );
     return 1;
-  }
-
-  // Configure gateway (same path as single-task mode). When runEval is
-  // injected (test mode), skip the gateway availability gate — the injected
-  // function handles its own backend, so requiring an API key here would
-  // make hermetic unit tests impossible.
-  if (!opts.runEval) {
-    configureGatewayForCli();
-    if (!isAvailable('chat')) {
-      process.stderr.write(
-        'Error: AI gateway has no usable chat provider. ' +
-        'Configure one of OPENAI_API_KEY / ANTHROPIC_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY.\n',
-      );
-      return 1;
-    }
   }
 
   // Per-question receipts land in a tempdir; we delete the tempdir at the

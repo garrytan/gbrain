@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.47.11.0] - 2026-09-02
+## [0.48.2.0] - 2026-09-02
 
 **Your search reranker now runs on Voyage, and every surface tells you whether it is actually running.**
 
@@ -45,7 +45,7 @@ No Voyage key and no wish to rerank: `gbrain config set search.reranker.enabled 
   ranker wave that follows this release; there is no new quality number in
   this entry, and the results publish there, wins and losses.
 
-### To take advantage of v0.47.11.0
+### To take advantage of v0.48.2.0
 
 `gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
 warns about the reranker:
@@ -132,6 +132,511 @@ warns about the reranker:
   `test/init-reranker-default.test.ts`; the sunset short-circuit suite now
   pins the explicit-ZE scenario plus the live-default-after-the-date case.
 
+## [0.48.1.0] - 2026-09-02
+
+**The community fix wave: 55 contributor pull requests adopted or reworked
+with credit, 22 verified open issues fixed directly, and a hardening pass
+over the whole set.** Extraction stops re-mining pages it already scanned,
+two same-day notes with the same headline no longer overwrite each other's
+atoms, your nightly summaries land on the calendar day you actually lived,
+Grok Build session logs import like every other harness, and LM Studio
+joins the local embedding providers. Every adopted fix carries a regression
+test proven red before the fix.
+
+### Behavior changes (read before you upgrade)
+
+- **Remote graph traversal now returns edges by default.** A remote MCP
+  `traverse_graph` call with no `link_type`/`direction` filter used to
+  return the legacy outgoing-node shape, which read as "no links" for pages
+  whose typed edges were all inbound. Remote callers now default to
+  `direction: both` and receive explicit `GraphPath[]` edges — a wire-shape
+  change if your remote client parsed the old no-filter node output. Pass an
+  explicit `direction` to pin a shape. Trusted local callers (`gbrain
+  graph`) keep the node shape unchanged. A remote call that leaves BOTH
+  direction and depth to default walks at depth 2 (bidirectional path
+  enumeration is combinatorial on entity hubs); an explicit `depth` is
+  honored up to the cap of 10. Both engines bound every path walk at
+  5,000 edge rows — the shallowest edges are kept, a truncation note goes
+  to stderr, and the wire shape is unchanged. (#4704, contributed by
+  @javieraldape; fixes #4666)
+- **Atom identity now folds in the source page.** Two source pages that
+  emit the same atom title on the same date get distinct atom slugs instead
+  of silently overwriting one another. Atoms created before this release
+  are adopted in place on their next re-extraction — no migration, no
+  duplicates. (#4734, contributed by @1kuna; fixes #4733)
+- **Search-cache epoch: one-time miss spike.** The query-cache key version
+  moved to v=28 (synthetic-row demotion changed result composition; it sits on
+  top of 0.48.0.0's 26 → 27 adaptive-return epoch).
+  Existing cache rows become unreachable on first re-query; nothing to do.
+- **Consolidated takes stop duplicating.** The dream cycle's take-identity
+  lookup no longer keys on `since_date` (which moves whenever facts
+  re-extract), so a re-run updates the existing take instead of inserting a
+  twin. Duplicates minted by the old shape reconcile automatically on the
+  next cycle. (#4719, contributed by @thomaskong119)
+- **Schema packs are now enforced where you write.** When the active pack
+  declares a vocabulary, an explicit undeclared page type on `capture` or
+  an undeclared link verb on `add_link` is rejected with the pack's actual
+  vocabulary in the error, instead of quietly minting an off-taxonomy page
+  or edge. No pack (or an unresolvable one) means no enforcement — writes
+  behave exactly as before. A capture whose frontmatter declares a type
+  the pack accepts is stored under that type — over MCP as well as from
+  the CLI — instead of being silently retyped to `note`. (#4721,
+  contributed by @javieraldape; fixes #4655)
+
+### AI providers
+
+- OpenRouter DeepSeek routes can now drive the subagent loop, with a live
+  abort/retry pin; supported families are declared once in
+  `src/core/ai/openrouter-families.ts` so the recipe predicate and the
+  handler auto-route can't disagree. (#4672, contributed by @taisy03)
+- OpenRouter DeepSeek gets `thinking_by_default` reasoning headroom, and
+  dream triage runs it thinking-off. (#4760, contributed by
+  @thebergerking91; fixes #4758)
+- OpenRouter responses whose `content` is empty promote
+  `reasoning_content` instead of reading as a blank reply. (#4754,
+  contributed by @thebergerking91; fixes #4753)
+- Thinking-by-default Ollama models get reasoning headroom too. (#4569,
+  contributed by @chrispaterson)
+- **LM Studio is a local embedding provider.** `gbrain init
+  --embedding-model lmstudio:<model-id> --embedding-dimensions <N>` points
+  gbrain at LM Studio's local server (default `http://localhost:1234/v1`);
+  the model id is whatever you loaded in the app. (#4697, contributed by
+  @jonathanlesh)
+- Ollama embedding recipes list real pullable tags, and bare model ids with
+  colons parse correctly; embedding-dimension lookup tries the exact model
+  id before stripping a provider prefix. (#4646, contributed by
+  @Masashi-Ono0611; fixes #3904)
+- Zhipu GLM-4.5+/5.x declare `thinking_by_default`, so `gbrain think`
+  grants them full reasoning headroom (#4727).
+
+### Dream / cycle
+
+- The full cycle runs for implicit default sources instead of silently
+  skipping phases. (#4745, contributed by @javieraldape; fixes #4700)
+- **Cycle summaries bucket by your local calendar day** (explicit `--date`
+  > `cycle.timezone` config > host timezone > UTC), so a run after local
+  midnight stops rewriting yesterday's summary. (#4348, contributed by
+  @avs-io)
+- Dream summaries are length-bounded and preserve original source dates.
+  (#4337, contributed by @avs-io)
+- Phantom-redirect recomputes `content_hash` with the shared hash shape
+  instead of a stale private copy. (#4693, contributed by @jonathanlesh)
+- Per-item drain failures stay typed (bounded, sanitized, reconcilable)
+  instead of collapsing into one opaque error. (#4731, contributed by
+  @1kuna; fixes #4730)
+- `propose_takes` prompts and parser agree on the kind vocabulary (#4736),
+  and each proposal's `model_id` provenance comes from the actual gateway
+  response (#4737).
+
+### Atoms / extraction
+
+- **Scanned pages stop re-arming.** The extract-atoms completion marker no
+  longer feeds the very content hash it is compared against, so an
+  export→sync round-trip stops re-mining every already-scanned page into
+  paraphrased near-duplicate atoms. (#4735, contributed by @DarkNightForge)
+- **Atom quotes are verified against the exact text the model saw** at
+  extraction time; located quotes persist original characters + offsets
+  with a `source_quote_verified` stamp, unlocatable quotes are dropped with
+  the atom kept. Quote location advances by full code points, so emoji and
+  CJK text can't skew offsets (#4706, contributed by @Grimnoth).
+- Facts extraction takes a config-driven prompt appendix plus a
+  deterministic junk gate. (#3852, contributed by @miroslavb)
+- A fact whose entity token is a null-like placeholder (`"null"`,
+  `"undefined"`, `"n/a"`, …) is treated as having no entity instead of
+  minting facts under a literal `null` entity slug (#4755). Fact and take
+  fence tables render correctly in GFM/Obsidian (the required blank line
+  is emitted, #4615), and a page's first Facts fence lands above the
+  timeline sentinel where the reconciler can see it (#4756).
+
+### Doctor / brain health
+
+- New `atom_provenance_drift` check: atoms whose `source_hash` no longer
+  resolves to their source page. (#4566, contributed by @SilverNine)
+- New `default_source_local_path` check plus the non-destructive repair
+  `gbrain sources set-path <id> <path>` — it only warns when the null
+  pointer demonstrably breaks write-through, never on the designed
+  fallback topology. (#4739, contributed by @rameshbaskaran)
+- Intentional hub pages opt out of `junk_entity_hubs` via a frontmatter
+  marker. (#4582, contributed by @Masashi-Ono0611)
+- `bootstrap_push_health` reports verified-clean idle as ok, not warn.
+  (#4715, contributed by @Masashi-Ono0611; fixes #4714)
+- Local-only sources with no git origin are healthy, not "corrupted"
+  (#4559, thanks @matteborje); `subagent_capability` mirrors the runtime
+  model precedence (#4575); `extract_atoms_backlog` verifies a cycle
+  actually runs before reporting OK (#4576); doctor honors `--skills-dir`
+  (#4673); and a candidate `.git` marker is structurally validated before
+  the home-in-worktree check warns about it (#4683).
+- Content-sanity junk patterns can be disabled individually without the
+  kill-switch. (#4702, contributed by @sprivalov)
+- Health measures orphans and graph coverage over served memory (#4280),
+  entity cards report exact fact counts and truthful thread lists (#4347),
+  `get_page` follows slug aliases within the caller's scope (#4275), skill
+  preconditions accept a populated default corpus (#4278), and standalone
+  nightly probes use your configured model routes (#4279; fixes #4636 —
+  all contributed by @avs-io).
+- Bootstrap verify's hook-overlap check compares every hook scope,
+  including user-scope carriers and PreCompact (#4585); the
+  brain-commit-push helper fails loudly on a push-lock timeout instead of
+  silently dropping the push (#4682).
+
+### Google / open loops
+
+- **`gbrain loops unmute sender <email>` / `unmute thread <id>`** reverses
+  a suppression exactly and forward-only; repeated unmutes are no-op
+  successes so scripts can call them unconditionally. (#4722, contributed
+  by @mike-tech-ship-it) **Say to your agent:** *"Mute this sender's
+  loops"* / *"unmute them"* — your agent runs `gbrain loops mute sender
+  <email>` and `gbrain loops unmute sender <email>`.
+- Calendar system mail (invites, acceptances, cancellations) neither opens
+  nor closes reply loops — it is detected structurally by the
+  `text/calendar` MIME part, so a colleague's real address can't be
+  penalized. (#4723, contributed by @mike-tech-ship-it)
+- Which threads reach the LLM commitment extractor is now decided by a
+  structural eligibility gate (Gmail labels, `List-Unsubscribe`, calendar
+  part, who wrote the message — no vendor lists), and every eligible
+  thread is queued losslessly instead of being dropped by a tight per-sweep
+  cap. (#4724, contributed by @mike-tech-ship-it)
+- Secondary calendars sync, not just primary: `gbrain google calendars`
+  lists every readable calendar and `sources add --calendar-id <id>` scopes
+  a source to one. (#4698, contributed by @jpark43)
+
+### Search / eval
+
+- Recall's page-search arm honors the federated source set. (#4709,
+  contributed by @jcnouwens; fixes #4707)
+- Chunkless synthetic title rows are demoted instead of outranking real
+  content, and the compiled-truth boost no longer applies to them. (#4256,
+  contributed by @avs-io; fixes #3695)
+- Duplicate exact-identity chunks collapse in search results (#4531) and
+  eval judges stay in grading mode behind a data boundary (#4338 — both
+  contributed by @avs-io).
+- Image-similarity search honors the active search mode's limit. (#4581,
+  contributed by @Masashi-Ono0611; fixes #4356)
+- A bare `gbrain recall <word>` that matches no facts by entity falls back
+  to a fact-text grep with a stderr note, so keyless/casual usage finds the
+  fact (#4720). Reranker empty/malformed pass-throughs are audited, stamped,
+  and announced once instead of silently serving raw fusion order (#4648).
+- `gbrain search modes` derives every knob from the live bundle and labels
+  its resolution planes (#4604); `eval --qrels` validates and normalizes
+  qrels before any billed search (#4608); CRAG escalation honors the
+  caller's limit (#4610); cross-source link resolution follows the
+  configured `sources.default` instead of a hardcoded `'default'` (#4611).
+- `unify-types` catch-all synthesis carries `slug_filter`/`path_filter`
+  through instead of dropping them (#4651), and think-gather pins
+  `autocut:false` on both search legs so evidence breadth survives (#4561).
+
+### MCP / schema
+
+- **Deployment-specific brain identity over MCP:** a configured identity
+  rides the initialize response under a `Deployment identity:` banner, so
+  agents connected to several brains sharing one tool catalog can tell them
+  apart. (#4748, contributed by @Tomlebretonxhec)
+- Unscoped writes that would land in `source_id='default'` on a brain whose
+  pages mostly live elsewhere are guarded: `gbrain sync` refuses
+  (it has `--source` to redirect), `gbrain import` warns, and MCP stdio
+  prints a once-per-process advisory when the write actually resolves to
+  the default tier. `GBRAIN_ALLOW_DEFAULT_WRITE=1` is the escape hatch.
+  (#4583, contributed by @noelboss; fixes #4564)
+
+### Sync / import
+
+- A clean local-folder import stamps `sources.last_sync_at`, so freshness
+  checks stop flagging healthy folder sources. (#4711, contributed by
+  @Masashi-Ono0611; fixes #1691)
+- Import worker fan-out clamps under `GBRAIN_MAX_CONNECTIONS`. (#4619,
+  contributed by @richtheworld)
+- `extract --explain` no longer crashes on bigint counters, and the sync
+  rename lane routes both resolution paths through the guarded resolver.
+  (#4676, contributed by @time-attack; fixes #3570)
+- Workspace secret scanning was hardened to cover gbrain's own credential
+  shapes. (#4740, contributed by @xavierboes)
+
+### Transcripts / code intel
+
+- **Grok Build (grok CLI) session logs ingest as a transcript format.**
+  `gbrain transcripts ingest` discovers `~/.grok/sessions` stores, imports
+  conversation text with real session times from the sidecar metadata, and
+  skips sidecar files structurally. (#4751, contributed by @thomasbek3;
+  fixes #4750) **Say to your agent:** *"Archive my session transcripts"* —
+  Grok Build sessions now import alongside Claude Code, Codex, OpenClaw,
+  and Hermes.
+- `code-def` and `code-refs` accept `--source <id>` / honor the ambient
+  source scope like the rest of the code-* family, sharing one resolver
+  with `code-callers`/`code-callees`. (#4749, contributed by
+  @scottgigante-hubflow; fixes #4747)
+
+### CLI
+
+- `gbrain history` honors `--json` and stops claiming a truncation that
+  did not happen. (#4692, contributed by @jonathanlesh)
+- File-upload filename validation was tightened (hardening). (#4688,
+  contributed by @Masashi-Ono0611)
+- skillopt classifies `BudgetExhausted` aborts correctly (#4687),
+  `embedQuestion` reaches every `runThink` call site (#4686; fixes #3734),
+  and a leading `--explain` before a non-claiming command no longer breaks
+  dispatch (#4685; fixes #4541 — all contributed by @Masashi-Ono0611).
+- `--flag false` on a boolean parameter consumes the literal value instead
+  of silently inverting intent and binding `'false'` to the next
+  positional (#4602).
+- `pglite-repair` uses the shared confirm-prompt helper (#4523, contributed
+  by @Masashi-Ono0611), and the Postgres sync-reconcile suite is wired into
+  e2e tier1 (#4678, contributed by @Masashi-Ono0611; fixes #4568).
+
+### Docs
+
+- Architecture and request flow clarified with a README flow diagram
+  (#4661, contributed by @danwiggins); `gemini-embedding-2` listed in the
+  Google embedding catalog (#4593, contributed by @VasconcelosADV);
+  timeline parsers skip generated backlink receipts (#4277, contributed by
+  @avs-io).
+
+### Ship-review hardening
+
+Three cross-model adversarial review rounds ran over the wave before ship,
+followed by a targeted test sweep. Every fix below carries a regression
+test proven red first; the rounds added roughly 225 test cases across 75
+test files, 11 of them new.
+
+- **Graph traversal and aliases.** Remote `traverse_graph` defaults to
+  depth 2 when direction is also defaulted, and both engines bound the
+  recursive edge walk at 5,000 rows with a stderr truncation note (see
+  Behavior changes; `gbrain graph-query` prints the same note). (#4704)
+  `get_page`'s alias hop reads the canonical page in the source that owns
+  the alias, so an unrelated live page at the same slug in another granted
+  source can no longer shadow it, and the trusted unscoped read consults
+  archived sources' alias rows only under `include_deleted`. (#4275)
+- **Capture and schema packs.** Frontmatter-typed captures over MCP
+  persist the declared type instead of being retyped to `note` (#4721).
+  The pack-vocabulary loader never throws — an unresolvable pack lets the
+  write proceed — and `add_link` dry runs preview a rejection.
+- **Default-write guard.** `gbrain sync --dry-run` is no longer refused on
+  a brain whose pages mostly live outside `default`: it prints
+  `[dry-run] a real run would be refused:` with the same routing guidance
+  and previews the run; only a real run exits. The MCP stdio advisory and
+  the `gbrain import` warning latch only after a successful assessment, so
+  a transient database error can no longer silence the advisory for the
+  life of the process; the import assessment is memoized per engine so
+  in-process callers (the `sync_brain` op, autopilot, minion sync) pay for
+  it once. (#4583) **Say to your agent:** *"Show me what a sync would do
+  without writing anything"* — your agent runs `gbrain sync --dry-run`.
+- **Calendar mail and open loops.** Calendar system mail is recognized by
+  the iCalendar `METHOD` Gmail carries in the calendar part's own
+  Content-Type header, only real METHOD values count as a stamp, and a
+  generic "Notification:" subject is no longer treated as calendar mail —
+  so a real inbound notification opens a loop again (#4723). `loops mute
+  sender` gates on who WROTE in a thread, never on recipients or CC, so
+  muting one person stops hiding everyone else's commitments in a group
+  thread; thread pages carry a `senders:` list beside `participants:`. The
+  loop-extraction queue budget is counted per source, so one account's
+  stalled backlog no longer starves another's (#4724). The calendar sync
+  token is bound to the calendar it was minted for: re-pointing a source's
+  `g_calendar_id` discards the old cursor and starts a fresh window instead
+  of replaying a foreign delta. `gbrain google calendars --json` emits the
+  standard `{ ok, status, … }` envelope every other google subcommand does
+  (#4698). **Say to your agent:** *"list the calendars my google account
+  can read"* — your agent runs `gbrain google calendars`.
+- **Transcripts.** The Grok Build adapter classifies an undecodable human
+  turn as malformed, so an upstream schema change is reported as drift
+  (watermark frozen) instead of silently advancing past whole
+  conversations; a session whose `summary.json` has not been written yet
+  imports with file-mtime provenance (`timestamp_source: file_mtime`)
+  instead of freezing the watermark for the whole store, and a
+  summary-less session gets a stable path-hash id. (#4751)
+- **Facts and eval.** The deterministic junk gate exempts commitment facts
+  from its plan-narration arm — "I'll send the deck by Friday" is exactly
+  the fact the loop engine exists to capture (#3852). The cross-modal judge
+  neutralizes a closing data-boundary delimiter inside candidate output, so
+  injected text stays inside the graded block (#4338). CRAG escalation
+  honors the caller's explicit limit or the mode-derived default and fires
+  only when the first pass did not already run with expansion on (#4610).
+  The drain summary's count-only error path routes through the same
+  failure sanitizer as typed records (#4731).
+- **MCP identity.** `gbrain config set mcp.instructions "<identity>"`
+  writes the file plane every MCP transport's initialize response reads —
+  the command was accepted and silently ignored before — and a blank
+  `GBRAIN_MCP_INSTRUCTIONS` in the environment no longer blanks a
+  configured identity (an empty or whitespace-only value is treated as
+  unset). (#4748)
+- **CLI and doctor.** `gbrain sources set-path` enforces the same
+  overlapping-path guard `sources add` does — exit 6 with the exact
+  message; `--force` bypasses it (#4739). An archived `--source` on
+  `gbrain agent run` is a clean one-line error + exit 1, not a stack trace
+  (#2922). The `home_dir_in_worktree` check normalizes a trailing-slash
+  `$HOME` before its containment test (#4683). Ollama's thinking predicate
+  excludes `qwen3-coder` and admits `phi4-mini-reasoning` (#4569). The
+  code-* family shares one source-scope SQL predicate, with the inline
+  `--source=<id>` spelling pinned across all four commands (#4747).
+  `recall`'s entity→text fallback is pinned to stay inside the source
+  boundary and to mirror over the thin client (#4720); `reranker_health`
+  warns at three or more audited pass-throughs (#4648).
+
+- **Open-loop extraction resilience (red-team round).** With no chat
+  provider configured (a keyless install or a provider outage) the sweep
+  enqueues no extraction jobs and says so once on stderr; the threads are
+  picked up on their next touch, or by `gbrain sync --source <id> --full`
+  once a provider exists. A job that finds the provider unavailable fails
+  visibly and retries instead of completing empty, so the thread stays
+  re-enqueueable (#4724). Eligibility requires a substantive owner-written
+  message: an RSVP to a calendar invite no longer pays for a model call, and
+  the per-source enqueue budget counts every pending job (waiting, delayed,
+  active). The junk-fact gate's provider-error pattern is anchored to the
+  error-sentence shape, so genuine spend-limit and rate-limit facts survive
+  (#3852). `get_page`'s alias hop surfaces a transport error instead of
+  degrading to not-found (#4275). The overlapping-path guard behind
+  `sources add` and `sources set-path` compares real paths, so a symlink
+  into another source's tree is refused unless `--force` (#4739).
+
+With thanks to every contributor whose pull request this wave adopts:
+@1kuna, @avs-io, @chrispaterson, @danwiggins, @DarkNightForge, @Grimnoth,
+@javieraldape, @jcnouwens, @jonathanlesh, @jpark43, @Masashi-Ono0611,
+@matteborje, @mike-tech-ship-it, @miroslavb, @noelboss, @rameshbaskaran,
+@richtheworld, @scottgigante-hubflow, @SilverNine, @sprivalov, @taisy03,
+@thebergerking91, @thomasbek3, @thomaskong119, @time-attack,
+@Tomlebretonxhec, @VasconcelosADV, @xavierboes — and to the reporters whose
+verified issues drove the direct fixes.
+
+## To take advantage of 0.48.1.0
+
+`gbrain upgrade` is all you need — no schema migrations, no manual steps.
+
+1. **Verify the upgrade:**
+   ```bash
+   gbrain --version
+   gbrain doctor
+   ```
+
+2. **Optional one-time re-stamp for already-scanned pages (Postgres/Supabase
+   brains).** Because the atom completion marker moved out of the content
+   hash, pages that round-tripped export→sync before this release carry a
+   stale marker and will re-scan ONCE on the next extraction cycle. That
+   re-scan is safe (the new atom identity upserts instead of duplicating)
+   but costs one extra LLM sweep. To skip it, re-stamp the marker on pages
+   that were already mined:
+
+   ```sql
+   -- One-time repair; safe to re-run (idempotent).
+   UPDATE pages
+      SET frontmatter = jsonb_set(frontmatter, '{atoms_scan_hash}',
+                                  to_jsonb(substring(content_hash from 1 for 16)))
+    WHERE frontmatter ? 'atoms_scan_hash'
+      AND frontmatter->>'atoms_scan_hash' <> substring(content_hash from 1 for 16);
+   ```
+
+   PGLite brains can simply let the one-time re-scan happen.
+
+3. **Optional: give this brain an identity for connected agents.** An agent
+   holding several brains behind one tool catalog tells them apart by the
+   `Deployment identity:` banner in the MCP initialize response:
+
+   ```bash
+   gbrain config set mcp.instructions "Team wiki brain — route product and roadmap questions here"
+   # restart `gbrain serve` afterwards (the response is built once per process)
+   ```
+
+   `GBRAIN_MCP_INSTRUCTIONS="<identity>"` in the serve process's environment
+   overrides the configured value for that process; a blank or unset variable
+   falls back to the configured one. `gbrain config unset mcp.instructions`
+   returns to the bare canonical contract.
+
+4. **Optional: sync a secondary calendar.**
+
+   ```bash
+   gbrain google calendars --json        # every readable calendar + ids, standard envelope
+   gbrain sources add family-cal --kind google --account you@example.com \
+     --services calendar --calendar-id "<id from the list>"
+   ```
+
+   Re-pointing an existing source's `g_calendar_id` is safe: the old sync
+   cursor is discarded and the new calendar starts from a fresh window.
+
+**Say to your agent:** *"Archive my session transcripts"* (Grok Build now
+included) — *"Mute this sender's loops"* / *"unmute them"* (your agent runs
+`gbrain loops mute|unmute sender <email>`) — *"Set up local embeddings
+through LM Studio"* (your agent runs `gbrain init --embedding-model
+lmstudio:<model-id> --embedding-dimensions <N>`) — *"Tell connected agents
+which brain this is"* (your agent runs `gbrain config set mcp.instructions
+"<identity>"`) — *"list the calendars my google account can read"* (your
+agent runs `gbrain google calendars`).
+## [0.48.0.0] - 2026-09-01
+
+The eval retrieval fix wave. Honest re-baselining against the public
+LongMemEval benchmark caught a serious unpublished regression in hybrid
+search and fixed it, and the OpenClaw context lane caught up to the
+volunteer layer Claude Code users already had. Measured, receipted, and
+republished in gbrain-evals alongside this release.
+
+### Fixed
+
+- **Hybrid search no longer lets keyword-fallback noise outvote your real
+  results.** Since the AND→OR keyword fallback shipped, a search whose exact
+  words didn't co-occur in any one chunk could bury the semantically right
+  answers under loose word matches. Measured on LongMemEval's official
+  `recall_all@5`: hybrid scored 51.3% while pure vector scored 93.8% on the
+  same corpus — after this fix, hybrid scores **93.2%** (201 questions
+  gained, 4 lost, out of 470). The fallback keeps its rescue role: it still
+  carries the answer when embeddings are unavailable (keyless installs,
+  provider outages, keyword-only setups). Multi-answer questions ("all the
+  doctors I saw") and temporal questions recover the most. Adversarial
+  review hardened the edges before ship: on cross-modal `both` searches the
+  image arm alone never mutes the keyword rescue (text-side health decides);
+  search meta now reports how many fallback rows were muted
+  (`relaxed_dropped`); and a transitional result set that leaned on fallback
+  rows mid embed-backfill takes the short cache TTL instead of pinning noise
+  for an hour.
+- **`GBRAIN_RETRIEVAL_REFLEX=off` now actually disables the reflex.** The
+  master switch only understood `false`/`0` while its child switches
+  accepted the full negative family (`off`, `no`, any case) — an operator
+  reaching for the incident lever got a silent no-op. All three reflex
+  switches now parse negatives identically.
+
+### Added
+
+- **Your OpenClaw now volunteers relevant pages mid-conversation, not just
+  the ones you explicitly mention.** The reflex lane gained the same
+  volunteer arm the Claude Code hook lane has had since v0.43: when the
+  conversation makes a page clearly relevant (0.7 confidence gate, up to 3
+  pages), it's offered alongside the entity pointers. BrainBench push recall
+  on the OpenClaw seam: 0.9063 → **1.0000** at precision 1.0 — every one of
+  the 9 previously-missed turns was a 4-entity turn the 3-pointer budget
+  couldn't cover. Kill switch: `retrieval_reflex_volunteer: false` in
+  `~/.gbrain/config.json` or `GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER=false`.
+- **The adaptive-return and autocut knobs are now real config keys.**
+  `gbrain config set search.adaptive_return true` (and the `_entity_max` /
+  `_other_max` / `_min_keep` caps, the four `search.autocut*` knobs, and
+  `search.crag_escalation` / `search.crag_think`) previously rejected —
+  the documented config plane was a silent no-op. Adaptive-on searches also
+  now use the semantic cache (previously always cache-cold). Note:
+  both CRAG knobs spend LLM calls per weak query when enabled — see
+  `docs/operations/spend-controls.md`.
+- **`gbrain/core/skillopt` is now a public export** (`runSkillOpt`,
+  `scoreSkillOnTasks`, `loadHeldOut`) so downstream eval harnesses stop
+  reaching through `node_modules` paths that break under non-hoisting
+  installs. This closes the last open finding from the gbrain-evals
+  2026-08-31 suite audit (237/237).
+
+### Changed
+
+- **One-time search-cache reset on upgrade** (cache key version 26 → 27):
+  the first repeat of a cached query re-runs once, then caches normally.
+  This carries the adaptive-return cache keying and the hybrid fusion fix
+  so pre-fix cached results can never be served post-fix.
+
+Known (measured, filed): with fusion now clean, LLM multi-query expansion's
+extra variant lists can dilute small-k retrieval instead of helping it —
+on the same benchmark run, expansion scored well below plain hybrid at k=5.
+If you run `tokenmax` mode and retrieve small result sets, `balanced` may
+serve you better until the follow-up lands (TODOS: expansion variant
+weighting).
+
+**Say to your agent:** *"search my brain for everything about X"* — multi-
+answer recall is dramatically better on hybrid search. — *"turn on adaptive
+return sizing"* — your agent runs `gbrain config set search.adaptive_return
+true`, now a real knob.
+
+To take advantage of v0.48.0.0: upgrade and re-run `gbrain doctor`. No
+migration needed; the search-cache reset is automatic and self-heals on
+first use. OpenClaw users get the volunteer arm immediately (default on,
+kill-switchable as above).
 ## [0.47.10.0] - 2026-09-01
 
 Ambient memory writeback, opt-in and OFF by default: tell your agent
@@ -944,6 +1449,8 @@ promised, and the context needed to respond.
 gbrain upgrade            # applies migration v144 automatically
 gbrain google setup       # connect Gmail/Calendar/Contacts → first digest
 gbrain waiting            # who is waiting on you, with receipts
+```
+
 ## [0.46.35.0] - 2026-08-27
 
 **The maintainer train: 31 red-proven fixes, every one adversarially verified.**

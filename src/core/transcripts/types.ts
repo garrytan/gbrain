@@ -2,7 +2,7 @@
  * types.ts — the transcript-adapter seam (cathedral-4).
  *
  * One contract for every dead-log format gbrain can import: coding-harness
- * session logs (Claude Code, Codex, OpenClaw, Hermes) and consumer chat
+ * session logs (Claude Code, Codex, OpenClaw, Hermes, Grok) and consumer chat
  * exports (ChatGPT, Claude.ai). Each adapter is a leaf module in this
  * directory; the registry in detect.ts is the only place formats are
  * enumerated. Every adapter carries a DATED SPEC_TARGET (the
@@ -29,6 +29,7 @@ export type TranscriptFormat =
   | 'codex'
   | 'openclaw'
   | 'hermes'
+  | 'grok'
   | 'chatgpt'
   | 'claude-export';
 
@@ -66,7 +67,7 @@ export interface ParsedSession {
 /**
  * Per-file diagnostics: the AsyncGenerator RETURN value. `sessions` counts
  * yields; `zeroSessionsReason` makes an empty file explain itself (the
- * parser-drift signal is `bytesRead > 0 && sessions === 0`).
+ * parser-drift signal is `bytesRead > 0 && sessions === 0 && !expectedEmpty`).
  */
 export interface FileDiagnostics {
   bytesRead: number;
@@ -74,6 +75,12 @@ export interface FileDiagnostics {
   truncated: boolean;
   sessions: number;
   zeroSessionsReason?: string;
+  /**
+   * File was understood and simply has no importable text turns (a grok
+   * session that is only system + tool/reasoning traffic). Not host-format
+   * drift — ingest must not freeze the watermark.
+   */
+  expectedEmpty?: boolean;
 }
 
 export interface ParseSessionsOpts {
@@ -111,6 +118,7 @@ const SLUG_DIRS: Record<TranscriptFormat, string> = {
   codex: 'conversations/sessions',
   openclaw: 'conversations/sessions',
   hermes: 'conversations/sessions',
+  grok: 'conversations/sessions',
   chatgpt: 'conversations/chatgpt',
   'claude-export': 'conversations/claude',
 };
@@ -120,6 +128,7 @@ const HARNESS_FORMATS: ReadonlySet<TranscriptFormat> = new Set([
   'codex',
   'openclaw',
   'hermes',
+  'grok',
 ]);
 
 /**

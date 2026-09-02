@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { BrainEngine } from '../core/engine.ts';
+import { bigintToStringReplacer } from '../core/utils.ts';
 import { loadActivePackBestEffort } from '../core/schema-pack/best-effort.ts';
 import { getExtractableSpec, extractableSpecsFromPack } from '../core/schema-pack/extractable.ts';
 import { locateMutablePackFile } from '../core/schema-pack/mutate.ts';
@@ -128,12 +129,24 @@ export async function runExtractExplain(
   }
 
   // Pull last 7d rollup aggregate for this kind.
+  // extract_rollup_7d's halt_count/eval_pass_count/eval_fail_count/
+  // round_completed_count are INT columns; Postgres's SUM(integer) returns
+  // bigint (a driver/SQL-standard fact, not a schema bug), and postgres.js
+  // surfaces that as JS `bigint`. Cast to ::text in SQL so the shape is
+  // identical across engines (PGLite's SUM(INT) returns a plain `number`,
+  // which would otherwise make --json's output type engine-dependent) and
+  // so a huge count is never silently truncated by an intermediate
+  // Number() coercion. This is also a NULL-producing aggregate with no
+  // GROUP BY: zero matching rows still returns one row with every SUM/MAX
+  // as NULL, not zero rows — the `| null` below reflects that.
+  // cost_usd is REAL (not INT), so SUM(cost_usd) is already a plain number
+  // and doesn't need the cast.
   type RollupRow = {
-    cost_7d_usd: number;
-    eval_pass_count: number;
-    eval_fail_count: number;
-    halt_count: number;
-    round_completed_count: number;
+    cost_7d_usd: number | null;
+    eval_pass_count: string | null;
+    eval_fail_count: string | null;
+    halt_count: string | null;
+    round_completed_count: string | null;
     last_updated_at: Date | string | null;
   };
   let rollup: RollupRow | null = null;
@@ -141,10 +154,10 @@ export async function runExtractExplain(
     const rows = await engine.executeRaw<RollupRow>(
       `SELECT
          SUM(cost_usd) AS cost_7d_usd,
-         SUM(eval_pass_count) AS eval_pass_count,
-         SUM(eval_fail_count) AS eval_fail_count,
-         SUM(halt_count) AS halt_count,
-         SUM(round_completed_count) AS round_completed_count,
+         SUM(eval_pass_count)::text AS eval_pass_count,
+         SUM(eval_fail_count)::text AS eval_fail_count,
+         SUM(halt_count)::text AS halt_count,
+         SUM(round_completed_count)::text AS round_completed_count,
          MAX(updated_at) AS last_updated_at
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7 AND kind = $1`,
@@ -156,6 +169,21 @@ export async function runExtractExplain(
   }
 
   if (json) {
+    // Number()-coerce the four INT-aggregate fields so --json's rollup_7d
+    // shape matches `extract status --json` and doctor's extract_health
+    // (both already Number()-coerce the same columns) rather than leaving
+    // them as the SQL-level ::text strings. bigintToStringReplacer stays as
+    // a defense-in-depth backstop in case a raw bigint reaches this object
+    // some other way; it's a no-op here since rollup is already
+    // string/number/null-only.
+    const rollupJson = rollup ? {
+      cost_7d_usd: rollup.cost_7d_usd,
+      eval_pass_count: Number(rollup.eval_pass_count) || 0,
+      eval_fail_count: Number(rollup.eval_fail_count) || 0,
+      halt_count: Number(rollup.halt_count) || 0,
+      round_completed_count: Number(rollup.round_completed_count) || 0,
+      last_updated_at: rollup.last_updated_at,
+    } : null;
     console.log(JSON.stringify({
       schema_version: 1,
       kind: kindArg,
@@ -164,8 +192,8 @@ export async function runExtractExplain(
       spec,
       prompt_template: promptPath ? { path: promptPath, exists: promptExists } : null,
       fixture_corpus: fixturePath ? { path: fixturePath, exists: fixtureExists } : null,
-      rollup_7d: rollup,
-    }, null, 2));
+      rollup_7d: rollupJson,
+    }, bigintToStringReplacer, 2));
     return;
   }
 

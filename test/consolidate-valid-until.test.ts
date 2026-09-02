@@ -48,6 +48,14 @@ beforeEach(async () => {
   await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'cdx4-%'`);
 });
 
+async function takeIdFor(slug: string): Promise<number> {
+  const r = await engine.executeRaw<{ id: number }>(
+    `SELECT t.id FROM takes t JOIN pages p ON p.id = t.page_id WHERE p.slug = $1 ORDER BY t.id LIMIT 1`,
+    [slug],
+  );
+  return r[0].id;
+}
+
 function unitVec(): string {
   const a = new Float32Array(1536);
   a[0] = 1.0;
@@ -260,6 +268,269 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
       `SELECT consolidated_into FROM facts WHERE entity_slug = 'cdx4-idempo-1' AND consolidated_into IS NOT NULL`,
     );
     expect(facts.length).toBe(4);
+  });
+
+  test('identical claim text on TWO pages consolidates into two page-scoped takes (never cross-page merged)', async () => {
+    // The take identity is (page_id, claim) scoped to this phase's rows. Two
+    // entities that happen to carry the same wording must each get their own
+    // take — a claim-only lookup would attach page B's facts to page A's take.
+    await seedPage('cdx4-shared-a');
+    await seedPage('cdx4-shared-b');
+    const oldDate = new Date(Date.now() - 30 * 60 * 60 * 1000);
+    for (const slug of ['cdx4-shared-a', 'cdx4-shared-b']) {
+      for (let i = 0; i < 3; i++) {
+        await insertFact({
+          entity_slug: slug,
+          text: 'ships a weekly release',
+          valid_from: new Date(oldDate.getTime() + i * 60 * 60 * 1000),
+        });
+      }
+    }
+
+    const r1 = await runPhaseConsolidate(engine, {});
+    expect(r1.details.takes_written).toBe(2);
+    expect(r1.details.facts_consolidated).toBe(6);
+
+    const takes = await engine.executeRaw<{ page_id: number; slug: string; claim: string }>(
+      `SELECT t.page_id, p.slug, t.claim FROM takes t JOIN pages p ON p.id = t.page_id
+       WHERE t.claim = 'ships a weekly release' ORDER BY p.slug`,
+    );
+    expect(takes).toHaveLength(2);
+    expect(takes.map(t => t.slug)).toEqual(['cdx4-shared-a', 'cdx4-shared-b']);
+    expect(new Set(takes.map(t => t.page_id)).size).toBe(2);
+
+    // Each page's facts point at ITS OWN take, never the sibling page's.
+    for (const t of takes) {
+      const facts = await engine.executeRaw<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM facts WHERE entity_slug = $1 AND consolidated_into = $2`,
+        [t.slug, await takeIdFor(t.slug)],
+      );
+      expect(parseInt(facts[0].n, 10)).toBe(3);
+    }
+
+    // Re-run after an extract_facts-style reset: still two, zero new.
+    await engine.executeRaw(
+      `UPDATE facts SET consolidated_at = NULL, consolidated_into = NULL
+       WHERE entity_slug IN ('cdx4-shared-a', 'cdx4-shared-b')`,
+    );
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+    const after = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM takes WHERE claim = 'ships a weekly release'`,
+    );
+    expect(parseInt(after[0].n, 10)).toBe(2);
+  });
+
+  test('semantic upsert: a re-extracted claim with a newer valid_from reuses the take', async () => {
+    await seedPage('cdx4-idempo-3');
+    const day1 = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-idempo-3',
+        text: 'stable claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r1 = await runPhaseConsolidate(engine, {});
+    expect(r1.details.takes_written).toBe(1);
+    const firstTake = await engine.executeRaw<{ id: number; since_date: string }>(
+      `SELECT id, since_date::text FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(firstTake.length).toBe(1);
+
+    // Simulate the next cycle's extract_facts: it hard-deletes and re-inserts
+    // the page's facts. The claim text is unchanged, but the new rows carry a
+    // fresh valid_from (an LLM extraction that defaults valid_from to now()),
+    // so MIN(valid_from) — and therefore since_date — lands on a later day.
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-idempo-3'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-idempo-3',
+        text: 'stable claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.facts_consolidated).toBe(4);
+    expect(r2.details.takes_written).toBe(0);
+
+    const countAfter2 = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(parseInt(countAfter2[0].n, 10)).toBe(1); // STILL 1 — no duplicate
+
+    // The take keeps its identity: same row, same since_date as first promotion.
+    const afterTake = await engine.executeRaw<{ id: number; since_date: string }>(
+      `SELECT id, since_date::text FROM takes WHERE page_id = (SELECT id FROM pages WHERE slug = 'cdx4-idempo-3')`,
+    );
+    expect(afterTake[0]).toEqual(firstTake[0]);
+  });
+
+  test('semantic upsert: a human-authored take with the same claim is not hijacked', async () => {
+    const pageId = await seedPage('cdx4-foreign');
+    await engine.executeRaw(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, source, active)
+       VALUES ($1, 1, 'shared claim', 'bet', 'garry', 'human:garry', TRUE)`,
+      [pageId],
+    );
+    const day1 = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-foreign',
+        text: 'shared claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.takes_written).toBe(1);
+
+    const rows = await engine.executeRaw<{ id: number; kind: string; holder: string; source: string }>(
+      `SELECT id, kind, holder, source FROM takes WHERE page_id = $1 ORDER BY id`,
+      [pageId],
+    );
+    // The bet keeps its provenance; consolidate appends its own take instead
+    // of adopting a row it did not author.
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toMatchObject({ kind: 'bet', holder: 'garry', source: 'human:garry' });
+    expect(rows[1]).toMatchObject({ kind: 'fact', holder: 'self' });
+  });
+
+  test('semantic upsert: a superseded take is not resurrected as a new active row', async () => {
+    const pageId = await seedPage('cdx4-supersede');
+    const day1 = new Date(Date.now() - 96 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-supersede',
+        text: 'retired claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+    await runPhaseConsolidate(engine, {});
+
+    // The user retires the take.
+    await engine.executeRaw(
+      `UPDATE takes SET active = FALSE, superseded_by = 999 WHERE page_id = $1`,
+      [pageId],
+    );
+
+    // Next cycle re-extracts the same claim with a fresher valid_from.
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-supersede'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-supersede',
+        text: 'retired claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+
+    const rows = await engine.executeRaw<{ active: boolean; claim: string }>(
+      `SELECT active, claim FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].active).toBe(false); // retirement survives the dream cycle
+  });
+
+  test('semantic upsert: a resolved take is reused but never mutated', async () => {
+    const pageId = await seedPage('cdx4-resolved');
+    const day1 = new Date(Date.now() - 96 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-resolved',
+        text: 'resolved claim',
+        valid_from: new Date(day1.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+    await runPhaseConsolidate(engine, {});
+    await engine.executeRaw(
+      `UPDATE takes SET resolved_at = now(), source = 'frozen' WHERE page_id = $1`,
+      [pageId],
+    );
+    const before = await engine.executeRaw<{ id: number; source: string; updated_at: Date }>(
+      `SELECT id, source, updated_at FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+
+    await engine.executeRaw(`DELETE FROM facts WHERE entity_slug = 'cdx4-resolved'`);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-resolved',
+        text: 'resolved claim',
+        valid_from: new Date(day1.getTime() + 24 * 60 * 60 * 1000 + i * 60 * 60 * 1000),
+      });
+    }
+    const r2 = await runPhaseConsolidate(engine, {});
+    expect(r2.details.takes_written).toBe(0);
+
+    const after = await engine.executeRaw<{ id: number; source: string; updated_at: Date }>(
+      `SELECT id, source, updated_at FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    expect(after.length).toBe(1);
+    expect(after[0].source).toBe(before[0].source);
+    expect(new Date(after[0].updated_at).getTime()).toBe(new Date(before[0].updated_at).getTime());
+
+    // Facts still consolidate into it — reuse without mutation.
+    const facts = await engine.executeRaw<{ consolidated_into: number }>(
+      `SELECT consolidated_into FROM facts WHERE entity_slug = 'cdx4-resolved' AND consolidated_into IS NOT NULL`,
+    );
+    expect(facts.length).toBe(4);
+    expect(facts[0].consolidated_into).toBe(before[0].id);
+  });
+
+  test('upgrade shape: pre-fix (page_id, claim, since_date) duplicates reconcile into the lowest-id row instead of minting a third', async () => {
+    // Brains that ran the pre-fix lookup already hold duplicate takes for the
+    // same claim — one per since_date the old key minted. The widened
+    // (page_id, claim, kind, holder) lookup with ORDER BY id must
+    // deterministically reuse the OLDEST row and never insert another.
+    const pageId = await seedPage('cdx4-upgrade');
+    const dupA = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, source, since_date, active)
+       VALUES ($1, 1, 'legacy claim', 'fact', 'self', 'test', '2026-08-01', TRUE)
+       RETURNING id`,
+      [pageId],
+    );
+    const dupB = await engine.executeRaw<{ id: number }>(
+      `INSERT INTO takes (page_id, row_num, claim, kind, holder, source, since_date, active)
+       VALUES ($1, 2, 'legacy claim', 'fact', 'self', 'test', '2026-08-02', TRUE)
+       RETURNING id`,
+      [pageId],
+    );
+    expect(dupB[0].id).toBeGreaterThan(dupA[0].id);
+
+    // The next cycle re-extracts the same claim with yet another valid_from
+    // (a THIRD since_date — the old lookup would have minted a third take).
+    const day3 = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    for (let i = 0; i < 4; i++) {
+      await insertFact({
+        entity_slug: 'cdx4-upgrade',
+        text: 'legacy claim',
+        valid_from: new Date(day3.getTime() + i * 60 * 60 * 1000),
+      });
+    }
+
+    const r = await runPhaseConsolidate(engine, {});
+    expect(r.details.takes_written).toBe(0); // reconciled, not duplicated
+    expect(r.details.facts_consolidated).toBe(4);
+
+    const count = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM takes WHERE page_id = $1`,
+      [pageId],
+    );
+    expect(parseInt(count[0].n, 10)).toBe(2); // still the two legacy rows
+
+    // Deterministic choice: facts landed in the LOWEST-id duplicate.
+    const facts = await engine.executeRaw<{ consolidated_into: number }>(
+      `SELECT consolidated_into FROM facts WHERE entity_slug = 'cdx4-upgrade' AND consolidated_into IS NOT NULL`,
+    );
+    expect(facts.length).toBe(4);
+    for (const f of facts) expect(f.consolidated_into).toBe(dupA[0].id);
   });
 
   test('valid_until idempotency: second run leaves valid_until unchanged (no diff)', async () => {

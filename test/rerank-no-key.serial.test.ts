@@ -1,5 +1,5 @@
 /**
- * v0.47.11 — `no_key` reranker preflight (fail-open, audit-only, once per
+ * v0.48.2 — `no_key` reranker preflight (fail-open, audit-only, once per
  * process per model).
  *
  * With the default reranker now keyed on VOYAGE_API_KEY, a keyless balanced
@@ -112,7 +112,7 @@ afterAll(() => {
   resetGateway();
 });
 
-describe('gateway.rerank no_key preflight (v0.47.11)', () => {
+describe('gateway.rerank no_key preflight (v0.48.2)', () => {
   test('default voyage model, no VOYAGE_API_KEY → RerankError(no_key) before any HTTP call', async () => {
     await withFreshAuditDir(async () => {
       configureGateway(keylessGw());
@@ -234,7 +234,7 @@ describe('gateway.rerank no_key preflight (v0.47.11)', () => {
   });
 });
 
-describe('applyReranker on no_key (v0.47.11)', () => {
+describe('applyReranker on no_key (v0.48.2)', () => {
   test('results pass through unchanged, no per-query rows, onSkip fires with no_key', async () => {
     await withFreshAuditDir(async () => {
       configureGateway(keylessGw());

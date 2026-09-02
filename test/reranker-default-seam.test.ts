@@ -1,7 +1,7 @@
 /**
  * #3657 reranker default seam — ONE code home for the runtime/bundle default.
  *
- * v0.47.11 flipped the default from the sunsetting `zeroentropyai:zerank-2`
+ * v0.48.2 flipped the default from the sunsetting `zeroentropyai:zerank-2`
  * to `voyage:rerank-2.5` (`DEFAULT_RERANKER_MODEL` in src/core/ai/defaults.ts).
  * Everything resolves through that constant:
  *   - the three mode bundles (src/core/search/mode.ts)
@@ -32,7 +32,7 @@ import {
   rerankerSunset,
 } from '../src/core/ai/defaults.ts';
 
-describe('DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.47.11)', () => {
+describe('DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)', () => {
   test('all three mode bundles resolve their reranker_model through the one constant', () => {
     expect(MODE_BUNDLES.conservative.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
     expect(MODE_BUNDLES.balanced.reranker_model).toBe(DEFAULT_RERANKER_MODEL);

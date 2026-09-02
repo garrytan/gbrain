@@ -115,6 +115,12 @@ it nightly and Phase 4 below (plus most of Phase 2's hygiene checks) is
 covered. The pseudocode that follows is the harness-side variant for agents
 that also do LLM-driven entity sweeps and memory consolidation on top.
 
+Nightly summaries land on the calendar day you actually lived: the cycle
+buckets by explicit `--date` > `cycle.timezone` config > the host's IANA
+timezone > UTC, so a run scheduled after local midnight no longer rewrites
+yesterday's summary. When the host clock's zone isn't yours (a cloud box on
+UTC), pin it once: `gbrain config set cycle.timezone America/Los_Angeles`.
+
 ### Synthesis cost control: the triage cascade
 
 The synthesize phase is a two-stage cascade: a cheap scored triage

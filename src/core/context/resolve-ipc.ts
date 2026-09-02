@@ -136,6 +136,13 @@ export interface ResolveRequest {
   /** v0.43 (#2095, codex D7): suppression mode — 'slug-only' under windowing. */
   suppression?: 'slug-and-title' | 'slug-only';
   /**
+   * 2026-08 fix wave: the volunteer stage's wide ungated pool resolve. The
+   * binding's onDelivered skips delivery logging for probe requests (the pool
+   * is not injected pointers; gated survivors log via volunteer-events). An
+   * older serve ignores the field — accepted minor mixed-version stat noise.
+   */
+  probe?: 'volunteer';
+  /**
    * v0.46.15: lexical-arms kill switch. Either side may disable: a client
    * `false` wins; otherwise the server applies its own file-config gate.
    */

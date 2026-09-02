@@ -32,7 +32,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, opAllowedForBoundClient } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { disabledOpsForPublishGates } from '../mcp/publish-gates.ts';
-import { buildMcpInstructions } from '../mcp/instructions.ts';
+import { resolveMcpInstructions } from '../mcp/instructions.ts';
 import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import {
   GBrainOAuthProvider,
@@ -2377,7 +2377,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       { name: 'gbrain', version: VERSION },
       {
         capabilities: { tools: {} },
-        instructions: buildMcpInstructions({ writeback: writebackOpts }),
+        // #4748: contract (+ opt-in writeback section) + deployment identity.
+        instructions: resolveMcpInstructions(config, process.env, { writeback: writebackOpts }),
       },
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => {

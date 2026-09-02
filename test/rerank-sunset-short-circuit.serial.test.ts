@@ -125,7 +125,7 @@ afterAll(() => {
 describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
   test('ABSENT per-call model resolves to the EXPLICITLY configured ZE model and short-circuits after the date — no transport call', async () => {
     await withFreshAuditDir(async () => {
-      // v0.47.11: the bundle/runtime default is live voyage, so the sunset
+      // v0.48.2: the bundle/runtime default is live voyage, so the sunset
       // case is now a brain with an EXPLICIT `search.reranker.model`
       // zeroentropyai:* config (gwConfig pins it). Absent per-call model →
       // effective model is that configured ZE model — the X7 main case.
@@ -237,7 +237,7 @@ describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
   });
 });
 
-describe('v0.47.11 live default: no ZE config at all', () => {
+describe('v0.48.2 live default: no ZE config at all', () => {
   test('ABSENT model → live voyage default → transport IS called after the date; no sunset row, no stderr', async () => {
     await withFreshAuditDir(async () => {
       // Base gwConfig() carries a VOYAGE_API_KEY and NO reranker_model → the
@@ -270,7 +270,7 @@ describe('applyReranker fail-open on post-sunset short-circuit (#3657)', () => {
 
       // Two searches — the gateway writes its one process-level row; the
       // applyReranker layer must not add per-query rows for this reason, and
-      // reports the skip through onSkip (v0.47.11) for the degraded stamp.
+      // reports the skip through onSkip (v0.48.2) for the degraded stamp.
       const skips: string[] = [];
       const opts = { enabled: true, topNIn: 30, topNOut: null, onSkip: (r: string) => skips.push(r) };
       const out1 = await applyReranker('query one', results, opts);

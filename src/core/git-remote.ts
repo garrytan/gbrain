@@ -346,6 +346,24 @@ export function validateRepoState(
     });
     remoteUrl = out.toString().trim();
   } catch {
+    // #4559 (reported by @matteborje): a local-only source has no `origin`
+    // by design — `git remote get-url origin` exiting non-zero is only
+    // corruption when a remote was actually expected (a managed clone
+    // missing its origin). With no expectedRemoteUrl, classify on real
+    // repository integrity instead so a healthy no-remote repo doesn't
+    // read clone_state=corrupted forever.
+    if (expectedRemoteUrl === undefined) {
+      try {
+        execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-dir'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 10_000,
+          env: { ...process.env, ...GIT_ENV },
+        });
+        return 'healthy';
+      } catch {
+        return 'corrupted';
+      }
+    }
     return 'corrupted';
   }
 

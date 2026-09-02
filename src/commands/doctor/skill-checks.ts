@@ -239,8 +239,29 @@ export async function skillPreconditionsCheck(
       } catch { return 0; }
     },
     async listSourceIds() {
+      // #4278: `source:<id>`'s contract is EXISTENCE — a registered-but-not-
+      // yet-synced source is met. Includes 'default' (it always exists).
       try {
-        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE id <> 'default'`);
+        const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources ORDER BY id`);
+        return rows.map(r => r.id);
+      } catch { return []; }
+    },
+    async listPopulatedSourceIds() {
+      // #4278: bare `source` means "a corpus exists" — any source (including
+      // 'default', where single-source brains hold everything) with >=1 live
+      // page. Pre-fix this required a non-default source, so a healthy
+      // default-only brain failed `requires: source` forever.
+      try {
+        const rows = await engine.executeRaw<{ id: string }>(
+          `SELECT s.id
+             FROM sources s
+            WHERE EXISTS (
+              SELECT 1 FROM pages p
+               WHERE p.source_id = s.id
+                 AND p.deleted_at IS NULL
+            )
+            ORDER BY s.id`,
+        );
         return rows.map(r => r.id);
       } catch { return []; }
     },

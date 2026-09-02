@@ -88,6 +88,11 @@ describe('cycle phase partition (#2194 fix #3)', () => {
     expect(resolveCyclePhases(['synthesize'], undefined)).toEqual(['synthesize']);
   });
 
+  test('default-like source opt-in runs a full implicit cycle without changing explicit phases (#4700)', () => {
+    expect(resolveCyclePhases(undefined, 'repo-a', true)).toEqual(ALL_PHASES);
+    expect(resolveCyclePhases(['sync'], 'repo-a', true)).toEqual(['sync']);
+  });
+
   test('exclusion skip-records never dilute failure status into a stampable partial (#4250 ship-stage P1)', () => {
     // Pre-fix: six failed freshness phases + seventeen synthetic exclusion
     // skips made deriveStatus see "not every entry failed" → 'partial' →

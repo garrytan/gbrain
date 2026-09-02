@@ -18,7 +18,8 @@
  * Trust boundary (this is gbrain's FIRST push path + FIRST secret storage):
  *  - The hook is LOCAL + untracked so a pulled commit can't rewrite executed
  *    code next to the PAT. Both hook and helper render from ONE bash template
- *    (PUSH_RETRY) — DRY at the TS source level, NOT by the hook sourcing a
+ *    (renderPushRetry; the lock-timeout return code is the sole per-renderer
+ *    knob, #4682) — DRY at the TS source level, NOT by the hook sourcing a
  *    repo-controlled script.
  *  - Credential is repo-scoped (local git config), token redacted everywhere
  *    via shell-redact's exact-value scrubber, store file 0600.
@@ -156,7 +157,15 @@ export function maintainPushLog(): void {
 // ── Shared bash push-retry template (DRY at the TS source — D7) ──────────────
 // Rendered into BOTH the (committed) helper and the (local, untracked) hook so
 // there is one source of truth without the hook executing repo-controlled code.
-const PUSH_RETRY = `# --- gbrain durability push-retry (generated; one source of truth) ---
+// The ONE rendered divergence is the lock-timeout return code (#4682): the
+// synchronous helper is the fail-loud durability guarantee, so it must NOT
+// claim success when the lock never freed and no push was even attempted
+// (rc 1); the detached post-commit hook is best-effort background work where
+// skipping a push that another holder is already performing is the designed
+// coalescing outcome (rc 0). GBRAIN_PUSH_LOCK_WAIT_SECONDS (default 30) tunes
+// the lock wait — env-only, incident/test escape hatch.
+function renderPushRetry(lockTimeoutRc: 0 | 1): string {
+  return `# --- gbrain durability push-retry (generated; one source of truth) ---
 brain_push() {
   _branch="$1"
   # CX2-8: GBRAIN_HOME is a PARENT dir (matches config.ts semantics — .gbrain appended)
@@ -169,7 +178,7 @@ brain_push() {
   # rebase-retry herd. No-op if flock is unavailable.
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$_gd/gbrain-push.lock"
-    flock -w 30 9 || { echo "$(date -u +%FT%TZ) [push] lock-timeout $_branch" >>"$_log"; return 0; }
+    flock -w "\${GBRAIN_PUSH_LOCK_WAIT_SECONDS:-30}" 9 || { echo "$(date -u +%FT%TZ) [push] lock-timeout $_branch" >>"$_log"; return ${lockTimeoutRc}; }
   fi
   if git push origin "HEAD:$_branch" >>"$_log" 2>&1; then
     echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short HEAD 2>/dev/null)" >>"$_log"; return 0
@@ -182,6 +191,7 @@ brain_push() {
   echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short HEAD 2>/dev/null) could not reach origin. Run: gbrain sources pull <id> && git push" >>"$_log"
   return 1
 }`;
+}
 
 function renderPostCommitHook(): string {
   return `#!/usr/bin/env bash
@@ -197,7 +207,7 @@ if [ "$_branch" = "HEAD" ]; then
   exit 0
 fi
 
-${PUSH_RETRY}
+${renderPushRetry(0)}
 
 # Detach so the commit returns instantly; all output goes to the log.
 ( brain_push "$_branch" ) </dev/null >/dev/null 2>&1 &
@@ -210,12 +220,12 @@ function renderCommitPushHelper(): string {
   return `#!/usr/bin/env bash
 ${HELPER_BANNER}
 # THE DURABILITY GUARANTEE: add -> commit -> push, atomically. Refuses to exit 0
-# without a confirmed push. Usage:
+# without a confirmed push — including on push-lock timeout (#4682). Usage:
 #   scripts/brain-commit-push.sh "message" <path> [path ...]
 #   scripts/brain-commit-push.sh --push-only [branch]
 set -euo pipefail
 
-${PUSH_RETRY}
+${renderPushRetry(1)}
 
 _branch="$(git rev-parse --abbrev-ref HEAD)"
 if [ "\${1:-}" = "--push-only" ]; then

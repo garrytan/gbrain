@@ -35,6 +35,10 @@ describe('--max-bytes CLI validation (gbrain#4149)', () => {
   test('omission leaves maxBytes undefined (adapter-native defaults stay in charge)', () => {
     expect((parseIngestArgs(['a.jsonl']) as any).maxBytes).toBeUndefined();
   });
+
+  test('accepts grok as a --format value', () => {
+    expect((parseIngestArgs(['a.jsonl', '--format', 'grok']) as any).format).toBe('grok');
+  });
 });
 
 describe('cap threading to adapters (gbrain#4149)', () => {

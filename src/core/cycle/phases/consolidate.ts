@@ -165,13 +165,32 @@ export async function runPhaseConsolidate(
       // which clears `consolidated_at` on every fact. Without this lookup,
       // a second cycle run would re-INSERT a duplicate take via
       // `MAX(row_num)+1`, silently poisoning trajectory + scorecard data.
-      // Match on (page_id, claim, since_date) — the natural identity of a
-      // promoted take.
-      const existing = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM takes
-         WHERE page_id = $1 AND claim = $2 AND since_date = $3
+      // Match on (page_id, claim) restricted to the rows this phase authors.
+      //
+      // `since_date` is NOT part of the identity: it is derived from
+      // MIN(valid_from) of the cluster, so it describes the fact rows that
+      // happen to exist right now. When extract_facts re-inserts a claim with
+      // a fresh `valid_from` (the common case: an LLM extraction that defaults
+      // valid_from to now()), keying on since_date makes this lookup miss and
+      // the upsert degrades into the duplicate-INSERT path this block exists
+      // to prevent.
+      //
+      // `kind = 'fact' AND holder = 'self'` mirrors the INSERT below, so the
+      // lookup can only ever match a take this phase wrote. Without it the
+      // widened match reaches human-authored takes that share the claim text
+      // and the UPDATE below would overwrite their provenance.
+      //
+      // Deliberately NOT filtered on `active`: a superseded take still owns
+      // this claim. Skipping it would send us down the INSERT path and
+      // resurrect a claim the user retired. `ORDER BY id` keeps the choice
+      // deterministic if a page already holds more than one matching row
+      // (duplicates minted by the pre-fix since_date lookup).
+      const existing = await engine.executeRaw<{ id: number; resolved_at: Date | null }>(
+        `SELECT id, resolved_at FROM takes
+         WHERE page_id = $1 AND claim = $2 AND kind = 'fact' AND holder = 'self'
+         ORDER BY id
          LIMIT 1`,
-        [pageId, best.fact, sinceISO],
+        [pageId, best.fact],
       );
 
       let takeId: number;
@@ -181,10 +200,16 @@ export async function runPhaseConsolidate(
         // source_session values that the prior run didn't see); leave
         // row_num + weight untouched to keep the take's identity stable.
         takeId = existing[0].id;
-        await engine.executeRaw(
-          `UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`,
-          [sources.slice(0, 200), takeId],
-        );
+        // A resolved take is immutable everywhere else (the engines throw
+        // TAKE_RESOLVED_IMMUTABLE / TAKE_ALREADY_RESOLVED); this raw UPDATE
+        // would bypass that guard. Reuse its id so the facts still consolidate
+        // into it, but leave the row untouched.
+        if (existing[0].resolved_at === null) {
+          await engine.executeRaw(
+            `UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`,
+            [sources.slice(0, 200), takeId],
+          );
+        }
       } else {
         const inserted = await engine.addTakesBatch([{
           page_id: pageId,

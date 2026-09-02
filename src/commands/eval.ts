@@ -462,6 +462,13 @@ QRELS FORMAT
     ]
   }
   "grades" is optional — enables graded nDCG. Without it, binary relevance is used.
+  A bare array of entries (no wrapper) is also accepted, as are the
+  \`gbrain eval gate\` per-entry keys ("relevant_slugs" / "first_relevant_slug",
+  in a {"schema_version": 1, "queries": [...]} wrapper) — they map onto
+  "relevant". The gate's federated shape ("relevant" as {source_id, slug}
+  objects) is gate-only: this command compares unqualified slugs and rejects
+  it with a pointer to \`gbrain eval gate\`. Every entry is validated BEFORE
+  any search is billed.
 
 CONFIG FORMAT
   { "name": "rrf-k-30", "strategy": "hybrid", "rrf_k": 30, "expand": false }

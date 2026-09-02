@@ -19,7 +19,7 @@ import { MinionQueue } from '../core/minions/queue.ts';
 import { isQueueQuotaExceededError } from '../core/minions/admission.ts';
 import { waitForCompletion, TimeoutError } from '../core/minions/wait-for-completion.ts';
 import type { MinionJobInput, SubagentHandlerData, AggregatorHandlerData } from '../core/minions/types.ts';
-import { resolveSourceId, ALL_SOURCES } from '../core/source-resolver.ts';
+import { resolveSourceId, isResolverUserError, ALL_SOURCES } from '../core/source-resolver.ts';
 import { fetchSource } from '../core/sources-load.ts';
 import { runAgentLogs } from './agent-logs.ts';
 
@@ -233,20 +233,6 @@ function parseRunFlags(args: string[]): { flags: RunFlags; rest: string[] } {
     }
   }
   return { flags, rest };
-}
-
-/**
- * Predicate: is this error one of the source resolver's user-facing throws
- * we want to surface as a clean stderr line + exit 1? Mirrors
- * dream.ts:isResolverUserError — anything else (connection failures,
- * genuine bugs) propagates with a stack trace.
- */
-function isResolverUserError(e: unknown): boolean {
-  if (!(e instanceof Error)) return false;
-  const m = e.message;
-  return (m.startsWith('Source "') && m.includes(' not found.'))
-      || m.startsWith('Invalid --source value')
-      || m.startsWith('Invalid GBRAIN_SOURCE value');
 }
 
 /**
