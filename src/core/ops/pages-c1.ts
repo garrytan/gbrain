@@ -50,6 +50,14 @@ export async function isC1ContainmentEnabled(engine: BrainEngine): Promise<boole
   }
 }
 
+export async function isC1RevisionGuardEnabled(engine: BrainEngine): Promise<boolean> {
+  try {
+    return enabledConfigValue(await engine.getConfig('writer.c1_revision_guard'));
+  } catch {
+    return false;
+  }
+}
+
 function assertSourceInWriteGrant(ctx: OperationContext, sourceId: string): void {
   if (ctx.remote === false) return;
   const writeAuthority = ctx.auth?.sourceId ?? ctx.sourceId;
@@ -150,7 +158,7 @@ async function assertProjectedPageMatchesCanonical(
   }
 }
 
-export function assertC1CreateTypeSupported(
+export function assertC1CreateAdmissible(
   content: string,
   slug: string,
   activePack?: ActivePack,
@@ -175,6 +183,20 @@ export function assertC1CreateTypeSupported(
       'Route this item to report-only review; do not infer or auto-remap a replacement type.',
     );
   }
+
+  // D4 assigns tenant, authenticated writer, policy-version, canonical-hash,
+  // and receipt construction to a trusted server-side authority boundary.
+  // OperationContext does not carry that authority envelope yet. Frontmatter
+  // is caller-owned input, so accepting tenant_id/privacy/lineage keys merely
+  // because they are present would let the caller self-attest the very fields
+  // the boundary is supposed to guarantee. Until that ingress exists, C1's
+  // only honest fail-closed behaviour is to reject every new authoritative
+  // page. Existing pages remain revision-patchable through patch_page.
+  throw new OperationError(
+    'authority_required',
+    `C1 containment cannot admit new authoritative page '${slug}' without a trusted server-issued authority envelope.`,
+    'Keep the input in its source/raw lane or submit it for review. Do not copy authority metadata into frontmatter to bypass this gate.',
+  );
 }
 
 /** Safely patch an existing canonical page using exact-byte CAS semantics. */

@@ -1280,7 +1280,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Opt-out for the put_page/capture disk write-through (write-through.ts):
   // 'false' makes every page write DB-only. For brains whose host repo is a
   // shared working tree where stray root-level .md artifacts are unwanted.
-  'sync.write_through', 'writer.c1_containment', // C1 revision-bound existing-page containment (off by default).
+  'sync.write_through', 'writer.c1_revision_guard', 'writer.c1_containment', // C1a existing-page revision guard; full C1 adds fail-closed authority admission.
   // Gateway-native subagent loop toggle (routes subagent jobs through the
   // provider-agnostic gateway.toolLoop for non-Anthropic providers). The
   // subagent handler's error message tells users to `config set` this, so it

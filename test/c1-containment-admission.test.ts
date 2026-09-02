@@ -69,6 +69,22 @@ describe('C1 containment activation', () => {
     expect(result.status).toBe('created_or_updated');
   });
 
+  test('C1a revision guard permits a new page but blocks later whole-page replacement', async () => {
+    await engine.setConfig('writer.c1_revision_guard', 'true');
+    const created = await putPage.handler(ctx(), {
+      slug: 'people/revision-guard-create',
+      content: '---\ntype: person\ntitle: Revision Guard\ncompany: Preserve Me\n---\n\nbody',
+    }) as { status: string };
+    expect(created.status).toBe('created_or_updated');
+
+    const error = await rejection({
+      slug: 'people/revision-guard-create',
+      content: '---\ntype: person\ntitle: Revision Guard\nrole: Replacement\n---\n\nbody',
+    });
+    expect(error.code).toBe('revision_required');
+    expect((await engine.getPage('people/revision-guard-create', { sourceId: 'default' }))?.frontmatter.company).toBe('Preserve Me');
+  });
+
   test('unsupported create writes no canonical or derived page', async () => {
     await engine.setConfig('writer.c1_containment', 'true');
     const error = await rejection({
@@ -80,19 +96,20 @@ describe('C1 containment activation', () => {
     expect(existsSync(join(brainDir, 'concepts/blocked.md'))).toBe(false);
   });
 
-  test('supported create remains on the legacy path in the narrow first slice', async () => {
+  test('supported create fails closed until trusted authority admission exists', async () => {
     await engine.setConfig('writer.c1_containment', 'true');
-    const result = await putPage.handler(ctx(), {
+    const error = await rejection({
       slug: 'people/legacy-create',
       content: '---\ntype: person\ntitle: Legacy Create\n---\n\nbody',
-    }) as { status: string };
-    expect(result.status).toBe('created_or_updated');
-    expect(await engine.getPage('people/legacy-create', { sourceId: 'default' })).not.toBeNull();
+    });
+    expect(error.code).toBe('authority_required');
+    expect(await engine.getPage('people/legacy-create', { sourceId: 'default' })).toBeNull();
+    expect(existsSync(join(brainDir, 'people/legacy-create.md'))).toBe(false);
   });
 
-  test('supported typed create with safety core succeeds', async () => {
+  test('caller-stamped safety fields cannot self-authorize a create', async () => {
     await engine.setConfig('writer.c1_containment', 'true');
-    const result = await putPage.handler(ctx(), {
+    const error = await rejection({
       slug: 'people/safe-create',
       content: `---
 type: person
@@ -108,9 +125,10 @@ lineage:
 
 body
 `,
-    }) as { status: string };
-    expect(result.status).toBe('created_or_updated');
-    expect(await engine.getPage('people/safe-create', { sourceId: 'default' })).not.toBeNull();
+    });
+    expect(error.code).toBe('authority_required');
+    expect(await engine.getPage('people/safe-create', { sourceId: 'default' })).toBeNull();
+    expect(existsSync(join(brainDir, 'people/safe-create.md'))).toBe(false);
   });
 
   test('unsupported type admission is case and whitespace normalized', async () => {
@@ -123,11 +141,15 @@ body
     expect(await engine.getPage('concepts/case-bypass', { sourceId: 'default' })).toBeNull();
   });
 
-  test('new capture still works while explicit existing capture remains blocked', async () => {
+  test('new capture cannot bypass authority admission', async () => {
     await engine.setConfig('writer.c1_containment', 'true');
-    const result = await capture.handler(ctx(), { content: 'new captured note' }) as { status: string; slug: string };
-    expect(result.status).toBe('created_or_updated');
-    expect(await engine.getPage(result.slug, { sourceId: 'default' })).not.toBeNull();
+    let error: OperationError | undefined;
+    try {
+      await capture.handler(ctx(), { content: 'new captured note' });
+    } catch (caught) {
+      error = caught as OperationError;
+    }
+    expect(error?.code).toBe('authority_required');
   });
 
   test('existing whole-page replacement is blocked; revision-bound patch remains available', async () => {
@@ -185,19 +207,22 @@ body
     expect(await engine.getPage('people/file-only', { sourceId: 'default' })).toBeNull();
   });
 
-  test('concurrent same-slug creates serialize so only one can create', async () => {
+  test('concurrent same-slug creates both fail before canonical or derived state changes', async () => {
     await engine.setConfig('writer.c1_containment', 'true');
     const attempts = await Promise.allSettled([
       putPage.handler(ctx(), { slug: 'people/race', content: '---\ntype: person\ntitle: First\n---\n\nfirst' }),
       putPage.handler(ctx(), { slug: 'people/race', content: '---\ntype: person\ntitle: Second\n---\n\nsecond' }),
     ]);
-    expect(attempts.filter((result) => result.status === 'fulfilled').length).toBe(1);
-    const rejected = attempts.find((result) => result.status === 'rejected') as PromiseRejectedResult;
-    expect((rejected.reason as OperationError).code).toBe('revision_required');
-    expect(await engine.getPage('people/race', { sourceId: 'default' })).not.toBeNull();
+    expect(attempts.filter((result) => result.status === 'rejected').length).toBe(2);
+    for (const rejected of attempts) {
+      expect((rejected as PromiseRejectedResult).reason).toBeInstanceOf(OperationError);
+      expect(((rejected as PromiseRejectedResult).reason as OperationError).code).toBe('authority_required');
+    }
+    expect(await engine.getPage('people/race', { sourceId: 'default' })).toBeNull();
+    expect(existsSync(join(brainDir, 'people/race.md'))).toBe(false);
   });
 
-  test('duplicate-id redirect cannot rewrite an existing canonical page', async () => {
+  test('duplicate-id create is rejected before it can reach an existing canonical page', async () => {
     await putPage.handler(ctx(), {
       slug: 'people/canonical-owner',
       content: '---\ntype: person\ntitle: Canonical Owner\nid: shared-person-id\nrole: Founder\n---\n\noriginal',
@@ -210,7 +235,7 @@ body
       slug: 'people/duplicate-request',
       content: '---\ntype: person\ntitle: Duplicate Request\nid: shared-person-id\nrole: Replacement\n---\n\nreplacement',
     });
-    expect(error.code).toBe('revision_required');
+    expect(error.code).toBe('authority_required');
     expect(readFileSync(ownerFile, 'utf8')).toContain('file_only_note: preserve-me');
     expect(readFileSync(ownerFile, 'utf8')).toContain('role: Founder');
     expect(await engine.getPage('people/duplicate-request', { sourceId: 'default' })).toBeNull();

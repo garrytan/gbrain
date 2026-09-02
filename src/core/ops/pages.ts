@@ -28,7 +28,7 @@ import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from 
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
-import { assertC1CreateTypeSupported, deletePageOperationHandler, isC1ContainmentEnabled, patchPageOperation, restorePageOperationHandler } from './pages-c1.ts';
+import { assertC1CreateAdmissible, deletePageOperationHandler, isC1ContainmentEnabled, isC1RevisionGuardEnabled, patchPageOperation, restorePageOperationHandler } from './pages-c1.ts';
 import {
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
@@ -370,6 +370,7 @@ const put_page: Operation = {
     validatePageSlug(slug);
     const sourceId = ctx.sourceId ?? 'default';
     const c1Containment = await isC1ContainmentEnabled(ctx.engine);
+    const c1RevisionGuard = c1Containment || await isC1RevisionGuardEnabled(ctx.engine);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
     // Only trusted LOCAL callers (ctx.remote === false — capture CLI,
@@ -461,10 +462,10 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const c1Lock = c1Containment
+    const c1Lock = c1RevisionGuard
       ? await acquirePageLock(slug, { sourceId, timeoutMs: 30_000 })
       : null;
-    if (c1Containment && !c1Lock) {
+    if (c1RevisionGuard && !c1Lock) {
       throw new OperationError('unavailable', `Could not acquire the canonical page lock for '${slug}'.`, 'Retry after the current writer completes.');
     }
     const c1Heartbeat = c1Lock ? setInterval(() => { void c1Lock.refresh(); }, 60_000) : null;
@@ -472,7 +473,7 @@ const put_page: Operation = {
     let result: Awaited<ReturnType<typeof importFromContent>>;
     let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' | 'dry_run' }) | undefined;
     try {
-      if (c1Containment) {
+      if (c1RevisionGuard) {
         const [projected, canonical] = await Promise.all([
           ctx.engine.getPage(slug, { sourceId }),
           readCanonicalPage(ctx.engine, slug, sourceId),
@@ -484,7 +485,7 @@ const put_page: Operation = {
             'Read the page with get_page, then use patch_page with canonical_revision as base_revision.',
           );
         }
-        assertC1CreateTypeSupported(p.content as string, slug, activePack);
+        if (c1Containment) assertC1CreateAdmissible(p.content as string, slug, activePack);
       }
       result = await importFromContent(ctx.engine, slug, p.content as string, {
         noEmbed,
@@ -510,7 +511,7 @@ const put_page: Operation = {
       // can't see — the parsed body is blank even though content isn't).
         ...(p.allow_empty === true ? { allowEmptyOverwrite: true } : {}),
       });
-    if (c1Containment && result.slug && result.slug !== slug) {
+    if (c1RevisionGuard && result.slug && result.slug !== slug) {
       throw new OperationError(
         'revision_required',
         `C1 containment blocks put_page because '${slug}' resolves to an existing page.`,
@@ -596,7 +597,7 @@ const put_page: Operation = {
       // atomically; never throws (failures land in skipped/error).
       writeThrough = await writePageThrough(ctx.engine, result.slug, {
         sourceId,
-        lockAlreadyHeld: c1Containment,
+        lockAlreadyHeld: c1RevisionGuard,
         frontmatterOverrides: {
           ingested_via: provenanceVia,
           ingested_at: new Date().toISOString(),
