@@ -109,7 +109,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: '',
+          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
           error: result.reason,
           hint: 'Integrity check failed; existing binary retained. Retry or download manually.',
         });
@@ -120,7 +120,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: '',
+          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
           error: `${result.reason}${result.error ? `: ${result.error}` : ''}`,
           hint: 'Download from https://github.com/garrytan/gbrain/releases',
         });
@@ -286,7 +286,7 @@ function verifyUpgrade(): string {
 export function recordUpgradeError(record: {
   phase: string;
   fromVersion: string;
-  toVersion: string;
+  toVersion?: string;
   error: string;
   hint: string;
 }): void {
@@ -294,11 +294,12 @@ export function recordUpgradeError(record: {
     const dir = join(process.env.HOME || '', '.gbrain');
     mkdirSync(dir, { recursive: true });
     const path = join(dir, 'upgrade-errors.jsonl');
+    const targetVersion = normalizeUpgradeTargetVersion(record.toVersion);
     const line = JSON.stringify({
       ts: new Date().toISOString(),
       phase: record.phase,
       from_version: record.fromVersion,
-      to_version: record.toVersion,
+      to_version: targetVersion,
       error: record.error,
       hint: record.hint,
     }) + '\n';
@@ -307,6 +308,12 @@ export function recordUpgradeError(record: {
     // Recording errors is itself best-effort. The user will still see the
     // underlying failure in stdout/stderr from the original command.
   }
+}
+
+/** A missing/malformed target stays explicit and can never auto-resolve. */
+export function normalizeUpgradeTargetVersion(value?: string | null): string {
+  const clean = typeof value === 'string' ? value.trim().replace(/^v/, '') : '';
+  return parseSemver(clean) ? clean : 'unknown';
 }
 
 function saveUpgradeState(oldVersion: string, newVersion: string) {

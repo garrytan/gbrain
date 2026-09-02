@@ -37,6 +37,18 @@ describe('upgrade command', () => {
   });
 });
 
+describe('upgrade error target normalization', () => {
+  test('blank and malformed targets become an explicit unknown sentinel', () => {
+    expect(upgradeModule.normalizeUpgradeTargetVersion('')).toBe('unknown');
+    expect(upgradeModule.normalizeUpgradeTargetVersion(undefined)).toBe('unknown');
+    expect(upgradeModule.normalizeUpgradeTargetVersion('garbage')).toBe('unknown');
+  });
+
+  test('valid targets are normalized without the v prefix', () => {
+    expect(upgradeModule.normalizeUpgradeTargetVersion('v0.48.1.0')).toBe('0.48.1.0');
+  });
+});
+
 describe('detectInstallMethod heuristic (source analysis)', () => {
   // Read the source and verify the detection order is correct
   const { readFileSync } = require('fs');

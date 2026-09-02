@@ -100,6 +100,8 @@ export interface BinarySelfUpdateResult {
   error?: string;
   /** Asset name resolved (when applicable). */
   asset?: string;
+  /** Release version resolved from GitHub, even when a later step fails. */
+  targetVersion?: string;
 }
 
 /** The release asset basename gbrain publishes for this platform/arch, or null
@@ -342,10 +344,11 @@ export async function runBinarySelfUpdate(
   if (!release) {
     return { ok: false, reason: 'fetch_failed', asset: assetName };
   }
+  const targetVersion = release.tag.replace(/^v/, '').trim();
 
   const url = resolvePlatformAsset(release.assets, platform, arch);
   if (!url) {
-    return { ok: false, reason: 'no_asset', asset: assetName };
+    return { ok: false, reason: 'no_asset', asset: assetName, targetVersion };
   }
 
   // Stage in a temp sibling so the rename is same-filesystem (atomic).
@@ -354,7 +357,7 @@ export async function runBinarySelfUpdate(
     await download(url, staged);
   } catch (e) {
     safeUnlink(staged);
-    return { ok: false, reason: 'download_failed', error: errMsg(e), asset: assetName };
+    return { ok: false, reason: 'download_failed', error: errMsg(e), asset: assetName, targetVersion };
   }
 
   // Integrity BEFORE chmod/exec: never make an unverified binary executable and
@@ -362,38 +365,38 @@ export async function runBinarySelfUpdate(
   const integrityFailure = await verifyIntegrity(staged, assetName, computeDigest, fetchAttestation);
   if (integrityFailure) {
     safeUnlink(staged);
-    return { ok: false, reason: integrityFailure, asset: assetName };
+    return { ok: false, reason: integrityFailure, asset: assetName, targetVersion };
   }
 
   try {
     chmodSync(staged, 0o755);
   } catch (e) {
     safeUnlink(staged);
-    return { ok: false, reason: 'download_failed', error: errMsg(e), asset: assetName };
+    return { ok: false, reason: 'download_failed', error: errMsg(e), asset: assetName, targetVersion };
   }
 
   if (!smoke(staged)) {
     safeUnlink(staged);
-    return { ok: false, reason: 'smoke_failed', asset: assetName };
+    return { ok: false, reason: 'smoke_failed', asset: assetName, targetVersion };
   }
 
   // Downgrade-replay guard: the staged binary must actually be the release it
   // claims. A swapped asset serving an older, still-validly-attested binary
   // clears digest+builder but reports the wrong version here.
-  const expectedVersion = release.tag.replace(/^v/, '').trim();
+  const expectedVersion = targetVersion;
   if (expectedVersion && !checkVersion(staged, expectedVersion)) {
     safeUnlink(staged);
-    return { ok: false, reason: 'version_mismatch', asset: assetName };
+    return { ok: false, reason: 'version_mismatch', asset: assetName, targetVersion };
   }
 
   try {
     renameSync(staged, targetPath); // atomic on same fs; old binary intact if this throws
   } catch (e) {
     safeUnlink(staged);
-    return { ok: false, reason: 'replace_failed', error: errMsg(e), asset: assetName };
+    return { ok: false, reason: 'replace_failed', error: errMsg(e), asset: assetName, targetVersion };
   }
 
-  return { ok: true, asset: assetName };
+  return { ok: true, asset: assetName, targetVersion };
 }
 
 function safeUnlink(path: string): void {

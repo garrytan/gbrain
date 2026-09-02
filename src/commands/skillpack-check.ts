@@ -77,6 +77,47 @@ interface SkillpackReport {
   } | { error: string };
 }
 
+function parseSchemaStatus(stdout: string): 'current' | 'stale' | 'unknown' {
+  const match = stdout.match(/Database:\s*connected,\s*schema v(\d+)\s*\(latest (\d+)\)/i);
+  if (!match) return 'unknown';
+  return Number(match[1]) >= Number(match[2]) ? 'current' : 'stale';
+}
+
+function parseMigrationsOutput(stdout: string): Exclude<SkillpackReport['migrations'], { error: string }> {
+  const lines = stdout.split('\n');
+  let applied = 0;
+  let pending = 0;
+  let partial = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('Status') || trimmed.startsWith('---')) continue;
+    const first = trimmed.split(/\s+/)[0];
+    if (first === 'applied') applied++;
+    else if (first === 'pending') pending++;
+    else if (first === 'partial') partial++;
+  }
+
+  return {
+    applied_count: applied,
+    pending_count: pending,
+    partial_count: partial,
+    stdout,
+  };
+}
+
+function isProvenRedundantMigrationAction(
+  check: DoctorCheck,
+  action: string,
+  migrations: SkillpackReport['migrations'],
+): boolean {
+  return check.name === 'upgrade_errors'
+    && action === 'gbrain apply-migrations --yes'
+    && 'stdout' in migrations
+    && parseSchemaStatus(migrations.stdout) === 'current'
+    && migrations.pending_count === 0
+    && migrations.partial_count === 0;
+}
+
 function runDoctor(): SkillpackReport['doctor'] {
   const { cmd, prefix } = gbrainSpawn();
   try {
@@ -120,19 +161,7 @@ function runMigrationsList(): SkillpackReport['migrations'] {
     //     applied  0.11.0    ...
     //     pending  0.11.1    ...
     //     partial  0.10.0    ...
-    const lines = stdout.split('\n');
-    let applied = 0;
-    let pending = 0;
-    let partial = 0;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('Status') || trimmed.startsWith('---')) continue;
-      const first = trimmed.split(/\s+/)[0];
-      if (first === 'applied') applied++;
-      else if (first === 'pending') pending++;
-      else if (first === 'partial') partial++;
-    }
-    return { applied_count: applied, pending_count: pending, partial_count: partial, stdout };
+    return parseMigrationsOutput(stdout);
   } catch (err: any) {
     return { error: `apply-migrations --list failed: ${err.message ?? String(err)}` };
   }
@@ -154,13 +183,21 @@ function buildReport(): SkillpackReport {
         // the `... Run: <cmd>` convention. Otherwise include the whole
         // message so the agent has enough to reason.
         const runMatch = check.message.match(/Run:\s*(.+)$/);
-        if (runMatch) actions.push(runMatch[1].trim());
+        if (runMatch) {
+          const action = runMatch[1].trim();
+          if (!isProvenRedundantMigrationAction(check, action, migrations)) actions.push(action);
+        }
         else actions.push(`[${check.name}] ${check.message}`);
       } else if (check.status === 'warn') {
         // Warnings don't fail the report but surface as informational
         // actions the agent can decide about.
         const runMatch = check.message.match(/Run:\s*(.+)$/);
-        if (runMatch && !actions.includes(runMatch[1].trim())) actions.push(runMatch[1].trim());
+        if (runMatch) {
+          const action = runMatch[1].trim();
+          if (!isProvenRedundantMigrationAction(check, action, migrations) && !actions.includes(action)) {
+            actions.push(action);
+          }
+        }
       }
     }
   } else {
@@ -268,4 +305,12 @@ function isSkillpackCheckSubcommand(): boolean {
 }
 
 /** Exported for unit tests. */
-export const __testing = { buildReport, runDoctor, runMigrationsList, gbrainSpawn };
+export const __testing = {
+  buildReport,
+  runDoctor,
+  runMigrationsList,
+  gbrainSpawn,
+  parseMigrationsOutput,
+  parseSchemaStatus,
+  isProvenRedundantMigrationAction,
+};

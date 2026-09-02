@@ -171,3 +171,50 @@ describe('gbrainSpawn — argv[1] vs execPath resolution (#4094)', () => {
     expect(prefix).toEqual([]);
   });
 });
+
+describe('upgrade-error migration action reconciliation', () => {
+  const upgradeWarning = {
+    name: 'upgrade_errors',
+    status: 'warn' as const,
+    message: 'Recovery: Run: gbrain apply-migrations --yes',
+  };
+
+  test('suppresses duplicate migration action only when live DB proves schema current', () => {
+    const migrations = __testing.parseMigrationsOutput(
+      'Installed gbrain version: 0.48.1.0\nDatabase: connected, schema v145 (latest 145)\n\nAll migrations up to date.\n',
+    );
+    expect(__testing.parseSchemaStatus(migrations.stdout)).toBe('current');
+    expect(__testing.isProvenRedundantMigrationAction(
+      upgradeWarning,
+      'gbrain apply-migrations --yes',
+      migrations,
+    )).toBe(true);
+  });
+
+  test('unknown or stale schema remains fail-closed and actionable', () => {
+    const unknown = __testing.parseMigrationsOutput(
+      'Installed gbrain version: 0.48.1.0\nDatabase: UNREACHABLE (timeout)\n',
+    );
+    const stale = __testing.parseMigrationsOutput(
+      'Installed gbrain version: 0.48.1.0\nDatabase: connected, schema v144 (latest 145)\n',
+    );
+    for (const migrations of [unknown, stale]) {
+      expect(__testing.isProvenRedundantMigrationAction(
+        upgradeWarning,
+        'gbrain apply-migrations --yes',
+        migrations,
+      )).toBe(false);
+    }
+  });
+
+  test('pending or partial orchestrator work preserves the action even with current schema', () => {
+    const migrations = __testing.parseMigrationsOutput(
+      'Database: connected, schema v145 (latest 145)\npartial 0.48.1 Pending host work\n',
+    );
+    expect(__testing.isProvenRedundantMigrationAction(
+      upgradeWarning,
+      'gbrain apply-migrations --yes',
+      migrations,
+    )).toBe(false);
+  });
+});
