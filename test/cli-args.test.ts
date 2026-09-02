@@ -43,6 +43,13 @@ describe('parseOpArgs', () => {
       'people/example', '--frontmatter-unset', '{"not":"an array"}',
     ])).toThrow('requires a JSON array');
   });
+
+  test('legacy comma-delimited array flags keep their documented string form', () => {
+    const params = parseOpArgs(operationsByName.search, [
+      'find people', '--types', 'person,company',
+    ]);
+    expect(params.types).toBe('person,company');
+  });
 });
 
 // #4602 — `--flag false` on a boolean param used to set the flag TRUE (silent

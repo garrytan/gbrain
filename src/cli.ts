@@ -1131,6 +1131,17 @@ function parseTypedOpArg(
   if (type === 'boolean') return raw !== 'false';
   if (type === 'number') return Number(raw);
   if (type !== 'object' && type !== 'array') return raw;
+  // Array-valued ops predate JSON CLI input and document comma-delimited
+  // strings (`--types person,company`, `--slugs a,b`). Preserve that wire
+  // shape unless the operator explicitly supplies a JSON array. Individual
+  // operation boundaries remain responsible for accepting or rejecting the
+  // legacy string form.
+  if (type === 'array' && !raw.trimStart().startsWith('[')) {
+    if (raw.trimStart().startsWith('{')) {
+      throw new Error(`--${key.replace(/_/g, '-')} requires a JSON array.`);
+    }
+    return raw;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
