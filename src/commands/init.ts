@@ -604,23 +604,29 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
 }
 
 /**
- * v0.46.3: voyage-keyed installs (any picked embedding provider) get the
- * recommended reranker written as EXPLICIT per-brain config — the mode-bundle
- * reranker default stays on the sunsetting legacy provider until the
- * September removal (split-default), so without this write a fresh voyage
- * brain would resolve a reranker whose key it doesn't have; keyed non-voyage
- * installs get explicit `search.reranker.enabled false` instead, and keyless
- * installs get no write. Never clobbers an existing explicit choice (re-init
- * preserves user config). Best-effort: reranking is fail-open, a missed
- * override degrades to no-rerank, never breaks init. Shared by the PGLite and
- * Postgres init paths (one edit site for the September bundle flip).
+ * v0.47.10: the mode-bundle reranker default IS `voyage:rerank-2.5` now
+ * (`DEFAULT_RERANKER_MODEL`), so a Voyage-keyed install needs NO reranker
+ * config row — an explicit `search.reranker.model` equal to the bundle value
+ * would only earn doctor's `search_mode` reset nag. Keyed NON-voyage installs
+ * (e.g. openai) still get explicit `search.reranker.enabled false`: they have
+ * no key for the default and silence beats a `no_key` audit row per process.
+ * KEYLESS installs deliberately get NO write — the documented keyless-recovery
+ * re-init must find virgin reranker config, and keyless brains take the
+ * no-embedding search path, which never reaches applyReranker. Deliberate
+ * `zeroentropyai:*` embedding picks are left alone (legacy setups; the sunset
+ * short-circuit + doctor cover them). Never clobbers an existing explicit
+ * choice (re-init preserves user config). Best-effort: reranking is fail-open,
+ * a missed override degrades to no-rerank, never breaks init. Shared by the
+ * PGLite and Postgres init paths. Readiness comes from the same predicate
+ * doctor and `gbrain search modes` use (`reranker-readiness.ts`), fed the
+ * file-plane + process env (init cannot use the gateway or `loadConfig()`).
  */
 async function writeNewInstallRerankerDefault(
   engine: { getConfig(key: string): Promise<string | null>; setConfig(key: string, value: string): Promise<void> },
   resolvedModel: string | undefined,
 ): Promise<void> {
-  // Deliberate legacy setups keep the legacy bundle reranker (works until the
-  // provider's shutdown; warn-on-use covers it).
+  // Deliberate legacy setups keep the legacy reranker (works until the
+  // provider's shutdown; warn-on-use + the sunset short-circuit cover it).
   if (resolvedModel?.startsWith('zeroentropyai:')) return;
   try {
     // Never-clobber: an existing explicit reranker model OR enabled override
@@ -630,28 +636,27 @@ async function writeNewInstallRerankerDefault(
       engine.getConfig('search.reranker.enabled'),
     ]);
     if (existingModel || existingEnabled != null) return;
-    // Voyage key on either plane (env or ~/.gbrain/config.json) → point the
-    // reranker at it. Otherwise the bundle default still resolves the legacy
-    // sunset reranker, which this install has no key for and which dies on
-    // 2026-09-04 — disable it explicitly so fresh installs don't inherit a
-    // doomed fail-open (per-search timeout penalty after the shutdown).
-    const hasVoyageKey =
-      !!process.env.VOYAGE_API_KEY || !!loadConfigFileOnly()?.voyage_api_key;
-    if (resolvedModel?.startsWith('voyage:') || hasVoyageKey) {
-      const { NEW_INSTALL_DEFAULT_RERANKER_MODEL } = await import('../core/ai/defaults.ts');
-      await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
-      console.log(`  Reranker: ${NEW_INSTALL_DEFAULT_RERANKER_MODEL} (same VOYAGE_API_KEY)`);
-    } else if (resolvedModel) {
-      // Keyed non-voyage install (e.g. openai): make the no-reranker state
-      // explicit instead of inheriting the legacy sunset bundle default this
-      // brain has no key for. KEYLESS installs deliberately get NO write —
-      // the documented recovery re-init must find virgin reranker config so
-      // its voyage override still lands (never-clobber would block it).
+    const { DEFAULT_RERANKER_MODEL } = await import('../core/ai/defaults.ts');
+    const { rerankerReadiness } = await import('../core/ai/reranker-readiness.ts');
+    const { mergedProviderEnv } = await import('../core/ai/provider-env.ts');
+    const readiness = rerankerReadiness(
+      DEFAULT_RERANKER_MODEL,
+      mergedProviderEnv(loadConfigFileOnly(), process.env),
+    );
+    if (readiness.ready) {
+      // Nothing to write: the bundle default already resolves to it.
+      console.log(
+        `  Reranker: ${DEFAULT_RERANKER_MODEL} (mode-bundle default` +
+        `${readiness.requiredKey ? `; same ${readiness.requiredKey}` : ''})`,
+      );
+      return;
+    }
+    if (resolvedModel) {
+      const key = readiness.requiredKey ?? 'VOYAGE_API_KEY';
       await engine.setConfig('search.reranker.enabled', 'false');
       console.log(
-        '  Reranker: disabled (no VOYAGE_API_KEY — enable later: ' +
-        'gbrain config set search.reranker.enabled true && ' +
-        'gbrain config set search.reranker.model voyage:rerank-2.5)',
+        `  Reranker: disabled (no ${key} — enable later: export ${key}=… && ` +
+        'gbrain config set search.reranker.enabled true)',
       );
     }
   } catch {
@@ -2034,3 +2039,6 @@ NOTES
   - Existing config is preserved unless --force is passed.
 `.trim());
 }
+
+/** Test-only seam (v0.47.10): the reranker-default write is pure enough to unit-test with a stub engine. */
+export const _exports_for_test = { writeNewInstallRerankerDefault };

@@ -571,8 +571,11 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      failures in window → 'ok: reranker disabled'. Avoids interpreting
  *      "no events" as "broken" when reranker is simply not in use.
  *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
- *   3) Auth failures: ANY single one warns (config-time problem doctor's
- *      own probe should have caught — surface it).
+ *   3) Auth failures (key present but rejected): ANY single one warns.
+ *      v0.47.10: enablement + model resolve through the mode plane; a
+ *      reranker that is enabled but NOT ready (key absent / provider past
+ *      sunset / unknown model) warns with the paste-ready fix BEFORE any
+ *      audit read, and `no_key` / `sunset_short_circuit` skip rows warn.
  *   4) Transient (network/timeout/rate_limit): warn at >=5 in window.
  *      Below that they're noise; reranker fails open anyway.
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
@@ -585,17 +588,66 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
 export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
   try {
     const { readRecentRerankFailures } = await import('../../../core/rerank-audit.ts');
-    const cfg = await engine.getConfig('search.reranker.enabled');
-    const rerankerEnabled = cfg === 'true' || cfg === '1';
+    const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
+    const { rerankerReadiness, describeRerankerFix } = await import('../../../core/ai/reranker-readiness.ts');
+    const { mergedProviderEnv } = await import('../../../core/ai/provider-env.ts');
+    const { loadConfig, loadConfigWithEngine } = await import('../../../core/config.ts');
+    // v0.47.10: resolve enablement + model through the SAME plane search
+    // reranks with (per-key config → mode bundle), not the raw
+    // `search.reranker.enabled` row — balanced/tokenmax enable the reranker
+    // with no row at all, and the default model is keyed on VOYAGE_API_KEY.
+    const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
+    const rerankerEnabled = knobs.reranker_enabled;
+    const model = knobs.reranker_model;
+    // Same config plane the CLI hands the gateway: env > file > DB-plane
+    // provider keys + provider_base_urls (loadConfigWithEngine). A key that
+    // lives only in the DB config table must read as ready here too.
+    let fileCfg: ReturnType<typeof loadConfig> = null;
+    try { fileCfg = loadConfig(); } catch { fileCfg = null; }
+    let mergedCfg: ReturnType<typeof loadConfig> = fileCfg;
+    try { mergedCfg = await loadConfigWithEngine(engine as any, fileCfg); } catch { mergedCfg = fileCfg; }
+    const readiness = rerankerReadiness(model, mergedProviderEnv(mergedCfg, process.env), new Date(), {
+      baseUrlOverrides: mergedCfg?.provider_base_urls ?? null,
+    });
+    const ready = readiness.ready;
 
-    const failures = readRecentRerankFailures(7);
+    if (rerankerEnabled && !ready) {
+      // Config-time problem: every search falls through unreranked in
+      // silence (one audit row per process, no stderr). Name the fix.
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `Reranker ${model} is enabled but not running — ${describeRerankerFix(readiness)}`,
+      };
+    }
+
+    const allRows = readRecentRerankFailures(7);
+    // Skip rows (no_key / sunset_short_circuit) describe processes that ran
+    // unreranked BEFORE the current state; readiness above already proves the
+    // current state, so once ready they are informational, never a warn (a
+    // warn here would outlive the fix by the 7-day audit window).
+    const skipRows = allRows.filter((f) => f.reason === 'no_key' || f.reason === 'sunset_short_circuit');
+    const failures = allRows.filter((f) => f.reason !== 'no_key' && f.reason !== 'sunset_short_circuit');
+    const readyNote = `Reranker ${model} ready${readiness.requiredKey ? ` (${readiness.requiredKey} present)` : ''}`;
+    if (rerankerEnabled && skipRows.length > 0 && failures.length === 0) {
+      const reasons = Array.from(new Set(skipRows.map((f) => f.reason))).join(', ');
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message:
+          `${readyNote} — ${skipRows.length} skip row(s) in last 7 days (${reasons}): searches in those processes ran unreranked ` +
+          `(a long-lived worker started before the key was added keeps skipping until restarted).`,
+      };
+    }
+
     if (failures.length === 0) {
       return {
         name: 'reranker_health',
         status: 'ok',
         message: rerankerEnabled
-          ? 'No rerank failures in last 7 days'
-          : 'Reranker disabled — no failures expected',
+          ? `${readyNote} — No rerank failures in last 7 days`
+          : `Reranker disabled — no failures expected` +
+            (readiness.ready ? ` (${model} is ready: gbrain config set search.reranker.enabled true)` : ''),
       };
     }
 
@@ -604,7 +656,7 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${authFails.length} reranker auth failure(s) in last 7 days. Fix: verify the reranker provider's API key (e.g. VOYAGE_API_KEY) and run \`gbrain models doctor\`.`,
+        message: `${authFails.length} reranker auth failure(s) in last 7 days (key present but rejected). Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`gbrain models doctor\`.`,
       };
     }
 
@@ -633,7 +685,7 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check ZE status if persistent.`,
+        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check the provider's status page if persistent.`,
       };
     }
 
