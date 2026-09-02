@@ -25,6 +25,36 @@ describe('validateSlug', () => {
   test('rejects leading slash', () => {
     expect(() => validateSlug('/absolute/path')).toThrow('start with /');
   });
+
+  // NOE-3172: a slug that already carries the markdown extension would make the
+  // write-through sink append a second `.md` → a corrupt `foo.md.md` on disk,
+  // silently written and invisible to delete_page (which resolves by the DB
+  // slug). Slugs never carry the extension — the storage layer adds `<slug>.md`
+  // — so strip a trailing `.md`/`.mdx`, matching slugifyPath's disk-side rule.
+  test('strips a trailing .md extension', () => {
+    expect(validateSlug('notes/foo.md')).toBe('notes/foo');
+    expect(validateSlug('daily/2026-08-28.md')).toBe('daily/2026-08-28');
+  });
+
+  test('strips a trailing .md/.mdx case-insensitively', () => {
+    expect(validateSlug('Foo.MD')).toBe('foo');
+    expect(validateSlug('components/Hero.MDX')).toBe('components/hero');
+  });
+
+  test('dedupes a doubled markdown extension to none', () => {
+    expect(validateSlug('notes/foo.md.md')).toBe('notes/foo');
+    expect(validateSlug('notes/foo.mdx.md')).toBe('notes/foo');
+  });
+
+  test('only strips the trailing extension, preserving inner dots', () => {
+    expect(validateSlug('notes/v1.0.0')).toBe('notes/v1.0.0');
+    expect(validateSlug('notes/v1.0.0.md')).toBe('notes/v1.0.0');
+  });
+
+  test('rejects a slug that is only a markdown extension', () => {
+    expect(() => validateSlug('.md')).toThrow('Invalid slug');
+    expect(() => validateSlug('foo/.md')).toThrow('Invalid slug');
+  });
 });
 
 describe('contentHash', () => {

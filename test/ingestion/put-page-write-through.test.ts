@@ -100,6 +100,24 @@ describe('put_page write-through — happy path', () => {
     expect(onDisk).toContain('WT body');
   });
 
+  test('NOE-3172: a .md-suffixed slug writes a single-extension file, not foo.md.md', async () => {
+    const ctx = makeCtx();
+    const result = (await putPage.handler(ctx, {
+      slug: 'inbox/report.md',
+      content: '---\ntitle: Dbl\n---\n\ndouble-ext body',
+    })) as { slug: string; write_through?: { written: boolean; path?: string } };
+    expect(result.write_through?.written).toBe(true);
+    // Canonical slug carries no markdown extension; the sink adds exactly one.
+    expect(result.slug).toBe('inbox/report');
+    const goodPath = path.join(brainDir, 'inbox/report.md');
+    expect(result.write_through?.path).toBe(goodPath);
+    expect(fs.existsSync(goodPath)).toBe(true);
+    // The corrupt double-extension artifact must never appear.
+    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md.md'))).toBe(false);
+    // The DB row is keyed by the stripped slug, so delete_page can find it.
+    expect(await engine.getPage('inbox/report')).not.toBeNull();
+  });
+
   test('stamps provenance frontmatter (ingested_via=put_page for local CLI)', async () => {
     const ctx = makeCtx({ remote: false });
     const result = (await putPage.handler(ctx, {
