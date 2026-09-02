@@ -83,7 +83,7 @@ Sell the upgrade. The user should feel "hell yeah, I want that." Lead with
 what they can DO now that they couldn't before, not what files changed.
 
 ```
-> **GBrain v0.5.0 is available** (you're on v0.4.0)
+> **GBrain vX.Y.Z is available** (you're on vX.Y.W)
 >
 > What's new:
 > - Your brain never falls behind. Live sync keeps the vector DB current
@@ -149,7 +149,7 @@ full_upgrade():
 
 Migration files live at `skills/migrations/vX.Y.Z.md`. They contain agent
 instructions (not scripts) for post-upgrade actions that make the new version
-work for existing users. Example: v0.5.0 migration sets up live sync and
+work for existing users. Example: a migration that sets up live sync and
 runs the verification runbook.
 
 The agent reads migration files in version order and executes them step by

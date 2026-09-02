@@ -9,7 +9,7 @@ owns the single-writer connection.**
 PGLite is a single-writer embedded Postgres (WASM). A running `gbrain serve`
 (stdio MCP) holds an open PGLite connection on the brain's data directory for
 its lifetime, guarded by the data-dir lock (`<dataDir>/.gbrain-lock/`), and a
-live holder is never displaced (#2348).
+live holder is never displaced.
 
 When `gbrain sync` finds a live serve holding the lock, it does not fail —
 it delegates:

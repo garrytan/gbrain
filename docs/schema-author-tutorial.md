@@ -8,7 +8,7 @@ The whole walkthrough takes about 5 minutes. You'll see something working by ste
 
 ## What you'll need
 
-- gbrain v0.40.7.0 or later (`gbrain --version` to check)
+- gbrain installed (`gbrain --version` to check)
 - A brain that's been initialized (`gbrain init` already run; either PGLite or Postgres is fine)
 - A terminal you can paste commands into
 
@@ -171,7 +171,7 @@ gbrain whoknows "machine learning"
 
 If your researcher pages contain ML-related content, they'll surface in the ranked results — even though they're typed `researcher`, not `person` or `company`.
 
-**This is the load-bearing demonstration of T1.5 wiring.** Pre-v0.40.7.0, `whoknows` hardcoded `['person', 'company']` as the eligible types and would have ignored your `researcher` pages entirely. The v0.40.7.0 wiring consults the active pack's `expert_routing: true` types via `expertTypesFromPack(pack.manifest)`, so your custom type now routes through expert search.
+**This is the load-bearing demonstration of the pack-aware wiring.** `whoknows` consults the active pack's `expert_routing: true` types via `expertTypesFromPack(pack.manifest)` rather than a hardcoded `['person', 'company']` list, so your custom type routes through expert search instead of being ignored.
 
 ## What you built
 
@@ -217,6 +217,6 @@ gbrain schema lint --with-db
 
 ## Related docs
 
-- **Reference:** `gbrain schema --help` for the full CLI surface (30+ subcommands); the "Schema Cathedral v3" section of `docs/architecture/KEY_FILES.md` for the module-by-module architecture.
+- **Reference:** `gbrain schema --help` for the full CLI surface (30+ subcommands); the "Schema packs: mutation surface" section of `docs/architecture/KEY_FILES.md` for the module-by-module architecture.
 - **How-to:** [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md) — the agent dispatcher with the 7-phase workflow (brain → assess → propose → apply → sync → verify → commit).
 - **Explanation:** [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md) — when to add a type vs alias vs prefix.

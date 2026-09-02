@@ -37,7 +37,7 @@ number you typed on the command line.
 ## Off switches (`off` / `unlimited` / `none`)
 
 The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to mean
-"no limit" — no more setting sentinel values like `100000`.
+"no limit", so no sentinel value like `100000` is needed.
 
 - `0` is **not** "off". On `sync.cost_gate_min_usd`, `0` means "block on any nonzero
   spend" (a real choice). On the backfill caps, `0` falls back to the default — and on
@@ -61,7 +61,7 @@ The USD-limit knobs accept `off`, `unlimited`, or `none` (case-insensitive) to m
 | `reindex-code` cost gate | — (preview before re-embed) | — | TTY prompt / non-TTY refuse + exit 2 | `--max-cost off` | informational |
 | `migrate embeddings` consent gate | — (plan + estimate before provider migration) | — | TTY y/N prompt / non-TTY refuse + exit 2 | `--yes` | estimate marked informational, but **still prompts** (guards a destructive schema rebuild, not just spend) |
 | `enrich` / `onboard --auto` | `--max-usd` (per-call) | — | refuse without a cap (non-TTY) | `--max-usd off` | runs uncapped (still ledgered) |
-| Image-OCR per-run ceiling (#3973) | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
+| Image-OCR per-run ceiling | `embedding_image_ocr_max_images` / `embedding_image_ocr_max_usd` | `200` images / `$1.00` (estimated) | skips OCR over-cap (import continues; skips counted in `ocr_skipped_budget`, surfaced by doctor `ocr_health`) | `0` disables that cap | **not** bypassed (per-run cap, not a tracker gate) |
 | Dream `extract_atoms` phase budget | `cycle.extract_atoms.budget_usd` | `0.30` | caps the phase's budget tracker | — | **not** consulted (phase budget enforces regardless) |
 
 The `extract_atoms` cap is enforced only for models in the pricing maps. A model
@@ -112,18 +112,17 @@ estimate is `delta + stale backlog`, labeled as such.
 - **Pre-pull window:** the gate fetches before estimating, so it prices what the run
   will pull. If a fetch fails (offline), it estimates against local HEAD and labels the
   result; the bounded residual is priced on the next run.
-- **Single-source `gbrain sync`** carries the same gate as `sync --all` (it previously
-  embedded inline with no preview).
+- **Single-source `gbrain sync`** carries the same gate as `sync --all`.
 - **Recovery under parallel:** `--skip-failed` / `--retry-failed` work under parallel
-  sync (the failure ledger is per-source and lock-serialized) — you no longer have to
-  drop to `--serial`, which is what used to arm the inline gate.
+  sync (the failure ledger is per-source and lock-serialized), so recovery never
+  requires dropping to `--serial` (which would arm the inline gate).
 - **Chat-side accounting completeness:** query-expansion and image-OCR calls record
   on the ambient budget tracker like every other gateway call, including failed
   attempts (recorded pessimistically). This is record-only — these paths never
   pre-reserve, so a cap breach from them surfaces on the next reserving call.
-  Practical effect: capped runs (`--max-cost` and friends) that previously
-  under-counted may now hit their ceiling; the new number is the honest one, so
-  raise the cap rather than assuming a regression.
+  Practical effect: capped runs (`--max-cost` and friends) count these calls
+  toward their ceiling; a run that hits its cap needs a higher cap, not a bug
+  report.
 
 ## Operator price overrides (`pricing.overrides`)
 
@@ -201,7 +200,7 @@ gbrain config set embed.backfill_max_usd_per_source_24h off
 gbrain enrich --max-usd off        # or: gbrain config set spend.posture tokenmax
 ```
 
-## CRAG knobs (registered 2026-08 wave — both default OFF)
+## CRAG knobs (both default OFF)
 
 `search.crag_think` runs `think` (an LLM call) on weak-graded LOCAL queries —
 it is fail-closed for remote callers. `search.crag_escalation` triggers a

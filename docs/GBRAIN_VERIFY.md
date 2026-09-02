@@ -2,7 +2,7 @@
 
 > **One-command equivalent:** `gbrain bootstrap verify` runs the whole install
 > contract (round-trip, graph floor, and more) automatically and exits non-zero
-> on failure — it is the modern first thing to run after any install. See
+> on failure — it is the first thing to run after any install. See
 > [docs/guides/bootstrap.md](guides/bootstrap.md). This runbook is the
 > **manual, deep-verification** companion: use it when `bootstrap verify` fails
 > and you need to isolate which layer broke, or when you want to understand
@@ -48,7 +48,7 @@ gbrain apply-migrations --dry-run   # what a real run would apply or resume
 Both surfaces are read-only — they never run orchestrators or schema
 migrations, even when combined with `--yes`. Each prints a `Database:` probe
 line above the plan, so an unreachable database is distinguishable from a
-clean one (the two used to render the identical all-pending plan):
+clean one:
 
 - `Database: connected, schema vN (latest M)` — the pre-flight probe
   connected. N behind M means schema migrations are pending; a plain run with
@@ -235,8 +235,9 @@ system context. See `skills/setup/SKILL.md` Phase D.
 
 ## 7. Knowledge Graph Wired
 
-The v0.12.0 graph layer needs to be populated for existing brains. New writes are
-auto-linked, but historical pages need a one-time backfill.
+The graph layer needs to be populated for brains with pre-existing content. New
+writes are auto-linked, but pages imported before the graph existed need a
+one-time backfill.
 
 **Command:**
 
@@ -274,10 +275,10 @@ heuristics won't find them — file an issue with a sample page.
 
 ---
 
-## 8. JSONB Frontmatter Integrity (v0.12.2)
+## 8. JSONB Frontmatter Integrity
 
-Postgres-backed brains created before v0.12.2 had double-encoded JSONB columns
-(`frontmatter->>'key'` returned NULL, GIN indexes were inert). `gbrain upgrade`
+A Postgres-backed brain can carry double-encoded JSONB columns
+(`frontmatter->>'key'` returns NULL, GIN indexes are inert). `gbrain upgrade`
 runs `gbrain repair-jsonb` automatically via the `v0_12_2` orchestrator.
 Verify the repair succeeded.
 
@@ -299,7 +300,8 @@ without `--dry-run`:
 gbrain repair-jsonb
 ```
 
-Idempotent. PGLite brains always report 0 (unaffected by the original bug).
+Idempotent. PGLite brains always report 0 (the embedded engine never
+double-encodes).
 
 **Bonus check** — the doctor's dedicated JSONB scan agrees:
 
@@ -339,7 +341,7 @@ gbrain check-update --json
 # 7. Knowledge graph populated (links + timeline > 0)
 gbrain stats | grep -E 'links|timeline'
 
-# 8. JSONB integrity (v0.12.2 — Postgres only, PGLite always 0)
+# 8. JSONB integrity (Postgres only, PGLite always 0)
 gbrain repair-jsonb --dry-run --json
 ```
 

@@ -35,7 +35,7 @@ Topologies 2 and 3 stack: a thin-client install can also host per-worktree
 code engines, and a per-worktree code engine can also point its artifact
 brain at a remote server.
 
-## Topology 1 — Single brain (today's default)
+## Topology 1 — Single brain (the default)
 
 ```
   ┌────────────────┐
@@ -122,14 +122,14 @@ MCP smoke). See [`thin-client.md`](./thin-client.md) for the routing seam.
 
 ```bash
 gbrain init --supabase                         # or --pglite, doesn't matter
-gbrain serve --http --port 3001 --bind 0.0.0.0 # v0.34: bind explicitly for remote access
-                                                # (defaults to 127.0.0.1 since v0.34)
+gbrain serve --http --port 3001 --bind 0.0.0.0 # bind explicitly for remote access
+                                                # (default bind is 127.0.0.1)
 gbrain auth register-client neuromancer \
   --grant-types client_credentials \
   --scopes read,write,admin                    # admin needed for ping/doctor
 
-# v0.34: source-scoped client (write to one source, federate reads across
-# multiple sources). Omit both flags for a v0.33-compatible super-client.
+# source-scoped client (write to one source, federate reads across
+# multiple sources). Omit both flags for an unscoped super-client.
 gbrain auth register-client neuromancer-dept \
   --grant-types client_credentials \
   --scopes read,write \
@@ -203,7 +203,7 @@ Three storage paths in priority order:
    persist a config-file copy when the env var was the source.
 2. **`~/.gbrain/config.json` with 0600 perms** (default for interactive
    setup; mirrors how Supabase keys are stored today).
-3. macOS Keychain integration is on the roadmap; not in v1.
+3. macOS Keychain integration is not supported (roadmap item).
 
 ## Topology 3 — Split-engine, per-worktree code + remote artifacts
 
@@ -293,8 +293,8 @@ gbrain reinit-pglite --embedding-model voyage:voyage-code-3 --embedding-dimensio
 gbrain reindex --code --yes
 ```
 
-(`gbrain config set embedding_model` is refused as of v0.37.11.0 because
-the schema column has to resize alongside the config.)
+(`gbrain config set embedding_model` is refused because the schema column
+has to resize alongside the config.)
 
 `gbrain reindex --code` prints a recommendation when the configured
 embedding model isn't code-tuned. Suppress with

@@ -12,7 +12,7 @@ falling through.
 
 **Surface posture:** thin clients stay FULL-surface. The thin-client CLI routes
 arbitrary `gbrain <op>` invocations over MCP, so a narrowed per-client surface
-(`oauth_clients.surface`, WP4) would break commands the install legitimately
+(`oauth_clients.surface`) would break commands the install legitimately
 owns — bootstrap pins `--surface full` on its serve registrations and operators
 should keep thin-client OAuth rows at `full` (or NULL). The stdio transport has
 no client row at all: it serves the server-resolved surface directly, and the

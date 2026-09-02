@@ -1,8 +1,7 @@
 # Eval capture — NDJSON schema reference
 
-**Status:** stable from v0.21.0. Schema versioning via `schema_version`
-on every row; additive changes increment the minor version; removals
-are breaking-schema-v2.
+**Status:** stable. Schema versioning via `schema_version` on every row;
+additive changes add optional fields; removals are breaking-schema-v2.
 
 **Audience:** downstream consumers (primarily the sibling
 [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo) that
@@ -76,7 +75,7 @@ guaranteed; consumers MUST key by name, not position.
 | `query` | string | **Already PII-scrubbed** by `scrubPii` unless `eval.scrub_pii: false`. Emails / phones / SSN / Luhn-verified credit cards / JWTs / bearer tokens replaced with `[REDACTED]`. Max length 50KB (CHECK-enforced). |
 | `retrieved_slugs` | string[] | Deduplicated slugs that came back in `SearchResult[]`. |
 | `retrieved_chunk_ids` | number[] | Every chunk id in result order (duplicates preserved — one per hit). |
-| `source_ids` | string[] | Distinct `sources.id` values across the result set (v0.18 multi-source). Empty for pre-v0.18 rows that lacked the column. |
+| `source_ids` | string[] | Distinct `sources.id` values across the result set. Consumers must tolerate an empty array. |
 | `expand_enabled` | boolean \| null | Whether the caller **requested** Haiku expansion. `null` for `search` (no expansion concept). |
 | `detail` | `"low"` \| `"medium"` \| `"high"` \| null | Detail level the caller **requested**. `null` when omitted. |
 | `detail_resolved` | `"low"` \| `"medium"` \| `"high"` \| null | What `hybridSearch` **actually used** after auto-detect. `null` when neither caller nor heuristic classified. |
@@ -99,10 +98,10 @@ tiebreaker. Replay tools can consume rows in order and assume:
 
 ## Schema versioning promise
 
-- **v1 (shipped v0.21.0)** — this document. All fields listed above.
-- **Additive changes** increment gbrain minor version (v0.25.0, v0.23.0
-  …) and ship with new optional fields. Consumers keyed on known fields
-  ignore unknown keys and keep working.
+- **v1** — this document. All fields listed above.
+- **Additive changes** ship as new optional fields without bumping
+  `schema_version`. Consumers keyed on known fields ignore unknown keys
+  and keep working.
 - **Breaking changes** (rename, type change, removal) increment
   `schema_version` to 2. Consumers MUST branch on `schema_version` to
   stay compatible.
@@ -122,8 +121,7 @@ directly, so in-process counters wouldn't work.
 
 ## Config + CONTRIBUTOR_MODE
 
-Capture is **off by default** as of v0.25.0 (was on for everyone in
-earlier drafts). Two paths to turn it on:
+Capture is **off by default**. Two paths to turn it on:
 
 **Path A — env var (contributor opt-in, the common case):**
 
@@ -159,7 +157,7 @@ the brain's distribution).
 (`gbrain query`, `gbrain recall`, …): the CLI merges the DB plane into the
 operation context it hands the capture gate.
 
-It does **not** yet apply to the **MCP server, `gbrain call`, or background
+It does **not** apply to the **MCP server, `gbrain call`, or background
 subagents** — those build their context from the file plane only, so a
 DB-plane value is stored, echoed back by `gbrain config get`, and ignored.
 For those, edit `~/.gbrain/config.json` directly or export

@@ -82,8 +82,8 @@ the agent's operational state:
 
 `homeLocation` is optional. The context engine shows a separate home clock only
 when an explicit home timezone differs from the current timezone. It never
-guesses a home city or timezone. Existing `garryAwake` state remains readable
-for migration compatibility; new producers should write `userAwake`.
+guesses a home city or timezone. The `garryAwake` alias remains readable
+for compatibility; producers should write `userAwake`.
 
 **Update the timezone when:**
 - Calendar shows the user flying somewhere (check for airline/hotel events)

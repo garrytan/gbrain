@@ -10,14 +10,14 @@ snapshot that was parsed, and only after every required operation succeeded.
 
 ## Outcome protocol
 
-The current protocol is v2. Its source names are versioned so rows written by
-older best-effort implementations cannot suppress a corrective replay.
+The protocol is v2. Its source names carry the version so rows written under
+any other protocol version cannot suppress a corrective replay.
 
 | Outcome | `facts.source` | Meaning |
 |---|---|---|
 | Complete | `cli:extract-conversation-facts:terminal:v2` | Every eligible segment was extracted and inserted successfully, the input remained unchanged, and the terminal write succeeded. |
 | Scanned, not extractable | `cli:extract-conversation-facts:non-extractable:v2` | A recognized input was scanned successfully but contained no eligible multi-message segment. |
-| Unfinished | no matching v2 outcome | Work is pending, failed, was not recognized, changed during extraction, or has only a legacy marker. |
+| Unfinished | no matching v2 outcome | Work is pending, failed, was not recognized, changed during extraction, or carries only a marker from another protocol version. |
 
 The non-extractable outcome is intentionally separate from completion. It does
 not claim that knowledge facts were extracted. CLI counters, cycle details, and
@@ -45,7 +45,7 @@ page-<pages.content_hash>-<effective-date>
 The effective-date suffix covers the remaining date input used by parsing. This
 identity does not depend on JavaScript's millisecond timestamp precision, so two
 writes within one PostgreSQL millisecond still produce different tokens when
-parser input changes. A legacy page with a null content hash uses a computed
+parser input changes. A page with a null content hash uses a computed
 SHA-256 fallback and is verified in-process by both extraction and doctor.
 
 ### Raw transcript sidecar
@@ -92,7 +92,7 @@ Single-page `--slug` runs use the same under-lock path.
 ## Strict extraction success
 
 The general `extractFactsFromTurn` API remains best-effort for interactive
-callers. It historically returns an empty array for both a legitimate zero-fact
+callers. It returns an empty array for both a legitimate zero-fact
 answer and several model failures.
 
 Conversation backfill instead uses `extractFactsFromTurnWithOutcome`, whose
@@ -140,7 +140,7 @@ facts that could not be removed.
 ## Checkpoints are not authority
 
 Operation checkpoints are only progress hints. They do not prove which page
-snapshot was processed, and old checkpoint entries do not include a snapshot
+snapshot was processed, and checkpoint entries do not include a snapshot
 token. When a page lacks a matching v2 outcome, the command discards that
 page's checkpoint entry and performs a delete-first full replay.
 
@@ -222,6 +222,6 @@ bun x tsc --noEmit
 ```
 
 The focused suite covers checkpoint garbage collection, same-timestamp edits,
-edits during extraction, sidecar-only edits, legacy marker replay, provider and
+edits during extraction, sidecar-only edits, replay over non-v2 markers, provider and
 insert failures, cleanup failure, recognized non-extractable scans, retryable
 parser misses, post-filter limits, force replay, and doctor accounting.

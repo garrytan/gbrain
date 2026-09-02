@@ -1,7 +1,7 @@
-# Push-based context (#2095, v0.42.43.0)
+# Push-based context
 
-Retrieval used to be pull-only: the agent had to *know to ask* before the brain
-contributed anything. Push-based context inverts that — the brain volunteers
+Pull retrieval needs the agent to *know to ask* before the brain contributes
+anything. Push-based context adds the other direction: the brain volunteers
 relevant pages from the recent conversation, confidence-gated so push noise
 never becomes worse than pull silence.
 
@@ -24,7 +24,7 @@ serve-side extraction, `memory.auto_writeback`) — is documented in
 1. **Extract** entities across the last N turns (capitalized runs, `@handles`),
    merged with recency / frequency / user-role salience. Assistant-introduced
    entities and "what did she invest in?" follow-ups whose antecedent was named
-   in the window now resolve.
+   in the window resolve.
 2. **Resolve** through the alias table, exact titles, surnames, and slug
    suffixes — each arm carries an honest confidence: alias 0.9, exact title
    0.8, surname 0.72, slug-suffix 0.6, +0.05 when mentioned in ≥2 turns or the
@@ -101,9 +101,9 @@ those; extending the lane is a filed follow-up in TODOS.md).
 
 Kill switch: `GBRAIN_HOOKS=0`. Install/uninstall: `docs/guides/bootstrap.md`.
 
-## The OpenClaw reflex volunteer arm (2026-08 fix wave)
+## The OpenClaw reflex volunteer arm
 
-The OpenClaw context-engine lane's ambient reflex now runs TWO arms per
+The OpenClaw context-engine lane's ambient reflex runs TWO arms per
 windowed turn: Arm 1 resolves entity pointers (the classic 3-pointer block),
 then Arm 2 runs the same `volunteerStage` gate the Claude Code turn-context
 lane ships — up to 3 additional confidence-gated pages (0.7 gate), deduped
@@ -111,8 +111,8 @@ against the turn's pointers, rendered in the same wire idiom. Volunteer
 events from this lane log to `context_volunteer_events` under the `openclaw`
 channel (in-process only — the wire-claimable harness channel allowlist
 deliberately excludes it, so a hook client cannot spoof production
-attribution; on the PGLite/IPC rung these events are not yet logged, a
-disclosed gap with a filed fix).
+attribution; on the PGLite/IPC rung these events are not logged; extending the
+log to that rung is a filed follow-up in TODOS.md).
 
 **Say to your agent:** *"Turn off the brain's volunteered context for now"* —
 your agent sets `retrieval_reflex_volunteer` to `false` (or exports
@@ -124,11 +124,11 @@ used?"* — your agent runs `gbrain volunteer-context --stats`.
 
 | Key | Default | What it does |
 |---|---|---|
-| `retrieval_reflex_window_turns` | 4 | turns the ambient reflex extracts from; 1 = legacy current-turn-only (file/env plane: `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`) |
+| `retrieval_reflex_window_turns` | 4 | turns the ambient reflex extracts from; 1 = current turn only (file/env plane: `GBRAIN_RETRIEVAL_REFLEX_WINDOW_TURNS`) |
 | `retrieval_reflex` | true | the ambient channel's master switch (env: `GBRAIN_RETRIEVAL_REFLEX`; negatives `false/0/off/no`, case-insensitive) |
 | `retrieval_reflex_volunteer` | true | the reflex volunteer arm (Arm 2) — the incident kill switch for volunteered pages on the OpenClaw lane (env: `GBRAIN_RETRIEVAL_REFLEX_VOLUNTEER`, env above config) |
 | `retrieval_reflex_max_pointers` | 3 | pointer cap per turn |
-| `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = pre-v0.46.15 arm set |
+| `retrieval_reflex_lexical_arms` | true | the lowercase-alias + surname recall arms (env: `GBRAIN_RETRIEVAL_REFLEX_LEXICAL_ARMS`); off = disables both arms |
 
 Per-call knobs: `max_pages` + `min_confidence` on both the op and `gbrain watch`
 (`--max-pages` / `--min-confidence`, plus `--window-turns` / `--source` on watch);

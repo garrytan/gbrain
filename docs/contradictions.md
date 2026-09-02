@@ -102,7 +102,7 @@ Decision criteria for the bigger swing (chunk-level `revises` field):
 |---|---|---|
 | < 5% | Source-boost + recency-decay + curated pages handle the load | Stop here; this is the right scope |
 | 5–15% | Real but bounded | Operator decides whether the cost justifies the swing |
-| > 15% | Real and substantial | Plan the bigger swing in v0.34+ |
+| > 15% | Real and substantial | Plan the bigger swing |
 
 ## When to act on findings
 
@@ -130,7 +130,7 @@ inspect findings without re-running the probe.
 ## Cost model
 
 Default judge is `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
-the v0.32.6 truncation at 1500 chars per pair, ~500 input + 80 output
+the default truncation at 1500 chars per pair (`--max-pair-chars`), ~500 input + 80 output
 tokens per judge call. Budget cap defaults to $5 in TTY / $1 non-TTY.
 
 - ~$0.0006 per judge call

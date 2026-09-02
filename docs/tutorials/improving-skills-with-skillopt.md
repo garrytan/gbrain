@@ -247,7 +247,7 @@ gbrain skillopt brain-ops --split 1:1:1 --allow-mutate-bundled \
   --held-out skills/brain-ops/held-out.jsonl
 ```
 
-Rewriting a bundled skill in place now requires BOTH `--allow-mutate-bundled` AND
+Rewriting a bundled skill in place requires BOTH `--allow-mutate-bundled` AND
 `--held-out <path>` (a JSONL with the same shape as your benchmark, but at least 5
 tasks whose IDs don't appear in the benchmark). The held-out set is how the run
 proves the edit didn't just learn the benchmark: a candidate that climbs the

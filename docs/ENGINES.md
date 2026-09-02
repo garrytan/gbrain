@@ -25,7 +25,7 @@ The engine interface means we don't have to choose. PGLite is the zero-friction 
 
 **The single source of truth is `export interface BrainEngine` in
 `src/core/engine.ts`.** It is large (100+ methods) and grows with every
-feature wave — do NOT work from any snapshot of it, including an old copy of
+feature — do NOT work from any snapshot of it, including an old copy of
 this doc. Read the interface itself, and let
 `test/e2e/engine-parity.test.ts` + `test/pglite-engine.test.ts` tell you
 whether both engines agree.
@@ -119,9 +119,8 @@ bound params). An RLS policy can then filter rows by
 `current_setting('app.scopes', true)`.
 
 **Default off.** With the env var unset, reads call through on the shared pool
-exactly as before — no per-read transaction, no pool-slot hold (the search
-methods keep the transaction they always had for their `SET LOCAL
-statement_timeout`). Existing operators see zero behavior change.
+with no per-read transaction and no pool-slot hold (the search methods keep
+their own transaction for `SET LOCAL statement_timeout`).
 
 **Enabling it** (operator-managed SQL; gbrain ships no DDL for this):
 
@@ -154,7 +153,7 @@ live in `test/postgres-engine-rls-scope.test.ts`.
 Self-hosted Postgres + pgvector gives you the PostgresEngine without a Supabase
 account. Two paths:
 
-**Homebrew (macOS)** — contributed by @roysaurav:
+**Homebrew (macOS)**:
 
 ```bash
 brew install postgresql@17
@@ -171,8 +170,7 @@ gbrain doctor
 one step. To point an EXISTING brain config at a different database without
 re-initializing, use `gbrain config set database_url <conn>` — it routes to the
 file plane (`~/.gbrain/config.json`), infers `engine: postgres`, and works even
-when the current database is unreachable. Hand-editing config.json is no longer
-needed.
+when the current database is unreachable.
 
 **Ladder-driven (harness installs)** — `gbrain init --prefer-postgres` probes
 for a usable Postgres before falling back to PGLite: an env URL, Supabase
@@ -202,7 +200,7 @@ Details in INSTALL_FOR_AGENTS.md ("Engine preference for harness installs").
 **PGLite-specific details:**
 - Uses `pglite-schema.ts` for DDL (pgvector extension, pg_trgm, triggers, indexes)
 - Parameterized queries throughout (shared utilities in `src/core/utils.ts`)
-- `hybridSearch` keyword-only fallback when `OPENAI_API_KEY` is not set
+- `hybridSearch` keyword-only fallback when no embedding provider key is configured
 - Data stored at `~/.gbrain/brain.pglite` (configurable)
 - pgvector HNSW index for cosine similarity vector search (same as Postgres)
 - tsvector + ts_rank for full-text search (same as Postgres)
@@ -301,8 +299,9 @@ point. They anchor the runtime availability loop: classified failure →
 
 Reports (JSON `schema_version: 1`): the effective engine vs the config-file
 engine (they can differ under a transient env URL), `db_url_source`, an
-env-shadow note when a cwd-.env `DATABASE_URL` is being excluded by the #427
-guard (with the precedence note when both `GBRAIN_DATABASE_URL` and
+env-shadow note when a cwd-.env `DATABASE_URL` is being excluded by the
+cwd-.env guard (gbrain never adopts a `DATABASE_URL` that Bun auto-loaded
+from the working directory's `.env`; with the precedence note when both `GBRAIN_DATABASE_URL` and
 `DATABASE_URL` are set), redacted URLs only, and — on Postgres — a
 zero-round-trip pooler block (Supabase pooler detection, prepared-statement
 resolution, pool sizes, direct/session-pooler derivability). `--brain <id>`
@@ -373,7 +372,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | Reason | Meaning |
 |---|---|
 | `no_url` | nothing configured at all — `gbrain init --prefer-postgres` (or `gbrain init` for PGLite) |
-| `env_shadowed` | a cwd-.env `DATABASE_URL` exists but the #427 guard excludes it — export `GBRAIN_DATABASE_URL` |
+| `env_shadowed` | a cwd-.env `DATABASE_URL` exists but the cwd-.env guard excludes it — export `GBRAIN_DATABASE_URL` |
 | `auth_failed` | password/role rejected (28P01) — reset credentials, then `gbrain init --url <conn>` |
 | `permission_denied` | 28000/42501 — the role lacks a GRANT or hits RLS |
 | `tenant_not_found` | Supavisor rejected the tenant — pooler usernames are `postgres.<project-ref>`; also raised by paused projects |
@@ -396,7 +395,7 @@ recipe text.
 
 ### Degraded-mode serve
 
-When Postgres is unreachable at `gbrain serve` STARTUP, serve no longer dies:
+When Postgres is unreachable at `gbrain serve` STARTUP, serve does not die:
 it boots on a lazy-reconnect engine, each tool call attempts a single reconnect
 (minimum ~5s between real attempts — no connect storms), and until one succeeds
 tool calls return the classified envelopes above. The call that triggers the
@@ -412,12 +411,12 @@ keep die-on-startup (that lane's repair is `gbrain pglite-repair`), and
 mid-session outages ride the engine's own reconnect plus the per-call
 classified envelopes.
 
-## JSONB writes: never double-encode (the #2339 trap)
+## JSONB writes: never double-encode
 
 Writing a JS value into a `jsonb` column has exactly two correct forms. Get this
 wrong and the write succeeds on PGLite but stores a **jsonb string scalar** on
 real Postgres — `col ->> 'k'` returns NULL, `jsonb_array_elements` throws, and a
-`jsonb_typeof = 'array'` CHECK rejects the row (this aborted every sync in #2339).
+`jsonb_typeof = 'array'` CHECK rejects the row (which aborts the sync that wrote it).
 
 | Form | Verdict |
 |---|---|
@@ -432,7 +431,7 @@ real Postgres — `col ->> 'k'` returns NULL, `jsonb_array_elements` throws, and
 cast then wraps that already-JSON string into a jsonb scalar string instead of
 parsing it. Casting through `$N::text::jsonb` forces a text→jsonb parse.
 **PGLite's `db.query` parses text→jsonb natively, so it hides the bug** — which is
-why a regression only shows up on Postgres (and why the parity test must run there).
+why the bug only shows up on Postgres (and why the parity test must run there).
 
 **Two CI guards enforce this, both wired into `scripts/check-jsonb-pattern.sh`:**
 - the template-tag grep (`${JSON.stringify(x)}::jsonb`), and
@@ -506,4 +505,4 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 
 **Custom/Remote.** The interface is clean enough that someone could build an engine backed by any storage: Firestore, DynamoDB, a REST API, even a flat file system. The interface doesn't assume SQL.
 
-Note: The original SQLite engine plan (`docs/SQLITE_ENGINE.md`) was superseded by PGLite. PGLite uses the same SQL as Postgres, eliminating the need for a separate SQLite dialect with FTS5/sqlite-vss translation.
+Note: there is no SQLite engine. PGLite uses the same SQL as Postgres, so no separate SQLite dialect with FTS5/sqlite-vss translation is needed.

@@ -5,20 +5,12 @@ manager. This guide explains the model and the workflow.
 
 ## Why it works this way
 
-An earlier design (the "amber" model):
-
-- `gbrain skillpack install <name>` copied bundled skills into your
-  workspace AND wrote a managed-block fence into your `RESOLVER.md` /
-  `AGENTS.md` with a `cumulative-slugs="..."` receipt.
-- Subsequent installs hash-checked every file and refused to overwrite
-  local edits unless you passed `--overwrite-local`.
-- `gbrain skillpack uninstall` had its own data-loss safeguards (D8
-  receipt gate + D11 content-hash pre-scan) and rebuilt the fence.
-
-It worked, but it treated personal-AI skills like vendor packages.
-Users couldn't cleanly fork a skill without the next install fighting
-them. Every release re-litigated the same managed block. The test
-surface alone for the managed block was ~1000 lines.
+A package-manager model (an `install` that copies skills into your
+workspace AND writes a managed-block fence into your `RESOLVER.md` /
+`AGENTS.md`, hash-checks every file on the next install, and refuses to
+overwrite local edits) treats personal-AI skills like vendor packages.
+You can't cleanly fork a skill without the next install fighting you, and
+every release re-litigates the same managed block.
 
 Skills aren't vendor packages. They're first-class code in your agent
 repo. You scaffold once, you own them, you fork and edit freely. When
@@ -149,7 +141,7 @@ to walk the genericization checklist before running the CLI.
 
 ## How agents discover scaffolded skills
 
-Routing under the new model lives entirely in each skill's frontmatter:
+Routing lives entirely in each skill's frontmatter:
 
 ```yaml
 ---
@@ -165,12 +157,11 @@ Your agent's job at runtime is to walk `skills/*/SKILL.md`, parse the
 frontmatter, and match the user's intent against every skill's
 `triggers:` array. When a match scores high enough, invoke that skill.
 
-This replaces the legacy model where `gbrain skillpack install` wrote
-table rows into your `RESOLVER.md`. Rows are gone (or, for users
-migrating from the old model, preserved transitionally by
-`migrate-fence` until they run `scrub-legacy-fence-rows`).
+gbrain writes no routing rows into your `RESOLVER.md`. A workspace that
+still carries a managed-block fence keeps its rows through `migrate-fence`
+until it runs `scrub-legacy-fence-rows`.
 
-If you're a downstream agent author updating to this model:
+If you're a downstream agent author adopting this model:
 
 1. On startup, scan `skills/*/SKILL.md` for frontmatter.
 2. Build an in-memory routing table from each skill's `triggers:`
@@ -200,7 +191,7 @@ rm skills/_output-rules.md
 
 You own the files. There's no manifest to update, no fence to rebuild.
 
-## The harness bridge: `scaffold --harness` (cathedral-7)
+## The harness bridge: `scaffold --harness`
 
 Workspace scaffolds serve agent repos. The HARNESS lane installs a
 persona-curated set of bundled skills into a coding harness's **native
@@ -228,8 +219,8 @@ gbrain skillpack remove --harness claude-code --skill query
   install-time hash in the ledger reports **unknown** provenance and is
   never auto-applied — patch by hand, or remove and re-scaffold.
 - **`remove --harness`** deletes ONLY files the bridge wrote (the ledger) —
-  never your own files. This is not the removed-in-v0.33 workspace
-  `uninstall`; workspace scaffolds stay user-owned outright.
+  never your own files. Workspace scaffolds have no `uninstall` at all;
+  they stay user-owned outright.
 - **`--stub`** installs cold-pull pointer SKILL.md files whose body fetches
   the real instructions via the gbrain MCP `get_skill` op. Preflight-gated:
   it refuses unless `mcp.publish_skills` is on and every slug is servable
@@ -250,11 +241,11 @@ gbrain skillpack remove --harness claude-code --skill query
 - **Coexistence**: the same skill names may also load from the gbrain
   marketplace plugin snapshot — duplicate names coexist in one session;
   prefer one lane per machine.
-- **Known limitation (v1)**: skill bodies that reference shared deps
+- **Known limitation**: skill bodies that reference shared deps
   repo-relatively (`skills/conventions/...`) keep those literal paths in a
   copied layout — same limitation as the plugin tree; sibling-relative
   references (`../conventions/...`) work because shared deps land as
-  siblings. No body rewriting in v1.
+  siblings. Skill bodies are never rewritten.
 
 ## When to use which command (quick decision tree)
 
@@ -273,8 +264,7 @@ gbrain skillpack remove --harness claude-code --skill query
 
 ## What about `install` and `uninstall`?
 
-Both are removed. Running either prints an error pointing at the
-replacement command. No deprecated alias — this is a clean break.
-If you have existing scripts referencing the old names, update them
-once and move on. (The harness lane's `remove --harness` is a different
+Neither exists. Running either prints an error pointing at the
+replacement command; there is no alias. Scripts that reference those
+names need `scaffold` (or plain file deletion) instead. (The harness lane's `remove --harness` is a different
 contract: it deletes only machine-ledgered bridge files, never yours.)

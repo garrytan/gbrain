@@ -56,10 +56,6 @@ Kill switch: `GBRAIN_MEMORABLE=0` (also `false`/`off`/`no`/`n`/`disable`/
 `disabled`/`none`, whitespace-trimmed) disables everything, env-only; no env
 value can ever enable. For the OpenClaw lane this is read by the **gateway
 process** — restart it to apply; the config gate applies live per compaction.
-On a machine where an OLDER gbrain binary might also run (mixed versions
-sharing `~/.gbrain`), the env kill switch is the version-safe off switch —
-older binaries route `config set …enabled false` through a plane the hook
-children don't read.
 
 **What is captured, per harness:**
 
@@ -223,7 +219,7 @@ cannot empty is not one they can trust.
 | A consent error on write | The human has not opted in | `memorable enable`. Never work around a consent refusal |
 | OpenClaw relays rejected with `no_decisive_steps` | OpenClaw capture is name-only for now (no tool arguments) and the extraction API refuses traces with nothing replayable | Expected until argument capture lands; `gbrain doctor` reports it as ok-with-note (`expected_openclaw_rejection`) so the ladder stays meaningful for real failures. The note is deferred, never a mask: on a host that also wires codex, a codex hook that never fired still warns first (`codex_hooks_never_fired`) |
 | Codex hook wired but nothing ever recorded | Codex hooks fail SILENTLY when their config.toml trust entry is stale (e.g. the SessionEnd groups were reordered) | Re-run `gbrain bootstrap hooks --harness codex` to re-trust; `gbrain doctor` warns (`codex_hooks_never_fired`) |
-| Commands hang, then time out against the brain | Something else holds gbrain's single-writer PGLite lock — often a long-running process like a viewer or `gbrain serve` | `cat <data-dir>/.gbrain-lock/lock` names the holder's PID and subcommand. Stop that process; the lock releases. A live holder is deliberately never stolen — the old steal-on-stale behavior corrupted data directories |
+| Commands hang, then time out against the brain | Something else holds gbrain's single-writer PGLite lock — often a long-running process like a viewer or `gbrain serve` | `cat <data-dir>/.gbrain-lock/lock` names the holder's PID and subcommand. Stop that process; the lock releases. A live holder is deliberately never stolen, because stealing a live lock corrupts the data directory |
 
 `memorable doctor` checks every integration point at once and prints a support
 bundle; run it before reporting anything as broken.

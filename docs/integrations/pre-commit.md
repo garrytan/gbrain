@@ -1,4 +1,4 @@
-# Pre-commit hook for brain repos (v0.22.4+)
+# Pre-commit hook for brain repos
 
 `gbrain frontmatter install-hook` installs a git pre-commit hook in your
 brain source's repo that runs `gbrain frontmatter validate` against staged

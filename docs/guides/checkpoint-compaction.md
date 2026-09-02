@@ -1,7 +1,7 @@
 # Checkpoint compaction + compiled views
 
 Compaction is the worst moment in a long-lived agent's life: the harness
-summarizes the window and the un-extracted detail dies with it. Cathedral 5
+summarizes the window and the un-extracted detail dies with it. gbrain
 makes the brain the durable side of that boundary, in two halves:
 
 1. **Checkpoint compaction** — at the compaction boundary the raw
@@ -82,9 +82,9 @@ makes this the exception path.
   delegating (spool-first; serve IPC on PGLite, direct connection on
   Postgres) and `assemble()` injects the checkpoint block from the banked
   manifest. No hooks, no recipe.
-- **Codex / opencode** — not wired in this release. The pull protocol
+- **Codex / opencode** — not wired. The pull protocol
   (`gbrain context-pack` after compaction, per `docs/guides/ambient-recall.md`)
-  is the supported path; codex now has a native SessionEnd capture lane (trust-gated hooks.json entry, `gbrain bootstrap hooks --harness codex`) — per-turn/compaction context on codex stays the pull protocol.
+  is the supported path; codex has a native SessionEnd capture lane (trust-gated hooks.json entry, `gbrain bootstrap hooks --harness codex`) — per-turn/compaction context on codex stays the pull protocol.
 
 ## Operational runbook — reason vocabulary
 

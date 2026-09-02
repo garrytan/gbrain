@@ -145,12 +145,11 @@ fact after expiry inserts fresh. Backstop-extracted facts currently get no
 TTL (the extractor doesn't classify transience yet — a filed follow-up), so a
 transient fact caught only by the backstop is durable until forgotten.
 
-**Upgrade note (existing brains):** `valid_until` always meant temporal
-validity — the consolidator and ontology writers have stamped it for releases
-— but active reads only started honoring it with this feature. The first
-upgraded read therefore reclassifies every pre-existing lapsed row out of the
-active set at once (facts-health counts step accordingly). Nothing is deleted
-or mutated; the doctor's `validity_lapsed_facts` count sizes the shift.
+**Note on lapsed rows:** `valid_until` is temporal validity and active reads
+honor it, so a brain that already carries lapsed rows sees them leave the
+active set on the first read after the migration (facts-health counts step
+accordingly). Nothing is deleted or mutated; the doctor's
+`validity_lapsed_facts` count sizes the shift.
 
 ## Privacy and visibility
 

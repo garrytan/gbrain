@@ -66,9 +66,9 @@ special). Turn it on:
 gbrain config set mcp.publish_skills true
 ```
 
-(New brains from `gbrain init` default this ON. Brains upgraded from a release
-before skill publishing existed stay OFF until you opt in, so this is the
-common gotcha for existing OpenClaw users.)
+(`gbrain init` writes `mcp.publish_skills: true`; a brain whose config lacks
+the key stays OFF until you set it, which is the common gotcha for OpenClaw
+users.)
 
 ### A2. On the host: mint a token
 
@@ -244,7 +244,7 @@ habits to build. Your agent stops being amnesiac.
 | Agent "can't reach the brain" (Path A) | `gbrain serve --http` bound to loopback | Restart with `--bind 0.0.0.0` |
 | `list_skills` returns nothing / errors | Skill publishing OFF on the host | `gbrain config set mcp.publish_skills true` |
 | Token rejected on first call | Wrong/expired token | Re-mint with `gbrain auth create`; `--install` smoke-tests it for you |
-| `unknown tool: capture` | Your surface predates v0.47 or your token's surface was narrowed | Upgrade the host (capture is on starter + full now); on narrowed tokens use `put_page`, or `remember` on the verbs surface |
+| `unknown tool: capture` | Your token's surface was narrowed, or the host is out of date | Upgrade the host (capture is on the starter and full surfaces); on narrowed tokens use `put_page`, or `remember` on the verbs surface |
 | Empty results (Path B) | Brain has nothing in it yet | `gbrain import ~/notes/` or `gbrain capture "..."` |
 
 ## Next steps

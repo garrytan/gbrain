@@ -241,7 +241,7 @@ is the whole story for them.
   source. The flags are for when you want to query across the boundary
   deliberately.
 
-## Entity identity across sources (#4224, v1)
+## Entity identity across sources
 
 **The identity key for a page is `(source_id, slug)`.** Slugs are only
 unique per source, so `people/alice` in your `wiki` source and
@@ -250,7 +250,7 @@ pages — even when they describe the same person. Nothing merges them
 automatically.
 
 When they ARE the same entity, say so explicitly with the manual-only
-identity ops (v1 — no auto-matching, no name-similarity heuristics):
+identity ops (no auto-matching, no name-similarity heuristics):
 
 ```
 gbrain entity-identity-link   --entity-id alice-chen --slug people/alice --source-id wiki
@@ -261,7 +261,7 @@ gbrain entity-identity-unlink --entity-id alice-chen --slug people/alice --sourc
 
 Members live in the `entity_identities` table (one identity per page;
 re-linking moves the page; at most one canonical member per group). The
-write ops are local-only in v1. Retrieval-side union — `get_links` /
+write ops are local-only. Retrieval-side union — `get_links` /
 `get_backlinks` merging edges from a page's identity co-members — is gated
 by the `entity_identity.union` config key (default off) and never widens a
 federated caller's source grant.
@@ -297,7 +297,7 @@ metadata — no schema column stores it, no query filters on it, and a remote
 caller with a source grant retrieves the page like any other. If a page must
 not be readable by remote callers, put it in a source those callers have no
 grant for; that is the supported boundary. (A read-side per-page/per-prefix
-ACL was proposed and declined — it is a new authorization surface that
+ACL is deliberately not offered: it is a new authorization surface that
 belongs to the mounts/brains access-policy design, not a bolt-on filter.)
 
 ## Further reading

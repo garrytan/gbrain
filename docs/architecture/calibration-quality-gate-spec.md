@@ -1,29 +1,20 @@
 # Calibration Quality Gate — Falsifiability Filter + Category Classification
 
-> **Historical context.** This is the source spec absorbed from PR #1191 into
-> two waves of implementation:
+> **Status: design, largely unshipped.** What ships: the
+> `takes_resolution_consistency` CHECK constraint accepts
+> `quality='unresolvable'` as a 4th valid state, and `TakesScorecard` carries
+> `unresolvable_count` + `unresolvable_rate` as sibling fields. The
+> falsifiability + category extraction at `propose_takes`, the SQL-side grade
+> gate, per-category calibration scorecards, and pg_trgm-based proposal dedup
+> described in the sections below are UNSHIPPED design. Do not read §§1–4 as
+> current behavior.
 >
-> - **v0.37.2.0 hotfix** (this release): widens the `takes_resolution_consistency`
->   CHECK constraint to accept `quality='unresolvable'` as a 4th valid state.
->   Unblocks the production grading script. Adds `unresolvable_count` +
->   `unresolvable_rate` to `TakesScorecard` as sibling fields (preserves
->   v0.36.1.0 historical comparison semantics). Migration renumbered v74→v79→v80
->   during successive master merges — v0.37.0.0's autonomous-remediation wave
->   claimed v68-v78, then v0.37.1.0 (brainstorm/lsd) claimed v79.
-> - **Follow-up minor — NEVER IMPLEMENTED.** The falsifiability + category
->   extraction at `propose_takes`, SQL-side grade gate, per-category
->   calibration scorecards, and pg_trgm-based proposal dedup described in the
->   sections below remain UNSHIPPED design. Do not read §§1–4 as current
->   behavior; only the `unresolvable` hotfix above landed.
->
-> Preserved here per the hotfix plan's PR #1191 close protocol so the
-> production context (falsifiability rate + category breakdown observed on a
-> large real brain) doesn't get lost in the CHANGELOG → release-notes
-> condensation.
+> Kept here so the production context (falsifiability rate + category
+> breakdown observed on a large real brain) stays next to the design.
 
 ## Problem
 
-v0.36.1.0 ships `propose_takes`, `grade_takes`, and `calibration_profile` as a
+gbrain ships `propose_takes`, `grade_takes`, and `calibration_profile` as a
 connected pipeline: extract claims → grade them against outcomes → build a
 calibration profile showing systematic biases.
 
@@ -154,25 +145,23 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_takes_falsifiability
 -- Optional: pg_trgm for dedup (CREATE EXTENSION IF NOT EXISTS pg_trgm;)
 ```
 
-## Evidence Retrieval (v0.36.1.0 → v0.37 enhancement)
+## Evidence Retrieval
 
-The current `grade_takes` evidence retriever returns a stub placeholder. In
-production testing, we wired real evidence retrieval via `gbrain query` (hybrid
-search). The pattern that works:
-
-1. Extract the core claim from the take (first 150 chars)
-2. Run `engine.query(claim)` to get relevant pages
-3. Filter to pages updated AFTER the take's `since_date` (evidence must be newer)
-4. Pass top-5 chunks as the evidence block to the judge
-
-This should replace the stub in the `evidenceRetriever` injection point.
+`grade_takes` retrieves evidence through `defaultEvidenceRetriever`
+(`src/core/cycle/grade-takes.ts`): a hybrid search on the take's claim
+(expansion off, `EVIDENCE_SEARCH_LIMIT` hits, scoped to the take's source, the
+take's own page excluded so the judge never grades a claim against itself).
+The evidence block labels each hit relative to the take's `since_date`
+(evidence dated before the claim is context, not outcome). A retrieval failure
+degrades to a claim-only note steering the judge to `unresolvable` rather than
+aborting the phase. `opts.evidenceRetriever` is the injectable test seam.
 
 ## Production Results
 
-After implementing the falsifiability filter (as a pre-processing step outside
-the cycle):
+Applying the falsifiability filter as a pre-processing step outside the cycle,
+on the same brain:
 
-| Metric | Before (v2, no filter) | After (v3, with filter) |
+| Metric | No filter | With filter |
 |--------|----------------------|----------------------|
 | Candidates evaluated | 50 | 34 (from 500 screened) |
 | Falsifiable predictions | ~19 (38%) | 34 (100%) |
@@ -182,8 +171,7 @@ the cycle):
 | Unresolvable | 31 (62%) | 17 (50%) |
 | Category breakdown | N/A | people_move:13, company_outcome:11, technology:4, market_call:2 |
 
-Key improvement: **the false positive rate dropped from 62% noise to 0% noise**
-in the gradeable set. The remaining 50% unresolvable rate is genuine — those
+Key result: **the filter takes the gradeable set from 62% noise to 0% noise**. The remaining 50% unresolvable rate is genuine — those
 predictions are about outcomes that haven't happened yet or where the brain
 lacks evidence. That's correct behavior, not noise.
 
@@ -191,8 +179,7 @@ lacks evidence. That's correct behavior, not noise.
 
 1. **`src/core/cycle/propose-takes.ts`** — Add falsifiability + category to
    extraction prompt and output schema
-2. **`src/core/cycle/grade-takes.ts`** — Add falsifiability gate before grading;
-   wire real evidence retrieval
+2. **`src/core/cycle/grade-takes.ts`** — Add falsifiability gate before grading
 3. **`src/core/cycle/calibration-profile.ts`** — Group scorecards by category
 4. **`src/core/engine.ts`** — Add `similarity()` helper for dedup (graceful
    fallback)

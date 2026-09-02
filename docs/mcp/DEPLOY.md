@@ -3,8 +3,8 @@
 > `gbrain serve --http` ships full OAuth 2.1 (client credentials, auth code +
 > PKCE, refresh rotation, optional DCR), an embedded React admin dashboard at
 > `/admin`, scoped operations, and a live SSE activity feed. Legacy bearer
-> tokens still work — `verifyAccessToken` falls back to the `access_tokens`
-> table; tokens with no `scopes` grant are grandfathered to `read+write+admin`,
+> tokens also work: `verifyAccessToken` falls back to the `access_tokens`
+> table; tokens with no `scopes` grant carry `read+write+admin`,
 > while tokens minted with `gbrain auth create --scopes …` (or by
 > `gbrain bootstrap harness`) are honored at exactly their granted scopes.
 > Both the legacy fallback and the OAuth tables work on PGLite and Postgres
@@ -70,9 +70,9 @@ This requires:
 2. A public tunnel (ngrok, Tailscale, or cloud host)
 3. A bearer token created via `gbrain auth create <name>`
 
-Existing bearer tokens (no `scopes` grant) are grandfathered as
-`read+write+admin` on the OAuth-capable HTTP server, so no migration is
-required; `gbrain auth create --scopes read,write` mints narrowed tokens.
+Bearer tokens created without a `scopes` grant carry `read+write+admin` on
+the HTTP server; `gbrain auth create --scopes read,write` mints narrowed
+tokens.
 
 ## OAuth 2.1 Setup
 
@@ -147,8 +147,8 @@ gbrain auth register-client dept-x-agent \
 `--source` controls the write authority — `put_page` / `add_link` / etc only
 land in `dept-x`. `--federated-read` controls the read axis independently;
 queries return rows from any of the listed sources. Omit both flags for an
-unscoped super-client. Clients registered before source scoping existed are
-backfilled to `source_id='default'` on `gbrain upgrade`. Within a source,
+unscoped super-client. A client with no recorded source is backfilled to
+`source_id='default'` on `gbrain upgrade`. Within a source,
 slug-level write fencing is also available: `--bound-slug-prefixes p1/,p2/`
 rejects slug-mutating writes outside the listed prefixes (update later with
 `gbrain auth rescope-client <id> --bound-slug-prefixes <p1,p2|none>`).
@@ -216,8 +216,8 @@ router exposes the spec-compliant discovery endpoint at
 ### 4. Scopes and localOnly
 
 Every operation is tagged `read | write | admin`. Operations flagged
-`localOnly: true` in `src/core/operations.ts` (10 today — `sync_brain` and
-the `file_*` ops among them) are rejected over HTTP regardless of scope.
+`localOnly: true` in `src/core/operations.ts` (`sync_brain` and the
+`file_*` ops among them) are rejected over HTTP regardless of scope.
 Remote agents cannot reach local filesystem surface area.
 
 | Scope | What it allows |
@@ -232,7 +232,7 @@ Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 ## Legacy Bearer Token Setup
 
 Bearer tokens are the simple path when you don't need per-client scoping.
-Without a `--scopes` grant they grandfather to `read+write+admin` on the
+Without a `--scopes` grant they carry `read+write+admin` on the
 HTTP server; pass `--scopes read,write` at creation to narrow one.
 
 ### 1. Set up the tunnel
@@ -402,6 +402,6 @@ Remote servers must be added via Settings > Integrations, NOT
 
 **Note:** `gbrain serve --http` has OAuth 2.1 + the admin dashboard baked
 into the binary. The custom HTTP wrapper pattern (see
-[voice recipe](../../recipes/twilio-voice-brain.md)) is still supported for
+[voice recipe](../../recipes/twilio-voice-brain.md)) is supported for
 teams that need bespoke middleware, but for most remote deployments the
 built-in server is the recommended path.

@@ -31,8 +31,7 @@ Isolation model:
 
 - **Reads** are source-granular, SQL-enforced (`federated_read`): every
   employee client reads `agents` + the read-only sources you grant.
-- **Writes** are slug-prefix-granular, server-enforced (`bound_slug_prefixes`,
-  v0.42.72.0+): a client can only mutate pages under its own `emp-<slug>/`
+- **Writes** are slug-prefix-granular, server-enforced (`bound_slug_prefixes`): a client can only mutate pages under its own `emp-<slug>/`
   and its channels' `chan-<x>/` prefixes — on `put_page`, `delete_page`,
   `restore_page`, `add_tag`, `remove_tag`, `add_link`/`remove_link`,
   `add_timeline_entry`, `revert_version` and `put_raw_data`, plus the
@@ -59,8 +58,7 @@ Isolation model:
 ### Known limitations — read these before you rely on the fence
 
 The write fence is a **write** boundary within a source. It is not a privacy
-boundary, and it does not make every side effect prefix-clean. As of
-v0.47.1.0:
+boundary, and it does not make every side effect prefix-clean:
 
 - **The fence follows a delegated write.** When a client with `agent` scope
   hands work to a subagent via `submit_agent`, that subagent runs under its own
@@ -86,10 +84,9 @@ v0.47.1.0:
   page content. Unreachable in the layout above (the `agents` source is
   path-less and holds no code pages); it applies only if you point employee
   writes at a code-synced source.
-- **Contradiction findings are matched by slug, not source.** The read ops
-  that used to be brain-wide — `get_recent_salience`, `find_anomalies`,
-  `find_contradictions`, and `sources_list`/`sources_status` — now honor the
-  federated grant (`sources_status` answers `not_found` for an out-of-grant
+- **Contradiction findings are matched by slug, not source.** The brain-wide
+  read ops (`get_recent_salience`, `find_anomalies`, `find_contradictions`,
+  and `sources_list`/`sources_status`) honor the federated grant (`sources_status` answers `not_found` for an out-of-grant
   id, indistinguishable from a nonexistent source). The residual is
   `find_contradictions`: findings carry no source attribution, so the scope
   check is slug existence within the grant — a finding derived from an

@@ -69,7 +69,7 @@ registerGuardrailProvider({
 ```
 
 Registration is idempotent by `id`, so a re-init won't double-fire. There are
-exactly two real wiring paths (#3688):
+exactly two real wiring paths:
 
 ### Path 1 — embedding gbrain as a library
 

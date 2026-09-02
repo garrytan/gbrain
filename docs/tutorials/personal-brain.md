@@ -126,7 +126,7 @@ gbrain skillpack scaffold --all
 
 `gbrain init --supabase` walks a short wizard that asks for your Supabase connection string and creates the schema. You'll get that connection string in Step 7 — read 7a and 7b first so you paste the right one (the transaction pooler, not the direct connection). If you'd rather try things locally before paying for a database, `gbrain init --pglite` gives you a zero-config embedded engine instead; you can migrate to Supabase later with `gbrain migrate --to supabase`.
 
-`gbrain skillpack scaffold --all` copies the 50+ bundled skills into your agent workspace as first-class files you can edit freely. (The old managed-install model was retired; see `docs/INSTALL.md` if you're upgrading from an older release.)
+`gbrain skillpack scaffold --all` copies the 50+ bundled skills into your agent workspace as first-class files you can edit freely.
 
 From this point, the agent has working memory and access to every skill.
 

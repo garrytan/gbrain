@@ -28,11 +28,11 @@ shows the pending provider work without making calls.
 The `takes.embedding` column follows your configured embedding dimension
 (migration v142): if the configured model's width differs from the column,
 the migration resizes it and clears every existing take vector by design —
-run `gbrain takes embed` once after upgrading to repopulate them. Until you
+run `gbrain takes embed` once after the migration to repopulate them. Until you
 do, `think` falls back to keyword-only takes retrieval and
 `takes search --semantic` simply reports no semantic matches.
 
-## Facts (hot memory — `facts` table, v0.31)
+## Facts (hot memory — `facts` table)
 
 Personal knowledge from the brain owner's conversations. Real-time capture.
 
@@ -65,7 +65,7 @@ and temporal reasoning.
 
 ## The Bridge
 
-The dream cycle's `consolidate` phase (v0.31) is the one-way bridge:
+The dream cycle's `consolidate` phase is the one-way bridge:
 
 ```
 hot facts → [dream consolidate] → cold takes
@@ -77,9 +77,9 @@ Facts flow in ONE direction. The consolidate phase:
 3. Promotes durable facts to takes with proper holder/weight
 4. Marks consolidated facts with `consolidated_at` + `consolidated_into`
 
-## Production Extraction Data (2026-05-10)
+## Production Extraction Data
 
-First full takes extraction run on a ~100K-page brain:
+Full takes extraction on a ~100K-page brain (measured 2026-05-10):
 - **Model:** Azure GPT-5.5 (ties Opus quality at 1/8th cost — $0.033 vs $0.260/page)
 - **Result:** 100,720 takes from 28,256 on-disk pages, $361.49, 83 errors (0.3%)
 - **Breakdown:** 70,960 takes / 24,342 facts / 2,875 bets / 2,649 hunches
@@ -91,7 +91,7 @@ First full takes extraction run on a ~100K-page brain:
 | Dimension | Score | Notes |
 |-----------|-------|-------|
 | Accuracy | 7.5 | Claims faithfully represent sources |
-| Attribution | 6.5 | Holder/subject confusion was #1 issue |
+| Attribution | 6.5 | Holder/subject confusion is the top issue |
 | Weight calibration | 7.0 | Good range usage, some false precision |
 | Kind classification | 6.5 | Occasional fact/take misclassification |
 | Signal density | 6.5 | Some trivial extractions pass through |
@@ -113,7 +113,7 @@ takes. Calibration, `think`, and the `doctor` calibration check resolve the owne
 holder through `resolveOwnerHolder` (`src/core/owner-holder.ts`): explicit override
 > `emotional_weight.user_holder` config > `self`.
 
-Known limitation (tracked in garrytan/gbrain#2465): the owner can also
+Known limitation: the owner can also
 appear under `brain` (a take the owner asserts, via `propose_takes`) and
 `people/<owner>` (extraction that names the owner). The resolver selects the
 *default* canonical owner string for reads; it does not merge those other

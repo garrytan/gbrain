@@ -1,12 +1,14 @@
 # Upgrading Downstream Agents
 
-> **Currency note:** this file is an append-only historical log and stopped
-> receiving new sections after v0.36.5.0. **The canonical, maintained upgrade
-> channel is `skills/migrations/v*.md`** (the agent-executed migration files
-> that `gbrain upgrade` / `gbrain post-upgrade` route through), plus
-> `CHANGELOG.md` for what each release changed. Use this file only to catch a
+> **Scope:** this file covers skill-fork diffs through v0.36.5.0. **The
+> canonical upgrade channel is `skills/migrations/v*.md`** (the agent-executed
+> migration files that `gbrain upgrade` / `gbrain post-upgrade` route through),
+> plus `CHANGELOG.md` for release history. Use this file to catch a
 > long-diverged fork up through the versions it covers; for anything after
-> v0.36.5.0, walk the migration files and CHANGELOG instead. Time-critical example: the ZeroEntropy shutdown (2026-09-04) — every fork still embedding or reranking through `zeroentropyai:*` must run `skills/migrations/v0.46.3.0.md` before that date.
+> v0.36.5.0, walk the migration files and CHANGELOG. Time-critical: the
+> ZeroEntropy hosted-API shutdown (2026-09-04) — every fork still embedding or
+> reranking through `zeroentropyai:*` must run `skills/migrations/v0.46.3.0.md`
+> before that date.
 
 GBrain ships skills in `skills/`. Downstream agents (custom OpenClaw deployments,
 agent forks of any kind) often **copy** these skill files into their own workspace and
@@ -24,7 +26,7 @@ the schema migrations and backfills the data. But the **skill files themselves**
 that tell the agent how to behave — those are user-owned. If your `~/git/<your-agent>/workspace/skills/brain-ops/SKILL.md`
 says `# Based on gbrain v0.10.0` at the top, it doesn't know about v0.12.0 features.
 
-The agent will keep manually calling `gbrain link` after every `put_page` (now redundant —
+The agent will keep manually calling `gbrain link` after every `put_page` (redundant —
 auto-link does it), miss out on `gbrain graph-query` for relationship questions, and
 not know to backfill the structured timeline.
 
@@ -47,7 +49,7 @@ Total time: ~10 minutes for all four skills.
 
 **Why:** Phase 2.5 declares that auto-link runs automatically. Without this, the
 agent's mental model says it must call `gbrain link` after every `put_page`, which
-is now redundant and can cause double-add warnings.
+is redundant and can cause double-add warnings.
 
 ```markdown
 ### Phase 2.5: Structured Graph Updates (automatic)
@@ -125,11 +127,10 @@ need to call `gbrain link` manually. Timeline entries still need explicit calls.
 
 ## 4. enrich/SKILL.md
 
-**Where:** Replace `### Step 7: Cross-reference` with the v0.12.0 version.
+**Where:** Replace `### Step 7: Cross-reference` with the block below.
 
-**Why:** Step 7 used to be primarily about creating links between related entity
-pages. With auto-link, that's automatic. Step 7 is now about content updates,
-not link creation.
+**Why:** With auto-link, link creation between related entity pages is
+automatic. Step 7 is about content updates, not link creation.
 
 Old (delete):
 ```markdown
@@ -170,8 +171,8 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
    ```bash
    gbrain post-upgrade
    ```
-   The v0.12.0 release wires post-upgrade to call `apply-migrations --yes`
-   automatically, which runs the v0_12_0 orchestrator (schema → config check →
+   `post-upgrade` calls `apply-migrations --yes` automatically, which runs the
+   `v0_12_0` orchestrator (schema → config check →
    `extract links --source db` → `extract timeline --source db` → verify).
    Idempotent; cheap when nothing is pending.
 
@@ -190,8 +191,8 @@ Timeline entries still need explicit `gbrain timeline-add` calls.
 ## v0.12.2 hotfix (data-correctness, no skill edits)
 
 v0.12.2 is a Postgres data-correctness hotfix. No forked skill files need to
-change — the skill contracts are unchanged. But you DO need to run the migration,
-and you should know about one behavior change in markdown parsing.
+change; the skill contracts are the same. You DO need to run the migration,
+and there is one markdown-parsing behavior to know about.
 
 ### 1. Run the migration (Postgres-backed brains)
 
@@ -220,27 +221,27 @@ timeline separator). Re-import from source:
 gbrain sync --full
 ```
 
-The new `splitBody` rebuilds `compiled_truth` correctly.
+`splitBody` rebuilds `compiled_truth` correctly.
 
-### 3. Know the splitBody contract going forward
+### 3. The splitBody contract
 
-`splitBody` now requires an explicit timeline sentinel. Recognized markers
+`splitBody` requires an explicit timeline sentinel. Recognized markers
 (priority order):
 
 1. `<!-- timeline -->` (preferred — what `serializeMarkdown` emits)
 2. `--- timeline ---` (decorated separator)
 3. `---` directly before `## Timeline` or `## History` heading (backward-compat)
 
-A bare `---` in body text is now a markdown horizontal rule, not a timeline
+A bare `---` in body text is a markdown horizontal rule, not a timeline
 separator. If your agent writes pages with a bare `---` delimiter, migrate to
-`<!-- timeline -->` — the `serializeMarkdown` helper already does this.
+`<!-- timeline -->` — the `serializeMarkdown` helper emits it.
 
-### 4. Wiki subtypes now auto-typed
+### 4. Wiki subtypes auto-typed
 
-`inferType` now auto-detects five additional directory patterns as their own
-page types (previously they all defaulted to `concept`):
+`inferType` detects five directory patterns as their own page types rather
+than `concept`:
 
-| Path pattern           | New type       |
+| Path pattern           | Type           |
 |------------------------|----------------|
 | `/wiki/analysis/`      | `analysis`     |
 | `/wiki/guides/`        | `guide`        |
@@ -249,7 +250,7 @@ page types (previously they all defaulted to `concept`):
 | `/writing/`            | `writing`      |
 
 If your skills or queries filter by `type=concept` and expect wiki content in
-that bucket, update them to include the new types.
+that bucket, update them to include these types.
 
 ---
 
@@ -257,7 +258,7 @@ that bucket, update them to include the new types.
 
 **Verdict: no action required for most skills.** v0.13 projects YAML frontmatter fields into the graph as typed edges. The ingestion API is unchanged — keep calling `put_page` with frontmatter the way you do today; the graph auto-populates behind the scenes.
 
-Three skills get an optional new phase if you want to consume the new `auto_links.unresolved` response field. Without this, unresolvable frontmatter names silently skip (same as v0.12 behavior).
+Three skills get an optional new phase if you want to consume the new `auto_links.unresolved` response field. Without this, unresolvable frontmatter names silently skip.
 
 ### 1. meeting-ingestion/SKILL.md (optional)
 
@@ -303,12 +304,12 @@ pages. Example flow:
 
 - **brain-ops/SKILL.md** — auto-link mechanics are internal; the write path stays the same.
 - **signal-detector/SKILL.md** — signal capture path unchanged.
-- **query/SKILL.md** — `traverse_graph` now returns richer results automatically.
+- **query/SKILL.md** — `traverse_graph` returns the frontmatter-derived edges automatically.
 - **daily-task-manager/SKILL.md**, **briefing/SKILL.md**, **citation-fixer/SKILL.md**, **media-ingest/SKILL.md** — unchanged.
 
-### New edge types you can filter in graph queries
+### Edge types you can filter in graph queries
 
-v0.13 edges carry new `link_type` values. If your fork has graph-query skills that filter by type, these are now available:
+Frontmatter-derived edges carry these `link_type` values. If your fork has graph-query skills that filter by type, these are available:
 
 - `works_at` (person → company) — from `company:`, `companies:`, or `key_people:`
 - `founded` (person → company) — from `founded:`
@@ -324,15 +325,18 @@ v0.13 edges carry new `link_type` values. If your fork has graph-query skills th
 
 `gbrain upgrade` takes 2-5 min on a 46K-page brain (one-time). Runs out-of-process via `gbrain post-upgrade`. If your agent holds a DB connection during the upgrade, reconnect after; otherwise keep serving.
 
-### Type normalization NOT in v0.13
+### Type names
 
-Legacy rows with `link_type='attendee'` or `link_type='mention'` coexist with new `'attended'` / `'mentions'` rows. Your queries filtering on old type names keep working. A separate opt-in `gbrain normalize-types` command in v0.14 handles the rename.
+The extractor emits `'attended'` and `'mentions'`. If your fork's graph queries filter on the older spellings `'attendee'` or `'mention'`, widen them to match both so rows written under either name are returned.
+
+---
+
 ## v0.14.0 shell jobs (optional adoption, no skill edits)
 
 Adds a `shell` job type to Minions so deterministic cron scripts (API fetch, token
 refresh, scrape + write) move off the LLM gateway. Zero tokens per fire. ~60%
-gateway CPU headroom at typical scale. Feature is **off by default**, existing
-installs keep running exactly as they did before. Nothing breaks.
+gateway CPU headroom at typical scale. Feature is **off by default**; installs that
+do not opt in are unaffected.
 
 To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
 
@@ -357,21 +361,21 @@ To adopt, follow `skills/migrations/v0.14.0.md`. The short version:
    fire. Compare against pre-migration behavior before approving the next batch.
 
 **No skill edits required.** The handler runs worker-side; skill files don't
-change. If your host exposed custom handlers via the plugin contract (v0.11.0),
-they still work the same way.
+change. If your host exposes custom handlers via the plugin contract, they
+work unchanged.
 
 Iron rule: **never auto-rewrite the operator's crontab.** Every rewrite is
-per-cron, human-approved, with a diff. If you want automation later, the
-upcoming `gbrain crontab-to-minions <file>` helper is P1 in TODOS.
+per-cron, human-approved, with a diff. gbrain ships no crontab-rewriting
+helper; every rewrite is manual.
 
 ---
 
 ## v0.16.0: durable agent runtime
 
-v0.15 ships `gbrain agent run` / `gbrain agent logs`, a new `subagent` handler
+gbrain ships `gbrain agent run` / `gbrain agent logs`, a `subagent` handler
 type in Minions, and a plugin contract for host-repo subagent defs. None of the
 existing skills need surgery. The question for downstream agents is *how* to
-adopt the new runtime, not how to patch around a breaking change.
+adopt the runtime, not how to patch around a breaking change.
 
 ### 1. Run a worker with an Anthropic key
 
@@ -449,7 +453,7 @@ context evaporated."
 
 ### 4. `put_page` from subagents writes under an agent namespace
 
-If you adopted the v0.15 subagent runtime, note that `put_page` calls
+If you adopt the subagent runtime, note that `put_page` calls
 originating from a subagent's tool dispatch MUST target
 `wiki/agents/<subagent_id>/...`. The schema shown to the model enforces this
 on first try; a server-side fail-closed check rejects anything else. This
@@ -497,21 +501,21 @@ for (const err of parsed.errors ?? []) {
 ### 2. Drop any references to `lib/brain-writer.mjs`
 
 If your fork's skills or scripts referenced an aspirational
-`lib/brain-writer.mjs` (it never shipped — the spec was in PR #392 and never
-landed), replace those references with the gbrain CLI. The `frontmatter-guard`
+`lib/brain-writer.mjs` (gbrain does not ship it), replace those references
+with the gbrain CLI. The `frontmatter-guard`
 skill lives at `skills/frontmatter-guard/SKILL.md` and points at
 `gbrain frontmatter validate` / `audit` / `install-hook`.
 
 ### 3. Wire the doctor subcheck into your health pipeline
 
-`gbrain doctor` now reports `frontmatter_integrity` automatically. If your
+`gbrain doctor` reports `frontmatter_integrity` automatically. If your
 fork has a custom health pipeline (e.g. a daily Slack post about brain
 health), pull from `gbrain doctor --json` and surface the
 `frontmatter_integrity` row counts.
 
 ### 4. (Optional) Install the pre-commit hook on brain repos
 
-For sources backed by git, the v0.22.4 install-hook helper drops a
+For sources backed by git, `gbrain frontmatter install-hook` drops a
 pre-commit script that blocks commits with malformed frontmatter:
 
 ```bash
@@ -535,11 +539,11 @@ The migration is **audit-only**. It never mutates brain content during
 
 ---
 
-## Future versions
+## Later versions
 
-When gbrain ships a new version, this doc will be updated with the diffs for that
-version. Each new version appends a section; old sections stay so you can catch up
-multiple versions at once.
+For versions after v0.36.5.0, the diffs live in `skills/migrations/v*.md` (one
+file per release that needs agent-side action) and `CHANGELOG.md`. The sections here stay so you can catch
+up multiple versions at once.
 
 To check what your fork is missing:
 ```bash
@@ -550,16 +554,16 @@ diff <(grep -A3 "Based on gbrain" ~/<your-fork>/skills/brain-ops/SKILL.md) \
 
 ## v0.36.5.0 — Free-form secret inheritance for shell jobs calling `gbrain` CLI
 
-**The change.** Shell-job params get a new `inherit:` field. Pass any
+**What it is.** Shell-job params accept an `inherit:` field. Pass any
 snake_case config-key name on it; the worker resolves the value from its
 `loadConfig()` at child-spawn time and injects it into the child env. Names
 land in the row; values never persist from `inherit:`. Validation runs
 **pre-enqueue** in both submit paths (CLI + `submit_job` op), so a malformed
 payload never lands in `minion_jobs.data`.
 
-**Why.** Pre-v0.36.5.0, agents that wanted to call `gbrain` from shell jobs
-had to either write `database_url` to `~/.gbrain/config.json` plaintext or
-pass `env: { GBRAIN_DATABASE_URL: "..." }` per-job. Both left plaintext
+**Why.** Without it, an agent that calls `gbrain` from shell jobs has to
+either write `database_url` to `~/.gbrain/config.json` plaintext or pass
+`env: { GBRAIN_DATABASE_URL: "..." }` per-job. Both leave plaintext
 secrets somewhere — disk or DB row. `inherit:` keeps names in the row and
 resolves values at spawn time.
 
@@ -579,7 +583,7 @@ The env-key name in the child is derived by uppercasing the config-key:
 does NOT police which config keys you inherit — the agent is in the same
 uid as the worker, so it's the agent's call.
 
-**You can still use `env:`.** v0.36.5.0 does not forbid `env:{ ANYTHING }`.
+**You can still use `env:`.** `inherit:` does not forbid `env:{ ANYTHING }`.
 If you have a reason to put a value in the row plaintext (a non-secret
 correlation token, or a secret you know is OK to persist), pass it via
 `env:`. Prefer `inherit:` when you want the value out of the row.
@@ -597,17 +601,17 @@ correlation token, or a secret you know is OK to persist), pass it via
   worker process
 
 If the worker can't resolve a requested name, the validator fail-fasts at
-submit time with `gbrain config set <X>` hint. No more silent "No database
-URL" failures in child stderr minutes after submission.
+submit time with a `gbrain config set <X>` hint, instead of a silent "No
+database URL" failure in child stderr minutes after submission.
 
-**Also new.** A `gbrain doctor` check `home_dir_in_worktree` warns if
-`~/.gbrain/` lives inside a git worktree. A retroactive `~/.gbrain/.gitignore`
-(single line `*`) is now laid down by every `saveConfig()` call AND by
-`gbrain post-upgrade`, so existing users get coverage without re-running
+**Related.** A `gbrain doctor` check `home_dir_in_worktree` warns if
+`~/.gbrain/` lives inside a git worktree. A `~/.gbrain/.gitignore`
+(single line `*`) is laid down by every `saveConfig()` call AND by
+`gbrain post-upgrade`, so existing installs get coverage without re-running
 `gbrain init`. Honest scope: the `.gitignore` covers casual `git add` but does
 NOT cover already-tracked files, screenshots, backups, or `git add -f`.
 
-**Strategy framing.** For agent-to-gbrain calls, the new canonical guide is
+**Strategy framing.** For agent-to-gbrain calls, the canonical guide is
 `docs/guides/agent-to-gbrain.md`. Two distinct surfaces: HTTP MCP via OAuth
 for ops with MCP equivalents (`search`, `query`, `put_page`, etc.), and shell
 job + `inherit:` for `localOnly` admin ops (`sync`, `embed`, `dream`,

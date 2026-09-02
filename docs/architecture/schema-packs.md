@@ -8,7 +8,7 @@ querying, or routing experts. It is the single source of truth for
 "what's in your brain."
 
 This doc is the user-facing reference; for implementation details see
-`docs/designs/V038_SCHEMA_PACKS.md` (the original design) and the engine
+`docs/designs/V038_SCHEMA_PACKS.md` (the design doc) and the engine
 layer in `src/core/schema-pack/`.
 
 ## What ships in the box
@@ -20,12 +20,11 @@ Seven bundled packs (`src/core/schema-pack/base/`):
   [`type-taxonomy.md`](./type-taxonomy.md) for the full type list and the
   upgrade path from `gbrain-base`.
 
-- **`gbrain-base`** — the original hardcoded behavior, byte-for-byte
-  (person, company, deal, meeting, project, place, concept, writing,
-  analysis, guide, hardware, architecture, etc. — the original
-  `ALL_PAGE_TYPES` list). Still the resolution-chain fallback (tier 7)
-  for brains with no pack configured anywhere, so pre-existing brains see
-  zero behavior change until they opt in to something newer.
+- **`gbrain-base`** — the built-in taxonomy, byte-for-byte identical to the
+  hardcoded type inference (person, company, deal, meeting, project, place,
+  concept, writing, analysis, guide, hardware, architecture, etc. — the
+  `ALL_PAGE_TYPES` list). The resolution-chain fallback (tier 7) for brains
+  with no pack configured anywhere.
 
 - **`gbrain-recommended`** — extends `gbrain-base` with the 13 additional
   directories described in `docs/GBRAIN_RECOMMENDED_SCHEMA.md`: deal,
@@ -112,8 +111,8 @@ Every read + write path consults the active pack at runtime:
 
 - **`parseMarkdown`** infers page `type` from path prefixes declared in
   the active pack (`page_types[].path_prefixes`). Without an active pack
-  threaded, falls back to the legacy hardcoded `inferType()` so the
-  byte-for-byte parity gate stays green.
+  threaded, falls back to the hardcoded `inferType()`; a parity test pins the
+  two byte-for-byte.
 - **`whoknows` / `find_experts`** scopes candidates to `expert_routing:
   true` types in the active pack.
 - **`extract_facts`** runs only on `extractable: true` types.
