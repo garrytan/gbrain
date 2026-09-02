@@ -189,7 +189,14 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     // (potentially 30-min) post-upgrade is deferred to the next launch so the
     // autopilot silent channel can swap + relaunch without freezing its tick.
     // connectEngine's pending-migration probe + runPostUpgrade run on boot.
+    // Daemon restart still runs HERE: KeepAlive launchd/systemd workers keep
+    // old code in memory across the swap, and waiting for a later post-upgrade
+    // leaves them on the pre-swap binary (chunker/schema drift is destructive).
     if (swapOnly) {
+      await runPostUpgradeDaemonRestart({
+        fromVersion: oldVersion,
+        toVersion: newVersion,
+      });
       return;
     }
     // Run post-upgrade feature discovery (reads migration files from the NEW binary).
@@ -399,6 +406,48 @@ async function applySelfUpgradeSetup(): Promise<void> {
   }
 }
 
+/**
+ * Best-effort post-swap daemon restart. Failures are recorded to
+ * upgrade-errors.jsonl (doctor surfaces them) but never fail the upgrade.
+ * Exported for unit tests that pin the wiring without running launchctl.
+ */
+export async function runPostUpgradeDaemonRestart(
+  versions: { fromVersion?: string; toVersion?: string } = {},
+): Promise<void> {
+  try {
+    const {
+      restartGbrainDaemonsAfterUpgrade,
+      formatDaemonRestartHint,
+    } = await import('../core/post-upgrade-daemon-restart.ts');
+    const report = restartGbrainDaemonsAfterUpgrade();
+    const failed = report.actions.filter((a) => !a.ok);
+    if (failed.length > 0 || report.unmanagedWarnings.length > 0) {
+      recordUpgradeError({
+        phase: 'daemon-restart',
+        fromVersion: versions.fromVersion ?? '',
+        toVersion: versions.toVersion ?? '',
+        error:
+          failed.length > 0
+            ? `failed to restart: ${failed.map((f) => f.target).join(', ')}`
+            : `unmanaged gbrain process(es) still running: ${report.unmanagedWarnings
+                .map((p) => String(p.pid))
+                .join(', ')}`,
+        hint: formatDaemonRestartHint(report),
+      });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[gbrain] post-upgrade daemon restart skipped: ${msg}`);
+    recordUpgradeError({
+      phase: 'daemon-restart',
+      fromVersion: versions.fromVersion ?? '',
+      toVersion: versions.toVersion ?? '',
+      error: msg,
+      hint: 'Restart gbrain launchd/systemd daemons manually so they load the new binary',
+    });
+  }
+}
+
 export async function runPostUpgrade(args: string[] = []): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log('Usage: gbrain post-upgrade');
@@ -422,6 +471,13 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
   // Restart=always so the silent channel's exit-for-relaunch respawns. All
   // file-plane + mechanical + idempotent; never blocks the upgrade.
   await applySelfUpgradeSetup();
+
+  // Restart long-running gbrain daemons onto the swapped binary BEFORE the
+  // (potentially 30-min) migration/reindex work below. KeepAlive workers that
+  // keep old code in memory cause destructive version drift (chunker gate
+  // force-rechunk + embedding wipe). Best-effort: never fails the upgrade.
+  await runPostUpgradeDaemonRestart();
+
   // Cosmetic: print feature pitches for migrations newer than the prior binary.
   try {
     const statePath = join(process.env.HOME || '', '.gbrain', 'upgrade-state.json');
