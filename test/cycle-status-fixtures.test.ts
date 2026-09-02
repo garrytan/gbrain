@@ -1,6 +1,6 @@
 /**
- * Status derivation fixtures (CM3 (k) of the brain-plane repair plan). The
- * HEALTHY_CYCLE watcher predicate keys on `report.status`, so the mapping
+ * Status derivation fixtures. An external health watcher keys on
+ * `report.status`, so the mapping
  * from phase results to the five derived statuses is pinned here:
  *   clean   every attempted phase ok/skipped, zero work
  *   ok      every attempted phase ok/skipped, some work

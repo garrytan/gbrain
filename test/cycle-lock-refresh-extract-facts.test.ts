@@ -4,7 +4,7 @@
  * consolidate already receive `buildYieldDuringPhase(lock, opts.yieldDuringPhase,
  * onStolen)`; extract_facts did not, so a facts run longer than LOCK_TTL_MS
  * (5 min) depended entirely on the background refresher and surfaced as
- * `lock_stolen` on the Modal plane (26 to 28 Aug 2026 reports at 600 s).
+ * `lock_stolen` on a containerized worker (cycle reports at the 600 s mark).
  *
  * The hook fires every EXTRACT_FACTS_YIELD_EVERY pages of the reconcile
  * loop. A literal 6-minute run is not needed to prove the wiring: the same

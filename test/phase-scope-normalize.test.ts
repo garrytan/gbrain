@@ -1,5 +1,5 @@
 /**
- * Documents CM1 of the brain-plane repair plan: a source-scoped QUEUED cycle
+ * Documents the queue-boundary contract: a source-scoped QUEUED cycle
  * (`autopilot-cycle` with source_id) is normalized to the freshness phases,
  * so global phases (embed, orphans, purge) submitted on the source lane are
  * DROPPED, not run. The global lane (`autopilot-global-maintenance`) owns

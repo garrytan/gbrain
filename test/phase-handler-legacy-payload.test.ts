@@ -9,7 +9,7 @@
  *      legacy lock against the global checkout);
  *   3. a configured-but-absent global path is `no_brain_dir` (skip), not a
  *      "Directory not found" throw inside the phase (the root cause behind
- *      the 2026-08 cycle dead-letter storm on the Modal plane);
+ *      a cycle dead-letter storm on a containerized worker plane);
  *   4. an explicit repoPath that does not exist FAILS the job with the reason
  *      (never a worker crash, never a run against the worker's cwd).
  */

@@ -1,9 +1,9 @@
 /**
- * Documents CM3 (e) of the brain-plane repair plan: when a queued `extract`
+ * Documents the continuation contract: when a queued `extract`
  * stale sweep hits its internal budget with work remaining, the handler
  * chains ONE continuation job and does not name a queue, so the continuation
  * lands on the DEFAULT queue: whichever worker drains `--queue default`
- * (the Modal worker lane) picks it up. A dedicated-queue submitter must
+ * picks it up. A dedicated-queue submitter must
  * expect its continuations there.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';

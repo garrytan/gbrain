@@ -1,6 +1,6 @@
 /**
- * Cycle lock ids per lane (eng finding E1 of the brain-plane repair plan):
- * the Modal source lane runs `autopilot-cycle --source default` and holds
+ * Cycle lock ids per lane: a source lane running `autopilot-cycle --source
+ * default` holds
  * `gbrain-cycle:default`; the global lane (`autopilot-global-maintenance`,
  * no source) holds the legacy `gbrain-cycle`. The two ids are DIFFERENT, so
  * the locks never serialize the lanes against each other: the worker's
