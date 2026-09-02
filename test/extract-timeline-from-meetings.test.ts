@@ -3,6 +3,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractTimelineFromMeetings } from '../src/core/extract-timeline-from-meetings.ts';
 import type { Gazetteer } from '../src/core/by-mention.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -32,16 +33,16 @@ async function seedEntity(slug: string, title: string): Promise<void> {
 
 async function seedNote(
   slug: string,
-  opts: { title: string; legacyType?: string },
+  opts: { title: string; legacyType?: string; body?: string; sourceId?: string },
 ): Promise<void> {
   await engine.putPage(slug, {
     type: 'note',
     title: opts.title,
-    compiled_truth: 'Meeting discussion notes.',
+    compiled_truth: opts.body ?? 'Meeting discussion notes.',
     timeline: '',
     frontmatter: opts.legacyType ? { legacy_type: opts.legacyType } : {},
     effective_date: new Date('2026-04-20T00:00:00.000Z'),
-  });
+  }, opts.sourceId ? { sourceId: opts.sourceId } : undefined);
 }
 
 async function addAttended(fromSlug: string, toSlug: string): Promise<void> {
@@ -96,6 +97,34 @@ describe('extractTimelineFromMeetings', () => {
     });
     const timeline = await engine.getTimeline('people/alice-example', { sourceId: 'default' });
     expect(timeline).toHaveLength(0);
+  });
+
+  it('follows body mentions of an entity in another source only under link_resolution.cross_source', async () => {
+    // Entity lives in 'default'; the meeting lives in 'team-b' and names the
+    // entity in its body (no attended link). Same shape as a multi-source brain
+    // whose entity dictionary sits in one source and meeting notes in another.
+    await seedEntity('people/alice-example', 'Alice Example');
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('team-b', 'Team B') ON CONFLICT (id) DO NOTHING`, []);
+    await seedNote('meetings/partner-sync', {
+      title: 'Partner Sync',
+      legacyType: 'meeting',
+      body: 'Alice Example presented the roadmap.',
+      sourceId: 'team-b',
+    });
+
+    const off = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: undefined }, () =>
+      extractTimelineFromMeetings(engine, { dryRun: true }));
+    expect(off).toMatchObject({ meetings_scanned: 1, entries_created: 0, entities_touched: 0 });
+
+    const on = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, () =>
+      extractTimelineFromMeetings(engine));
+    expect(on).toMatchObject({ meetings_scanned: 1, entries_created: 1, entities_touched: 1, batch_errors: 0 });
+    const timeline = await engine.getTimeline('people/alice-example', { sourceId: 'default' });
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      source: 'extract-timeline-from-meetings:meetings/partner-sync',
+      summary: 'Discussed in Partner Sync',
+    });
   });
 });
 
