@@ -499,6 +499,25 @@ export interface SyncOpts {
   onProgress?: (p: { phase: string; bankedFiles?: number }) => void;
 }
 
+/**
+ * Resolve the strategy for a single-source sync.
+ *
+ * An explicit CLI override wins. Otherwise the registered source owns its
+ * ingestion strategy, matching the existing `sync --all` and
+ * `syncOneSource` behavior. Invalid legacy config values fail safely to the
+ * normal default instead of being cast into SyncOpts.
+ */
+export function resolveSingleSourceSyncStrategy(
+  explicit: SyncOpts['strategy'] | undefined,
+  sourceConfig: Record<string, unknown> | null | undefined,
+): SyncOpts['strategy'] | undefined {
+  if (explicit) return explicit;
+  const configured = sourceConfig?.strategy;
+  return configured === 'markdown' || configured === 'code' || configured === 'auto'
+    ? configured
+    : undefined;
+}
+
 // The git-plumbing cluster (git(), discoverGitRoot, createSyncBaselineCommit,
 // path-containment guards, ...) was peeled to src/core/sync-git.ts (pure
 // move). Re-exported so existing importers keep working.
@@ -5169,9 +5188,23 @@ See also:
   // lock released by its own finally) instead of a hard cut.
   const singleSourceInterrupt = new AbortController();
   const onSingleSourceSigint = () => { try { singleSourceInterrupt.abort(new Error('SIGINT')); } catch { /* */ } };
+  // A registered source owns its default ingestion strategy. `sync --all`
+  // and syncOneSource already honor config.strategy; the explicit
+  // `sync --source <id>` path historically dropped it and silently fell back
+  // to markdown. That left code sources partially indexed and made graph
+  // queries report false zero-callers results. Keep an explicit CLI strategy
+  // authoritative, otherwise inherit the source's durable configuration.
+  const strategyRows = await engine.executeRaw<{ config: Record<string, unknown> }>(
+    `SELECT config FROM sources WHERE id = $1`,
+    [sourceId],
+  );
+  const singleSourceStrategy = resolveSingleSourceSyncStrategy(
+    strategyArg,
+    strategyRows[0]?.config,
+  );
   const opts: SyncOpts = {
     repoPath, dryRun, full, noPull, noEmbed, noExtract, skipFailed, retryFailed, noSchemaPack, includeGitignored, workingTree, sourceId,
-    strategy: strategyArg, concurrency,
+    strategy: singleSourceStrategy, concurrency,
     srcSubpath,
     exclude: excludePatterns.length > 0 ? excludePatterns : undefined,
     includeHidden: includeHiddenPatterns.length > 0 ? includeHiddenPatterns : undefined,

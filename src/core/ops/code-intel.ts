@@ -156,7 +156,7 @@ const code_refs: Operation = {
 
 const code_blast: Operation = {
   name: 'code_blast',
-  description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Returns: {result, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
+  description: 'BEFORE editing any function, run code_blast with the symbol name to surface every transitive caller grouped by depth (direct → 2-hop → 3-hop). Use this during plan-mode to size the change. Returns up to 200 nodes. Trust an empty/not_found result only when ready=true; ready=false means impact is unknown and requires a safe fallback. Returns: {result, status, ready, depth_groups?, truncation?, cycles_detected?, did_you_mean?, candidates?}. Example ok: {result:"ok", status:"ready", ready:true, depth_groups:[{depth:1, nodes:[{symbol,chunk_id}], confidence:0.77}], truncation:"none"}.',
   params: {
     symbol: { type: 'string', required: true, description: 'Bare or qualified symbol name (e.g. "performSync" or "src/foo::performSync")' },
     depth: { type: 'number', description: 'Hop cap (default 5, max 8)' },
@@ -178,7 +178,7 @@ const code_blast: Operation = {
     // exactly preserving pre-fix local behavior.
     const { sourceId: scopedSourceId } = await routeCodeIntelScope(ctx, typeof p.source_id === 'string' ? p.source_id : undefined);
     const sourceId = scopedSourceId ?? ctx.sourceId;
-    return getCachedOrCompute(
+    const walk = await getCachedOrCompute(
       ctx.engine,
       { symbol_qualified: symbol, depth, source_id: sourceId },
       () => runRecursiveWalk(ctx.engine, symbol, {
@@ -189,6 +189,29 @@ const code_blast: Operation = {
         exact,
       }),
     );
+    // Recursive traversal must carry the same typed readiness contract as
+    // code_def/code_refs/code_callers/code_callees. Without it,
+    // `{result:"not_found"}` conflates a genuine miss with an unbuilt or
+    // still-indexing graph, causing agents to treat absence of evidence as
+    // evidence of no blast radius.
+    const resultCount = walk.result === 'ok'
+      ? walk.depth_groups.reduce((total, group) => total + group.nodes.length, 0)
+      : walk.result === 'ambiguous'
+        ? walk.candidates.length
+        : 0;
+    const { resolveCodeReadiness } = await import('../code-graph-readiness.ts');
+    const readiness = await resolveCodeReadiness(ctx.engine, {
+      kind: walk.result === 'not_found' ? 'symbol' : 'edge',
+      count: resultCount,
+      sourceId,
+      remote: ctx.remote,
+    });
+    return {
+      ...walk,
+      status: readiness.status,
+      ready: readiness.ready,
+      ...(readiness.scoped_source_id ? { scoped_source_id: readiness.scoped_source_id } : {}),
+    };
   },
   cliHints: { name: 'code_blast', hidden: true },
 };
