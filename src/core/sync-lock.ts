@@ -1,3 +1,4 @@
+import { lockHostIdentity } from './db-lock.ts';
 /**
  * Sync lock layer: the typed lock-busy error, the rich busy message,
  * `--break-lock` handling, and the partial-result envelope. Peeled out of
@@ -83,8 +84,7 @@ export async function runBreakLock(
   opts: { force: boolean; json: boolean; maxAgeSeconds?: number },
 ): Promise<number> {
   const { inspectLock, deleteLockRow, deleteLockRowIfStale, classifyHolderLiveness } = await import('./db-lock.ts');
-  const { hostname } = await import('os');
-  const localHost = hostname();
+  const localHost = lockHostIdentity();
   let snap;
   try { snap = await inspectLock(engine, lockKey); }
   catch (e) {
