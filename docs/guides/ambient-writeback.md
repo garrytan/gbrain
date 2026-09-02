@@ -96,7 +96,10 @@ bank remains harmless — the target serve's own DB gate decides.
    after changing mode/TTL/visibility config, re-run
    `gbrain config set memory.auto_writeback <mode>` then `bootstrap harness`
    (the config set refreshes the engine-free posture stamp the renderer
-   reads; doctor's drift warning names the same combo). Registrar mode
+   reads; doctor's drift warning names the same combo). Blocks install only
+   after the same run's MCP registration confirms, and a failed final smoke
+   test strips the blocks that run installed — no block outlives a
+   rolled-back registration. Registrar mode
    (`--url` to a non-loopback serve) never installs instruction blocks: the
    local setting speaks for the local brain, and the remote brain's own MCP
    instructions carry the contract when *its* operator enables writeback.
@@ -108,9 +111,11 @@ bank remains harmless — the target serve's own DB gate decides.
    name = free dedup, even on keyless brains), and asks the serve to extract
    it asynchronously. The hook never blocks: its own 2s deadline inside
    Stop's 10s cap, exit 0 on every path, typed heartbeat reasons for every
-   outcome. Serve down? The file waits for the maintenance sweep. PGLite
-   only by design (the hook IPC socket) — on Postgres brains the hook lane
-   stays quiet and the sweep is the lane.
+   outcome. Serve down? The file waits for the maintenance sweep. The lane is
+   engine-uniform: the IPC listener keys its socket off the brain's
+   connection URL, so Postgres brains harvest the same way whenever a
+   `gbrain serve` for that brain is running (heartbeat `no_serve` between
+   serves — the banked file is the durable artifact either way).
 
 ## Per-harness reality (honest limitations)
 
@@ -192,8 +197,13 @@ extraction switches.
 `gbrain doctor` → `memory_writeback`: resolved mode (+`mode_valid`), TTL
 (+`ttl_valid`), both visibility postures (instruction template vs backstop),
 brain audience + reasons, installed harness blocks (receipt vs live sentinel
-probe, override-file detection, config-drift warning), validity-lapsed fact
-count, and 7-day counters — `remember` outcomes over MCP (all callers — the
+probe, override-file detection, config-drift warning — and a receipt target
+marked FAILED, e.g. a smoke-rollback strip that itself failed, stays a
+standing warn until a `bootstrap harness` re-run or `--remove` converges it),
+and validity-lapsed fact count. With writeback OFF the check still probes for
+lingering instruction blocks and warns — the off switch is incomplete until a
+`bootstrap harness` re-run converges them. It also reports 7-day counters —
+`remember` outcomes over MCP (all callers — the
 wire cannot distinguish ambient from explicit saves) and persisted backstop
 results from the serve-side harvest receipts. Counters are local, append-only,
 loss-tolerant observability — never a source of truth.

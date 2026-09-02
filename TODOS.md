@@ -1941,7 +1941,7 @@ explicitly scoped OUT with a one-line rationale — none is a bug, all are addit
 
 - [ ] **Autonomous transcript watchers (D3=B).** The shipped event contract covers session boundaries (start, compaction, heartbeat) but relies on the harness emitting a lifecycle event. A per-harness transcript watcher would drive ambient recall for harnesses that can't emit — but watchers are fragile and compaction is often invisible on disk. Add per harness that proves it can't emit a boundary event. Priority: P3.
 - [ ] **Materialized `thread_state` table.** `delta`'s thread-change arm derives open-thread deltas from facts/timeline `updated_at` scans. If a perf gate ever forces it, materialize a `thread_state` table instead of deriving. Not needed until the derive-path SLO is threatened. Priority: P3.
-- [ ] **Codex native boundary hooks.** Codex has no hooks upstream (`CODEX_HAS_HOOKS=false`), so its ambient path is pull-only (AGENTS.md gate tells it to call `context_pack`/`delta` at boundaries). When Codex ships a hook mechanism, register the boundary events the way the Claude Code lane does; the IPC `context_pack` kind + `--harness codex` attribution channel are already reserved for it. Priority: P3.
+- [ ] **Codex native boundary hooks.** Codex has no PER-TURN/boundary hooks upstream (SessionEnd-only hooks landed with the Memorable wave — `CODEX_HAS_HOOKS=true`, trust-gated via `src/core/bootstrap/codex-hooks.ts`), so its ambient path stays pull-only per turn (AGENTS.md gate tells it to call `context_pack`/`delta` at boundaries). When Codex ships a hook mechanism, register the boundary events the way the Claude Code lane does; the IPC `context_pack` kind + `--harness codex` attribution channel are already reserved for it. Priority: P3.
 ## Brain-currency harness-e2e follow-ups (filed with the PR-A wave)
 
 - [ ] **P1 — Extend engine-identity convergence to the other long-lived planes.**
@@ -8518,3 +8518,19 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   continuity score silently drifts from what users see. **Context:** filed
   from the ambient-writeback wave (v0.47.10.0, read-time validity).
   **Effort:** S.
+
+- [ ] **P3 — `volunteer_channels` quiet-channel guidance predates the
+  engine-uniform IPC listener.** **What:** the non-PGLite branch in
+  `src/commands/doctor/checks/core-health.ts` (~line 339) still tells
+  Postgres operators "the harness-hook channels require a PGLite serve
+  socket — quiet by design", but #4245 made the listener engine-uniform
+  (`resolveSocketPathForConfig` keys a run-dir socket off the connection
+  URL; Postgres serves bind it). **Why:** a Postgres operator with a live
+  serve gets told their quiet hook lane can never fire when the real fix is
+  "start/restart a serve for this brain and re-register". Update the
+  guidance to the serve-liveness framing (and re-check the matching
+  `volunteer_channels` passage in `docs/architecture/KEY_FILES.md`, which
+  mirrors the code's current wording). **Context:** surfaced by the
+  v0.47.10.0 doc audit — `docs/guides/bootstrap.md`'s Postgres row and
+  `docs/guides/ambient-writeback.md` were corrected to the engine-uniform
+  truth; this is the remaining code-side echo. **Effort:** S.
