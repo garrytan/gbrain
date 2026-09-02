@@ -2583,9 +2583,14 @@ export async function registerBuiltinHandlers(
     // postgres brain should skip filesystem phases (no_brain_dir) and run the
     // DB-only phases (resolve_symbol_edges, embed, ...) — not silently lint/sync
     // against whatever directory the worker happens to be running in.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
+    // The payload's repoPath is an EXPLICIT checkout for the legacy (no
+    // source_id) cycle only; a per-source cycle binds to the source's own
+    // local_path (#2227/#2194) and ignores it. Resolution (explicit → source
+    // local_path → global sync.repo_path, every path checked on disk) lives
+    // in src/core/brain-dir.ts, shared with `gbrain dream`.
+    const explicitRepoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
-      : (await engine.getConfig('sync.repo_path')) ?? null;
+      : null;
 
     // v0.38 (codex r1 P1-2 + P1-5): per-source dispatch threading.
     //   - source_id: when set, runCycle uses the per-source lock ID and
@@ -2604,8 +2609,8 @@ export async function registerBuiltinHandlers(
     // not the global brain's. Pre-fix it inherited `repoPath` (the default
     // checkout) while writing DB freshness for `source_id` — mixed scope that
     // made cooldown/freshness attribute to the wrong source. We resolve the
-    // source's `local_path` here and use it as the cycle's brainDir below.
-    let sourceLocalPath: string | null = null;
+    // source's `local_path` (via resolveBrainDir) and use it as the cycle's
+    // brainDir below.
     if (rawSourceId !== undefined && rawSourceId !== null) {
       if (typeof rawSourceId !== 'string') {
         throw new Error(`autopilot-cycle: invalid source_id (not a string): ${JSON.stringify(rawSourceId)}`);
@@ -2640,16 +2645,23 @@ export async function registerBuiltinHandlers(
         };
       }
       sourceId = rawSourceId;
-      sourceLocalPath = typeof rows[0].local_path === 'string' && rows[0].local_path.length > 0
-        ? rows[0].local_path
-        : null;
     }
 
     // Effective checkout for FS phases. For a per-source cycle, bind to the
-    // SOURCE's local_path (or null → skip FS phases for a pure-DB source);
-    // NEVER fall through to the global repoPath, which would run sync/lint
-    // against the wrong tree. Legacy (no source_id) keeps the global repoPath.
-    const effectiveBrainDir: string | null = sourceId ? sourceLocalPath : repoPath;
+    // SOURCE's local_path (or null → skip FS phases for a pure-DB source, or
+    // for a checkout that lives on another host); NEVER fall through to the
+    // global repoPath, which would run sync/lint against the wrong tree.
+    // Legacy (no source_id) keeps the explicit/global repoPath, checked on
+    // disk: a configured-but-absent path is null (FS phases skip with
+    // no_brain_dir) instead of a "Directory not found" throw inside a phase.
+    const { resolveBrainDir } = await import('../core/brain-dir.ts');
+    const brainDirResolution = await resolveBrainDir(engine, sourceId ? null : explicitRepoPath, sourceId);
+    if (brainDirResolution.reason === 'explicit_missing') {
+      // A failed job carrying the reason (attempts → dead-letter), never a
+      // worker crash and never a silent run against the worker's cwd.
+      throw new Error(`autopilot-cycle: repoPath does not exist: ${explicitRepoPath} (brain_dir: explicit_missing)`);
+    }
+    const effectiveBrainDir: string | null = brainDirResolution.dir;
 
     // Allow callers to select phases via job data (e.g. skip embed for
     // fast cycles). Validates against ALL_PHASES to prevent injection, then
@@ -2714,6 +2726,7 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      brain_dir_reason: brainDirResolution.reason,
       // Surfaced so operators can see the queue-boundary normalization at
       // work in job results (runCycle never sees rejected phases, so its
       // excludedPhases skip-reporting cannot cover them).
@@ -2729,19 +2742,42 @@ export async function registerBuiltinHandlers(
   // on success so the dispatch gate backs off.
   worker.register('autopilot-global-maintenance', async (job) => {
     const { runCycle, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } = await import('../core/cycle.ts');
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
+    const { resolveBrainDir } = await import('../core/brain-dir.ts');
+    // Same contract as the autopilot-cycle handler: an explicit repoPath must
+    // exist (else the job fails with the reason), the global sync.repo_path is
+    // used only when it exists on disk, else null → filesystem phases skip.
+    const explicitRepoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
-      : (await engine.getConfig('sync.repo_path')) ?? null;
+      : null;
+    const brainDirResolution = await resolveBrainDir(engine, explicitRepoPath, undefined);
+    if (brainDirResolution.reason === 'explicit_missing') {
+      throw new Error(`autopilot-global-maintenance: repoPath does not exist: ${explicitRepoPath} (brain_dir: explicit_missing)`);
+    }
+    const repoPath: string | null = brainDirResolution.dir;
 
     // #4250: queued maintenance payloads are machine-authored too — intersect
     // with MAINTENANCE_PHASES so a stale (or remote-submitted) payload can't
     // run source-scoped phases through the global lane, symmetric with the
     // per-source normalization in the autopilot-cycle handler.
+    // Fail CLOSED when the payload names phases and none of them is a
+    // maintenance phase: pre-fix the empty intersection substituted the FULL
+    // list, so a bogus or source-scoped payload silently ran every mixed and
+    // global phase (LLM phases included) through the global lane. The full
+    // list is the default only when no phases were requested at all.
     const maintenanceSet = new Set<string>(MAINTENANCE_PHASES);
-    const requested = Array.isArray(job.data.phases)
-      ? (job.data.phases as string[]).filter((p) => maintenanceSet.has(p))
-      : MAINTENANCE_PHASES;
-    const phases = (requested.length > 0 ? requested : MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
+    const requestedPhases: string[] | undefined = Array.isArray(job.data.phases)
+      ? (job.data.phases as unknown[]).filter((p): p is string => typeof p === 'string')
+      : undefined;
+    const rejectedPhases = requestedPhases ? requestedPhases.filter((p) => !maintenanceSet.has(p)) : [];
+    const acceptedPhases = requestedPhases ? requestedPhases.filter((p) => maintenanceSet.has(p)) : undefined;
+    if (acceptedPhases !== undefined && acceptedPhases.length === 0) {
+      return {
+        partial: false,
+        status: 'skipped',
+        report: { reason: 'no_valid_phases', rejected: rejectedPhases, requested: requestedPhases },
+      };
+    }
+    const phases = (acceptedPhases ?? MAINTENANCE_PHASES) as typeof MAINTENANCE_PHASES;
 
     const report = await runCycle(engine, {
       brainDir: repoPath,
@@ -2772,6 +2808,8 @@ export async function registerBuiltinHandlers(
       partial: report.status === 'partial' || report.status === 'failed',
       status: report.status,
       report,
+      brain_dir_reason: brainDirResolution.reason,
+      ...(rejectedPhases.length > 0 ? { phases_rejected: rejectedPhases } : {}),
     };
   });
 
@@ -2890,22 +2928,44 @@ export async function registerBuiltinHandlers(
   // the single source of truth for phase semantics.
   const makePhaseHandler = (phase: string) => async (job: any) => {
     const { runCycle } = await import('../core/cycle.ts');
+    const { resolveBrainDir } = await import('../core/brain-dir.ts');
     // v0.41.38 (codex P2 review): fall back to null (NOT cwd '.') when no repo
     // is configured, matching the autopilot-cycle handler + `gbrain dream`. On a
     // checkout-less postgres brain a filesystem phase (synthesize/patterns/...)
     // skips with reason 'no_brain_dir' instead of running against the worker cwd;
     // DB-only phases (resolve_symbol_edges/embed/...) ignore brainDir either way.
-    const repoPath: string | null = typeof job.data.repoPath === 'string'
+    //
+    // Optional `source_id` (validated like the autopilot-cycle handler): a
+    // scoped phase job takes the per-source cycle lock (`gbrain-cycle:<id>`)
+    // and binds to that source's checkout, so a queued `extract_facts` for
+    // one source can never run against the global checkout under the legacy
+    // lock. A payload WITHOUT source_id resolves the global path and the
+    // legacy lock exactly as before.
+    const explicitRepoPath: string | null = typeof job.data.repoPath === 'string'
       ? job.data.repoPath
-      : ((await engine.getConfig('sync.repo_path')) ?? null);
+      : null;
+    let sourceId: string | undefined;
+    const rawSourceId = job.data.source_id;
+    if (rawSourceId !== undefined && rawSourceId !== null) {
+      const { isValidSourceId } = await import('../core/source-id.ts');
+      if (typeof rawSourceId !== 'string' || !isValidSourceId(rawSourceId)) {
+        throw new Error(`${phase}: invalid source_id: ${JSON.stringify(rawSourceId)}`);
+      }
+      sourceId = rawSourceId;
+    }
+    const brainDirResolution = await resolveBrainDir(engine, sourceId ? null : explicitRepoPath, sourceId);
+    if (brainDirResolution.reason === 'explicit_missing') {
+      throw new Error(`${phase}: repoPath does not exist: ${explicitRepoPath} (brain_dir: explicit_missing)`);
+    }
     const report = await runCycle(engine, {
-      brainDir: repoPath,
+      brainDir: brainDirResolution.dir,
       phases: [phase as any],
       signal: job.signal,
       deadlineAtMs: job.deadlineAtMs, // #2781: phases budget sub-work from remaining time
       privateQueueOwnerJobId: job.id,
+      ...(sourceId ? { sourceId } : {}),
     });
-    return { phase, status: report.status, report };
+    return { phase, status: report.status, report, brain_dir_reason: brainDirResolution.reason };
   };
 
   // PROTECTED — internally spawn subagent children

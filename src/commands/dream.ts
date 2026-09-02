@@ -34,8 +34,7 @@ import {
 import { isResolverUserError, resolveImplicitDefaultSourceId, resolveSourceId } from '../core/source-resolver.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { fetchSource } from '../core/sources-load.ts';
-import { existsSync } from 'fs';
-import { resolve } from 'node:path';
+import { resolveBrainDir } from '../core/brain-dir.ts';
 
 interface DreamArgs {
   json: boolean;
@@ -307,67 +306,6 @@ function parseArgs(args: string[]): DreamArgs {
     windowSeconds,
     once,
   };
-}
-
-/**
- * Resolve the brain directory without the `findRepoRoot` footgun.
- *
- * Resolution order (v0.41.30 — postgres support):
- *   1. An explicit --dir argument (exits 1 if it doesn't exist — a real mistake).
- *   2. T1: when --source resolved to a source that has an on-disk `local_path`,
- *      use it (matches `gbrain sync`, lets that source's filesystem phases run).
- *   3. The legacy `sync.repo_path` config key (pre-v0.18 default-source brains).
- *   4. `null` — no local checkout. The cycle then SKIPS filesystem phases
- *      (lint/backlinks/sync/synthesize/extract/patterns) with reason
- *      `no_brain_dir` and runs the DB-only phases (resolve_symbol_edges, embed,
- *      orphans, ...). This is what makes `gbrain dream` work on a postgres /
- *      Supabase brain with no checkout. `runDream` owns the only hard error:
- *      no checkout AND no engine = truly nothing to run.
- *
- * Still never walks cwd for a `.git` — only the explicit / source / config
- * signals are trusted.
- */
-async function resolveBrainDir(
-  engine: BrainEngine | null,
-  explicit: string | null,
-  resolvedSourceId?: string,
-): Promise<string | null> {
-  if (explicit) {
-    if (!existsSync(explicit)) {
-      console.error(`--dir path does not exist: ${explicit}`);
-      process.exit(1);
-    }
-    // Resolve to absolute so downstream writeFileSync(join(brainDir, slug))
-    // can't silently land at cwd when explicit is `.` / `./brain` / etc.
-    return resolve(explicit);
-  }
-
-  // T1: the user scoped to a specific source via --source/--source-id; if that
-  // source has a checkout on disk, use it so its filesystem phases can run.
-  if (engine && resolvedSourceId) {
-    const src = await fetchSource(engine, resolvedSourceId);
-    if (src?.local_path && existsSync(src.local_path)) {
-      return resolve(src.local_path);
-    }
-    // Explicit --source whose checkout isn't on disk → DB-only (skip FS phases).
-    // Do NOT fall through to the global sync.repo_path below: that path belongs
-    // to the default/unscoped brain, and running FS phases (sync/lint/extract)
-    // against it while the DB phases AND the last_full_cycle_at stamp target
-    // <resolvedSourceId> would mix scopes — syncing one source's checkout while
-    // marking a different source fresh. (codex P1 review finding.)
-    return null;
-  }
-
-  if (engine) {
-    const configured = await engine.getConfig('sync.repo_path');
-    if (configured && existsSync(configured)) {
-      return resolve(configured);
-    }
-  }
-
-  // No checkout found. Return null (NOT exit) — DB-only phases can still run
-  // against the engine. The both-null hard error lives in runDream.
-  return null;
 }
 
 function printHelp() {
@@ -757,7 +695,17 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     }
   }
 
-  const brainDir = await resolveBrainDir(engine, opts.dir, resolvedSourceId);
+  // Resolution (explicit --dir → the source's local_path → the global
+  // sync.repo_path, every path checked on disk) lives in src/core/brain-dir.ts
+  // and is shared with the job handlers. The explicit --dir is the one hard
+  // error at THIS layer: a typo'd path is a real mistake, never a request to
+  // run DB-only. The resolver never exits; this call site keeps the exit-1.
+  const brainDirResolution = await resolveBrainDir(engine, opts.dir, resolvedSourceId);
+  if (brainDirResolution.reason === 'explicit_missing') {
+    console.error(`--dir path does not exist: ${opts.dir}`);
+    process.exit(1);
+  }
+  const brainDir = brainDirResolution.dir;
   // Both-null is the only hard error: no local checkout AND no DB connection
   // means neither filesystem phases nor DB phases can run. With an engine but
   // no checkout, the cycle skips filesystem phases and runs DB-only phases
