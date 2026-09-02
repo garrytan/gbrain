@@ -3,7 +3,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { loadStorageConfig, validateStorageConfig, getStorageTier } from '../core/storage-config.ts';
 import type { StorageConfig, StorageTier } from '../core/storage-config.ts';
 import { walkBrainRepo, type DiskFileEntry } from '../core/disk-walk.ts';
-import { getDefaultSourcePath } from '../core/source-resolver.ts';
+import { getDefaultSourcePath, resolveSourceForRepoPath } from '../core/source-resolver.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes
@@ -146,7 +146,11 @@ export async function getStorageStatus(
   // per directory + one stat per .md file, plus O(1) lookups below.
   const fileMap: Map<string, DiskFileEntry> = repoPath ? walkBrainRepo(repoPath) : new Map();
 
-  const pages = await engine.listPages({ limit: 1_000_000 });
+  const source = repoPath ? await resolveSourceForRepoPath(engine, repoPath) : null;
+  const pages = await engine.listPages({
+    limit: 1_000_000,
+    ...(source ? { sourceId: source.source_id } : {}),
+  });
 
   for (const page of pages) {
     const tier = config ? getStorageTier(page.slug, config) : 'unspecified';
