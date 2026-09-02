@@ -9,7 +9,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { GBRAIN_MCP_INSTRUCTIONS, resolveMcpInstructions } from '../src/mcp/instructions.ts';
+import { GBRAIN_MCP_INSTRUCTIONS, resolveMcpInstructions, buildMcpInstructions } from '../src/mcp/instructions.ts';
+import { buildAmbientWritebackSection } from '../src/core/facts/writeback-instructions.ts';
 
 describe('resolveMcpInstructions', () => {
   test('appends the configured deployment identity under the canonical contract', () => {
@@ -52,5 +53,40 @@ describe('resolveMcpInstructions', () => {
     );
     expect(resolveMcpInstructions(null, {})).toBe(GBRAIN_MCP_INSTRUCTIONS);
     expect(resolveMcpInstructions({}, {})).toBe(GBRAIN_MCP_INSTRUCTIONS);
+  });
+});
+
+// The merge of the ambient-writeback section (#4788) and the deployment
+// identity (#4748) fixed the composition order: contract → writeback section
+// → identity. Both extensions are append-only; each is byte-identical to the
+// layer below it when unset.
+describe('resolveMcpInstructions — three-way composition with the ambient-writeback section', () => {
+  const WRITEBACK = { mode: 'salient' as const, transientTtl: '3d', visibility: 'world' as const, extractFactsAvailable: true };
+
+  test('writeback on + identity set: contract, then the writeback section, then the identity LAST', () => {
+    const out = resolveMcpInstructions({ mcp: { instructions: 'Team wiki brain' } }, {}, { writeback: WRITEBACK });
+    const base = buildMcpInstructions({ writeback: WRITEBACK });
+    expect(out).toBe(`${base}\n\nDeployment identity:\nTeam wiki brain`);
+    expect(out.startsWith(GBRAIN_MCP_INSTRUCTIONS + '\n\n')).toBe(true);
+    expect(out.indexOf(buildAmbientWritebackSection(WRITEBACK))).toBeLessThan(out.indexOf('Deployment identity:'));
+  });
+
+  test('writeback on + no identity: byte-identical to buildMcpInstructions (the writeback pins keep holding)', () => {
+    expect(resolveMcpInstructions({}, {}, { writeback: WRITEBACK })).toBe(buildMcpInstructions({ writeback: WRITEBACK }));
+    expect(resolveMcpInstructions(null, { GBRAIN_MCP_INSTRUCTIONS: '  ' }, { writeback: WRITEBACK })).toBe(buildMcpInstructions({ writeback: WRITEBACK }));
+  });
+
+  test('writeback off/null + identity: contract then identity, no writeback section', () => {
+    for (const opts of [undefined, {}, { writeback: null }]) {
+      const out = resolveMcpInstructions({ mcp: { instructions: 'Personal brain' } }, {}, opts);
+      expect(out).toBe(`${GBRAIN_MCP_INSTRUCTIONS}\n\nDeployment identity:\nPersonal brain`);
+      expect(out).not.toContain('mode: salient');
+    }
+  });
+
+  test('the env override still wins over config with writeback on', () => {
+    const out = resolveMcpInstructions({ mcp: { instructions: 'from-config' } }, { GBRAIN_MCP_INSTRUCTIONS: 'from-env' }, { writeback: WRITEBACK });
+    expect(out.endsWith('Deployment identity:\nfrom-env')).toBe(true);
+    expect(out).not.toContain('from-config');
   });
 });
