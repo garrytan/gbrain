@@ -1731,7 +1731,9 @@ export function formatResult(
         // Lazy import keeps formatResult's startup hot path narrow for
         // the common non-explain case.
         const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
-        return formatResultsExplain(results);
+        // v0.47.10: thread the captured retrieval meta so the header lines
+        // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
+        return formatResultsExplain(results, lastRetrievalMeta ?? undefined);
       }
       return results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,

@@ -11,6 +11,7 @@ import {
   formatResultExplain,
   formatResultsExplain,
   formatAutocutSummary,
+  formatDegradedSummary,
 } from '../../src/core/search/explain-formatter.ts';
 import type { AutocutDecision } from '../../src/core/search/autocut.ts';
 
@@ -258,5 +259,28 @@ describe('v0.42.3.0 — autocut in --explain', () => {
   test('formatResultsExplain omits the summary when meta has no autocut decision', () => {
     const out = formatResultsExplain([r('a/b', 1.2)]);
     expect(out.startsWith('autocut:')).toBe(false);
+  });
+});
+
+describe('formatDegradedSummary — v0.47.10 skipped-stage line', () => {
+  test('null when the run was clean', () => {
+    expect(formatDegradedSummary(undefined)).toBeNull();
+    expect(formatDegradedSummary([])).toBeNull();
+  });
+
+  test('names each stage with its reason', () => {
+    expect(formatDegradedSummary([{ stage: 'reranker_skipped', reason: 'no_key' }])).toBe(
+      'degraded: reranker_skipped (no_key)',
+    );
+    expect(
+      formatDegradedSummary([{ stage: 'keyword_zero' }, { stage: 'reranker_skipped', reason: 'sunset_short_circuit' }]),
+    ).toBe('degraded: keyword_zero, reranker_skipped (sunset_short_circuit)');
+  });
+
+  test('formatResultsExplain prepends the degraded line (after autocut when both exist)', () => {
+    const out = formatResultsExplain([r('a/b', 1.5)], {
+      degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }],
+    } as any);
+    expect(out.startsWith('degraded: reranker_skipped (no_key)\n\n1. a/b')).toBe(true);
   });
 });

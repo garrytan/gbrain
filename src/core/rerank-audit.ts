@@ -31,9 +31,15 @@ import { createAuditWriter, computeIsoWeekFilename } from './audit/audit-writer.
  * `sunset_short_circuit` (#3657) is written ONCE per process per model by the
  * gateway itself (not per query by applyReranker): the reranker's hosted API
  * passed its announced shutdown date, so calls are skipped without HTTP and
- * results pass through unreranked. */
+ * results pass through unreranked. `no_key` (v0.47.10) follows the same
+ * once-per-process-per-model rule: the resolved reranker's provider key is
+ * absent from the gateway env, so the HTTP call is skipped and results pass
+ * through unreranked — audit-only, no stderr (a shell-per-query agent would
+ * otherwise see a line on every search). `auth` now means "key present but
+ * rejected" (HTTP 401/403). */
 export type RerankFailureReason =
   | 'auth'
+  | 'no_key'
   | 'rate_limit'
   | 'network'
   | 'timeout'

@@ -143,7 +143,9 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.47.10: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // the check warns "not running" before reading the audit rows.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
         for (let i = 0; i < 3; i++) {
           logRerankFailure({
             model: 'zeroentropyai:zerank-2',
@@ -173,7 +175,9 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-doctor-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.47.10: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // the check warns "not running" before reading the audit rows.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
         logRerankFailure({
           model: 'acmecorp:unpriced-reranker-v9',
           reason: 'budget',

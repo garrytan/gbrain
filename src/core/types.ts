@@ -1790,6 +1790,10 @@ export interface EvalCaptureFailure {
  *                        it was the primary recall arm (vector unavailable)
  *   cache_prestamp     — served from a cache row written before the
  *                        degradation stamp existed; cleanliness unprovable
+ *   reranker_skipped   — the mode enables the reranker but it did not run:
+ *                        reason `no_key` (provider key absent) or
+ *                        `sunset_short_circuit` (provider dead past its
+ *                        announced date); results are in RRF order
  */
 export const DEGRADED_STAGES = [
   'embed_unavailable',
@@ -1802,6 +1806,7 @@ export const DEGRADED_STAGES = [
   'budget_truncated',
   'keyword_zero',
   'cache_prestamp',
+  'reranker_skipped',
 ] as const;
 export type DegradedStage = (typeof DEGRADED_STAGES)[number];
 
@@ -1818,6 +1823,8 @@ export const DEGRADED_REASONS = [
   'variant_embed_failed',
   'original_embed_failed',
   'first_result_truncated',
+  'no_key',
+  'sunset_short_circuit',
 ] as const;
 export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 

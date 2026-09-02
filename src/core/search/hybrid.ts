@@ -2087,8 +2087,14 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
+  // v0.47.10: a SKIPPED reranker (no provider key / provider past its sunset)
+  // is stamped as a degraded stage so --explain, telemetry and eval rows can
+  // tell "reranked" from "fell through in RRF order" — never stderr.
   const reranked = rerankerOpts.enabled
-    ? await applyReranker(query, deduped, rerankerOpts as any)
+    ? await applyReranker(query, deduped, {
+        ...(rerankerOpts as any),
+        onSkip: (reason: 'no_key' | 'sunset_short_circuit') => pushDegraded(degraded, 'reranker_skipped', reason),
+      })
     : deduped;
 
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
@@ -2694,7 +2700,13 @@ export async function hybridSearchCached(
     results.length > 0 &&
     (innerMeta?.vector_enabled ?? false)
   ) {
-    const isDegraded = (finalMeta.degraded?.length ?? 0) > 0;
+    // v0.47.10: `reranker_skipped` is a CONFIG state (no provider key / dead
+    // provider), not a transient provider limp — the result set is complete,
+    // just unreranked, and will stay that way until the operator acts. It
+    // keeps the full TTL (a keyless balanced brain must not churn its cache
+    // every 60s); the stamp still rides the stored meta so a hit is honest.
+    // Stale unreranked rows after a key appears expire within one TTL.
+    const isDegraded = (finalMeta.degraded ?? []).some((d) => d.stage !== 'reranker_skipped');
     trackCacheWrite(
       cache
         .store(query, queryEmbedding, results, finalMeta, {

@@ -65,7 +65,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       expansion: false,
       searchLimit: 10,
       reranker_enabled: false,
-      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_model: 'voyage:rerank-2.5',
       reranker_top_n_in: 30,
       reranker_top_n_out: null,
       reranker_timeout_ms: 5000,
@@ -100,7 +100,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       expansion: false,
       searchLimit: 25,
       reranker_enabled: true,
-      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_model: 'voyage:rerank-2.5',
       // v0.42.3.0 D4: topNIn = searchLimit (25), was 30.
       reranker_top_n_in: 25,
       reranker_top_n_out: null,
@@ -134,7 +134,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       expansion: true,
       searchLimit: 50,
       reranker_enabled: true,
-      reranker_model: 'zeroentropyai:zerank-2',
+      reranker_model: 'voyage:rerank-2.5',
       // v0.42.3.0 D4: topNIn = searchLimit (50), was 30.
       reranker_top_n_in: 50,
       reranker_top_n_out: null,

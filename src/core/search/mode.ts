@@ -30,7 +30,7 @@ import { getRecipe } from '../ai/recipes/index.ts';
 // #3657 seam: the sunsetting legacy reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
 // resolve through it so the September default swap is a one-line change.
-import { LEGACY_DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
+import { DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
 
 /**
  * Look up the `reranker.default_timeout_ms` declared by the resolved
@@ -120,15 +120,14 @@ export interface ModeBundle {
   reranker_enabled: boolean;
   /**
    * Provider:model for the reranker. Bundle default is
-   * `LEGACY_DEFAULT_RERANKER_MODEL` (ai/defaults.ts — currently zerank-2)
-   * — LEGACY until the September removal (v0.46.3 split-default: existing
-   * ZE-keyed brains keep a working reranker until the hosted API dies on
-   * 2026-09-04; voyage-keyed new installs get an explicit
-   * `search.reranker.model voyage:rerank-2.5` override written at init
-   * (keyed non-voyage installs get explicit `search.reranker.enabled false`),
-   * and the September release flips this bundle value to voyage). Voyage
-   * rerankers (`rerank-2.5`, `rerank-2.5-lite`) are live recipes today via
-   * `touchpoints.reranker`.
+   * `DEFAULT_RERANKER_MODEL` (ai/defaults.ts — `voyage:rerank-2.5` since
+   * v0.47.10, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
+   * 2026-09-04 hosted shutdown). Rides VOYAGE_API_KEY; a brain without the
+   * key fails open per search (`RerankError('no_key')`, one audit row per
+   * process, no stderr — `gbrain search modes` / `gbrain doctor` say so).
+   * Keyed non-voyage installs get explicit `search.reranker.enabled false`
+   * at init. Because `reranker_model` is folded into the knobs hash
+   * unconditionally, the flip re-keyed every cached result set once.
    */
   reranker_model: string;
   /** Candidates to send upstream (default 30). The full result list always
@@ -295,8 +294,10 @@ export interface ModeBundle {
   /**
    * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
    * this, autocut no-ops (gap normalization by a weak top manufactures
-   * spurious cliffs). Scale-dependent on the reranker — the September
-   * reranker default flip must re-tune it. Config: `search.autocut_min_top`.
+   * spurious cliffs). Scale-dependent on the reranker — tuned on zerank-2's
+   * score scale; the v0.47.10 voyage default is measured against it by the
+   * pre-registered rerank A/B (rule R2) and re-tuned there if it moves.
+   * Config: `search.autocut_min_top`.
    */
   autocut_min_top: number;
   /**
@@ -344,7 +345,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.35.0.0+: reranker off — conservative is cost-sensitive; reranker
     // spend doesn't fit the tier's value prop.
     reranker_enabled: false,
-    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
+    reranker_model: DEFAULT_RERANKER_MODEL,
     reranker_top_n_in: 30,
     reranker_top_n_out: null,
     reranker_timeout_ms: 5000,
@@ -393,12 +394,13 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // real-corpus benchmark shows zerank-2 reshuffles 60% of top-1 results
     // — the headline ZE quality story reaches the 80% of installs that
     // stay on `balanced`. Per-query rerank cost ~$0.025/M tokens, ~150ms
-    // p50 added latency. Missing ZEROENTROPY_API_KEY is handled via
-    // src/core/search/rerank.ts fail-open contract: log to audit JSONL,
-    // return input order unchanged. Opt out with
+    // p50 added latency. A missing VOYAGE_API_KEY is handled via the
+    // src/core/search/rerank.ts fail-open contract: one `no_key` audit row per
+    // process, results pass through in RRF order, `reranker_skipped` stamped
+    // on the search meta. Opt out with
     // `gbrain config set search.reranker.enabled false`.
     reranker_enabled: true,
-    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
+    reranker_model: DEFAULT_RERANKER_MODEL,
     // v0.42.3.0 D4: topNIn = searchLimit (25) so the cross-encoder scores
     // every result the limit slice will return — no unscored tail for autocut
     // to wrongly drop (Codex #2). Was 30; tracking searchLimit is the
@@ -457,7 +459,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // their fee. ~$0.0003/query at this shape; rounding error vs the
     // tier's $700/mo @ Opus pairing per CLAUDE.md cost matrix.
     reranker_enabled: true,
-    reranker_model: LEGACY_DEFAULT_RERANKER_MODEL,
+    reranker_model: DEFAULT_RERANKER_MODEL,
     // v0.42.3.0 D4: topNIn = searchLimit (50) so every returned result is
     // cross-encoder scored — closes the Codex #2 recall gap where autocut
     // would drop the deliberately-preserved un-reranked tail (results 31-50).

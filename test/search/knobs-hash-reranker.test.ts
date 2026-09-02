@@ -28,6 +28,7 @@ import {
   type ResolvedSearchKnobs,
 } from '../../src/core/search/mode.ts';
 import { resolveHardExcludes } from '../../src/core/search/source-boost.ts';
+import { DEFAULT_RERANKER_MODEL, LEGACY_DEFAULT_RERANKER_MODEL } from '../../src/core/ai/defaults.ts';
 
 /** Build a baseline resolved knob set with all reranker fields filled. */
 function baseKnobs(): ResolvedSearchKnobs {
@@ -264,5 +265,17 @@ describe('v=12 hard-exclude participation (#2825)', () => {
     expect(knobsHash(k)).not.toBe(
       knobsHash(k, { hardExcludes: resolveHardExcludes(undefined, undefined, undefined) }),
     );
+  });
+});
+
+describe('v0.47.10 reranker default flip re-keys the cache (rrm= is folded unconditionally)', () => {
+  test('per mode: hash(DEFAULT voyage) !== hash(LEGACY zerank) even with the reranker OFF', () => {
+    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
+    for (const mode of ['conservative', 'balanced', 'tokenmax'] as const) {
+      const base = { ...baseKnobs(), reranker_enabled: MODE_BUNDLES[mode].reranker_enabled };
+      const withDefault = knobsHash({ ...base, reranker_model: DEFAULT_RERANKER_MODEL });
+      const withLegacy = knobsHash({ ...base, reranker_model: LEGACY_DEFAULT_RERANKER_MODEL });
+      expect(withDefault).not.toBe(withLegacy);
+    }
   });
 });

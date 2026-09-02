@@ -115,7 +115,7 @@ import {
   DEFAULT_EMBEDDING_MODEL,
   DEFAULT_EMBEDDING_DIMENSIONS,
   NEW_INSTALL_DEFAULT_EMBEDDING_MODEL,
-  LEGACY_DEFAULT_RERANKER_MODEL,
+  DEFAULT_RERANKER_MODEL,
   renderCanonicalMigrationCommands,
   rerankerSunset, sunsetDateHasPassed,
   type RerankerSunset,
@@ -123,14 +123,10 @@ import {
 import { logRerankFailure } from '../rerank-audit.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
-// v0.35.0.0+: reranker default. Used only when search.reranker.enabled is set
-// AND no explicit reranker_model is configured. Mode bundles' per-mode
-// `reranker_model` default to this same value but can be overridden.
-// v0.46.3: stays on the LEGACY zerank-2 until the September removal (split-default: existing
-// ZE-keyed brains keep their working reranker until the API dies; NEW installs get explicit
-// `search.reranker.*` config at init — `voyage:rerank-2.5` with a Voyage key, `enabled false`
-// otherwise). #3657 seam: ONE constant in defaults.ts, shared with the mode bundles.
-const DEFAULT_RERANKER_MODEL = LEGACY_DEFAULT_RERANKER_MODEL;
+// v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
+// is set AND no explicit reranker_model is configured. #3657 seam: the value is
+// `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with
+// the mode bundles) — `voyage:rerank-2.5` since v0.47.10.
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
@@ -862,11 +858,16 @@ export function getChatFallbackChain(): string[] {
 }
 
 /**
- * v0.35.0.0+: configured reranker model. Returns undefined when no reranker
- * is configured (default for installs that haven't opted in). Callers must
- * check before invoking gateway.rerank() — `applyReranker` in
- * src/core/search/rerank.ts does the existence check via isAvailable
- * ('reranker') first.
+ * v0.35.0.0+: EXPLICITLY configured reranker model (`search.reranker.model` /
+ * gateway `reranker_model`). Returns undefined when none is configured; the
+ * effective model is then the mode bundle's, and `rerank()` itself resolves
+ * `input.model ?? getRerankerModel() ?? DEFAULT_RERANKER_MODEL`. Callers do
+ * NOT need to pre-check availability: `rerank()` fails with
+ * `RerankError('no_key')` (once-per-process audit row, fail-open in
+ * applyReranker) when the resolved provider's key is absent. The sync
+ * readiness predicate for dashboards/doctor is `reranker-readiness.ts`
+ * (`rerankerReadiness`), kept in agreement with `isAvailable('reranker', m)`
+ * by test.
  */
 export function getRerankerModel(): string | undefined {
   return requireConfig().reranker_model;
@@ -1568,6 +1569,36 @@ const _sunsetWarned = new Set<string>();
 export function _resetSunsetWarningsForTest(): void {
   _sunsetWarned.clear();
   _sunsetShortCircuited.clear();
+  _noKeyNoticed.clear();
+}
+
+/**
+ * v0.47.10 `no_key` preflight traceability. The default reranker is keyed on
+ * VOYAGE_API_KEY; a brain without it would otherwise burn one 'auth' audit
+ * row PER SEARCH (the gateway's applyResolveAuth throws AIConfigError for the
+ * missing key). Mirror of sunsetShortCircuitOnce MINUS the stderr line: the
+ * FIRST skip per process per model writes ONE `no_key` row to the
+ * rerank-failures audit JSONL (doctor's reranker_health + `gbrain search
+ * modes` read it); nothing is printed — shell-per-query agents would see a
+ * line on every search, and today's keyless state is stderr-silent.
+ */
+const _noKeyNoticed = new Set<string>();
+function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: number): void {
+  try {
+    if (_noKeyNoticed.has(modelStr)) return;
+    _noKeyNoticed.add(modelStr);
+    logRerankFailure({
+      model: modelStr,
+      reason: 'no_key',
+      query_hash: createHash('sha256').update(query, 'utf8').digest('hex').slice(0, 8),
+      doc_count: docCount,
+      error_summary:
+        `${keyName} not set — rerank calls skipped this process (results pass through ` +
+        `unreranked); fix: export ${keyName}=… or gbrain config set search.reranker.enabled false`,
+    });
+  } catch {
+    // Traceability must never block the fail-open path.
+  }
 }
 
 /**
@@ -4421,7 +4452,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
  * loud-fail (auth — should have been caught by doctor). Mirror of the
  * RemoteMcpError pattern in src/core/mcp-client.ts. */
 export class RerankError extends Error {
-  reason: 'auth' | 'rate_limit' | 'network' | 'timeout' | 'payload_too_large' | 'sunset_short_circuit' | 'unknown';
+  reason: 'auth' | 'no_key' | 'rate_limit' | 'network' | 'timeout' | 'payload_too_large' | 'sunset_short_circuit' | 'unknown';
   status?: number;
   constructor(message: string, reason: RerankError['reason'], status?: number) {
     super(message);
@@ -4495,19 +4526,6 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     DEFAULT_RERANKER_MODEL;
 
   const tracker = __budgetStore.getStore() ?? null;
-  if (tracker) {
-    // Reranker pricing isn't in the canonical pricing map today — when no
-    // cap is set this fires the warn-once path; when a cap IS set TX2 hard-
-    // fails. record() below logs the actual size after success.
-    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
-    tracker.reserve({
-      modelId: modelStr,
-      estimatedInputTokens: Math.ceil(totalChars / 4),
-      maxOutputTokens: 0,
-      kind: 'rerank',
-      label: 'gateway.rerank',
-    });
-  }
   const { parsed, recipe } = resolveRecipe(modelStr);
   const tp = recipe.touchpoints.reranker;
   if (!tp) {
@@ -4541,6 +4559,24 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
+  // v0.47.10 `no_key` preflight — fail-open, audit-only, once per process per
+  // model (see noKeyOnce). A recipe without a custom resolveAuth needs every
+  // `auth_env.required` key in the gateway env snapshot; when one is missing
+  // there is no point issuing the HTTP call, so throw the dedicated skip
+  // reason and let applyReranker pass results through without a per-query
+  // audit row. Sunset keeps precedence (checked above). HTTP 401/403 below
+  // stays `auth` = "key present but rejected".
+  if (!recipe.resolveAuth) {
+    const missingKey = (recipe.auth_env?.required ?? []).find((k) => !cfg.env[k]);
+    if (missingKey) {
+      noKeyOnce(modelStr, missingKey, input.query, input.documents.length);
+      throw new RerankError(
+        `Reranker ${modelStr} needs ${missingKey} (not set) — rerank skipped, results pass ` +
+          `through unreranked. Fix: export ${missingKey}=… or gbrain config set search.reranker.enabled false`,
+        'no_key',
+      );
+    }
+  }
   const compat = applyOpenAICompatConfig(recipe, cfg);
   // v0.40.6.1: rerank URL path is recipe-pluggable. Defaults to ZeroEntropy's
   // legacy `/models/rerank`; openai-style providers like llama.cpp's
@@ -4595,6 +4631,24 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (input.signal) {
     if (input.signal.aborted) ctrl.abort(input.signal.reason);
     else input.signal.addEventListener('abort', () => ctrl.abort(input.signal!.reason), { once: true });
+  }
+
+  // Budget admission happens HERE — after every preflight that can skip the
+  // call (sunset short-circuit, no_key, unknown model, payload cap). A
+  // reservation before those checks was never settled when they threw, so a
+  // keyless brain under a cost cap leaked one projection per search (#4770
+  // wave review). Reranker pricing lives in the embedding pricing table; when
+  // no cap is set this fires the warn-once path, when a cap IS set TX2
+  // hard-fails. record() below logs the actual size after success.
+  if (tracker) {
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    tracker.reserve({
+      modelId: modelStr,
+      estimatedInputTokens: Math.ceil(totalChars / 4),
+      maxOutputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+    });
   }
 
   let _rerankRecorded = false;
