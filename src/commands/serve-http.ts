@@ -2296,6 +2296,18 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
    * the ceiling is the only floor available (pre-WP4 behavior).
    */
   let lastKnownDefaultSurface: McpSurface | null = null;
+  /**
+   * Merge the gateway JWT subject into a request-log params object. Several
+   * gateway keys can map to one client_id (external-token-verifier caller
+   * map), so token_name alone cannot say WHICH key made the call —
+   * `params->>'external_sub'` can. No-op (params unchanged) for every
+   * non-external auth path.
+   */
+  function withExternalSub(auth: AuthInfo, paramsObj: unknown): unknown {
+    if (auth.externalSub === undefined) return paramsObj;
+    const base = typeof paramsObj === 'object' && paramsObj !== null ? paramsObj : {};
+    return { ...base, external_sub: auth.externalSub };
+  }
   async function resolveEffectiveSurface(authInfo: AuthInfo): Promise<{ ceiling: McpSurface; effective: McpSurface }> {
     const ceiling = clampSurface(serverSurfaceCeiling);
     // min() can never go below the narrowest surface: a 'verbs' ceiling makes
@@ -2431,7 +2443,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
           [authInfo.clientId, agentName, 'tools/list', latency, 'success'],
-          [{ tool_count: tools.length }],
+          [withExternalSub(authInfo, { tool_count: tools.length })],
         );
       } catch { /* best effort */ }
       broadcastEvent({
@@ -2459,7 +2471,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
             [authInfo.clientId, agentName, name, latency, 'error', `unknown_operation: ${name}`],
-            [null],
+            [withExternalSub(authInfo, null)],
           );
         } catch { /* best effort */ }
         broadcastEvent({
@@ -2500,7 +2512,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
              VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
             [authInfo.clientId, agentName, name, latency, 'denied_after_list', `insufficient_scope: requires '${requiredScope}'`],
-            [null],
+            [withExternalSub(authInfo, null)],
           );
         } catch { /* best effort */ }
         broadcastEvent({
@@ -2540,9 +2552,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // 'tools/list'. Pre-existing string-shaped rows are normalized by
       // migration v41 in src/core/migrate.ts.
       const safeParamsSummary = summarizeMcpParams(name, params);
-      const logParamsObj: unknown = logFullParams
-        ? (params || null)
-        : (safeParamsSummary || null);
+      const logParamsObj: unknown = withExternalSub(
+        authInfo,
+        logFullParams ? (params || null) : (safeParamsSummary || null),
+      );
       const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
       // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
@@ -2965,7 +2978,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
             // write_source_id is the security-relevant part of this request:
             // which partition the capture was routed to. Without it the audit
             // trail cannot answer "where did this client's writes land".
-            [{ content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId }],
+            [withExternalSub(authInfo, { content_type: contentType, content_hash: contentHash, bytes: body.length, job_id: job.id, write_source_id: writeSourceId })],
           );
         } catch { /* best effort */ }
         broadcastEvent({
