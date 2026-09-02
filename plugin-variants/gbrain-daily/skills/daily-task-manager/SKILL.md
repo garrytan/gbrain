@@ -64,7 +64,7 @@ Map user intent deterministically before touching state:
    - **Add:** Require a description. Priority: use the user's stated/clearly-implied level; otherwise default to **P3 and say so in the reply + timeline entry**. Due date only if supplied or explicit in the user's words. Mint a new task ID (`t-YYYYMMDD-NN`, NN = next free ordinal that day). Add a timeline entry.
    - **Complete:** Mark `[x]`, move to Completed with `(completed: YYYY-MM-DD)`.
    - **Defer:** Require a target date/timeframe AND a reason; ask if missing. Move to Deferred preserving original text, ID, and priority unless the user changes them.
-   - **Remove:** Destructive — require explicit confirmation unless the user's message already contains it. Prefer suggesting complete or defer.
+   - **Remove:** Destructive — require explicit confirmation unless the user's message already contains it. Move the task to `Removed`, mark `[x]`, preserve its stable ID, origin/source metadata and visible description, and append `(removed: YYYY-MM-DD)`. Never delete the line: it is the durable tombstone that prevents source retries from recreating the task. If `Removed` is absent on an older page, add it immediately before `Completed`. Prefer suggesting complete or defer.
    - **Review:** Read-only. Never mutates. Active tasks grouped by priority, IDs shown.
 5. **Save.** `put_page("ops/tasks.md", content=<complete edited canonical content>, expected_content_hash=<hash from Load>)` after any mutation. Diff-mindset: touch only the affected lines; preserve all other content, including sections this skill doesn't recognize. On `write_conflict`, re-read the page, re-identify the same user-requested action, reapply it to the new canonical content, remint an add ID if necessary, and retry. Stop after three total write attempts and report the conflict; never fall back to an unguarded put.
 
@@ -73,6 +73,7 @@ Map user intent deterministically before touching state:
 - **First run:** page missing → create from template before acting; `status: ok`, note "initialized".
 - **Malformed page:** if `ops/tasks.md` exists but doesn't match the schema, do NOT rewrite it wholesale. Append/edit within it minimally, preserve unknown content verbatim, and flag the malformation in the reply.
 - **Retry/duplicate add:** if an identical description already exists in active tasks, do not add a duplicate — report the existing task ID instead.
+- **Removed source retry:** a matching ID, origin, source link or exact obligation in `Removed` is closed. Do not recreate or move it back to active unless the user explicitly asks to restore it as a new action.
 - **Dates:** ISO 8601 (`YYYY-MM-DD`) everywhere. Compute "today"/"next week" with code/clock, never guess.
 - **Page identifier:** always `ops/tasks.md` (with extension) in tool calls; this is the single canonical location.
 - **Concurrent mutation.** `put_page` replaces the whole page, so every task mutation must carry the exact `content_hash` returned by its read. A conflict means another writer won; re-read and reapply the intended action. Never retry the stale body or omit `expected_content_hash`. Avoid parallel task mutations because repeated conflicts add latency, but correctness no longer depends on a single-writer assumption.
@@ -100,6 +101,9 @@ Each task carries a stable ID so later actions can target it safely:
 
 ## Deferred
 - [ ] <!-- id: {task-id} --> {task description} (deferred until: {date}; reason: {reason})
+
+## Removed
+- [x] <!-- id: {task-id} --> {task description} (removed: {date})
 
 ## Completed
 - [x] <!-- id: {task-id} --> {task description} (completed: {date})
