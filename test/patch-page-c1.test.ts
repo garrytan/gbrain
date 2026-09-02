@@ -107,6 +107,38 @@ describe('patch_page C1 operation', () => {
     expect((await engine.getVersions('people/example-person', { sourceId: 'default' })).length).toBe(1);
   });
 
+  test('dedicated type and title fields retype and retitle a page while frontmatter and body survive', async () => {
+    const { revision } = await seedPerson();
+    const result = await patchPage.handler(ctx(), {
+      slug: 'people/example-person',
+      base_revision: revision,
+      type: 'company',
+      title: 'Example Co (retitled)',
+    }) as { status: string };
+    expect(result.status).toBe('patched');
+
+    const canonical = readFileSync(join(brainDir, 'people/example-person.md'), 'utf8');
+    expect(canonical).toContain('type: company');
+    expect(canonical).not.toContain('type: person');
+    expect(canonical).toContain('title: Example Co (retitled)');
+    expect(canonical).not.toContain('title: Example Person');
+    expect(canonical.match(/^type: /gm)?.length).toBe(1);
+    expect(canonical.match(/^title: /gm)?.length).toBe(1);
+    expect(canonical).toContain('company: Example Co');
+    expect(canonical).toContain('Original body.');
+    const projected = await engine.getPage('people/example-person', { sourceId: 'default' });
+    expect(projected?.type).toBe('company');
+    expect(projected?.title).toBe('Example Co (retitled)');
+  });
+
+  test('title rejects blank and multi-line values before touching the page', async () => {
+    const { revision } = await seedPerson();
+    await expect(patchPage.handler(ctx(), { slug: 'people/example-person', base_revision: revision, title: '   ' })).rejects.toBeInstanceOf(OperationError);
+    await expect(patchPage.handler(ctx(), { slug: 'people/example-person', base_revision: revision, title: 'two\nlines' })).rejects.toBeInstanceOf(OperationError);
+    const canonical = readFileSync(join(brainDir, 'people/example-person.md'), 'utf8');
+    expect(canonical).toContain('title: Example Person');
+  });
+
   test('two sessions cannot erase each other: stale write conflicts, refreshed retry preserves both', async () => {
     const { revision: sharedBase } = await seedPerson();
     const first = await patchPage.handler(ctx(), {

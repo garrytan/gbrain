@@ -222,6 +222,7 @@ export const patchPageOperation: Operation = {
     source_id: { type: 'string', required: false, description: 'Source that supplied the canonical_revision. Remote callers may target only their write source.' },
     base_revision: { type: 'string', required: true, description: 'Exact canonical_revision returned by get_page.' },
     type: { type: 'string', required: false, description: 'New page type (lowercase slug grammar). type is a reserved frontmatter key, so this is the only way to retype a page through patch_page.' },
+    title: { type: 'string', required: false, description: 'New page title (single line, 1-300 characters). title is a reserved frontmatter key, so this is the only way to retitle a page through patch_page.' },
     frontmatter_set: { type: 'object', required: false, description: 'Top-level frontmatter keys to set. Nested objects and arrays replace atomically.' },
     frontmatter_unset: { type: 'array', required: false, items: { type: 'string' }, description: 'Top-level frontmatter keys to remove explicitly.' },
     frontmatter_set_if_empty: { type: 'object', required: false, description: 'Set a key only when absent, null, or a blank string.' },
@@ -283,8 +284,12 @@ export const patchPageOperation: Operation = {
     if (p.type !== undefined && (typeof p.type !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/.test(p.type))) {
       throw new OperationError('invalid_params', 'patch_page type must be a lowercase slug-grammar string.', 'Pass a declared page type such as conversation or meeting.');
     }
+    if (p.title !== undefined && (typeof p.title !== 'string' || p.title.trim().length === 0 || p.title.length > 300 || /[\r\n]/.test(p.title))) {
+      throw new OperationError('invalid_params', 'patch_page title must be a single non-empty line of at most 300 characters.', 'Pass the full new title as one line.');
+    }
     const patch: SparsePagePatch = {
       ...(typeof p.type === 'string' ? { type: p.type } : {}),
+      ...(typeof p.title === 'string' ? { title: p.title.trim() } : {}),
       ...(p.frontmatter_set !== undefined ? { frontmatter_set: p.frontmatter_set as Record<string, unknown> } : {}),
       ...(p.frontmatter_unset !== undefined ? { frontmatter_unset: p.frontmatter_unset as string[] } : {}),
       ...(p.frontmatter_set_if_empty !== undefined ? { frontmatter_set_if_empty: p.frontmatter_set_if_empty as Record<string, unknown> } : {}),
