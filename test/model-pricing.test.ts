@@ -17,6 +17,7 @@ import {
   CANONICAL_PRICING,
   canonicalLookup,
   ANTHROPIC_CACHE_READ_MULT,
+  ANTHROPIC_CACHE_READ_MULT_OVERRIDES,
   ANTHROPIC_CACHE_WRITE_5M_MULT,
 } from '../src/core/model-pricing.ts';
 import { ANTHROPIC_PRICING } from '../src/core/anthropic-pricing.ts';
@@ -57,6 +58,16 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-fable-5']).toMatchObject({ input: 10.0, output: 50.0 });
   });
 
+  test('Fable 5.1 uses $0.25 cache reads while Fable 5 remains at $1.00', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5-1']).toEqual({
+      input: 10.0,
+      output: 50.0,
+      cache_read: 0.25,
+      cache_write: 12.5,
+    });
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5'].cache_read).toBe(1.0);
+  });
+
   test('Gemini 2.0 Flash reconciled to $0.10/$0.40; legacy alias agrees', () => {
     expect(CANONICAL_PRICING['google:gemini-2.0-flash']).toEqual({ input: 0.1, output: 0.4 });
     expect(CANONICAL_PRICING['google:gemini-2-flash']).toEqual(
@@ -74,11 +85,20 @@ describe('CANONICAL_PRICING — table integrity', () => {
   // #4218 drift guard extension: cache_read/cache_write are DERIVED from the
   // input rate via the exported multipliers — a hand-edited cache number that
   // drifts from input*mult fails here.
-  test('every anthropic: row carries cache_read = 0.1x input and cache_write = 1.25x input', () => {
+  test('every anthropic: row carries its declared cache-read multiplier and cache_write = 1.25x input', () => {
     for (const [key, p] of Object.entries(CANONICAL_PRICING)) {
       if (!key.startsWith('anthropic:')) continue;
-      expect(p.cache_read).toBeCloseTo(p.input * ANTHROPIC_CACHE_READ_MULT, 10);
+      const mult = ANTHROPIC_CACHE_READ_MULT_OVERRIDES[key] ?? ANTHROPIC_CACHE_READ_MULT;
+      expect(p.cache_read).toBeCloseTo(p.input * mult, 10);
       expect(p.cache_write).toBeCloseTo(p.input * ANTHROPIC_CACHE_WRITE_5M_MULT, 10);
+    }
+  });
+
+  test('every cache-read multiplier override names a canonical row with matching cache_read', () => {
+    for (const [key, mult] of Object.entries(ANTHROPIC_CACHE_READ_MULT_OVERRIDES)) {
+      const p = CANONICAL_PRICING[key];
+      expect(p).toBeDefined();
+      expect(p!.cache_read).toBeCloseTo(p!.input * mult, 10);
     }
   });
 

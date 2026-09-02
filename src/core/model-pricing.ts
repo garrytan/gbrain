@@ -44,8 +44,9 @@ export interface ModelPricing {
   /**
    * #4218 — USD per 1M prompt-cache-READ tokens. Optional: present only for
    * providers whose published cache pricing we've verified (Anthropic:
-   * 0.1x input). Consumers that price cache tokens fall back to the input
-   * rate when absent (conservative over-estimate for reads).
+   * 0.1x input by default; Fable 5.1 / Mythos 5.1: 0.025x). Consumers that
+   * price cache tokens fall back to the input rate when absent (conservative
+   * over-estimate for reads).
    */
   cache_read?: number;
   /**
@@ -63,15 +64,25 @@ export interface ModelPricing {
  * writes bill 1.25x. Exported so the drift guard can assert every
  * anthropic: row's cache fields stay derived from its input rate. */
 export const ANTHROPIC_CACHE_READ_MULT = 0.1;
+/** Fable 5.1 / Mythos 5.1 bill cache hits at 0.025x base input ($0.25/MTok on a
+ * $10 input rate) instead of the 0.1x every other Anthropic model uses. */
+export const ANTHROPIC_CACHE_READ_MULT_FABLE_5_1 = 0.025;
 export const ANTHROPIC_CACHE_WRITE_5M_MULT = 1.25;
-function anthro(input: number, output: number): ModelPricing {
+function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_READ_MULT): ModelPricing {
   return {
     input,
     output,
-    cache_read: input * ANTHROPIC_CACHE_READ_MULT,
+    cache_read: input * cacheReadMult,
     cache_write: input * ANTHROPIC_CACHE_WRITE_5M_MULT,
   };
 }
+
+/** Per-model cache-read multiplier overrides. Anthropic bills cache hits at
+ *  ANTHROPIC_CACHE_READ_MULT (0.1x) except where listed here. Keys match
+ *  CANONICAL_PRICING keys; the drift guard asserts both directions. */
+export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
+  'anthropic:claude-fable-5-1': ANTHROPIC_CACHE_READ_MULT_FABLE_5_1,
+};
 
 /**
  * Canonical price table. Keys are provider-prefixed (`provider:model`),
@@ -86,6 +97,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // see the anthro() helper + multiplier constants above.
   // Fable 5: Anthropic's top tier, above Opus. $10 in / $50 out.
   'anthropic:claude-fable-5':             anthro(10.00, 50.00),
+  // Fable 5.1: same $10/$50 sticker as Fable 5, but cache hits bill 0.025x
+  // ($0.25/MTok) instead of 0.1x — the only rate that changed.
+  'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_FABLE_5_1),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   'anthropic:claude-opus-5':              anthro( 5.00, 25.00),
