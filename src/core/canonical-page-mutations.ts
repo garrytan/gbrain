@@ -232,6 +232,11 @@ export function applySparsePagePatch(
   if (!hasMutation) throw new CanonicalMutationError('invalid_patch', 'patch_page requires at least one explicit change.');
 
   const frontmatter = { ...parsed.frontmatter };
+  // serializeMarkdown spreads the frontmatter AFTER the meta type/title, so a
+  // page whose frontmatter already carries `type` would silently keep it and
+  // the dedicated patch field would be ignored. Drop the keys the patch owns.
+  if (patch.type !== undefined) delete frontmatter.type;
+  if (patch.title !== undefined) delete frontmatter.title;
   for (const key of patch.frontmatter_unset ?? []) delete frontmatter[key];
   for (const [key, value] of Object.entries(patch.frontmatter_set_if_empty ?? {})) {
     if (!nonEmpty(frontmatter[key])) frontmatter[key] = value;

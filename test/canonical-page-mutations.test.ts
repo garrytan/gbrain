@@ -59,6 +59,16 @@ function cleanup(): void {
 
 afterEach(cleanup);
 
+test('applySparsePagePatch: dedicated type and title fields win over existing frontmatter keys', () => {
+  const next = applySparsePagePatch(ORIGINAL, 'people/example-person', { type: 'company', title: 'Example Co' });
+  expect(next).toContain('type: company');
+  expect(next).not.toContain('type: person');
+  expect(next).toContain('title: Example Co');
+  expect(next).not.toContain('title: Example Person');
+  expect(next.match(/^type: /gm)?.length).toBe(1);
+  expect(next).toContain('role: Founder');
+});
+
 describe('sparse canonical patch semantics', () => {
   test('preserves omitted fields and treats nested values atomically', () => {
     const next = applySparsePagePatch(ORIGINAL, 'people/example-person', {
