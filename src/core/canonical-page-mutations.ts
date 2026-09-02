@@ -68,9 +68,57 @@ export interface CanonicalMutationResult<T> {
   projection_error?: string;
 }
 
+export interface CanonicalMutationReceiptV2 {
+  receipt_version: 2;
+  receipt_id: string;
+  principal_id: string;
+  operation: string;
+  source_id: string;
+  slug: string;
+  idempotency_key: string;
+  request_hash: string;
+  base_revision: string | null;
+  canonical_revision: string;
+  projected_revision: string;
+  committed_at: string;
+}
+
+export interface CanonicalMutationJournalV2 {
+  version: 2;
+  principal_id: string;
+  source_id: string;
+  slug: string;
+  operation: string;
+  idempotency_key: string;
+  request_hash: string;
+  base_revision: string | null;
+  intended_revision: string;
+  state: 'prepared' | 'canonical_written' | 'index_pending' | 'committed';
+  created_at: string;
+  updated_at: string;
+  projection_error?: string;
+  receipt?: CanonicalMutationReceiptV2;
+}
+
+export type CanonicalMutationV2Result =
+  | {
+      outcome: 'applied' | 'replayed';
+      projection_state: 'current';
+      receipt: CanonicalMutationReceiptV2;
+      journal_path: string;
+    }
+  | {
+      outcome: 'pending';
+      projection_state: 'pending';
+      canonical_revision: string;
+      journal_path: string;
+      retryable: boolean;
+      projection_error: string;
+    };
+
 export class CanonicalMutationError extends Error {
   constructor(
-    public code: 'canonical_unavailable' | 'revision_required' | 'revision_conflict' | 'invalid_patch' | 'invalid_canonical',
+    public code: 'canonical_unavailable' | 'revision_required' | 'revision_conflict' | 'idempotency_conflict' | 'invalid_patch' | 'invalid_canonical',
     message: string,
   ) {
     super(message);
@@ -245,7 +293,17 @@ function journalPath(root: string, sourceId: string, slug: string, idempotencyKe
   return join(root, `${name}.json`);
 }
 
-function writeIntent(path: string, intent: CanonicalMutationIntent): void {
+function receiptIdentity(principalId: string, sourceId: string, idempotencyKey: string): string {
+  return createHash('sha256')
+    .update(principalId).update('\0').update(sourceId).update('\0').update(idempotencyKey)
+    .digest('hex');
+}
+
+function journalPathV2(root: string, principalId: string, sourceId: string, idempotencyKey: string): string {
+  return join(root, `${receiptIdentity(principalId, sourceId, idempotencyKey)}.v2.json`);
+}
+
+function writeIntent(path: string, intent: CanonicalMutationIntent | CanonicalMutationJournalV2): void {
   mkdirSync(dirname(path), { recursive: true });
   atomicWriteFileSync(path, `${JSON.stringify(intent, null, 2)}\n`);
 }
@@ -253,6 +311,289 @@ function writeIntent(path: string, intent: CanonicalMutationIntent): void {
 function readIntent(path: string): CanonicalMutationIntent | null {
   if (!existsSync(path)) return null;
   return JSON.parse(readFileSync(path, 'utf8')) as CanonicalMutationIntent;
+}
+
+function readIntentV2(path: string): CanonicalMutationJournalV2 | null {
+  if (!existsSync(path)) return null;
+  return JSON.parse(readFileSync(path, 'utf8')) as CanonicalMutationJournalV2;
+}
+
+function assertJournalV2Envelope(
+  journal: CanonicalMutationJournalV2,
+  expected: { principalId: string; sourceId: string; idempotencyKey: string },
+  identity: string,
+): void {
+  const revisionPattern = /^sha256:[0-9a-f]{64}$/;
+  const createdAt = typeof journal.created_at === 'string' ? Date.parse(journal.created_at) : Number.NaN;
+  const updatedAt = typeof journal.updated_at === 'string' ? Date.parse(journal.updated_at) : Number.NaN;
+  const valid = journal.version === 2
+    && journal.principal_id === expected.principalId
+    && journal.source_id === expected.sourceId
+    && journal.idempotency_key === expected.idempotencyKey
+    && typeof journal.slug === 'string'
+    && journal.slug.length > 0
+    && typeof journal.operation === 'string'
+    && journal.operation.length > 0
+    && revisionPattern.test(journal.request_hash)
+    && (journal.base_revision === null || revisionPattern.test(journal.base_revision))
+    && revisionPattern.test(journal.intended_revision)
+    && ['prepared', 'canonical_written', 'index_pending', 'committed'].includes(journal.state)
+    && Number.isFinite(createdAt)
+    && Number.isFinite(updatedAt)
+    && updatedAt >= createdAt
+    && (journal.projection_error === undefined || typeof journal.projection_error === 'string')
+    && (journal.state === 'committed' || journal.receipt === undefined);
+  if (!valid) {
+    throw new CanonicalMutationError('invalid_canonical', `Canonical mutation v2 journal is invalid for receipt ${identity}.`);
+  }
+}
+
+function validatedCommittedReceiptV2(
+  journal: CanonicalMutationJournalV2,
+  identity: string,
+): CanonicalMutationReceiptV2 {
+  const receipt = journal.receipt;
+  const revisionPattern = /^sha256:[0-9a-f]{64}$/;
+  const valid = receipt?.receipt_version === 2
+    && receipt.receipt_id === `sha256:${identity}`
+    && receipt.principal_id === journal.principal_id
+    && receipt.operation === journal.operation
+    && receipt.source_id === journal.source_id
+    && receipt.slug === journal.slug
+    && receipt.idempotency_key === journal.idempotency_key
+    && receipt.request_hash === journal.request_hash
+    && receipt.base_revision === journal.base_revision
+    && receipt.canonical_revision === journal.intended_revision
+    && receipt.projected_revision === journal.intended_revision
+    && revisionPattern.test(receipt.request_hash)
+    && revisionPattern.test(receipt.canonical_revision)
+    && (receipt.base_revision === null || revisionPattern.test(receipt.base_revision))
+    && receipt.committed_at === journal.updated_at
+    && Number.isFinite(Date.parse(receipt.committed_at));
+  if (!valid) {
+    throw new CanonicalMutationError('invalid_canonical', `Committed canonical mutation receipt ${identity} failed integrity validation.`);
+  }
+  return receipt;
+}
+
+/**
+ * Version-two canonical mutation coordinator for caller-stable idempotency.
+ *
+ * Receipt identity is deliberately independent of the target slug and page
+ * revision: (principal, source_id, idempotency_key). The semantic request hash
+ * carries the operation and slug, so accidentally reusing one key for another
+ * request fails closed. A committed receipt is immutable and remains replayable
+ * after later page mutations.
+ *
+ * `verifyProjection` closes the crash window between a successful projection
+ * transaction and receipt persistence. It must prove that the exact intended
+ * canonical revision is already projected; otherwise `project` is retried.
+ */
+export async function commitCanonicalMutationV2(opts: {
+  engine: BrainEngine;
+  principalId: string;
+  slug: string;
+  sourceId?: string;
+  operation: string;
+  idempotencyKey: string;
+  semanticRequest: unknown;
+  /** Exact CAS revision, null for create, or 'latest' for a lock-owned append to an existing page. */
+  baseRevision: string | null | 'latest' | undefined;
+  buildContent: (current: CanonicalPageSnapshot) => string;
+  project: (content: string, intendedRevision: string) => Promise<void>;
+  verifyProjection: (content: string, intendedRevision: string) => Promise<boolean>;
+  journalRoot?: string;
+  lockRoot?: string;
+}): Promise<CanonicalMutationV2Result> {
+  const principalId = opts.principalId.trim();
+  const idempotencyKey = opts.idempotencyKey.trim();
+  if (!principalId || !idempotencyKey) {
+    throw new CanonicalMutationError('invalid_patch', 'Version-two canonical mutations require non-empty server-derived principal and idempotency key.');
+  }
+  const sourceId = opts.sourceId ?? 'default';
+  const root = opts.journalRoot ?? gbrainPath('canonical-mutation-journal');
+  const path = journalPathV2(root, principalId, sourceId, idempotencyKey);
+  const identity = receiptIdentity(principalId, sourceId, idempotencyKey);
+  const requestHash = exactCanonicalRevision(stableJson({
+    operation: opts.operation,
+    sourceId,
+    slug: opts.slug,
+    request: opts.semanticRequest,
+  }));
+  const receiptLockSlug = `__canonical_receipt_v2__/${identity}`;
+  const lockOpts = { timeoutMs: 30_000, sourceId, ...(opts.lockRoot ? { lockRoot: opts.lockRoot } : {}) };
+  const receiptLockOpts = {
+    timeoutMs: 30_000,
+    sourceId,
+    lockRoot: join(opts.lockRoot ?? gbrainPath('page-locks'), 'receipts-v2'),
+  };
+
+  return withPageLock(receiptLockSlug, async () => withPageLock(opts.slug, async () => {
+    let prior = readIntentV2(path);
+    if (prior) {
+      assertJournalV2Envelope(prior, {
+        principalId,
+        sourceId,
+        idempotencyKey,
+      }, identity);
+    }
+    if (prior && prior.request_hash !== requestHash) {
+      throw new CanonicalMutationError(
+        'idempotency_conflict',
+        `Canonical mutation receipt sha256:${identity} is already bound to a different request.`,
+      );
+    }
+    if (prior && (prior.slug !== opts.slug || prior.operation !== opts.operation)) {
+      throw new CanonicalMutationError('invalid_canonical', `Canonical mutation v2 journal request fields are inconsistent for receipt ${identity}.`);
+    }
+    if (prior?.state === 'committed') {
+      const receipt = validatedCommittedReceiptV2(prior, identity);
+      return {
+        outcome: 'replayed',
+        projection_state: 'current',
+        receipt,
+        journal_path: path,
+      };
+    }
+
+    let current = await readCanonicalPage(opts.engine, opts.slug, sourceId);
+    let intendedRevision: string;
+    let candidate: string;
+
+    if (prior) {
+      intendedRevision = prior.intended_revision;
+      if (current.revision === intendedRevision && current.content !== null) {
+        candidate = current.content;
+        if (prior.state === 'prepared') {
+          prior = { ...prior, state: 'canonical_written', updated_at: new Date().toISOString() };
+          writeIntent(path, prior);
+        }
+      } else if (prior.state === 'prepared' && current.revision === prior.base_revision) {
+        candidate = opts.buildContent(current);
+        if (exactCanonicalRevision(candidate) !== intendedRevision) {
+          throw new CanonicalMutationError('idempotency_conflict', 'Retry rebuilt different canonical bytes for the same prepared mutation receipt.');
+        }
+        mkdirSync(dirname(current.target.filePath), { recursive: true });
+        atomicWriteFileSync(current.target.filePath, candidate, {
+          verify: (onDisk) => {
+            if (exactCanonicalRevision(onDisk) !== intendedRevision) {
+              throw new CanonicalMutationError('invalid_canonical', 'Canonical byte verification failed before rename.');
+            }
+            const parsed = parseMarkdown(onDisk, `${opts.slug}.md`, { validate: true, expectedSlug: opts.slug });
+            if ((parsed.errors ?? []).length > 0) {
+              throw new CanonicalMutationError('invalid_canonical', `Candidate Markdown failed validation: ${(parsed.errors ?? []).map((e) => e.code).join(', ')}.`);
+            }
+          },
+        });
+        prior = { ...prior, state: 'canonical_written', updated_at: new Date().toISOString() };
+        writeIntent(path, prior);
+        current = await readCanonicalPage(opts.engine, opts.slug, sourceId);
+      } else {
+        return {
+          outcome: 'pending',
+          projection_state: 'pending',
+          canonical_revision: intendedRevision,
+          journal_path: path,
+          retryable: false,
+          projection_error: `Canonical page advanced beyond pending receipt ${identity}; reconciliation is required.`,
+        };
+      }
+    } else {
+      if (opts.baseRevision === 'latest' && !current.exists) {
+        throw new CanonicalMutationError('canonical_unavailable', `Existing canonical page ${sourceId}/${opts.slug} is required.`);
+      }
+      if (current.exists && !opts.baseRevision) {
+        throw new CanonicalMutationError('revision_required', `Existing page ${sourceId}/${opts.slug} requires base_revision.`);
+      }
+      const acceptedBaseRevision = opts.baseRevision === 'latest'
+        ? current.revision
+        : (opts.baseRevision ?? null);
+      if (current.revision !== acceptedBaseRevision) {
+        throw new CanonicalMutationError(
+          'revision_conflict',
+          `Stale base_revision for ${sourceId}/${opts.slug}: expected ${current.revision ?? 'null'}, received ${acceptedBaseRevision ?? 'null'}.`,
+        );
+      }
+      candidate = opts.buildContent(current);
+      intendedRevision = exactCanonicalRevision(candidate);
+      const now = new Date().toISOString();
+      prior = {
+        version: 2,
+        principal_id: principalId,
+        source_id: sourceId,
+        slug: opts.slug,
+        operation: opts.operation,
+        idempotency_key: idempotencyKey,
+        request_hash: requestHash,
+        base_revision: acceptedBaseRevision,
+        intended_revision: intendedRevision,
+        state: 'prepared',
+        created_at: now,
+        updated_at: now,
+      };
+      writeIntent(path, prior);
+      mkdirSync(dirname(current.target.filePath), { recursive: true });
+      atomicWriteFileSync(current.target.filePath, candidate, {
+        verify: (onDisk) => {
+          if (exactCanonicalRevision(onDisk) !== intendedRevision) {
+            throw new CanonicalMutationError('invalid_canonical', 'Canonical byte verification failed before rename.');
+          }
+          const parsed = parseMarkdown(onDisk, `${opts.slug}.md`, { validate: true, expectedSlug: opts.slug });
+          if ((parsed.errors ?? []).length > 0) {
+            throw new CanonicalMutationError('invalid_canonical', `Candidate Markdown failed validation: ${(parsed.errors ?? []).map((e) => e.code).join(', ')}.`);
+          }
+        },
+      });
+      prior = { ...prior, state: 'canonical_written', updated_at: new Date().toISOString() };
+      writeIntent(path, prior);
+    }
+
+    try {
+      let projected = await opts.verifyProjection(candidate, intendedRevision);
+      if (!projected) {
+        await opts.project(candidate, intendedRevision);
+        projected = await opts.verifyProjection(candidate, intendedRevision);
+      }
+      if (!projected) throw new Error('Projection verification did not confirm the intended canonical revision.');
+
+      const committedAt = new Date().toISOString();
+      const receipt: CanonicalMutationReceiptV2 = {
+        receipt_version: 2,
+        receipt_id: `sha256:${identity}`,
+        principal_id: principalId,
+        operation: opts.operation,
+        source_id: sourceId,
+        slug: opts.slug,
+        idempotency_key: idempotencyKey,
+        request_hash: requestHash,
+        base_revision: prior.base_revision,
+        canonical_revision: intendedRevision,
+        projected_revision: intendedRevision,
+        committed_at: committedAt,
+      };
+      prior = { ...prior, state: 'committed', receipt, updated_at: committedAt };
+      delete prior.projection_error;
+      writeIntent(path, prior);
+      return {
+        outcome: 'applied',
+        projection_state: 'current',
+        receipt,
+        journal_path: path,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      prior = { ...prior, state: 'index_pending', projection_error: message, updated_at: new Date().toISOString() };
+      writeIntent(path, prior);
+      return {
+        outcome: 'pending',
+        projection_state: 'pending',
+        canonical_revision: intendedRevision,
+        journal_path: path,
+        retryable: true,
+        projection_error: message,
+      };
+    }
+  }, lockOpts), receiptLockOpts);
 }
 
 export async function commitCanonicalMutation<T>(opts: {

@@ -8,6 +8,7 @@ import {
   applySparsePagePatch,
   CanonicalMutationError,
   commitCanonicalMutation,
+  commitCanonicalMutationV2,
   exactCanonicalRevision,
 } from '../src/core/canonical-page-mutations.ts';
 
@@ -271,5 +272,332 @@ describe('canonical-first coordinator', () => {
     })).rejects.toMatchObject({ code: 'revision_conflict' });
     expect(projectedOldIntent).toBe(false);
     expect(readFileSync(file, 'utf8')).toBe(newer);
+  });
+});
+
+describe('canonical-first v2 immutable receipts', () => {
+  function seed(slug: string, content = ORIGINAL): string {
+    const file = join(brainDir, `${slug}.md`);
+    require('node:fs').mkdirSync(join(file, '..'), { recursive: true });
+    require('node:fs').writeFileSync(file, content);
+    return file;
+  }
+
+  test('replays the original receipt after a later canonical page mutation', async () => {
+    const slug = 'people/receipt-replay';
+    const file = seed(slug);
+    const projected = new Set<string>();
+    let projectCalls = 0;
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-1:people/receipt-replay',
+      semanticRequest: { date: '2026-09-02', channel: 'email', note: 'Discussed renewal.' },
+      baseRevision: exactCanonicalRevision(ORIGINAL),
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => { projectCalls += 1; projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+
+    const first = await invoke();
+    expect(first.outcome).toBe('applied');
+    if (first.outcome === 'pending') throw new Error('unexpected pending result');
+    const originalReceipt = JSON.parse(JSON.stringify(first.receipt));
+
+    const later = applySparsePagePatch(readFileSync(file, 'utf8'), slug, { frontmatter_set: { role: 'Operator' } });
+    require('node:fs').writeFileSync(file, later);
+    const replay = await invoke();
+    expect(replay.outcome).toBe('replayed');
+    if (replay.outcome === 'pending') throw new Error('unexpected pending result');
+    expect(replay.receipt).toEqual(originalReceipt);
+    expect(projectCalls).toBe(1);
+    expect(readFileSync(file, 'utf8')).toBe(later);
+  });
+
+  test("'latest' binds an append to the revision read inside the page lock", async () => {
+    const slug = 'people/latest-under-lock';
+    seed(slug);
+    const projected = new Set<string>();
+    const result = await commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-latest:people/latest-under-lock',
+      semanticRequest: { note: 'Uses the lock-owned latest revision' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => { projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    expect(result.outcome).toBe('applied');
+    if (result.outcome === 'pending') throw new Error('unexpected pending result');
+    expect(result.receipt.base_revision).toBe(exactCanonicalRevision(ORIGINAL));
+  });
+
+  test('same receipt identity with a changed request or slug fails closed', async () => {
+    const slug = 'people/idempotency-owner';
+    const otherSlug = 'people/idempotency-other';
+    const file = seed(slug);
+    seed(otherSlug);
+    const projected = new Set<string>();
+    const call = (targetSlug: string, note: string) => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug: targetSlug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-2:people/idempotency-owner',
+      semanticRequest: { date: '2026-09-02', channel: 'email', note },
+      baseRevision: exactCanonicalRevision(ORIGINAL),
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, targetSlug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => { projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    await call(slug, 'Original note');
+    const after = readFileSync(file, 'utf8');
+    await expect(call(slug, 'Changed note')).rejects.toMatchObject({ code: 'idempotency_conflict' });
+    await expect(call(otherSlug, 'Original note')).rejects.toMatchObject({ code: 'idempotency_conflict' });
+    expect(readFileSync(file, 'utf8')).toBe(after);
+    expect(readFileSync(join(brainDir, `${otherSlug}.md`), 'utf8')).toBe(ORIGINAL);
+  });
+
+  test('same textual key is isolated by principal and source', async () => {
+    const projected = new Set<string>();
+    const invoke = (principalId: string, sourceId: string, slug: string) => commitCanonicalMutationV2({
+      engine,
+      principalId,
+      sourceId,
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'shared-textual-key',
+      semanticRequest: { note: slug },
+      baseRevision: null,
+      journalRoot,
+      lockRoot,
+      buildContent: () => ORIGINAL.replace('Example Person', slug),
+      project: async (_content, revision) => { projected.add(`${sourceId}:${revision}`); },
+      verifyProjection: async (_content, revision) => projected.has(`${sourceId}:${revision}`),
+    });
+    const a = await invoke('oauth:a', 'default', 'people/principal-a');
+    const b = await invoke('oauth:b', 'default', 'people/principal-b');
+    const c = await invoke('oauth:a', 'secondary', 'people/source-secondary');
+    expect([a.outcome, b.outcome, c.outcome]).toEqual(['applied', 'applied', 'applied']);
+    expect(new Set([a.journal_path, b.journal_path, c.journal_path]).size).toBe(3);
+  });
+
+  test('two concurrent identical requests append once and share one immutable receipt', async () => {
+    const slug = 'people/concurrent-receipt';
+    const file = seed(slug);
+    const projected = new Set<string>();
+    let builds = 0;
+    let projections = 0;
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-concurrent:people/concurrent-receipt',
+      semanticRequest: { note: 'Concurrent event' },
+      baseRevision: exactCanonicalRevision(ORIGINAL),
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => {
+        builds += 1;
+        return applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } });
+      },
+      project: async (_content, revision) => { projections += 1; projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    const [first, second] = await Promise.all([invoke(), invoke()]);
+    expect(new Set([first.outcome, second.outcome])).toEqual(new Set(['applied', 'replayed']));
+    expect(builds).toBe(1);
+    expect(projections).toBe(1);
+    expect(readFileSync(file, 'utf8').match(/last_contacted:/g)?.length).toBe(1);
+    if (first.outcome === 'pending' || second.outcome === 'pending') throw new Error('unexpected pending result');
+    expect(first.receipt).toEqual(second.receipt);
+  });
+
+  test('recovers a lost projection response without projecting twice', async () => {
+    const slug = 'people/projection-crash';
+    seed(slug);
+    const projected = new Set<string>();
+    let projectCalls = 0;
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-crash:people/projection-crash',
+      semanticRequest: { note: 'Crash window event' },
+      baseRevision: exactCanonicalRevision(ORIGINAL),
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => {
+        projectCalls += 1;
+        projected.add(revision);
+        throw new Error('response lost after committed projection');
+      },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('pending');
+    const second = await invoke();
+    expect(second.outcome).toBe('applied');
+    expect(projectCalls).toBe(1);
+    const third = await invoke();
+    expect(third.outcome).toBe('replayed');
+    if (second.outcome === 'pending' || third.outcome === 'pending') throw new Error('unexpected pending result');
+    expect(third.receipt).toEqual(second.receipt);
+  });
+
+  test('rejects a corrupted committed receipt instead of replaying success', async () => {
+    const slug = 'people/corrupt-receipt';
+    seed(slug);
+    const projected = new Set<string>();
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-corrupt:people/corrupt-receipt',
+      semanticRequest: { note: 'Receipt integrity event' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => { projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('applied');
+    const journal = JSON.parse(readFileSync(first.journal_path, 'utf8'));
+    journal.receipt.slug = 'people/copied-elsewhere';
+    require('node:fs').writeFileSync(first.journal_path, `${JSON.stringify(journal, null, 2)}\n`);
+    await expect(invoke()).rejects.toMatchObject({ code: 'invalid_canonical' });
+  });
+
+  test('rejects a malformed pending journal envelope', async () => {
+    const slug = 'people/malformed-pending';
+    seed(slug);
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-malformed:people/malformed-pending',
+      semanticRequest: { note: 'Pending envelope event' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async () => { throw new Error('projection offline'); },
+      verifyProjection: async () => false,
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('pending');
+    const journal = JSON.parse(readFileSync(first.journal_path, 'utf8'));
+    journal.intended_revision = 'sha256:not-a-revision';
+    require('node:fs').writeFileSync(first.journal_path, `${JSON.stringify(journal, null, 2)}\n`);
+    await expect(invoke()).rejects.toMatchObject({ code: 'invalid_canonical' });
+  });
+
+  test('a pending receipt never reprojects or overwrites after canonical advances', async () => {
+    const slug = 'people/pending-advanced';
+    const file = seed(slug);
+    let projectCalls = 0;
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-pending:people/pending-advanced',
+      semanticRequest: { note: 'Pending projection event' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async () => { projectCalls += 1; throw new Error('projection offline'); },
+      verifyProjection: async () => false,
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('pending');
+    const later = applySparsePagePatch(readFileSync(file, 'utf8'), slug, { frontmatter_set: { role: 'Operator' } });
+    require('node:fs').writeFileSync(file, later);
+    const second = await invoke();
+    expect(second).toMatchObject({ outcome: 'pending', retryable: false });
+    expect(projectCalls).toBe(1);
+    expect(readFileSync(file, 'utf8')).toBe(later);
+  });
+
+  test('recovers a prepared journal when canonical rename did not land', async () => {
+    const slug = 'people/prepared-before-rename';
+    const file = seed(slug);
+    const projected = new Set<string>();
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-prepared:people/prepared-before-rename',
+      semanticRequest: { note: 'Prepared recovery event' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => { projected.add(revision); },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('applied');
+    const journal = JSON.parse(readFileSync(first.journal_path, 'utf8'));
+    journal.state = 'prepared';
+    delete journal.receipt;
+    journal.updated_at = journal.created_at;
+    require('node:fs').writeFileSync(first.journal_path, `${JSON.stringify(journal, null, 2)}\n`);
+    require('node:fs').writeFileSync(file, ORIGINAL);
+    projected.clear();
+
+    const recovered = await invoke();
+    expect(recovered.outcome).toBe('applied');
+    expect(readFileSync(file, 'utf8')).toMatch(/last_contacted:\s+['"]?2026-09-02['"]?/);
+  });
+
+  test('retries a projection that failed before committing', async () => {
+    const slug = 'people/projection-retry';
+    seed(slug);
+    const projected = new Set<string>();
+    let projectCalls = 0;
+    const invoke = () => commitCanonicalMutationV2({
+      engine,
+      principalId: 'oauth:client-a',
+      slug,
+      operation: 'append_page_event',
+      idempotencyKey: 'gmail:message-projection-retry:people/projection-retry',
+      semanticRequest: { note: 'Projection retry event' },
+      baseRevision: 'latest',
+      journalRoot,
+      lockRoot,
+      buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
+      project: async (_content, revision) => {
+        projectCalls += 1;
+        if (projectCalls === 1) throw new Error('projection failed before commit');
+        projected.add(revision);
+      },
+      verifyProjection: async (_content, revision) => projected.has(revision),
+    });
+    const first = await invoke();
+    expect(first.outcome).toBe('pending');
+    const second = await invoke();
+    expect(second.outcome).toBe('applied');
+    expect(projectCalls).toBe(2);
   });
 });
