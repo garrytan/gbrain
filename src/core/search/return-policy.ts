@@ -15,14 +15,22 @@
  * cliff-cutting just adds noise. So the mechanism is a cap, with intent as the
  * (admittedly coarse) prior on how many answers the query wants.
  *
- * Default OFF. Cache-safe via a skip in hybridSearchCached when enabled (the
- * trimmed set must not be served to a gate-off lookup); folding the params into
- * KNOBS_HASH is a v0.42+ follow-up before any mode-default flip.
+ * Default OFF. Cache-safe via the KNOBS_HASH v=27 fold (2026-08 fix wave,
+ * E5b): the gate params (ar/arem/arom/armk) AND the query's resolved intent
+ * class (ari) key the semantic cache, so adaptive-on calls CACHE — a trimmed
+ * set can never be served to a gate-off or different-cap/intent lookup. The
+ * pre-v27 mechanism (wholesale skipCache when enabled) is gone.
  *
  * Pure + dependency-light so it unit-tests in isolation.
  */
 
-export type AdaptiveQueryIntent = 'entity' | 'temporal' | 'event' | 'general';
+/**
+ * 2026-08 fix wave (E5c): now the FULL QueryIntent union — 'concept' joined
+ * so hybrid.ts no longer coerces it to 'general'. Cap mapping is unchanged in
+ * effect ('entity' → entityMax, everything else → otherMax): concept queries
+ * are exactly the ones that want breadth.
+ */
+export type AdaptiveQueryIntent = 'entity' | 'temporal' | 'event' | 'concept' | 'general';
 
 export interface AdaptiveReturnConfig {
   /** Master switch. Default false — no behavior change for existing callers. */
@@ -96,7 +104,13 @@ export function resolveAdaptiveReturn(
   };
 }
 
-/** True iff the gate is on (per-call or config). Used for the cache skip. */
+/**
+ * True iff the gate is on (per-call or config). Convenience over
+ * resolveAdaptiveReturn(...).enabled. NOTE (2026-08 wave): its former
+ * production caller — hybridSearchCached's adaptive cache SKIP — is gone
+ * (adaptive-on calls now cache via the KNOBS_HASH v=27 fold); kept as a
+ * public helper for external callers and the unit suite.
+ */
 export function adaptiveReturnEnabled(
   perCall: AdaptiveReturnInput,
   cfg: Record<string, unknown> | null | undefined,

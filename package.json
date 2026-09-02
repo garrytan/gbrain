@@ -29,6 +29,7 @@
     "./ingestion": "./src/core/ingestion/index.ts",
     "./ingestion/test-harness": "./src/core/ingestion/test-harness.ts",
     "./core/guardrails": "./src/core/guardrails.ts",
+    "./core/skillopt": "./src/core/skillopt/index.ts",
     "./pglite-lock": "./src/core/pglite-lock.ts"
   },
   "scripts": {

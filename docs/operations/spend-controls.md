@@ -200,3 +200,12 @@ gbrain config set embed.backfill_max_usd_per_source_24h off
 # Run enrich uncapped non-interactively:
 gbrain enrich --max-usd off        # or: gbrain config set spend.posture tokenmax
 ```
+
+## CRAG knobs (registered 2026-08 wave — both default OFF)
+
+`search.crag_think` runs `think` (an LLM call) on weak-graded LOCAL queries —
+it is fail-closed for remote callers. `search.crag_escalation` triggers a
+high-ceiling retrieval re-run with `expansion=true` (one LLM multi-query call)
+per weak-graded query and IS reachable by remote MCP callers once the operator
+enables it — attacker-shaped weak queries drive that spend. Both respect
+`spend.posture`; leave them off unless you accept per-weak-query LLM cost.

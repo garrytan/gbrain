@@ -38,7 +38,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
 
-import type { BrainEngine, NewFact, FactVisibility } from '../engine.ts';
+import type { BrainEngine, NewFact, FactVisibility, FactKind } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { inferTypeFromPack } from '../markdown.ts';
 import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
@@ -423,7 +423,7 @@ export async function writeFactsToFence(
         const { body: updated, rowNum } = upsertFactRow(body, {
           rowNum:      nextRowNum++,
           claim:       f.fact,
-          kind:        (f.kind ?? 'fact') as 'fact' | 'event' | 'preference' | 'commitment' | 'belief' | 'idea',
+          kind:        (f.kind ?? 'fact') as FactKind,
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',

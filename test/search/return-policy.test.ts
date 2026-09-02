@@ -99,7 +99,7 @@ describe('applyAdaptiveReturn', () => {
     expect(decision.applied).toBe(true);
   });
   test('non-entity intent uses otherMax', () => {
-    for (const intent of ['temporal', 'event', 'general'] as const) {
+    for (const intent of ['temporal', 'event', 'concept', 'general'] as const) {
       const { kept } = applyAdaptiveReturn(items(20), intent, ON({ otherMax: 5 }));
       expect(kept.length).toBe(5);
     }

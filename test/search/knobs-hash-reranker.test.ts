@@ -86,10 +86,12 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // #4358 residual: 23→24 negative-offset cache-skip gap.
     // 24→25 (#3617): kof= (keyword AND→OR fallback knob) joins the key.
     // 25→26: sal=/rec=/ipat= — salience/recency + intent_patterns fold (#4415).
-    // 26→27: compiledTruthBoost suppresses the 2x boost for synthetic
+    // 26→27: ar=/arem=/arom=/armk=/ari= — adaptive-return gate + intent
+    // class fold (2026-08 fix wave E5b); adaptive-on calls now cache.
+    // 27→28: compiledTruthBoost suppresses the 2x boost for synthetic
     // chunkless title rows (#4256, fixes #3695's fusion path) — reorders
     // fused rows for identical knobs; version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(27);
+    expect(KNOBS_HASH_VERSION).toBe(28);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {

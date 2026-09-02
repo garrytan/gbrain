@@ -24,8 +24,12 @@ import { reflexPointerRationale } from './reflex-rationale.ts';
 
 export const VOLUNTEER_EVENTS_TTL_DAYS = 90;
 
-/** Single source of truth for channel values — type + guards derive from it. */
-export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'claude-code', 'codex', 'opencode'] as const;
+/** Single source of truth for channel values — type + guards derive from it.
+ * 'openclaw' (2026-08 wave) is the IN-PROCESS OpenClaw reflex lane's volunteer
+ * channel — deliberately NOT in HARNESS_CHANNELS below: it is never
+ * wire-claimable (a hook client claiming it would spoof production
+ * attribution; outside-voice codex-2 #7). */
+export const VOLUNTEER_CHANNELS = ['op', 'reflex', 'watch', 'openclaw', 'claude-code', 'codex', 'opencode'] as const;
 export type VolunteerChannel = (typeof VOLUNTEER_CHANNELS)[number];
 
 /** The harness subset — the ONLY channels a wire caller may claim. */
