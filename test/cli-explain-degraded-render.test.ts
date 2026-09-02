@@ -1,5 +1,5 @@
 /**
- * v0.47.10 — `gbrain search … --explain` renders the retrieval-meta header
+ * v0.47.11 — `gbrain search … --explain` renders the retrieval-meta header
  * lines (`degraded: reranker_skipped (no_key)`), because formatResult now
  * threads the captured `_meta.retrieval` into formatResultsExplain. Before
  * this, the only CLI call site passed results alone and the header was

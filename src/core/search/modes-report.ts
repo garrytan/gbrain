@@ -15,9 +15,8 @@ import {
   type SearchMode,
   type ModeBundle,
 } from './mode.ts';
-import { loadConfig, loadConfigWithEngine } from '../config.ts';
-import { mergedProviderEnv } from '../ai/provider-env.ts';
-import { rerankerReadiness, describeRerankerFix } from '../ai/reranker-readiness.ts';
+import { describeRerankerFix } from '../ai/reranker-readiness.ts';
+import { rerankerReadinessForEngine } from '../ai/reranker-readiness-engine.ts';
 
 export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -68,25 +67,44 @@ export interface SearchModesReport {
   bundles: Record<SearchMode, ModeBundle>;
   config_keys: ReadonlyArray<string>;
   /**
-   * v0.47.10 — is the RESOLVED reranker actually going to run? Same predicate
+   * v0.47.11 — is the RESOLVED reranker actually going to run? Same predicate
    * doctor's `reranker_health` and init use (`reranker-readiness.ts`), fed the
    * file-plane + process env. Absent only when readiness itself threw.
    */
-  reranker_readiness?: {
-    model: string;
-    enabled: boolean;
-    ready: boolean;
-    required_key: string | null;
-    key_present: boolean;
-    sunset_passed: boolean;
-    /** A provider_base_urls override routes the provider to a self-hosted endpoint (sunset does not apply). */
-    self_hosted: boolean;
-    /** Paste-ready fix when not ready; null when ready. */
-    fix: string | null;
-  };
+  reranker_readiness?: RerankerReadinessReport;
   _meta?: {
     metric_glossary?: Record<string, string>;
   };
+}
+
+export interface RerankerReadinessReport {
+  model: string;
+  enabled: boolean;
+  ready: boolean;
+  /** Env var the reranker needs; ABSENT on the remote (MCP) surface — see redactReadinessForRemote. */
+  required_key?: string | null;
+  /** ABSENT on the remote surface (host key inventory is not for untrusted callers). */
+  key_present?: boolean;
+  sunset_passed: boolean;
+  /** A provider_base_urls override routes the provider to a self-hosted endpoint (sunset does not apply). Always false on the remote surface. */
+  self_hosted: boolean;
+  /** Paste-ready fix when not ready; null when ready; ABSENT on the remote surface (it names the key). */
+  fix?: string | null;
+}
+
+/**
+ * Remote (untrusted MCP) callers get the readiness verdict without the host's
+ * provider-key inventory: which env vars exist on the machine is
+ * fingerprinting data, and the paste-ready fix names them. `ready` stays —
+ * it is observable anyway (reranked results carry `rerank_score`).
+ */
+export function redactReadinessForRemote(report: SearchModesReport): SearchModesReport {
+  const rr = report.reranker_readiness;
+  if (!rr) return report;
+  // self_hosted is deployment topology (a private base-URL override exists) —
+  // not needed for the verdict, so it stays local too.
+  const { model, enabled, ready, sunset_passed } = rr;
+  return { ...report, reranker_readiness: { model, enabled, ready, sunset_passed, self_hosted: false } };
 }
 
 export async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
@@ -102,7 +120,7 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     'tokenBudget',
     'expansion',
     'searchLimit',
-    // v0.47.10 — the reranker knobs were the one result-shaping family the
+    // v0.47.11 — the reranker knobs were the one result-shaping family the
     // dashboard omitted; with the default keyed on VOYAGE_API_KEY, "what
     // reranker am I running" must be answerable here.
     'reranker_enabled',
@@ -136,15 +154,9 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
   let reranker_readiness: SearchModesReport['reranker_readiness'];
   try {
     // Same plane the CLI hands the gateway (env > file > DB-plane provider
-    // keys + provider_base_urls), so a key that lives only in the DB config
-    // table — or a self-hosted base-URL override — reads correctly here.
-    let fileCfg: ReturnType<typeof loadConfig> = null;
-    try { fileCfg = loadConfig(); } catch { fileCfg = null; }
-    let mergedCfg: ReturnType<typeof loadConfig> = fileCfg;
-    try { mergedCfg = await loadConfigWithEngine(engine as any, fileCfg); } catch { mergedCfg = fileCfg; }
-    const r = rerankerReadiness(resolved.reranker_model, mergedProviderEnv(mergedCfg, process.env), new Date(), {
-      baseUrlOverrides: mergedCfg?.provider_base_urls ?? null,
-    });
+    // keys + provider_base_urls) — shared with doctor's reranker_health via
+    // rerankerReadinessForEngine so the two surfaces cannot drift.
+    const { readiness: r } = await rerankerReadinessForEngine(engine, resolved.reranker_model);
     reranker_readiness = {
       model: r.model,
       enabled: resolved.reranker_enabled,
@@ -155,8 +167,19 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
       self_hosted: r.selfHosted,
       fix: describeRerankerFix(r),
     };
-  } catch {
-    reranker_readiness = undefined;
+  } catch (e) {
+    // Never vanish silently — the user asking "is my reranker running" gets a
+    // verdict line either way.
+    reranker_readiness = {
+      model: resolved.reranker_model,
+      enabled: resolved.reranker_enabled,
+      ready: false,
+      required_key: null,
+      key_present: false,
+      sunset_passed: false,
+      self_hosted: false,
+      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run gbrain doctor`,
+    };
   }
 
   return {

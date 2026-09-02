@@ -6,6 +6,7 @@
  * + missing-context bugs; this module exists to prevent that recurring.
  */
 
+import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
@@ -336,7 +337,10 @@ export function buildEmptyRetrievalBlock(retrieval: unknown): string | null {
   };
   const parts: string[] = ['0 results.'];
   if (typeof r.retrieved_count === 'number') parts.push(`retrieved ${r.retrieved_count} before trimming.`);
+  // Ranking-only stages (a skipped reranker) cannot cause a miss — the model
+  // must not be told recall was impaired when only ordering was.
   const stages = (r.degraded ?? [])
+    .filter(affectsRecall)
     .map(d => d?.stage)
     .filter((s): s is string => typeof s === 'string' && s.length > 0);
   parts.push(stages.length > 0

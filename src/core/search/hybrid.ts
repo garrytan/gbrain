@@ -19,6 +19,7 @@ import type {
   DegradedStageEntry,
   DegradedReason,
 } from '../types.ts';
+import { affectsRecall } from '../types.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { isDbAccessFailure } from '../pg-access-classify.ts';
@@ -39,7 +40,7 @@ import {
 } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
-import { applyReranker } from './rerank.ts';
+import { applyReranker, type RerankSkipReason } from './rerank.ts';
 import {
   classifyQuery,
   classifyQueryWithBrainPatterns,
@@ -2087,13 +2088,13 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
-  // v0.47.10: a SKIPPED reranker (no provider key / provider past its sunset)
+  // v0.47.11: a SKIPPED reranker (no provider key / provider past its sunset)
   // is stamped as a degraded stage so --explain, telemetry and eval rows can
   // tell "reranked" from "fell through in RRF order" — never stderr.
   const reranked = rerankerOpts.enabled
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
-        onSkip: (reason: 'no_key' | 'sunset_short_circuit') => pushDegraded(degraded, 'reranker_skipped', reason),
+        onSkip: (reason: RerankSkipReason) => pushDegraded(degraded, 'reranker_skipped', reason),
       })
     : deduped;
 
@@ -2700,13 +2701,13 @@ export async function hybridSearchCached(
     results.length > 0 &&
     (innerMeta?.vector_enabled ?? false)
   ) {
-    // v0.47.10: `reranker_skipped` is a CONFIG state (no provider key / dead
+    // v0.47.11: `reranker_skipped` is a CONFIG state (no provider key / dead
     // provider), not a transient provider limp — the result set is complete,
     // just unreranked, and will stay that way until the operator acts. It
     // keeps the full TTL (a keyless balanced brain must not churn its cache
     // every 60s); the stamp still rides the stored meta so a hit is honest.
     // Stale unreranked rows after a key appears expire within one TTL.
-    const isDegraded = (finalMeta.degraded ?? []).some((d) => d.stage !== 'reranker_skipped');
+    const isDegraded = (finalMeta.degraded ?? []).some(affectsRecall);
     trackCacheWrite(
       cache
         .store(query, queryEmbedding, results, finalMeta, {

@@ -120,13 +120,13 @@ import {
   rerankerSunset, sunsetDateHasPassed,
   type RerankerSunset,
 } from './defaults.ts';
-import { logRerankFailure } from '../rerank-audit.ts';
+import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
 const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
 // is set AND no explicit reranker_model is configured. #3657 seam: the value is
 // `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with
-// the mode bundles) — `voyage:rerank-2.5` since v0.47.10.
+// the mode bundles) — `voyage:rerank-2.5` since v0.47.11.
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
@@ -487,6 +487,9 @@ export function configureGateway(config: AIGatewayConfig): void {
   stashGatewayAnthropicKeyFromEnv(config.env); // #2119: filter + rationale in anthropic-key.ts
   _modelCache.clear();
   _shrinkState.clear();
+  // A (re)configure is a new env snapshot: a key that appeared or vanished
+  // since the last no_key audit row deserves a fresh once-per-process row.
+  _noKeyNoticed.clear();
   warnRecipesMissingBatchTokens();
 }
 
@@ -729,6 +732,15 @@ function clearGatewayState(): void {
  * registered — re-applies it so the gateway returns to the process-wide
  * test default instead of an unconfigured limbo (#3554).
  */
+/**
+ * Test seam: leave the gateway truly UNCONFIGURED (requireConfig() throws) so
+ * callers with a "gateway-first, config-plane fallback" split can exercise the
+ * fallback. resetGateway() re-installs the test baseline instead.
+ */
+export function _clearGatewayForTests(): void {
+  clearGatewayState();
+}
+
 export function resetGateway(): void {
   clearGatewayState();
   // configureGateway re-clears _modelCache/_shrinkState; transports are NOT
@@ -1573,7 +1585,7 @@ export function _resetSunsetWarningsForTest(): void {
 }
 
 /**
- * v0.47.10 `no_key` preflight traceability. The default reranker is keyed on
+ * v0.47.11 `no_key` preflight traceability. The default reranker is keyed on
  * VOYAGE_API_KEY; a brain without it would otherwise burn one 'auth' audit
  * row PER SEARCH (the gateway's applyResolveAuth throws AIConfigError for the
  * missing key). Mirror of sunsetShortCircuitOnce MINUS the stderr line: the
@@ -1586,7 +1598,8 @@ const _noKeyNoticed = new Set<string>();
 function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: number): void {
   try {
     if (_noKeyNoticed.has(modelStr)) return;
-    _noKeyNoticed.add(modelStr);
+    // Mark AFTER the write succeeds — a transient audit-dir failure must not
+    // permanently silence the only trace of an unreranked process.
     logRerankFailure({
       model: modelStr,
       reason: 'no_key',
@@ -1596,6 +1609,7 @@ function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: n
         `${keyName} not set — rerank calls skipped this process (results pass through ` +
         `unreranked); fix: export ${keyName}=… or gbrain config set search.reranker.enabled false`,
     });
+    _noKeyNoticed.add(modelStr);
   } catch {
     // Traceability must never block the fail-open path.
   }
@@ -4452,7 +4466,9 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
  * loud-fail (auth — should have been caught by doctor). Mirror of the
  * RemoteMcpError pattern in src/core/mcp-client.ts. */
 export class RerankError extends Error {
-  reason: 'auth' | 'no_key' | 'rate_limit' | 'network' | 'timeout' | 'payload_too_large' | 'sunset_short_circuit' | 'unknown';
+  // One edit in rerank-audit.ts covers both unions; `budget` is classified by
+  // applyReranker from BudgetExhausted, never thrown as a RerankError.
+  reason: Exclude<RerankFailureReason, 'budget'>;
   status?: number;
   constructor(message: string, reason: RerankError['reason'], status?: number) {
     super(message);
@@ -4559,7 +4575,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
 
   // Resolve base URL + auth from the recipe (same path Voyage/ZE embeddings use).
   const cfg = requireConfig();
-  // v0.47.10 `no_key` preflight — fail-open, audit-only, once per process per
+  // v0.47.11 `no_key` preflight — fail-open, audit-only, once per process per
   // model (see noKeyOnce). A recipe without a custom resolveAuth needs every
   // `auth_env.required` key in the gateway env snapshot; when one is missing
   // there is no point issuing the HTTP call, so throw the dedicated skip
@@ -4624,6 +4640,27 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   const headers = new Headers(authHeaders);
   headers.set('Content-Type', 'application/json');
 
+  // Budget admission happens HERE — after every preflight that can skip the
+  // call (sunset short-circuit, no_key, unknown model, payload cap) and BEFORE
+  // the abort timer is armed, so a BudgetExhausted throw leaves no live timer.
+  // A reservation ahead of the preflights was never settled when they threw,
+  // leaking one projection per search on a keyless brain under a cost cap.
+  // Reranker pricing resolves through the embedding pricing table (the default
+  // model is priced); an unpriced custom reranker still hits the warn-once
+  // (no cap) / TX2 hard-fail (cap set) path. record() below settles it.
+  if (tracker) {
+    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
+    tracker.reserve({
+      modelId: modelStr,
+      // Honor the recipe's tokenizer density (Voyage declares ~1 char/token on
+      // dense payloads) so a cap cannot be under-reserved ~4× by CJK/JSON docs.
+      estimatedInputTokens: Math.ceil(totalChars / (recipe.touchpoints.embedding?.chars_per_token ?? 4)),
+      maxOutputTokens: 0,
+      kind: 'rerank',
+      label: 'gateway.rerank',
+    });
+  }
+
   // Timeout via AbortController; merges with caller-supplied signal.
   const ctrl = new AbortController();
   const timeoutMs = input.timeoutMs ?? DEFAULT_RERANK_TIMEOUT_MS;
@@ -4631,24 +4668,6 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (input.signal) {
     if (input.signal.aborted) ctrl.abort(input.signal.reason);
     else input.signal.addEventListener('abort', () => ctrl.abort(input.signal!.reason), { once: true });
-  }
-
-  // Budget admission happens HERE — after every preflight that can skip the
-  // call (sunset short-circuit, no_key, unknown model, payload cap). A
-  // reservation before those checks was never settled when they threw, so a
-  // keyless brain under a cost cap leaked one projection per search (#4770
-  // wave review). Reranker pricing lives in the embedding pricing table; when
-  // no cap is set this fires the warn-once path, when a cap IS set TX2
-  // hard-fails. record() below logs the actual size after success.
-  if (tracker) {
-    const totalChars = input.query.length + input.documents.reduce((s, d) => s + d.length, 0);
-    tracker.reserve({
-      modelId: modelStr,
-      estimatedInputTokens: Math.ceil(totalChars / 4),
-      maxOutputTokens: 0,
-      kind: 'rerank',
-      label: 'gateway.rerank',
-    });
   }
 
   let _rerankRecorded = false;

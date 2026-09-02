@@ -9,7 +9,7 @@
  * (with the sunset date), and the `gbrain search modes --reset` advice is
  * withheld whenever a reset would re-arm a sunsetting reranker.
  *
- * v0.47.10: the mode-bundle default is the LIVE voyage reranker, so the
+ * v0.47.11: the mode-bundle default is the LIVE voyage reranker, so the
  * bundle-only cases are back to the original [CDX-20] `ok` and a reset can
  * never re-arm a dying provider — only an EXPLICIT zeroentropyai:* override
  * still warns.
@@ -44,7 +44,7 @@ describe('checkSearchMode [CDX-20]', () => {
     const c = await checkSearchMode(engine);
     expect(c.name).toBe('search_mode');
     // [CDX-20] original never-warn contract holds again: the balanced
-    // fallback's reranker is live (v0.47.10), so no sunset claim.
+    // fallback's reranker is live (v0.47.11), so no sunset claim.
     expect(c.status).toBe('ok');
     expect(c.message).toMatch(/unset/i);
     expect(c.message).toContain('gbrain search modes');
@@ -91,7 +91,7 @@ describe('checkSearchMode [CDX-20]', () => {
 });
 
 describe('checkSearchMode sunset-awareness (#3657/#4382)', () => {
-  test('explicit voyage overrides equal to the live bundle default → plain --reset advice, no sunset claims (v0.47.10)', async () => {
+  test('explicit voyage overrides equal to the live bundle default → plain --reset advice, no sunset claims (v0.47.11)', async () => {
     // The old #4382 repro: tokenmax + explicit voyage reranker overrides. A
     // reset now restores the SAME live model, so consolidation is safe again.
     await engine.setConfig('search.mode', 'tokenmax');
@@ -133,6 +133,17 @@ describe('checkSearchMode sunset-awareness (#3657/#4382)', () => {
     expect(c.status).toBe('ok');
     expect(c.message).toContain('gbrain search modes --reset');
     expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
+  });
+
+  test('an explicit search.reranker.model equal to the bundle default is called redundant with a precise unset, never --reset', async () => {
+    // Every v0.46.3–v0.47.10 Voyage install carries this row from init.
+    await engine.setConfig('search.mode', 'balanced');
+    await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
+    const c = await checkSearchMode(engine);
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('redundant');
+    expect(c.message).toContain('gbrain config unset search.reranker.model');
+    expect(c.message).not.toContain('--reset');
   });
 
   test('sunset-clean mode + overrides keeps the --reset recommendation (conservative bundle reranks nothing)', async () => {

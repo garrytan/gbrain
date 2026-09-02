@@ -262,7 +262,7 @@ describe('v0.42.3.0 — autocut in --explain', () => {
   });
 });
 
-describe('formatDegradedSummary — v0.47.10 skipped-stage line', () => {
+describe('formatDegradedSummary — v0.47.11 skipped-stage line', () => {
   test('null when the run was clean', () => {
     expect(formatDegradedSummary(undefined)).toBeNull();
     expect(formatDegradedSummary([])).toBeNull();
@@ -277,10 +277,22 @@ describe('formatDegradedSummary — v0.47.10 skipped-stage line', () => {
     ).toBe('degraded: keyword_zero, reranker_skipped (sunset_short_circuit)');
   });
 
-  test('formatResultsExplain prepends the degraded line (after autocut when both exist)', () => {
+  test('formatResultsExplain prepends the degraded line', () => {
     const out = formatResultsExplain([r('a/b', 1.5)], {
       degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }],
     } as any);
     expect(out.startsWith('degraded: reranker_skipped (no_key)\n\n1. a/b')).toBe(true);
+  });
+
+  test('autocut line precedes the degraded line when both exist', () => {
+    const out = formatResultsExplain([r('a/b', 1.5)], {
+      autocut: { applied: false, signal: 'rerank', gapRatio: 0.1, kept: 1, total: 1 } as any,
+      degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }],
+    } as any);
+    const [first, second, blank, body] = out.split('\n');
+    expect(first.startsWith('autocut:')).toBe(true);
+    expect(second).toBe('degraded: reranker_skipped (no_key)');
+    expect(blank).toBe('');
+    expect(body.startsWith('1. a/b')).toBe(true);
   });
 });

@@ -1834,6 +1834,17 @@ export interface DegradedStageEntry {
 }
 
 /**
+ * Stages that change RANKING but never RECALL: the result set is complete,
+ * only its order is not what the mode promised. Consumers that reason about
+ * "was recall impaired?" (empty-result copy, the short degraded cache TTL)
+ * skip these; consumers that report "what did not run" keep them.
+ */
+export const RANKING_ONLY_DEGRADED_STAGES: ReadonlySet<DegradedStage> = new Set<DegradedStage>(['reranker_skipped']);
+export function affectsRecall(d: { stage?: string; reason?: string } | undefined | null): boolean {
+  return !!d?.stage && !RANKING_ONLY_DEGRADED_STAGES.has(d.stage as DegradedStage);
+}
+
+/**
  * Side-channel metadata that hybridSearch reports about what actually ran.
  * Surfaced via the optional `onMeta` callback in HybridSearchOpts so
  * existing SearchResult[] consumers (Cathedral II, gbrain-evals, etc.)

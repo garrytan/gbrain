@@ -38,7 +38,7 @@ describe('zeroEntropyCompatFetch — shim structural shape', () => {
     // the cast and re-introducing the tsc TS2741 failure documented in
     // gateway.ts:556 comments. (Window is 9000 chars because the
     // `warnSunsetOnce` block, the post-sunset short-circuit helpers AND the
-    // v0.47.10 `noKeyOnce` no_key audit helper sit between the last shim
+    // v0.47.11 `noKeyOnce` no_key audit helper sit between the last shim
     // cast and `resolveEmbeddingProvider`.)
     const src = await Bun.file(GATEWAY_PATH).text();
     expect(src).toMatch(/\}\)\s*as unknown as typeof fetch;[\s\S]{0,9000}async function resolveEmbeddingProvider/);

@@ -45,7 +45,7 @@ export interface RerankerOpts {
    */
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
   /**
-   * v0.47.10 — fired when the reranker is SKIPPED without reordering
+   * v0.47.11 — fired when the reranker is SKIPPED without reordering
    * (`no_key` / `sunset_short_circuit`). hybrid.ts stamps the degraded
    * entry; nothing is written to stderr. Never fired for genuine failures
    * (those keep the per-query audit row instead).
@@ -112,7 +112,7 @@ export async function applyReranker(
     });
   } catch (err) {
     const reason = classifyRerankFailure(err);
-    // #3657 post-sunset short-circuit + v0.47.10 no_key: the gateway already
+    // #3657 post-sunset short-circuit + v0.47.11 no_key: the gateway already
     // wrote the ONE per-process-per-model audit row (and, for the sunset case
     // only, the once-per-process stderr line) when it skipped the HTTP call —
     // a per-query row here would flood the audit file on every search until

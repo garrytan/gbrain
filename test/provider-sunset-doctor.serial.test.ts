@@ -134,7 +134,7 @@ describe('provider_sunset — doctor flags brains pinned to a sunsetting provide
   test('reranker exposure resolves through the mode plane search actually reranks with', async () => {
     const { checkProviderSunset } = await import('../src/commands/doctor.ts');
     // NO gateway reranker configured — the reranker is set ONLY as a DB-plane
-    // `search.reranker.model` row (v0.47.10: the mode-bundle default itself
+    // `search.reranker.model` row (v0.47.11: the mode-bundle default itself
     // is live voyage). A gateway-plane read here returns undefined and
     // false-oks the exact post-embedding-migration brains this check exists
     // to protect; the mode plane sees the row.

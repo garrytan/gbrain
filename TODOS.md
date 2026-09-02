@@ -733,7 +733,7 @@
 - [ ] **P2 — Per-model calibration for `search.evidence_cosine_floor` (0.80) and
   `search.autocut_min_top` (0.35).** Both are provider-scale-dependent; both are
   config-overridable today. The reranker default flip (zerank-2 →
-  voyage:rerank-2.5) shipped in v0.47.10.0 WITHOUT re-tuning autocut_min_top: the
+  voyage:rerank-2.5) shipped in v0.47.11.0 WITHOUT re-tuning autocut_min_top: the
   re-tune is rule R2 of the ranker wave's pre-registered rerank A/B (offline
   `applyAutocut` replay over recorded `rerank_scores`; keep 0.35 iff A3−A1 ≥ −0.5pp
   overall and no type < −1.0pp, else adopt the replay cell, else autocut OFF in
@@ -1346,6 +1346,25 @@
   carry `cause`, `lateness_ms`, `overlap_skips`, `load1`/`cores`, `via`,
   `deadline_deferred` — so the doctor check can classify starved-worker
   vs DB-outage windows without new plumbing.
+- [ ] **P2 — Cached result sets written while the reranker was skipped stay unreranked
+  until `cache.ttl_seconds` after the key appears.** `knobsHash` folds `rrm=` (the model)
+  but not whether the reranker WILL run, and `reranker_skipped` deliberately keeps the
+  full TTL (a keyless brain must not churn its cache every 60 s). Doctor and
+  `gbrain search modes` say "ready" while warm hits still carry
+  `degraded: reranker_skipped`. Candidates: fold a readiness bit (`rk=`) into the knobs
+  hash inside the ranker wave's single 26→27 bump, or purge `query_cache` rows stamped
+  `reranker_skipped` when readiness flips. Noticed while shipping v0.47.11.0.
+  **Priority:** P2.
+- [ ] **P3 — Serial-lane test interference: `test/dispatch-response-meta.serial.test.ts` breaks
+  `test/hybrid-degraded-cache-meta.serial.test.ts` when both run in ONE bun process in that
+  order (7 cache-meta assertions fail: `cache.status` undefined, embed transport stubs
+  ignored). Reproduces at master (81d01622) with
+  `bun test --max-concurrency 1 test/dispatch-response-meta.serial.test.ts test/hybrid-degraded-cache-meta.serial.test.ts`,
+  passes in every other order and in isolation — the dispatch suite leaks gateway/hook state
+  (its `[mcp] _meta hook failed for search: hot memory down` warning is the tell). Fix the
+  leak in the dispatch suite's teardown; noticed while triaging the v0.47.11.0 ship.
+  **Priority:** P3.
+
 ## v0.47 SEPTEMBER REMOVAL — ZeroEntropy (filed v0.46.3.0; TARGET: ship 2026-09-04..2026-09-08)
 
 <!-- 2026-08-29 fix-wave addenda for the removal executor:
@@ -1357,7 +1376,7 @@
   (b) Default-swap decision input from the issue thread: two independent
       corpus reports found reranking actively HURT (2k-page personal brain —
       three rerankers demoted short entity pages; 19k-page Japanese corpus —
-      zerank-2 itself 0/6 vs OFF). DECISION (v0.47.10.0, 2026-09-02): the
+      zerank-2 itself 0/6 vs OFF). DECISION (v0.47.11.0, 2026-09-02): the
       default flipped to voyage:rerank-2.5 in ALL three bundles ahead of the
       sunset (a dead default is strictly worse than an unmeasured live one);
       balanced ON/OFF (rule R1) is decided by rerank-ON vs OFF on
@@ -1381,7 +1400,7 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   `DEFAULT_EMBEDDING_MODEL`/`DEFAULT_EMBEDDING_DIMENSIONS` (src/core/ai/defaults.ts)
   stop resolving to `zeroentropyai:*`; unmigrated configless brains get a HARD,
   actionable error naming `gbrain migrate embeddings --to voyage:voyage-4 --dim 1024`.
-  The reranker half is DONE (v0.47.10.0): `DEFAULT_RERANKER_MODEL` lives in
+  The reranker half is DONE (v0.47.11.0): `DEFAULT_RERANKER_MODEL` lives in
   defaults.ts and the three mode-bundle `reranker_model` values resolve to
   `voyage:rerank-2.5`; the one-time all-modes knobs-hash cache miss was documented
   in that CHANGELOG. `LEGACY_DEFAULT_RERANKER_MODEL` + the `RERANKER_SUNSETS` row

@@ -386,7 +386,7 @@ describe('locks + schema honesty', () => {
 
 describe('reranker companion (D8)', () => {
   test('explicitly configured ZE reranker is exposed; auto switches to the target provider reranker', async () => {
-    // v0.47.10: the mode-bundle default is live voyage, so exposure now comes
+    // v0.47.11: the mode-bundle default is live voyage, so exposure now comes
     // from an EXPLICIT `search.reranker.model` zeroentropyai:* row — the
     // exposure must still resolve THROUGH the mode plane (config override).
     await engine.setConfig('search.reranker.model', ZE_RERANKER);

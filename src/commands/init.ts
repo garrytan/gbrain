@@ -1,3 +1,4 @@
+import { isZeroEntropyModel } from '../core/ai/defaults.ts';
 import { execSync } from 'child_process';
 import { readdirSync, lstatSync, existsSync, copyFileSync, mkdirSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -604,7 +605,7 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
 }
 
 /**
- * v0.47.10: the mode-bundle reranker default IS `voyage:rerank-2.5` now
+ * v0.47.11: the mode-bundle reranker default IS `voyage:rerank-2.5` now
  * (`DEFAULT_RERANKER_MODEL`), so a Voyage-keyed install needs NO reranker
  * config row — an explicit `search.reranker.model` equal to the bundle value
  * would only earn doctor's `search_mode` reset nag. Keyed NON-voyage installs
@@ -612,9 +613,9 @@ function printNoEmbeddingProviderHint(typos: Array<{ userSet: string; suggested:
  * no key for the default and silence beats a `no_key` audit row per process.
  * KEYLESS installs deliberately get NO write — the documented keyless-recovery
  * re-init must find virgin reranker config, and keyless brains take the
- * no-embedding search path, which never reaches applyReranker. Deliberate
- * `zeroentropyai:*` embedding picks are left alone (legacy setups; the sunset
- * short-circuit + doctor cover them). Never clobbers an existing explicit
+ * no-embedding search path, which never reaches applyReranker. A ZeroEntropy
+ * embedding pick is just another keyed non-Voyage install now (its hosted
+ * reranker dies 2026-09-04; doctor names the migration). Never clobbers an existing explicit
  * choice (re-init preserves user config). Best-effort: reranking is fail-open,
  * a missed override degrades to no-rerank, never breaks init. Shared by the
  * PGLite and Postgres init paths. Readiness comes from the same predicate
@@ -625,9 +626,6 @@ async function writeNewInstallRerankerDefault(
   engine: { getConfig(key: string): Promise<string | null>; setConfig(key: string, value: string): Promise<void> },
   resolvedModel: string | undefined,
 ): Promise<void> {
-  // Deliberate legacy setups keep the legacy reranker (works until the
-  // provider's shutdown; warn-on-use + the sunset short-circuit cover it).
-  if (resolvedModel?.startsWith('zeroentropyai:')) return;
   try {
     // Never-clobber: an existing explicit reranker model OR enabled override
     // means the user already decided — leave both keys alone.
@@ -639,10 +637,16 @@ async function writeNewInstallRerankerDefault(
     const { DEFAULT_RERANKER_MODEL } = await import('../core/ai/defaults.ts');
     const { rerankerReadiness } = await import('../core/ai/reranker-readiness.ts');
     const { mergedProviderEnv } = await import('../core/ai/provider-env.ts');
-    const readiness = rerankerReadiness(
-      DEFAULT_RERANKER_MODEL,
-      mergedProviderEnv(loadConfigFileOnly(), process.env),
-    );
+    // Same plane the CLI hands the gateway: env > file > DB-plane provider keys
+    // (a `--force` re-init of a brain whose Voyage key lives only in the config
+    // table must not be classified keyless and locked into `enabled=false`).
+    const fileCfg = loadConfigFileOnly();
+    let mergedCfg = fileCfg;
+    try {
+      const { loadConfigWithEngine } = await import('../core/config.ts');
+      mergedCfg = await loadConfigWithEngine(engine as any, fileCfg);
+    } catch { mergedCfg = fileCfg; }
+    const readiness = rerankerReadiness(DEFAULT_RERANKER_MODEL, mergedProviderEnv(mergedCfg, process.env));
     if (readiness.ready) {
       // Nothing to write: the bundle default already resolves to it.
       console.log(
@@ -1156,7 +1160,7 @@ function printResolvedAIChoice(
   // OR in the file plane, surface the setup gap at init time instead of
   // letting the first embed call blow up. After Lane C, file-plane
   // zeroentropy_api_key propagates through buildGatewayConfig.
-  if (resolved.embedding_model.startsWith('zeroentropyai:')) {
+  if (isZeroEntropyModel(resolved.embedding_model)) {
     const fileCfg = loadConfigFileOnly();
     if (!process.env.ZEROENTROPY_API_KEY && !fileCfg?.zeroentropy_api_key) {
       console.warn('');
@@ -2040,5 +2044,5 @@ NOTES
 `.trim());
 }
 
-/** Test-only seam (v0.47.10): the reranker-default write is pure enough to unit-test with a stub engine. */
+/** Test-only seam (v0.47.11): the reranker-default write is pure enough to unit-test with a stub engine. */
 export const _exports_for_test = { writeNewInstallRerankerDefault };

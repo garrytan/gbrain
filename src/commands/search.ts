@@ -63,16 +63,16 @@ function formatModesText(report: SearchModesReport): string {
     const value = String(attr.value ?? '(undefined)');
     lines.push(`  ${knob.padEnd(28)} = ${value.padEnd(12)} [${attr.source_detail}]`);
   }
-  // v0.47.10 — one runtime line answering "is my reranker actually running?"
+  // v0.47.11 — one runtime line answering "is my reranker actually running?"
   const rr = report.reranker_readiness;
   if (rr) {
     lines.push('');
     if (!rr.enabled) {
-      lines.push(`Reranker: off (resolved) — ${rr.model} would need ${rr.required_key ?? 'no key'}`);
+      lines.push(`Reranker: off (resolved) — ${rr.model}${rr.required_key ? ` would need ${rr.required_key}` : ''}`);
     } else if (rr.ready) {
       lines.push(`Reranker: ${rr.model} (enabled) — ${rr.required_key ? `${rr.required_key} present` : 'no key required'}`);
     } else {
-      lines.push(`Reranker: ${rr.model} (enabled but NOT running) — ${rr.fix}`);
+      lines.push(`Reranker: ${rr.model} (enabled but NOT running) — ${rr.fix ?? 'see gbrain doctor'}`);
     }
   }
   lines.push('');

@@ -705,8 +705,11 @@ const search_modes: Operation = {
   scope: 'read',
   area: 'search',
   handler: async (ctx) => {
-    const { buildModesReport } = await import('../search/modes-report.ts');
-    return buildModesReport(ctx.engine);
+    const { buildModesReport, redactReadinessForRemote } = await import('../search/modes-report.ts');
+    // Untrusted (remote) callers get the readiness verdict without the host's
+    // provider-key inventory (env var names + presence + paste-ready fix).
+    const modesReport = await buildModesReport(ctx.engine);
+    return ctx.remote === false ? modesReport : redactReadinessForRemote(modesReport);
   },
 };
 

@@ -163,7 +163,7 @@ describe('gateway.rerank() — happy path', () => {
 describe('gateway.rerank() — error classification', () => {
   beforeEach(() => configureZE());
 
-  test('missing required reranker API key → RerankError(no_key) before HTTP call (v0.47.10; auth = key present but rejected)', async () => {
+  test('missing required reranker API key → RerankError(no_key) before HTTP call (v0.47.11; auth = key present but rejected)', async () => {
     configureGateway({
       reranker_model: 'zeroentropyai:zerank-2',
       env: {},

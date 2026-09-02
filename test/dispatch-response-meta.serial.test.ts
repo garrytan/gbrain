@@ -114,6 +114,15 @@ describe('dispatch response meta (WP2/D3/D8)', () => {
 });
 
 describe('buildEmptyRetrievalBlock (unit)', () => {
+  test('a ranking-only stage (reranker_skipped) never impairs recall → still a clean miss', async () => {
+    const { buildEmptyRetrievalBlock } = await import('../src/mcp/dispatch.ts');
+    const out = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }] });
+    expect(out).toContain('clean miss');
+    expect(out).not.toContain('reranker_skipped');
+    const mixed = buildEmptyRetrievalBlock({ retrieved_count: 0, degraded: [{ stage: 'reranker_skipped' }, { stage: 'embed_unavailable', reason: 'no_provider' }] });
+    expect(mixed).toContain('degraded: embed_unavailable.');
+  });
+
   test('hint passthrough + stage dedupe + garbage tolerance', async () => {
     const { buildEmptyRetrievalBlock } = await import('../src/mcp/dispatch.ts');
     const text = buildEmptyRetrievalBlock({

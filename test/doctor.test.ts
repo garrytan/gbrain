@@ -143,12 +143,18 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));
     try {
-      // v0.47.10: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // v0.47.11: the default reranker is keyed on VOYAGE_API_KEY; without it
       // the check warns "not running" before reading the audit rows.
       await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        // readiness reads the live gateway plane — give it the key the CLI
+        // would have folded so the audit ladder below is what gets exercised.
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         for (let i = 0; i < 3; i++) {
           logRerankFailure({
-            model: 'zeroentropyai:zerank-2',
+            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
             reason: 'unknown',
             query_hash: `unknown${i}`,
             doc_count: 30,
@@ -175,11 +181,17 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-doctor-'));
     try {
-      // v0.47.10: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // v0.47.11: the default reranker is keyed on VOYAGE_API_KEY; without it
       // the check warns "not running" before reading the audit rows.
       await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        // readiness reads the live gateway plane — give it the key the CLI
+        // would have folded so the audit ladder below is what gets exercised.
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         logRerankFailure({
-          model: 'acmecorp:unpriced-reranker-v9',
+          model: 'voyage:rerank-2.5', // rows are filtered to the resolved model
           reason: 'budget',
           query_hash: 'budget01',
           doc_count: 30,

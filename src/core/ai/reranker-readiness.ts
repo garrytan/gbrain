@@ -1,7 +1,7 @@
 /**
  * Pure reranker readiness — the ONE predicate behind "is the reranker actually
  * running?" for `gbrain search modes`, `gbrain doctor`'s `reranker_health`
- * check, and init's reranker-default write (v0.47.10).
+ * check, and init's reranker-default write (v0.47.11).
  *
  * Why a leaf: init cannot use the gateway (it runs before `configureGateway`)
  * and must not pull provider SDKs; doctor and the modes dashboard want the
@@ -25,14 +25,14 @@
 
 import { getRecipe } from './recipes/index.ts';
 import { parseModelId } from './model-resolver.ts';
-import { rerankerSunset, sunsetDateHasPassed, type RerankerSunset } from './defaults.ts';
+import { DEFAULT_RERANKER_MODEL, rerankerSunset, sunsetDateHasPassed, type RerankerSunset } from './defaults.ts';
 
 export interface RerankerReadiness {
   /** The provider:model string that was evaluated. */
   model: string;
-  /** Provider id (text before the first `:`), or '' when unparseable. */
+  /** Provider id as `parseModelId` resolves it (`:` or `/` separator), or '' when unparseable. */
   provider: string;
-  /** Model id (text after the first `:`), or '' when unparseable. */
+  /** Canonical model id (recipe alias resolved), or '' when unparseable. */
   modelId: string;
   /** A recipe with this provider id is registered. */
   recipeKnown: boolean;
@@ -62,20 +62,22 @@ export interface RerankerReadiness {
 }
 
 export interface RerankerReadinessOpts {
+  /** Clock for the sunset comparison (tests inject a fixed date). */
+  now?: Date;
   /** Provider ids with a base-URL override (self-hosted endpoints). */
   baseUrlOverrides?: Record<string, string | undefined> | null;
 }
 
 /**
- * Evaluate readiness for `model` against `env`. Pure; never throws; `now`
- * defaults to the wall clock (tests pass a fixed date).
+ * Evaluate readiness for `model` against `env`. Pure; never throws;
+ * `opts.now` defaults to the wall clock (tests pass a fixed date).
  */
 export function rerankerReadiness(
   model: string,
   env: Record<string, string | undefined>,
-  now: Date = new Date(),
   opts: RerankerReadinessOpts = {},
 ): RerankerReadiness {
+  const now = opts.now ?? new Date();
   let provider = '';
   let modelId = '';
   try {
@@ -107,7 +109,8 @@ export function rerankerReadiness(
     recipeKnown: !!recipe,
     hasTouchpoint: !!tp,
     modelListed: listed,
-    requiredKey: needsEnvKey ? required[0]! : null,
+    // Name the key that is actually missing (multi-key recipes), else the first.
+    requiredKey: needsEnvKey ? (required.find((k) => !env[k]) ?? required[0]!) : null,
     keyPresent,
     sunset,
     sunsetPassed,
@@ -133,7 +136,7 @@ export function describeRerankerFix(r: RerankerReadiness): string | null {
   if (!r.recipeKnown || !r.hasTouchpoint || !r.modelListed) {
     return (
       `${r.model} is not a known reranker (provider:model) — set one: ` +
-      `gbrain config set search.reranker.model voyage:rerank-2.5`
+      `gbrain config set search.reranker.model ${DEFAULT_RERANKER_MODEL}`
     );
   }
   if (!r.keyPresent && r.requiredKey) {

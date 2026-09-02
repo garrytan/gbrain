@@ -27,9 +27,9 @@ import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
-// #3657 seam: the sunsetting legacy reranker default has ONE code home
+// #3657 seam: the runtime/mode-bundle reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
-// resolve through it so the September default swap is a one-line change.
+// resolve through DEFAULT_RERANKER_MODEL (voyage:rerank-2.5 since v0.47.11).
 import { DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
 
 /**
@@ -121,7 +121,7 @@ export interface ModeBundle {
   /**
    * Provider:model for the reranker. Bundle default is
    * `DEFAULT_RERANKER_MODEL` (ai/defaults.ts — `voyage:rerank-2.5` since
-   * v0.47.10, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
+   * v0.47.11, flipped from the sunsetting ZeroEntropy zerank-2 ahead of the
    * 2026-09-04 hosted shutdown). Rides VOYAGE_API_KEY; a brain without the
    * key fails open per search (`RerankError('no_key')`, one audit row per
    * process, no stderr — `gbrain search modes` / `gbrain doctor` say so).
@@ -295,7 +295,7 @@ export interface ModeBundle {
    * v0.46.15 (#1863) — weak-top floor: when the TOP rerank score is below
    * this, autocut no-ops (gap normalization by a weak top manufactures
    * spurious cliffs). Scale-dependent on the reranker — tuned on zerank-2's
-   * score scale; the v0.47.10 voyage default is measured against it by the
+   * score scale; the v0.47.11 voyage default is measured against it by the
    * pre-registered rerank A/B (rule R2) and re-tuned there if it moves.
    * Config: `search.autocut_min_top`.
    */

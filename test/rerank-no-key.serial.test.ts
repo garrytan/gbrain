@@ -1,5 +1,5 @@
 /**
- * v0.47.10 — `no_key` reranker preflight (fail-open, audit-only, once per
+ * v0.47.11 — `no_key` reranker preflight (fail-open, audit-only, once per
  * process per model).
  *
  * With the default reranker now keyed on VOYAGE_API_KEY, a keyless balanced
@@ -30,7 +30,7 @@ import {
   _resetSunsetWarningsForTest,
 } from '../src/core/ai/gateway.ts';
 import { applyReranker } from '../src/core/search/rerank.ts';
-import { BudgetTracker } from '../src/core/budget/budget-tracker.ts';
+import { BudgetTracker, BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { withBudgetTracker } from '../src/core/ai/gateway.ts';
 import { readRecentRerankFailures } from '../src/core/rerank-audit.ts';
 import {
@@ -112,7 +112,7 @@ afterAll(() => {
   resetGateway();
 });
 
-describe('gateway.rerank no_key preflight (v0.47.10)', () => {
+describe('gateway.rerank no_key preflight (v0.47.11)', () => {
   test('default voyage model, no VOYAGE_API_KEY → RerankError(no_key) before any HTTP call', async () => {
     await withFreshAuditDir(async () => {
       configureGateway(keylessGw());
@@ -196,6 +196,19 @@ describe('gateway.rerank no_key preflight (v0.47.10)', () => {
     });
   });
 
+  test('key present + exhausted cap → BudgetExhausted BEFORE the transport call; applyReranker files a `budget` row', async () => {
+    await withFreshAuditDir(async (dir) => {
+      configureGateway(keylessGw({ env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test' } }));
+      const transport = installCountingTransport();
+      const tracker = new BudgetTracker({ maxCostUsd: 1e-9, label: 'cap', auditPath: path.join(dir, 'b.jsonl') });
+      await expect(withBudgetTracker(tracker, () => rerank({ query: 'q', documents: ['d'] }))).rejects.toBeInstanceOf(BudgetExhausted);
+      expect(transport.count()).toBe(0);
+      const out = await withBudgetTracker(tracker, () => applyReranker('q', mkResults(), { enabled: true, topNIn: 30, topNOut: null }));
+      expect(out.map((r) => r.slug)).toEqual(['a', 'b']);
+      expect(readRecentRerankFailures(7).map((r) => r.reason)).toEqual(['budget']);
+    });
+  });
+
   test('key present but rejected (HTTP 401) stays `auth`', async () => {
     await withFreshAuditDir(async () => {
       configureGateway(keylessGw({ env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-bad' } }));
@@ -221,7 +234,7 @@ describe('gateway.rerank no_key preflight (v0.47.10)', () => {
   });
 });
 
-describe('applyReranker on no_key (v0.47.10)', () => {
+describe('applyReranker on no_key (v0.47.11)', () => {
   test('results pass through unchanged, no per-query rows, onSkip fires with no_key', async () => {
     await withFreshAuditDir(async () => {
       configureGateway(keylessGw());

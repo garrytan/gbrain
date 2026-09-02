@@ -121,7 +121,7 @@ export function formatAutocutSummary(decision: AutocutDecision | undefined): str
 }
 
 /**
- * v0.47.10 — one-line degraded summary for `--explain` (null when the run was
+ * v0.47.11 — one-line degraded summary for `--explain` (null when the run was
  * clean). Reads the closed `degraded[]` vocabulary, e.g.
  * `degraded: reranker_skipped (no_key)` — the only place a silently skipped
  * reranker is visible from the CLI.
@@ -143,7 +143,7 @@ export function formatResultsExplain(
   if (results.length === 0) return 'No results.\n';
   const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
   // v0.42.3.0 — prepend the autocut summary when meta carries a decision;
-  // v0.47.10 — and the degraded summary when any stage was skipped.
+  // v0.47.11 — and the degraded summary when any stage was skipped.
   const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded)]
     .filter((l): l is string => l !== null);
   return head.length > 0 ? `${head.join('\n')}\n\n${body}` : body;

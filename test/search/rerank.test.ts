@@ -174,7 +174,7 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     expect(out).toEqual(results);
   });
 
-  test('missing gateway reranker API key fail-opens and audits ONE no_key row (v0.47.10)', async () => {
+  test('missing gateway reranker API key fail-opens and audits ONE no_key row (v0.47.11)', async () => {
     const { configureGateway, _resetSunsetWarningsForTest } = await import('../../src/core/ai/gateway.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-search-'));
     try {

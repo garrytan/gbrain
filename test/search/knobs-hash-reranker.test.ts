@@ -268,7 +268,7 @@ describe('v=12 hard-exclude participation (#2825)', () => {
   });
 });
 
-describe('v0.47.10 reranker default flip re-keys the cache (rrm= is folded unconditionally)', () => {
+describe('v0.47.11 reranker default flip re-keys the cache (rrm= is folded unconditionally)', () => {
   test('per mode: hash(DEFAULT voyage) !== hash(LEGACY zerank) even with the reranker OFF', () => {
     expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
     for (const mode of ['conservative', 'balanced', 'tokenmax'] as const) {
