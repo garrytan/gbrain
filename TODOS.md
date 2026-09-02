@@ -732,9 +732,12 @@
   setupRun/teardownRun; bank the baseline in the same commit). Context: outside-voice F5.
 - [ ] **P2 — Per-model calibration for `search.evidence_cosine_floor` (0.80) and
   `search.autocut_min_top` (0.35).** Both are provider-scale-dependent; both are
-  config-overridable today. The September reranker default flip (zerank-2 →
-  voyage:rerank-2.5) MUST re-tune autocut_min_top — add that line to the v0.47
-  removal checklist when executing it. Context: outside-voice F16. Ship-review
+  config-overridable today. The reranker default flip (zerank-2 →
+  voyage:rerank-2.5) shipped in v0.47.10.0 WITHOUT re-tuning autocut_min_top: the
+  re-tune is rule R2 of the ranker wave's pre-registered rerank A/B (offline
+  `applyAutocut` replay over recorded `rerank_scores`; keep 0.35 iff A3−A1 ≥ −0.5pp
+  overall and no type < −1.0pp, else adopt the replay cell, else autocut OFF in
+  balanced/tokenmax with a CHANGELOG note). Context: outside-voice F16. Ship-review
   addendum (F6): the floor is not purely a label — `create_safety` consumes the
   evidence tier and gates duplicate-page creation, so a floor that never fires on
   a low-cosine-scale embedder degrades `exists`→`probable` and loosens the
@@ -1354,11 +1357,18 @@
   (b) Default-swap decision input from the issue thread: two independent
       corpus reports found reranking actively HURT (2k-page personal brain —
       three rerankers demoted short entity pages; 19k-page Japanese corpus —
-      zerank-2 itself 0/6 vs OFF). A/B the voyage default on a real corpus
-      before flipping; "disable in balanced" is a live option. tokenmax must
-      leave zerank regardless.
+      zerank-2 itself 0/6 vs OFF). DECISION (v0.47.10.0, 2026-09-02): the
+      default flipped to voyage:rerank-2.5 in ALL three bundles ahead of the
+      sunset (a dead default is strictly worse than an unmeasured live one);
+      balanced ON/OFF (rule R1) is decided by rerank-ON vs OFF on
+      NamedThingBench hit@1/hit@3/create_safety, cat13b and world-v1 in the
+      ranker wave — stays ON iff no net per-query regression (≤1 hit@3 loss,
+      0 hit@1 loss), else `balanced.reranker_enabled=false` before the wave
+      ships; tokenmax stays ON. Keyless brains fail open per search
+      (`no_key`, one audit row per process, no stderr) with doctor/`search
+      modes` naming the fix.
   (c) The autocut_min_top re-tune requirement (outside-voice F16, filed at
-      the P2 calibration TODO above) binds to option (a)-style flips only. -->
+      the P2 calibration TODO above) is rule R2 of the same A/B. -->
 
 
 ZeroEntropy's hosted API dies 2026-09-04. v0.46.3.0 deprecated it (split-default:
@@ -1371,10 +1381,11 @@ Staged-deletion discipline (ship replacements → migrate call sites → update 
   `DEFAULT_EMBEDDING_MODEL`/`DEFAULT_EMBEDDING_DIMENSIONS` (src/core/ai/defaults.ts)
   stop resolving to `zeroentropyai:*`; unmigrated configless brains get a HARD,
   actionable error naming `gbrain migrate embeddings --to voyage:voyage-4 --dim 1024`.
-  Also flip `DEFAULT_RERANKER_MODEL` (gateway.ts) + the three mode-bundle
-  `reranker_model` values (mode.ts:298,348,403) to `voyage:rerank-2.5` — one-time
-  knobs-hash query-cache miss for ALL modes incl. conservative (reranker_model is
-  hashed unconditionally; document in that release's CHANGELOG). Verify the schema
+  The reranker half is DONE (v0.47.10.0): `DEFAULT_RERANKER_MODEL` lives in
+  defaults.ts and the three mode-bundle `reranker_model` values resolve to
+  `voyage:rerank-2.5`; the one-time all-modes knobs-hash cache miss was documented
+  in that CHANGELOG. `LEGACY_DEFAULT_RERANKER_MODEL` + the `RERANKER_SUNSETS` row
+  stay until the recipe itself is deleted here. Verify the schema
   generators' legacy-constant consumers (pglite-schema, postgres-engine,
   embedding-column.ts registry fallback) get a deliberate post-ZE story.
 - [ ] **P1 — PREREQ before recipe deletion: move gateway.ts's `'/models/rerank'`

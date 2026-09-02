@@ -25,6 +25,8 @@ The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`):
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
 | `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
+| `reranker` (cross-encoder)    | off            | `voyage:rerank-2.5` | `voyage:rerank-2.5` |
+| `autocut` (rerank-cliff cut)  | off            | on (0.35)  | on (0.35)      |
 
 - **`conservative`** — smallest payloads. Pairs naturally with a cheap
   downstream model (Haiku-class) or a high query volume.

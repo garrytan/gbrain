@@ -118,15 +118,15 @@ enforcement in hybrid search.
 ### Default-on with `balanced` and `tokenmax` modes
 
 The `balanced` and `tokenmax` mode bundles default
-`search.reranker.enabled = true`. Brains that never set
-`search.reranker.model` still fall back to `zerank-2` (the legacy bundle
-default until the September cutover — new installs write explicit reranker
-config instead: `voyage:rerank-2.5` when a Voyage key is present, otherwise
-`search.reranker.enabled false`). With
-`ZEROENTROPY_API_KEY` set, the ZE reranker fires automatically. Without
-the key, every rerank call fails-open (audit-logged) and search returns
-RRF order — same UX as before, just with an observable failure surfaced
-via `gbrain doctor`.
+`search.reranker.enabled = true`. Since v0.47.10 the bundle default MODEL is
+`voyage:rerank-2.5`; a ZeroEntropy reranker runs only when
+`search.reranker.model` is explicitly set to `zeroentropyai:zerank-*` (with
+`ZEROENTROPY_API_KEY`), and on/after 2026-09-04 the gateway skips that dead
+hosted call before any HTTP (one audit row per process, one stderr line
+naming the switch command). Without the provider key for whichever reranker
+is resolved, every rerank call fails open (one `no_key` audit row per process,
+no stderr) and search returns RRF order, with the skip visible in
+`gbrain search --explain`, `gbrain search modes` and `gbrain doctor`.
 
 ### Enabling reranking today
 
@@ -152,7 +152,7 @@ Two probes run for reranker:
 | Config key | Default | Notes |
 |---|---|---|
 | `search.reranker.enabled` | `true` for balanced/tokenmax, `false` for conservative | One-flip opt-in/out |
-| `search.reranker.model` | `zeroentropyai:zerank-2` (legacy fallback; new installs write `voyage:rerank-2.5`) | The recommended replacement is `voyage:rerank-2.5` |
+| `search.reranker.model` | `voyage:rerank-2.5` (bundle default since v0.47.10) | Set `zeroentropyai:zerank-2` explicitly only for a self-hosted wire-compatible endpoint; the hosted API ends 2026-09-04 |
 | `search.reranker.top_n_in` | per mode: `30` conservative / `25` balanced / `50` tokenmax (tracks each bundle's `searchLimit`) | Candidates sent to reranker (caps API spend) |
 | `search.reranker.top_n_out` | `null` (no truncate) | Truncate reranked output to this many; `null` preserves full length |
 | `search.reranker.timeout_ms` | `5000` | HTTP timeout; long stalls degrade UX worse than RRF fallback |
