@@ -40,40 +40,77 @@ No Voyage key and no wish to rerank: `gbrain config set search.reranker.enabled 
   it until 2026-09-04; from that date the dead hosted call is skipped before
   any HTTP, with one audit row per process and a single stderr line naming
   the switch command.
-- The paired rerank A/B (balanced on vs off, and the autocut floor) on
-  LongMemEval, NamedThingBench, cat13b and world-v1 is pre-registered in the
-  ranker wave that follows this release; the reranker-off row below is a
-  reproduction of v0.48.0.0, not a new result, and the reranker-on rows
-  publish there, wins and losses.
+- The LongMemEval reranker on-vs-off rows landed in this release (Measured,
+  below; the reranker-off row is a reproduction of v0.48.0.0, not a new
+  result). The rest of the paired rerank A/B (the autocut floor, and
+  NamedThingBench, cat13b and world-v1) is pre-registered in the ranker wave
+  that follows this release and publishes there, wins and losses.
+- If you run `tokenmax`, expect worse small-k recall than `balanced` for now.
+  `tokenmax` turns on LLM multi-query expansion, and on LongMemEval at k=5
+  expansion drops strict `recall_all@5` from 93.19% to 54.89% (258/470,
+  2026-09-02, v0.48.2.0; paired +3 / -183 against plain hybrid). The
+  mechanism is equal-weight variant vector lists in RRF, and the fix is
+  tracked in the TODOS.md entry on master, "multi-query expansion dilutes
+  small-k retrieval now that fusion is clean" (weight variant lists below the
+  original, cap their contribution, or expand only when the original query's
+  evidence is weak). Until it lands, `gbrain config set search.mode balanced`
+  keeps the reranker and drops expansion.
 
 ### Measured
 
-Reranker-off retrieval on the public LongMemEval benchmark, re-run at this
-release so the reranker flip has a baseline it can be judged against.
-Metric: LongMemEval's official session-level `recall_all@5` (every gold
+Five retrieval arms on the public LongMemEval benchmark, run at this release
+so the reranker flip is judged against a reranker-off baseline from the same
+day. Metric: LongMemEval's official session-level `recall_all@5` (every gold
 session inside the top-5 distinct retrieved sessions; retrieval only, no
 reader model). Dataset: `longmemeval_s`, cleaned September 2025 revision,
 500 questions, 30 abstention questions excluded, 470 scored. Run on
 2026-09-02 at gbrain v0.48.2.0 (commit 172df271, PR #4792), search mode
-`balanced` pinned with reranker OFF and autocut OFF, embedder
-`openai:text-embedding-3-large` at 1536 dims, k=5, single run.
+`balanced` pinned, autocut OFF, reranker OFF except the two rerank arms
+(which run `voyage:rerank-2.5`, this release's default), embedder
+`openai:text-embedding-3-large` at 1536 dims, k=5, single run, 0 errors in
+every arm. "Paired" is per-question against the hybrid row: questions this
+arm gets right that hybrid missed / questions it loses that hybrid had.
 
-| Arm | recall_all@5 | recall_any@5 | Notes |
-|---|---|---|---|
-| hybrid (reranker off) | **93.19%** (438/470) | 98.72% | nDCG_any@5 93.32%; distinct sessions in the top 5: 5 on 422 questions, 4 on 47, 3 on 1 (mean 4.90); p50 3.7 s / p99 6.3 s per question; 0 errors |
-| hybrid + LLM multi-query expansion | pending, run in progress | pending, run in progress | v0.48.0.0 receipt: 49.6% at k=5, filed as harmful at small k |
-| hybrid, session-diverse (3x over-fetch, top-5 distinct sessions) | pending, run in progress | pending, run in progress | |
-| hybrid + rerank (`voyage:rerank-2.5`, this release's default) | pending, run in progress | pending, run in progress | |
-| hybrid, session-diverse + rerank | pending, run in progress | pending, run in progress | |
+| Arm | recall_all@5 | recall_any@5 | Paired vs hybrid | Notes |
+|---|---|---|---|---|
+| hybrid (reranker off; the like-for-like row) | **93.19%** (438/470) | 98.72% | +0 / -0 | nDCG_any@5 93.32%; distinct sessions in the top 5: 5 on 422 questions, 4 on 47, 3 on 1 (mean 4.90); p50 3.7 s / p99 6.3 s per question |
+| hybrid + LLM multi-query expansion | **54.89%** (258/470) | 86.60% | +3 / -183 | nDCG_any@5 71.68%; mean 5.00 distinct sessions; p50 5.1 s / p99 8.0 s; the v0.48.0.0 receipt had 49.6%, same verdict: harmful at small k |
+| hybrid, session-diverse (3x over-fetch, top-5 distinct sessions) | **93.40%** (439/470) | 98.72% | +1 / -0 | nDCG_any@5 93.38%; mean 5.00 distinct sessions; p50 3.7 s / p99 6.4 s |
+| hybrid + rerank (`voyage:rerank-2.5`, this release's default; the release default path) | **95.32%** (448/470) | 99.79% | +18 / -8 | nDCG_any@5 95.77%; mean 4.89 distinct sessions; p50 3.8 s / p99 6.3 s |
+| hybrid, session-diverse + rerank | **95.53%** (449/470) | 99.79% | +19 / -8 | nDCG_any@5 95.82%; mean 5.00 distinct sessions; p50 3.8 s / p99 6.3 s |
 
-By question type, hybrid with reranker off (`recall_all@5`): knowledge-update
-98.6% (71/72), multi-session 92.6% (112/121), single-session-assistant 100%
-(56/56), single-session-preference 96.7% (29/30), single-session-user 98.4%
-(63/64), temporal-reasoning 84.3% (107/127).
+By question type (`recall_all@5`, hybrid reranker off, then hybrid + rerank):
+knowledge-update 98.6% (71/72), then 100% (72/72); multi-session 92.6%
+(112/121), unchanged at 92.6% (112/121); single-session-assistant 100%
+(56/56), unchanged; single-session-preference 96.7% (29/30), then 100%
+(30/30); single-session-user 98.4% (63/64), then 100% (64/64);
+temporal-reasoning 84.3% (107/127), then 89.8% (114/127). The expansion arm
+loses in every type (multi-session 34.7%, temporal-reasoning 40.2%,
+knowledge-update 62.5%, single-session-user 78.1%, single-session-preference
+80.0%, single-session-assistant 82.1%). The full per-type table is in
+`docs/eval-bench.md`.
 
 - **Identical to v0.48.0.0.** 438/470 matches the v0.48.0.0 receipt (PR
   #4787) exactly, per type as well as in total: the reranker succession does
   not change reranker-off retrieval.
+- **The reranker earns +2.13 points on the release default path.** With
+  `voyage:rerank-2.5` on, hybrid moves from 93.19% to 95.32% (+18 / -8
+  paired); every gain outside multi-session, where the reranker changes
+  nothing (112/121 both ways), and the largest in temporal-reasoning (107 to
+  114 of 127). Any-hit rises to 99.79%: the reranker is promoting sessions
+  that were already in the candidate pool, not finding new ones.
+- **Expansion is harmful at k=5, plainly.** `tokenmax`'s LLM multi-query
+  expansion drops strict recall from 93.19% to 54.89% (+3 / -183 paired) and
+  any-hit from 98.72% to 86.60%, on the same 470 questions, with zero
+  expansion errors. Equal-weight variant vector lists push correct sessions
+  out of the top 5. Nobody should read the reranker-on numbers as a
+  `tokenmax` result; `tokenmax` was not measured with the reranker here.
+- **Slot starvation is not the miss class.** Session-diverse over-fetch (3x,
+  keep the top-5 distinct sessions) fills every top-5 to 5.00 distinct
+  sessions (hybrid alone returned fewer than 5 on 48 of 470) and gains
+  exactly one question (93.19% to 93.40%, +1 / -0; 95.32% to 95.53% with the
+  reranker). The 22 questions the reranker still misses are ranking misses,
+  not duplicate sessions eating slots.
 - **The bracket below the fix, disclosed.** Between v0.28.8 (83.40%
   `recall_all@5`, May 2026; the 97.66% any-hit figure that led the May report
   is a diagnostic only) and v0.48.0.0, an unpublished keyword-fallback fusion
@@ -89,7 +126,9 @@ By question type, hybrid with reranker off (`recall_all@5`): knowledge-update
   number says nothing about answer accuracy (gbrain has published no
   LLM-judged answer-accuracy run).
 
-Receipts, per-question rows, and the arm table as it fills in:
+Receipts, per-question rows (`rerun-2026-09-02-v0.48.2.0-*.ndjson`, one per
+arm, plus `rerun-2026-09-02-v0.48.2.0-all-arms.json` and the two SVG charts),
+and the arm table:
 [gbrain-evals `docs/benchmarks/2026-05-07-longmemeval-s.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/benchmarks/2026-05-07-longmemeval-s.md).
 
 **Say to your agent:** *"Run the public LongMemEval benchmark against my
