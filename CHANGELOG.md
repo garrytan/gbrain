@@ -35,7 +35,8 @@ test proven red before the fix.
   are adopted in place on their next re-extraction — no migration, no
   duplicates. (#4734, contributed by @1kuna; fixes #4733)
 - **Search-cache epoch: one-time miss spike.** The query-cache key version
-  moved to v=27 (synthetic-row demotion changed result composition).
+  moved to v=28 (synthetic-row demotion changed result composition; it sits on
+  top of 0.48.0.0's 26 → 27 adaptive-return epoch).
   Existing cache rows become unreachable on first re-query; nothing to do.
 - **Consolidated takes stop duplicating.** The dream cycle's take-identity
   lookup no longer keys on `since_date` (which moves whenever facts

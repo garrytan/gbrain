@@ -230,7 +230,7 @@ deferred M-effort issues above are NOT repeated here.
   analog of the per-call `dedupOpts.maxPerPage` (publicized by the LongMemEval
   `hybrid-diverse` row). Deferred at the 2026-08 CEO review (D3.5): ship only
   with a Class-1-dominant decomposition receipt; folds into the NEXT
-  KNOBS_HASH bump (v=28), never its own. **Where:** `src/core/search/dedup.ts`
+  KNOBS_HASH bump (v=29 as of 0.48.1.0 — 28 is the compiled-truth-boost epoch), never its own. **Where:** `src/core/search/dedup.ts`
   + `mode.ts` + `config.ts` registry. **Effort:** S.
 - [ ] **P3 — single-pool volunteer resolve micro-opt.** **What:** Arm 1 + Arm 2
   currently issue two resolver calls per windowed turn (pointer budget, then
