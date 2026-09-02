@@ -18,6 +18,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { LinkBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
+import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { inferLinkTypeFromPack } from './schema-pack/link-inference.ts';
 import { loadActivePackForLocalEngine, packSupportsNerInference } from './schema-pack/best-effort.ts';
 
@@ -123,6 +124,7 @@ export async function extractNerLinks(
   if (gazetteer.size === 0) {
     return { pages: 0, created: 0, pack_unavailable: false };
   }
+  const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
   // Pre-fetch target entity types so inferLinkType has the type signal
   // without an N+1 getPage round-trip. Pulls the slug→type map from
@@ -170,6 +172,7 @@ export async function extractNerLinks(
     const mentions = findMentionedEntities(body, gazetteer, {
       fromSlug: slug,
       fromSourceId: source_id,
+      allowCrossSource,
     });
     if (mentions.length === 0) continue;
 
