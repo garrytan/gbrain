@@ -50,6 +50,7 @@ import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
+import { OperationError } from './ops/contract.ts';
 
 /**
  * v0.20.0 Cathedral II Layer 8 D2 — markdown fence extraction helper.
@@ -369,6 +370,15 @@ export async function importFromContent(
      * and reindex leave it unset so the guard stays armed.
      */
     allowEmptyOverwrite?: boolean;
+    /**
+     * Optimistic concurrency guard for whole-page writers. When supplied, the
+     * write succeeds only if the page still has this content hash after the
+     * transaction-scoped page lock is acquired. Callers obtain the hash from
+     * get_page and retry the full read -> modify -> put cycle on conflict.
+     *
+     * Undefined preserves the legacy unconditional replace behavior.
+     */
+    expectedContentHash?: string;
   } = {},
 ): Promise<ImportResult> {
   // Normalize BEFORE any tx write: putPage lowercases via validateSlug but
@@ -650,6 +660,14 @@ export async function importFromContent(
   // mirrors that default instead of matching the slug in ANY source (the
   // unscoped-check/scoped-write bug class).
   const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
+
+  if (opts.expectedContentHash !== undefined && !/^[a-f0-9]{64}$/i.test(opts.expectedContentHash)) {
+    throw new OperationError(
+      'invalid_params',
+      'expected_content_hash must be a 64-character hexadecimal SHA-256 hash.',
+      'Read the page with get_page include_content:true and pass its content_hash unchanged.',
+    );
+  }
 
   // #2044 / #4548: remote get_page/fetch intentionally strip non-'world'
   // facts rows before an untrusted caller ever sees them. A documented
@@ -952,6 +970,32 @@ export async function importFromContent(
   // for single-source callers.
   const txOpts = { sourceId: sourceId ?? 'default' };
   await engine.transaction(async (tx) => {
+    // Serialize competing writers for the same source + slug before checking
+    // the caller's observed hash. Postgres holds this advisory lock until the
+    // transaction commits. PGLite is single-process and its transaction is
+    // already serialized; engines/test doubles without advisory locks fall
+    // through to the in-transaction re-read.
+    if (opts.expectedContentHash !== undefined) {
+      try {
+        await tx.executeRaw(
+          `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
+          [`put_page_cas:${sourceId ?? 'default'}:${slug}`],
+        );
+      } catch {
+        // Embedded engines do not need a cross-process advisory lock.
+      }
+
+      const current = await tx.getPage(slug, txOpts);
+      const actualHash = current?.content_hash ?? null;
+      if (actualHash !== opts.expectedContentHash) {
+        throw new OperationError(
+          'write_conflict',
+          `Page '${slug}' changed after it was read; refusing to overwrite newer content.`,
+          'Read the page again, reapply the intended mutation, and retry with the new content_hash.',
+        );
+      }
+    }
+
     if (existing) await tx.createVersion(slug, txOpts);
 
     // v0.29.1 — compute effective_date from frontmatter precedence chain.
