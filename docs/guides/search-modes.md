@@ -100,6 +100,20 @@ gbrain search diagnose "<query>" --target <slug>
                                  # across the keyword/vector/alias/hybrid layers
 ```
 
+`gbrain search modes` also answers the question the knob table cannot: is
+the resolved reranker actually going to run? Below the attribution table it
+prints one runtime line — `Reranker: voyage:rerank-2.5 (enabled) —
+VOYAGE_API_KEY present`, `Reranker: off (resolved) — …`, or `Reranker:
+<model> (enabled but NOT running) — <paste-ready fix>` — and each bundle row
+carries `reranker=… topNIn=… autocut=…`. `--json` exposes the same verdict
+as `reranker_readiness`. Without the key, search still works: results come
+back in fusion order, `gbrain search "<query>" --explain` shows
+`degraded: reranker_skipped (no_key)`, and `gbrain doctor`'s
+`reranker_health` names the fix. **Say to your agent:** *"check whether my
+brain's reranker is actually running"* — *"turn reranking off for now"* —
+your agent runs `gbrain search modes` / `gbrain doctor`, then either exports
+`VOYAGE_API_KEY` or runs `gbrain config set search.reranker.enabled false`.
+
 The mode picker runs inside `gbrain init` (non-TTY auto-selects `balanced`).
 
 ## Choosing a lookup verb (search vs query vs get)
@@ -181,7 +195,7 @@ on user_asks_about(topic):
 3. Run `gbrain get alice-example` -- confirm it returns the full page with compiled truth and timeline.
 4. Compare: search for the same entity using all three modes. Keyword should be fastest, hybrid should surface conceptual matches, direct should return the complete page.
 5. After a search returns a chunk, run `gbrain get` on the slug from that chunk. Confirm the full page contains more context than the chunk alone.
-6. Run `gbrain search modes` -- confirm the active mode bundle and any per-key overrides are what you expect.
+6. Run `gbrain search modes` -- confirm the active mode bundle, any per-key overrides, and the `Reranker:` line (`enabled` with the key present, or `off`) are what you expect.
 
 ---
 *Part of the [GBrain Skillpack](../GBRAIN_SKILLPACK.md).*

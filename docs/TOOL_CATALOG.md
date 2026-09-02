@@ -192,7 +192,7 @@ Every non-localOnly operation on the MCP surface: 121 tools across 23 areas. **S
 | `query` | Hybrid search with vector + keyword + multi-query expansion. | read | yes |  |
 | `search` | Cheap hybrid search (vector + keyword + RRF) with no LLM expansion. | read | yes |  |
 | `search_by_image` | v0.36 cross-modal Phase 2: image-as-query retrieval. | read |  |  |
-| `search_modes` | Read-only search-mode dashboard: active mode, per-knob resolved value with attribution (mode default vs config override), and the three frozen bundles. | read |  |  |
+| `search_modes` | Read-only search-mode dashboard: active mode, per-knob resolved value with attribution (mode default vs config override), the three frozen bundles, and a reranker_readiness verdict (whether the resolved reranker will actually run; remote callers get the verdict without the host key inventory). | read |  |  |
 | `search_stats` | Search observability over a window: cache hit rate, intent/mode mix, budget drops, rank-1 score drift, graph-signals failure counts. | admin |  |  |
 | `search_tune` | Read-only tuning recommendations derived from the last 7 days of search telemetry: what should change, why, and the paste-ready config command per recommendation — relay them to the user. | admin |  |  |
 

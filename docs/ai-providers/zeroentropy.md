@@ -130,10 +130,13 @@ no stderr) and search returns RRF order, with the skip visible in
 
 ### Enabling reranking today
 
-Set the surviving reranker FIRST, then enable — enabling on a brain that
-never set `search.reranker.model` falls back to the dying `zerank-2`:
-`gbrain config set search.reranker.model voyage:rerank-2.5`, then
-`gbrain config set search.reranker.enabled true`.
+`gbrain config set search.reranker.enabled true` is enough on a brain that
+never set `search.reranker.model`: since v0.47.11 the bundle default resolves
+to `voyage:rerank-2.5` (needs `VOYAGE_API_KEY`; without it search fails open
+in RRF order and `gbrain search modes` says so). Set `search.reranker.model`
+first only when you want a different reranker — an explicit
+`zeroentropyai:zerank-*` value works with `ZEROENTROPY_API_KEY` until
+2026-09-04, then the gateway short-circuits it.
 
 ### Verify
 
@@ -200,7 +203,8 @@ Both clear naturally; no operator action required.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `embedding_config` probe says invalid dim | Defaulting to 1536 (OpenAI default) | Set `embedding_dimensions` to one of 2560/1280/640/320/160/80/40 |
-| `reranker_config` probe says model not in allowlist | Typo in `search.reranker.model` | Use one of `zerank-2` / `zerank-1` / `zerank-1-small` |
-| `reranker_health` doctor warns about auth | `ZEROENTROPY_API_KEY` not set or invalid | Re-export the env var; `gbrain models doctor` to verify |
-| `reranker_health` doctor warns about transient failures | Upstream flake or rate limit | Reranker fails open to RRF; check ZE status page if persistent |
+| `reranker_config` probe says model not in allowlist | Typo in `search.reranker.model` | For a ZeroEntropy reranker use `zeroentropyai:zerank-2` / `zerank-1` / `zerank-1-small`; or `gbrain config unset search.reranker.model` to fall back to the bundle default `voyage:rerank-2.5` |
+| `reranker_health` says enabled but NOT running (`<KEY> not set`) | The resolved reranker's provider key is absent — search fails open in RRF order, one `no_key` audit row per process, nothing on stderr | `export VOYAGE_API_KEY=…` for the default (or `ZEROENTROPY_API_KEY` for an explicit ZE model), or `gbrain config set search.reranker.enabled false` |
+| `reranker_health` doctor warns about auth failures | Key present but rejected (HTTP 401/403) | Re-export a valid key; `gbrain models doctor` to verify |
+| `reranker_health` doctor warns about transient failures | Upstream flake or rate limit | Reranker fails open to RRF; check the provider's status page if persistent |
 | Cache hit rate dipped after upgrade | Expected during rolling deploy | Clears within `cache.ttl_seconds` (default 3600s) |

@@ -699,8 +699,10 @@ const search_modes: Operation = {
   name: 'search_modes',
   description:
     'Read-only search-mode dashboard: active mode, per-knob resolved value with attribution ' +
-    '(mode default vs config override), and the three frozen bundles. Never mutates; to ' +
-    'change modes, tell the user to set the search.mode config key on the brain host.',
+    '(mode default vs config override), the three frozen bundles, and a reranker_readiness ' +
+    'verdict (whether the resolved reranker will actually run; remote callers get the verdict ' +
+    'without the host key inventory). Never mutates; to change modes, tell the user to set the ' +
+    'search.mode config key on the brain host.',
   params: {},
   scope: 'read',
   area: 'search',
