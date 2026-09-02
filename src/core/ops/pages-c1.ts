@@ -40,6 +40,20 @@ function enabledConfigValue(value: string | null): boolean {
   return ['1', 'true', 'on', 'yes'].includes(value.trim().toLowerCase());
 }
 
+function assertPlainObjectParam(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (value === undefined) return;
+  if (value === null || Array.isArray(value) || typeof value !== 'object') {
+    throw new OperationError('invalid_params', `${name} must be a JSON object.`);
+  }
+}
+
+function assertStringArrayParam(value: unknown, name: string): asserts value is string[] {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new OperationError('invalid_params', `${name} must be a JSON array of strings.`);
+  }
+}
+
 export async function isC1ContainmentEnabled(engine: BrainEngine): Promise<boolean> {
   try {
     return enabledConfigValue(await engine.getConfig('writer.c1_containment'));
@@ -236,6 +250,9 @@ export const patchPageOperation: Operation = {
         );
       }
     }
+    assertPlainObjectParam(p.frontmatter_set, 'frontmatter_set');
+    assertStringArrayParam(p.frontmatter_unset, 'frontmatter_unset');
+    assertPlainObjectParam(p.frontmatter_set_if_empty, 'frontmatter_set_if_empty');
     const existing = await ctx.engine.getPage(slug, { sourceId });
     if (!existing) throw new OperationError('page_not_found', `Page not found: ${slug}`, 'patch_page updates existing pages only.');
     let packDerivedFields: Set<string>;

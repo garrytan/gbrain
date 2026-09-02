@@ -139,6 +139,18 @@ describe('patch_page C1 operation', () => {
     expect(canonical).toContain('company: Example Co');
   });
 
+  test('rejects untyped structured params before canonical mutation', async () => {
+    const { revision } = await seedPerson();
+    const path = join(brainDir, 'people/example-person.md');
+    const before = readFileSync(path, 'utf8');
+    await expect(patchPage.handler(ctx(), {
+      slug: 'people/example-person',
+      base_revision: revision,
+      frontmatter_set: '{"role":"Advisor"}',
+    })).rejects.toMatchObject({ code: 'invalid_params' });
+    expect(readFileSync(path, 'utf8')).toBe(before);
+  });
+
   test('completed request replay is idempotent and does not create another version', async () => {
     const { revision } = await seedPerson();
     const params = {

@@ -1123,6 +1123,26 @@ export function resolveQueryImage(
 // the validator can never disagree on what a boolean flag swallows.
 const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
 
+function parseTypedOpArg(
+  key: string,
+  type: Operation['params'][string]['type'],
+  raw: string,
+): unknown {
+  if (type === 'boolean') return raw !== 'false';
+  if (type === 'number') return Number(raw);
+  if (type !== 'object' && type !== 'array') return raw;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`--${key.replace(/_/g, '-')} requires valid JSON ${type}.`);
+  }
+  if (type === 'array' ? !Array.isArray(parsed) : parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error(`--${key.replace(/_/g, '-')} requires a JSON ${type}.`);
+  }
+  return parsed;
+}
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1148,9 +1168,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false'
-            : def.type === 'number' ? Number(raw)
-            : raw;
+          params[key] = parseTypedOpArg(key, def.type, raw);
           continue;
         }
       }
@@ -1190,8 +1208,8 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // positionally, then --content clobbered it). Warn to stderr; when
         // the discarded value names an existing file, point at capture --file.
         const prevValue = params[key];
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        const raw = args[++i];
+        params[key] = paramDef ? parseTypedOpArg(key, paramDef.type, raw) : raw;
         if (prevValue !== undefined && prevValue !== params[key]) {
           let fileHint = '';
           try {
