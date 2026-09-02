@@ -72,6 +72,21 @@ describe('normalizeText', () => {
     expect(normalizeText('')).toBe('');
     expect(normalizeText('   !!  ')).toBe('');
   });
+  it('preserves Korean text instead of stripping it to nothing', () => {
+    expect(normalizeText('한국어 문장 다듬어줘')).toBe('한국어 문장 다듬어줘');
+  });
+  it('preserves Chinese and Japanese text', () => {
+    expect(normalizeText('中文测试')).toBe('中文测试');
+    expect(normalizeText('日本語のテスト')).toBe('日本語のテスト');
+  });
+  it('still strips punctuation from non-Latin scripts', () => {
+    expect(normalizeText('한국어, 다듬어줘!')).toBe('한국어 다듬어줘');
+  });
+  it('a non-English trigger still substring-matches a non-English intent', () => {
+    const index = { skillPhrases: new Map([['fluent-korean', ['한국어 다듬']]]) };
+    const result = structuralRouteMatch('이거 한국어 다듬어줄 수 있어?', index);
+    expect(result.matched).toEqual(['fluent-korean']);
+  });
 });
 
 describe('extractTriggerPhrases', () => {

@@ -84,7 +84,7 @@ export interface RoutingCaseResult {
 /**
  * Normalize a string for routing comparison:
  *   - lowercase
- *   - replace any non-alphanumeric char with a space
+ *   - replace any non-letter/non-number char with a space
  *   - collapse whitespace
  *   - trim
  *
@@ -94,10 +94,21 @@ export interface RoutingCaseResult {
  * a routing match should do. The cost is slightly over-permissive
  * matching; the benefit is reliable matches across quote/punctuation
  * variants that agents emit in practice.
+ *
+ * The character class is `\p{L}\p{N}` (any Unicode letter or number),
+ * not `a-z0-9`. An ASCII-only class silently drops every non-Latin
+ * script — Korean, Chinese, Japanese, Cyrillic, etc. all collapse to an
+ * empty string, so a skill with only non-English triggers can never
+ * match any intent through this checker, no matter how the trigger is
+ * worded. GBrain otherwise treats CJK/multi-language support as a first-
+ * class concern (see docs/guides/multi-language-fts.md and the CJK
+ * chunking/extraction work), so routing was the one place that support
+ * didn't reach. `\p{L}`/`\p{N}` need the `u` (unicode) flag to be
+ * interpreted as Unicode property escapes rather than literal `p{L}`.
  */
 export function normalizeText(s: string): string {
   if (!s) return '';
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
 /**
