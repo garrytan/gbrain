@@ -35,6 +35,7 @@ import { __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.
 import { __setChatTransportForTests, configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import {
   LOOPS_EXTRACT_ENQUEUE_CEILING,
+  LOOPS_EXTRACT_KEY_REVISION,
   LOOPS_EXTRACT_MAX_PER_SWEEP,
 } from '../src/core/google/loops-extract.ts';
 import {
@@ -927,10 +928,11 @@ describe('loops_extract enqueue completeness', () => {
         // "deferring … (they re-candidate on next touch)". That was silent
         // loss: a thread only re-candidates when it CHANGES, so an untouched
         // overflow thread was never extracted at all.
-        const jobs = await engine.executeRaw<{ data: unknown }>(
-          `SELECT data FROM minion_jobs WHERE name = 'loops_extract'`,
+        const jobs = await engine.executeRaw<{ data: unknown; idempotency_key: string }>(
+          `SELECT data, idempotency_key FROM minion_jobs WHERE name = 'loops_extract'`,
         );
         expect(jobs).toHaveLength(total);
+        expect(jobs.every((job) => job.idempotency_key.startsWith(`loops:r${LOOPS_EXTRACT_KEY_REVISION}:`))).toBe(true);
         expect(err).toContain(`loops_extract: enqueued ${total} eligible thread(s)`);
         const slugs = jobs
           .map((j) => (typeof j.data === 'string' ? JSON.parse(j.data) : j.data) as { slug: string })

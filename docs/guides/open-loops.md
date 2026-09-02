@@ -83,6 +83,17 @@ else's commitments in a group thread they were copied on, and an outside
 sender cannot dodge extraction by CC'ing a muted address. Thread pages carry
 the author list as `senders:` frontmatter beside `participants:`.
 
+**Cross-thread reminders do not create a second obligation.** Before the
+existing model call, the extractor supplies at most five open LLM loops from
+other threads that share the same source, sender, normalized subject, and
+30-day window. The model may mark an extracted item as the exact same
+unresolved loop; only an id from that bounded candidate list and the same
+loop type is accepted. A match reuses the original row and fact while adding
+the new page as evidence. Different promises or successive steps remain
+separate. When there is no confident match, the original thread + direction
++ text hash remains the deterministic fallback. No second model call, table,
+or dedupe service is involved.
+
 **Which threads reach the extractor.** A structural eligibility gate runs
 first (`loopExtractionEligibility`), so bulk mail neither pays for model
 calls nor crowds real correspondence out of the sweep:
@@ -109,11 +120,14 @@ without mail content reaching the logs.
 **Every eligible thread is queued** (newest first — ordering only, nothing is
 dropped for being older). The MinionQueue is the backlog and the worker's
 concurrency is the rate limit; the old tight per-sweep cap silently lost
-threads (a thread only re-candidates when it changes). Jobs are keyed by page
-revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
-thread is a no-op and that key is the only dedupe in play. A generous safety
+threads (a thread only re-candidates when it changes). Jobs are keyed by
+extractor revision plus page revision
+(`loops:r<N>:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
+thread is a no-op while a semantic extractor fix can deliberately re-judge
+the bounded window once. A generous safety
 ceiling (500/sweep) remains purely as a spend backstop for pathological
-sweeps; when it binds, the log names the drop honestly.
+sweeps; when it binds, the log names the drop honestly. Semantic cross-thread
+dedupe happens only inside the extractor as described above.
 
 ## The surfaces
 

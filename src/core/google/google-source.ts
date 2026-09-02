@@ -504,7 +504,12 @@ async function processThread(
 async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
   if (deps.extractCandidates.length === 0) return;
   try {
-    const { isLoopsExtractionEnabled, LOOPS_EXTRACT_JOB, LOOPS_EXTRACT_ENQUEUE_CEILING } = await import('./loops-extract.ts');
+    const {
+      isLoopsExtractionEnabled,
+      LOOPS_EXTRACT_JOB,
+      LOOPS_EXTRACT_ENQUEUE_CEILING,
+      LOOPS_EXTRACT_KEY_REVISION,
+    } = await import('./loops-extract.ts');
     if (!(await isLoopsExtractionEnabled(deps.engine))) return;
     // No chat provider (keyless install, outage) → enqueue NOTHING. A job the
     // handler cannot run would fail-and-die and burn its revision-keyed
@@ -582,7 +587,7 @@ async function enqueueLoopsExtraction(deps: GoogleSyncDeps): Promise<void> {
           // Page-revision keyed: a re-sweep of an unchanged thread is a no-op,
           // and this is now the ONLY dedupe mechanism in play (no maxWaiting —
           // its cap-hit coalesce loses brand-new keys, see above).
-          idempotency_key: `loops:${deps.sourceId}:${c.slug}:${c.newestMs}`,
+          idempotency_key: `loops:r${LOOPS_EXTRACT_KEY_REVISION}:${deps.sourceId}:${c.slug}:${c.newestMs}`,
         },
       );
     }

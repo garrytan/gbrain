@@ -62,8 +62,33 @@ describe('parseLoopsJson — clean payloads', () => {
     expect(toMe.direction).toBe('owed_to_me');
     expect(toMe.due_iso).toBeNull();
     expect(toMe.counterparty_email).toBe('charlie@acme-example.com');
+    expect(byMe.same_as_loop_id).toBeNull(); // omitted by older providers normalizes safely
 
     expect(r!.decisions_pending[0].text).toBe('Pick a date for the acme-example kickoff');
+    expect(r!.decisions_pending[0].same_as_loop_id).toBeNull();
+  });
+
+  test('positive integer same_as_loop_id values survive normalization', () => {
+    const r = parseLoopsJson(
+      JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_by_me',
+            text: 'Send the revised note',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: 'I will send the revised note.',
+            same_as_loop_id: 42,
+          },
+        ],
+        decisions_pending: [
+          { text: 'Choose the next step', quote: 'What should we do next?', same_as_loop_id: 43 },
+        ],
+      }),
+    );
+    expect(r?.commitments[0].same_as_loop_id).toBe(42);
+    expect(r?.decisions_pending[0].same_as_loop_id).toBe(43);
   });
 
   test('text is trimmed and capped at 500 chars; quote capped at 200', () => {
@@ -107,6 +132,16 @@ describe('parseLoopsJson — clean payloads', () => {
 });
 
 describe('parseLoopsJson — ALL-or-nothing barrier', () => {
+  test('invalid same_as_loop_id poisons the whole batch', () => {
+    for (const invalid of [0, -1, 1.5, '42']) {
+      const bad = JSON.parse(payload()) as {
+        decisions_pending: Array<Record<string, unknown>>;
+      };
+      bad.decisions_pending[0].same_as_loop_id = invalid;
+      expect(parseLoopsJson(JSON.stringify(bad))).toBeNull();
+    }
+  });
+
   test('missing decisions_pending array → null', () => {
     const r = parseLoopsJson(
       JSON.stringify({

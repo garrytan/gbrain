@@ -107,7 +107,11 @@ beforeAll(async () => {
         'From: alice@example.com\n\nHi — following up on the deck.\n\n' +
         'Me: I will send you the deck by Friday.\n' +
         'Alice: Great. Which week works for the kickoff?\n',
-      frontmatter: { thread_id: THREAD_ID, date: '2026-08-20T10:00:00Z' },
+      frontmatter: {
+        thread_id: THREAD_ID,
+        date: '2026-08-20T10:00:00Z',
+        account: 'owner@example.com',
+      },
       effective_date: new Date('2026-08-20T10:00:00Z'),
     },
     { sourceId: SRC },
@@ -416,6 +420,19 @@ describe('runLoopsExtract', () => {
     expect(r.decisions).toBe(1);
     expect(r.loop_ids.length).toBe(2);
 
+    // The real Gmail renderer identifies the owner through frontmatter.account
+    // and outer-message headings. The judge must receive both pieces so a
+    // first-person promise in an outbound reply is not mistaken for quoted
+    // inbound prose or silently omitted.
+    expect(lastChatReq?.messages?.[0]?.content).toContain('account_email="owner@example.com"');
+    expect(lastChatReq?.system).toContain('The "→" marker is authoritative');
+    expect(lastChatReq?.system).toContain('different owner alias');
+    expect(lastChatReq?.system).toContain('Inspect EVERY owner-authored outer message');
+    expect(lastChatReq?.system).toContain('quoted replies inside the body do not change');
+    expect(lastChatReq?.system).toContain('ACCOUNT OWNER personally must choose');
+    expect(lastChatReq?.system).toContain('unsolicited sales, marketing, recruiting, PR');
+    expect(lastChatReq?.system).toContain('owned by another participant or the team');
+
     // Projection 2 — the open_loops rows.
     const loops = await engine.executeRaw<Record<string, unknown>>(
       `SELECT * FROM open_loops WHERE source_id = $1 ORDER BY loop_type`,
@@ -462,8 +479,14 @@ describe('runLoopsExtract', () => {
     expect(links[0].to_slug).toBe(PERSON_SLUG);
   });
 
-  test('idempotency: extracting the same page twice does not duplicate loops', async () => {
-    chatImpl = async () => ({ text: cleanJson(), stopReason: 'end' });
+  test('idempotency: model paraphrasing with the same verbatim quote does not duplicate loops', async () => {
+    const paraphrased = JSON.parse(cleanJson()) as {
+      commitments: Array<{ text: string }>;
+      decisions_pending: Array<{ text: string }>;
+    };
+    paraphrased.commitments[0].text = 'Send the widget-co presentation to Alice';
+    paraphrased.decisions_pending[0].text = 'Choose the kickoff week';
+    chatImpl = async () => ({ text: JSON.stringify(paraphrased), stopReason: 'end' });
     const before = await countLoops();
     const firstIds = (
       await engine.executeRaw<{ id: number }>(
@@ -476,6 +499,58 @@ describe('runLoopsExtract', () => {
     expect(r.status).toBe('extracted');
     expect(await countLoops()).toBe(before); // dedup keys collide → upsert, no new rows
     expect(r.loop_ids.sort((a, b) => a - b)).toEqual(firstIds); // same rows, same ids
+  });
+
+  test('a later clean extraction closes stale items from this thread only', async () => {
+    const before = await engine.executeRaw<{ id: number; status: string }>(
+      `SELECT id, status FROM open_loops
+        WHERE source_id = $1 AND thread_id = $2 AND status = 'open'`,
+      [SRC, THREAD_ID],
+    );
+    expect(before.length).toBe(2);
+
+    chatImpl = async () => ({
+      text: '{"commitments":[],"decisions_pending":[]}',
+      stopReason: 'end',
+    });
+    const r = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    expect(r.loop_ids).toEqual([]);
+
+    const after = await engine.executeRaw<{ status: string; closed_by: string }>(
+      `SELECT status, closed_by FROM open_loops
+        WHERE source_id = $1 AND thread_id = $2 ORDER BY id`,
+      [SRC, THREAD_ID],
+    );
+    expect(after).toHaveLength(2);
+    expect(after.every((row) => row.status === 'done')).toBe(true);
+    expect(after.every((row) => row.closed_by === 'llm_reconciled')).toBe(true);
+  });
+
+  test('a successful semantic pass removes the raw unanswered-inbound candidate', async () => {
+    const { upsertOpenLoop } = await import('../src/core/loops/loops-store.ts');
+    const raw = await upsertOpenLoop(engine, {
+      sourceId: SRC,
+      dedupKey: 'thread:raw-inbound-test',
+      loopType: 'unanswered_inbound',
+      summary: 'Reply owed to a synthetic sender',
+      evidence: [{ page_slug: EMAIL_SLUG }],
+      threadId: THREAD_ID,
+      pageSlug: EMAIL_SLUG,
+      detector: 'deterministic_thread',
+      lastActivityAt: '2026-08-20T10:00:00Z',
+    });
+    chatImpl = async () => ({
+      text: '{"commitments":[],"decisions_pending":[]}',
+      stopReason: 'end',
+    });
+
+    await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+    const rows = await engine.executeRaw<{ status: string; closed_by: string }>(
+      `SELECT status, closed_by FROM open_loops WHERE id = $1`,
+      [raw.id],
+    );
+    expect(rows).toEqual([{ status: 'done', closed_by: 'llm_triaged' }]);
   });
 
   test('prompt hardening: newest 12k is retained and sanitized; stale head is dropped', async () => {
@@ -663,5 +738,384 @@ describe('runLoopsExtract', () => {
     expect(byType['awaiting_reply_from']).toBe('I will share the pilot metrics by Wednesday.');
     expect(byType['owes_to']).toBe('Send Alice the compliance checklist');
     for (const e of edges) expect(e.context).not.toContain('compliance checklist by Tuesday');
+  });
+});
+
+// ── Cross-thread semantic dedup ─────────────────────────────────────────────
+
+describe('cross-thread semantic dedup', () => {
+  async function seedEmail(
+    slug: string,
+    title: string,
+    threadId: string,
+    date: string,
+    body: string,
+    from = 'Peer <peer@example.com>',
+  ): Promise<void> {
+    await engine.putPage(
+      slug,
+      {
+        type: 'email',
+        title,
+        compiled_truth: body,
+        frontmatter: { thread_id: threadId, date, from, account: 'owner@example.com' },
+        effective_date: new Date(date),
+      },
+      { sourceId: SRC },
+    );
+  }
+
+  test('a reminder in another Gmail thread reuses one commitment and keeps both evidence pages', async () => {
+    const firstSlug = 'emails/2026/08/2026-08-24-review-plan-11112222.md';
+    const secondSlug = 'emails/2026/08/2026-08-25-review-plan-33334444.md';
+    const olderSlug = 'emails/2026/08/2026-08-23-review-plan-12121212.md';
+    const firstQuote = 'I will review the plan and send comments.';
+    const secondQuote = 'I will still get you my comments on the plan.';
+    const olderQuote = 'I will send my comments after reviewing the plan.';
+    await seedEmail(firstSlug, 'Review plan', 'thread-11112222', '2026-08-24T10:00:00Z', firstQuote);
+    await seedEmail(
+      secondSlug,
+      'Re: Review plan',
+      'thread-33334444',
+      '2026-08-25T10:00:00Z',
+      secondQuote,
+    );
+
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_by_me',
+            text: 'Review the plan and send comments',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: firstQuote,
+            same_as_loop_id: null,
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    const first = await runLoopsExtract(engine, { slug: firstSlug, sourceId: SRC });
+    const firstId = first.loop_ids[0];
+    const beforeFacts = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_id = $1`,
+      [SRC],
+    );
+
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_by_me',
+            text: 'Send the promised comments on the plan',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: secondQuote,
+            same_as_loop_id: firstId,
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    lastChatReq = null;
+    const second = await runLoopsExtract(engine, { slug: secondSlug, sourceId: SRC });
+    expect(second.loop_ids).toEqual([firstId]);
+    const dedupPrompt = lastChatReq as ChatReq | null;
+    expect(dedupPrompt?.messages?.[0]?.content).toContain('<existing_open_loops>');
+    expect(dedupPrompt?.messages?.[0]?.content).toContain(`"id":${firstId}`);
+    expect(dedupPrompt?.system).toContain('exact same still-unresolved obligation');
+
+    // Historical catch-up runs newest-first. Older evidence may be processed
+    // later, but must not move the canonical row's thread/page backwards.
+    await seedEmail(
+      olderSlug,
+      'Fwd: Review plan',
+      'thread-12121212',
+      '2026-08-23T10:00:00Z',
+      olderQuote,
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_by_me',
+            text: 'Review the plan before sending comments',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: olderQuote,
+            same_as_loop_id: firstId,
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    const older = await runLoopsExtract(engine, { slug: olderSlug, sourceId: SRC });
+    expect(older.loop_ids).toEqual([firstId]);
+
+    const rows = await engine.executeRaw<{
+      id: number;
+      thread_id: string;
+      page_slug: string;
+      evidence: unknown;
+      fact_id: number;
+    }>(`SELECT id, thread_id, page_slug, evidence, fact_id FROM open_loops WHERE id = $1`, [firstId]);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].id)).toBe(firstId);
+    expect(rows[0].thread_id).toBe('thread-33334444');
+    expect(rows[0].page_slug).toBe(secondSlug);
+    const evidence =
+      typeof rows[0].evidence === 'string'
+        ? (JSON.parse(rows[0].evidence) as Array<{ page_slug: string }>)
+        : (rows[0].evidence as Array<{ page_slug: string }>);
+    expect(evidence.map((item) => item.page_slug)).toEqual([firstSlug, secondSlug, olderSlug]);
+
+    const afterFacts = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_id = $1`,
+      [SRC],
+    );
+    expect(Number(afterFacts[0].n)).toBe(Number(beforeFacts[0].n));
+  });
+
+  test('same sender and subject still produce two loops when the obligations are distinct', async () => {
+    const firstSlug = 'emails/2026/08/2026-08-26-budget-choice-55556666.md';
+    const secondSlug = 'emails/2026/08/2026-08-27-budget-choice-77778888.md';
+    await seedEmail(
+      firstSlug,
+      'Budget choice',
+      'thread-55556666',
+      '2026-08-26T10:00:00Z',
+      'Should we increase the monthly limit?',
+    );
+    await seedEmail(
+      secondSlug,
+      'Fwd: Budget choice',
+      'thread-77778888',
+      '2026-08-27T10:00:00Z',
+      'Should we change the annual contract term?',
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [],
+        decisions_pending: [
+          {
+            text: 'Decide whether to increase the monthly limit',
+            quote: 'Should we increase the monthly limit?',
+            same_as_loop_id: null,
+          },
+        ],
+      }),
+      stopReason: 'end',
+    });
+    const first = await runLoopsExtract(engine, { slug: firstSlug, sourceId: SRC });
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [],
+        decisions_pending: [
+          {
+            text: 'Decide whether to change the annual contract term',
+            quote: 'Should we change the annual contract term?',
+            same_as_loop_id: null,
+          },
+        ],
+      }),
+      stopReason: 'end',
+    });
+    const second = await runLoopsExtract(engine, { slug: secondSlug, sourceId: SRC });
+    expect(second.loop_ids[0]).not.toBe(first.loop_ids[0]);
+  });
+
+  test('an id outside the supplied candidates never merges rows', async () => {
+    const firstSlug = 'emails/2026/08/2026-08-28-capacity-alert-99990000.md';
+    const secondSlug = 'emails/2026/08/2026-08-29-capacity-alert-aaaacccc.md';
+    const quote = 'Should we raise the capacity limit?';
+    await seedEmail(
+      firstSlug,
+      'Capacity alert',
+      'thread-99990000',
+      '2026-08-28T10:00:00Z',
+      quote,
+    );
+    await seedEmail(
+      secondSlug,
+      'Re: Capacity alert',
+      'thread-aaaacccc',
+      '2026-08-29T10:00:00Z',
+      quote,
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [],
+        decisions_pending: [
+          { text: 'Decide whether to raise capacity', quote, same_as_loop_id: null },
+        ],
+      }),
+      stopReason: 'end',
+    });
+    const first = await runLoopsExtract(engine, { slug: firstSlug, sourceId: SRC });
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [],
+        decisions_pending: [
+          { text: 'Decide whether to raise capacity', quote, same_as_loop_id: 999_999 },
+        ],
+      }),
+      stopReason: 'end',
+    });
+    const second = await runLoopsExtract(engine, { slug: secondSlug, sourceId: SRC });
+    expect(second.loop_ids[0]).not.toBe(first.loop_ids[0]);
+  });
+});
+
+// ── Two commitments in one owner message ─────────────────────────────────────
+
+describe('multiple commitments from a single message', () => {
+  // Regression for the real-world shape this pipeline previously flattened:
+  // one reply from the account owner containing two INDEPENDENT promises.
+  // The dedup key folds the commitment text, so two different promises in the
+  // same thread must land as two distinct rows — collapsing them to one, or
+  // duplicating them on re-run, are both failures.
+  //
+  // Fully anonymised: no real correspondent, subject or wording.
+  const MULTI_SLUG = 'emails/2026/08/2026-08-14-two-promises-aaaabbbb.md';
+  const MULTI_THREAD = 'thread-aaaabbbb';
+  const PROMISE_A = 'Follow up after vacation on the introductions';
+  const PROMISE_B = 'Discuss the report with the team and come back with feedback';
+  const QUOTE_A = 'I will follow up after my vacation on those introductions.';
+  const QUOTE_B = 'I will discuss the report with my team and come back with feedback.';
+
+  async function seedThread(): Promise<void> {
+    await engine.putPage(
+      MULTI_SLUG,
+      {
+        type: 'email',
+        title: 'Follow up',
+        compiled_truth:
+          'From: peer@example.com\n\nGreat to meet.\n\n' +
+          `Me: ${QUOTE_A} ${QUOTE_B}\n`,
+        frontmatter: { thread_id: MULTI_THREAD, date: '2026-08-14T10:00:00Z' },
+        effective_date: new Date('2026-08-14T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+  }
+
+  const twoOwedByMe = (): string =>
+    JSON.stringify({
+      commitments: [
+        {
+          direction: 'owed_by_me',
+          text: PROMISE_A,
+          counterparty_name: '',
+          counterparty_email: 'peer@example.com',
+          due_iso: null,
+          quote: QUOTE_A,
+        },
+        {
+          direction: 'owed_by_me',
+          text: PROMISE_B,
+          counterparty_name: '',
+          counterparty_email: 'peer@example.com',
+          due_iso: null,
+          quote: QUOTE_B,
+        },
+      ],
+      decisions_pending: [],
+    });
+
+  async function loopsFor(slug: string): Promise<Array<{ id: number; loop_type: string; summary: string; status: string }>> {
+    return await engine.executeRaw(
+      `SELECT id, loop_type, summary, status FROM open_loops
+        WHERE source_id = $1 AND page_slug = $2 ORDER BY id`,
+      [SRC, slug],
+    );
+  }
+
+  test('one owner reply with two promises → exactly two commitment_owed_by_me', async () => {
+    await seedThread();
+    chatImpl = async () => ({ text: twoOwedByMe(), stopReason: 'end' });
+    const r = await runLoopsExtract(engine, { slug: MULTI_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    expect(r.commitments).toBe(2);
+
+    const rows = await loopsFor(MULTI_SLUG);
+    expect(rows).toHaveLength(2);
+    // Both are commitments owed BY the owner — never reply loops. The
+    // deterministic detector's types must not leak into this projection.
+    expect(rows.every((x) => x.loop_type === 'commitment_owed_by_me')).toBe(true);
+    expect(rows.some((x) => x.loop_type === 'unanswered_inbound')).toBe(false);
+    expect(rows.some((x) => x.loop_type === 'unanswered_outbound')).toBe(false);
+    // Two DISTINCT obligations, not one row and not the same text twice.
+    expect(new Set(rows.map((x) => x.summary)).size).toBe(2);
+    expect(rows.map((x) => x.summary).sort()).toEqual([PROMISE_A, PROMISE_B].sort());
+  });
+
+  test('re-running the same extraction creates no duplicates', async () => {
+    chatImpl = async () => ({ text: twoOwedByMe(), stopReason: 'end' });
+    await runLoopsExtract(engine, { slug: MULTI_SLUG, sourceId: SRC });
+    const rows = await loopsFor(MULTI_SLUG);
+    expect(rows).toHaveLength(2);
+  });
+
+  test('later evidence closes only the matching commitment', async () => {
+    const { closeOpenLoop } = await import('../src/core/loops/loops-store.ts');
+    const before = await loopsFor(MULTI_SLUG);
+    const target = before.find((x) => x.summary === PROMISE_A)!;
+    await closeOpenLoop(engine, SRC, target.id, 'done', 'test');
+
+    const after = await loopsFor(MULTI_SLUG);
+    const closed = after.filter((x) => x.status === 'done');
+    const open = after.filter((x) => x.status === 'open');
+    expect(closed).toHaveLength(1);
+    expect(closed[0].summary).toBe(PROMISE_A);
+    // The sibling promise is untouched — one obligation being met says
+    // nothing about the other.
+    expect(open).toHaveLength(1);
+    expect(open[0].summary).toBe(PROMISE_B);
+  });
+
+  test('a promise made BY the counterparty lands as commitment_owed_to_me', async () => {
+    const OTHER_SLUG = 'emails/2026/08/2026-08-15-their-promise-ccccdddd.md';
+    const THEIR_QUOTE = 'I will send over the signed copy next week.';
+    await engine.putPage(
+      OTHER_SLUG,
+      {
+        type: 'email',
+        title: 'Their promise',
+        compiled_truth: `From: peer@example.com\n\n${THEIR_QUOTE}\n`,
+        frontmatter: { thread_id: 'thread-ccccdddd', date: '2026-08-15T10:00:00Z' },
+        effective_date: new Date('2026-08-15T10:00:00Z'),
+      },
+      { sourceId: SRC },
+    );
+    chatImpl = async () => ({
+      text: JSON.stringify({
+        commitments: [
+          {
+            direction: 'owed_to_me',
+            text: 'Send the signed copy next week',
+            counterparty_name: '',
+            counterparty_email: 'peer@example.com',
+            due_iso: null,
+            quote: THEIR_QUOTE,
+          },
+        ],
+        decisions_pending: [],
+      }),
+      stopReason: 'end',
+    });
+    const r = await runLoopsExtract(engine, { slug: OTHER_SLUG, sourceId: SRC });
+    expect(r.status).toBe('extracted');
+    const rows = await loopsFor(OTHER_SLUG);
+    expect(rows).toHaveLength(1);
+    // The direction is the whole point: this is THEIR obligation, and it must
+    // not be filed as one of mine, nor as a reply loop.
+    expect(rows[0].loop_type).toBe('commitment_owed_to_me');
   });
 });
