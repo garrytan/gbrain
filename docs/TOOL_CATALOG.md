@@ -165,6 +165,7 @@ Every non-localOnly operation on the MCP surface: 122 tools across 23 areas. **S
 | `get_raw_data` | Retrieve raw data for a page | read |  |  |
 | `get_versions` | Page version history | read |  |  |
 | `list_pages` | List pages with optional filters. | read | yes |  |
+| `patch_page` | Safely patch an existing canonical page. | write |  |  |
 | `put_page` | Write or replace a page (markdown with frontmatter). | write | yes |  |
 | `put_raw_data` | Store raw API response data for a page | write |  |  |
 | `resolve_slugs` | Fuzzy-resolve a partial slug to matching page slugs | read | yes |  |

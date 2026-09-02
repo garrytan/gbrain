@@ -410,11 +410,12 @@ function toBatchInput(pageId: number, t: ParsedTake, supersededBy?: number | nul
 }
 
 async function withTakesLock<T>(
-  target: Pick<TakesWriteTarget, 'slug' | 'lockTimeoutMs'>,
+  target: Pick<TakesWriteTarget, 'slug' | 'sourceId' | 'lockTimeoutMs'>,
   fn: () => Promise<T>,
 ): Promise<T> {
   try {
     return await withPageLock(target.slug, fn, {
+      sourceId: target.sourceId ?? 'default',
       ...(target.lockTimeoutMs !== undefined ? { timeoutMs: target.lockTimeoutMs } : {}),
     });
   } catch (err) {

@@ -245,5 +245,5 @@ export async function forgetFactInFence(
     );
 
     return { ok: true, path: 'fence', reason };
-  }, { timeoutMs: 5_000 });
+  }, { timeoutMs: 5_000, sourceId: row.source_id });
 }
