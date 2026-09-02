@@ -576,6 +576,7 @@ describe('canonical-first v2 immutable receipts', () => {
     seed(slug);
     const projected = new Set<string>();
     let projectCalls = 0;
+    let admissibilityCalls = 0;
     const invoke = () => commitCanonicalMutationV2({
       engine,
       principalId: 'oauth:client-a',
@@ -586,6 +587,7 @@ describe('canonical-first v2 immutable receipts', () => {
       baseRevision: 'latest',
       journalRoot,
       lockRoot,
+      assertNewRequest: () => { admissibilityCalls += 1; },
       buildContent: (current) => applySparsePagePatch(current.content!, slug, { frontmatter_set: { last_contacted: '2026-09-02' } }),
       project: async (_content, revision) => {
         projectCalls += 1;
@@ -598,6 +600,9 @@ describe('canonical-first v2 immutable receipts', () => {
     expect(first.outcome).toBe('pending');
     const second = await invoke();
     expect(second.outcome).toBe('applied');
+    const third = await invoke();
+    expect(third.outcome).toBe('replayed');
     expect(projectCalls).toBe(2);
+    expect(admissibilityCalls).toBe(1);
   });
 });

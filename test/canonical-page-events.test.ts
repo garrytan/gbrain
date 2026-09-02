@@ -181,6 +181,21 @@ describe('canonical interaction event splice', () => {
     expect(next).toContain('last_interaction_channel: slack');
   });
 
+  test('serialized ISO timestamps participate in monotonic comparison', () => {
+    const timestamp = PAGE.replace("last_contacted: '2026-08-30'", "last_contacted: '2026-08-30T00:00:00.000Z'");
+    const next = applyCanonicalInteractionEvent(timestamp, 'people/example-person', event());
+    expect(next).toMatch(/last_contacted:\s+['"]?2026-09-02['"]?/);
+    expect(next).toContain('last_interaction_channel: email');
+  });
+
+  test('adds a line break before an older event when the final bullet has no newline', () => {
+    const endingAtBullet = PAGE.slice(0, PAGE.indexOf('\n\n## Notes'))
+      .replace(/\n$/, '');
+    const historical = event({ date: '2026-08-01', eventToken: TOKEN_B });
+    const next = applyCanonicalInteractionEvent(endingAtBullet, 'people/example-person', historical);
+    expect(next).toContain(`Existing interaction\n<!-- cosmic:event:v1 ${TOKEN_B} -->`);
+  });
+
   test('same-day event advances the latest interaction channel', () => {
     const next = applyCanonicalInteractionEvent(PAGE, 'people/example-person', event({ date: '2026-08-30' }));
     expect(next).toContain('last_interaction_channel: email');

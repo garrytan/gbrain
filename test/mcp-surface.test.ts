@@ -91,6 +91,8 @@ describe('STARTER_OPS (WP4)', () => {
     expect(STARTER_OPS.has('whoami')).toBe(true);
     // D4: request_tools is listed on starter (+full) …
     expect(STARTER_OPS.has('request_tools')).toBe(true);
+    expect(STARTER_OPS.has('append_page_event')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('append_page_event')).toBe(false);
   });
 
   it('D4: request_tools is NOT on the verbs surface', () => {

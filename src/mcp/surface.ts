@@ -95,6 +95,11 @@ export const STARTER_OPS: ReadonlySet<string> = new Set([
   // starter connect lanes retire the "unknown tool: capture" FAQ, which only
   // works if the starter surface actually lists it.
   'capture',
+  // Typed, idempotent interaction ingestion is a daily writer primitive for
+  // source adapters. Keep it outside BRAIN_TOOL_ALLOWLIST: starter clients
+  // can discover it when its own default-off gate is enabled, while minion
+  // subagents do not gain it implicitly.
+  'append_page_event',
 ]);
 
 /**

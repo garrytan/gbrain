@@ -27,6 +27,17 @@ function isRealIsoDate(value: string): boolean {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+function normalizedFrontmatterDate(value: unknown): string | null {
+  const raw = coerceFrontmatterString(value).trim();
+  if (!raw) return null;
+  if (isRealIsoDate(raw)) return raw;
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime()) && /^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
 export function validateCanonicalInteractionEvent(event: CanonicalInteractionEvent): void {
   if (typeof event.date !== 'string' || typeof event.channel !== 'string'
     || typeof event.note !== 'string' || typeof event.eventToken !== 'string') {
@@ -111,6 +122,7 @@ function interactionInsertionOffset(section: string, eventDate: string): number 
   let previousLine = '';
   let fence: { marker: '`' | '~'; length: number } | null = null;
   let sawBullet = false;
+  let lastBulletEnd = 0;
   for (const raw of lines) {
     if (!raw) continue;
     const line = raw.replace(/\r?\n$/, '');
@@ -125,6 +137,7 @@ function interactionInsertionOffset(section: string, eventDate: string): number 
         const bullet = line.match(/^ {0,3}-[ \t]+(\d{4}-\d{2}-\d{2})[ \t]+·/);
         if (bullet && isRealIsoDate(bullet[1])) {
           sawBullet = true;
+          lastBulletEnd = offset + raw.length;
           if (eventDate >= bullet[1]) {
             return /^<!--[ \t]+cosmic:event:v1[ \t]+sha256:[0-9a-f]{64}[ \t]+-->$/.test(previousLine)
               ? previousStart
@@ -138,8 +151,7 @@ function interactionInsertionOffset(section: string, eventDate: string): number 
     offset += raw.length;
   }
   if (!sawBullet) return 0;
-  const trailingBlank = section.match(/(?:[ \t]*\r?\n)*$/)?.[0] ?? '';
-  return section.length - trailingBlank.length;
+  return lastBulletEnd;
 }
 
 function spliceInteractionBlock(content: string, block: string, eventDate: string): string {
@@ -160,7 +172,7 @@ function spliceInteractionBlock(content: string, block: string, eventDate: strin
   const localOffset = interactionInsertionOffset(section, eventDate);
   const absoluteOffset = heading.headingEnd + localOffset;
   const rendered = block.replaceAll('\n', heading.newline);
-  const leading = localOffset === 0 ? heading.newline : '';
+  const leading = localOffset === 0 || content[absoluteOffset - 1] !== '\n' ? heading.newline : '';
   const inserted = `${leading}${rendered}${heading.newline}`;
   return content.slice(0, absoluteOffset) + inserted + content.slice(absoluteOffset);
 }
@@ -183,9 +195,10 @@ export function applyCanonicalInteractionEvent(
     );
   }
 
-  const existingDate = coerceFrontmatterString(parsed.frontmatter.last_contacted).trim();
-  const shouldAdvance = !existingDate
-    || (isRealIsoDate(existingDate) && event.date >= existingDate);
+  const existingDateRaw = coerceFrontmatterString(parsed.frontmatter.last_contacted).trim();
+  const existingDate = normalizedFrontmatterDate(parsed.frontmatter.last_contacted);
+  const shouldAdvance = !existingDateRaw
+    || (existingDate !== null && event.date >= existingDate);
   const withMetadata = shouldAdvance
     ? applySparsePagePatch(content, slug, {
         frontmatter_set: {

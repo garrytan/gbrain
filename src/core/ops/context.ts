@@ -299,7 +299,7 @@ export function normalizeSlugPrefix(prefix: string): string {
  * denied to bound clients until someone fences it and adds it here.
  */
 export const CLIENT_FENCED_WRITE_OPS: ReadonlySet<string> = new Set([
-  'put_page', 'delete_page', 'restore_page', 'add_tag', 'remove_tag',
+  'put_page', 'append_page_event', 'delete_page', 'restore_page', 'add_tag', 'remove_tag',
   'add_link', 'remove_link', 'add_timeline_entry', 'revert_version',
   'put_raw_data', 'think',
   // submit_agent enforces bound_slug_prefixes itself (it is the op the column

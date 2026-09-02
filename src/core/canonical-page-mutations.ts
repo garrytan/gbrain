@@ -299,6 +299,11 @@ function receiptIdentity(principalId: string, sourceId: string, idempotencyKey: 
     .digest('hex');
 }
 
+/** Stable public-form receipt identity; callers never supply this digest. */
+export function canonicalMutationReceiptId(principalId: string, sourceId: string, idempotencyKey: string): string {
+  return `sha256:${receiptIdentity(principalId, sourceId, idempotencyKey)}`;
+}
+
 function journalPathV2(root: string, principalId: string, sourceId: string, idempotencyKey: string): string {
   return join(root, `${receiptIdentity(principalId, sourceId, idempotencyKey)}.v2.json`);
 }
@@ -355,7 +360,7 @@ function validatedCommittedReceiptV2(
   const receipt = journal.receipt;
   const revisionPattern = /^sha256:[0-9a-f]{64}$/;
   const valid = receipt?.receipt_version === 2
-    && receipt.receipt_id === `sha256:${identity}`
+    && receipt.receipt_id === canonicalMutationReceiptId(journal.principal_id, journal.source_id, journal.idempotency_key)
     && receipt.principal_id === journal.principal_id
     && receipt.operation === journal.operation
     && receipt.source_id === journal.source_id
@@ -400,6 +405,8 @@ export async function commitCanonicalMutationV2(opts: {
   /** Exact CAS revision, null for create, or 'latest' for a lock-owned append to an existing page. */
   baseRevision: string | null | 'latest' | undefined;
   buildContent: (current: CanonicalPageSnapshot) => string;
+  /** New requests only: enforce operation-specific admissibility inside both receipt and page locks. */
+  assertNewRequest?: (current: CanonicalPageSnapshot) => Promise<void> | void;
   project: (content: string, intendedRevision: string) => Promise<void>;
   verifyProjection: (content: string, intendedRevision: string) => Promise<boolean>;
   journalRoot?: string;
@@ -499,6 +506,7 @@ export async function commitCanonicalMutationV2(opts: {
         };
       }
     } else {
+      await opts.assertNewRequest?.(current);
       if (opts.baseRevision === 'latest' && !current.exists) {
         throw new CanonicalMutationError('canonical_unavailable', `Existing canonical page ${sourceId}/${opts.slug} is required.`);
       }
@@ -559,7 +567,7 @@ export async function commitCanonicalMutationV2(opts: {
       const committedAt = new Date().toISOString();
       const receipt: CanonicalMutationReceiptV2 = {
         receipt_version: 2,
-        receipt_id: `sha256:${identity}`,
+        receipt_id: canonicalMutationReceiptId(principalId, sourceId, idempotencyKey),
         principal_id: principalId,
         operation: opts.operation,
         source_id: sourceId,

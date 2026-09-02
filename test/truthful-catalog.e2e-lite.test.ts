@@ -164,11 +164,12 @@ afterAll(async () => {
 // Harness helpers
 // ---------------------------------------------------------------------------
 
-/** Flip BOTH publish gates together on the DB plane (per-key independence is
+/** Flip every publish gate together on the DB plane (per-key independence is
  * pinned by test/publish-gates.test.ts; the matrix treats gates as one axis). */
 async function setGates(on: boolean): Promise<void> {
   await engine.setConfig('mcp.publish_skills', on ? 'true' : 'false');
   await engine.setConfig('mcp.publish_advisor', on ? 'true' : 'false');
+  await engine.setConfig('writer.append_page_event', on ? 'true' : 'false');
 }
 
 interface Cell {
@@ -371,7 +372,7 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
       label: 'legacy-full-gates-off', scopes: null, surface: 'full', gatesOn: false, bound: false,
     });
     expect(sortedArray(listed)).toEqual(sortedArray(expected));
-    for (const gated of ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor']) {
+    for (const gated of ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor', 'append_page_event']) {
       expect(listed.has(gated)).toBe(false);
     }
     for (const localOnly of ['file_list', 'file_upload', 'file_url', 'sync_brain']) {
@@ -416,7 +417,7 @@ describe('E5 truthful catalog — legacy bearer transport (real HTTP, PGLite)', 
   e5test('restart-free gate flip: ON lists + allows the gated ops; OFF hides them again (per-request read)', async () => {
     await setGates(true);
     const listedOn = await legacyToolsList();
-    for (const gated of ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor']) {
+    for (const gated of ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor', 'append_page_event']) {
       expect(listedOn.has(gated)).toBe(true);
     }
     // Listed means callable: the gate-on probe reaches the handler and is
@@ -575,7 +576,7 @@ describe('E5 truthful catalog — OAuth-path cells (serve-http seams over dispat
     expect(mismatches).toEqual([]);
   });
 
-  e5test('matrix: denial-class representative probes per cell (gated ×4, admin op, localOnly op, request_tools)', async () => {
+  e5test('matrix: denial-class representative probes per cell (all gated ops, admin op, localOnly op, request_tools)', async () => {
     const violations: string[] = [];
     const record = (cell: Cell, name: string, msg: string) =>
       violations.push(`${cell.label} / ${name}: ${msg}`);
