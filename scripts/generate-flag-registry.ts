@@ -42,6 +42,28 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   embed: ['--pace', '--pace-max-concurrency'],
   // sync shares the same pace surface via env/config plus CLI passthrough.
   sync: ['--pace', '--pace-max-concurrency'],
+  // eval-longmemeval.ts is imported from an `if (command === 'eval' &&
+  // args[0] === 'longmemeval')` compound-condition early-bypass block in
+  // src/cli.ts (bypasses connectEngine — the benchmark brings its own
+  // in-memory PGLite), NOT from inside handleCliOnly's `case 'eval':`
+  // block. The marker regex above only matches a SIMPLE `if (command ===
+  // 'X')` condition, so this compound condition creates no marker of its
+  // own and its text (and eval-brainbench.ts's identically-shaped block
+  // right above it) silently falls into whichever marker precedes it in
+  // source order — currently 'dream'. Confirmed against the real CLI
+  // (`bun src/cli.ts eval longmemeval <file> --resume-from ...` — a flag
+  // that predates PR #4770 entirely — was ALSO rejected before this fix,
+  // so this is a pre-existing gap, not something PR #4770 introduced).
+  // Fixing the shared regex to also match compound conditions is a much
+  // larger, separate change (it would also move eval-brainbench.ts's
+  // flags and any other compound-condition block elsewhere in cli.ts);
+  // out of scope here. This list is every flag eval-longmemeval.ts's own
+  // parseArgs/printHelp reference that isn't already reachable via 'eval'
+  // through some other eval-*.ts file.
+  eval: [
+    '--by-type', '--by-type-floor', '--expansion', '--keyword-only',
+    '--no-trajectory', '--resume-from', '--retrieval-only', '--search-config',
+  ],
 };
 
 /**
