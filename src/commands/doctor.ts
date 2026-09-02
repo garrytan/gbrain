@@ -35,6 +35,8 @@ import { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable
 export { buildMemorableRelayCheck } from './doctor/checks/integrations-memorable.ts';
 import { buildHomeDirInWorktreeCheck } from './doctor/checks/home-worktree.ts';
 export { buildHomeDirInWorktreeCheck, isValidGitMarker } from './doctor/checks/home-worktree.ts';
+import { buildMemoryWritebackCheck } from './doctor/checks/memory-writeback.ts';
+export { buildMemoryWritebackCheck } from './doctor/checks/memory-writeback.ts';
 import {
   skillConformanceCheck,
   skillsManifestIntegrityCheck,
@@ -849,6 +851,13 @@ export async function buildChecks(
   // ok row; the states it exists to catch are enabled-without-disclosure and
   // enabled-but-never-actually-relaying.
   checks.push(await buildMemorableRelayCheck());
+
+  // 2e-bis. Ambient-writeback health (WP6): resolved mode/TTL/visibility +
+  // brain audience, installed instruction blocks (receipt vs live probe vs
+  // drift), validity-lapsed count, and the 7d local counters. Off = one
+  // quiet ok row (opt-in convention).
+  progress.heartbeat('memory_writeback');
+  checks.push(await buildMemoryWritebackCheck(engine));
 
   // 2f. Chat-connector health (D3.2): re-auth-needed / stalled-sync / drift.
   // Credential-gated + auto_sync-gated — emits a plain "ok" (no nag) on brains

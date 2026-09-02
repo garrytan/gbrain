@@ -1407,6 +1407,12 @@ export async function initPGLite(opts: {
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
 
+      // Ambient-writeback consent ask (WP8): personal brains only, fires
+      // once ever (sentinel), [AGENT]-relayed on non-TTY, never auto-enables,
+      // never blocks init.
+      const { runWritebackNudge } = await import('../core/onboard/writeback-nudge.ts');
+      await runWritebackNudge(engine, { context: 'init' });
+
       // The single primary action, last-on-screen.
       printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true });
     }
@@ -1729,6 +1735,10 @@ export async function initPostgresCore(opts: {
       // Fail-open; 3s wallclock cap. Skipped silently in non-TTY contexts.
       const { runInitNudge } = await import('../core/onboard/init-nudge.ts');
       await runInitNudge(engine);
+
+      // Ambient-writeback consent ask (WP8) — same contract as the PGLite arm.
+      const { runWritebackNudge } = await import('../core/onboard/writeback-nudge.ts');
+      await runWritebackNudge(engine, { context: 'init' });
 
       // The single primary action, last-on-screen.
       printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0 });

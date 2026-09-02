@@ -25,8 +25,9 @@ const DEFAULT_TOP_K = 10;
  * Hard bound on cache entries. The key folds caller-controlled
  * `_meta.session_id`, so without a bound a remote caller could grow the map
  * without limit by minting fresh session ids per call. On overflow the entry
- * with the OLDEST expiry is evicted (it dies soonest anyway; with a uniform
- * TTL this is insertion order).
+ * with the OLDEST expiry is evicted (it dies soonest anyway; expiries are
+ * near-uniform, clamped shorter only when a row's valid_until lands inside
+ * the window).
  */
 export const HOT_MEMORY_CACHE_MAX_ENTRIES = 1000;
 
@@ -160,7 +161,17 @@ export async function getBrainHotMemoryMeta(
       })),
     },
   };
-  cacheSet(cacheKey, { expiresAt: Date.now() + ttl, payload });
+  // Read-time TTL honesty (adversarial review, this wave): a row whose
+  // valid_until lands INSIDE the cache window would otherwise keep riding
+  // the ambient channel for up to `ttl` past its expiry even though the
+  // underlying reads now filter it — clamp this entry's cache deadline to
+  // the earliest retained valid_until so the next call re-reads on time.
+  let expiresAt = Date.now() + ttl;
+  for (const r of rows) {
+    const vu = r.valid_until?.getTime();
+    if (vu !== undefined && Number.isFinite(vu) && vu < expiresAt) expiresAt = vu;
+  }
+  cacheSet(cacheKey, { expiresAt, payload });
   return payload;
 }
 

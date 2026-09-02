@@ -44,7 +44,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import { VERSION } from '../../version.ts';
-import { loadConfig, toEngineConfig } from '../config.ts';
+import { loadConfig, loadConfigFileOnly, toEngineConfig, type GBrainConfig } from '../config.ts';
+import { resolveWritebackConfigFromFile } from '../facts/writeback-config.ts';
+import {
+  AMBIENT_WRITEBACK_BLOCK_BEGIN,
+  ambientBlockPresent,
+  installAmbientWritebackBlockAt,
+  probeAmbientBlock,
+  renderAmbientInstructionBlock,
+  stripAmbientWritebackBlockAt,
+} from './instructions-block.ts';
 import { createEngine } from '../engine-factory.ts';
 import { probeBrainIdentity, type ConnectProbeResult } from '../connect-probe.ts';
 import {
@@ -90,8 +99,11 @@ import {
   CODEX_TOML_BLOCK_BEGIN,
   CODEX_TOML_BLOCK_END,
   GBRAIN_HARNESS_MARKER_VALUE,
+  claudeUserMemoryPath,
   claudeUserSettingsPath,
+  codexAgentsOverridePath,
   codexConfigPath,
+  codexGlobalAgentsPath,
   mcpPermissionEntry,
   opencodeConfigDir,
   opencodeGlobalConfigPath,
@@ -253,6 +265,18 @@ export interface HarnessDeps {
   codexConfig?: string;
   /** Resolved opencode config path (tests point at a temp XDG_CONFIG_HOME). */
   opencodeConfig?: string;
+  /** Resolved Claude user memory file (~/.claude/CLAUDE.md) — the
+   * ambient-writeback block target. Defaults to the sibling of an injected
+   * userSettingsPath so a sandboxed test can never touch the real file. */
+  claudeMemoryPath?: string;
+  /** Resolved codex user-global AGENTS.md (same sandboxing rule, keyed off
+   * an injected codexConfig). */
+  codexAgentsPath?: string;
+  /** Resolved codex AGENTS.override.md — the [OV-A4] exclusivity probe. */
+  codexAgentsOverride?: string;
+  /** Engine-free file-plane config loader (ambient-writeback gate); tests
+   * inject a fake. */
+  loadFileConfig?: () => GBrainConfig | null;
   /** Engine-backed mint; tests inject a fake. */
   mint?: (opts: {
     name: string;
@@ -281,6 +305,21 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
     userSettingsPath: deps.userSettingsPath ?? claudeUserSettingsPath(),
     codexConfig: deps.codexConfig ?? codexConfigPath(),
     opencodeConfig: deps.opencodeConfig ?? opencodeGlobalConfigPath(),
+    // Instruction-file targets derive from an INJECTED settings/config path's
+    // directory when one is given: in production the derivation equals the
+    // host-specs defaults (CLAUDE.md and AGENTS.md live beside settings.json
+    // and config.toml), and in tests it keeps every write inside the temp
+    // sandbox even when the test predates these fields.
+    claudeMemoryPath:
+      deps.claudeMemoryPath ??
+      (deps.userSettingsPath ? join(dirname(deps.userSettingsPath), 'CLAUDE.md') : claudeUserMemoryPath()),
+    codexAgentsPath:
+      deps.codexAgentsPath ??
+      (deps.codexConfig ? join(dirname(deps.codexConfig), 'AGENTS.md') : codexGlobalAgentsPath()),
+    codexAgentsOverride:
+      deps.codexAgentsOverride ??
+      (deps.codexConfig ? join(dirname(deps.codexConfig), 'AGENTS.override.md') : codexAgentsOverridePath()),
+    loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
     mint: deps.mint ?? defaultMint,
     revokeById: deps.revokeById ?? defaultRevokeById,
     pgliteLiveServe: deps.pgliteLiveServe ?? defaultPgliteLiveServe,
@@ -409,6 +448,10 @@ export function buildConsentBlock(p: {
   userSettingsPath: string;
   codexConfig: string;
   opencodeConfig: string;
+  /** Instruction files receiving the ambient-writeback managed block (only
+   * when memory.auto_writeback is enabled) — consent names every file the
+   * apply will write [X7 parity]. */
+  instructionsPaths?: string[];
 }): string {
   const lines: string[] = [
     'gbrain bootstrap harness — wire framework-spawned coding sessions to this brain',
@@ -453,6 +496,13 @@ export function buildConsentBlock(p: {
       `  ${n++}. opencode (user-global): write the mcp.${p.name} remote entry with the bearer token INLINE into ` +
         `${p.opencodeConfig} (0600) — framework-spawned opencode inherits no shell env, so the {env:…} ` +
         `interpolation would resolve empty.`,
+    );
+  }
+  if (p.instructionsPaths && p.instructionsPaths.length > 0) {
+    lines.push(
+      `  ${n++}. Ambient memory writeback is ENABLED (memory.auto_writeback): install the managed ` +
+        `instruction block (marker-delimited, credential-free) into ${p.instructionsPaths.join(' and ')} ` +
+        `so every session saves durable user facts to this brain.`,
     );
   }
   // [X7] The reach statement matches what is ACTUALLY being wired — it must
@@ -520,12 +570,30 @@ async function cleanupStalePriorTargets(
       if (nt.host !== pt.host || nt.kind !== pt.kind) return false;
       if (pt.kind === 'hooks') return nt.path === pt.path && nt.marker === pt.marker;
       if (pt.kind === 'permission') return nt.path === pt.path && nt.entry === pt.entry;
+      if (pt.kind === 'instructions') return nt.path === pt.path;
       return (nt.name ?? 'gbrain') === (pt.name ?? 'gbrain');
     });
   for (const pt of prior.targets) {
     if (matches(pt)) continue;
     try {
-      if (pt.host === 'claude-code' && pt.kind === 'hooks') {
+      if (pt.kind === 'instructions') {
+        // Ambient-writeback block no longer planned (host dropped or
+        // writeback turned off) — strip it. Same [X11] nested-lock
+        // discipline as the codex branch below (the caller holds the
+        // claude/config dir lock).
+        if (pt.path && existsSync(pt.path)) {
+          const blockDir = dirname(pt.path);
+          const heldDir = resolve(dirname(d.userSettingsPath));
+          const lk = resolve(blockDir) === heldDir ? null : await acquireBootstrapLock(blockDir);
+          let r: { removed: boolean };
+          try {
+            r = stripAmbientWritebackBlockAt(pt.path);
+          } finally {
+            lk?.release();
+          }
+          if (r.removed) d.log(`stale ambient-writeback block removed from ${pt.path} (no longer planned).`);
+        }
+      } else if (pt.host === 'claude-code' && pt.kind === 'hooks') {
         const r = removeClaudeHooksAt(pt.path ?? d.userSettingsPath, pt.marker ?? GBRAIN_HARNESS_MARKER_VALUE);
         if (r.notes.some((n) => n.startsWith('WARNING'))) throw new Error(r.notes.join('; '));
         if (r.removed > 0) d.log(`stale harness hooks unwired from ${r.settingsPath} (no longer planned).`);
@@ -680,6 +748,35 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     return 1;
   }
 
+  // 2b. Ambient-writeback gate (WP3): resolved from the FILE plane only —
+  // this lane is engine-free by design (the DB plane stays authoritative for
+  // extraction; doctor's drift check catches plane divergence). Default OFF.
+  // REGISTRAR MODE never installs instruction blocks (adversarial review,
+  // this wave): the local file mirror speaks for the LOCAL brain, but the
+  // block would order agents to save into the REMOTE brain — whose operator
+  // may never have opted in. That brain's own serve advertises the ambient
+  // section over MCP `instructions` when ITS config enables it.
+  const wb = resolveWritebackConfigFromFile(d.loadFileConfig());
+  const wbInstall = wb.enabled && !registrarMode;
+  if (wb.enabled && registrarMode) {
+    d.log(
+      'registrar mode: ambient-writeback instruction blocks are NOT installed for a remote brain — ' +
+        'its own MCP instructions carry the contract when the remote operator enables memory.auto_writeback.',
+    );
+  }
+  const ambientBody =
+    !wbInstall
+      ? null
+      : renderAmbientInstructionBlock({
+          mode: wb.mode as 'salient' | 'all',
+          transientTtl: wb.transient_ttl,
+          visibility: wb.visibility_posture,
+          serveUrl: url,
+        });
+  const instructionsPaths = wbInstall
+    ? [...(wireClaude ? [d.claudeMemoryPath] : []), ...(wireCodex ? [d.codexAgentsPath] : [])]
+    : [];
+
   // 3. Consent (connect --install shape; never the interview/A8 ledger).
   const wireHooks = wireClaude && !flags.noHooks && !registrarMode;
   const hookScope = flags.projects.length > 0 ? `${flags.projects.length} project dir(s)` : 'user scope';
@@ -698,6 +795,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     userSettingsPath: d.userSettingsPath,
     codexConfig: d.codexConfig,
     opencodeConfig: d.opencodeConfig,
+    ...(instructionsPaths.length > 0 ? { instructionsPaths } : {}),
   });
   d.log(consent);
   if (!flags.yes) {
@@ -802,6 +900,16 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         });
       }
     }
+    if (wbInstall) {
+      targets.push({
+        host: 'claude-code',
+        kind: 'instructions',
+        state: 'pending',
+        scope: 'user',
+        path: d.claudeMemoryPath,
+        mechanism: 'managed-block',
+      });
+    }
   }
   if (wireCodex) {
     targets.push({
@@ -813,6 +921,16 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       name: flags.name,
       mechanism: 'toml-block',
     });
+    if (wbInstall) {
+      targets.push({
+        host: 'codex',
+        kind: 'instructions',
+        state: 'pending',
+        scope: 'user',
+        path: d.codexAgentsPath,
+        mechanism: 'managed-block',
+      });
+    }
   }
   if (wireOpencode) {
     targets.push({
@@ -1003,6 +1121,30 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
           confirm(t);
           d.log(`headless pre-approval: '${t.entry}' in permissions.allow (${t.path})`);
         }
+      } else if (t.kind === 'instructions') {
+        // Under the cfgLock already held for this loop — CLAUDE.md lives in
+        // the same config dir the lock serializes. The null-guard replaces a
+        // pair of `!` assertions whose invariant (targets planned ⟺ body
+        // rendered) lived 350 lines away: if a future edit decouples them,
+        // this fails the TARGET, not the whole install loop.
+        if (!t.path || ambientBody === null) {
+          failTarget(t, 'internal: instructions target planned without a rendered block body');
+          continue;
+        }
+        // Same precedent as the permission pre-approval above: the block
+        // orders agents to save through THIS host's gbrain registration —
+        // if that registration didn't land (foreign-url refusal, write
+        // failure), installing the block would direct ambient saves at
+        // whatever server already owns the name, a consent the operator
+        // never gave (codex re-review, this wave).
+        const hostMcp = targets.find((x) => x.host === t.host && x.kind === 'mcp');
+        if (hostMcp && hostMcp.state !== 'confirmed') {
+          failTarget(t, `skipped: the ${t.host} MCP registration itself did not land — an instruction block without it would direct saves at a foreign server`);
+          continue;
+        }
+        installAmbientWritebackBlockAt(t.path, ambientBody);
+        confirm(t);
+        d.log(`ambient-writeback instruction block installed in ${t.path} (mode: ${wb.mode}).`);
       } else {
         const settingsPath = t.scope === 'user' ? d.userSettingsPath : t.path!;
         const env: ClaudeHookEnv = {
@@ -1047,6 +1189,50 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // gbrain writers with different GBRAIN_HOMEs serialize on ITS directory.
   for (const t of targets) {
     if (t.host !== 'codex') continue;
+    if (t.kind === 'instructions') {
+      try {
+        // [OV-A4] Exclusivity pre-check: when AGENTS.override.md exists,
+        // codex loads IT and IGNORES AGENTS.md — a block written there is a
+        // dead integration and must never be reported as installed.
+        if (existsSync(d.codexAgentsOverride)) {
+          failTarget(
+            t,
+            `codex ignores ${t.path} while ${d.codexAgentsOverride} exists (AGENTS.override.md loads ` +
+              `exclusively, per developers.openai.com/codex/guides/agents-md) — fold the ambient-writeback ` +
+              `block into that file yourself, or remove it and re-run \`gbrain bootstrap harness\`.`,
+          );
+        } else if (!t.path || ambientBody === null) {
+          // Same decoupling guard as the claude lane: fail the TARGET.
+          failTarget(t, 'internal: instructions target planned without a rendered block body');
+        } else if ((() => {
+          // Same registration guard as the claude lane (codex re-review):
+          // the codex MCP target is applied EARLIER in this loop (planned
+          // first), so its state is final here — a foreign-toml refusal or
+          // failed write must not leave a block directing ambient saves at
+          // a server this run never registered.
+          const codexMcp = targets.find((x) => x.host === 'codex' && x.kind === 'mcp');
+          return codexMcp !== undefined && codexMcp.state !== 'confirmed';
+        })()) {
+          failTarget(t, 'skipped: the codex MCP registration itself did not land — an instruction block without it would direct saves at a foreign server');
+        } else {
+          // Same [X11] lock discipline as the managed TOML block: AGENTS.md
+          // is a user-global shared file.
+          const agentsDir = dirname(t.path);
+          mkdirSync(agentsDir, { recursive: true });
+          const agentsLock = await acquireBootstrapLock(agentsDir);
+          try {
+            installAmbientWritebackBlockAt(t.path, ambientBody);
+          } finally {
+            agentsLock.release();
+          }
+          confirm(t);
+          d.log(`ambient-writeback instruction block installed in ${t.path} (mode: ${wb.mode}).`);
+        }
+      } catch (e) {
+        failTarget(t, e instanceof Error ? e.message : String(e));
+      }
+      continue;
+    }
     try {
       // Plugin-lane collision WARN (not a refusal — the harness lane serves
       // framework-spawned sessions over HTTP and may legitimately coexist
@@ -1308,6 +1494,22 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         d.logError(`could not remove the pre-approval after rollback: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // Ambient instruction blocks installed THIS run must not outlive their
+    // rolled-back registrations either (codex re-review): a confirmed block
+    // would keep ordering every new session to save through an endpoint that
+    // failed verification — or through a foreign registration a forced
+    // replacement just restored. Strip removes only OUR marker block; the
+    // file itself always stays.
+    for (const it of targets) {
+      if (it.kind !== 'instructions' || it.state !== 'confirmed' || !it.path) continue;
+      try {
+        stripAmbientWritebackBlockAt(it.path);
+        failTarget(it, 'instruction block removed after the failed smoke (its registration was rolled back)');
+      } catch (e) {
+        d.logError(`could not remove the ambient-writeback block from ${it.path} after the failed smoke: ${e instanceof Error ? e.message : String(e)}`);
+        failTarget(it, 'smoke failed and the instruction block could not be removed — run `gbrain bootstrap harness --remove` to converge');
+      }
+    }
     // The fresh mint was sent to an endpoint that failed verification — a
     // possible impostor now holds a live credential. Retire it immediately
     // (we minted it, so the engine is reachable); the receipt keeps the id,
@@ -1350,6 +1552,65 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       await cleanupStalePriorTargets(prior, receipt, d, save);
     } finally {
       cleanupLock.release();
+    }
+  }
+
+  // 9b. Converge-on-off [OV-A2/OV2-2]: writeback disabled means a
+  // previously-installed ambient block is a stale contract — strip it from
+  // the receipt-recorded paths AND the candidate paths (an out-of-band or
+  // crashed-receipt install still converges). The FILE always stays in
+  // place, even when left empty of our content. Removing a stale
+  // instruction block never disconnects anything, so this is not gated on
+  // the smoke (unlike step 9's wiring cleanup).
+  if (!wb.enabled) {
+    const candidatePaths = new Set<string>([d.claudeMemoryPath, d.codexAgentsPath]);
+    for (const pt of prior?.targets ?? []) {
+      if (pt.kind === 'instructions' && pt.path) candidatePaths.add(pt.path);
+    }
+    for (const path of candidatePaths) {
+      try {
+        if (!existsSync(path) || !ambientBlockPresent(readFileSync(path, 'utf8'))) continue;
+        const blockDir = dirname(path);
+        const blockLock = await acquireBootstrapLock(blockDir);
+        let r: { removed: boolean };
+        try {
+          r = stripAmbientWritebackBlockAt(path);
+        } finally {
+          blockLock.release();
+        }
+        if (r.removed) {
+          d.log(`ambient-writeback instruction block removed from ${path} (memory.auto_writeback is off — converged).`);
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        d.logError(
+          `could not remove the ambient-writeback block from ${path}: ${msg}`,
+        );
+        // Track the orphan (adversarial review, this wave): a damaged block
+        // that failed to strip would otherwise vanish from the rewritten
+        // receipt while STILL instructing every new session — record a
+        // failed `instructions` target so --status shows it, --remove and
+        // the next converge retry it, and doctor's off-branch probe warns.
+        receipt.targets.push({
+          host: path === d.codexAgentsPath ? 'codex' : 'claude-code',
+          kind: 'instructions',
+          state: 'failed',
+          scope: 'user',
+          path,
+          mechanism: 'managed-block',
+          error: `converge-off: ${msg}`,
+        });
+        save();
+      }
+    }
+    // WP8 audience gate (engine-free lane, so the DECLARED file-plane
+    // audience is the signal — `config set brain.audience` dual-writes it):
+    // a shared-declared brain never gets the enable nudge; undeclared reads
+    // as the single-operator harness default (the consent ask itself only
+    // ever fires on engine-classified personal brains).
+    const declaredAudience = (d.loadFileConfig()?.brain?.audience ?? '').trim().toLowerCase();
+    if (declaredAudience !== 'shared') {
+      d.log('ambient writeback off — enable with `gbrain config set memory.auto_writeback salient` and re-run.');
     }
   }
 
@@ -1455,7 +1716,28 @@ export async function removeHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
   try {
   for (const t of receipt.targets) {
     try {
-      if (t.host === 'claude-code' && t.kind === 'mcp') {
+      if (t.kind === 'instructions') {
+        // Ambient-writeback managed block: strip it wherever the receipt
+        // recorded it (any host). Damaged markers throw → the target stays
+        // failed on the receipt for a hand-fix + retry.
+        if (!t.path || !existsSync(t.path)) {
+          d.log(`no ambient-writeback block file at ${t.path ?? '(no path recorded)'} — counted as removed.`);
+        } else {
+          const blockDir = dirname(t.path);
+          const blockLock = resolve(blockDir) === resolve(rmCfgDir) ? null : await acquireBootstrapLock(blockDir);
+          let r: { removed: boolean };
+          try {
+            r = stripAmbientWritebackBlockAt(t.path);
+          } finally {
+            blockLock?.release();
+          }
+          d.log(
+            r.removed
+              ? `ambient-writeback instruction block removed from ${t.path}.`
+              : `no ambient-writeback block in ${t.path} — counted as removed.`,
+          );
+        }
+      } else if (t.host === 'claude-code' && t.kind === 'mcp') {
         // [C8] Only remove what points at OUR url.
         const get = await d.runner(['claude', 'mcp', 'get', t.name ?? 'gbrain']);
         if (get.code !== 0 || !parseClaudeMcpGetUrl(`${get.stdout}\n${get.stderr}`).found) {
@@ -1774,6 +2056,32 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
 
   const degraded = (health.engine ?? receipt.engine) === 'postgres';
 
+  // Ambient-writeback block probes (kind === 'instructions'): live sentinel
+  // presence, plus the [OV-A4] codex exclusivity file — an install shadowed
+  // by AGENTS.override.md must never read as healthy.
+  const instructionsProbes = receipt.targets
+    .filter((t) => t.kind === 'instructions')
+    .map((t) => {
+      let probe: 'installed' | 'missing' | 'override-blocked' | 'unreadable' = 'missing';
+      try {
+        if (t.host === 'codex' && existsSync(d.codexAgentsOverride)) {
+          probe = 'override-blocked';
+        } else if (
+          t.path &&
+          existsSync(t.path) &&
+          // The ONE probe vocabulary (instructions-block.ts) so status,
+          // converge, and doctor classify a damaged-marker file identically.
+          probeAmbientBlock(readFileSync(t.path, 'utf8')).state === 'present'
+        ) {
+          probe = 'installed';
+        }
+      } catch {
+        probe = 'unreadable';
+      }
+      return { host: t.host, path: t.path ?? null, probe };
+    });
+  const instructionsOk = instructionsProbes.every((p) => p.probe === 'installed');
+
   if (flags.json) {
     d.log(
       JSON.stringify(
@@ -1789,6 +2097,7 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
           token_verified: tokenVerified,
           degraded_per_turn: degraded,
           targets: receipt.targets,
+          ...(instructionsProbes.length > 0 ? { instructions_blocks: instructionsProbes } : {}),
           pending_previous_tokens: receipt.token.previous_ids ?? [],
           receipt_path: harnessReceiptPath(d.gbrainHome),
         },
@@ -1801,6 +2110,14 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
     d.log(tokenLine);
     for (const t of receipt.targets) {
       d.log(`  ${t.host}/${t.kind} (${t.scope}): ${t.state}${t.error ? ` — ${t.error}` : ''}`);
+    }
+    for (const p of instructionsProbes) {
+      d.log(
+        `  ambient-writeback block (${p.host}): ${p.probe}${p.path ? ` — ${p.path}` : ''}` +
+          (p.probe === 'override-blocked'
+            ? ` (codex ignores AGENTS.md while ${d.codexAgentsOverride} exists — fold the block in there or remove the override and re-run)`
+            : ''),
+      );
     }
     if (receipt.token.previous_ids?.length) {
       d.log(`  pending: ${receipt.token.previous_ids.length} previous token(s) await revocation (re-run to converge): ${receipt.token.previous_ids.join(', ')}`);
@@ -1827,7 +2144,9 @@ export async function statusHarness(flags: HarnessFlags, rawDeps: HarnessDeps): 
         'stop the serve and re-run `gbrain bootstrap harness --remove`, or revoke it with `gbrain auth revoke` and the id flag.',
     );
   }
-  return health.ok && tokenVerified !== false && allTargetsConfirmed && rotationConverged && !removalPending ? 0 : 1;
+  return health.ok && tokenVerified !== false && allTargetsConfirmed && rotationConverged && !removalPending && instructionsOk
+    ? 0
+    : 1;
 }
 
 // ── Home preflight ──────────────────────────────────────────────────────────

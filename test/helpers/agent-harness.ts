@@ -256,7 +256,11 @@ export function hasClaudeAuth(): boolean {
 /** Codex is usable if the operator has a real ~/.codex/auth.json. */
 export function hasCodexAuth(): boolean {
   try {
-    return fs.existsSync(path.join(os.homedir(), '.codex', 'auth.json'));
+    // Either auth shape works for a spawned `codex exec`: the operator's
+    // auth.json (copied into the hermetic CODEX_HOME) or an ambient
+    // CODEX_API_KEY (hermeticChildEnv's extraAllow passes CODEX_* through).
+    return fs.existsSync(path.join(os.homedir(), '.codex', 'auth.json'))
+      || !!process.env.CODEX_API_KEY;
   } catch {
     return false;
   }

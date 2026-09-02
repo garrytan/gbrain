@@ -2503,7 +2503,7 @@ export async function registerBuiltinHandlers(
     const page = await engine.getPage(slug, { sourceId });
     if (!page) return { skipped: 'page_missing', slug, sourceId };
     const { runFactsBackstop } = await import('../core/facts/backstop.ts');
-    const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import'] as const;
+    const KNOWN_SOURCES = ['sync:import', 'mcp:put_page', 'mcp:extract_facts', 'file_upload', 'code_import', 'hook:writeback'] as const;
     const source = (KNOWN_SOURCES as readonly string[]).includes(job.data.source as string)
       ? (job.data.source as typeof KNOWN_SOURCES[number])
       : 'mcp:put_page';

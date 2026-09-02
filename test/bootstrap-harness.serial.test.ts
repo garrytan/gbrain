@@ -42,16 +42,19 @@ import {
   type HarnessDeps,
   type HarnessFlags,
 } from '../src/core/bootstrap/harness.ts';
-import { readHarnessReceiptState, harnessReceiptPath } from '../src/core/bootstrap/format.ts';
+import { readHarnessReceiptState, harnessReceiptPath, type HarnessTarget } from '../src/core/bootstrap/format.ts';
 import {
   CLAUDE_HOOK_EVENTS,
   CODEX_TOML_BLOCK_BEGIN,
   CODEX_TOML_BLOCK_END,
   GBRAIN_HARNESS_MARKER_VALUE,
 } from '../src/core/bootstrap/host-specs.ts';
+import { AMBIENT_WRITEBACK_BLOCK_BEGIN } from '../src/core/bootstrap/instructions-block.ts';
 import type { ExecRunner } from '../src/core/bootstrap/repo.ts';
 import type { ConnectProbeResult } from '../src/core/connect-probe.ts';
+import type { GBrainConfig } from '../src/core/config.ts';
 import { VERSION } from '../src/version.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const TOKEN_A = `gbrain_${'a'.repeat(64)}`;
 const TOKEN_B = `gbrain_${'b'.repeat(64)}`;
@@ -1069,5 +1072,186 @@ describe('opencode harness target (managed JSONC entry)', () => {
     expect(g.out.join('\n')).toMatch(/does not match this receipt's url .* skipping/);
     const kept = JSON.parse(readFileSync(g.opencodeConfig, 'utf8')) as { mcp: Record<string, unknown> };
     expect(kept.mcp.gbrain).toBeDefined(); // never delete what is not provably ours
+  });
+});
+
+describe('ambient-writeback instruction blocks (kind: instructions, WP3)', () => {
+  // Engine-free file-plane fake: memory.auto_writeback=salient enables the lane.
+  const WB_ON = (): GBrainConfig => ({ engine: 'pglite', memory: { auto_writeback: 'salient' } });
+  // resolveDeps derives the instruction-file paths from the INJECTED settings/
+  // config paths' directory (production: the host-specs defaults), so both
+  // land inside the fake's temp dir.
+  const memoryPath = (f: Fake) => join(dirname(f.userSettings), 'CLAUDE.md');
+  const agentsPath = (f: Fake) => join(dirname(f.codexConfig), 'AGENTS.md');
+  const overridePath = (f: Fake) => join(dirname(f.codexConfig), 'AGENTS.override.md');
+  const instrTargets = (home: string): HarnessTarget[] => {
+    const state = readHarnessReceiptState(home);
+    return state.state === 'ok' ? state.receipt.targets.filter((t) => t.kind === 'instructions') : [];
+  };
+
+  test('enabled config plans + confirms BOTH instructions targets; blocks carry sentinel + mode + serve url; consent names the files', async () => {
+    const f = makeFake();
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    expect(await applyHarness(flags(), deps)).toBe(0);
+    for (const path of [memoryPath(f), agentsPath(f)]) {
+      const text = readFileSync(path, 'utf8');
+      expect(text).toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+      expect(text).toContain('mode: salient');
+      expect(text).toContain(`serve: ${URL}`); // [OV-A3] the header names the endpoint
+    }
+    const targets = instrTargets(f.home);
+    expect(targets.map((t) => [t.host, t.state, t.mechanism]).sort()).toEqual([
+      ['claude-code', 'confirmed', 'managed-block'],
+      ['codex', 'confirmed', 'managed-block'],
+    ]);
+    // Consent names the writes before they happen [X7 parity].
+    expect(f.out.join('\n')).toMatch(/Ambient memory writeback is ENABLED/);
+    expect(f.out.join('\n')).toContain(memoryPath(f));
+    expect(f.out.join('\n')).toContain(agentsPath(f));
+  });
+
+  test('a failed MCP registration blocks THAT host\'s instruction install; the other host proceeds (codex re-review)', async () => {
+    const f = makeFake({ mcpAddCode: 1 }); // claude `mcp add` fails; codex toml write succeeds
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    const code = await applyHarness(flags(), deps);
+    expect(code).toBe(1);
+    // No block may direct ambient saves through a registration that never
+    // landed — the claude lane skips; codex (whose registration landed)
+    // still converges normally.
+    expect(existsSync(memoryPath(f))).toBe(false);
+    const targets = instrTargets(f.home);
+    const claude = targets.find((t) => t.host === 'claude-code');
+    expect(claude?.state).toBe('failed');
+    expect(String(claude?.error)).toContain('did not land');
+  });
+
+  test('a failed smoke rolls the instruction blocks back too — no block outlives its unverified registration (codex re-review)', async () => {
+    const f = makeFake({ probeOk: false }); // apply succeeds, final smoke fails (auth)
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    const code = await applyHarness(flags(), deps);
+    expect(code).toBe(1);
+    for (const path of [memoryPath(f), agentsPath(f)]) {
+      if (!existsSync(path)) continue; // stripped block may leave an empty-of-ours file
+      expect(readFileSync(path, 'utf8')).not.toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+    }
+    for (const t of instrTargets(f.home)) {
+      expect(t.state).toBe('failed');
+      expect(String(t.error)).toContain('failed smoke');
+    }
+  });
+
+  test('registrar mode (non-loopback --url): NO instruction blocks even with local writeback on — the remote brain never opted in (adversarial review)', async () => {
+    const f = makeFake();
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    const code = await applyHarness(
+      flags(['--url', 'http://192.168.1.50:3131/mcp', '--token', TOKEN_A, '--harness', 'codex']),
+      deps,
+    );
+    expect(code).toBe(0);
+    // The MCP registration lands; the block does NOT (the local file mirror
+    // speaks for the LOCAL brain — a block here would order agents to save
+    // into the remote brain without its brain-scoped opt-in).
+    expect(readFileSync(f.codexConfig, 'utf8')).toContain('http://192.168.1.50:3131/mcp');
+    expect(existsSync(agentsPath(f))).toBe(false);
+    expect(instrTargets(f.home)).toEqual([]);
+    expect(f.out.join('\n')).toContain('registrar mode: ambient-writeback instruction blocks are NOT installed');
+  });
+
+  test('re-apply is idempotent: both instruction files byte-identical', async () => {
+    const f = makeFake();
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    expect(await applyHarness(flags(), deps)).toBe(0);
+    const claudeOnce = readFileSync(memoryPath(f), 'utf8');
+    const agentsOnce = readFileSync(agentsPath(f), 'utf8');
+    expect(await applyHarness(flags(), deps)).toBe(0);
+    expect(readFileSync(memoryPath(f), 'utf8')).toBe(claudeOnce);
+    expect(readFileSync(agentsPath(f), 'utf8')).toBe(agentsOnce);
+  });
+
+  test('[OV-A4] AGENTS.override.md present → codex target FAILS with the actionable error; claude target still succeeds', async () => {
+    const f = makeFake();
+    writeFileSync(overridePath(f), '# my override\n');
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    expect(await applyHarness(flags(), deps)).toBe(1);
+    const targets = instrTargets(f.home);
+    const codex = targets.find((t) => t.host === 'codex');
+    expect(codex?.state).toBe('failed');
+    expect(codex?.error).toMatch(/AGENTS\.override\.md/);
+    expect(codex?.error).toMatch(/ignores/);
+    // Never a dead integration: AGENTS.md was NOT written.
+    expect(existsSync(agentsPath(f))).toBe(false);
+    // The claude lane is unaffected.
+    expect(targets.find((t) => t.host === 'claude-code')?.state).toBe('confirmed');
+    expect(readFileSync(memoryPath(f), 'utf8')).toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+  });
+
+  test('[OV-A2/OV2-2] config back OFF converges: blocks stripped (files kept), receipt cleared, advisory printed', async () => {
+    const f = makeFake();
+    writeFileSync(memoryPath(f), '# mine\n');
+    writeFileSync(agentsPath(f), '# agents\n');
+    expect(await applyHarness(flags(), { ...f.deps, loadFileConfig: WB_ON })).toBe(0);
+    expect(readFileSync(memoryPath(f), 'utf8')).toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+    // Second apply with the DEFAULT off config (makeFake injects none; the
+    // preload-pinned GBRAIN_HOME scratch has no config.json → off).
+    expect(await applyHarness(flags(), f.deps)).toBe(0);
+    // Non-block content restored EXACTLY; the files are never deleted.
+    expect(readFileSync(memoryPath(f), 'utf8')).toBe('# mine\n');
+    expect(readFileSync(agentsPath(f), 'utf8')).toBe('# agents\n');
+    expect(instrTargets(f.home)).toEqual([]);
+    expect(f.out.join('\n')).toMatch(
+      /ambient writeback off — enable with `gbrain config set memory\.auto_writeback salient` and re-run\./,
+    );
+  });
+
+  test('--remove strips the blocks and leaves the files in place', async () => {
+    const f = makeFake();
+    writeFileSync(memoryPath(f), '# keep\n');
+    expect(await applyHarness(flags(), { ...f.deps, loadFileConfig: WB_ON })).toBe(0);
+    expect(await removeHarness(parseHarnessArgs(['--remove', '--yes']), f.deps)).toBe(0);
+    expect(readFileSync(memoryPath(f), 'utf8')).toBe('# keep\n');
+    // The codex agents file was created by the apply (block only) — emptied, NEVER deleted.
+    expect(existsSync(agentsPath(f))).toBe(true);
+    expect(readFileSync(agentsPath(f), 'utf8')).not.toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('--status probes sentinel presence: installed → missing → override-blocked (exit reflects it)', async () => {
+    const f = makeFake();
+    const deps: HarnessDeps = { ...f.deps, loadFileConfig: WB_ON };
+    expect(await applyHarness(flags(), deps)).toBe(0);
+    expect(await statusHarness(parseHarnessArgs(['--status']), deps)).toBe(0);
+    expect(f.out.join('\n')).toMatch(/ambient-writeback block \(claude-code\): installed/);
+    expect(f.out.join('\n')).toMatch(/ambient-writeback block \(codex\): installed/);
+    // Hand-emptied AGENTS.md → missing, exit 1.
+    writeFileSync(agentsPath(f), '# emptied\n');
+    f.out.length = 0;
+    expect(await statusHarness(parseHarnessArgs(['--status']), deps)).toBe(1);
+    expect(f.out.join('\n')).toMatch(/ambient-writeback block \(codex\): missing/);
+    // Override file appears → override-blocked (checked in status too), exit 1.
+    writeFileSync(overridePath(f), '# override\n');
+    f.out.length = 0;
+    expect(await statusHarness(parseHarnessArgs(['--status', '--json']), deps)).toBe(1);
+    const payload = JSON.parse(f.out[f.out.length - 1]) as {
+      instructions_blocks: Array<{ host: string; probe: string }>;
+    };
+    expect(payload.instructions_blocks.find((p) => p.host === 'codex')?.probe).toBe('override-blocked');
+    expect(payload.instructions_blocks.find((p) => p.host === 'claude-code')?.probe).toBe('installed');
+  });
+
+  test('default file-plane read honors GBRAIN_HOME: config.json with salient enables the target without an injected loader', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-wb-home-'));
+    mkdirSync(join(parent, '.gbrain'), { recursive: true });
+    writeFileSync(
+      join(parent, '.gbrain', 'config.json'),
+      JSON.stringify({ engine: 'pglite', memory: { auto_writeback: 'salient' } }),
+    );
+    const f = makeFake();
+    await withEnv({ GBRAIN_HOME: parent }, async () => {
+      expect(await applyHarness(flags(['--harness', 'claude-code', '--no-hooks']), f.deps)).toBe(0);
+    });
+    expect(readFileSync(memoryPath(f), 'utf8')).toContain(AMBIENT_WRITEBACK_BLOCK_BEGIN);
+    // claude-only run: no codex target, no codex agents-file write.
+    expect(existsSync(agentsPath(f))).toBe(false);
+    expect(instrTargets(f.home).map((t) => t.host)).toEqual(['claude-code']);
   });
 });

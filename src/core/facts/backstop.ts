@@ -56,12 +56,14 @@ export interface FactsBackstopCtx {
    *   - 'file_upload'        — file_upload import path
    *   - 'code_import'        — code import path
    *   - 'hook:compact'       — compaction-boundary checkpoint harvest (cathedral 5)
+   *   - 'hook:writeback'     — ambient-writeback Stop-hook backstop (WP4)
    */
-  source: 'sync:import' | 'mcp:put_page' | 'mcp:extract_facts' | 'file_upload' | 'code_import' | 'hook:compact';
+  source: 'sync:import' | 'mcp:put_page' | 'mcp:extract_facts' | 'file_upload' | 'code_import' | 'hook:compact' | 'hook:writeback';
   /** Execution mode — D8. Default 'queue' (fire-and-forget). */
   mode?: 'queue' | 'inline';
-  /** Notability filter — D4. Default 'all'; sync uses 'high-only'. */
-  notabilityFilter?: 'all' | 'high-only';
+  /** Notability filter — D4. Default 'all'; sync uses 'high-only'; the
+   * ambient-writeback lane uses 'medium-and-up' in salient mode. */
+  notabilityFilter?: 'all' | 'high-only' | 'medium-and-up';
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;
   /** Mirrors OperationContext.remote for trust-aware logging paths. */
@@ -541,7 +543,9 @@ async function runPipelineBodyInner(
   // suppression pass 'high-only' (sync does).
   const notabilityAdmission = filter === 'high-only'
     ? { allowed: ['high'] as const, invalid: 'drop' as const }
-    : undefined;
+    : filter === 'medium-and-up'
+      ? { allowed: ['high', 'medium'] as const, invalid: 'drop' as const }
+      : undefined;
   const outcome = await extractFactsFromTurnWithOutcome({
     turnText: input.turnText,
     sessionId: ctx.sessionId,

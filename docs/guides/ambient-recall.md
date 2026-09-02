@@ -10,6 +10,10 @@ answers well when asked. It is **placement**: the misses come from moments when
 no question fires. Two frozen verbs close that gap with 2-3 deterministic calls
 per session instead of per-message overhead.
 
+This guide is the READ side of ambient memory. The WRITE side — opt-in
+ambient writeback, where agents save directly-stated user facts during
+ordinary conversation — is [ambient-writeback.md](./ambient-writeback.md).
+
 ## The frontier — which verb goes where
 
 | Moment | Call | Why | Cost |

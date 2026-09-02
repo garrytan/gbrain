@@ -529,6 +529,15 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
           // Banner is cosmetic; never block the upgrade.
         }
 
+        // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
+        // upgrading into the feature. Personal brains only; double-gated on
+        // its own sentinel + the setting being unset; [AGENT]-relayed;
+        // never auto-enables; its own try/catch lives inside.
+        {
+          const { runWritebackNudge } = await import('../core/onboard/writeback-nudge.ts');
+          await runWritebackNudge(engine, { context: 'post-upgrade' });
+        }
+
         // Waiting-TTL pre-notice (one-shot, warn-before-act). The worker
         // gates its first sweep behind the SAME flag via runWaitingTtlTick
         // (notice → grace window → sweep) because daemon restarts never run

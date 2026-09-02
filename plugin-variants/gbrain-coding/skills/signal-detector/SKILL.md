@@ -53,7 +53,14 @@ Always-on is a harness-routing convention that a well-behaved agent
 follows, not a mechanical guarantee; nothing in the gbrain runtime blocks
 a reply if the skill never loads. On harnesses without per-message ambient
 routing (Claude Code, Codex), apply this skill as an agent convention or
-wire it via a prompt-submit hook.
+wire it via a prompt-submit hook. When the operator has enabled
+`memory.auto_writeback` (off by default; `gbrain config set
+memory.auto_writeback salient`), the MCP server's initialize instructions
+and the managed bootstrap instruction blocks carry the ambient-writeback
+contract to the agent, and on Claude Code a Stop-hook extraction backstop
+catches turns the convention missed. That is still a convention on the
+agent side — server-delivered instructions plus a backstop, not a
+mechanical guarantee.
 
 > **Convention:** See `skills/conventions/quality.md` for Iron Law back-linking.
 
