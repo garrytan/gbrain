@@ -2,7 +2,7 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.47.10.0] - 2026-09-01
+## [0.48.1.0] - 2026-09-02
 
 **The community fix wave: 55 contributor pull requests adopted or reworked
 with credit, 22 verified open issues fixed directly, and a hardening pass
@@ -201,7 +201,7 @@ test proven red before the fix.
   agents connected to several brains sharing one tool catalog can tell them
   apart. (#4748, contributed by @Tomlebretonxhec)
 - Unscoped writes that would land in `source_id='default'` on a brain whose
-  pages overwhelmingly live elsewhere are guarded: `gbrain sync` refuses
+  pages mostly live elsewhere are guarded: `gbrain sync` refuses
   (it has `--source` to redirect), `gbrain import` warns, and MCP stdio
   prints a once-per-process advisory when the write actually resolves to
   the default tier. `GBRAIN_ALLOW_DEFAULT_WRITE=1` is the escape hatch.
@@ -279,7 +279,7 @@ test files, 11 of them new.
   The pack-vocabulary loader never throws — an unresolvable pack lets the
   write proceed — and `add_link` dry runs preview a rejection.
 - **Default-write guard.** `gbrain sync --dry-run` is no longer refused on
-  a brain whose pages overwhelmingly live outside `default`: it prints
+  a brain whose pages mostly live outside `default`: it prints
   `[dry-run] a real run would be refused:` with the same routing guidance
   and previews the run; only a real run exits. The MCP stdio advisory and
   the `gbrain import` warning latch only after a successful assessment, so
@@ -364,7 +364,7 @@ With thanks to every contributor whose pull request this wave adopts:
 @Tomlebretonxhec, @VasconcelosADV, @xavierboes — and to the reporters whose
 verified issues drove the direct fixes.
 
-## To take advantage of 0.47.10.0
+## To take advantage of 0.48.1.0
 
 `gbrain upgrade` is all you need — no schema migrations, no manual steps.
 
