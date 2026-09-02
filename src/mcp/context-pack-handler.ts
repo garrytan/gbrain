@@ -25,6 +25,7 @@ import {
   upsertSessionContextState,
 } from '../core/context/session-state.ts';
 import { scheduleCheckpointHarvest, type HarvestAck } from '../core/context/checkpoint-harvest.ts';
+import { parseWbFileName } from '../core/context/corpus-segments.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
@@ -109,8 +110,16 @@ export function makeContextPackIpcHandler(
           if (!existsSync(join(dir, base))) {
             checkpointFlush = { status: 'skipped', reason: 'not_found' };
           } else {
+            // Ambient-writeback turn files ride the SAME bank lane with a
+            // basename-derived lane tag (WP4): `.wb-<hash>` files get the
+            // serve-side auto_writeback gate, the salient notability filter,
+            // and no manifest publish. Lane derivation uses the ONE parser
+            // (corpus-segments.ts) — a hand-rolled regex here could drift
+            // from the writer's naming and silently route wb files down the
+            // compact lane, past the writeback gate.
+            const lane = parseWbFileName(base) !== null ? ('writeback' as const) : ('compact' as const);
             checkpointFlush = scheduleCheckpointHarvest({
-              engine, sourceId: defaultSource, sessionId, corpusDir: dir, file: base,
+              engine, sourceId: defaultSource, sessionId, corpusDir: dir, file: base, lane,
             });
           }
         }

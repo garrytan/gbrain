@@ -631,10 +631,10 @@ export interface FactListOpts {
 /** Per-source operational health snapshot consumed by `gbrain doctor`. */
 export interface FactsHealth {
   source_id: string;
-  total_active: number;          // facts where expired_at IS NULL
+  total_active: number;          // expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())
   total_today: number;           // created in last 24h
   total_week: number;            // created in last 7d
-  total_expired: number;         // expired_at IS NOT NULL
+  total_expired: number;         // expired_at IS NOT NULL OR valid_until <= now() (the complement of active)
   total_consolidated: number;    // consolidated_at IS NOT NULL
   top_entities: Array<{ entity_slug: string; count: number }>;
   /** Optional counters fed by the queue / classifier — populated when those modules report. */
@@ -2153,7 +2153,9 @@ export interface BrainEngine {
   /**
    * v0.32: count facts that haven't been promoted to takes by the consolidate
    * phase yet (active + unconsolidated). Drives `gbrain recall --pending`.
-   * Single SQL: COUNT(*) WHERE consolidated_at IS NULL AND expired_at IS NULL.
+   * Single SQL: COUNT(*) WHERE consolidated_at IS NULL AND expired_at IS NULL
+   * AND (valid_until IS NULL OR valid_until > now()) — read-time TTL validity
+   * keeps this backlog in lockstep with what the consolidator can read.
    */
   countUnconsolidatedFacts(source_id: string): Promise<number>;
 
@@ -2185,9 +2187,12 @@ export interface BrainEngine {
    * - Visibility-filtered: when `opts.remote=true`, only `visibility='world'`
    *   facts are returned. Trusted local callers see both private + world.
    * - Optional metric filter restricts to a single normalized metric label.
-   * - Active-only by default (expired_at IS NULL); soft-deleted entities
-   *   on the pages side are NOT filtered here — trajectory is a facts-table
-   *   query and doesn't JOIN pages.
+   * - Active-only by default (expired_at IS NULL). DELIBERATELY no
+   *   valid_until clause: trajectory is a HISTORY view, and the consolidator
+   *   stamps valid_until on every non-newest point in a cluster — filtering
+   *   would collapse each trajectory to its final point. Soft-deleted
+   *   entities on the pages side are NOT filtered here — trajectory is a
+   *   facts-table query and doesn't JOIN pages.
    */
   findTrajectory(opts: TrajectoryOpts): Promise<TrajectoryPoint[]>;
 

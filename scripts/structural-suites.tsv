@@ -117,7 +117,7 @@ test/dream-cli-flags.test.ts	--once wiring (issue #2860)	5	readFileSync
 test/dream-cli-flags.test.ts	--source / --source-id wiring (v0.41.13)	9	readFileSync
 test/dream-cli-flags.test.ts	dream CLI flag wiring	9	readFileSync
 test/dry-fix.test.ts	autoFixDryViolations	12	readFileSync
-test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	4	readFileSync
+test/e2e/bootstrap-real-codex.serial.test.ts	bootstrap rendered protocol — ambient boundaries (always runs)	5	readFileSync
 test/e2e/codex-plugin-install-real.serial.test.ts	(file-level)	2	readFileSync
 test/e2e/migration-flow.test.ts	(file-level)	4	readFileSync
 test/e2e/openclaw-reference-compat.test.ts	OpenClaw reference workspace compat (W1 + W2 + W3)	8	readFileSync

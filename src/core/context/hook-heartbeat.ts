@@ -39,9 +39,13 @@ export interface HookHeartbeatEntry {
    * slugs/fact text [S3#7].
    */
   segment?: string;
-  /** Cathedral 5 — checkpoint-harvest fact counters (counts only) [S3#7]. */
+  /** Cathedral 5 — checkpoint-harvest fact counters (counts only) [S3#7].
+   * The ambient-writeback lane (`event: 'writeback'`) reports the same
+   * counters plus `superseded` — these are PERSISTED results from the
+   * serve-side harvest (OV-A11), never candidate counts. */
   inserted?: number;
   duplicate?: number;
+  superseded?: number;
   /**
    * Cathedral 5 — the compact hook's harvest-schedule ACK code
    * (`scheduled` / `skip_queue_full` / `skip_not_found` / `skip_bad_basename`
@@ -57,7 +61,7 @@ export interface HookHeartbeatEntry {
 /** The FULL key allowlist — CI greps the fixture against this [S3#7]. */
 export const HEARTBEAT_ALLOWED_KEYS = [
   'ts', 'event', 'outcome', 'reason', 'duration_ms', 'turns', 'bytes', 'redactions',
-  'segment', 'inserted', 'duplicate', 'links', 'flush',
+  'segment', 'inserted', 'duplicate', 'superseded', 'links', 'flush',
 ] as const;
 
 /** Gbrain home resolver: the S3#10 choke point (create-or-resolve, fail-open). */

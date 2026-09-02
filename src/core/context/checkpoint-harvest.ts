@@ -54,6 +54,15 @@ export interface HarvestJob {
   corpusDir: string;
   /** Segment BASENAME (already validated by the IPC handler). */
   file: string;
+  /**
+   * Ambient-writeback lane (WP4): 'writeback' jobs carry a single gated user
+   * turn (`.wb-` files) — extra serve-side gate on `memory.auto_writeback`
+   * (a stale hook-side file-plane read never extracts against operator
+   * intent: off ⇒ terminal `.ingested {skipped:'writeback_off'}`),
+   * salient-mode notability filter, NO manifest publish (turn files have no
+   * segment ledger), and the `writeback` heartbeat event. Default 'compact'.
+   */
+  lane?: 'compact' | 'writeback';
   /** TEST SEAM: capability report override (sweep PassCtx precedent). */
   capabilities?: CapabilityReport;
   /** TEST SEAM: per-job abort budget override (default HARVEST_JOB_TIMEOUT_MS). */
@@ -85,11 +94,47 @@ export function scheduleCheckpointHarvest(job: HarvestJob): HarvestAck {
   if (queue.some((q) => q.file === job.file && q.corpusDir === job.corpusDir)) {
     return { status: 'skipped', reason: 'already_queued' };
   }
+  // F9/OV2-4 cost posture: per-session prompt-harvest cap for the writeback
+  // lane, enforced HERE (the single serve process owns the queue; in-memory,
+  // serve-restart resets — documented). Overflow is an ACK-only skip: the wb
+  // file REMAINS on disk and the sweep's corpus pass batch-extracts it later
+  // — freshness lost, nothing dropped.
+  if (job.lane === 'writeback' && (wbSessionCounts.get(job.sessionId) ?? 0) >= WRITEBACK_SESSION_CAP) {
+    return { status: 'skipped', reason: 'session_cap' };
+  }
   if (queue.length >= HARVEST_QUEUE_CAP) return { status: 'skipped', reason: 'queue_full' };
+  if (job.lane === 'writeback') {
+    // Budget burns only on a real enqueue — a queue_full rejection retries
+    // free via the sweep. Bounded map: evict the OLDEST entries (Map keeps
+    // insertion order) rather than clear() — a wholesale clear would re-arm
+    // the spend cap of every capped session under session churn (security
+    // review, this wave). Serve restarts still reset (documented).
+    if (wbSessionCounts.size >= WB_SESSION_MAP_MAX && !wbSessionCounts.has(job.sessionId)) {
+      for (const key of wbSessionCounts.keys()) {
+        if (wbSessionCounts.size < WB_SESSION_MAP_MAX) break;
+        wbSessionCounts.delete(key);
+      }
+    }
+    // delete-before-set makes the map LRU: a bare .set() on an existing key
+    // keeps its ORIGINAL insertion slot, so the busiest long-lived session
+    // would be evicted first — re-arming exactly the budget the eviction
+    // policy exists to preserve (adversarial review, this wave).
+    const burned = (wbSessionCounts.get(job.sessionId) ?? 0) + 1;
+    wbSessionCounts.delete(job.sessionId);
+    wbSessionCounts.set(job.sessionId, burned);
+  }
   queue.push(job);
   void pump();
   return { status: 'scheduled' };
 }
+
+/** Per-session prompt-harvest budget for the writeback lane (F9/OV2-4). */
+export const WRITEBACK_SESSION_CAP = 30;
+/** Size bound for the per-session counter map — oldest-first eviction, so an
+ * ACTIVE session's burned budget survives churn (a stale evicted session that
+ * comes back gets a fresh budget, the accepted residual). */
+const WB_SESSION_MAP_MAX = 200;
+const wbSessionCounts = new Map<string, number>();
 
 /** Shutdown grace: don't let a transport that ignores the abort signal hold
  * serve's exit — the claim's staleness window + the sweep backstop make an
@@ -127,6 +172,7 @@ export function __resetCheckpointHarvestForTests(): void {
   shuttingDown = false;
   currentAbort = null;
   idleResolve = null;
+  wbSessionCounts.clear();
 }
 
 /** TEST SEAM: resolves once the queue is fully drained. */
@@ -150,6 +196,7 @@ async function pump(): Promise<void> {
   let reason: string | undefined;
   let inserted: number | undefined;
   let duplicate: number | undefined;
+  let superseded: number | undefined;
   let links: number | undefined;
   try {
     const r = await runOne(job);
@@ -157,6 +204,7 @@ async function pump(): Promise<void> {
     reason = r.reason;
     inserted = r.inserted;
     duplicate = r.duplicate;
+    superseded = r.superseded;
     links = r.links;
   } catch (e) {
     outcome = 'error';
@@ -165,12 +213,15 @@ async function pump(): Promise<void> {
     inFlight = false;
     await writeHeartbeat({
       ts: new Date().toISOString(),
-      event: 'checkpoint-harvest',
+      // The writeback lane heartbeats under its own event so doctor's
+      // backstop counters never conflate the two lanes (OV-A11).
+      event: job.lane === 'writeback' ? 'writeback' : 'checkpoint-harvest',
       outcome,
       ...(reason ? { reason } : {}),
       duration_ms: Date.now() - t0,
       ...(inserted !== undefined ? { inserted } : {}),
       ...(duplicate !== undefined ? { duplicate } : {}),
+      ...(superseded !== undefined ? { superseded } : {}),
       ...(links !== undefined ? { links } : {}),
       // trim:false — serve is a long-lived high-frequency writer; its
       // read→tmp→rename trim would clobber concurrent hook appends.
@@ -194,6 +245,7 @@ async function runOne(job: HarvestJob): Promise<{
   reason?: string;
   inserted?: number;
   duplicate?: number;
+  superseded?: number;
   links?: number;
 }> {
   const full = join(job.corpusDir, job.file);
@@ -209,6 +261,8 @@ async function runOne(job: HarvestJob): Promise<{
     if (await stat(ingestedPath).then(() => true, () => false)) {
       return { outcome: 'ok', reason: 'already_ingested' };
     }
+
+    if (job.lane === 'writeback') return await runWritebackTurn(job, full, ingestedPath);
 
     // Receipt retry path (codex round 2): extraction already happened; the
     // manifest publish failed transiently. Re-publish WITHOUT re-extracting.
@@ -319,6 +373,107 @@ async function runOne(job: HarvestJob): Promise<{
   } finally {
     await rm(claimPath, { force: true }).catch(() => {});
   }
+}
+
+/**
+ * Writeback-lane extraction (WP4): one gated user turn. Distinct from the
+ * compact lane in exactly four ways — the AUTHORITATIVE serve-side
+ * `memory.auto_writeback` gate (off ⇒ TERMINAL `.ingested` sidecar, so a
+ * stale hook-side file-plane read never extracts against operator intent —
+ * and the sweep respects the same sidecar), the salient-mode notability
+ * filter, `source: 'hook:writeback'`, and NO manifest publish (turn files
+ * have no segment ledger). Claim/ingested lifecycle is the caller's
+ * (runOne's) shared discipline. wb-file state machine (OV2-10): a
+ * genuinely-resolved gate-off ⇒ terminal sidecar; keyless /
+ * extraction_disabled / abort / plane-drift / invalid-mode / non-transport
+ * extraction skip ⇒ NO sidecar (claim released, file remains — the sweep
+ * retries when the gate opens or the config re-coheres); success ⇒
+ * `.ingested` with persisted counts.
+ */
+async function runWritebackTurn(job: HarvestJob, full: string, ingestedPath: string): Promise<{
+  outcome: 'ok' | 'degraded' | 'error';
+  reason?: string;
+  inserted?: number;
+  duplicate?: number;
+  superseded?: number;
+}> {
+  const { resolveWritebackConfig } = await import('../facts/writeback-config.ts');
+  const { loadConfig } = await import('../config.ts');
+  // Gate semantics ({gate:true}): a config READ FAILURE is OFF but NOT
+  // terminal — skip with no sidecar (claim releases, sweep retries when the
+  // DB returns). Same for PLANE DRIFT (DB row absent while the file mirror
+  // says enabled — a failed dual-write is not operator intent) and for an
+  // UNRECOGNIZED mode value (a typo is not a decision). Only a
+  // genuinely-resolved OFF writes the terminal sidecar: that one is intent.
+  // The gate resolves BEFORE the capability/kill-switch checks: an
+  // operator's OFF must retire the banked turn even on a keyless or
+  // extraction-disabled brain — otherwise the file lingers eligible and a
+  // later re-enable would extract turns the operator already revoked
+  // (codex re-review, this wave).
+  const wb = await resolveWritebackConfig(job.engine, loadConfig(), { gate: true });
+  if (wb.read_error) return { outcome: 'degraded', reason: 'gate_unreadable' };
+  if (!wb.enabled && (wb.plane_drift || !wb.mode_valid)) {
+    return { outcome: 'degraded', reason: wb.plane_drift ? 'writeback_plane_drift' : 'writeback_mode_invalid' };
+  }
+  if (!wb.enabled) {
+    const { writebackOffSidecarJson } = await import('./corpus-segments.ts');
+    await writeFile(ingestedPath, writebackOffSidecarJson());
+    return { outcome: 'ok', reason: 'writeback_off' };
+  }
+  const caps = job.capabilities ?? (await import('../capability.ts')).detectCapabilities();
+  if (!caps.extraction.available) return { outcome: 'degraded', reason: 'keyless' };
+  const { isFactsExtractionEnabled } = await import('../facts/extract.ts');
+  if (!(await isFactsExtractionEnabled(job.engine))) {
+    return { outcome: 'degraded', reason: 'extraction_disabled' };
+  }
+
+  const raw = await readFile(full, 'utf-8');
+  const { runFactsPipeline } = await import('../facts/backstop.ts');
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), job.timeoutMs ?? HARVEST_JOB_TIMEOUT_MS);
+  currentAbort = abort;
+  let r: Awaited<ReturnType<typeof runFactsPipeline>>;
+  try {
+    r = await runFactsPipeline(raw, {
+      engine: job.engine,
+      sourceId: job.sourceId,
+      sessionId: job.sessionId,
+      source: 'hook:writeback',
+      mode: 'inline',
+      remote: false,
+      abortSignal: abort.signal,
+      notabilityFilter: wb.mode === 'salient' ? 'medium-and-up' : 'all',
+      // visibility deliberately unset → resolveDefaultVisibility [ENG-8] —
+      // the backstop inherits extract_facts' contract, never widened (req 6).
+    });
+  } finally {
+    clearTimeout(timer);
+    currentAbort = null;
+  }
+  if (abort.signal.aborted) return { outcome: 'degraded', reason: 'aborted' };
+  if (r.skipped_reason) {
+    // Non-transport extraction skip (refusal / content_filter /
+    // malformed_output / non_terminal_stop / chat_unavailable): NOT terminal
+    // — no sidecar, so the sweep's corpus pass retries the file exactly once
+    // more and records the final outcome in ITS sidecar. Sidecaring here
+    // would turn a transient moderation/format hiccup into silent permanent
+    // loss of the banked turn (adversarial review, this wave). Transport
+    // failures already throw (FactsExtractionError) and land in runOne's
+    // catch with the same no-sidecar result.
+    return { outcome: 'degraded', reason: `extract_skipped_${r.skipped_reason}` };
+  }
+
+  await writeFile(
+    ingestedPath,
+    JSON.stringify({
+      ingested_at: new Date().toISOString(),
+      facts_inserted: r.inserted,
+      facts_duplicate: r.duplicate,
+      facts_superseded: r.superseded,
+      lane: 'writeback',
+    }) + '\n',
+  );
+  return { outcome: 'ok', inserted: r.inserted, duplicate: r.duplicate, superseded: r.superseded };
 }
 
 async function readReceipt(path: string): Promise<HarvestReceipt | null> {

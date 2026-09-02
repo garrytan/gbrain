@@ -14,7 +14,8 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { loadConfig } from '../core/config.ts';
 import { gcSessionContextState } from '../core/context/session-state.ts';
 import { bindResolveIpcForServe } from './resolve-ipc-binding.ts';
-import { GBRAIN_MCP_INSTRUCTIONS } from './instructions.ts';
+import { buildMcpInstructions } from './instructions.ts';
+import { resolveWritebackConfig, ambientOptsFrom } from '../core/facts/writeback-config.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 
 export async function resolveMcpStdioSourceScope(
@@ -129,18 +130,6 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
 }
 
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
-  const server = new Server(
-    { name: 'gbrain', version: VERSION },
-    // listChanged: a client that handshakes during DEGRADED mode receives the
-    // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
-    // op on engine failure) and caches it — recovery sends the notification
-    // so the full catalog comes back without a harness restart.
-    {
-      capabilities: { tools: { listChanged: true } },
-      instructions: GBRAIN_MCP_INSTRUCTIONS,
-    },
-  );
-
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
   // to pre-surface behavior), 'starter' (WP4 daily-driver set), or 'verbs'
   // (exactly the 7 protocol verbs). Enforced BOTH on the advertised list and
@@ -150,9 +139,38 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // the transport-LOCALITY axis). Publish gates are the separate owner-
   // CONSENT axis keyed on ctx.remote === false only, and stdio dispatches
   // remote:true — so gate-off ops are subtracted per tools/list below.
+  // (Resolved before Server construction: the initialize instructions need
+  // the allowed-op set to decide whether extract_facts may be advertised.)
   const surface: McpSurface = clampSurface(opts.surface ?? 'full');
   const surfacedOps = filterOpsForSurface(operations, surface);
   const allowedOps = surface === 'full' ? undefined : allowedOpNames(operations, surface);
+
+  // Ambient writeback (opt-in, default off): resolved ONCE at boot — a
+  // config flip needs a serve restart on this lane, the same posture as
+  // `mcp.strict_params` below. Uses the fail-closed dual-plane resolver
+  // rather than a file-only read (deliberate deviation from the file-plane
+  // boot rule): the visibility POSTURE lives in the DB plane, and a partial
+  // file-only resolve could embed a `world` posture against an explicitly
+  // private brain. Read failure here yields the OFF bundle — no section,
+  // never a wrong posture — and the engine is already connected by the time
+  // serve reaches this call.
+  const writeback = await resolveWritebackConfig(engine, loadConfig());
+  const server = new Server(
+    { name: 'gbrain', version: VERSION },
+    // listChanged: a client that handshakes during DEGRADED mode receives the
+    // gate-hidden catalog (stdioVisibleTools fail-closes every publishGateKey
+    // op on engine failure) and caches it — recovery sends the notification
+    // so the full catalog comes back without a harness restart.
+    {
+      capabilities: { tools: { listChanged: true } },
+      instructions: buildMcpInstructions({
+        writeback: ambientOptsFrom(writeback, {
+          remember: allowedOps ? allowedOps.has('remember') : true,
+          extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
+        }),
+      }),
+    },
+  );
 
   // WP3: strict-params schema emission, resolved ONCE at startup from the
   // FILE config plane only — stdio has no per-request list cycle, so a

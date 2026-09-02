@@ -34,6 +34,11 @@ export interface VerbUsageEvent {
   source_id: string;
   budget_dropped?: number;
   entity_found?: boolean;
+  /** `remember` outcome (inserted|duplicate|superseded) — additive, stamped
+   * by dispatch. Counts ALL MCP callers of the verb, ambient or explicit —
+   * doctor's memory_writeback check labels it exactly that way (OV-A11):
+   * a per-call ambient/explicit distinction does not exist on the wire. */
+  remember_status?: string;
 }
 
 let _pathOverride: string | null = null;

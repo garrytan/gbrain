@@ -299,6 +299,77 @@ export function readOpenclawBoundaryTail(
 }
 
 /**
+ * Ambient-writeback turn files (WP4) — the Stop-hook backstop's siblings of
+ * checkpoint segments. `<sessionId>.wb-<hash24>[.src-<sourceId>].txt` where
+ * the hash is the GATE's normalized-turn hash (turn identity, computed in
+ * writeback-gate.ts) — a re-fired Stop hook for the same turn re-derives the
+ * same name and short-circuits (requirement 9's deterministic idempotency,
+ * embedding-free). The optional `.src-` segment banks the session's
+ * GBRAIN_SOURCE so the SWEEP fallback files the turn into the same source
+ * the prompt-time IPC lane would have (source-isolation invariant —
+ * adversarial review, this wave); omitted for the default source, keeping
+ * default-flow names byte-identical. They end `.txt` ON PURPOSE: the sweep's
+ * corpus pass is the free backstop when serve/IPC is down (the sweep applies
+ * the writeback gate before extracting them — OV2-11).
+ */
+export function wbFileName(sessionId: string, hash24: string, sourceId?: string | null): string {
+  const src = sourceId && sourceId !== 'default' ? `.src-${safeIdComponent(sourceId)}` : '';
+  return `${safeIdComponent(sessionId)}.wb-${hash24.replace(/[^0-9a-f]/g, '')}${src}.txt`;
+}
+
+/** `{sessionId, hash, sourceId?}` when `name` is a writeback turn file, else
+ * null. `sourceId` is the RAW banked segment — consumers validate it
+ * (isValidSourceId) before any DB use. */
+export function parseWbFileName(name: string): { sessionId: string; hash: string; sourceId?: string } | null {
+  const m = /^(.+)\.wb-([0-9a-f]{12,64})(?:\.src-([A-Za-z0-9._-]+))?\.txt$/.exec(name);
+  return m ? { sessionId: m[1], hash: m[2], ...(m[3] ? { sourceId: m[3] } : {}) } : null;
+}
+
+/** The TERMINAL writeback_off `.ingested` sidecar payload — the wb state
+ * machine's one terminal skip, written identically by the serve harvest and
+ * the sweep backstop (shape drift between the two writers would be invisible
+ * until a consumer disagrees). */
+export function writebackOffSidecarJson(): string {
+  return JSON.stringify({ ingested_at: new Date().toISOString(), skipped: 'writeback_off' }) + '\n';
+}
+
+/**
+ * Bank one gated user turn as a writeback corpus file: redacted render
+ * (NEVER written unscanned — scanner unavailable is a typed skip, matching
+ * the segment posture) → idempotent existence check (same turn or its
+ * `.ingested` sidecar ⇒ dup skip, zero LLM) → atomic write. Returns typed
+ * status codes for the heartbeat. Never throws.
+ */
+export async function bankWritebackTurn(
+  dir: string,
+  sessionId: string,
+  normalizedTurn: string,
+  hash24: string,
+  sourceId?: string | null,
+): Promise<{ status: 'wb_banked' | 'wb_dup' | 'wb_scan_unavailable' | 'wb_empty' | `wb_${string}`; flushCorpusFile?: string }> {
+  try {
+    const name = wbFileName(sessionId, hash24, sourceId);
+    const file = join(dir, name);
+    if (existsSync(file) || existsSync(file + '.ingested')) return { status: 'wb_dup', flushCorpusFile: name };
+    let redacted: string;
+    try {
+      const scan = await import('../secret-scan.ts');
+      redacted = scan.redactFindings(normalizedTurn).text;
+    } catch {
+      return { status: 'wb_scan_unavailable' };
+    }
+    if (!redacted.trim()) return { status: 'wb_empty' };
+    const tmp = `${file}.tmp-${process.pid}`;
+    writeFileSync(tmp, redacted + '\n', { mode: 0o600 });
+    renameSync(tmp, file);
+    return { status: 'wb_banked', flushCorpusFile: name };
+  } catch (e) {
+    const name = e instanceof Error ? e.name || 'Error' : 'Error';
+    return { status: `wb_${name.toLowerCase()}` };
+  }
+}
+
+/**
  * The whole compact-time segment step (cathedral 5, durability first): slice
  * the since-last-boundary window → per-step deadline degrades → redacted
  * render (never written unscanned) → content-addressed write → ledger append

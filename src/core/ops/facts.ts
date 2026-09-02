@@ -24,6 +24,7 @@ import { isAvailable } from '../ai/gateway.ts';
 // #4209: the named entity-hints cap — surfaced in the extract_facts param
 // description and the entity_hints_used/_dropped response fields.
 import { ENTITY_HINTS_CAP } from '../facts/extract.ts';
+import { parseTtlShorthand } from '../facts/ttl-parse.ts';
 import { MEMORY_VERBS_VERSION } from '../verbs.ts';
 import type { SearchResult } from '../types.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
@@ -858,46 +859,31 @@ function parseSinceParam(raw: unknown): Date | null {
  * Throws verbError('invalid_params') on anything unparseable.
  */
 export function parseTtlParam(raw: unknown): Date | null {
-  if (raw == null) return null;
-  if (typeof raw !== 'string') {
+  // Grammar lives in the dependency-free leaf (core/facts/ttl-parse.ts — E1,
+  // ambient-writeback wave) so the engine-free hook lane shares it without
+  // importing this module's gateway-reaching graph. This wrapper owns the
+  // wire contract: the verbError copy below is byte-identical to the
+  // pre-extraction messages.
+  const parsed = parseTtlShorthand(raw);
+  if (parsed.ok) return parsed.validUntil;
+  if (parsed.code === 'not_string') {
     throw verbError(
       'invalid_params',
       `ttl must be a string, got ${typeof raw}.`,
       'Pass a duration like "30d" or "12h", or an absolute ISO 8601 timestamp like "2026-07-12T00:00:00Z".',
     );
   }
-  const s = raw.trim();
-  if (!s) return null;
-
-  // ISO-8601 DURATION syntax is a documented trap — reject with the fix.
-  if (/^P(T|\d)/i.test(s) && /^P(?:\d+[YMWD])*(?:T(?:\d+[HMS])+)?$/i.test(s)) {
+  if (parsed.code === 'iso_duration') {
+    const s = parsed.input;
     throw verbError(
       'invalid_params',
       `ttl "${s}" looks like an ISO-8601 duration, which is not accepted.`,
       `Use the shorthand form instead (e.g. "${s.replace(/^PT?/i, '').toLowerCase()}" style: "30d", "12h"), or an absolute ISO 8601 expiry timestamp.`,
     );
   }
-
-  // Relative duration shorthand → now + duration.
-  const dur = s.match(/^(\d+)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?)$/i);
-  if (dur) {
-    const n = parseInt(dur[1], 10);
-    const unit = dur[2].toLowerCase();
-    const ms =
-      unit.startsWith('s') ? n * 1000 :
-      unit.startsWith('m') ? n * 60 * 1000 :
-      unit.startsWith('h') ? n * 60 * 60 * 1000 :
-      n * 24 * 60 * 60 * 1000;
-    return new Date(Date.now() + ms);
-  }
-
-  // Absolute ISO 8601 date or datetime.
-  const iso = Date.parse(s);
-  if (Number.isFinite(iso)) return new Date(iso);
-
   throw verbError(
     'invalid_params',
-    `Cannot parse ttl "${s}".`,
+    `Cannot parse ttl "${parsed.input}".`,
     'Pass a duration like "30d" or "12h", or an absolute ISO 8601 timestamp like "2026-07-12T00:00:00Z". Omit ttl for a fact that never expires.',
   );
 }

@@ -323,6 +323,21 @@ export function claudeProjectSkillsDir(workspaceDir: string): string {
   return join(workspaceDir, '.claude', 'skills');
 }
 
+/**
+ * User-scope Claude Code memory file (`~/.claude/CLAUDE.md` — loaded into
+ * every session's context; the ambient-writeback managed block's install
+ * target). PROVISIONAL-from-docs (https://code.claude.com/docs/en/memory,
+ * noted 2026-09-01): the user-memory location is documented but has no
+ * in-repo live-binary attestation yet — treat a writer failure as
+ * "re-verify the spec" per the [ENG-7] discipline. Same
+ * CLAUDE_CONFIG_DIR-else-HOME-env-else-homedir() resolution as
+ * claudeUserSettingsPath (Bun's homedir() reads the password database, not
+ * $HOME — the sandboxed-test hazard documented there).
+ */
+export function claudeUserMemoryPath(): string {
+  return join(claudeConfigBase(), 'CLAUDE.md');
+}
+
 // ── Codex shapes ────────────────────────────────────────────────────────────
 
 /**
@@ -363,6 +378,32 @@ export function codexSessionsDir(): string {
  */
 export function codexHooksPath(): string {
   return join(codexHome(), 'hooks.json');
+}
+
+/**
+ * Codex user-global AGENTS.md — (CODEX_HOME || ~/.codex)/AGENTS.md, the
+ * instruction file codex merges into every session; the ambient-writeback
+ * managed block's install target. PROVISIONAL-from-docs
+ * (https://developers.openai.com/codex/guides/agents-md, noted 2026-09-01):
+ * no in-repo live-binary attestation for the user-global file yet — an
+ * observation run promotes it (follow-up filed in the ambient-writeback
+ * plan). The SAME doc pins an exclusivity rule: when AGENTS.override.md
+ * exists in CODEX_HOME, codex loads IT INSTEAD and ignores AGENTS.md
+ * entirely — writers must probe codexAgentsOverridePath() first or they
+ * install a dead integration [OV-A4].
+ */
+export function codexGlobalAgentsPath(): string {
+  return join(codexHome(), 'AGENTS.md');
+}
+
+/**
+ * The exclusivity file for codexGlobalAgentsPath() (same dated PROVISIONAL
+ * spec note, developers.openai.com/codex/guides/agents-md, 2026-09-01): its
+ * presence means codex IGNORES AGENTS.md — probe it before writing there,
+ * and report it in status so a dead integration never reads healthy.
+ */
+export function codexAgentsOverridePath(): string {
+  return join(codexHome(), 'AGENTS.override.md');
 }
 
 /** Codex hook events gbrain wires (v1: session-end capture only — a

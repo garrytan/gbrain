@@ -19,6 +19,7 @@ import { collectUninstalledBundled } from './collect-uninstalled-bundled.ts';
 import { collectChronicle } from './collect-chronicle.ts';
 import { collectMcpClientFit } from './collect-mcp-client-fit.ts';
 import { collectBackupCoverage } from './collect-backup-coverage.ts';
+import { collectWritebackConsent } from './collect-writeback-consent.ts';
 
 /** Deterministic v1 collector order (also the secondary sort key for ranking). */
 export const COLLECTORS: AdvisorCollector[] = [
@@ -33,6 +34,7 @@ export const COLLECTORS: AdvisorCollector[] = [
   collectChronicle,
   collectMcpClientFit,
   collectBackupCoverage,
+  collectWritebackConsent,
 ];
 
 const SEV_RANK: Record<AdvisorSeverity, number> = { critical: 0, warn: 1, info: 2 };

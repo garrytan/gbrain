@@ -70,6 +70,7 @@ export async function runPhaseConsolidate(
       FROM facts
       WHERE consolidated_at IS NULL
         AND expired_at IS NULL
+        AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
       GROUP BY source_id, entity_slug
       HAVING COUNT(*) >= ${minPerBucket}

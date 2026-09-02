@@ -50,6 +50,66 @@ const FILE_PLANE_DOTTED_KEYS: ReadonlySet<string> = new Set([
   'backup.check_interval_days',
 ]);
 
+/** Ambient-writeback keys are DUAL-PLANE (OV2-5): the DB plane is
+ * authoritative (the serve-side harvest gate re-checks it before any
+ * extraction) while the file plane mirrors it for the engine-free readers
+ * (Stop-hook child, stdio boot resolve, the bootstrap-harness advisory's
+ * audience gate). ONE leaf list derives both the Set and the unset lane's
+ * types so a new key cannot be dual-written on one lane and single-deleted
+ * (or silently mistyped) on the other. Write order: file first, then DB —
+ * a DB failure leaves the planes briefly diverged and says so (doctor
+ * surfaces plane drift). */
+const MEMORY_DUAL_PLANE_LEAVES = ['auto_writeback', 'auto_writeback_transient_ttl'] as const;
+const MEMORY_DUAL_PLANE_KEYS: ReadonlySet<string> = new Set(
+  MEMORY_DUAL_PLANE_LEAVES.map((l) => `memory.${l}`),
+);
+/** `brain.audience` mirrors the same dual-plane rule (WP8): the declared
+ * audience must be readable by the ENGINE-FREE bootstrap-harness lane so a
+ * shared-declared brain never gets the enable-nudge advisory. */
+const BRAIN_AUDIENCE_KEY = 'brain.audience';
+
+/** Ambient-writeback posture re-stamp (red-team review, this wave): the
+ * engine-free bootstrap-harness renderer reads `memory.visibility_posture`
+ * from the file mirror, previously refreshed ONLY by `config set memory.*` —
+ * so a later `facts.default_visibility` flip left installed instruction
+ * blocks ordering the OLD posture (visibility is an EXPLICIT param in the
+ * block, so a stale 'world' stamp silently widens an operator's new private
+ * default) and doctor's drift warn named a bootstrap re-run that could never
+ * converge. Re-stamping on every facts.default_visibility set/unset closes
+ * the loop. Best-effort and gated on the mirror already existing: a failed
+ * stamp never breaks the DB write that persisted, and brains that never
+ * touched ambient writeback don't grow a `memory` slot. */
+/** The machine-global config.json mirror belongs to the HOST brain: a
+ * `config set/unset --brain <mount>` (or GBRAIN_BRAIN_ID / .gbrain-mount)
+ * writes the MOUNT's DB row without touching the host's engine-free readers
+ * — enabling ambient writeback on a team mount must never opt the host's
+ * Stop hook into banking host conversations (codex re-review, this wave).
+ * Unresolvable brain selection also skips the mirror (fail toward not
+ * mutating host state); doctor's plane-compare names the re-sync if the
+ * HOST's own planes ever diverge. */
+async function hostBrainSelected(): Promise<boolean> {
+  try {
+    const { resolveBrainId } = await import('../core/brain-resolver.ts');
+    const { HOST_BRAIN_ID } = await import('../core/brain-registry.ts');
+    const { getCliOptions } = await import('../core/cli-options.ts');
+    return resolveBrainId(getCliOptions().brain ?? null) === HOST_BRAIN_ID;
+  } catch {
+    return false;
+  }
+}
+
+async function restampVisibilityPosture(newRaw: string | null): Promise<void> {
+  try {
+    if (!(await hostBrainSelected())) return; // a mount's posture never stamps the host mirror
+    const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+    const { visibilityPostureFromRaw } = await import('../core/facts/writeback-config.ts');
+    const cfg = loadConfigFileOnly();
+    if (!cfg?.memory) return;
+    cfg.memory.visibility_posture = visibilityPostureFromRaw(newRaw).visibility;
+    saveConfig(cfg);
+  } catch { /* best-effort — the authoritative DB write already landed */ }
+}
+
 export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openai_api_key',
   'anthropic_api_key',
@@ -191,7 +251,32 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
         process.exit(1);
       }
       const keys = await engine.listConfigKeys(prefix);
-      if (keys.length === 0) {
+      // Dual-plane keys matching the prefix must ALSO leave the file mirror
+      // (codex re-review, this wave): a DB-only pattern delete would report
+      // success while the engine-free Stop hook keeps reading the mirror's
+      // enabled value — the exact bypass the single-key dual-plane branch
+      // below exists to prevent. Swept even when the DB had no matching rows
+      // (a previously-failed dual-write leaves the key file-only).
+      const fileSwept: string[] = [];
+      const dualPlaneMatches = [...MEMORY_DUAL_PLANE_KEYS, BRAIN_AUDIENCE_KEY].filter((k) => k.startsWith(prefix));
+      // Mount selection never sweeps the host's machine-local mirror
+      // (codex re-review) — same rule as the single-key dual-plane lanes.
+      if (dualPlaneMatches.length > 0 && (await hostBrainSelected())) {
+        const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+        const cfg = loadConfigFileOnly();
+        if (cfg) {
+          for (const k of dualPlaneMatches) {
+            if (k === BRAIN_AUDIENCE_KEY) {
+              if (cfg.brain && 'audience' in cfg.brain) { delete cfg.brain.audience; fileSwept.push(k); }
+            } else {
+              const leaf = k.slice('memory.'.length) as (typeof MEMORY_DUAL_PLANE_LEAVES)[number];
+              if (cfg.memory && leaf in cfg.memory) { delete cfg.memory[leaf]; fileSwept.push(k); }
+            }
+          }
+          if (fileSwept.length > 0) saveConfig(cfg);
+        }
+      }
+      if (keys.length === 0 && fileSwept.length === 0) {
         console.log(`No keys match prefix "${prefix}".`);
         return;
       }
@@ -202,6 +287,10 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       }
       console.log(`Unset ${deleted} key(s) matching "${prefix}":`);
       for (const k of keys) console.log(`  - ${k}`);
+      for (const k of fileSwept) {
+        if (!keys.includes(k)) console.log(`  - ${k} (file mirror)`);
+      }
+      if (fileSwept.length > 0) console.log(`File mirror cleared for: ${fileSwept.join(', ')}`);
       return;
     }
 
@@ -209,6 +298,54 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (!key) {
       console.error('Usage: gbrain config unset <key> | --pattern <prefix>');
       process.exit(1);
+    }
+    if (MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY) {
+      // Dual-plane delete, mirroring the dual-plane set: file mirror AND the
+      // authoritative DB row both go. "Not found" only when neither had it.
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = loadConfigFileOnly();
+      let fileHad = false;
+      // Mount selection never touches the host's machine-local mirror —
+      // same rule as the dual-plane set lane (codex re-review).
+      if (await hostBrainSelected()) {
+        if (key === BRAIN_AUDIENCE_KEY) {
+          if (cfg?.brain && 'audience' in cfg.brain) {
+            delete cfg.brain.audience;
+            saveConfig(cfg);
+            fileHad = true;
+          }
+        } else {
+          const leaf = key.slice('memory.'.length) as (typeof MEMORY_DUAL_PLANE_LEAVES)[number];
+          if (cfg?.memory && leaf in cfg.memory) {
+            delete cfg.memory[leaf];
+            saveConfig(cfg);
+            fileHad = true;
+          }
+        }
+      }
+      let dbDeleted = 0;
+      try {
+        dbDeleted = await engine.unsetConfig(key);
+      } catch (e) {
+        // Same posture as the dual-plane set lane (adversarial review, this
+        // wave): the DB row is the authoritative runtime value — a failed
+        // delete after the file delete succeeded means the revocation did
+        // NOT take effect, so say it and exit non-zero instead of a raw
+        // stack (or worse, a success line).
+        console.error(`[config] ERROR: file plane cleared but the DB-plane delete failed (${e instanceof Error ? e.message : String(e)}).`);
+        console.error(`[config] The authoritative runtime value is UNCHANGED — re-run this command once the database is reachable.`);
+        process.exit(1);
+      }
+      if (fileHad || dbDeleted > 0) {
+        console.log(`Unset ${key} (${[fileHad ? 'file plane' : null, dbDeleted > 0 ? 'db plane' : null].filter(Boolean).join(' + ')})`);
+        if (key === 'memory.auto_writeback') {
+          console.log('Ambient writeback resolves off while unset. If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).');
+        }
+      } else {
+        console.error(`Config key not found: ${key}`);
+        process.exit(1);
+      }
+      return;
     }
     if (FILE_PLANE_DOTTED_KEYS.has(key)) {
       const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
@@ -265,6 +402,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     const n = await engine.unsetConfig(key);
     if (n > 0) {
       console.log(`Unset ${key}`);
+      if (key === 'facts.default_visibility') await restampVisibilityPosture(null);
     } else {
       console.error(`Config key not found: ${key}`);
       process.exit(1);
@@ -295,13 +433,27 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     };
     const fileVal = resolveDotted(filePlane, key);
     const dbVal = await engine.getConfig(key);
-    const val = fileVal !== undefined && fileVal !== null ? fileVal : dbVal;
+    // Dual-plane ambient-writeback keys are DB-AUTHORITATIVE at runtime
+    // (adversarial review, this wave): reporting the file mirror here after
+    // a failed dual-write would show 'off' while every runtime surface still
+    // serves the previous DB value — exactly the lie the off switch's
+    // non-zero exit exists to prevent. Everything else keeps the #2120
+    // file/env-wins resolution.
+    const dbAuthoritative = MEMORY_DUAL_PLANE_KEYS.has(key) || key === BRAIN_AUDIENCE_KEY;
+    const val = dbAuthoritative
+      ? (dbVal ?? fileVal)
+      : (fileVal !== undefined && fileVal !== null ? fileVal : dbVal);
     if (val !== null && val !== undefined) {
       // #3943: redact by default like `show`/`set` — `get` output lands in
       // agent transcripts and shell history; scripts opt out with the flag.
       const out = typeof val === 'string' ? val : JSON.stringify(val);
       console.log(rawFlag ? out : redactConfigValue(key, out));
-      if (fileVal !== undefined && fileVal !== null) {
+      if (dbAuthoritative) {
+        console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}`);
+        if (dbVal !== null && dbVal !== undefined && fileVal !== undefined && fileVal !== null && String(fileVal) !== String(dbVal)) {
+          console.error(`[config] WARN: file mirror disagrees ('${String(fileVal)}') — planes diverged; re-run: gbrain config set ${key} ${String(dbVal)}`);
+        }
+      } else if (fileVal !== undefined && fileVal !== null) {
         const shadow = dbVal !== null && dbVal !== undefined
           ? ' — a DB-plane value also exists and is shadowed at runtime'
           : '';
@@ -347,6 +499,129 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // the generic file-plane branch would swallow the key before its
     // dedicated branch below — which must win, because unset is a consent
     // REVOCATION (it clears the disclosure stamp, not just the flag).
+    // Ambient-writeback keys DUAL-WRITE (OV2-5): file mirror first (the
+    // engine-free readers' plane), then the authoritative DB row. A DB
+    // failure leaves the planes briefly diverged — reported, not hidden.
+    if (key === BRAIN_AUDIENCE_KEY) {
+      // Dual-plane like memory.* (WP8): the engine-free harness lane gates
+      // its enable-nudge advisory on the file-plane declared audience.
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+      const audience = value.trim().toLowerCase();
+      if (audience !== 'personal' && audience !== 'shared') {
+        console.error(`[config] ${key} must be personal | shared (got '${value}'). Nothing was written.`);
+        process.exit(1);
+      }
+      const hostPlane = await hostBrainSelected();
+      if (hostPlane) {
+        cfg.brain = { ...(cfg.brain ?? {}), audience };
+        saveConfig(cfg);
+      } else {
+        console.log(`[config] mounted brain selected — the machine-local mirror belongs to the host brain and is untouched (DB row only).`);
+      }
+      try {
+        await engine.setConfig(key, audience);
+      } catch (e) {
+        // Non-zero exit (adversarial review, this wave): the DB plane is
+        // authoritative for engine-backed readers — reporting success here
+        // would let `config get` show the file value while runtime
+        // classification still reads the old declaration.
+        console.error(`[config] ERROR: ${hostPlane ? 'file plane written but ' : ''}the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
+        console.error(`[config] The authoritative runtime value is UNCHANGED — re-run this command once the database is reachable.`);
+        process.exit(1);
+      }
+      console.log(`Set ${key} = ${audience} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
+      return;
+    }
+    if (MEMORY_DUAL_PLANE_KEYS.has(key)) {
+      const { loadConfigFileOnly, saveConfig } = await import('../core/config.ts');
+      const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
+      let normalized: string;
+      if (key === 'memory.auto_writeback') {
+        const { WRITEBACK_MODES } = await import('../core/facts/writeback-config.ts');
+        normalized = value.trim().toLowerCase();
+        if (!(WRITEBACK_MODES as readonly string[]).includes(normalized)) {
+          console.error(`[config] ${key} must be one of: ${WRITEBACK_MODES.join(' | ')} (got '${value}'). Nothing was written.`);
+          process.exit(1);
+        }
+        // WP8: on a shared-classified brain, enabling ambient capture gets a
+        // caution (members' words get persisted) — never a refusal.
+        if (normalized !== 'off') {
+          try {
+            const { classifyBrainAudience } = await import('../core/facts/writeback-audience.ts');
+            const audience = await classifyBrainAudience(engine, cfg);
+            if (audience.audience === 'shared') {
+              console.error('[config] CAUTION: this brain looks like a company/team brain (' + audience.reasons.join('; ') + ').');
+              console.error('[config] Ambient writeback persists what people say to agents on this brain into a store other');
+              console.error('[config] authorized agents can read. Check `facts.default_visibility` and your ACCESS_POLICY.md');
+              console.error('[config] before relying on it. Proceeding as requested.');
+            }
+          } catch { /* classifier is advisory — never blocks an explicit set */ }
+        }
+      } else {
+        // Same predicate as the resolver's degrade path — ONE home in
+        // ttl-parse.ts so config-set rejection and runtime fallback agree.
+        const { isValidTransientTtl } = await import('../core/facts/ttl-parse.ts');
+        normalized = value.trim();
+        if (!isValidTransientTtl(normalized)) {
+          console.error(`[config] ${key} must be a positive duration shorthand no longer than 365d (e.g. '3d', '12h'; got '${value}'). Nothing was written.`);
+          process.exit(1);
+        }
+      }
+      // Stamp the resolved visibility POSTURE into the mirror while we hold
+      // an engine: the engine-free bootstrap-harness renderer embeds it in
+      // the managed instruction block. A failed read keeps any prior stamp;
+      // with NO prior stamp it fail-closes to 'private' — the file resolver
+      // defaults an ABSENT stamp to 'world' (F5's readable-unset rule), so
+      // leaving it absent here would let a transient blip on an explicitly
+      // private brain render world-widening instructions (codex re-review,
+      // this wave). A wrongly-private stamp on a world brain only costs a
+      // doctor drift warn; the reverse widens facts.
+      let posture: string | undefined = cfg.memory?.visibility_posture;
+      try {
+        const { visibilityPostureFromRaw } = await import('../core/facts/writeback-config.ts');
+        posture = visibilityPostureFromRaw(await engine.getConfig('facts.default_visibility')).visibility;
+      } catch {
+        posture = posture ?? 'private';
+      }
+      const hostPlane = await hostBrainSelected();
+      if (hostPlane) {
+        cfg.memory = {
+          ...(cfg.memory ?? {}),
+          [key.slice('memory.'.length)]: normalized,
+          ...(posture ? { visibility_posture: posture } : {}),
+        };
+        saveConfig(cfg);
+      } else {
+        // The mirror gates the HOST's engine-free Stop hook — enabling a
+        // mount must not opt the host's conversations into banking.
+        console.log(`[config] mounted brain selected — the machine-local mirror belongs to the host brain and is untouched (DB row only; the mount's serve reads the DB plane).`);
+      }
+      try {
+        await engine.setConfig(key, normalized);
+      } catch (e) {
+        // Non-zero exit (adversarial review, this wave): the serve-side gate
+        // and the instruction lanes read the DB plane — exiting 0 here would
+        // report an off switch as flipped while every runtime surface still
+        // serves the PREVIOUS value, and `config get` (file plane) would
+        // corroborate the lie. Loud failure is the only honest outcome.
+        console.error(`[config] ERROR: ${hostPlane ? 'file plane written but ' : ''}the DB-plane write failed (${e instanceof Error ? e.message : String(e)}).`);
+        console.error(`[config] The authoritative runtime value is UNCHANGED (still the previous DB value) — re-run this command once the database is reachable.`);
+        process.exit(1);
+      }
+      console.log(`Set ${key} = ${normalized} (${hostPlane ? 'file + db planes' : 'db plane only — mounted brain'})`);
+      if (key === 'memory.auto_writeback' && normalized !== 'off') {
+        console.log('Ambient writeback enabled. Running stdio serves pick it up on restart; HTTP serves on the next request.');
+        console.log('To install the managed harness instruction blocks: gbrain bootstrap harness --yes');
+      }
+      if (key === 'memory.auto_writeback' && normalized === 'off') {
+        // The off switch gates instructions + extraction immediately, but
+        // previously-installed harness instruction blocks keep directing new
+        // sessions until converged — say so (red-team review, this wave).
+        console.log('Ambient writeback off. If harness instruction blocks were installed, remove them: gbrain bootstrap harness --yes (converges on off).');
+      }
+      return;
+    }
     if (FILE_PLANE_DOTTED_KEYS.has(key) || key === 'integrations.memorable.enabled') {
       const { loadConfigFileOnly, saveConfig, isConfigTruthy } = await import('../core/config.ts');
       const cfg = (loadConfigFileOnly() ?? { engine: 'pglite' }) as Parameters<typeof saveConfig>[0];
@@ -715,6 +990,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     // keys / tokens / passwords are commonly set from terminals with
     // scrollback; echoing the raw value to stderr leaks the secret.
     console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+    if (key === 'facts.default_visibility') await restampVisibilityPosture(value);
 
     // v0.40.3.0 (D3 + Phase 2B): mode-switch UX. Fires only on
     // search.mode writes. Honors GBRAIN_NO_MODE_SWITCH_UX=1 + non-TTY.

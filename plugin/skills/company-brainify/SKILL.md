@@ -519,6 +519,19 @@ recovery line.
 - If the repo carries push hooks or auto-hardening wiring, re-verify remotes
   and hooks survived the rewrite before handing the repo to the team
 
+**Hand the repo to the team — stamp it shared first.** Whichever path
+produced the team repo (fresh-history export in Step 0 or the post-purge
+force-push), stamp the published brain's audience before handoff:
+`gbrain config set brain.audience shared` — run against the TEAM brain,
+never the personal one. The stamp declares this a company/team brain, so
+the ambient memory writeback consent nudge (a personal-brain ask) never
+fires on it. If team members will run `gbrain init` for the shared brain
+BEFORE this stamp exists (e.g. a fresh clone initializing its own engine),
+have them prefix that one command with `GBRAIN_NO_ONBOARD_NUDGE=1` — a
+fresh un-stamped brain classifies personal, and the init-time nudge is
+fire-once, so letting it fire there would both ask the wrong question and
+burn the sentinel.
+
 ### Phase 6: Ongoing hygiene — periodic re-audit
 
 Sensitive data re-accumulates through meeting-transcript ingestion (candid
@@ -618,6 +631,9 @@ This skill guarantees:
   commit is pushed to the shared repo.
 - Confirmed purges are logged to `daily/notes/YYYY-MM-DD.md` under
   `## Data Deletions` with the backup path as the recovery line.
+- A brainified brain is stamped `brain.audience=shared` at handoff and never
+  receives the ambient-writeback enablement nudge — that consent ask is
+  reserved for personal brains.
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (edits in
   place, plus the daily/ deletion log).
