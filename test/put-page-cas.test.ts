@@ -92,4 +92,20 @@ describe('put_page expected_content_hash', () => {
       expected_content_hash: 'not-a-hash',
     })).rejects.toMatchObject({ code: 'invalid_params' });
   });
+
+  test('supports create-if-missing and rejects a second creator', async () => {
+    const first = await putPage.handler(ctx(), {
+      slug: 'ops/new-tasks',
+      content: page('Tasks', 'first'),
+      expected_content_hash: 'absent',
+    }) as { status: string };
+    expect(first.status).toBe('created_or_updated');
+
+    await expect(putPage.handler(ctx(), {
+      slug: 'ops/new-tasks',
+      content: page('Tasks', 'second'),
+      expected_content_hash: 'absent',
+    })).rejects.toMatchObject({ code: 'write_conflict' });
+    expect((await engine.getPage('ops/new-tasks', { sourceId: 'default' }))!.compiled_truth).toContain('first');
+  });
 });

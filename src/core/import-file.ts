@@ -661,11 +661,15 @@ export async function importFromContent(
   // unscoped-check/scoped-write bug class).
   const existing = await engine.getPage(slug, { sourceId: sourceId ?? 'default' });
 
-  if (opts.expectedContentHash !== undefined && !/^[a-f0-9]{64}$/i.test(opts.expectedContentHash)) {
+  if (
+    opts.expectedContentHash !== undefined
+    && opts.expectedContentHash !== 'absent'
+    && !/^[a-f0-9]{64}$/i.test(opts.expectedContentHash)
+  ) {
     throw new OperationError(
       'invalid_params',
-      'expected_content_hash must be a 64-character hexadecimal SHA-256 hash.',
-      'Read the page with get_page include_content:true and pass its content_hash unchanged.',
+      'expected_content_hash must be a 64-character hexadecimal SHA-256 hash or "absent".',
+      'Read the page with get_page include_content:true and pass its content_hash unchanged; use "absent" only when creating a page that must not already exist.',
     );
   }
 
@@ -987,7 +991,8 @@ export async function importFromContent(
 
       const current = await tx.getPage(slug, txOpts);
       const actualHash = current?.content_hash ?? null;
-      if (actualHash !== opts.expectedContentHash) {
+      const expectedHash = opts.expectedContentHash === 'absent' ? null : opts.expectedContentHash;
+      if (actualHash !== expectedHash) {
         throw new OperationError(
           'write_conflict',
           `Page '${slug}' changed after it was read; refusing to overwrite newer content.`,

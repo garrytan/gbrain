@@ -44,7 +44,7 @@ For `review`, return the grouped active-task list instead of a single task_id. W
 
 ## Tool Interface
 
-Use ONLY the declared tools. `get_page("ops/tasks.md")` to read, `put_page("ops/tasks.md", …)` to write, `add_timeline_entry` for the audit trail, `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks` / `gbrain put ops/tasks` — equivalents only, not the skill's interface.)
+Use ONLY the declared tools. `get_page("ops/tasks.md", include_content=true)` to read the canonical markdown and its `content_hash`; `put_page("ops/tasks.md", content=…, expected_content_hash=…)` to write; `add_timeline_entry` for the audit trail; `search` for cross-referencing. Do not shell out to `gbrain` CLI verbs from this skill; the tools are the interface. (When the user runs this manually outside an agent, the CLI equivalents are `gbrain get ops/tasks --include-content --json` / `gbrain put ops/tasks --expected-content-hash HASH` — equivalents only, not the skill's interface.)
 
 ## Action Routing
 
@@ -57,7 +57,7 @@ Map user intent deterministically before touching state:
 
 ## Phases
 
-1. **Load.** `get_page("ops/tasks.md")`. **First run:** if the page does not exist, create it from the Output Format template, then proceed.
+1. **Load.** `get_page("ops/tasks.md", include_content=true)`. Preserve the returned canonical `content` and `content_hash`. **First run:** if the page does not exist, create it from the Output Format template with `expected_content_hash="absent"`, then proceed.
 2. **Validate.** Determine the action via Action Routing. If required fields are missing (see per-action rules), ask ONE concise clarification before mutating state. Never fabricate priorities, due dates, or defer reasons.
 3. **Identify the target task** (complete/defer/remove): match by `id` when given; otherwise fuzzy-match description against ACTIVE tasks only. Zero matches → return `not_found`, do not mutate. Multiple matches → list candidates with IDs, return `ambiguous`, do not mutate.
 4. **Execute:**
@@ -66,7 +66,7 @@ Map user intent deterministically before touching state:
    - **Defer:** Require a target date/timeframe AND a reason; ask if missing. Move to Deferred preserving original text, ID, and priority unless the user changes them.
    - **Remove:** Destructive — require explicit confirmation unless the user's message already contains it. Prefer suggesting complete or defer.
    - **Review:** Read-only. Never mutates. Active tasks grouped by priority, IDs shown.
-5. **Save.** `put_page("ops/tasks.md")` after any mutation. Diff-mindset: touch only the affected lines; preserve all other content, including sections this skill doesn't recognize.
+5. **Save.** `put_page("ops/tasks.md", content=<complete edited canonical content>, expected_content_hash=<hash from Load>)` after any mutation. Diff-mindset: touch only the affected lines; preserve all other content, including sections this skill doesn't recognize. On `write_conflict`, re-read the page, re-identify the same user-requested action, reapply it to the new canonical content, remint an add ID if necessary, and retry. Stop after three total write attempts and report the conflict; never fall back to an unguarded put.
 
 ## Edge Cases
 
@@ -75,7 +75,7 @@ Map user intent deterministically before touching state:
 - **Retry/duplicate add:** if an identical description already exists in active tasks, do not add a duplicate — report the existing task ID instead.
 - **Dates:** ISO 8601 (`YYYY-MM-DD`) everywhere. Compute "today"/"next week" with code/clock, never guess.
 - **Page identifier:** always `ops/tasks.md` (with extension) in tool calls; this is the single canonical location.
-- **Single-writer assumption (concurrency limitation).** The task cycle is read-modify-write: `get_page("ops/tasks.md")` → edit → `put_page("ops/tasks.md")`. `put_page` replaces the WHOLE page and has no compare-and-swap, so two mutations that interleave are last-writer-wins: the second `put_page` overwrites the first's change (a completed task reappears, an added task vanishes), and the `t-YYYYMMDD-NN` minting can hand the same ordinal to two concurrent adds (duplicate IDs). Serialize task edits — never run parallel task mutations (multiple subagents, concurrent chat turns) against `ops/tasks.md`. If a mutation might race, re-`get_page` immediately before `put_page` and re-derive the next free ordinal from the freshly-read page.
+- **Concurrent mutation.** `put_page` replaces the whole page, so every task mutation must carry the exact `content_hash` returned by its read. A conflict means another writer won; re-read and reapply the intended action. Never retry the stale body or omit `expected_content_hash`. Avoid parallel task mutations because repeated conflicts add latency, but correctness no longer depends on a single-writer assumption.
 
 ## Output Format
 
@@ -122,7 +122,7 @@ Each with its corrective action:
 - Fabricating due dates, priorities, or reasons → never invent required fields; ask.
 - Unbounded list growth → when Backlog exceeds ~20 items, prompt a weekly review.
 - Storing tasks outside the brain page → everything lives in `ops/tasks.md` (searchable).
-- Running parallel task mutations against `ops/tasks.md` → last-writer-wins whole-page `put_page` silently loses updates and mints duplicate IDs; serialize edits, re-read immediately before writing.
+- Writing `ops/tasks.md` without `expected_content_hash`, or retrying a stale body after `write_conflict` → silent lost-update risk; always re-read, reapply and retry with the new hash.
 
 ## Design Rationale (failure modes this version closes)
 

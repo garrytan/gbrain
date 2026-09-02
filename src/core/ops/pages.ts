@@ -364,7 +364,7 @@ const put_page: Operation = {
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it.' },
-    expected_content_hash: { type: 'string', required: false, description: 'Optimistic concurrency guard. Pass the exact content_hash returned by get_page; the write fails with write_conflict if another writer changed the page first.' },
+    expected_content_hash: { type: 'string', required: false, description: 'Optimistic concurrency guard. Pass the exact content_hash returned by get_page, or "absent" for create-if-missing; the write fails with write_conflict if the page state changed first.' },
     allow_empty: { type: 'boolean', required: false, description: 'Allow overwriting an existing non-empty page with empty/whitespace-only content (default: false). Without it, put_page rejects the empty overwrite — the empty-stdin failure class.' },
     // v0.39.3.0 provenance write-through (WARN-8 + A1 + CV6). Optional fields
     // for trusted local callers (capture CLI, autopilot, dream cycle). Remote
