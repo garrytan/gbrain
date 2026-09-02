@@ -211,6 +211,7 @@ test/pglite-engine.test.ts	PGLiteEngine: v0.13.1 error-wrap on connect() (#223)	
 test/pglite-repair-command.serial.test.ts	gbrain pglite-repair — interactive confirm wiring (#4318 residual)	1	readFileSync
 test/pglite-wal-repair.serial.test.ts	WAL auto-repair — real-brain regression (#223/#1670/#2575)	6	readFileSync
 test/phantom-redirect-per-source-lock.test.ts	phantom-redirect lock contract	3	readFileSync
+test/post-upgrade-daemon-restart.test.ts	upgrade.ts wiring (source analysis)	1	readFileSync
 test/postgres-engine-singleton-ownership.test.ts	postgres-engine / module-singleton ownership (#1471)	7	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search date filtering	1	readFileSync
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	readFileSync
