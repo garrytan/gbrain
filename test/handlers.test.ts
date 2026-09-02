@@ -51,10 +51,12 @@ describe('registerBuiltinHandlers', () => {
 
 describe('autopilot-cycle handler — partial failure does NOT throw', () => {
   test('phase failure returns partial:true + structured report, no throw', async () => {
-    // Call the handler directly with a job pointing at a nonexistent repo.
-    // Filesystem-dependent phases (lint, backlinks, sync) all fail because
-    // the dir / .git repo isn't there. DB-dependent phases (extract,
-    // embed, orphans) run fine against the in-memory test engine.
+    // Call the handler directly with a job pointing at an EXISTING directory
+    // that is not a git checkout: the sync phase fails (no .git) while the
+    // DB-dependent phases (extract, embed, orphans) run fine against the
+    // in-memory test engine. (A repoPath that does not exist at all is a
+    // payload error now: the brain-dir resolver reports explicit_missing and
+    // the handler fails the job with that reason, see the next test.)
     //
     // CRITICAL INVARIANT: the handler must return successfully even when
     // phases fail. Throwing would cause the Minion to retry, blocking
@@ -63,28 +65,44 @@ describe('autopilot-cycle handler — partial failure does NOT throw', () => {
     const handler = (worker as any).handlers.get('autopilot-cycle');
     expect(handler).toBeDefined();
 
-    const result = await handler({
+    const fs = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const dir = fs.mkdtempSync(join(tmpdir(), 'gbrain-autopilot-nogit-'));
+    try {
+      const result = await handler({
+        data: { repoPath: dir },
+        signal: { aborted: false } as any,
+        job: { id: 1, name: 'autopilot-cycle' } as any,
+      });
+
+      expect(result).toBeDefined();
+      expect((result as any).partial).toBe(true);
+      // v0.17 shape: { partial, status, report }. The report's phases array
+      // replaces the old failed_steps list.
+      expect(['partial', 'failed']).toContain((result as any).status);
+      const report = (result as any).report;
+      expect(report).toBeDefined();
+      expect(report.schema_version).toBe('1');
+      expect(Array.isArray(report.phases)).toBe(true);
+      // The git-dependent phase failed on a directory with no .git.
+      const failedPhases = report.phases
+        .filter((p: any) => p.status === 'fail')
+        .map((p: any) => p.phase);
+      expect(failedPhases).toContain('sync');
+      expect((result as any).brain_dir_reason).toBe('explicit');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a repoPath that does not exist fails the job with brain_dir explicit_missing (payload error, not a phase failure)', async () => {
+    const handler = (worker as any).handlers.get('autopilot-cycle');
+    await expect(handler({
       data: { repoPath: '/definitely-does-not-exist-for-autopilot-test' },
       signal: { aborted: false } as any,
       job: { id: 1, name: 'autopilot-cycle' } as any,
-    });
-
-    expect(result).toBeDefined();
-    expect((result as any).partial).toBe(true);
-    // v0.17 shape: { partial, status, report }. The report's phases array
-    // replaces the old failed_steps list.
-    expect(['partial', 'failed']).toContain((result as any).status);
-    const report = (result as any).report;
-    expect(report).toBeDefined();
-    expect(report.schema_version).toBe('1');
-    expect(Array.isArray(report.phases)).toBe(true);
-    // The filesystem-dependent phases should have failed on a missing dir.
-    const failedPhases = report.phases
-      .filter((p: any) => p.status === 'fail')
-      .map((p: any) => p.phase);
-    expect(failedPhases).toContain('lint');
-    expect(failedPhases).toContain('backlinks');
-    expect(failedPhases).toContain('sync');
+    })).rejects.toThrow(/explicit_missing/);
   });
 
   test('all phases succeed → result has structured report (smoke)', async () => {
@@ -254,7 +272,7 @@ describe('autopilot-cycle handler — phase passthrough', () => {
     // the "silently convert an empty payload into a full run" footgun. It is
     // now an honest skip.
     const result = await handler({
-      data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: [] },
+      data: { phases: [] },
       signal: { aborted: false } as any,
       job: { id: 12, name: 'autopilot-cycle' } as any,
     });
@@ -266,18 +284,26 @@ describe('autopilot-cycle handler — phase passthrough', () => {
 
   test('non-array phases value is ignored (falls back to all)', async () => {
     const handler = (worker as any).handlers.get('autopilot-cycle');
-    // String instead of array — should be ignored
-    const result = await handler({
-      data: { repoPath: '/definitely-does-not-exist-for-phase-test', phases: 'lint' },
-      signal: { aborted: false } as any,
-      job: { id: 13, name: 'autopilot-cycle' } as any,
-    });
+    const fs = await import('fs');
+    const { tmpdir } = await import('os');
+    const { join } = await import('path');
+    const dir = fs.mkdtempSync(join(tmpdir(), 'gbrain-phase-nonarray-'));
+    try {
+      // String instead of array — should be ignored
+      const result = await handler({
+        data: { repoPath: dir, phases: 'lint' },
+        signal: { aborted: false } as any,
+        job: { id: 13, name: 'autopilot-cycle' } as any,
+      });
 
-    const report = (result as any).report;
-    const phaseNames = report.phases.map((p: any) => p.phase);
-    // Should have all phases since the string was ignored
-    expect(phaseNames).toContain('lint');
-    expect(phaseNames).toContain('sync');
-    expect(phaseNames).toContain('embed');
+      const report = (result as any).report;
+      const phaseNames = report.phases.map((p: any) => p.phase);
+      // Should have all phases since the string was ignored
+      expect(phaseNames).toContain('lint');
+      expect(phaseNames).toContain('sync');
+      expect(phaseNames).toContain('embed');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }, 30_000);
 });

@@ -182,7 +182,7 @@ describe('#1972 — complete cooperative-abort coverage', () => {
     // Each long phase receives the signal (W0: the combined cycleSignal, so
     // phases also stop on lock-steal, not just external aborts).
     expect(body).toContain('runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId)');
-    expect(body).toMatch(/runPhaseExtractFacts\([^)]*cycleSignal\)/);
+    expect(body).toMatch(/runPhaseExtractFacts\([^)]*cycleSignal[,)]/);
     expect(body).toContain('signal: cycleSignal'); // consolidate opts
     expect(body).toContain('runPhaseLint(brainDir, dryRun, engine, cycleSignal)');
     // Reaper runs at cycle start.

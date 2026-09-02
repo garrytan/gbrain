@@ -167,7 +167,18 @@ export interface ExtractFactsOpts {
    * under the worker's 30s force-evict instead of running to completion.
    */
   signal?: AbortSignal;
+  /**
+   * Called every EXTRACT_FACTS_YIELD_EVERY pages inside the reconcile loop so
+   * a long run keeps refreshing the cycle lock and the Minion job lock
+   * (cycle.ts wraps both into one hook, the way synthesize/extract_atoms/
+   * patterns/consolidate already do). Hook errors are swallowed: a refresh
+   * hiccup must not fail the reconcile; the lock TTL stays the backstop.
+   */
+  yieldDuringPhase?: () => Promise<void>;
 }
+
+/** Reconcile-loop cadence of `ExtractFactsOpts.yieldDuringPhase` (pages). */
+export const EXTRACT_FACTS_YIELD_EVERY = 25;
 
 export interface ExtractFactsResult {
   pagesScanned: number;
@@ -449,6 +460,9 @@ export async function runExtractFacts(
     // partial state; the receipt/rollup below still runs with partial counts.
     if (isAborted(opts.signal)) break;
     result.pagesScanned += 1;
+    if (opts.yieldDuringPhase && result.pagesScanned % EXTRACT_FACTS_YIELD_EVERY === 0) {
+      try { await opts.yieldDuringPhase(); } catch { /* hook errors are not fatal */ }
+    }
 
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {

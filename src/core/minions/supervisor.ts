@@ -43,9 +43,8 @@ import {
   writeSync,
 } from 'fs';
 import { dirname, resolve } from 'path';
-import { hostname } from 'os';
 import type { BrainEngine } from '../engine.ts';
-import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle } from '../db-lock.ts';
+import { tryAcquireDbLock, waitForDbLockTakeover, inspectLock, isLockHolderLive, type DbLockHandle, lockHostIdentity } from '../db-lock.ts';
 import { MinionQueue } from './queue.ts';
 import { currentBrainId, readWorkers } from './worker-registry.ts';
 import { autopilotPausedMarkerPath } from '../autopilot-paths.ts';
@@ -734,7 +733,7 @@ export class MinionSupervisor {
       if (waitSeconds !== 0) {
         try {
           const snap = await inspectLock(this.engine, this.supervisorLockId());
-          holderIsCrossHost = snap !== null && snap.holder_host !== hostname();
+          holderIsCrossHost = snap !== null && snap.holder_host !== lockHostIdentity();
         } catch { /* stay one-shot on inspect failure */ }
       }
       if (waitSeconds !== 0 && holderIsCrossHost) {

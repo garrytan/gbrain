@@ -78,6 +78,22 @@ const DEFAULT_TTL_MINUTES = 30;
 export const HOLDER_TAKEOVER_GRACE_MS = 60_000;
 
 /**
+ * The host identity written into lock rows and compared by the dead-holder
+ * reaper. Defaults to `os.hostname()`. `GBRAIN_LOCK_HOST` overrides it for
+ * hosts whose hostname is NOT unique per process space: every Modal
+ * container reports hostname `modal` and runs its worker as PID 2, so without
+ * the override a live holder in another container looks like a dead local
+ * process (same host, PID probe says ESRCH) and is reaped after
+ * HOLDER_TAKEOVER_GRACE_MS. A containerized plane sets it to a per-container
+ * id (e.g. `modal:<task id>`); holders elsewhere are then `cross_host` and
+ * only the TTL + steal grace can take them over.
+ */
+export function lockHostIdentity(): string {
+  const override = process.env.GBRAIN_LOCK_HOST?.trim();
+  return override && override.length > 0 ? override : hostname();
+}
+
+/**
  * v0.42.x (#1794): heartbeat-aware steal grace. A holder whose
  * `last_refreshed_at` is within this window is treated as ALIVE and is NOT
  * stolen even if its `ttl_expires_at` has lapsed — defending a live, actively
@@ -135,7 +151,7 @@ export function classifyHolderLiveness(
   ageMs: number,
   opts: HolderLivenessOpts = {},
 ): HolderLiveness {
-  const localHost = opts.localHost ?? hostname();
+  const localHost = opts.localHost ?? lockHostIdentity();
   if (holderHost !== localHost) return 'cross_host';
 
   const probe = opts.processKill ?? ((p: number, s: number) => process.kill(p, s));
@@ -210,7 +226,7 @@ export async function tryAcquireDbLock(
   ttlMinutes: number = DEFAULT_TTL_MINUTES,
 ): Promise<DbLockHandle | null> {
   const pid = process.pid;
-  const host = hostname();
+  const host = lockHostIdentity();
   // v0.42.x (#1794): a holder that refreshed within this window is protected
   // from the ON CONFLICT steal even if its TTL lapsed (starved-but-alive).
   const stealGraceSeconds = resolveStealGraceSeconds(ttlMinutes);
