@@ -1,0 +1,13 @@
+// Routing eval fixtures for skills/research-compendium. Each positive intent
+// includes at least one trigger string as substring (structural matcher
+// requirement). data-research's bare "research"/"track" triggers substring-match
+// several intents, hence the ambiguous_with declarations. The adversarial case
+// guards the tracker boundary: structured-tracker output routes to data-research
+// even when phrased research-ily. The final case is a true negative.
+{"intent":"Research everything about zettelkasten note systems, save every source, and write me a compendium","expected_skill":"research-compendium","ambiguous_with":["data-research"]}
+{"intent":"Write me the definitive guide to home espresso — read them all and summarize each source first","expected_skill":"research-compendium"}
+{"intent":"Deepen the compendium on urban walkability with another research layer","expected_skill":"research-compendium","ambiguous_with":["data-research"]}
+{"intent":"Archive the sources then summarize each one before writing the synthesis doc","expected_skill":"research-compendium"}
+{"intent":"Deep research and write up a comprehensive guide to solid-state batteries","expected_skill":"research-compendium","ambiguous_with":["data-research"]}
+{"intent":"Deep research and write up a tracker with one row per funding round","expected_skill":"data-research","ambiguous_with":["research-compendium"]}
+{"intent":"Just give me a quick answer about espresso grind size, no sources needed","expected_skill":null}

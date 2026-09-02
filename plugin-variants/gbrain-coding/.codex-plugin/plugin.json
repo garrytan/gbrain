@@ -1,0 +1,39 @@
+{
+  "name": "gbrain-coding",
+  "version": "0.48.2.0",
+  "description": "Brain-first coding agent working inside a repo: retrieval, routing, ingest discipline, correction hygiene. Default persona for the claude-code harness bridge; also published as the gbrain-coding marketplace variant. (persona variant of the gbrain plugin — 20 skills)",
+  "author": {
+    "name": "Garry Tan",
+    "url": "https://github.com/garrytan"
+  },
+  "homepage": "https://github.com/garrytan/gbrain",
+  "repository": "https://github.com/garrytan/gbrain",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "knowledge-base",
+    "mcp",
+    "search",
+    "agent",
+    "brain",
+    "pgvector"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.codex-plugin/mcp.json",
+  "interface": {
+    "displayName": "GBrain",
+    "shortDescription": "Give your agent a persistent brain: search, synthesis, memory",
+    "longDescription": "GBrain wires a personal knowledge brain into every session: hybrid keyword+vector search, entity graph traversal, synthesis, and memory your agent writes itself — served on the starter MCP surface (the seven memory verbs plus the daily-driver brain ops). Bundles the curated brain-first skill set: setup (walks install + gbrain init), cold-start day-one brain filling, ingest, query, briefing, upgrade, and more. Requires the gbrain CLI (bun install -g github:garrytan/gbrain#latest-stable) and a brain (gbrain init); the bundled setup skill walks the rest. Unix (macOS/Linux) only.",
+    "developerName": "Garry Tan",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/garrytan/gbrain",
+    "defaultPrompt": [
+      "Search my brain, recall context across sessions, and write new memory as we work"
+    ],
+    "brandColor": "#1F6F5C"
+  }
+}

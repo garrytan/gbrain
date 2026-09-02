@@ -1,0 +1,509 @@
+---
+name: maintain
+version: 1.1.0
+upstream: maintain@fc834ee
+description: |
+  Brain health checks: back-link enforcement, citation audit, filing validation,
+  stale info detection, orphan pages, and benchmarks. Use when asked to check
+  brain health, run maintenance, or audit quality.
+triggers:
+  - "brain health"
+  - "check backlinks"
+  - "maintenance"
+  - "orphan pages"
+  - "stale pages"
+  - "extract links"
+  - "build link graph"
+  - "populate timeline"
+  - "populate links"
+  - "backfill graph"
+  - "extract timeline entries"
+  - "retriage the backlog"
+  - "re-score the triage"
+  - "run dream"
+  - "process today's session"
+  - "process yesterday's transcripts"
+  - "synthesize my conversations"
+  - "what patterns did you see"
+  - "did the dream cycle run"
+  - "consolidate yesterday's conversations"
+tools:
+  - get_health
+  - get_page
+  - put_page
+  - list_pages
+  - get_backlinks
+  - add_link
+  - search
+mutating: true
+---
+
+# Maintain Skill
+
+Periodic brain health checks and cleanup.
+
+## Contract
+
+This skill guarantees:
+- All health dimensions are checked (stale, orphan, dead links, cross-refs, backlinks, citations, filing, tags)
+- Each issue found has a specific fix action
+- Back-link iron law is enforced
+- Citation format is validated against the standard
+- Results are reported with counts per dimension
+
+## Phases
+
+### Autonomous path (v0.36.4.0) — when you want to reach a target score
+
+If the user asks "get my brain to 90/100" or "fix what's broken", prefer the
+one-command loop over walking each dimension by hand:
+
+```bash
+gbrain doctor --remediation-plan --json              # preview what would run
+gbrain doctor --remediate --yes --target-score 90 --max-usd 5
+```
+
+`--remediation-plan` prints a dependency-ordered list (sync before extract,
+embed after consolidate, etc.) with per-step `est_seconds` and `est_usd_cost`.
+`--remediate` walks the plan, submitting each step as a Minion job, re-checking
+score between every step. `--max-usd N` is a hard cost cap — submission refuses
+when the plan would exceed the cap (prevents synthesize loops from burning
+Anthropic credits unattended).
+
+When the target score is unreachable for the brain (empty brain with no entity
+pages → `graph_coverage` caps at 70; unconfigured embedding key → caps at 60),
+the command bails with a list of what's missing rather than looping.
+
+Use the per-dimension walk below (Phase 2 onward) when:
+- The user explicitly asks for a dimension-by-dimension audit
+- You're investigating why score is stuck below `--remediate`'s ceiling
+- A specific dimension needs manual judgment that the auto path skips
+
+### Manual path
+
+1. **Run health check.** Check gbrain health to get the dashboard.
+2. **Check each dimension:**
+
+### Stale pages
+Pages where compiled_truth is older than the latest timeline entry. The assessment hasn't been updated to reflect recent evidence.
+- Check the health output for stale page count
+- For each stale page: read the page from gbrain, review timeline, determine if compiled_truth needs rewriting
+
+### Orphan pages
+Pages with zero inbound links. Nobody references them.
+- Review orphans: are they genuinely isolated or just missing links?
+- Add links in gbrain from related pages or flag for deletion
+
+### Dead links
+Links pointing to pages that don't exist.
+- Remove dead links in gbrain
+
+### Missing cross-references
+Pages that mention entity names but don't have formal links.
+- Read compiled_truth from gbrain, extract entity mentions, create links in gbrain
+
+### Link graph extraction
+If link_count is 0 or low relative to page_count, run batch extraction:
+```bash
+gbrain extract links --dir ~/brain
+```
+This scans all markdown files for entity references, See Also sections, and
+frontmatter fields, then creates typed links in the database.
+
+### Timeline extraction
+If timeline_entry_count is 0, extract structured timeline from markdown:
+```bash
+gbrain extract timeline --dir ~/brain
+```
+
+### Dream cycle (v0.23): synthesize + patterns
+
+`gbrain dream` runs the full maintenance cycle (core phases shown; opt-in
+phases like atoms/concepts/drift slot in between):
+
+```
+lint -> backlinks -> sync -> synthesize -> extract -> patterns -> embed -> orphans
+```
+
+The two new phases consolidate yesterday's conversations into long-term memory:
+
+**Synthesize phase (two-stage cascade):** reads transcripts from
+`dream.synthesize.session_corpus_dir`, then triages before it spends: a cheap
+utility-tier judge (`models.dream.triage`) scores every new file 0–1 for
+salience and pre-extracts candidate quotes + entities, cached in
+`dream_verdicts` with the judging model + prompt version (bounded per cycle
+by `dream.triage.max_ms`, default 5 min — deferred files retry next cycle,
+never silently rejected). A file passes the gate two ways: it scores at or
+above `dream.triage.threshold` (default 0.5), OR the **verified-segment
+rescue** fires — a score in `[dream.triage.rescue_floor, threshold)` still
+passes when at least `dream.triage.rescue_min_segments` (default 2; `0`
+disables) of the judge's own quoted segments verify as substrings of the
+transcript AND the content type is in `dream.triage.rescue_content_types`
+(default `mixed,reflection,idea,strategy,people` — never routine/technical).
+The rescue costs nothing (no extra LLM calls, it re-reads the cached verdict)
+and it is what recovers real signal buried in an otherwise mundane transcript.
+The whole gate is applied at READ time, so retuning the threshold or the
+rescue knobs re-gates with zero new LLM calls. Files that pass fan out one
+synthesis subagent per transcript chunk, each primed with the triage map. By default
+each child runs in oneshot mode (`dream.synthesize.mode`, default `oneshot`):
+ONE tool-less completion against a prompt carrying a pre-retrieved LINK
+CANDIDATES manifest (`dream.synthesize.link_manifest`, default on) and the
+write allow-list, validated end-to-end (slug fences, task shapes, wikilinks)
+before any page is written programmatically. A response that fails validation
+falls back to the classic agentic loop in the same job, where the
+`dream.synthesize.max_turns` cap (default 16) applies; revert dial:
+`gbrain config set dream.synthesize.mode agentic`. Each child writes reflections
+(`wiki/personal/reflections/...`) and originals (`wiki/originals/ideas/...`);
+people timeline entries are written only on the agentic path (fallback or
+`mode agentic`), where the child has the `add_timeline_entry` tool. The orchestrator collects the slugs from
+`subagent_tool_executions` (NOT `pages.updated_at` — that would pick up
+unrelated writes), runs the quote verify pass over them (below), and
+reverse-renders each new page from DB → markdown on disk. To re-apply the
+gate after retuning the threshold or the rescue knobs, or to drain a queued
+backlog, run `gbrain dream retriage --dry-run` (zero LLM calls, cached
+scores only) then `gbrain dream retriage --reconcile-queue`; `--force`
+re-judges everything from scratch. Retriage reads the SAME gate the cycle
+does, so a reconcile sweep never cancels a job the rescue admitted.
+
+**Quote verify/repair (post-write, zero LLM):** after slug collection and
+before the reverse-write, `dream.synthesize.quote_verify` (default on) checks
+every quoted span on the pages this phase just created against the transcript
+it came from. An exact match is kept; a span that differs only in whitespace,
+curly quotes, dashes, or case is replaced with the verbatim transcript slice;
+a near match is repaired the same way; anything that still can't be grounded
+keeps its TEXT but loses its quotation marks. Nothing is ever fabricated and
+no content is deleted. Numeric and date claims absent from the transcript are
+counted as warnings, not edits. Telemetry lands in
+`details.synthesis.quote_verify`; the config key is the incident off switch.
+
+**Patterns phase:** runs after `extract` (so the graph state is fresh).
+Reads recent reflections within `dream.patterns.lookback_days` (default 30),
+runs a single Sonnet pass to surface recurring themes, and writes pattern
+pages to `wiki/personal/patterns/<theme>` when ≥`dream.patterns.min_evidence`
+(default 3) reflections support a pattern.
+
+**Quality bar (Iron Law for synthesis):**
+1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible
+   EXACTLY from the transcript — if you cannot reproduce a span exactly,
+   paraphrase it WITHOUT quotation marks. Do not paraphrase memorable
+   phrasings you can quote exactly. (The quote verify pass enforces this
+   mechanically after the write.)
+2. Cross-reference compulsively: every new page MUST have at least one wikilink.
+3. Slug discipline: lowercase alphanumeric and hyphens only. NO underscores, NO file extensions.
+4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite.
+5. Preserve concrete facts: carry the specific numbers, dates, dollar amounts,
+   names, and who-decided-what of the salient content, exactly as the
+   transcript states them. Do not pad with routine logistics.
+6. Ground every claim in the transcript. Attribute speculation as speculation,
+   and never state a completion state or outcome the transcript does not show.
+
+**Trust boundary (`allowed_slug_prefixes`):** the synthesis subagent runs with an
+explicit allow-list of write paths sourced from `_brain-filing-rules.json`'s
+`dream_synthesize_paths.globs`. Even on prompt-injection success, the subagent
+cannot write outside that list. Trust comes from PROTECTED_JOB_NAMES — MCP
+cannot submit subagent jobs at all. Editing the JSON is the only way to add
+a new directory the synthesizer can write to.
+
+**Idempotency + privacy:** transcripts are keyed by `(file_path, content_hash)`,
+so re-running on the same content is a no-op. `dream.synthesize.exclude_patterns`
+(default `["medical", "therapy"]`) filters out transcripts before any LLM call.
+Each entry is auto-wrapped as a word-boundary regex (e.g. `medical` matches
+"medical advice" but NOT "comedical"). Power users may pass full regex.
+
+**Cooldown:** the cycle's spend cap. `dream.synthesize.cooldown_hours` (default
+12) means at most ~2 synthesize runs per day under autopilot. The completion
+timestamp is stored in `dream.synthesize.last_completion_ts` and is written
+ONLY on successful runs (not on skipped/failed). Explicit `--input` /
+`--date` / `--from` / `--to` invocations bypass cooldown.
+
+**`--dry-run` semantics:** runs the scored triage pass (judges + caches
+verdicts for new files) but skips the synthesis subagents. NOT zero LLM
+calls — for a zero-call preview from cached scores use
+`gbrain dream retriage --dry-run` instead.
+
+**Configure synthesize on a fresh brain:**
+```bash
+gbrain config set dream.synthesize.session_corpus_dir /path/to/transcripts
+gbrain config set dream.synthesize.enabled true
+gbrain dream --phase synthesize --dry-run --json   # preview
+gbrain dream                                       # full cycle
+```
+
+**Invocation patterns:**
+```bash
+gbrain dream                                          # full cycle
+gbrain dream --phase synthesize                       # just synthesize
+gbrain dream --phase patterns                         # just patterns
+gbrain dream --input ~/transcripts/2026-04-25.txt     # ad-hoc one transcript
+gbrain dream --from 2026-04-01 --to 2026-04-25        # backfill range
+gbrain dream --json                                   # CycleReport JSON
+```
+
+**Auto-commit deferred to v1.1:** v1 writes files to `brain_dir` but does NOT
+`git add` / `commit` / `push`. Either commit yourself or let `gbrain autopilot`
+handle it.
+Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
+Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
+
+### Autopilot check
+Verify autopilot is running:
+```bash
+gbrain autopilot --status
+```
+The exit code is trustworthy for gating: 0 fresh (or nothing installed),
+1 needs attention (stale heartbeat, never ran, or paused by a migration),
+2 the daemon disabled itself (its repo path vanished). `--json` emits the
+full report (`state`, `heartbeat_age_seconds`, `paused_reason`,
+`disabled_reason`). Status reads only the filesystem, so it works even
+when the database is down.
+
+If not running, install it:
+```bash
+gbrain autopilot --install --repo ~/brain
+```
+Autopilot runs sync, extract, and embed in a continuous loop with adaptive scheduling.
+In v0.11.1+, autopilot dispatches each cycle as a single `autopilot-cycle`
+Minion job and supervises the worker child — one install step gives you
+sync + extract + embed + backlinks + durable job processing.
+
+### Fix a half-migrated install
+A v0.11.0 install where the migration skill never fired leaves Minions
+partially set up: schema is applied, but `~/.gbrain/preferences.json`
+doesn't exist, autopilot runs inline, host manifests still reference
+`agentTurn`. Repair:
+
+```bash
+# Check migration status
+gbrain apply-migrations --list
+
+# Apply pending migrations (idempotent; safe on healthy installs)
+gbrain apply-migrations --yes
+
+# If host-specific handlers are flagged in ~/.gbrain/migrations/pending-host-work.jsonl:
+# walk them per skills/migrations/v0.11.0.md + docs/guides/plugin-handlers.md,
+# ship handler registrations in the host repo, then re-run apply-migrations.
+```
+
+Full troubleshooting guide: `docs/guides/minions-fix.md`.
+
+### Back-link enforcement
+Check that the back-linking iron law is being followed:
+- For each recently updated page, check if entities mentioned in it have
+  corresponding back-links FROM those entity pages
+- A mention without a back-link is a broken brain
+- Fix: add the missing back-link to the entity's Timeline or See Also section
+- Format: `- **YYYY-MM-DD** | Referenced in [page title](path) -- brief context`
+
+### Filing rule violations
+Check for common misfiling patterns (see `skills/_brain-filing-rules.md`):
+- Content with clear primary subjects filed in `sources/` instead of the
+  appropriate directory (people/, companies/, concepts/, etc.)
+- Use gbrain search to find pages in `sources/` that reference specific
+  people, companies, or concepts -- these may be misfiled
+- Flag misfiled pages for review or re-filing
+
+### Citation audit
+Spot-check pages for missing `[Source: ...]` citations:
+- Read 5-10 recently updated pages
+- Check that compiled truth (above the line) has inline citations
+- Check that timeline entries have source attribution
+- Flag pages where facts appear without provenance
+
+### Tag consistency
+Inconsistent tagging (e.g., "vc" vs "venture-capital", "ai" vs "artificial-intelligence").
+- Standardize to the most common variant using gbrain tag operations
+
+### Graph population (v0.10.3+)
+
+The `links` and `timeline_entries` tables are the structured graph layer.
+Populate them periodically or after major imports:
+
+- `gbrain extract links --source db` — backfill structured links by walking pages
+  from the engine. Reads `[Name](people/slug)` / `[Name](companies/slug)` references
+  and infers relationship types (`attended`, `works_at`, `invested_in`, `founded`,
+  `advises`, `mentions`, `source`). Idempotent. Use `--source fs --dir <brain>`
+  if you have a markdown checkout to walk instead.
+- `gbrain extract timeline --source db` — backfill structured timeline entries.
+  Parses `- **YYYY-MM-DD** | summary` lines from page content. Idempotent (DB
+  UNIQUE constraint).
+- `gbrain extract all --source db` — both in one run.
+- `gbrain graph-query <slug> --depth 2` — verify connectivity (use any well-known
+  entity slug as a probe).
+- `gbrain stats` — verify `link_count > 0` and `timeline_entry_count > 0` after extraction.
+- `gbrain health` — review `link_coverage` and `timeline_coverage` percentages
+  on entity pages (person/company). Below 50% means more extraction is needed.
+  On brains with very few entity pages these report "too few to grade"
+  (`null` in JSON, with `entity_page_count` carrying the denominator) instead
+  of a misleading 0%/100% — grow the entity set before acting on coverage.
+
+Available link types (use with `gbrain graph-query --type`):
+`attended`, `works_at`, `invested_in`, `founded`, `advises`, `mentions`, `source`.
+
+Going forward, every `gbrain put` call auto-creates and reconciles links via the
+auto-link post-hook (default on; disable: `gbrain config set auto_link false`).
+So link-extract is mostly a one-time backfill. timeline-extract should be re-run
+after bulk imports or content edits that add new dated entries.
+
+### Feature adoption check (weekly)
+```bash
+gbrain features --json    # scan for underused features + recommendations
+```
+Run weekly alongside lint. Surfaces missing embeddings, unused integrations,
+and configuration improvements.
+
+### Embedding freshness
+Chunks without embeddings, or chunks embedded with an old model.
+- For large embedding refreshes (>1000 chunks), use nohup:
+  `nohup gbrain embed refresh > /tmp/gbrain-embed.log 2>&1 &`
+- Then check progress: `tail -1 /tmp/gbrain-embed.log`
+
+### Security (RLS verification)
+Run `gbrain doctor --json` and check the RLS status.
+All tables should show RLS enabled. If not, run `gbrain init` again.
+
+### Schema health
+Check that the schema version is up to date. `gbrain doctor --json` reports
+the current version vs expected. If behind, `gbrain init` runs migrations
+automatically.
+
+### File storage health
+Check the integrity of stored files and redirect pointers:
+- Run `gbrain files verify` to check all DB records have valid data
+- Run `gbrain files status` to see migration state (local, mirrored, redirected)
+- Check for orphan `.redirect.yaml` pointers that reference missing storage files
+- Check for large binary files (>= 100 MB) still in git that should be in cloud storage
+- If storage backend is configured: verify redirect pointers resolve (download test)
+
+### Open threads
+Timeline items older than 30 days with unresolved action items.
+- Flag for review
+
+## Benchmark Testing
+
+Periodically verify search quality hasn't regressed. Run a battery of test
+queries across difficulty tiers:
+
+- **Tier 1 (entity lookup):** known names -- should always resolve
+- **Tier 2 (topic recall):** concepts, topics -- keyword search should handle
+- **Tier 3 (semantic):** queries with no exact keyword match -- needs embeddings
+- **Tier 4 (cross-domain):** relational/connection queries -- only semantic handles
+
+Compare results from `gbrain search` (keyword) vs `gbrain query` (hybrid).
+Quality matters more than speed (2.5s right > 200ms wrong).
+
+When to run benchmarks:
+- After major brain imports or re-imports
+- After gbrain version upgrades
+- After embedding regeneration
+- Monthly to track quality drift
+
+## Heartbeat Integration
+
+For production agents running on a schedule, integrate gbrain health checks into
+your operational heartbeat.
+
+### On every heartbeat (hourly or per-session)
+
+Run `gbrain doctor --json` and check for degradation. Report any failing checks
+to the user. Key signals: connection health, schema version, RLS status, embedding
+staleness.
+
+### Weekly maintenance
+
+Run `gbrain embed --stale` to refresh embeddings for pages that have changed since
+their last embedding. For large brains (>5000 pages), run this with nohup:
+```bash
+nohup gbrain embed --stale > /tmp/gbrain-embed.log 2>&1 &
+```
+
+### Monthly backup check
+
+Run `gbrain backup status` and relay anything red. It verifies every knowledge
+repo (and the agent workspace) has a git remote — local-only means a disk loss
+loses it. Fixes are printed inline (`gbrain bootstrap repo`, `git remote add`,
+`gbrain sources harden <id>`).
+
+### Daily verification
+
+Verify sync is running: check `gbrain stats` and confirm `last_sync` is within
+the last 24 hours. If sync has stopped, the brain is drifting from the repo.
+
+### Stale compiled truth detection
+
+Flag pages where compiled truth is >30 days old but the timeline has recent entries.
+This means new evidence exists that hasn't been synthesized. These pages need a
+compiled truth rewrite (see the maintain workflow above).
+
+## Report Storage
+
+After maintenance runs, save a report:
+- Health check results (before/after scores for each dimension)
+- Back-link violations found and fixed
+- Filing rule violations found
+- Citation gaps flagged
+- Benchmark results (if run)
+- Outstanding issues requiring user attention
+
+This creates an audit trail for brain health over time.
+
+## Quality Rules
+
+- Never delete pages without confirmation
+- Log all changes via timeline entries
+- Check gbrain health before and after to show improvement
+
+## Anti-Patterns
+
+- Fixing pages without reading them first -- you must understand context before editing
+- Silently skipping dimensions -- every dimension must be checked and reported, even if clean
+- Deleting orphan pages without checking if they should be linked instead
+- Running embedding refresh during peak usage hours
+- Batch-fixing back-links without verifying the relationship is real
+- Marking a dimension "clean" without actually querying it
+- Rewriting compiled truth without reading the full timeline first
+- Removing tags without checking if other pages use the same tag consistently
+
+## Output Format
+
+The maintenance report follows this structure:
+
+```
+## Brain Health Report — YYYY-MM-DD
+
+| Dimension           | Issues Found | Fixed | Remaining |
+|----------------------|-------------|-------|-----------|
+| Stale pages          | N           | N     | N         |
+| Orphan pages         | N           | N     | N         |
+| Dead links           | N           | N     | N         |
+| Missing cross-refs   | N           | N     | N         |
+| Back-link violations | N           | N     | N         |
+| Citation gaps        | N           | N     | N         |
+| Filing violations    | N           | N     | N         |
+| Tag inconsistencies  | N           | N     | N         |
+| Embedding staleness  | N           | N     | N         |
+| Security (RLS)       | N           | N     | N         |
+| Schema health        | N           | N     | N         |
+| File storage         | N           | N     | N         |
+| Open threads         | N           | N     | N         |
+
+### Details
+[Per-dimension breakdown with specific pages and actions taken]
+
+### Benchmark Results (if run)
+[Tier 1-4 query results with pass/fail]
+
+### Outstanding Issues
+[Items requiring user attention or confirmation]
+```
+
+## Tools Used
+
+- Check gbrain health (get_health)
+- List pages in gbrain with filters (list_pages)
+- Read a page from gbrain (get_page)
+- Check backlinks in gbrain (get_backlinks)
+- Link entities in gbrain (add_link)
+- Remove links in gbrain (remove_link)
+- Tag a page in gbrain (add_tag)
+- Remove a tag in gbrain (remove_tag)
+- View timeline in gbrain (get_timeline)
