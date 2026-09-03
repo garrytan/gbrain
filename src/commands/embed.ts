@@ -1819,6 +1819,7 @@ async function embedAllStale(
   let afterUpdatedAt: string | null = null;
   let totalChunksLoaded = 0;
   let budgetExitNotified = false;
+  const touchedPages = new Map<string, { slug: string; sourceId: string }>();
   // #1946 (OV2a) + #3037: embed failures are tracked on result.failures so
   // the catch-up warning below AND the CLI exit verdict both see them.
 
@@ -1972,16 +1973,8 @@ async function embedAllStale(
             token_count: c.token_count || Math.ceil(c.chunk_text.length / 4),
           }));
           await observed(pacer, () => engine.upsertChunks(slug, merged, { sourceId: keySourceId }));
-          // v0.41.31: stamp provenance after the page's chunks are embedded —
-          // but only when EVERY chunk was stale (fully re-embedded this pass).
-          // A partially-stale page keeps preserved chunks of unknown/old
-          // provenance, so don't claim it's current. (After invalidate, a
-          // signature-drifted page IS fully stale → this stamps it.)
-          // #3037: not on partial failure — failed chunks stay NULL.
-          if (signature && failed === 0 && stale.length === existing.length) {
-            await observed(pacer, () =>
-              engine.setPageEmbeddingSignature(slug, { sourceId: keySourceId, signature }),
-            );
+          if (stale.length > failed) {
+            touchedPages.set(key, { slug, sourceId: keySourceId });
           }
           // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the
           // title tier — keep the stamped mode honest. Partially-stale pages
@@ -2052,6 +2045,34 @@ async function embedAllStale(
     }
   } finally {
     if (budgetTimer) clearTimeout(budgetTimer);
+  }
+
+  if (signature && touchedPages.size > 0) {
+    const model = signature.slice(0, signature.lastIndexOf(':'));
+    const reconciliation = await runSlidingPool({
+      items: Array.from(touchedPages.values()),
+      workers: CONCURRENCY,
+      failureLabel: page => `${page.sourceId}::${page.slug}`,
+      onItem: async ({ slug, sourceId }) => {
+        // A page can span the 2,000-row boundary, so judge completion from
+        // the final database state at the end of the pass, not a cursor-batch subset.
+        // Preserved non-stale chunks prove the same provenance when the vector,
+        // expected model, and current chunk_text hash all match, so the signature
+        // can be recorded safely whether or not they were re-embedded in this pass.
+        const complete = await observed(pacer, () =>
+          engine.hasCompletePageEmbeddingProvenance(slug, { sourceId, model }),
+        );
+        if (complete) {
+          await observed(pacer, () =>
+            engine.setPageEmbeddingSignature(slug, { sourceId, signature }),
+          );
+        }
+      },
+    });
+    for (const failure of reconciliation.failures) {
+      recordFailure(result, 1, failure.label, failure.error);
+      serr(`\n  Error reconciling embedding signature for ${failure.label}: ${failure.error instanceof Error ? failure.error.message : failure.error}`);
+    }
   }
 
   if (!staleOpts?.quiet) slog(`Embedded ${result.embedded} chunks across ${totalProcessedPages} pages`);
