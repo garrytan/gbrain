@@ -36,6 +36,7 @@ import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
+import { parseTypedOpArg } from './core/cli-util.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
@@ -1148,9 +1149,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         const def = op.params[key];
         if (def) {
           const raw = arg.slice(eq + 1);
-          params[key] = def.type === 'boolean' ? raw !== 'false'
-            : def.type === 'number' ? Number(raw)
-            : raw;
+          params[key] = parseTypedOpArg(key, def.type, raw);
           continue;
         }
       }
@@ -1190,8 +1189,8 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // positionally, then --content clobbered it). Warn to stderr; when
         // the discarded value names an existing file, point at capture --file.
         const prevValue = params[key];
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        const raw = args[++i];
+        params[key] = paramDef ? parseTypedOpArg(key, paramDef.type, raw) : raw;
         if (prevValue !== undefined && prevValue !== params[key]) {
           let fileHint = '';
           try {

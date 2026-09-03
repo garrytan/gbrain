@@ -12,7 +12,9 @@ import { clampSearchLimit } from '../engine.ts';
 import type { Page, PageType } from '../types.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
+import { writePageThrough, type WriteThroughResult } from '../write-through.ts';
+import { readCanonicalPage } from '../canonical-page-mutations.ts';
+import { acquirePageLock } from '../page-lock.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
@@ -26,6 +28,7 @@ import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from 
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
+import { assertC1CreateAdmissible, deletePageOperationHandler, isC1ContainmentEnabled, isC1RevisionGuardEnabled, patchPageOperation, restorePageOperationHandler } from './pages-c1.ts';
 import {
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
@@ -37,33 +40,6 @@ import {
 } from './context.ts';
 
 // --- Page CRUD ---
-
-/**
- * #4329 (S1-tightened): write-authority gate for a per-call source_id on the
- * destructive page ops. Trusted local callers (ctx.remote === false) own the
- * brain and may target any source (slug fences still apply). EVERY other
- * caller — authenticated HTTP MCP, unauthenticated transports (stdio MCP,
- * subagent dispatch), unset trust — may target ONLY its write authority:
- * `ctx.auth.sourceId` when auth exists (falling back to `ctx.sourceId` for
- * legacy tokens that predate the v0.34.1 source grant), else `ctx.sourceId`.
- *
- * `ctx.auth.allowedSources` is the READ-federation grant (see contract.ts:
- * "array of source ids this OAuth client may READ from") and plays NO role
- * in writes — mirroring put_page, which writes only to ctx.sourceId
- * (`localFederatedSourceIds` is likewise consumed exclusively by
- * federatedSearchScope, a read path). Fail-closed permission_denied
- * otherwise, never a silent retarget.
- */
-function assertSourceInWriteGrant(ctx: OperationContext, sourceId: string): void {
-  if (ctx.remote === false) return;
-  const writeAuthority = ctx.auth?.sourceId ?? ctx.sourceId;
-  if (sourceId === writeAuthority) return;
-  throw new OperationError(
-    'permission_denied',
-    `source '${sourceId}' is outside your write authority`,
-    'Omit source_id (or pass your write source) to target your write source. Federated read grants do not confer delete/restore access.',
-  );
-}
 
 /**
  * #4352 remediation — filter fuzzy-resolution candidates so get_page's
@@ -274,6 +250,17 @@ const get_page: Operation = {
     // it" signal it would get from search. The marker is also in frontmatter;
     // this is the clean, documented accessor.
     const content_flag = getContentFlag(page.frontmatter as Record<string, unknown> | null);
+    // C1: expose an opaque exact-byte revision for compare-and-swap updates.
+    // It is computed from the full canonical file, not the privacy-filtered
+    // response body and not the semantic content_hash. A missing/unavailable
+    // canonical artifact leaves the field absent rather than making a read
+    // fail (legacy DB-only brains remain readable).
+    let canonicalRevision: string | undefined;
+    try {
+      canonicalRevision = (await readCanonicalPage(ctx.engine, page.slug, page.source_id)).revision ?? undefined;
+    } catch {
+      canonicalRevision = undefined;
+    }
     // #2225: `content` is the canonical serialized markdown (frontmatter +
     // compiled_truth + `<!-- timeline -->` sentinel + timeline). Clients that
     // edit-and-put_page this field round-trip losslessly; hand-concatenating
@@ -287,6 +274,7 @@ const get_page: Operation = {
       ...visibleBody,
       tags,
       ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
+      ...(canonicalRevision ? { canonical_revision: canonicalRevision } : {}),
       ...(resolved_slug ? { resolved_slug } : {}),
       ...(content_flag ? { content_flag } : {}),
     };
@@ -380,6 +368,9 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     validatePageSlug(slug);
+    const sourceId = ctx.sourceId ?? 'default';
+    const c1Containment = await isC1ContainmentEnabled(ctx.engine);
+    const c1RevisionGuard = c1Containment || await isC1RevisionGuardEnabled(ctx.engine);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
     // Only trusted LOCAL callers (ctx.remote === false — capture CLI,
@@ -471,8 +462,33 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
-      noEmbed,
+    const c1Lock = c1RevisionGuard
+      ? await acquirePageLock(slug, { sourceId, timeoutMs: 30_000 })
+      : null;
+    if (c1RevisionGuard && !c1Lock) {
+      throw new OperationError('unavailable', `Could not acquire the canonical page lock for '${slug}'.`, 'Retry after the current writer completes.');
+    }
+    const c1Heartbeat = c1Lock ? setInterval(() => { void c1Lock.refresh(); }, 60_000) : null;
+    c1Heartbeat?.unref();
+    let result: Awaited<ReturnType<typeof importFromContent>>;
+    let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' | 'dry_run' }) | undefined;
+    try {
+      if (c1RevisionGuard) {
+        const [projected, canonical] = await Promise.all([
+          ctx.engine.getPage(slug, { sourceId }),
+          readCanonicalPage(ctx.engine, slug, sourceId),
+        ]);
+        if (projected || canonical.exists) {
+          throw new OperationError(
+            'revision_required',
+            `C1 containment blocks whole-page replacement of existing page '${slug}'.`,
+            'Read the page with get_page, then use patch_page with canonical_revision as base_revision.',
+          );
+        }
+        if (c1Containment) assertC1CreateAdmissible(p.content as string, slug, activePack);
+      }
+      result = await importFromContent(ctx.engine, slug, p.content as string, {
+        noEmbed,
       // v0.42 (#1699): untrusted callers can't smuggle gate-owned frontmatter
       // markers (quarantine/content_flag/embed_skip). Fail-closed — anything
       // not strictly local is remote (matches CV6 / v0.26.9 F7b posture).
@@ -493,9 +509,15 @@ const put_page: Operation = {
       // escape hatch; the default put_page path stays guarded end-to-end
       // (including frontmatter-only content the raw-content check above
       // can't see — the parsed body is blank even though content isn't).
-      ...(p.allow_empty === true ? { allowEmptyOverwrite: true } : {}),
-    });
-
+        ...(p.allow_empty === true ? { allowEmptyOverwrite: true } : {}),
+      });
+    if (c1RevisionGuard && result.slug && result.slug !== slug) {
+      throw new OperationError(
+        'revision_required',
+        `C1 containment blocks put_page because '${slug}' resolves to an existing page.`,
+        'Read the existing page and use patch_page with its canonical_revision.',
+      );
+    }
     // The dedup pre-check in importFromContent can resolve the write to a
     // DIFFERENT page than the one requested (same content_hash, or the same
     // `frontmatter.id`), and the disk write-through below runs against that
@@ -517,7 +539,6 @@ const put_page: Operation = {
         );
       }
     }
-
     // v0.39 T13 — auto-prompt on first unknown-type write.
     //
     // Contract (codex finding #8 honored — 7 cases covered):
@@ -566,7 +587,6 @@ const put_page: Operation = {
     // put_page's own trust-gating produces two skip reasons ('subagent_sandbox',
     // 'dry_run') that never come out of writePageThrough itself — widen the
     // field rather than losing the commit/pushed/lastPushStatus typing.
-    let writeThrough: (Omit<WriteThroughResult, 'skipped'> & { skipped?: WriteThroughResult['skipped'] | 'subagent_sandbox' | 'dry_run' }) | undefined;
     const isSandboxSubagent = ctx.viaSubagent === true
       && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
     if (!ctx.dryRun && result.status !== 'error' && !isSandboxSubagent) {
@@ -577,6 +597,7 @@ const put_page: Operation = {
       // atomically; never throws (failures land in skipped/error).
       writeThrough = await writePageThrough(ctx.engine, result.slug, {
         sourceId,
+        lockAlreadyHeld: c1RevisionGuard,
         frontmatterOverrides: {
           ingested_via: provenanceVia,
           ingested_at: new Date().toISOString(),
@@ -624,6 +645,10 @@ const put_page: Operation = {
         `put_page: the page content could not be written to disk (${writeThrough.skipped ?? writeThrough.error}).`,
         'Check that the configured repo path exists and is writable, then retry.',
       );
+    }
+    } finally {
+      if (c1Heartbeat) clearInterval(c1Heartbeat);
+      await c1Lock?.release();
     }
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -1136,58 +1161,7 @@ const delete_page: Operation = {
   },
   mutating: true,
   scope: 'write',
-  handler: async (ctx, p) => {
-    const slug = p.slug as string;
-    enforceClientSlugFence(ctx, slug, 'delete_page');
-    // #4329: honor a per-call source_id (pre-fix it was silently dropped and
-    // the delete landed on ctx.sourceId's row — the wrong-source soft-delete).
-    const requestedSource = parseSourceIdParam(p.source_id, 'delete_page');
-    if (requestedSource !== undefined) assertSourceInWriteGrant(ctx, requestedSource);
-    if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
-    // v0.31.8 (D7): thread ctx.sourceId so multi-source brains soft-delete the
-    // intended row instead of always targeting (default, slug).
-    const sourceOpts = requestedSource
-      ? { sourceId: requestedSource }
-      : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    // #4022 trust gating: sandbox subagents (viaSubagent without
-    // allowedSlugPrefixes) stay DB-only, matching put_page's write-through gate.
-    const isSandboxSubagent = ctx.viaSubagent === true
-      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
-    // #4022: resolve the artifact target BEFORE softDeletePage stamps
-    // deleted_at — resolvePageWriteTarget reads the recorded source_path from
-    // active rows only, so a post-stamp resolution would fall back to the
-    // slug-derived twin and miss the real artifact.
-    const wtSourceId = sourceOpts.sourceId ?? 'default';
-    const target = isSandboxSubagent
-      ? undefined
-      : await resolvePageWriteTarget(ctx.engine, slug, wtSourceId);
-    // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
-    // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
-    // tests. softDeletePage returns null when the slug is unknown OR already
-    // soft-deleted (idempotent-as-null) — preserve that as a clean no-op shape.
-    const result = await ctx.engine.softDeletePage(slug, sourceOpts);
-    if (result === null) {
-      // Distinguish "not found" from "already soft-deleted" so the agent gets a
-      // clear signal. Probe once with include_deleted to disambiguate.
-      const existing = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
-      if (!existing) {
-        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug (and source_id on a multi-source brain).');
-      }
-      return { status: 'already_soft_deleted', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), deleted_at: existing.deleted_at };
-    }
-    // #4022: remove the on-disk artifact too. Pre-fix this was DB-only, so the
-    // deleted page's `.md` survived, any timer-based commit (snapshot cron,
-    // hardened post-commit push) pushed it back into git, and the next
-    // `gbrain sync` resurrected the page. Best-effort like put_page's
-    // write-through: a skip/error never fails the delete (the DB row is the
-    // durable sink and the stale file reconciles on the next sync).
-    const writeThrough = isSandboxSubagent
-      ? { removed: false, skipped: 'subagent_sandbox' as const }
-      : await deletePageThrough(ctx.engine, slug, { sourceId: wtSourceId, logger: ctx.logger, target });
-    // Echo the targeted source so a multi-source caller can verify WHICH row
-    // the delete landed on (#4329's false-confidence failure mode).
-    return { status: 'soft_deleted', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), recoverable_until: 'now + 72h via restore_page', write_through: writeThrough };
-  },
+  handler: deletePageOperationHandler,
   cliHints: { name: 'delete', positional: ['slug'] },
 };
 
@@ -1200,39 +1174,7 @@ const restore_page: Operation = {
   },
   mutating: true,
   scope: 'write',
-  handler: async (ctx, p) => {
-    const slug = p.slug as string;
-    enforceClientSlugFence(ctx, slug, 'restore_page');
-    // #4329: honor a per-call source_id (pre-fix it was silently dropped).
-    const requestedSource = parseSourceIdParam(p.source_id, 'restore_page');
-    if (requestedSource !== undefined) assertSourceInWriteGrant(ctx, requestedSource);
-    if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
-    // v0.31.8 (D7): thread ctx.sourceId.
-    const sourceOpts = requestedSource
-      ? { sourceId: requestedSource }
-      : ctx.sourceId ? { sourceId: ctx.sourceId } : {};
-    const ok = await ctx.engine.restorePage(slug, sourceOpts);
-    if (!ok) {
-      // Distinguish "not found" from "already active" (idempotent-as-false).
-      const existing = await ctx.engine.getPage(slug, { includeDeleted: true, ...sourceOpts });
-      if (!existing) {
-        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug (and source_id on a multi-source brain).');
-      }
-      return { status: 'already_active', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}) };
-    }
-    // #4022: re-render the artifact — delete_page now removes it, so without
-    // this a restored page has a DB row and no file, and `sync --full`'s
-    // delete-reconcile treats the missing artifact as a user deletion,
-    // silently re-deleting the page that was just restored. Keeps the two
-    // sinks symmetric across the delete/restore pair; sandbox subagents stay
-    // DB-only, matching put_page's trust gate.
-    const isSandboxSubagent = ctx.viaSubagent === true
-      && !(Array.isArray(ctx.allowedSlugPrefixes) && ctx.allowedSlugPrefixes.length > 0);
-    const writeThrough = isSandboxSubagent
-      ? { written: false, skipped: 'subagent_sandbox' as const }
-      : await writePageThrough(ctx.engine, slug, { sourceId: sourceOpts.sourceId, logger: ctx.logger });
-    return { status: 'restored', slug, ...(sourceOpts.sourceId ? { source_id: sourceOpts.sourceId } : {}), write_through: writeThrough };
-  },
+  handler: restorePageOperationHandler,
   cliHints: { name: 'restore', positional: ['slug'] },
 };
 
@@ -1498,7 +1440,7 @@ const capture: Operation = {
 // (Page CRUD quartet first, then the v0.26.5 destructive-guard ops:
 // page-level soft-delete recovery + admin purge, then capture.)
 export const pagesOperations: Operation[] = [
-  get_page, put_page, delete_page, list_pages,
+  get_page, put_page, patchPageOperation, delete_page, list_pages,
   restore_page, purge_deleted_pages, capture,
   fetch_page,
 ];
