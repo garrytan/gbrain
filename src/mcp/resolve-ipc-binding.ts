@@ -29,7 +29,7 @@ import {
   type IpcHandlers,
 } from '../core/context/resolve-ipc.ts';
 import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/context/retrieval-reflex.ts';
-import { lexicalArmsEnabled } from '../core/context/reflex.ts';
+import { lexicalArmsEnabled, volunteerExcludeSlugPrefixes } from '../core/context/reflex.ts';
 import { VOLUNTEER_MAX_PAGES_CAP } from '../core/context/volunteer.ts';
 import { assembleTurnContext } from '../core/context/turn-context.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
@@ -184,6 +184,7 @@ export async function bindResolveIpcForServe(
             // Per-request config read — same next-turn-revert rationale as
             // the resolve handler above (adversarial F3).
             lexicalArms: lexicalArmsEnabled(loadConfig()),
+            excludeSlugPrefixes: volunteerExcludeSlugPrefixes(loadConfig()),
           }),
         // v0.45.7 ambient recall: boundary context pack. Extracted to
         // context-pack-handler.ts (directly testable against a real engine);
