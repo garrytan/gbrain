@@ -1046,6 +1046,9 @@ export class PostgresEngine implements BrainEngine {
     const slugCondition = slugPrefix
       ? sql`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sql``;
+    const frontmatterStorageTierCondition = filters?.frontmatterStorageTier
+      ? sql`AND p.frontmatter->>'storage_tier' = ${filters.frontmatterStorageTier}`
+      : sql``;
     // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. When BOTH are set, the array wins (federated semantics
     // subsume the scalar case). When neither is set, no filter applies.
@@ -1083,7 +1086,7 @@ export class PostgresEngine implements BrainEngine {
       const rows = await tx`
         SELECT p.* FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${frontmatterStorageTierCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `;
       return rows.map(rowToPage);

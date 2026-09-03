@@ -2055,6 +2055,10 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
     }
+    if (filters?.frontmatterStorageTier) {
+      params.push(filters.frontmatterStorageTier);
+      where.push(`p.frontmatter->>'storage_tier' = $${params.length}`);
+    }
     // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. Array form wins (federated subsumes scalar).
     if (filters?.sourceIds && filters.sourceIds.length > 0) {

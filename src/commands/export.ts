@@ -6,8 +6,8 @@ import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
 import { slugifyPath } from '../core/sync.ts';
-import { getDefaultSourcePath } from '../core/source-resolver.ts';
-import type { PageType } from '../core/types.ts';
+import { getDefaultSourcePath, resolveSourceForRepoPath } from '../core/source-resolver.ts';
+import type { Page, PageFilters, PageType } from '../core/types.ts';
 
 export async function runExport(engine: BrainEngine, args: string[]) {
   const dirIdx = args.indexOf('--dir');
@@ -43,6 +43,9 @@ export async function runExport(engine: BrainEngine, args: string[]) {
 
   // Load storage configuration if repo path is provided
   const storageConfig = repoPath ? loadStorageConfig(repoPath) : null;
+  const restoreSource = restoreOnly && repoPath
+    ? await resolveSourceForRepoPath(engine, repoPath)
+    : null;
 
   // D5 + Codex P0: refuse --restore-only when there's no storage config to
   // scope the restore. Without storageConfig, the selective filter (db_only
@@ -61,11 +64,12 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   
   // Build filters. slugPrefix is engine-side (Issue #13) — no in-memory
   // post-filter, no full-table load.
-  const filters: import('../core/types.ts').PageFilters = { limit: 100000 };
+  const filters: PageFilters = { limit: 100000 };
   if (typeFilter) filters.type = typeFilter;
   if (slugPrefix) filters.slugPrefix = slugPrefix;
+  if (restoreOnly && restoreSource) filters.sourceId = restoreSource.source_id;
 
-  let pages: import('../core/types.ts').Page[];
+  let pages: Page[];
 
   // Restore-only path: query each db_only directory with slugPrefix instead
   // of loading every page in the brain. On a 200K-page brain where 95% is
@@ -74,24 +78,38 @@ export async function runExport(engine: BrainEngine, args: string[]) {
   if (restoreOnly && repoPath && storageConfig) {
     const seen = new Set<string>();
     pages = [];
+    const addRestoreCandidate = (p: Page) => {
+      if (seen.has(p.slug)) return;
+      seen.add(p.slug);
+      if (!isDbOnly(p.slug, storageConfig, p.frontmatter)) return; // belt-and-suspenders
+      const filePath = join(repoPath, p.slug + '.md');
+      if (existsSync(filePath)) return;
+      pages.push(p);
+    };
     for (const dir of storageConfig.db_only) {
-      const tierFilters: import('../core/types.ts').PageFilters = {
+      const tierSlugPrefix = filters.slugPrefix
+        ? filters.slugPrefix.startsWith(dir)
+          ? filters.slugPrefix
+          : dir.startsWith(filters.slugPrefix)
+            ? dir
+            : undefined
+        : dir;
+      if (!tierSlugPrefix) continue;
+      const tierFilters: PageFilters = {
         ...filters,
-        slugPrefix: filters.slugPrefix
-          ? // If user passed --slug-prefix, only include tier dirs that start with it.
-            (dir.startsWith(filters.slugPrefix) ? dir : undefined)
-          : dir,
+        slugPrefix: tierSlugPrefix,
       };
-      if (!tierFilters.slugPrefix) continue;
       const tierPages = await engine.listPages(tierFilters);
       for (const p of tierPages) {
-        if (seen.has(p.slug)) continue;
-        seen.add(p.slug);
-        if (!isDbOnly(p.slug, storageConfig)) continue; // belt-and-suspenders
-        const filePath = join(repoPath, p.slug + '.md');
-        if (existsSync(filePath)) continue;
-        pages.push(p);
+        addRestoreCandidate(p);
       }
+    }
+    const frontmatterPages = await engine.listPages({
+      ...filters,
+      frontmatterStorageTier: 'db_only',
+    });
+    for (const p of frontmatterPages) {
+      addRestoreCandidate(p);
     }
   } else {
     pages = await engine.listPages(filters);

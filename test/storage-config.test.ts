@@ -70,6 +70,13 @@ describe('Storage Configuration', () => {
       expect(getStorageTier('projects/random-thing', testConfig)).toBe('unspecified');
     });
 
+    test('frontmatter storage_tier db_only wins outside and over configured prefixes', () => {
+      expect(isSupabaseOnly('projects/random-thing', testConfig, { storage_tier: 'db_only' })).toBe(true);
+      expect(getStorageTier('projects/random-thing', testConfig, { storage_tier: 'db_only' })).toBe('db_only');
+      expect(isGitTracked('people/john-doe', testConfig, { storage_tier: 'db_only' })).toBe(false);
+      expect(getStorageTier('people/john-doe', testConfig, { storage_tier: 'db_only' })).toBe('db_only');
+    });
+
     test('handles prefix edge cases', () => {
       expect(isGitTracked('people', testConfig)).toBe(false);
       expect(isGitTracked('people/', testConfig)).toBe(true);

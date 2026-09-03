@@ -348,11 +348,27 @@ function matchesTierDir(slug: string, dir: string): boolean {
   return slug.startsWith(dir);
 }
 
-export function isDbTracked(slug: string, config: StorageConfig): boolean {
+export function isDbTracked(
+  slug: string,
+  config: StorageConfig,
+  frontmatter?: Record<string, unknown> | null,
+): boolean {
+  if (hasExplicitDbOnlyDeclaration(frontmatter)) return false;
   return config.db_tracked.some((dir) => matchesTierDir(slug, dir));
 }
 
-export function isDbOnly(slug: string, config: StorageConfig): boolean {
+export function hasExplicitDbOnlyDeclaration(
+  frontmatter: Record<string, unknown> | null | undefined,
+): boolean {
+  return frontmatter?.storage_tier === 'db_only';
+}
+
+export function isDbOnly(
+  slug: string,
+  config: StorageConfig,
+  frontmatter?: Record<string, unknown> | null,
+): boolean {
+  if (hasExplicitDbOnlyDeclaration(frontmatter)) return true;
   return config.db_only.some((dir) => matchesTierDir(slug, dir));
 }
 
@@ -422,9 +438,13 @@ export function findDbOnlyCollisions(
   return hits;
 }
 
-export function getStorageTier(slug: string, config: StorageConfig): StorageTier {
-  if (isDbTracked(slug, config)) return 'db_tracked';
-  if (isDbOnly(slug, config)) return 'db_only';
+export function getStorageTier(
+  slug: string,
+  config: StorageConfig,
+  frontmatter?: Record<string, unknown> | null,
+): StorageTier {
+  if (isDbOnly(slug, config, frontmatter)) return 'db_only';
+  if (isDbTracked(slug, config, frontmatter)) return 'db_tracked';
   return 'unspecified';
 }
 
