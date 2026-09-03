@@ -113,6 +113,44 @@ describe('maybeRunWorkerStartupRecovery', () => {
 // Structural (separate suite so the behavioral tests above stay classified
 // behavioral; binding name is deliberately non-generic so the classifier's
 // reference heuristic can't leak onto sibling suites).
+describe('dream-inline queues stay live while a cycle lock is fresh', () => {
+  async function seedCycleLock(refreshedAgo: string): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO gbrain_cycle_locks (id, holder_pid, holder_host, acquired_at, ttl_expires_at, last_refreshed_at)
+       VALUES ('gbrain-cycle:default', 4, 'modal:ta-test', now() - interval '30 minutes',
+               now() + interval '5 minutes', now() - ($1 || ' seconds')::interval)
+       ON CONFLICT (id) DO UPDATE SET last_refreshed_at = EXCLUDED.last_refreshed_at`,
+      [refreshedAgo],
+    );
+  }
+
+  test('an orphan-looking queue survives recovery while a cycle lock was refreshed within 5 minutes', async () => {
+    const { queueName, childId } = await seedOrphanQueue();
+    await seedCycleLock('40');
+    try {
+      expect(await queue.classifyPrivateQueueForRecovery(queueName)).toBe('live');
+      const r = await queue.reconcileOrphanedPrivateQueues({ reason: 'test' });
+      expect(r.cancelled_jobs).toBe(0);
+      expect((await childRow(childId)).status).toBe('waiting');
+    } finally {
+      await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id = 'gbrain-cycle:default'`);
+    }
+  });
+
+  test('the same queue is reaped once the cycle lock is stale (refreshed more than 5 minutes ago)', async () => {
+    const { queueName, childId } = await seedOrphanQueue();
+    await seedCycleLock('600');
+    try {
+      expect(await queue.classifyPrivateQueueForRecovery(queueName)).toBe('orphan');
+      const r = await queue.reconcileOrphanedPrivateQueues({ reason: 'test' });
+      expect(r.cancelled_jobs).toBe(1);
+      expect((await childRow(childId)).status).toBe('cancelled');
+    } finally {
+      await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id = 'gbrain-cycle:default'`);
+    }
+  });
+});
+
 describe('work-handler recovery placement (structural)', () => {
   test('the work handler awaits recovery right after ensureSchema, before the worker spawns', () => {
     const jobsSource = readFileSync(

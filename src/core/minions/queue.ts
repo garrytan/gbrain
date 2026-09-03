@@ -957,6 +957,7 @@ export class MinionQueue {
       max_lease_until: string | null;
       future_lease_rows: string | number;
       recently_touched: string | number;
+      live_cycle_locks: string | number;
     }>(
       `WITH q AS (
          SELECT *
@@ -982,7 +983,9 @@ export class MinionQueue {
          (SELECT count(*) FROM owners WHERE status IN ('waiting','active','delayed','waiting-children','paused')) AS nonterminal_owner_rows,
          max(q.private_queue_lease_until)::text AS max_lease_until,
          count(*) FILTER (WHERE q.private_queue_lease_until > now()) AS future_lease_rows,
-         count(*) FILTER (WHERE q.updated_at > now() - interval '120 seconds') AS recently_touched
+         count(*) FILTER (WHERE q.updated_at > now() - interval '120 seconds') AS recently_touched,
+         (SELECT count(*) FROM gbrain_cycle_locks
+           WHERE last_refreshed_at > now() - interval '5 minutes') AS live_cycle_locks
        FROM q`,
       [queueName],
     );
@@ -992,6 +995,16 @@ export class MinionQueue {
     if (Number(r.active_healthy ?? 0) > 0 || Number(r.live_owner_rows ?? 0) > 0) {
       return 'live';
     }
+    // A dream-inline queue belongs to a cycle, and a cycle holds a cycle lock
+    // that its refresher renews every ~50 s (cycle.ts LOCK_TTL_MS, 5 min).
+    // While any cycle lock is fresh, treat the queue as live even when its
+    // owner-less children carry a lapsed lease: a CLI `gbrain dream` renews
+    // the lease only once it reaches its inline drain, and its submit loop
+    // can outlast the lease, so a worker starting in between (a 15-minute
+    // drain tick on a containerized plane) reaped live children
+    // (2026-09-03). A crashed cycle stops refreshing and the queue becomes
+    // reapable again 5 minutes later, which is the intended backstop.
+    if (Number(r.live_cycle_locks ?? 0) > 0) return 'live';
     if (Number(r.metadata_rows ?? 0) === 0) return 'unowned';
     // Freshness guard BEFORE the owner-terminal fast path: any row touched in
     // the last 2 minutes (a 30s-cadence lease renewal, a claim, a child_done)
