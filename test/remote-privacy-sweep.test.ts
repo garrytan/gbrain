@@ -305,6 +305,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   remember: 'ok',
   forget: 'error',
   put_page: 'ok',
+  patch_page: 'error', // generic sweep omits required revision; dedicated C1 privacy test proves hidden facts survive
+  append_page_event: 'error', // default-off writer gate; dedicated operation tests cover the enabled response envelope
   delete_page: 'ok',
   restore_page: 'ok',
   capture: 'ok',

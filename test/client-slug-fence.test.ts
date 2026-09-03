@@ -29,7 +29,7 @@ function op(name: string): Operation {
 }
 
 function makeCtx(overrides: Partial<OperationContext> = {}): OperationContext {
-  const engine = {} as BrainEngine; // dry_run short-circuits before touching the engine
+  const engine = { getConfig: async () => 'true' } as unknown as BrainEngine; // append gate resolves on before dry-run
   return {
     engine,
     config: { engine: 'postgres' } as any,
@@ -54,6 +54,13 @@ function boundAuth(prefixes: string[] | undefined): AuthInfo {
 // Every fenced op with a params factory for an arbitrary slug.
 const FENCED_OPS: Array<{ name: string; params: (slug: string) => Record<string, unknown> }> = [
   { name: 'put_page', params: (slug) => ({ slug, content: 'stub' }) },
+  { name: 'append_page_event', params: (slug) => ({
+    slug,
+    idempotency_key: `test:${slug}`,
+    date: '2026-09-02',
+    channel: 'test',
+    note: 'Dry-run fence probe',
+  }) },
   { name: 'delete_page', params: (slug) => ({ slug }) },
   { name: 'restore_page', params: (slug) => ({ slug }) },
   { name: 'add_tag', params: (slug) => ({ slug, tag: 't' }) },
@@ -75,9 +82,13 @@ const FENCED_OPS: Array<{ name: string; params: (slug: string) => Record<string,
 describe('client slug fence (bound_slug_prefixes on direct writes)', () => {
   describe('regression: unbound callers unchanged', () => {
     for (const { name, params } of FENCED_OPS) {
-      test(`${name}: no ctx.auth accepts arbitrary slug`, async () => {
-        const result = await op(name).handler(makeCtx(), params('anywhere/at-all'));
-        expect(result).toMatchObject({ dry_run: true });
+      test(`${name}: no ctx.auth preserves its existing transport posture`, async () => {
+        const call = op(name).handler(makeCtx(), params('anywhere/at-all'));
+        if (name === 'append_page_event') {
+          await expect(call).rejects.toMatchObject({ code: 'unknown_transport' });
+        } else {
+          expect(await call).toMatchObject({ dry_run: true });
+        }
       });
 
       test(`${name}: authed client WITHOUT binding accepts arbitrary slug`, async () => {

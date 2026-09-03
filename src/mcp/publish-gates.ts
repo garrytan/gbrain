@@ -36,9 +36,15 @@ export async function readPublishGate(
     // Engine without a config table / transient error → file plane decides.
   }
   if (dbVal != null) return dbVal === 'true';
-  const mcp = config?.mcp as Record<string, unknown> | undefined;
-  const fileKey = key.slice('mcp.'.length);
-  return mcp?.[fileKey] === true;
+  if (key.startsWith('mcp.')) {
+    const mcp = config?.mcp as Record<string, unknown> | undefined;
+    const fileKey = key.slice('mcp.'.length);
+    return mcp?.[fileKey] === true;
+  }
+  // Writer activation keys are deliberately DB-only. They control a live
+  // mutation surface and must not be enabled accidentally by a stale file
+  // config copied between hosts.
+  return false;
 }
 
 /**

@@ -8,18 +8,11 @@
  * keeps filenames safe regardless of slug content (slashes, unicode, etc.).
  *
  * File contents: `{pid}\n{iso-timestamp}\n{ownership-token}`. The pid line
- * is DIAGNOSTIC ONLY. Staleness = mtime older than `LOCK_TTL_MS` (5 min) —
- * i.e. heartbeat/lease recency, nothing else (#2840). PID liveness
- * (`process.kill(pid, 0)`) is deliberately NOT consulted: a PID is only
- * meaningful inside the namespace that produced it, so in containerized
- * deploys sharing `GBRAIN_HOME` across PID namespaces (e.g. `gbrain serve`
- * + `gbrain jobs work` as sibling containers) a LIVE holder resolves to
- * ESRCH and would be stolen milliseconds after it heartbeated — silent
- * last-writer-wins on facts/takes. Same family as the sync lock's
- * refresh-recency rule (GBRAIN_LOCK_STEAL_GRACE): a holder that heartbeated
- * recently is never stolen; dead holders stop refreshing and age past the
- * TTL. Cost: a crashed holder blocks the page for up to the TTL (bounded
- * wait) instead of being reaped instantly on the same host.
+ * is DIAGNOSTIC ONLY. Locks are never stolen automatically: portable Node
+ * filesystems do not expose an atomic compare-and-unlink, so TTL reclamation
+ * can delete a newly-created live lock under a two-reclaimer race. A crashed
+ * holder therefore fails closed until an operator quiesces writers and removes
+ * the orphaned lock. This trades availability after a crash for data integrity.
  *
  * Ownership for release()/refresh() is the per-acquire random token, never
  * the bare PID — PIDs collide across namespaces, so a same-pid lockfile is
@@ -35,20 +28,20 @@
  *   }
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { gbrainPath } from './config.ts';
 
-const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes — matches eng-review fold spec
-
 export interface PageLockHandle {
   /** Release the lock if we still hold it. Idempotent. */
   release: () => Promise<void>;
-  /** Refresh the mtime + timestamp so the TTL doesn't expire mid-operation. */
+  /** Refresh the timestamp for diagnostics while a long operation is active. */
   refresh: () => Promise<void>;
   /** Slug the lock was acquired for (for diagnostics). */
   slug: string;
+  /** Source owning the page. Lock identity is the pair (sourceId, slug). */
+  sourceId: string;
 }
 
 export interface AcquirePageLockOpts {
@@ -58,10 +51,15 @@ export interface AcquirePageLockOpts {
   pollMs?: number;
   /** Override lock root for tests. */
   lockRoot?: string;
+  /** Source owning the page. Defaults to `default` for legacy callers. */
+  sourceId?: string;
 }
 
-function lockPathFor(slug: string, lockRoot?: string): string {
-  const sha = createHash('sha256').update(slug).digest('hex');
+function lockPathFor(slug: string, lockRoot?: string, sourceId = 'default'): string {
+  // A slug is only unique inside a source. Hash an unambiguous composite so
+  // same-slug pages in federated sources can mutate independently while every
+  // writer for one concrete page still serializes on the same lock.
+  const sha = createHash('sha256').update(sourceId).update('\0').update(slug).digest('hex');
   const dir = lockRoot ?? gbrainPath('page-locks');
   return join(dir, `${sha}.lock`);
 }
@@ -71,36 +69,15 @@ function tokenOf(content: string): string {
   return content.trim().split('\n')[2] ?? '';
 }
 
-function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
+function tryAcquireOnce(slug: string, sourceId: string, lockPath: string): PageLockHandle | null {
   const dir = join(lockPath, '..');
   mkdirSync(dir, { recursive: true });
   const pid = process.pid;
   // Namespace-stable per-acquire identity. Release/refresh ownership keys on
   // this, never on the PID (#2840: PIDs collide across PID namespaces).
   const token = randomUUID();
-
   if (existsSync(lockPath)) {
-    try {
-      const st = statSync(lockPath);
-      const ageMs = Date.now() - st.mtimeMs;
-      // Liveness = heartbeat recency ONLY. Do not consult PID liveness:
-      // kill(pid, 0) answers "does this PID exist in MY namespace", which is
-      // the wrong question for a lockfile on a volume shared across
-      // containers — a live foreign holder is ESRCH here and would be
-      // stolen while it works (#2840).
-      if (ageMs < LOCK_TTL_MS) {
-        return null; // live holder (heartbeat within TTL)
-      }
-      // Stale (holder stopped heartbeating for a full TTL) — remove it, then
-      // race for the exclusive create below. Two reclaimers can both unlink,
-      // but only ONE wins the 'wx' open; the pre-fix
-      // existsSync→writeFileSync sequence let both "acquire" (adversarial
-      // finding — the loser silently lost its writes).
-      try { unlinkSync(lockPath); } catch { /* already gone */ }
-    } catch {
-      // Stat error → lockfile vanished mid-check (holder released) or is
-      // unreadable; fall through to the exclusive create, which decides.
-    }
+    return null;
   }
 
   // Exclusive create: mutual exclusion comes from O_EXCL, not from the
@@ -114,6 +91,7 @@ function tryAcquireOnce(slug: string, lockPath: string): PageLockHandle | null {
 
   return {
     slug,
+    sourceId,
     refresh: async () => {
       try {
         // Only heartbeat a lock we still own — if our TTL lapsed and another
@@ -145,16 +123,17 @@ export async function acquirePageLock(
   slug: string,
   opts: AcquirePageLockOpts = {},
 ): Promise<PageLockHandle | null> {
-  const lockPath = lockPathFor(slug, opts.lockRoot);
+  const sourceId = opts.sourceId ?? 'default';
+  const lockPath = lockPathFor(slug, opts.lockRoot, sourceId);
   const deadline = Date.now() + (opts.timeoutMs ?? 0);
   const pollMs = opts.pollMs ?? 200;
 
-  let attempt = tryAcquireOnce(slug, lockPath);
+  let attempt = tryAcquireOnce(slug, sourceId, lockPath);
   if (attempt) return attempt;
 
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, pollMs));
-    attempt = tryAcquireOnce(slug, lockPath);
+    attempt = tryAcquireOnce(slug, sourceId, lockPath);
     if (attempt) return attempt;
   }
 
@@ -174,9 +153,13 @@ export async function withPageLock<T>(
   if (!handle) {
     throw new Error(`acquirePageLock: could not acquire lock for slug "${slug}" within ${opts.timeoutMs ?? 30_000}ms`);
   }
+  // Keep diagnostics current while projection/embedding work is in flight.
+  const heartbeat = setInterval(() => { void handle.refresh(); }, 60_000);
+  heartbeat.unref();
   try {
     return await fn();
   } finally {
+    clearInterval(heartbeat);
     await handle.release();
   }
 }

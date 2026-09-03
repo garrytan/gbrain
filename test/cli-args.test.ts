@@ -20,6 +20,36 @@ describe('parseOpArgs', () => {
       source_id: 'gstack-code-repo-0e4763c9',
     });
   });
+
+  test('structured params parse as JSON instead of string character maps', () => {
+    const params = parseOpArgs(operationsByName.patch_page, [
+      'people/example',
+      '--base-revision',
+      `sha256:${'a'.repeat(64)}`,
+      '--frontmatter-set',
+      '{"city":"Kyoto","preferences":{"channel":"signal"}}',
+      '--frontmatter-unset=["legacy_key"]',
+    ]);
+
+    expect(params.frontmatter_set).toEqual({ city: 'Kyoto', preferences: { channel: 'signal' } });
+    expect(params.frontmatter_unset).toEqual(['legacy_key']);
+  });
+
+  test('structured params reject malformed JSON and the wrong top-level shape', () => {
+    expect(() => parseOpArgs(operationsByName.patch_page, [
+      'people/example', '--frontmatter-set', '{bad',
+    ])).toThrow('requires valid JSON object');
+    expect(() => parseOpArgs(operationsByName.patch_page, [
+      'people/example', '--frontmatter-unset', '{"not":"an array"}',
+    ])).toThrow('requires a JSON array');
+  });
+
+  test('legacy comma-delimited array flags keep their documented string form', () => {
+    const params = parseOpArgs(operationsByName.search, [
+      'find people', '--types', 'person,company',
+    ]);
+    expect(params.types).toBe('person,company');
+  });
 });
 
 // #4602 — `--flag false` on a boolean param used to set the flag TRUE (silent

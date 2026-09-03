@@ -11,8 +11,8 @@
  *
  * Concurrency: reuses the v0.28 page-lock primitive
  * (`src/core/page-lock.ts`), an FS-level lockfile under
- * `~/.gbrain/page-locks/<sha256-of-slug>.lock` with heartbeat-recency
- * staleness (5-minute TTL; namespace-agnostic — no PID-liveness, #2840).
+ * `~/.gbrain/page-locks/<sha256-of-source-and-slug>.lock`. Locks are never
+ * auto-stolen; orphan cleanup requires a stopped-writer maintenance window.
  * Multi-process safe — two `gbrain` invocations writing
  * to the same entity page serialize through the same kernel-visible
  * lockfile. 5-second timeout per the plan's "5s retry" failure mode.
@@ -504,7 +504,7 @@ export async function writeFactsToFence(
       }
       return { inserted: result.inserted, ids: result.ids };
     },
-    { timeoutMs: 5_000 },
+    { timeoutMs: 5_000, sourceId: target.sourceId },
   );
 }
 

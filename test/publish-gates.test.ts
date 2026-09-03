@@ -11,7 +11,7 @@ import { operations, opAllowedForBoundClient, CLIENT_FENCED_WRITE_OPS } from '..
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
-const GATED_OPS = ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor'];
+const GATED_OPS = ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor', 'append_page_event'];
 
 function engineWithConfig(values: Record<string, string | null> | 'throws'): BrainEngine {
   return {
@@ -23,14 +23,14 @@ function engineWithConfig(values: Record<string, string | null> | 'throws'): Bra
 }
 
 describe('publish-gates: gate declaration', () => {
-  test('exactly the four gated ops carry publishGateKey', () => {
+  test('exactly the reviewed gated ops carry publishGateKey', () => {
     const declared = operations.filter(o => o.publishGateKey).map(o => o.name).sort();
     expect(declared).toEqual([...GATED_OPS].sort());
   });
 });
 
 describe('publish-gates: disabledOpsForPublishGates', () => {
-  test('gates absent on both planes → all four hidden (default-off posture)', async () => {
+  test('gates absent on both planes → all gated operations hidden (default-off posture)', async () => {
     const disabled = await disabledOpsForPublishGates(engineWithConfig({}), null);
     for (const name of GATED_OPS) expect(disabled.has(name)).toBe(true);
   });
@@ -44,6 +44,7 @@ describe('publish-gates: disabledOpsForPublishGates', () => {
     expect(disabled.has('list_brain_skillpack')).toBe(false);
     // advisor rides a SEPARATE gate and stays hidden.
     expect(disabled.has('advisor')).toBe(true);
+    expect(disabled.has('append_page_event')).toBe(true);
   });
 
   test('DB plane false wins over file plane true (DB > file)', async () => {
@@ -71,6 +72,15 @@ describe('publish-gates: disabledOpsForPublishGates', () => {
   test('read failure with file-plane true → visible (file plane still decides)', async () => {
     const cfg = { engine: 'pglite', mcp: { publish_skills: true } } as unknown as GBrainConfig;
     expect(await readPublishGate(engineWithConfig('throws'), cfg, 'mcp.publish_skills')).toBe(true);
+  });
+
+  test('writer activation gate is DB-only and controls append_page_event visibility', async () => {
+    const disabled = await disabledOpsForPublishGates(
+      engineWithConfig({ 'writer.append_page_event': 'true' }),
+      { engine: 'pglite', writer: { append_page_event: false } } as unknown as GBrainConfig,
+    );
+    expect(disabled.has('append_page_event')).toBe(false);
+    expect(await readPublishGate(engineWithConfig({}), null, 'writer.append_page_event')).toBe(false);
   });
 });
 

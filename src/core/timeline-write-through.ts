@@ -445,7 +445,7 @@ export async function writeTimelineEntryThrough(
         };
         return { handled: true, file, entry: rendered.canonical };
       },
-      { timeoutMs: 5_000 },
+      { timeoutMs: 5_000, sourceId },
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
