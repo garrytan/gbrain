@@ -332,6 +332,8 @@ export interface GBrainConfig {
    * reverts on the next turn with a config edit, no redeploy.
    */
   retrieval_reflex_lexical_arms?: boolean;
+  /** Slug prefixes the volunteer stage never surfaces — see volunteerExcludeSlugPrefixes. */
+  retrieval_reflex_volunteer_exclude_slug_prefixes?: string[];
   /**
    * 2026-08 fix wave — kill switch for the reflex's volunteer arm (Arm 2:
    * confidence-gated volunteered pages fused after the pointer budget, parity

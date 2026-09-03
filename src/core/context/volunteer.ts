@@ -67,6 +67,13 @@ export interface VolunteerOpts {
    * slots every turn and starve new pages behind it (red-team finding).
    */
   excludeSlugs?: ReadonlySet<string>;
+  /**
+   * Slug prefixes to skip on the same terms as excludeSlugs. Needed because a
+   * whole subtree (an imported flashcard vault whose one-word aliases collide
+   * with ordinary prose) cannot be enumerated as a set — its members change on
+   * every sync.
+   */
+  excludeSlugPrefixes?: readonly string[];
   maxPages?: number;
   minConfidence?: number;
   /** v0.46.15: lexical-arms kill switch — see ResolvePointersOpts.lexicalArms. */
@@ -132,6 +139,12 @@ export interface GateOpts {
   minConfidence?: number;
   /** Skipped BEFORE gate + cap — see VolunteerOpts.excludeSlugs. */
   excludeSlugs?: ReadonlySet<string>;
+  /**
+   * Slug prefixes skipped BEFORE gate + cap. The set form needs every slug
+   * enumerated up front, which is unusable for a whole subtree (an imported
+   * flashcard vault, a scratch inbox) whose members change on every sync.
+   */
+  excludeSlugPrefixes?: readonly string[];
   /** Turn count of the extraction window — feeds the rationale template. */
   windowSize: number;
 }
@@ -166,6 +179,7 @@ export function gateVolunteeredPointers(
   const out: VolunteeredPage[] = [];
   for (const p of block.pointers) {
     if (opts.excludeSlugs?.has(p.slug)) continue; // before gate + cap — see VolunteerOpts
+    if (opts.excludeSlugPrefixes?.some((prefix) => p.slug.startsWith(prefix))) continue;
     // matchedNorm is the resolver's provenance join-key (the candidate that
     // resolved the pointer); display-based lookup is the fallback for the
     // rare suffix rows where provenance couldn't be recovered.
@@ -225,6 +239,8 @@ export type VolunteerResolveFn = (
 export interface VolunteerStageOpts {
   /** Skipped BEFORE gate + cap — typically the turn's already-injected pointer slugs. */
   excludeSlugs?: ReadonlySet<string>;
+  /** Slug prefixes skipped BEFORE gate + cap — see GateOpts.excludeSlugPrefixes. */
+  excludeSlugPrefixes?: readonly string[];
   priorContextText?: string;
   lexicalArms?: boolean;
   maxPages?: number;
@@ -262,6 +278,7 @@ export async function volunteerStage(
     maxPages: opts.maxPages,
     minConfidence: opts.minConfidence,
     excludeSlugs: opts.excludeSlugs,
+    excludeSlugPrefixes: opts.excludeSlugPrefixes,
     windowSize,
   });
 }
@@ -292,6 +309,7 @@ export async function volunteerContext(
     turns.length,
     {
       excludeSlugs: opts.excludeSlugs,
+      excludeSlugPrefixes: opts.excludeSlugPrefixes,
       priorContextText: opts.priorContext,
       lexicalArms: opts.lexicalArms,
       maxPages: opts.maxPages,
