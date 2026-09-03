@@ -59,6 +59,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
+import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -3194,11 +3195,19 @@ export interface ChatToolDef {
  * final text on the subagent tool loop. Give those models headroom; providers
  * bill actual tokens, not the cap, so it is free for the models that don't use
  * it. Everything else keeps 4096 on purpose: raising the default blanket-wide
- * would exceed some openai-compat providers' hard max-output caps (DeepSeek
- * 8192, gpt-4o 16384) and 400 on them — a regression for exactly the
- * non-Anthropic subagent users the gateway loop exists to serve.
+ * would exceed some openai-compat providers' hard max-output caps (gpt-4o
+ * 16384) and 400 on them — a regression for exactly the non-Anthropic
+ * subagent users the gateway loop exists to serve.
+ *
+ * The headroom is NOT blanket-wide: it is granted only to models that declare
+ * thinking-by-default, either by name (Claude 5) or via their recipe's
+ * `thinking_by_default` capability (gbrain#4172). The former "DeepSeek 8192"
+ * caveat here described the retired `deepseek-chat`; v4 accepts and honors a
+ * 32000 cap (verified 2026-09-02: max_tokens=32000 returned 19913 output
+ * tokens, finish_reason "stop"; the same prompt at 8192 truncated with
+ * finish_reason "length"). Providers bill actual tokens, not the cap.
  */
-const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
 export const THINKING_MODEL_MAX_OUTPUT_TOKENS = 32000;
 // Matches Claude 5-family ids behind ANY provider-prefix chain
 // (`anthropic:claude-sonnet-5`, `openrouter:anthropic/claude-sonnet-5`,
@@ -3209,10 +3218,23 @@ const THINKING_BY_DEFAULT_MODEL_RE = /(?:^|[:/])(?:anthropic[:/])?claude-[a-z]+-
 export function isThinkingByDefaultModel(modelStr: string | undefined): boolean {
   return !!modelStr && THINKING_BY_DEFAULT_MODEL_RE.test(modelStr);
 }
-function defaultMaxOutputTokens(modelStr: string | undefined): number {
-  return isThinkingByDefaultModel(modelStr)
-    ? THINKING_MODEL_MAX_OUTPUT_TOKENS
-    : DEFAULT_MAX_OUTPUT_TOKENS;
+export function defaultMaxOutputTokens(modelStr: string | undefined): number {
+  if (isThinkingByDefaultModel(modelStr)) return THINKING_MODEL_MAX_OUTPUT_TOKENS;
+  // Recipe-declared thinking-by-default (gbrain#4172, e.g. DeepSeek v4): keyed
+  // on the declared capability rather than a model-name regex, so a provider's
+  // model renames can't silently drop the headroom. Reasoning bills as output
+  // and counts against max_tokens, so without this a thinking model spends the
+  // whole 4096 default on reasoning and returns empty content (finish_reason
+  // "length") — every chat() caller then sees malformed/blank output.
+  // `think`'s maxOutputTokensFor already does this; chat() is the other half.
+  try {
+    if (modelStr && getProviderCapabilities(modelStr).supportsThinking) {
+      return THINKING_MODEL_MAX_OUTPUT_TOKENS;
+    }
+  } catch {
+    // Unknown provider / chat-less recipe — keep the conservative default.
+  }
+  return DEFAULT_MAX_OUTPUT_TOKENS;
 }
 
 /**
