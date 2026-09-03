@@ -241,6 +241,32 @@ describe('daily cap — engaged', () => {
     }
   }, 60_000);
 
+  test('a transcript whose synth-v2 child already completed is skipped before any work; a cancelled row does not count', async () => {
+    const rig = await setupRig();
+    try {
+      const done = await seedPassingFile(rig, '2026-08-05-done.txt');
+      const redo = await seedPassingFile(rig, '2026-08-06-redo.txt');
+      const key = (name: string) => {
+        const content = `conversation in ${name}\n`.repeat(200);
+        const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+        return `dream:synth-v2:default:filename:${name}:${hash16}`;
+      };
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at, finished_at)
+         VALUES ('subagent', 'dream-inline-old-run', 'completed', '{"source_id":"default"}'::jsonb, $1, now() - interval '2 days', now() - interval '2 days'),
+                ('subagent', 'dream-inline-old-run', 'cancelled', '{"source_id":"default"}'::jsonb, $2, now() - interval '2 days', now() - interval '2 days')`,
+        [key('2026-08-05-done.txt'), key('2026-08-06-redo.txt')],
+      );
+      const details = await runPhase(rig);
+      const doneSkip = details.skips.find(s => s.filePath === done);
+      expect(doneSkip?.reason).toBe('already_synthesized_v2_single_chunk');
+      expect(details.skips.find(s => s.filePath === redo)).toBeUndefined();
+      expect(details.children_submitted).toBe(1);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
   test('24h window: a >24h-old submission row does not eat the budget', async () => {
     const rig = await setupRig();
     try {

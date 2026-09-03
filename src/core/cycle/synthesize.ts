@@ -634,6 +634,7 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
+    const successfulV2Keys = await loadSuccessfulSynthV2Keys(engine, cycleSourceId);
     const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
       engine,
       cycleSourceId,
@@ -699,6 +700,27 @@ async function runPhaseSynthesizeInner(
           reason: legacyCompletion === 'chunked'
             ? 'already_synthesized_legacy_chunked'
             : 'already_synthesized_legacy_single_chunk',
+        });
+        continue;
+      }
+
+      // Same rule for the current synth-v2 key family. Before this skip a
+      // transcript whose children had already COMPLETED coalesced onto them
+      // through queue.add's idempotency key, which was free for the daily cap
+      // but only AFTER the link manifest (up to 20 searches) had been built,
+      // and the coalesced children then re-entered writtenRefs so their old
+      // pages were quote-repaired, restamped and re-embedded every night. On
+      // a 600-transcript corpus that was hours of manifests and ~500 page
+      // rewrites per run with nothing new written (2026-09-03).
+      const v2Completion = findSynthV2Completion(
+        successfulV2Keys, t.filePath, hash16, opts.sourceId ?? 'default',
+      );
+      if (v2Completion) {
+        skipReports.push({
+          filePath: t.filePath,
+          reason: v2Completion === 'chunked'
+            ? 'already_synthesized_v2_chunked'
+            : 'already_synthesized_v2_single_chunk',
         });
         continue;
       }
@@ -2824,6 +2846,56 @@ async function loadSuccessfulLegacySynthesisKeys(
  * (chunk indices are 0-based). Partial chunk sets return null so the
  * transcript gets a fresh v2 synthesis instead of shipping with holes.
  */
+/**
+ * Completed `dream:synth-v2:<source>:filename:<basename>:<hash16>[:c<i>of<n>]`
+ * keys for one source, so the submit loop can skip a transcript whose
+ * synthesis already completed without building its link manifest.
+ */
+async function loadSuccessfulSynthV2Keys(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<string[]> {
+  const rows = await engine.executeRaw<{ idempotency_key: string }>(
+    `SELECT idempotency_key
+       FROM minion_jobs
+      WHERE name = 'subagent'
+        AND status = 'completed'
+        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
+        AND idempotency_key LIKE 'dream:synth-v2:%'`,
+    [sourceId],
+  );
+  return rows.map(row => row.idempotency_key);
+}
+
+/** Mirror of findLegacyCompletion for the synth-v2 key family. */
+function findSynthV2Completion(
+  successfulKeys: string[],
+  filePath: string,
+  hash16: string,
+  sourceId: string,
+): 'single' | 'chunked' | null {
+  const prefix =
+    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
+    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
+  const chunkSets = new Map<number, Set<number>>();
+  for (const key of successfulKeys) {
+    if (key === prefix) return 'single';
+    if (!key.startsWith(prefix + ':c')) continue;
+    const chunk = /:c(\d+)of(\d+)$/.exec(key);
+    if (!chunk) continue;
+    const i = Number(chunk[1]);
+    const n = Number(chunk[2]);
+    if (n < 1 || i < 0 || i >= n) continue;
+    let seen = chunkSets.get(n);
+    if (!seen) chunkSets.set(n, seen = new Set());
+    seen.add(i);
+  }
+  for (const [n, seen] of chunkSets) {
+    if (seen.size === n) return 'chunked';
+  }
+  return null;
+}
+
 function findLegacyCompletion(
   successfulKeys: string[],
   filePath: string,
