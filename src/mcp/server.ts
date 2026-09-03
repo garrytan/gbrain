@@ -173,6 +173,10 @@ export async function trackStdioRpc<T>(work: () => Promise<T>): Promise<T> {
 
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; sourceGuard?: boolean } = {}) {
   const config = loadConfig();
+  // Refuse to serve a well-formed GBRAIN_SOURCE that no source row backs
+  // (see source-preflight.ts). Throws before any transport is attached.
+  const { assertStdioSourceBindable } = await import('./source-preflight.ts');
+  await assertStdioSourceBindable(engine);
   // MEMORY_VERBS v1 surface mode: 'full' (default — every op, byte-identical
   // to pre-surface behavior), 'starter' (WP4 daily-driver set), or 'verbs'
   // (exactly the 7 protocol verbs). Enforced BOTH on the advertised list and
