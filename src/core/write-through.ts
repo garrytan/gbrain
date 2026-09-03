@@ -31,6 +31,7 @@ import {
   isDurabilityHardened, commitWriteThroughFile, currentBranch, getLastPushOutcome,
   type PushLogOutcome,
 } from './brain-repo-durability.ts';
+import { withPageLock } from './page-lock.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -96,6 +97,8 @@ export interface WritePageThroughOpts {
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
+  /** Caller already owns the shared (source, slug) canonical-page lock. */
+  lockAlreadyHeld?: boolean;
 }
 
 /**
@@ -354,7 +357,7 @@ export async function resolvePageWriteTarget(
  * `skipped` / `error` fields (the DB write is the durable sink; the file is
  * best-effort and reconciled by the next `gbrain sync`).
  */
-export async function writePageThrough(
+async function writePageThroughUnlocked(
   engine: BrainEngine,
   slug: string,
   opts: WritePageThroughOpts = {},
@@ -483,6 +486,30 @@ export async function writePageThrough(
   }
 }
 
+/**
+ * Serialize every DB-to-canonical-file rewrite with sparse canonical patches.
+ * Callers that deliberately hold the same lock across an earlier DB mutation
+ * pass `lockAlreadyHeld`; every other caller shares this lock automatically.
+ */
+export async function writePageThrough(
+  engine: BrainEngine,
+  slug: string,
+  opts: WritePageThroughOpts = {},
+): Promise<WriteThroughResult> {
+  if (opts.lockAlreadyHeld) return writePageThroughUnlocked(engine, slug, opts);
+  try {
+    return await withPageLock(
+      slug,
+      () => writePageThroughUnlocked(engine, slug, opts),
+      { sourceId: opts.sourceId ?? 'default' },
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    opts.logger?.warn(`[write-through] failed for ${slug}: ${msg}`);
+    return { written: false, error: msg };
+  }
+}
+
 export interface DeleteThroughResult {
   /** True when an artifact existed and was unlinked. */
   removed: boolean;
@@ -524,10 +551,17 @@ export interface DeleteThroughResult {
  * report a clean `file_not_present` no-op while the REAL artifact stayed on
  * disk — the very silent-no-op class this helper exists to close.
  */
-export async function deletePageThrough(
+type DeletePageThroughOpts = {
+  sourceId?: string;
+  logger?: WriteThroughLogger;
+  target?: PageWriteTarget;
+  lockAlreadyHeld?: boolean;
+};
+
+async function deletePageThroughUnlocked(
   engine: BrainEngine,
   slug: string,
-  opts: { sourceId?: string; logger?: WriteThroughLogger; target?: PageWriteTarget } = {},
+  opts: DeletePageThroughOpts = {},
 ): Promise<DeleteThroughResult> {
   const sourceId = opts.sourceId ?? 'default';
   try {
@@ -546,6 +580,25 @@ export async function deletePageThrough(
 
     unlinkSync(filePath);
     return { removed: true, path: filePath };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);
+    return { removed: false, error: msg };
+  }
+}
+
+export async function deletePageThrough(
+  engine: BrainEngine,
+  slug: string,
+  opts: DeletePageThroughOpts = {},
+): Promise<DeleteThroughResult> {
+  if (opts.lockAlreadyHeld) return deletePageThroughUnlocked(engine, slug, opts);
+  try {
+    return await withPageLock(
+      slug,
+      () => deletePageThroughUnlocked(engine, slug, opts),
+      { sourceId: opts.sourceId ?? 'default' },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.logger?.warn(`[write-through] delete failed for ${slug}: ${msg}`);

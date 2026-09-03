@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -15,8 +15,8 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-function lockFile(slug: string) {
-  const sha = createHash('sha256').update(slug).digest('hex');
+function lockFile(slug: string, sourceId = 'default') {
+  const sha = createHash('sha256').update(sourceId).update('\0').update(slug).digest('hex');
   return join(tmp, `${sha}.lock`);
 }
 
@@ -38,29 +38,31 @@ describe('acquirePageLock', () => {
     await first!.release();
   });
 
-  test('reclaims stale lock (mtime > 5 min)', async () => {
+  test('same slug in different sources uses independent locks', async () => {
+    const first = await acquirePageLock('people/alice', { lockRoot: tmp, sourceId: 'team-a' });
+    const second = await acquirePageLock('people/alice', { lockRoot: tmp, sourceId: 'team-b' });
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first!.sourceId).toBe('team-a');
+    expect(second!.sourceId).toBe('team-b');
+    expect(existsSync(lockFile('people/alice', 'team-a'))).toBe(true);
+    expect(existsSync(lockFile('people/alice', 'team-b'))).toBe(true);
+    await first!.release();
+    await second!.release();
+  });
+
+  test('fails closed on an orphaned lock instead of racing to steal it', async () => {
     const slug = 'meetings/2026-04-29';
-    // Write a fake stale lock with a non-existent PID.
     const path = lockFile(slug);
     require('node:fs').mkdirSync(tmp, { recursive: true });
     writeFileSync(path, `999999999\n2024-01-01T00:00:00Z\n`);
-    // Backdate mtime by 10 minutes.
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-    utimesSync(path, tenMinAgo, tenMinAgo);
-
     const lock = await acquirePageLock(slug, { lockRoot: tmp });
-    expect(lock).not.toBeNull();
-    // We replaced the stale content with our own pid + fresh timestamp.
-    const content = readFileSync(path, 'utf-8').trim();
-    expect(content.split('\n')[0]).toBe(String(process.pid));
-    await lock!.release();
+    expect(lock).toBeNull();
+    expect(readFileSync(path, 'utf8')).toContain('999999999');
   });
 
-  // #2840: PID liveness is namespace-local. A holder running in another
-  // container (shared GBRAIN_HOME volume, separate PID namespace) presents
-  // exactly like this: a PID that resolves to ESRCH locally, but a FRESH
-  // heartbeat (mtime). Staleness must key on heartbeat recency only —
-  // kill(pid, 0) must never justify stealing a recently-refreshed lock.
+  // #2840: PID liveness is namespace-local. A foreign holder may resolve to
+  // ESRCH locally, so PID probing must never authorize lock theft.
   test('does not steal a fresh lock whose holder PID is not visible in this namespace', async () => {
     const slug = 'people/charlie';
     const path = lockFile(slug);
@@ -72,19 +74,6 @@ describe('acquirePageLock', () => {
     // The holder's lockfile must be untouched (not unlinked, not overwritten).
     const content = readFileSync(path, 'utf-8').trim();
     expect(content.split('\n')[0]).toBe('999999999');
-  });
-
-  test('reclaims a dead-PID lock only after the TTL heartbeat window lapses', async () => {
-    const slug = 'people/charlie-crashed';
-    const path = lockFile(slug);
-    require('node:fs').mkdirSync(tmp, { recursive: true });
-    writeFileSync(path, `999999999\n${new Date().toISOString()}\n`);
-    // Holder stopped heartbeating 10 minutes ago (TTL is 5 min).
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
-    utimesSync(path, tenMinAgo, tenMinAgo);
-    const lock = await acquirePageLock(slug, { lockRoot: tmp });
-    expect(lock).not.toBeNull();
-    await lock!.release();
   });
 
   test('refresh() updates timestamp', async () => {
