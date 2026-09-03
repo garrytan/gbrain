@@ -70,6 +70,12 @@ the tracker cannot price — e.g. a local Ollama model selected via
 warning (a USD cap cannot be enforced on an unpriced model; local models incur
 no API spend).
 
+`cycle.extract_atoms.self_review_enabled=true` adds one critic call per source
+that yielded candidates and one repair call when the critic requests repairs.
+Those calls use the same model and phase budget tracker, so the existing cap
+still bounds the run; operators should enable this mode on small batches before
+increasing discovery or drain limits.
+
 ### Sync inline-embed cost gate
 
 Fires only when sync embeds **inline** (federated_v2 off, or `--serial` without

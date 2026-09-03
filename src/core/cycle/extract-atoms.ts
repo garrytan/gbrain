@@ -75,7 +75,7 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
-
+import { selfReviewAtoms } from './extract-atoms-self-review.ts';
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
 // cycle.extract_atoms.* config keys (max_input_chars — with the #4529
@@ -171,6 +171,7 @@ export interface ExtractAtomsOpts {
   affectedSlugs?: string[];
   /** Test seam: alternative chat function (bypasses real LLM calls). */
   _chat?: typeof gatewayChat;
+  _selfReviewEnabled?: boolean;
   /**
    * Test seam: alternative config loader. Sync OR async — extended in
    * v0.41.2.1 to allow loadConfigWithEngine() (async) to be the default.
@@ -746,6 +747,7 @@ export async function runPhaseExtractAtoms(
   let maxInputChars = DEFAULT_EXTRACT_MAX_INPUT_CHARS;
   let maxOutputTokens = DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS;
   let pacingMs = 0;
+  let selfReviewEnabled = false;
   try {
     extractModel = await resolveExtractAtomsModel(engine);
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
@@ -782,6 +784,7 @@ export async function runPhaseExtractAtoms(
       const n = Number(configuredPacing);
       if (Number.isFinite(n) && n > 0) pacingMs = Math.min(60_000, Math.floor(n));
     }
+    selfReviewEnabled = opts._selfReviewEnabled ?? (await engine.getConfig('cycle.extract_atoms.self_review_enabled')) === 'true';
   } catch {
     // Keep safe defaults on any config-read failure: key-aware utility-tier
     // model, $0.30 cap, default input cap (max_input_chars).
@@ -840,7 +843,7 @@ export async function runPhaseExtractAtoms(
   // EXCEPT the ones TRANSIENT_EXTRACT_ERROR_RE + the rate_limit abort class
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
-
+  let selfReviewCalls = 0, atomsSelfReviewed = 0, atomsRejectedUnverified = 0, atomsRejectedByCritic = 0;
   /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
   async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
     try {
@@ -942,7 +945,42 @@ export async function runPhaseExtractAtoms(
         }
         continue;
       }
-      const atoms = parseOutcome.atoms;
+      let atoms = parseOutcome.atoms;
+      if (selfReviewEnabled && atoms.length > 0) {
+        atomsSelfReviewed += atoms.length;
+        const reviewed = await selfReviewAtoms({
+          atoms, origin: originLabel, source: promptContent, model: extractModel,
+          maxTokens: maxOutputTokens,
+          chat,
+          parseAtoms: parseAtomsOutcome,
+          quoteIsVerified: (quote) => locateQuote(promptContent, quote) !== null,
+          beforeCall: () => { selfReviewCalls++; },
+          afterCall: async () => {
+            await maybeYield();
+            llmHalt.reset();
+            if (pacingMs > 0) await new Promise<void>((r) => setTimeout(r, pacingMs));
+          },
+        });
+        estimatedSpendUsd = budgetTracker.totalSpent;
+        if (!reviewed.ok) {
+          malformedOutputs++;
+          hardFailureCount++;
+          const failCount = await recordPageFailureCount(item);
+          failures.push({
+            source: originLabel,
+            error: `malformed self-${reviewed.stage} output: ${reviewed.reason}` +
+              (failCount != null ? ` (consecutive failure ${failCount} on this content)` : ''),
+          });
+          if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
+            await stampAtomsScanHash(item);
+            tombstonedForFailures.push(item.slug);
+          }
+          continue;
+        }
+        atoms = reviewed.atoms;
+        atomsRejectedUnverified += reviewed.rejectedUnverified;
+        atomsRejectedByCritic += reviewed.rejectedByCritic;
+      }
       if (atoms.length === 0) {
         // #2144: tombstone zero-yield pages so they stop being rediscovered.
         // Idempotency is keyed on atom rows — a page that yields no atoms
@@ -1213,6 +1251,11 @@ export async function runPhaseExtractAtoms(
       budget_exhausted: budgetExhausted,
       source_id: sourceId,
       dry_run: opts.dryRun ?? false,
+      self_review_enabled: selfReviewEnabled,
+      self_review_calls: selfReviewCalls,
+      atoms_self_reviewed: atomsSelfReviewed,
+      atoms_rejected_unverified: atomsRejectedUnverified,
+      atoms_rejected_by_critic: atomsRejectedByCritic,
     },
   };
 }
