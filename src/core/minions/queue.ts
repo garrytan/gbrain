@@ -37,6 +37,9 @@ import {
   logBatchRetry as auditLogBatchRetry,
   logBatchExhausted as auditLogBatchExhausted,
 } from '../audit/batch-retry-audit.ts';
+import {
+  releaseOrBlockTerminalIdempotencyKey, resolveIdempotencyDeadRetryLimit,
+} from './idempotency-dead-retry.ts';
 /** Trusted 4th argument, kept outside user-spread job options. */
 export interface TrustedSubmitOpts {
   /** Allow PROTECTED_JOB_NAMES; CLI or operation-local callers only. */
@@ -320,15 +323,29 @@ export class MinionQueue {
     // so audit filesystem I/O never runs while holding the advisory lock.
     let coalesceAudit: CoalesceAuditEvent | null = null;
 
+    // Read outside the transaction: a keyless submit must not pay a config
+    // round-trip, and the value is only consulted on the terminal-row path.
+    const deadRetryLimit = opts?.idempotency_key
+      ? await resolveIdempotencyDeadRetryLimit(this.engine)
+      : 0;
+
     const result = await this.engine.transaction(async (tx) => {
       // 1. Idempotency fast path — if a row already exists for this key, return it
       //    without doing any other work. The unique partial index guarantees
       //    no second row can be inserted with the same non-null key.
       //
       //    Dead/cancelled jobs represent permanently-failed work whose
-      //    idempotency slot must be freed so a fresh attempt can be inserted.
-      //    We NULL the key (preserving the row for audit) and fall through
-      //    to the INSERT path below.
+      //    idempotency slot must be freed so a fresh attempt can be inserted
+      //    (#2252/#3306). That release has no counter, so an input that fails
+      //    PERMANENTLY is re-dispatched on every caller pass: `max_attempts`
+      //    is a per-row column and each release mints a row with
+      //    `attempts_made = 0`, so nothing in the queue can bound it.
+      //    `releaseOrBlockTerminalIdempotencyKey` keeps that release for the
+      //    first `minions.idempotency_dead_retry_limit` consecutive dead
+      //    dispatches (default 3, floor 2: one dead always earns one fresh
+      //    dispatch) and retains the key after that, so the submit coalesces
+      //    onto the dead row instead of minting another job. `cancelled`
+      //    always releases. `jobs retry` / `jobs cancel` free a blocked key.
       if (opts?.idempotency_key) {
         const existing = await tx.executeRaw<Record<string, unknown>>(
           `SELECT * FROM minion_jobs WHERE idempotency_key = $1`,
@@ -337,10 +354,20 @@ export class MinionQueue {
         if (existing.length > 0) {
           const existingJob = rowToMinionJob(existing[0]);
           if (existingJob.status === 'dead' || existingJob.status === 'cancelled') {
-            await tx.executeRaw(
-              `UPDATE minion_jobs SET idempotency_key = NULL WHERE id = $1`,
-              [existingJob.id]
-            );
+            const block = await releaseOrBlockTerminalIdempotencyKey(tx, {
+              jobId: existingJob.id,
+              status: existingJob.status,
+              idempotencyKey: opts.idempotency_key,
+              limit: deadRetryLimit,
+            });
+            if (block) {
+              existingJob.coalesced = true;
+              // The SELECT above predates the marker write, so hand back the
+              // post-write `data`: a caller inspecting the returned row can
+              // then see why it was not re-dispatched.
+              if (block.data) existingJob.data = block.data;
+              return existingJob;
+            }
           } else {
             existingJob.coalesced = true;
             return existingJob;
