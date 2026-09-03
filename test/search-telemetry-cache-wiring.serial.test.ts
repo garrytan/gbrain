@@ -40,14 +40,21 @@ function fixedEmbedding(): Float32Array {
 // Pluggable behavior so individual tests can simulate an embed-provider
 // failure (the 'disabled'-via-catch flavor). null → deterministic vector.
 let embedBehavior: (() => Promise<Float32Array>) | null = null;
+let embedCalls = 0;
 
 // Mock the embedding seam BEFORE importing hybrid.ts so both the cache-lookup
 // embed and the inner vector-arm embed resolve without a provider call. Spread
 // the real module so every other export stays live.
 mock.module('../src/core/embedding.ts', () => ({
   ...realEmbedding,
-  embed: async () => (embedBehavior ? embedBehavior() : fixedEmbedding()),
-  embedQuery: async () => (embedBehavior ? embedBehavior() : fixedEmbedding()),
+  embed: async () => {
+    embedCalls += 1;
+    return embedBehavior ? embedBehavior() : fixedEmbedding();
+  },
+  embedQuery: async () => {
+    embedCalls += 1;
+    return embedBehavior ? embedBehavior() : fixedEmbedding();
+  },
 }));
 
 // Import AFTER mocking.
@@ -139,6 +146,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   embedBehavior = null;
+  embedCalls = 0;
   _resetTelemetryWriterForTest();
   _resetPendingSearchCacheWritesForTests();
   await engine.executeRaw('DELETE FROM search_telemetry');
@@ -150,6 +158,9 @@ describe('hybridSearchCached — telemetry carries the cache outcome', () => {
     // Call 1 — cache consulted, empty → miss.
     const first = await hybridSearchCached(engine, 'alice telemetry fixtures', { limit: 5 });
     expect(first.length).toBeGreaterThan(0);
+    // A cache miss must reuse its lookup vector for the search arm. Calling
+    // the provider twice here can immediately trip a per-request rate limit.
+    expect(embedCalls).toBe(1);
     await awaitPendingSearchCacheWrites();
 
     // Sanity: the writeback actually landed, so call 2 exercises a REAL hit
@@ -174,6 +185,7 @@ describe('hybridSearchCached — telemetry carries the cache outcome', () => {
     });
     expect(meta?.cache?.status).toBe('hit');
     expect(second.length).toBeGreaterThan(0);
+    expect(embedCalls).toBe(2);
 
     const afterHit = await readCounters();
     // Pre-fix both sides of this were wrong: hit stayed 0 forever AND the hit

@@ -990,6 +990,13 @@ export interface HybridSearchOpts extends SearchOpts {
   _queryEmbedDeadline?: QueryEmbedDeadline;
 
   /**
+   * INTERNAL — query embedding already computed by `hybridSearchCached` for
+   * the semantic-cache lookup. Reuse it for the original query on a cache
+   * miss instead of charging the provider twice for identical work.
+   */
+  _queryEmbedding?: Float32Array;
+
+  /**
    * Hermetic eval canaries/CI — non-semantic embeddings. When set, the query
    * embedding for the TEXT vector arm comes from this function (e.g. qrels
    * basis vectors) INSTEAD of the gateway's query-embed path, and the
@@ -1778,7 +1785,9 @@ export async function hybridSearch(
     // No deadline needed — it's a synchronous-ish local computation with no
     // network. Absent queryEmbedFn, the bounded gateway path is unchanged.
     const embedOneQuery = (q: string): Promise<Float32Array> =>
-      opts?.queryEmbedFn
+      q === query && opts?._queryEmbedding
+        ? Promise.resolve(opts._queryEmbedding)
+        : opts?.queryEmbedFn
         ? Promise.resolve(opts.queryEmbedFn(q))
         : embedQueryBounded(q, embedOpts, embedDl);
     if (!searchSalvageEnabled()) {
@@ -2738,6 +2747,9 @@ export async function hybridSearchCached(
     // v0.42.20.0 (Fix 3) — share the query-embed deadline so the inner embed
     // doesn't start a fresh 6s budget after the cache-lookup already spent it.
     _queryEmbedDeadline: queryEmbedDl,
+    // The cache lookup already embedded the original query. Reuse that exact
+    // vector on a miss; expansion variants, if any, are still embedded here.
+    _queryEmbedding: queryEmbedding ?? undefined,
     // #2952 — classify this search's telemetry record (emitted by the inner
     // function) with the cache-consult outcome. 'hit' already returned above,
     // so only miss/disabled reach this call.
