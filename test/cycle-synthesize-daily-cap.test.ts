@@ -214,6 +214,33 @@ describe('daily cap — engaged', () => {
     }
   }, 60_000);
 
+  test('cap exhausted: the pre-chunk gate skips a fresh file but lets a file with a coalescible row through', async () => {
+    // The gate runs BEFORE splitTranscriptByBudget (the tokenizer tail that
+    // cost ~40 min on a 600-transcript corpus). It must keep the per-chunk
+    // coalescing rule: a file whose synth-v2 row already exists (status not
+    // cancelled/dead) is zero-cost and still passes.
+    const rig = await setupRig();
+    try {
+      await rig.engine.setConfig('dream.synthesize.max_submissions_per_source_per_day', '1');
+      await seedSubmissionRow(rig, { ageHours: 1, tag: '2026-08-01-spent.txt' }); // budget already used
+      const fresh = await seedPassingFile(rig, '2026-08-03-fresh.txt');
+      const coalesced = await seedPassingFile(rig, '2026-08-04-coalesced.txt');
+      const content = `conversation in 2026-08-04-coalesced.txt\n`.repeat(200);
+      const hash16 = createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+      await rig.engine.executeRaw(
+        `INSERT INTO minion_jobs (name, queue, status, data, idempotency_key, created_at)
+         VALUES ('subagent', 'dream-inline-old-run', 'waiting', '{"source_id":"default"}'::jsonb, $1, now() - interval '1 hour')`,
+        [`dream:synth-v2:default:filename:2026-08-04-coalesced.txt:${hash16}`],
+      );
+      const details = await runPhase(rig);
+      const capSkips = details.skips.filter(s => s.reason.startsWith('daily_cap_reached'));
+      expect(capSkips.map(s => s.filePath)).toContain(fresh);
+      expect(capSkips.map(s => s.filePath)).not.toContain(coalesced);
+    } finally {
+      await rig.cleanup();
+    }
+  }, 60_000);
+
   test('24h window: a >24h-old submission row does not eat the budget', async () => {
     const rig = await setupRig();
     try {

@@ -703,6 +703,38 @@ async function runPhaseSynthesizeInner(
         continue;
       }
 
+      // Cap already exhausted: decide BEFORE chunking. splitTranscriptByBudget
+      // tokenizes the whole transcript (seconds each on a WASM tokenizer), and
+      // the per-file cap check below needs the chunk count only to name the
+      // coalescible keys; when the cap is spent and no coalescible row exists
+      // for this file, the answer is a skip whatever the chunk count. On a
+      // ~600-transcript corpus with cap 8 this tail was ~40 min of pure
+      // chunking after the last submit, long enough for the children's queue
+      // lease to expire before the drain (2026-09-03). A file that already has
+      // a coalescible row keeps the exact per-chunk accounting below.
+      if (capActive && submittedToday >= dailyCap) {
+        const keyPrefix =
+          `dream:synth-v2:${encodeURIComponent(opts.sourceId ?? 'default')}` +
+          `:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`;
+        let coalescible = 0;
+        try {
+          const rows = await engine.executeRaw<{ n: number }>(
+            `SELECT COUNT(*)::int AS n FROM minion_jobs
+              WHERE idempotency_key LIKE $1
+                AND status NOT IN ('cancelled', 'dead')`,
+            [`${keyPrefix}%`],
+          );
+          coalescible = rows[0]?.n ?? 0;
+        } catch { /* fail-open like the cap count itself: fall through to the chunked check */ }
+        if (coalescible === 0) {
+          skipReports.push({
+            filePath: t.filePath,
+            reason: `daily_cap_reached: ${submittedToday}/${dailyCap}`,
+          });
+          continue;
+        }
+      }
+
       const chunks = splitTranscriptByBudget(t.content, t.contentHash, maxCharsPerChunk);
 
       // D5 cap hit: log + skip; do NOT write to dream_verdicts. Closes the
