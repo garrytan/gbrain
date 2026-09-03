@@ -505,6 +505,8 @@ export interface LintOpts {
    * CLI can size its progress bar without walking the tree a second time.
    */
   onPagesCollected?: (count: number) => void;
+  /** Hardened corpus root whose exact lint-fixed pages should be committed. */
+  durabilityRoot?: string;
 }
 
 export interface LintResult {
@@ -544,6 +546,17 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   const contentSanity = opts.contentSanity ?? await resolveLintContentSanity(opts.engine);
   const lintOpts: LintContentOpts = { contentSanity };
 
+  let commitFixedPage: ((page: string) => void) | undefined;
+  if (opts.durabilityRoot && !opts.dryRun) {
+    const { commitWriteThroughFile, isDurabilityHardened } = await import('../core/brain-repo-durability.ts');
+    if (isDurabilityHardened(opts.durabilityRoot)) {
+      commitFixedPage = (page) => {
+        const slug = relative(opts.durabilityRoot!, page).replace(/\.md$/u, '');
+        commitWriteThroughFile(opts.durabilityRoot!, page, slug);
+      };
+    }
+  }
+
   let totalIssues = 0;
   let totalFixable = 0;
   let totalFixed = 0;
@@ -576,6 +589,7 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
         totalFixed += fixCount;
         if (!opts.dryRun) {
           writeFileSync(page, fixed);
+          commitFixedPage?.(page);
         }
       }
     }
