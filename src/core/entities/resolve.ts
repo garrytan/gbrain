@@ -164,16 +164,32 @@ const PREFIX_EXPANSION_DIRS = ['people', 'companies', 'hosts', 'projects'] as co
  * v0.40.2.0 — resolution-source-tagged variant for trajectory routing.
  *
  * Same resolution chain as `resolveEntitySlug` but returns the source
- * (`exact_page` | `fuzzy_match` | `fallback_slugify`) alongside the slug
- * so trajectory callers can gate on `resolution_source !==
- * 'fallback_slugify'` — querying findTrajectory on an invented slug
- * always returns [] and wastes a SQL round-trip. Codex Problem 5 from
- * v0.40.2.0 outside-voice review.
+ * (`exact_page` | `alias_exact` | `prefix_expansion` | `fuzzy_match` |
+ * `fallback_slugify`) alongside the slug so trajectory callers can gate on
+ * `resolution_source !== 'fallback_slugify'` — querying findTrajectory on
+ * an invented slug always returns [] and wastes a SQL round-trip. Codex
+ * Problem 5 from v0.40.2.0 outside-voice review.
  *
  * The original `resolveEntitySlug` keeps its existing contract (returns
  * just the slug) for all pre-v0.40 call sites — no caller-side churn.
+ *
+ * `prefix_expansion` split out from `fuzzy_match` (previously the same tag)
+ * because the two branches carry very different confidence: `fuzzy_match`
+ * scores a multi-token phrase against existing slugs/titles, while
+ * `prefix_expansion` picks the sole `<dir>/<token>-*` page for a BARE
+ * single-token name purely because it's the only candidate sharing that
+ * token — cardinality, not identity. A bare "Victor" mentioned in an
+ * unrelated context silently resolves to the brain's one existing
+ * `people/victor-*` page even when it refers to someone else entirely
+ * (observed 2026-09-03: a Back-to-School-Night transcript's "Victor" —
+ * a classmate referred to by first name only — merged onto an unrelated
+ * `people/victor-wooten` page and wrote a fact about him that wasn't his).
+ * Both branches still verify a LIVE page (unlike `fallback_slugify`), so
+ * existing `!== 'fallback_slugify'` gates elsewhere are unaffected by this
+ * split; `facts/backstop.ts` uses the new tag specifically to flag
+ * fact-fence writes that land on an existing page through this weaker path.
  */
-export type ResolutionSource = 'exact_page' | 'alias_exact' | 'fuzzy_match' | 'fallback_slugify';
+export type ResolutionSource = 'exact_page' | 'alias_exact' | 'prefix_expansion' | 'fuzzy_match' | 'fallback_slugify';
 
 export interface ResolveResult {
   slug: string;
@@ -200,7 +216,7 @@ export async function resolveEntitySlugWithSource(
 
   if (isBareName(trimmed)) {
     const expanded = await tryUnambiguousPrefixExpansion(engine, source_id, slugify(trimmed));
-    if (expanded) return { slug: expanded, source: 'fuzzy_match' };
+    if (expanded) return { slug: expanded, source: 'prefix_expansion' };
   } else {
     const fuzzy = await tryFuzzyMatch(engine, source_id, trimmed);
     if (fuzzy) return { slug: fuzzy, source: 'fuzzy_match' };

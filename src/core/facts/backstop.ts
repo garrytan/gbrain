@@ -42,6 +42,38 @@ import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 
+/**
+ * Stamp the fact's context cell with a caution note when its entity_slug
+ * came from `resolveEntitySlugWithSource`'s `prefix_expansion` branch —
+ * a bare single-token name ("Victor") resolved to the ONLY existing
+ * `<dir>/<token>-*` page purely because it's the sole candidate, not
+ * because anything confirms this mention refers to that same person or
+ * company. Unlike `fallback_slugify` (an invented slug, caught by the
+ * #4108 stub guard on page CREATE), prefix_expansion always targets an
+ * already-existing, already-curated page — so a false match here silently
+ * corrupts real content instead of spawning an obviously-empty stub.
+ *
+ * Deliberately additive, not blocking: the fact still gets written (most
+ * prefix-expansion hits ARE correct, and dropping them would re-lose real
+ * facts the way the pre-2026-08-31 `daily-enrich.ts` bug did). The note
+ * just keeps the uncertainty visible in the fence/DB instead of the fact
+ * reading identically to a confirmed one — the same shape as an editor's
+ * "citation needed" rather than a silent revert.
+ *
+ * Observed in the wild 2026-09-03: a Back-to-School-Night meeting
+ * transcript's bare "Victor" (a classmate mentioned by first name only)
+ * resolved onto the brain's one unrelated `people/victor-wooten` page and
+ * wrote a fact about him that wasn't his, with no signal anything was off.
+ */
+function annotateUnverifiedResolution(
+  sourceSlug: string | null,
+  resolutionSource: ResolutionSource | null,
+): string | null {
+  if (resolutionSource !== 'prefix_expansion') return sourceSlug;
+  const note = 'entity matched by bare name only (prefix expansion) — unverified, please confirm';
+  return sourceSlug ? `${sourceSlug} — ${note}` : note;
+}
+
 export interface FactsBackstopCtx {
   engine: BrainEngine;
   /** Brain source identifier; default 'default'. */
@@ -700,7 +732,7 @@ async function runPipelineBodyInner(
     for (const s of unparented) legacyBucket.push(s);
   }
 
-  for (const { f, resolvedSlug } of legacyBucket) {
+  for (const { f, resolvedSlug, resolutionSource } of legacyBucket) {
     const newFact: NewFact = {
       fact: f.fact,
       kind: f.kind,
@@ -713,7 +745,7 @@ async function runPipelineBodyInner(
       embedding: f.embedding ?? null,
       // #4206: caller event-time fallback + provenance context.
       valid_from: f.valid_from ?? ctx.validFrom,
-      context: ctx.sourceSlug ?? null,
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource),
     };
     const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
@@ -734,14 +766,19 @@ async function runPipelineBodyInner(
   for (const [slug, group] of byEntity) {
     if (abortSignal?.aborted) break;
 
-    const inputFacts = group.map(({ f }) => ({
+    const inputFacts = group.map(({ f, resolutionSource }) => ({
       fact: f.fact,
       kind: f.kind,
       notability: f.notability,
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: ctx.sourceSlug ?? null,
+      // Flagged when the entity_slug came from prefix_expansion (see
+      // annotateUnverifiedResolution below): that branch verifies A live
+      // page exists, but for a bare name it's picked purely because it's
+      // the ONLY `<dir>/<token>-*` page — not because anything confirms
+      // it's the SAME person/company as this mention.
+      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
