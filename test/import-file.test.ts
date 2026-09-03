@@ -243,6 +243,50 @@ Content here.
     expect(addCalls.length).toBe(2);
   });
 
+  test('reconciliation only removes tags the FILE owns, never machine-generated tags', async () => {
+    // Regression guard. Frontmatter is authoritative only over the tags the file wrote
+    // (tags.source IS NULL, which is what the importer's own addTag writes). Tags applied
+    // outside the file carry an explicit source and live only in the database — an LLM
+    // tagger, a rule-based tagger, a manual tag. Reconciling against ALL tags deleted every
+    // one of them on any re-import, because none appear in the frontmatter.
+    const filePath = join(TMP, 'machine-tags.md');
+    writeFileSync(filePath, `---
+type: concept
+title: Machine Tagged
+tags: [kept-tag]
+---
+
+Content here.
+`);
+
+    const fileTags = ['old-tag', 'kept-tag'];      // source IS NULL — the file's own
+    const machineTags = ['hermes-tag', 'rule-tag']; // source set — not the file's business
+    let askedForFileOnly = false;
+
+    const engine = mockEngine({
+      getTags: (_slug: string, opts?: { fileOnly?: boolean }) => {
+        if (opts?.fileOnly) {
+          askedForFileOnly = true;
+          return Promise.resolve(fileTags);
+        }
+        return Promise.resolve([...fileTags, ...machineTags]);
+      },
+      getPage: () => Promise.resolve(null),
+    });
+
+    await importFile(engine, filePath, 'concepts/machine-tags.md', { noEmbed: true });
+
+    const removed = (engine as any)._calls
+      .filter((c: any) => c.method === 'removeTag')
+      .map((c: any) => c.args[1]);
+
+    expect(askedForFileOnly).toBe(true);
+    // The file dropped 'old-tag', so it goes. Nothing else may.
+    expect(removed).toEqual(['old-tag']);
+    expect(removed).not.toContain('hermes-tag');
+    expect(removed).not.toContain('rule-tag');
+  });
+
   test('chunks compiled_truth and timeline separately', async () => {
     const filePath = join(TMP, 'chunked.md');
     writeFileSync(filePath, `---

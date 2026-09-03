@@ -1177,11 +1177,12 @@ export class PostgresEngine implements BrainEngine {
     `;
   }
 
-  async getTags(slug: string): Promise<string[]> {
+  async getTags(slug: string, opts?: { fileOnly?: boolean }): Promise<string[]> {
     const sql = this.sql;
     const rows = await sql`
       SELECT tag FROM tags
       WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
+        ${opts?.fileOnly ? sql`AND source IS NULL` : sql``}
       ORDER BY tag
     `;
     return rows.map((r) => r.tag as string);

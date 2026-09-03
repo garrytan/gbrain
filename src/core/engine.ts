@@ -231,7 +231,16 @@ export interface BrainEngine {
   // Tags
   addTag(slug: string, tag: string): Promise<void>;
   removeTag(slug: string, tag: string): Promise<void>;
-  getTags(slug: string): Promise<string[]>;
+  /**
+   * Tags for a page. By default every tag regardless of origin.
+   *
+   * Pass opts.fileOnly=true for tags the MARKDOWN FILE owns (tags.source IS NULL, which
+   * is what addTag writes). Tags generated outside the file — hermes (LLM tagger), rule
+   * (deterministic stub tagger), manual — carry an explicit source and are excluded.
+   * Import reconciliation must use this, or it deletes machine tags the file never knew
+   * about. See import-file.ts.
+   */
+  getTags(slug: string, opts?: { fileOnly?: boolean }): Promise<string[]>;
 
   // Timeline
   /**

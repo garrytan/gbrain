@@ -278,8 +278,20 @@ export async function importFromContent(
       content_hash: hash,
     });
 
-    // Tag reconciliation: remove stale, add current
-    const existingTags = await tx.getTags(slug);
+    // Tag reconciliation: remove stale FILE tags, add current.
+    //
+    // fileOnly is essential. The file's frontmatter is authoritative ONLY over the tags the
+    // file itself wrote (tags.source IS NULL). Tags generated outside the file carry an
+    // explicit source — 'hermes' (LLM tagger), 'rule' (deterministic stub tagger),
+    // 'manual' — and live only in Postgres; they are never written back to the markdown.
+    // Reconciling against ALL tags therefore deleted every machine tag on any re-import,
+    // because none of them appear in the frontmatter.
+    //
+    // Measured damage before this fix (2026-09-02): a bulk re-import on 2026-08-28 wiped
+    // the tags off 5,640 `sources/email/*` pages, and 8,029 of 16,951 notes (47%) sat
+    // untagged. The page row survives the re-import, so the tagger's own ledger still said
+    // "done" and never revisited them — the loss was silent and permanent.
+    const existingTags = await tx.getTags(slug, { fileOnly: true });
     const newTags = new Set(parsed.tags);
     for (const old of existingTags) {
       if (!newTags.has(old)) await tx.removeTag(slug, old);

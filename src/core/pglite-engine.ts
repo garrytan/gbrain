@@ -1030,10 +1030,11 @@ export class PGLiteEngine implements BrainEngine {
     );
   }
 
-  async getTags(slug: string): Promise<string[]> {
+  async getTags(slug: string, opts?: { fileOnly?: boolean }): Promise<string[]> {
     const { rows } = await this.db.query(
       `SELECT tag FROM tags
        WHERE page_id = (SELECT id FROM pages WHERE slug = $1)
+         ${opts?.fileOnly ? 'AND source IS NULL' : ''}
        ORDER BY tag`,
       [slug]
     );
