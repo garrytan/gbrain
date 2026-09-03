@@ -748,10 +748,20 @@ export async function runImport(
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
   if (jsonOutput) {
+    // `skipped` includes every per-file failure importFile RETURNS (invalid
+    // frontmatter, oversize, symlink, slug mismatch) as well as content-hash
+    // no-ops, and `errors` counts only the thrown ones — so a caller cannot
+    // tell "unchanged" from "failed" by counts alone. The failure ledger is
+    // written only for git-repo dirs (see the gitHead gate below), so a caller
+    // importing a scratch directory has no other channel. Emit the per-file
+    // list so state can be gated per file.
     console.log(JSON.stringify({
       status: 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
       total_files: allFiles.length,
+      unchanged: skipped - failures.length - malformedFileSkips,
+      malformed_skipped: malformedFileSkips,
+      failures,
     }));
   } else {
     console.log(`\nImport complete (${totalTime}s):`);
