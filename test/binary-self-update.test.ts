@@ -81,6 +81,7 @@ describe('runBinarySelfUpdate', () => {
       });
       expect(res.ok).toBe(true);
       expect(res.asset).toBe('gbrain-darwin-arm64');
+      expect(res.targetVersion).toBe('9.9.9');
       expect(readFileSync(target, 'utf8')).toBe('NEW BINARY');
     });
   });
@@ -124,6 +125,7 @@ describe('runBinarySelfUpdate', () => {
         fetchRelease: async () => ({ tag: 'v9.9.9', assets: [] }),
       });
       expect(res.reason).toBe('no_asset');
+      expect(res.targetVersion).toBe('9.9.9');
       expect(readFileSync(target, 'utf8')).toBe('OLD');
     });
   });
@@ -141,6 +143,7 @@ describe('runBinarySelfUpdate', () => {
         },
       });
       expect(res.reason).toBe('download_failed');
+      expect(res.targetVersion).toBe('9.9.9');
       expect(res.error).toContain('disk full');
       expect(readFileSync(target, 'utf8')).toBe('OLD');
     });
