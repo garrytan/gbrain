@@ -1734,6 +1734,7 @@ export function formatResult(
       if (r.error === 'ambiguous_slug') {
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
+      if (params.json === true) return JSON.stringify(r, null, 2) + '\n';
       return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', {
         type: r.type, title: r.title, tags: r.tags || [],
       });
