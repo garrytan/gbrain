@@ -121,6 +121,7 @@ export const FILE_PLANE_API_KEYS: readonly string[] = [
   'openrouter_api_key',
   'voyage_api_key',
   'dashscope_api_key',
+  'deepseek_api_key',
   'litellm_api_key',
   'together_api_key',
   'google_api_key',
