@@ -64,7 +64,7 @@ import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
 import { buildGatewayConfig, foldNativeBaseUrlsFromFilePlane } from './build-gateway-config.ts';
-
+import { assertOutboundChatAllowed, assertOutboundImageEmbeddingAllowed, assertOutboundEmbeddingAllowed } from './outbound-gate.ts';
 // ---- Gateway-wide AI-HTTP timeout (v0.42.20.0, #1762/#1775) ----
 //
 // Plain `fetch` (Bun/Node) has NO default request timeout, so a stalled provider
@@ -1912,7 +1912,7 @@ export interface EmbedOpts {
 }
 
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
-  if (!texts || texts.length === 0) return [];
+  if (!texts || texts.length === 0) { assertOutboundEmbeddingAllowed([]); return []; }
 
   const cfg = requireConfig();
   // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
@@ -1923,7 +1923,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
   const truncated = texts.map(t => truncateUtf8(t ?? '', MAX_CHARS));
-
+  assertOutboundEmbeddingAllowed(truncated);
   // Reserve up front for the worst-case batch token count. Embeddings have
   // no output rate, so maxOutputTokens=0. record() at the end uses the
   // actual total reported by the SDK across all sub-batches.
@@ -2278,7 +2278,14 @@ export async function embedMultimodal(
   opts: EmbedMultimodalOpts = {},
 ): Promise<Float32Array[]> {
   if (!inputs || inputs.length === 0) return [];
-
+  // The gate is only honest if the bytes it scans ARE the bytes we send.
+  // Shorten here and reuse the SAME array downstream — scanning a shortened
+  // copy while the request body carried the full text let everything past
+  // MAX_CHARS out unscanned.
+  inputs = inputs.map(input =>
+    input.kind === 'text' ? { ...input, text: truncateUtf8(input.text ?? '', MAX_CHARS) } : input);
+  assertOutboundImageEmbeddingAllowed(inputs.map(input => input.kind));
+  assertOutboundEmbeddingAllowed(inputs.flatMap(input => input.kind === 'text' ? [input.text ?? ''] : []));
   const cfg = requireConfig();
   // Prefer embedding_multimodal_model when set, so brains using OpenAI for
   // text embeddings can route multimodal to Voyage without changing the
@@ -2904,7 +2911,7 @@ export async function expand(query: string): Promise<string[]> {
     const viaText = async (): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
-        textResult = await _generateTextTransport({
+        textResult = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
           model,
           abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
           prompt: expansionPrompt,
@@ -2924,7 +2931,7 @@ export async function expand(query: string): Promise<string[]> {
       // generic, so `object` would be `{}`.)
       let result: { object?: { queries?: string[] }; usage?: unknown };
       try {
-        result = await _generateObjectTransport({
+        result = await (assertOutboundChatAllowed("generateObject"), _generateObjectTransport)({
           model,
           schema: ExpansionSchema,
           // Name the schema. On the native-anthropic path the SDK turns the schema
@@ -2956,7 +2963,7 @@ export async function expand(query: string): Promise<string[]> {
       // schema (strict validation), and fall back to the text path if it is
       // rejected at call time so a mis-declared capability never drops expansion.
       try {
-        const result = await _generateObjectTransport({
+        const result = await (assertOutboundChatAllowed("generateObject"), _generateObjectTransport)({
           model,
           schema: ExpansionSchema,
           // Same schema name+description as the native branch above: an
@@ -3051,7 +3058,7 @@ export async function generateOcrText(imageBytes: Buffer, mime: string): Promise
     recordSpendOnTracker(tracker, ocrModelId, label, tokens);
   let result: Awaited<ReturnType<GenerateTextFn>>;
   try {
-    result = await _generateTextTransport({
+    result = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
       model,
       // v0.42.20.0 (codex) — OCR is a 5th unbounded generateText entry point.
       abortSignal: withDefaultTimeout(undefined, AI_CHAT_TIMEOUT_MS),
@@ -3986,7 +3993,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     : opts.system;
 
   try {
-    const result = await _generateTextTransport({
+    const result = await (assertOutboundChatAllowed("generateText"), _generateTextTransport)({
       model,
       system: systemParam,
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
