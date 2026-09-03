@@ -677,6 +677,63 @@ describe('loops_close', () => {
     expect(res.status).toBe('dropped');
   });
 
+  test('multi-source grant + explicit in-grant source_id may close', async () => {
+    const { id } = await upsertOpenLoop(engine, loop());
+    const res = (await loopsCloseOp.handler(
+      ctx({
+        remote: true,
+        auth: {
+          token: 't',
+          clientId: 'c',
+          scopes: ['write'],
+          allowedSources: ['g1', 'g2'],
+        },
+      }),
+      { id, status: 'done', source_id: 'g1' },
+    )) as { closed: boolean; status: string };
+    expect(res.closed).toBe(true);
+    expect(res.status).toBe('done');
+    expect(await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' })).toHaveLength(0);
+  });
+
+  test('explicit source_id outside the grant → permission_denied, loop untouched', async () => {
+    const { id } = await upsertOpenLoop(engine, loop());
+    await expect(
+      loopsCloseOp.handler(
+        ctx({
+          remote: true,
+          auth: {
+            token: 't',
+            clientId: 'c',
+            scopes: ['write'],
+            allowedSources: ['g2', 'g3'], // g1 is not readable by this caller
+          },
+        }),
+        { id, status: 'done', source_id: 'g1' },
+      ),
+    ).rejects.toThrow(/permission_denied|outside the caller/);
+    expect(await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' })).toHaveLength(1);
+  });
+
+  test('source_id naming another source leaves the loop alone', async () => {
+    const { id } = await upsertOpenLoop(engine, loop());
+    const res = (await loopsCloseOp.handler(
+      ctx({
+        remote: true,
+        auth: {
+          token: 't',
+          clientId: 'c',
+          scopes: ['write'],
+          allowedSources: ['g1', 'g2'],
+        },
+      }),
+      { id, status: 'done', source_id: 'g2' },
+    )) as { closed: boolean; reason?: string };
+    expect(res.closed).toBe(false);
+    expect(res.reason).toBe('not_found_or_already_closed');
+    expect(await listOpenLoops(engine, { sourceIds: ['g1'], status: 'open' })).toHaveLength(1);
+  });
+
   test('dry_run returns the action without closing', async () => {
     const { id } = await upsertOpenLoop(engine, loop());
     const res = (await loopsCloseOp.handler(ctx({ dryRun: true }), { id, status: 'done' })) as {
