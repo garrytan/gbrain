@@ -9,7 +9,7 @@
  *   - query-arm keyword degradation (never an error without embeddings)
  *   - remember contract: provenance_required, ttl forms (P30D trap), enum
  *     kinds, world default + the remote remember→recall round-trip [F2],
- *     private facts hidden from remote readers
+ *     session-scoped writes, private facts hidden from remote readers
  *   - entity: card shape vs RESPONSE_SCHEMAS, three resolution arms,
  *     miss→suggestions, ZERO-LLM guard (chat transport rigged to throw)
  *   - synthesize: [EXPENSIVE prefix, annotations, clean `unavailable` with
@@ -267,6 +267,40 @@ describe('remember — contract behavior', () => {
     const texts = body.facts.map((f: { fact: string }) => f.fact).join('|');
     expect(texts).toContain('world-visible round-trip fact');
     expect(texts).not.toContain('PRIVATE-SENTINEL');
+  });
+
+  it('stamps session_id for session-scoped recall while omitted session_id stays null and excluded', async () => {
+    const sessionId = 'remember-session-positive';
+    const positiveFact = 'session-scoped remember positive fact';
+    const negativeFact = 'session-less remember negative control fact';
+
+    const positive = await callRemote('remember', {
+      fact: positiveFact,
+      provenance: 'session regression test',
+      session_id: `  ${sessionId}  `,
+    });
+    const negative = await callRemote('remember', {
+      fact: negativeFact,
+      provenance: 'session regression test',
+    });
+    expect(positive.isError).toBe(false);
+    expect(negative.isError).toBe(false);
+
+    const rows = await engine.executeRaw<{ fact: string; source_session: string | null }>(
+      `SELECT fact, source_session
+         FROM facts
+        WHERE fact IN ($1, $2)
+        ORDER BY fact`,
+      [positiveFact, negativeFact],
+    );
+    expect(rows).toContainEqual({ fact: positiveFact, source_session: sessionId });
+    expect(rows).toContainEqual({ fact: negativeFact, source_session: null });
+
+    const recalled = await callRemote('recall', { session_id: sessionId });
+    expect(recalled.isError).toBe(false);
+    const recalledFacts = recalled.body.facts.map((f: { fact: string }) => f.fact);
+    expect(recalledFacts).toContain(positiveFact);
+    expect(recalledFacts).not.toContain(negativeFact);
   });
 });
 
