@@ -9,7 +9,7 @@ addition/exclusion).
 ## MCP surface note (read once)
 
 The plugin's MCP server runs `gbrain serve --surface starter` — the
-27-op daily-driver surface (the seven memory verbs + daily
+28-op daily-driver surface (the seven memory verbs + daily
 brain ops + capture). 22
 bundled skills reference gbrain operations beyond that surface; every one of
 them has a first-class `gbrain` CLI path, which is the primary way skills
