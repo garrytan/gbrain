@@ -295,4 +295,177 @@ describe('extract_atoms persists provenance, not claims (#4706)', () => {
     expect(atom.frontmatter.quote_unverified).toBeUndefined();
     expect(atom.frontmatter.source_quote_verified).toBeUndefined();
   });
+
+  test('opt-in self-review repairs lost scope before canonical write', async () => {
+    const scopedSource = [
+      'Course method: get each participant to an MVP in one week.',
+      'For this course, split the MVP into 4-7 tasks of 15-30 minutes each.',
+      'This is a teaching constraint, not universal product advice.',
+    ].join('\n').padEnd(600, ' .');
+    const responses = [
+      [{
+        title: 'Split every MVP into small tasks',
+        atom_type: 'framework',
+        body: 'Every MVP should be split into 4-7 short tasks.',
+        source_quote: 'split the MVP into several short tasks',
+      }],
+      [{ index: 0, verdict: 'repair', issues: ['The course and one-week scope are missing.'] }],
+      [{
+        title: 'A one-week course uses 4-7 short MVP tasks',
+        atom_type: 'framework',
+        body: 'In this one-week course, participants split their MVP into 4-7 tasks of 15-30 minutes. This is a teaching constraint, not universal product advice.',
+        source_quote: 'For this course, split the MVP into 4-7 tasks of 15-30 minutes each.',
+      }],
+    ];
+    let call = 0;
+    const chat = async (opts: ChatOpts): Promise<ChatResult> => {
+      expect(call === 0 ? opts.system : '').not.toContain('Audit candidate atoms');
+      if (call === 1) {
+        expect(opts.system).toContain('Audit candidate atoms');
+        expect(opts.messages[0]?.content).toContain('CANDIDATE ATOMS');
+      }
+      if (call === 2) expect(opts.system).toContain('Rewrite candidate atoms');
+      const text = JSON.stringify(responses[call++] ?? []);
+      return {
+        text,
+        blocks: [{ type: 'text', text }],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-haiku-4-5',
+        providerId: 'anthropic',
+      };
+    };
+
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [{ filePath: '/tmp/course.txt', content: scopedSource, contentHash: 'f6'.repeat(8) }],
+      _pages: [],
+      _chat: chat,
+      _selfReviewEnabled: true,
+    });
+
+    expect(call).toBe(3);
+    expect(result.details?.self_review_enabled).toBe(true);
+    expect(result.details?.self_review_calls).toBe(2);
+    expect(result.details?.atoms_self_reviewed).toBe(1);
+    expect(result.details?.atoms_rejected_unverified).toBe(0);
+    const atom = await onlyAtom();
+    expect(atom.compiled_truth).toContain('In this one-week course');
+    expect(atom.compiled_truth).toContain('not universal product advice');
+    expect(atom.frontmatter.source_quote_verified).toBe(true);
+    expect(atom.frontmatter.source_quote).toBe('For this course, split the MVP into 4-7 tasks of 15-30 minutes each.');
+  });
+
+  test('opt-in self-review drops an atom whose repaired quote is still unsupported', async () => {
+    const responses = [
+      [{ title: 'Candidate', atom_type: 'insight', body: 'A candidate.', source_quote: 'not exact' }],
+      [{ index: 0, verdict: 'repair', issues: ['Quote is unsupported.'] }],
+      [{ title: 'Still unsupported', atom_type: 'insight', body: 'Still unsupported.', source_quote: 'invented quote' }],
+    ];
+    let call = 0;
+    const chat = async (): Promise<ChatResult> => {
+      const text = JSON.stringify(responses[call++] ?? []);
+      return {
+        text,
+        blocks: [{ type: 'text', text }],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-haiku-4-5',
+        providerId: 'anthropic',
+      };
+    };
+
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [{ filePath: '/tmp/reject.txt', content: SOURCE, contentHash: 'a7'.repeat(8) }],
+      _pages: [],
+      _chat: chat,
+      _selfReviewEnabled: true,
+    });
+
+    expect(call).toBe(3);
+    expect(result.status).toBe('ok');
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.atoms_rejected_unverified).toBe(1);
+    const atoms = await engine.listPages({ type: 'atom', limit: 10 });
+    expect(atoms).toHaveLength(0);
+  });
+
+  test('opt-in self-review keeps a supported atom without a repair call', async () => {
+    const responses = [
+      [{
+        title: 'Budgets are ceilings',
+        atom_type: 'insight',
+        body: 'In these meeting notes, the budget is a ceiling rather than a target.',
+        source_quote: 'The budget is a ceiling and not a target.',
+      }],
+      [{ index: 0, verdict: 'pass', issues: [] }],
+    ];
+    let call = 0;
+    const chat = async (): Promise<ChatResult> => {
+      const text = JSON.stringify(responses[call++] ?? []);
+      return {
+        text,
+        blocks: [{ type: 'text', text }],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-haiku-4-5',
+        providerId: 'anthropic',
+      };
+    };
+
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [{ filePath: '/tmp/pass.txt', content: SOURCE, contentHash: 'a8'.repeat(8) }],
+      _pages: [],
+      _chat: chat,
+      _selfReviewEnabled: true,
+    });
+
+    expect(call).toBe(2);
+    expect(result.details?.self_review_calls).toBe(1);
+    expect(result.details?.atoms_extracted).toBe(1);
+    expect((await onlyAtom()).frontmatter.source_quote_verified).toBe(true);
+  });
+
+  test('opt-in self-review fails closed on malformed critic output', async () => {
+    const responses = [
+      [{
+        title: 'Candidate',
+        atom_type: 'insight',
+        body: 'A candidate.',
+        source_quote: 'The budget is a ceiling and not a target.',
+      }],
+      [{ index: 0, verdict: 'maybe', issues: [] }],
+    ];
+    let call = 0;
+    const chat = async (): Promise<ChatResult> => {
+      const text = JSON.stringify(responses[call++] ?? []);
+      return {
+        text,
+        blocks: [{ type: 'text', text }],
+        stopReason: 'end',
+        usage: { input_tokens: 100, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-haiku-4-5',
+        providerId: 'anthropic',
+      };
+    };
+
+    const result = await runPhaseExtractAtoms(engine, {
+      sourceId: 'default',
+      _transcripts: [{ filePath: '/tmp/malformed-critic.txt', content: SOURCE, contentHash: 'a9'.repeat(8) }],
+      _pages: [],
+      _chat: chat,
+      _selfReviewEnabled: true,
+    });
+
+    expect(call).toBe(2);
+    expect(result.details?.atoms_extracted).toBe(0);
+    expect(result.details?.malformed_outputs).toBe(1);
+    expect(result.details?.failures).toEqual([
+      expect.objectContaining({ error: expect.stringContaining('malformed self-critic output') }),
+    ]);
+    const atoms = await engine.listPages({ type: 'atom', limit: 10 });
+    expect(atoms).toHaveLength(0);
+  });
 });

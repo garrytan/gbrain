@@ -1351,11 +1351,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'cycle.extract_atoms.max_source_chars',
   'cycle.extract_atoms.page_discovery_budget',
   // #4540: per-item extractor caps (defaults 50000 chars / 4096 tokens) plus
-  // an optional between-item pacing sleep (ms, default 0). Read via
-  // engine.getConfig in src/core/cycle/extract-atoms.ts.
+  // optional pacing. Read via engine.getConfig in src/core/cycle/extract-atoms.ts.
   'cycle.extract_atoms.max_input_chars',
   'cycle.extract_atoms.max_output_tokens',
   'cycle.extract_atoms.pacing_ms',
+  'cycle.extract_atoms.self_review_enabled',
   'models.dream.patterns',
   'models.dream.synthesize_verdict',
   // #4152: preferred triage-model key (explicit pre-read in loadSynthConfig;
