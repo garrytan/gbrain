@@ -36,6 +36,7 @@ import type { Operation, OperationContext } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
+import { parseTypedOpArg } from './core/cli-util.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
 import type { CliOptions } from './core/cli-options.ts';
 import { callRemoteTool, RemoteMcpError, unpackToolResult, extractResponseMeta } from './core/mcp-client.ts';
@@ -1122,37 +1123,6 @@ export function resolveQueryImage(
 // (mirror the traversal so the token counts as consumed) so the parser and
 // the validator can never disagree on what a boolean flag swallows.
 const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
-
-function parseTypedOpArg(
-  key: string,
-  type: Operation['params'][string]['type'],
-  raw: string,
-): unknown {
-  if (type === 'boolean') return raw !== 'false';
-  if (type === 'number') return Number(raw);
-  if (type !== 'object' && type !== 'array') return raw;
-  // Array-valued ops predate JSON CLI input and document comma-delimited
-  // flag values. Preserve that wire shape unless the operator explicitly
-  // supplies a JSON array. Individual
-  // operation boundaries remain responsible for accepting or rejecting the
-  // legacy string form.
-  if (type === 'array' && !raw.trimStart().startsWith('[')) {
-    if (raw.trimStart().startsWith('{')) {
-      throw new Error(`--${key.replace(/_/g, '-')} requires a JSON array.`);
-    }
-    return raw;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error(`--${key.replace(/_/g, '-')} requires valid JSON ${type}.`);
-  }
-  if (type === 'array' ? !Array.isArray(parsed) : parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new Error(`--${key.replace(/_/g, '-')} requires a JSON ${type}.`);
-  }
-  return parsed;
-}
 
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
