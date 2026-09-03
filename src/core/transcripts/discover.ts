@@ -150,6 +150,79 @@ export async function indexImportedSessions(
 }
 
 /**
+ * Normalize a session identifier so the two names the pipeline gives the same
+ * session compare equal. The conversation page stamps
+ * `transcript_import.session_id` (`20260720_071844_e91dbe`); the corpus file
+ * on disk is named from the same parts with a different separator
+ * (`2026-07-20-071844-e91dbe.md`). Dropping separators and case makes them
+ * comparable without teaching this module either harness's naming scheme.
+ * Identity-safe for the JSONL harnesses too, where the basename stem already
+ * IS the session id (normalizing both sides is a no-op on a match).
+ */
+function sessionKey(raw: string): string {
+  return raw.toLowerCase().replace(/[-_]/g, '');
+}
+
+export interface TranscriptPageIndex {
+  /**
+   * normalized session key → conversation page slugs. A session that split
+   * across parts renders one page per part, all stamped with the same
+   * session_id, so this is one-to-many by design.
+   */
+  bySessionKey: Map<string, string[]>;
+  pagesScanned: number;
+}
+
+/**
+ * Reverse of `indexImportedSessions`: maps a session back to the conversation
+ * PAGE(S) it was rendered into, so a caller holding only a transcript file
+ * path can find the page to attribute it to. Same one-query, frontmatter-only
+ * discipline — conversation bodies run to ~300KB per part and must not be
+ * streamed to read two keys.
+ */
+export async function indexTranscriptPages(
+  engine: BrainEngine,
+  sourceId: string,
+): Promise<TranscriptPageIndex> {
+  const bySessionKey = new Map<string, string[]>();
+  let pagesScanned = 0;
+  const rows = await engine.executeRaw<{ slug: string; frontmatter: unknown }>(
+    `SELECT slug, frontmatter FROM pages
+     WHERE type = 'conversation' AND source_id = $1 AND deleted_at IS NULL`,
+    [sourceId],
+  );
+  for (const row of rows) {
+    pagesScanned++;
+    const fm = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as
+      | Record<string, unknown>
+      | null;
+    const ti = fm?.transcript_import as { session_id?: string } | undefined;
+    if (!ti || typeof ti.session_id !== 'string' || ti.session_id === '') continue;
+    const key = sessionKey(ti.session_id);
+    if (key === '') continue;
+    const slugs = bySessionKey.get(key);
+    if (slugs) slugs.push(row.slug);
+    else bySessionKey.set(key, [row.slug]);
+  }
+  return { bySessionKey, pagesScanned };
+}
+
+/**
+ * The conversation page(s) a transcript file was rendered into, or [] when the
+ * transcript has not been imported as a page. Matches on the basename stem,
+ * which every supported harness derives from the session id.
+ */
+export function resolveTranscriptPageSlugs(
+  filePath: string,
+  index: TranscriptPageIndex,
+): string[] {
+  const base = filePath.split(/[/\\]/).pop() ?? '';
+  const stem = base.replace(/\.(md|markdown|jsonl|json)$/i, '');
+  if (stem === '') return [];
+  return index.bySessionKey.get(sessionKey(stem)) ?? [];
+}
+
+/**
  * JSONL harnesses name the session in the file basename (claude-code /
  * openclaw uuid.jsonl, codex rollout-<id>.jsonl). Grok does not: the
  * basename is always `chat_history.jsonl` and the session id is the parent
