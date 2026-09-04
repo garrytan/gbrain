@@ -38,6 +38,14 @@ gbrain embed --stale          # re-embeds signature-drifted pages
 gbrain embed --stale --dry-run # preview the count without re-embedding
 ```
 
+Hot-memory facts are not part of that page sweep. A fact row that missed its
+vector at write time (provider outage, keyless install, budget cap) shows up
+as `facts_pending` in `gbrain migrate embeddings --status`;
+`gbrain embed --stale --facts` backfills exactly those rows (same predicate,
+`embedding IS NULL AND expired_at IS NULL`), and `--dry-run` previews the
+count. Facts carry no signature column, so the flag never re-embeds a row
+that already has a vector; use the width-change recipe below for that.
+
 Under federated_v2, the same drift is picked up by the per-source
 `embed-backfill` jobs that `gbrain sync --all` enqueues (capped
 `$X/source/24h`). **Grandfather:** pages whose chunks were embedded

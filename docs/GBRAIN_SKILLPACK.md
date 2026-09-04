@@ -126,6 +126,7 @@ data sources to populate it:
 | `gbrain sync` | Sync local markdown repo to gbrain index |
 | `gbrain import <path>` | Import files into the brain |
 | `gbrain embed --stale` | Re-embed pages with stale or missing embeddings |
+| `gbrain embed --stale --facts` | Backfill hot-memory fact rows that never got a vector |
 | `gbrain integrations` | Manage integration recipes (senses + reflexes) |
 | `gbrain stats` | Show brain statistics (page count, last sync, etc.) |
 | `gbrain doctor` | Diagnose brain health issues |
