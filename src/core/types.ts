@@ -294,11 +294,16 @@ export interface PageInput {
   ingested_at?: Date | null;
 }
 
+export type PageFrontmatterFilter =
+  | { field: string; operator: 'eq_ci'; value: string }
+  | { field: string; operator: 'contains_any_ci'; values: string[] };
+
 export interface PageFilters {
   type?: PageType;
   tag?: string;
   limit?: number;
   offset?: number;
+  frontmatterFilters?: PageFrontmatterFilter[];
   /** ISO date string (YYYY-MM-DD or full ISO timestamp). Filter to pages updated_at > value. */
   updated_after?: string;
   /**
@@ -384,7 +389,7 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // timestamp order arbitrarily and a >limit tie cluster is unpageable.
   updated_asc:  'p.updated_at ASC, p.slug ASC',
   created_desc: 'p.created_at DESC',
-  slug:         'p.slug ASC',
+  slug:         'p.slug ASC, p.source_id ASC, p.id ASC',
 };
 
 /**

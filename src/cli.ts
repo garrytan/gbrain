@@ -32,7 +32,7 @@ import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import { resolveSourceIdEngineFree } from './core/source-resolver.ts';
 import { formatVolunteeredPage } from './core/context/volunteer.ts';
-import type { Operation, OperationContext } from './core/operations.ts';
+import type { Operation, OperationContext, ParamDef } from './core/operations.ts';
 import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExitCode, setCliExitVerdict, writeStdoutFinal, installStdoutPipeDelivery } from './core/cli-force-exit.ts';
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
@@ -1123,6 +1123,35 @@ export function resolveQueryImage(
 // the validator can never disagree on what a boolean flag swallows.
 const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
 
+/** Parses numbers and explicitly JSON-encoded CLI parameters from one raw token. */
+function parseCliParamValue(
+  op: Operation,
+  key: string,
+  def: ParamDef | undefined,
+  raw: string,
+): unknown {
+  if (def?.type === 'number') return Number(raw);
+  if (def?.type !== 'array' && def?.type !== 'object') return raw;
+  if (!op.cliHints?.jsonParams?.includes(key)) return raw;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`Invalid JSON for --${key.replace(/_/g, '-')}`);
+  }
+  if (def.type === 'array' && !Array.isArray(parsed)) {
+    throw new Error(`--${key.replace(/_/g, '-')} must be a JSON array`);
+  }
+  if (
+    def.type === 'object'
+    && (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
+  ) {
+    throw new Error(`--${key.replace(/_/g, '-')} must be a JSON object`);
+  }
+  return parsed;
+}
+
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1149,8 +1178,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         if (def) {
           const raw = arg.slice(eq + 1);
           params[key] = def.type === 'boolean' ? raw !== 'false'
-            : def.type === 'number' ? Number(raw)
-            : raw;
+            : parseCliParamValue(op, key, def, raw);
           continue;
         }
       }
@@ -1190,8 +1218,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // positionally, then --content clobbered it). Warn to stderr; when
         // the discarded value names an existing file, point at capture --file.
         const prevValue = params[key];
-        params[key] = args[++i];
-        if (paramDef?.type === 'number') params[key] = Number(params[key]);
+        params[key] = parseCliParamValue(op, key, paramDef, args[++i]);
         if (prevValue !== undefined && prevValue !== params[key]) {
           let fileHint = '';
           try {
@@ -1207,7 +1234,7 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
     } else if (posIdx < positional.length) {
       const key = positional[posIdx++];
       const paramDef = op.params[key];
-      params[key] = paramDef?.type === 'number' ? Number(arg) : arg;
+      params[key] = parseCliParamValue(op, key, paramDef, arg);
     }
   }
 
