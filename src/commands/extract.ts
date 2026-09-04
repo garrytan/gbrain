@@ -69,14 +69,18 @@ import { pathToSlug, slugifyPath, pruneDir, isSyncable } from '../core/sync.ts';
 import { withRetry, isRetryableConnError } from '../core/retry.ts';
 export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
-import { buildGazetteer, findMentionedEntities } from '../core/by-mention.ts';
+import {
+  buildGazetteer,
+  findMentionedEntities,
+  hashMentionResolution,
+  resolveMentionResolutionConfig,
+} from '../core/by-mention.ts';
 // #4611: the cross-source link fallback follows the configured
 // `sources.default` (validated shape) instead of the literal 'default'.
 import { isValidSourceId } from '../core/source-id.ts';
 import {
   loadOpCheckpoint, recordCompleted, clearOpCheckpoint, mentionsFingerprint,
 } from '../core/op-checkpoint.ts';
-import { createHash } from 'crypto';
 // v0.41.15.0 (T7, D9): --workers N for the fs-walk inner loops via the
 // shared sliding-pool helper + PGLite-clamp wrapper.
 import { runSlidingPool } from '../core/worker-pool.ts';
@@ -1155,11 +1159,8 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
           setCliExitVerdict(1);
         }
       } else if (byMention || ner) {
-        // v0.41.18.0 (T7): combined --by-mention + --ner walk shares one
-        // gazetteer; saves an entire pass on big brains. When only one
-        // flag is set, the other extractor skips silently.
-        const { buildGazetteer: buildGz } = await import('../core/by-mention.ts');
-        const sharedGazetteer = (byMention || ner) ? await buildGz(engine) : undefined;
+        // Each enabled extractor resolves the current mention policy before
+        // building its gazetteer so ignore and federation rules cannot drift.
         if (byMention) {
           const r = await extractMentionsFromDb(engine, dryRun, jsonMode, typeFilter, since, {
             sourceIdFilter,
@@ -1175,7 +1176,6 @@ export async function runExtract(engine: BrainEngine, args: string[]) {
             sourceIdFilter,
             typeFilter,
             since,
-            gazetteer: sharedGazetteer,
           });
           if (r.pack_unavailable && !jsonMode) {
             console.log('Note: no active schema pack with link_types[].inference.regex — NER pass produced 0 links.');
@@ -2216,10 +2216,9 @@ export async function extractStaleFromDB(
  * mention link_source is filtered OUT of backlink-count per D12 so
  * search ranking semantics are preserved.
  *
- * Source isolation: mentions cross-source pages are deliberately
- * suppressed by `findMentionedEntities`'s cross-source guard. Page in
- * source A mentions entity in source B → no link created. v1
- * conservative posture; relaxable in a future wave.
+ * Source isolation defaults to same-source only. When
+ * `link_resolution.cross_source_mentions` is enabled, cross-source links are
+ * allowed only when both source ids are active and explicitly federated.
  */
 async function extractMentionsFromDb(
   engine: BrainEngine,
@@ -2235,9 +2234,13 @@ async function extractMentionsFromDb(
   // the current mention set. Dry-run stays a pure preview (no deletes).
   const rebuild = opts?.rebuild === true && !dryRun;
 
-  // Build gazetteer once per run. Skip everything if there are no
-  // linkable entities — vacuous truth, no mentions to find.
-  const gazetteer = await buildGazetteer(engine);
+  // Resolve mention settings and build the gazetteer once per run. Skip
+  // everything if there are no linkable entities — vacuous truth, no mentions
+  // to find.
+  const mentionResolution = await resolveMentionResolutionConfig(engine);
+  const gazetteer = await buildGazetteer(engine, {
+    extraIgnore: mentionResolution.mentionIgnore,
+  });
   if (gazetteer.size === 0) {
     if (jsonMode) {
       process.stdout.write(JSON.stringify({ event: 'no_gazetteer', message: 'no linkable entity pages found; nothing to scan' }) + '\n');
@@ -2251,10 +2254,13 @@ async function extractMentionsFromDb(
   // fingerprint so adding new entity pages mid-pause invalidates the
   // checkpoint cleanly. Without it, resumed pages would skip new
   // entities silently (codex flag).
-  const gazetteerHash = createHash('sha256')
-    .update([...gazetteer.keys()].sort().join('|'))
-    .digest('hex')
-    .slice(0, 8);
+  // Every target and the exact federation membership participate, so a
+  // mid-pause alias, title, ignore, source, or authorization change cannot
+  // reuse pages scanned under a stale resolution policy.
+  const gazetteerHash = hashMentionResolution(
+    gazetteer,
+    mentionResolution.crossSourceFederated,
+  );
 
   // #4304: --since prunes at the ref level BEFORE the checkpoint diff and
   // the per-page getPage loop. Refs outside the window never enter the
@@ -2370,6 +2376,7 @@ async function extractMentionsFromDb(
       ? findMentionedEntities(body, gazetteer, {
           fromSlug: slug,
           fromSourceId: source_id,
+          crossSourceFederated: mentionResolution.crossSourceFederated,
         })
       : [];
 

@@ -117,6 +117,12 @@ describe('KNOWN_CONFIG_KEYS', () => {
     expect(KNOWN_CONFIG_KEYS).toContain('orphans.exclude_slugs');
   });
 
+  test('registers only the exact mention-resolution keys', () => {
+    expect(KNOWN_CONFIG_KEYS).toContain('link_resolution.cross_source_mentions');
+    expect(KNOWN_CONFIG_KEYS).toContain('link_resolution.mention_ignore');
+    expect(KNOWN_CONFIG_KEY_PREFIXES).not.toContain('link_resolution.');
+  });
+
   test('no duplicate entries', () => {
     const set = new Set(KNOWN_CONFIG_KEYS);
     expect(set.size).toBe(KNOWN_CONFIG_KEYS.length);

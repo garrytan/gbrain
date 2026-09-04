@@ -268,6 +268,33 @@ describe('recommender / handler parity (the anti-drift invariant)', () => {
       expect(recommended).toBe(false); // the fixture declares no regex rules
     });
   });
+
+  it('NER applies the same authoritative mention ignore as stale-link scans', async () => {
+    await engine.putPage('companies/acme', {
+      title: 'Acme Corp',
+      type: 'company',
+      compiled_truth: 'Acme Corp is a company.',
+      timeline: '', frontmatter: {},
+    });
+    await engine.putPage('notes/job', {
+      title: 'Job note',
+      type: 'note',
+      compiled_truth: 'Alice works at Acme Corp.',
+      timeline: '', frontmatter: {},
+    });
+    await engine.setConfig('link_resolution.mention_ignore', 'Acme Corp');
+
+    try {
+      await withPack('gbrain-base', async () => {
+        const { extractNerLinks } = await import('../src/core/extract-ner.ts');
+        const { scanStaleMentions } = await import('../src/core/by-mention.ts');
+        expect((await extractNerLinks(engine)).created).toBe(0);
+        expect((await scanStaleMentions(engine)).staleLinks).toBe(0);
+      });
+    } finally {
+      await engine.unsetConfig('link_resolution.mention_ignore');
+    }
+  });
 });
 
 describe('checkTimelineCoverage — datable-meetings gate', () => {

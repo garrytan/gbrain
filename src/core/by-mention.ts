@@ -7,8 +7,8 @@
  *
  * `findMentionedEntities` is a pure function that scans body text against
  * the gazetteer, applies the maximal-munch matcher (longest gazetteer
- * entry wins at each offset), self-link guard, cross-source guard, and
- * per-page first-mention-only cap (1 link per (source_slug, target_slug)).
+ * entry wins at each offset), self-link guard, federated cross-source guard,
+ * and per-page first-mention-only cap (1 link per (source_slug, target_slug)).
  *
  * Design decisions locked in /plan-eng-review for v0.42.0.0:
  *  - D2/D10  Hardcoded entity-type filter (not pack-aware) — pack v2
@@ -21,15 +21,18 @@
  *  - D13     Self-link guard.
  *  - CK12    Ignore-list applied at gazetteer-build time, NOT match time.
  *            Built-in ambiguous tokens (Apple, Amazon, Square, Stripe, Box)
- *            are dropped from the gazetteer ONLY when no corresponding
- *            entity page exists. If a page DOES exist, the user explicitly
- *            created it and we trust the gazetteer presence.
+ *            are dropped only when no corresponding entity page exists.
+ *            User-supplied ignore entries are authoritative for titles and
+ *            aliases, even when an entity page exists.
  */
 
+import { createHash } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { isConfigTruthy } from './config.ts';
 import { isUndefinedTableError } from './utils.ts';
 import { CJK_SLUG_CHARS } from './cjk.ts';
 import { stripCodeBlocks } from './link-extraction.ts';
+import { loadAllSources } from './sources-load.ts';
 // #4222: shared generic-token reject list — same list gates enrichEntity
 // minting and drives the junk_entity_hubs doctor check.
 import { isGenericEntityToken } from './entity-name-quality.ts';
@@ -94,8 +97,8 @@ export interface Mention {
 
 export interface BuildGazetteerOpts {
   /**
-   * Optional user-supplied additional ignore-list entries (case-sensitive
-   * raw title match). Merged with DEFAULT_IGNORE_LIST.
+   * Optional authoritative ignore entries. Titles use exact raw matches;
+   * normalized aliases use case-insensitive matches.
    */
   extraIgnore?: string[];
 }
@@ -105,6 +108,39 @@ export interface FindMentionsOpts {
   fromSlug: string;
   /** Source id of the page being scanned. Used for cross-source guard. */
   fromSourceId: string;
+  /**
+   * Active, explicitly federated source ids allowed to link across sources.
+   * Undefined preserves the default same-source-only behavior.
+   */
+  crossSourceFederated?: ReadonlySet<string>;
+}
+
+interface GazetteerMatch {
+  entry: GazetteerEntry;
+  tokenCount: number;
+}
+
+/** Hashes every mention target and the exact cross-source authorization set. */
+export function hashMentionResolution(
+  gazetteer: Gazetteer,
+  crossSourceFederated: ReadonlySet<string> | undefined,
+): string {
+  const entries = [...gazetteer.values()]
+    .flatMap(bucket => bucket)
+    .map(entry => JSON.stringify([
+      entry.source_id,
+      entry.slug,
+      entry.title,
+      entry.tokens,
+    ]))
+    .sort();
+  const federatedSourceIds = crossSourceFederated === undefined
+    ? null
+    : [...crossSourceFederated].sort();
+  return createHash('sha256')
+    .update(JSON.stringify({ entries, federatedSourceIds }))
+    .digest('hex')
+    .slice(0, 8);
 }
 
 // ============================================================
@@ -364,8 +400,8 @@ export function tokenizeTitle(title: string): string[] {
  *
  * Hardcoded type filter per D2 (pack-awareness is TODO-1). Soft-deleted
  * pages excluded. Pages with too-short titles excluded (MIN_NAME_LENGTH).
- * Ignore-list applied per CK12: built-in ambiguous tokens dropped unless
- * the user has explicitly created the corresponding page.
+ * User ignore entries always exclude matching titles. Built-in ambiguous
+ * tokens apply to aliases below; a title row already represents a real page.
  *
  * Returned gazetteer is keyed by lowercase first token; entries with the
  * same first token co-exist in the same bucket (e.g. "Acme" + "Acme Corp").
@@ -383,26 +419,16 @@ export async function buildGazetteer(
     [],
   );
 
-  // Pre-build the existing-slug Set so the ignore-list rule can check
-  // "does this name already correspond to a real page?" in O(1).
-  const existingTitles = new Set<string>();
-  for (const r of rows) {
-    if (r.title) existingTitles.add(r.title);
-  }
-  const ignoreSet = new Set<string>([...DEFAULT_IGNORE_LIST, ...(opts.extraIgnore ?? [])]);
+  const defaultIgnore = new Set<string>(DEFAULT_IGNORE_LIST);
+  const userIgnore = new Set<string>(opts.extraIgnore ?? []);
 
   const gazetteer: Gazetteer = new Map();
   for (const row of rows) {
     if (!row.title) continue;
     if (!hasCJK(row.title) && row.title.length < MIN_NAME_LENGTH) continue;
     if (hasCJK(row.title) && cjkCharCount(row.title) < MIN_CJK_NAME_LENGTH) continue;
-    // NOTE (v0.46.15, deliberately preserved): for TITLES this condition is
-    // intentionally vacuous — every row here IS a real page, so an
-    // ignore-listed name the user explicitly created a page for is always
-    // allowed (documented CK12 policy). The ignore list bites only via
-    // opts.extraIgnore names that have no page, and — with real teeth — on
-    // the ALIAS entries below, which are not user-created pages.
-    if (ignoreSet.has(row.title) && !existingTitles.has(row.title)) continue;
+    // User entries are explicit exclusions and override page existence.
+    if (userIgnore.has(row.title)) continue;
 
     const tokens = tokenizeTitle(row.title);
     if (tokens.length === 0) continue;
@@ -454,7 +480,9 @@ export async function buildGazetteer(
          AND p.deleted_at IS NULL`,
       [],
     );
-    const ignoreLc = new Set(Array.from(ignoreSet, (s) => s.toLowerCase()));
+    const ignoreLc = new Set(
+      [...defaultIgnore, ...userIgnore].map((name) => name.toLowerCase()),
+    );
     // Per-source title index for alias-vs-title collision checks.
     const titleBySource = new Set<string>();
     for (const r of rows) {
@@ -512,22 +540,56 @@ export async function buildGazetteer(
 // Body-text scanner (pure)
 // ============================================================
 
+/** Selects one authorized, unambiguous maximal match at a body-token offset. */
+function selectGazetteerMatch(
+  tokens: ScannedToken[],
+  index: number,
+  bucket: GazetteerEntry[],
+  opts: FindMentionsOpts,
+): GazetteerMatch | undefined {
+  const authorizedMatches = bucket.filter((entry) => {
+    if (entry.source_id !== opts.fromSourceId) {
+      const federated = opts.crossSourceFederated;
+      if (!federated?.has(opts.fromSourceId) || !federated.has(entry.source_id)) {
+        return false;
+      }
+    }
+    if (index + entry.tokens.length > tokens.length) return false;
+    return entry.tokens.every((token, offset) => tokens[index + offset]!.text === token);
+  });
+  if (authorizedMatches.length === 0) return undefined;
+
+  const tokenCount = Math.max(...authorizedMatches.map(entry => entry.tokens.length));
+  const identities = new Map<string, GazetteerEntry>();
+  for (const entry of authorizedMatches) {
+    if (entry.tokens.length !== tokenCount) continue;
+    identities.set(`${entry.source_id}\0${entry.slug}`, entry);
+  }
+
+  const local = [...identities.values()].filter(entry => entry.source_id === opts.fromSourceId);
+  if (local.length === 1) return { entry: local[0]!, tokenCount };
+  if (local.length > 1) return undefined;
+
+  const foreign = [...identities.values()];
+  return foreign.length === 1 ? { entry: foreign[0]!, tokenCount } : undefined;
+}
+
 /**
  * Scan body text for mentions of gazetteer entities. Pure function — no
  * IO. Returns `Mention[]` ordered by offset, deduped per
- * `(fromSlug → entry.slug)` pair (first-mention-only cap).
+ * `(fromSourceId, fromSlug → entry.source_id, entry.slug)` pair
+ * (first-mention-only cap).
  *
  * Matcher is maximal-munch: at each token offset, the longest gazetteer
  * entry that matches the body-token sequence wins. Single-word entries
  * are length-1 maximal matches.
  *
  * Guards (deterministic):
- *  - D13 self-link: skip when `fromSlug === entry.slug`.
- *  - Cross-source: skip when `fromSourceId !== entry.source_id` (mention
- *    in source A of an entity in source B is suppressed; design doc
- *    treats this as deliberate isolation in v1, can relax in a follow-up).
- *  - First-mention-only cap: dedup by `entry.slug` (one link per
- *    target page regardless of how many body mentions there are).
+ *  - D13 self-link: skip when both source id and slug match the source page.
+ *  - Cross-source: skip when `fromSourceId !== entry.source_id`, unless both
+ *    ids are present in the caller's explicitly federated source set.
+ *  - First-mention-only cap: dedup by `(entry.source_id, entry.slug)`
+ *    (one link per target page regardless of how many body mentions there are).
  *
  * Code-block stripping via `stripCodeBlocks` (preserves offsets, so the
  * returned mention offsets index into the ORIGINAL text not the stripped
@@ -544,7 +606,7 @@ export function findMentionedEntities(
   if (tokens.length === 0) return [];
 
   const out: Mention[] = [];
-  const seenSlugs = new Set<string>();
+  const seenTargets = new Set<string>();
   let i = 0;
 
   while (i < tokens.length) {
@@ -555,47 +617,20 @@ export function findMentionedEntities(
       continue;
     }
 
-    // Maximal-munch: bucket is pre-sorted longest-first. Find the first
-    // entry whose subsequent tokens all match the body sequence.
-    let matched: GazetteerEntry | null = null;
-    let matchedTokens = 0;
-    for (const entry of bucket) {
-      if (entry.tokens.length === 1) {
-        matched = entry;
-        matchedTokens = 1;
-        break;
-      }
-      // Multi-word: validate subsequent tokens.
-      if (i + entry.tokens.length > tokens.length) continue;
-      let allMatch = true;
-      for (let k = 1; k < entry.tokens.length; k++) {
-        if (tokens[i + k]!.text !== entry.tokens[k]) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch) {
-        matched = entry;
-        matchedTokens = entry.tokens.length;
-        break;
-      }
-    }
-
-    if (!matched) {
+    const match = selectGazetteerMatch(tokens, i, bucket, opts);
+    if (match === undefined) {
       i++;
       continue;
     }
+    const { entry: matched, tokenCount: matchedTokens } = match;
 
     // Guards.
-    if (matched.slug === opts.fromSlug) {
+    if (matched.source_id === opts.fromSourceId && matched.slug === opts.fromSlug) {
       i += matchedTokens;
       continue;
     }
-    if (matched.source_id !== opts.fromSourceId) {
-      i += matchedTokens;
-      continue;
-    }
-    if (seenSlugs.has(matched.slug)) {
+    const targetIdentity = `${matched.source_id}\0${matched.slug}`;
+    if (seenTargets.has(targetIdentity)) {
       i += matchedTokens;
       continue;
     }
@@ -606,11 +641,49 @@ export function findMentionedEntities(
       name: matched.title,
       offset: head.offset,
     });
-    seenSlugs.add(matched.slug);
+    seenTargets.add(targetIdentity);
     i += matchedTokens;
   }
 
   return out;
+}
+
+// ============================================================
+// Mention-resolution configuration
+// ============================================================
+
+/** Resolved mention settings shared by extraction and stale-link scans. */
+export interface MentionResolutionConfig {
+  /** User-authoritative entity titles and aliases to omit. */
+  mentionIgnore: string[];
+  /** Present only when cross-source mode is enabled. */
+  crossSourceFederated?: ReadonlySet<string>;
+}
+
+/**
+ * Resolve mention settings once, including the active explicit-federation
+ * boundary used to authorize cross-source links. Cross-source mode defaults
+ * off; the environment override takes precedence over the DB-plane flag.
+ */
+export async function resolveMentionResolutionConfig(
+  engine: BrainEngine,
+): Promise<MentionResolutionConfig> {
+  const [dbCrossSource, rawMentionIgnore] = await Promise.all([
+    engine.getConfig('link_resolution.cross_source_mentions'),
+    engine.getConfig('link_resolution.mention_ignore'),
+  ]);
+  const envCrossSource = process.env.GBRAIN_LINK_RESOLUTION_CROSS_SOURCE_MENTIONS;
+  const crossSourceEnabled = isConfigTruthy(envCrossSource ?? dbCrossSource);
+  const mentionIgnore = rawMentionIgnore
+    ? rawMentionIgnore.split(',').map((name) => name.trim()).filter(Boolean)
+    : [];
+  const crossSourceFederated = crossSourceEnabled
+    ? new Set(
+        (await loadAllSources(engine, { federatedOnly: true })).map((source) => source.id),
+      )
+    : undefined;
+
+  return { mentionIgnore, crossSourceFederated };
 }
 
 // ============================================================
@@ -696,7 +769,10 @@ export async function scanStaleMentions(
   };
   if (totalPagesWithMentions === 0) return empty;
 
-  const gazetteer = await buildGazetteer(engine);
+  const mentionResolution = await resolveMentionResolutionConfig(engine);
+  const gazetteer = await buildGazetteer(engine, {
+    extraIgnore: mentionResolution.mentionIgnore,
+  });
 
   // Same bounded page set for both queries so the link rows and the bodies
   // can never describe different pages.
@@ -761,6 +837,7 @@ export async function scanStaleMentions(
       findMentionedEntities(page.body, gazetteer, {
         fromSlug: page.slug,
         fromSourceId,
+        crossSourceFederated: mentionResolution.crossSourceFederated,
       }).map(m => `${m.source_id}::${m.slug}`),
     );
 
