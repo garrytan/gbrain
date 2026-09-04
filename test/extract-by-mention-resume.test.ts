@@ -18,7 +18,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract } from '../src/commands/extract.ts';
 import { setCliOptions } from '../src/core/cli-options.ts';
 import { loadOpCheckpoint, mentionsFingerprint } from '../src/core/op-checkpoint.ts';
-import { createHash } from 'crypto';
+import { buildGazetteer, hashMentionResolution } from '../src/core/by-mention.ts';
 
 let engine: PGLiteEngine;
 
@@ -81,12 +81,15 @@ async function runByMention(args: string[]): Promise<void> {
 }
 
 /** Compute the canonical gazetteer hash the way the production code does. */
-async function expectedGazetteerHash(): Promise<string> {
+async function expectedGazetteerHash(crossSourceEnabled = false): Promise<string> {
   // The gazetteer is built from entity pages by buildGazetteer; for tests
   // we just build it the same way the prod code does and hash sorted keys.
-  const { buildGazetteer } = await import('../src/core/by-mention.ts');
+  // The default-off cross-source mode is part of the production fingerprint.
   const gz = await buildGazetteer(engine);
-  return createHash('sha256').update([...gz.keys()].sort().join('|')).digest('hex').slice(0, 8);
+  return hashMentionResolution(
+    gz,
+    crossSourceEnabled ? new Set(['default', 'team-b']) : undefined,
+  );
 }
 
 describe('by-mention checkpoint/resume (T5)', () => {
@@ -122,7 +125,7 @@ describe('by-mention checkpoint/resume (T5)', () => {
     const fp = mentionsFingerprint({ source: undefined, type: undefined, since: undefined, gazetteerHash: gh });
     await engine.executeRaw(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ('extract-by-mention', $1, $2::jsonb, NOW())`,
+       VALUES ('extract-by-mention', $1, $2::text::jsonb, NOW())`,
       [fp, JSON.stringify(['default::writing/already-scanned'])],
     );
 
@@ -150,14 +153,12 @@ describe('by-mention checkpoint/resume (T5)', () => {
     await seedEntities();
     await seedContentPage('writing/post-1', 'Acme Corp.');
     await runByMention([]);
+    const oldHash = await expectedGazetteerHash();
 
     // Now add a new entity. The gazetteer hash changes → different
     // fingerprint → fresh checkpoint state (codex fix #3 regression guard).
     await engine.putPage('people/charlie', { type: 'person', title: 'Charlie Example', compiled_truth: 'body', timeline: '', frontmatter: {} });
 
-    const oldHash = createHash('sha256').update(
-      ['acme corp', 'alice example'].sort().join('|'),
-    ).digest('hex').slice(0, 8);
     const newHash = await expectedGazetteerHash();
     expect(newHash).not.toBe(oldHash);
 
@@ -199,5 +200,59 @@ describe('by-mention checkpoint/resume (T5)', () => {
     );
     expect(Number(matchLinks[0]!.c)).toBeGreaterThanOrEqual(1);
     expect(Number(nomatchLinks[0]!.c)).toBe(0);
+  });
+
+  test('cross-source mode invalidates an off-mode checkpoint and links federated sources', async () => {
+    await seedEntities();
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config)
+       VALUES ('team-b', 'team-b', '{"federated":true}'::jsonb)
+       ON CONFLICT (id) DO UPDATE SET config = EXCLUDED.config, archived = false`,
+    );
+    await engine.putPage('writing/team-b-post', {
+      type: 'note',
+      title: 'Team B Post',
+      compiled_truth: 'Acme Corp joined the project.',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: 'team-b' });
+    await engine.setConfig('link_resolution.cross_source_mentions', 'true');
+
+    const offHash = await expectedGazetteerHash(false);
+    const offFingerprint = mentionsFingerprint({
+      source: 'team-b',
+      type: undefined,
+      since: undefined,
+      gazetteerHash: offHash,
+    });
+    await engine.executeRaw(
+      `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+       VALUES ('extract-by-mention', $1, $2::text::jsonb, NOW())`,
+      [offFingerprint, JSON.stringify(['team-b::writing/team-b-post'])],
+    );
+
+    try {
+      await runByMention(['--source-id', 'team-b']);
+      const rows = await engine.executeRaw<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+           FROM links l
+           JOIN pages from_page ON from_page.id = l.from_page_id
+           JOIN pages to_page ON to_page.id = l.to_page_id
+          WHERE from_page.source_id = 'team-b'
+            AND from_page.slug = 'writing/team-b-post'
+            AND to_page.source_id = 'default'
+            AND to_page.slug = 'companies/acme'
+            AND l.link_source = 'mentions'`,
+      );
+      expect(rows[0]!.count).toBe(1);
+      expect(await loadOpCheckpoint(engine, {
+        op: 'extract-by-mention',
+        fingerprint: offFingerprint,
+      })).toEqual(['team-b::writing/team-b-post']);
+    } finally {
+      await engine.unsetConfig('link_resolution.cross_source_mentions');
+      await engine.executeRaw("DELETE FROM op_checkpoints WHERE op = 'extract-by-mention'");
+      await engine.executeRaw("DELETE FROM sources WHERE id = 'team-b'");
+    }
   });
 });
