@@ -822,6 +822,7 @@ export function isKeylessStaleRefusal(args: string[], embeddingDisabled: boolean
   return args.includes('--stale')
     && !args.includes('--all')
     && !args.includes('--slugs')
+    && !args.includes('--facts')
     && !args.includes('--dry-run')
     && embeddingDisabled === true;
 }
@@ -842,6 +843,37 @@ export async function runEmbed(engine: BrainEngine, args: string[]): Promise<Emb
       pages_processed: 0, failures: 0, failure_samples: [], dryRun: false,
       chunkless_pages_healed: 0,
     };
+  }
+
+  // #4812: --stale --facts backfills facts.embedding (bare fact text, the
+  // write-time space). Branches before the chunk path; the result rides the
+  // EmbedResult shape so cli.ts's failures>0 exit verdict applies unchanged.
+  if (args.includes('--facts')) {
+    if (!args.includes('--stale')) {
+      serr('Usage: gbrain embed --stale --facts [--dry-run] [--batch-size N] [--source <id>] [--json]');
+      process.exit(1);
+    }
+    const dryRun = args.includes('--dry-run');
+    if (!dryRun) {
+      assertEmbeddingEnabled(loadConfig());
+      const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+      validateEmbeddingCreds();
+    }
+    const srcI = args.indexOf('--source');
+    const bsI = args.indexOf('--batch-size');
+    const { embedStaleFacts } = await import('../core/embed-facts.ts');
+    const r = await embedStaleFacts(engine, {
+      dryRun,
+      sourceId: srcI >= 0 ? args[srcI + 1] : undefined,
+      batchSize: bsI >= 0 ? (parseInt(args[bsI + 1] ?? '', 10) || undefined) : undefined,
+    });
+    if (args.includes('--json')) console.log(JSON.stringify(r, null, 2));
+    else if (dryRun) slog(`[dry-run] Would embed ${r.would_embed} active fact(s)`);
+    else {
+      slog(`Embedded ${r.embedded} fact(s); ${r.total_stale - r.embedded} remain stale.`);
+      if (r.failures > 0) serr(`[embed] Failed to embed ${r.failures} fact(s): ${r.failure_samples[0] ?? 'unknown error'}`);
+    }
+    return { embedded: r.embedded, skipped: 0, would_embed: r.would_embed, total_chunks: r.total_stale, pages_processed: 0, failures: r.failures, failure_samples: r.failure_samples, dryRun, chunkless_pages_healed: 0 };
   }
 
   // v0.36+ T7: --background submits via Minion queue, returns job_id to

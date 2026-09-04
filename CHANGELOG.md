@@ -2,6 +2,46 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.3.0] - 2026-09-03
+
+**`gbrain embed --stale --facts` backfills the fact rows that never got a vector.**
+
+Facts are embedded when they are written, so a row captured while the
+provider was down, the brain was keyless, or the budget was capped landed
+with `embedding IS NULL` and stayed that way. `gbrain migrate embeddings
+--status` has counted those rows as `facts_pending` since v0.41, but nothing
+drained them: `embed --stale` only walks page chunks and `takes embed` only
+walks takes (#4812). The new flag is the facts twin of `takes embed`: same
+batch loop, same `jsonb_to_recordset` writer, same BigInt-safe row
+normalization, and it embeds the bare fact text so the backfilled vectors
+share the space `consolidate` and duplicate detection already query.
+
+**Say to your agent:** *"backfill the facts that have no embedding"* —
+*"how many facts are still waiting for a vector?"* — your agent runs
+`gbrain embed --stale --facts` (or `--dry-run` for the count).
+
+### How to use it
+
+```bash
+gbrain migrate embeddings --status        # facts_pending: N
+gbrain embed --stale --facts --dry-run    # [dry-run] Would embed N active fact(s)
+gbrain embed --stale --facts              # Embedded N fact(s); 0 remain stale.
+gbrain embed --stale --facts --source work --batch-size 50 --json
+```
+
+### Things to watch
+
+- Facts carry no embedding signature column, so this flag only fills NULL
+  rows; it never re-embeds a fact that already has a vector. Re-runs are
+  idempotent on `embedding IS NULL`. A width change still goes through the
+  `docs/embedding-migrations.md` recipe.
+- Expired rows (`expired_at IS NOT NULL`) are neither selected nor written,
+  matching the `facts_pending` predicate exactly.
+- A failed batch leaves its rows NULL and moves on; the summary line and a
+  non-zero exit report it, and the next run picks those rows up again.
+- `--facts` without `--stale` is a usage error; `--facts --background` runs
+  inline (the facts pass is not a queued job).
+
 ## [0.48.2.0] - 2026-09-02
 
 **Your search reranker now runs on Voyage, and every surface tells you whether it is actually running.**
