@@ -135,13 +135,14 @@ describe('Recursive Text Chunker', () => {
 });
 
 describe('CJK chunking (v0.32.7)', () => {
-  test('MARKDOWN_CHUNKER_VERSION is 3', async () => {
+  test('MARKDOWN_CHUNKER_VERSION is 4', async () => {
     // v0.40.3.0: bumped 2→3 to signal the post-upgrade reembed sweep that
-    // contextual retrieval wrapping is now applied at embed time. Chunk
-    // boundaries themselves are unchanged; the bump forces re-embed for
-    // pages where chunker_version < 3.
+    // contextual retrieval wrapping is now applied at embed time.
+    // v4: CJK overlap tokenization + UTF-16 surrogate-pair safety changes
+    // chunk boundaries for CJK-dominant text; English path is unchanged.
+    // `reindex --markdown` rebuilds pages where chunker_version < 4.
     const mod = await import('../../src/core/chunkers/recursive.ts');
-    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(3);
+    expect(mod.MARKDOWN_CHUNKER_VERSION).toBe(4);
   });
 
   test('long pure-Chinese paragraph splits into multiple chunks', () => {
