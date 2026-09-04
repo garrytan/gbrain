@@ -902,6 +902,46 @@ CREATE INDEX IF NOT EXISTS idx_files_page_id ON files(page_id);
 CREATE INDEX IF NOT EXISTS idx_files_source_id ON files(source_id);
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
 
+-- One explicit current pointer per page-owned filename. Content-addressed
+-- files rows remain immutable retained versions; moving this head supports
+-- A -> B -> A without inventing a duplicate object or relying on row ids.
+CREATE TABLE IF NOT EXISTS page_image_heads (
+  page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+  source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (page_id, filename)
+);
+CREATE INDEX IF NOT EXISTS idx_page_image_heads_source
+  ON page_image_heads(source_id, page_id);
+
+-- Durable object-deletion outbox. Source cascades remove files rows, so a
+-- BEFORE DELETE trigger must retain backend paths independently of sources.
+CREATE TABLE IF NOT EXISTS page_image_gc_queue (
+  storage_path TEXT NOT NULL,
+  storage_identity TEXT NOT NULL,
+  source_id    TEXT NOT NULL,
+  reason       TEXT NOT NULL,
+  queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  last_error   TEXT,
+  PRIMARY KEY (storage_identity, storage_path)
+);
+CREATE OR REPLACE FUNCTION queue_page_image_object_gc() RETURNS trigger SET search_path = pg_catalog, public AS \$\$
+BEGIN
+  IF OLD.metadata->>'kind' = 'page_image' AND OLD.metadata->>'storage' = 'backend' THEN
+    INSERT INTO page_image_gc_queue (storage_path, storage_identity, source_id, reason, queued_at)
+    VALUES (OLD.storage_path, COALESCE(OLD.metadata->>'storage_identity', 'legacy'), OLD.source_id, 'files_row_deleted', now())
+    ON CONFLICT (storage_identity, storage_path) DO NOTHING;
+  END IF;
+  RETURN OLD;
+END;
+\$\$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+CREATE TRIGGER queue_page_image_object_gc_trigger
+  BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION queue_page_image_object_gc();
+
 -- ============================================================
 -- file_migration_ledger (v0.18.0 Step 7)
 -- Drives the storage-object rewrite performed by the v0_18_0
@@ -1547,6 +1587,8 @@ BEGIN
     ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
     ALTER TABLE config ENABLE ROW LEVEL SECURITY;
     ALTER TABLE files ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE page_image_heads ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE page_image_gc_queue ENABLE ROW LEVEL SECURITY;
     ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
     ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;

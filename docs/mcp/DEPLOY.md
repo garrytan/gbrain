@@ -229,6 +229,125 @@ Remote agents cannot reach local filesystem surface area.
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
 
+### Native page images (full surface, explicit opt-in)
+
+`put_image` and `get_image` are on the `full` MCP surface, not `starter`.
+Remote writes are also hidden and denied until the brain owner enables the
+separate binary-write gate. Configure persistent object storage first. A
+self-hosted local backend can use a dedicated mounted directory:
+
+```json
+{
+  "storage": {
+    "backend": "local",
+    "bucket": "gbrain",
+    "namespace": "my-brain-prod-v1",
+    "localPath": "/data/gbrain-files",
+    "requestTimeoutMs": 60000
+  }
+}
+```
+
+`namespace` is mandatory for page images, must be exclusive to one brain, and
+must remain stable together with the backend, bucket, and physical locator
+(`localPath`, Supabase `projectUrl`, or S3 `endpoint` + `region`). For local
+storage, the locator is the canonical directory actually opened by the backend
+plus the durable `.gbrain-storage-id` marker created inside that directory, so
+retargeting a symlink or replacing the root with an unrelated directory fails
+closed. Preserve this marker together with the image objects in every backup:
+restoring both at the same canonical mount path preserves the logical backend
+identity even when the filesystem inode changes. Never copy one active brain's
+marker into another active brain. GBrain
+atomically anchors a credential-free fingerprint in the brain database on the
+first upload intent, persists it on every backend image, and refuses later reads,
+writes, or GC if the active configuration differs. Changing storage therefore
+requires an explicit object-storage migration; editing the config alone is
+deliberately rejected. The directory must survive container replacement and be included in backup
+and restore procedures alongside the database. S3-compatible and Supabase
+Storage backends use the same contract. Before enabling writes, prove a restore
+of both planes: a database-only restore can recreate metadata but not pixels,
+and an object-only restore cannot re-establish page ownership or current heads.
+For a local backend, the restore proof must additionally verify that the
+restored `.gbrain-storage-id` matches the snapshot and that a known image can be
+read after the database and object snapshots are restored together.
+Then enable the write gate and give
+only the intended OAuth client the full surface:
+
+```bash
+gbrain config set mcp.publish_images true
+gbrain auth rescope-client <client_id> --surface full
+```
+
+Before migration v146, inspect historical duplicate filenames. Duplicates are
+supported and the migration deterministically selects the newest row as the
+head, but the count is useful rollback evidence:
+
+```sql
+SELECT source_id, page_id, filename, count(*)
+FROM files
+WHERE page_id IS NOT NULL
+GROUP BY source_id, page_id, filename
+HAVING count(*) > 1;
+```
+
+The defaults are finite: 8 MiB per image, 1 GiB / 1000 retained image rows per
+source, 128 MiB / 100 rows per page, 20 versions per filename, and 30 new image
+writes per client per hour. Override retention quotas with
+`mcp.image_max_source_bytes`, `mcp.image_max_source_files`,
+`mcp.image_max_page_bytes`, `mcp.image_max_page_files`, and
+`mcp.image_max_versions_per_filename`. Override the per-client write rate with
+`GBRAIN_MCP_IMAGE_WRITES_PER_HOUR`. Both HTTP MCP transports cap the complete
+JSON request at 12 MiB by default (`GBRAIN_HTTP_MAX_BODY_BYTES`), enough for
+one 8 MiB image encoded as base64.
+S3 and Supabase calls carry a real abort signal and default to a 60-second
+deadline (`storage.requestTimeoutMs`, capped at 10 minutes), so a stalled
+backend cannot hold the page-image transaction and global GC lock forever.
+
+**Say to your agent:** *"Attach this PNG to page `<slug>` as `<filename>`
+using `put_image`, keep the returned `get_image_args`, then call `get_page` to
+verify it appears in `images`. When you need the pixels, call `get_image` with
+those exact arguments."* `get_page.images` lists the current ref per filename;
+older content-addressed refs remain readable only when explicitly retained.
+The response metadata is the first text block and the pixels are a native MCP
+`image` block. Remote callers cannot use the legacy repository-path fallback.
+The generic thin-client CLI renderer prints the metadata block only; it is not
+a binary download command.
+
+Retained non-current versions are reclaimed only by the trusted local operator
+operation. Always take a database + object-store backup first, preview the exact
+candidates, then run the same retention window without `--dry-run`:
+
+```bash
+gbrain call prune_page_images '{"retention_days":30,"dry_run":true}'
+gbrain call prune_page_images '{"retention_days":30}'
+```
+
+An upload intent is committed before object creation. Upload, metadata commit,
+head movement, and intent removal then run under the same exclusion lock used
+by GC; a crash leaves the intent queued, while a successful retry consumes it.
+Ordinary GC never deletes an unreferenced `upload_pending` intent: this closes
+the gap between the committed intent and acquisition of the writer lock. After
+investigating a genuinely abandoned upload, preview and explicitly recover only
+aged intents (minimum 15 minutes, longer than the maximum storage timeout):
+
+```bash
+gbrain call prune_page_images '{"retention_days":30,"recover_upload_intents_older_than_minutes":15,"dry_run":true}'
+gbrain call prune_page_images '{"retention_days":30,"recover_upload_intents_older_than_minutes":15}'
+```
+
+Stale metadata is queued transactionally before deletion. The GC drain locks
+and rechecks that no live `files` row references the path before touching the
+backend. Failed object deletions remain queued with an attempt counter and are
+retried by the next run. Source deletion cascades also preserve backend paths in
+that queue, so removing a source cannot make its objects undiscoverable.
+
+Preview output reports totals, returned rows, and whether either list was
+truncated. A mutating run schedules and drains at most 1000 rows; repeat until
+the queue total reaches zero. The write-rate limiter is process-local, so a
+multi-replica deployment must enforce the aggregate ceiling at its gateway.
+Rollback must restore the matching database and object-store snapshot together;
+never point rolled-back metadata at a different backend identity.
+
 ## Legacy Bearer Token Setup
 
 Bearer tokens are the simple path when you don't need per-client scoping.

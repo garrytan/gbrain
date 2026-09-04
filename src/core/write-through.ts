@@ -200,6 +200,8 @@ export type PageWriteTarget =
       ok: true;
       filePath: string;
       writeRoot: string;
+      /** Root owned by this source (narrower than writeRoot for .sources/<id>). */
+      sourceRoot: string;
       /**
        * `filePath` expressed in the file scanner's `pages.source_path`
        * convention (#774: git-root-relative when the scan root sits inside a
@@ -345,7 +347,13 @@ export async function resolvePageWriteTarget(
     return { ok: false, skipped: 'path_escapes_source_root' };
   }
 
-  return { ok: true, filePath, writeRoot, sourcePathToBind: scannerSourcePath(scanRoot, filePath) };
+  return {
+    ok: true,
+    filePath,
+    writeRoot,
+    sourceRoot: scanRoot,
+    sourcePathToBind: scannerSourcePath(scanRoot, filePath),
+  };
 }
 
 /**

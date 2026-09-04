@@ -5180,6 +5180,7 @@ export class PGLiteEngine implements BrainEngine {
          size_bytes = EXCLUDED.size_bytes,
          content_hash = EXCLUDED.content_hash,
          metadata = EXCLUDED.metadata
+       WHERE files.source_id = EXCLUDED.source_id
        RETURNING id, (xmax = 0) AS created`,
       [
         sourceId,
@@ -5194,7 +5195,7 @@ export class PGLiteEngine implements BrainEngine {
       ]
     );
     if (result.rows.length === 0) {
-      throw new Error(`upsertFile returned no rows for ${spec.storage_path}`);
+      throw new Error(`storage_path collision belongs to another source: ${spec.storage_path}`);
     }
     return { id: result.rows[0].id, created: !!result.rows[0].created };
   }
@@ -5209,7 +5210,6 @@ export class PGLiteEngine implements BrainEngine {
     );
     return result.rows.length > 0 ? (result.rows[0] as FileRow) : null;
   }
-
   async listFilesForPage(pageId: number): Promise<FileRow[]> {
     const result = await this.db.query<FileRow>(
       `SELECT id, source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at
@@ -5220,7 +5220,6 @@ export class PGLiteEngine implements BrainEngine {
     );
     return result.rows as FileRow[];
   }
-
   // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const result = await this.db.query<{

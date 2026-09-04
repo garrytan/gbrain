@@ -15,11 +15,12 @@ server restart unless it says so.
 
 Gated ops (`Operation.publishGateKey`): `list_skills` / `get_skill` /
 `list_brain_skillpack` (`mcp.publish_skills`) and `advisor`
-(`mcp.publish_advisor`). Both gates default OFF: the ops are hidden from
+(`mcp.publish_advisor`), plus the binary write `put_image`
+(`mcp.publish_images`). All gates default OFF: their ops are hidden from
 remote tools/list AND denied at call time.
 
 ```bash
-gbrain config set mcp.publish_skills true      # or mcp.publish_advisor
+gbrain config set mcp.publish_skills true      # or mcp.publish_advisor / mcp.publish_images
 ```
 
 **Expected outcome:** the very next tools/list from any token includes the

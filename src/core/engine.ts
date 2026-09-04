@@ -82,9 +82,9 @@ export interface FileRow {
 }
 
 /**
- * v0.27.1: spec for upsertFile. Identity is (source_id, storage_path).
- * Re-upserting the same identity with a different content_hash updates the
- * row in place (image was replaced); same content_hash is a no-op.
+ * v0.27.1: files are source-owned, but storage_path remains globally unique;
+ * callers namespace keys by source to avoid collisions. Re-upserting a path
+ * with a different content_hash updates the row in place.
  */
 export interface FileSpec {
   source_id?: string;
@@ -1778,7 +1778,6 @@ export interface BrainEngine {
   upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
   getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
   listFilesForPage(pageId: number): Promise<FileRow[]>;
-
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
   // ============================================================

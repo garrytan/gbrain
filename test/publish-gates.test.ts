@@ -11,7 +11,7 @@ import { operations, opAllowedForBoundClient, CLIENT_FENCED_WRITE_OPS } from '..
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
 
-const GATED_OPS = ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor'];
+const GATED_OPS = ['list_skills', 'get_skill', 'list_brain_skillpack', 'advisor', 'put_image'];
 
 function engineWithConfig(values: Record<string, string | null> | 'throws'): BrainEngine {
   return {
@@ -23,14 +23,14 @@ function engineWithConfig(values: Record<string, string | null> | 'throws'): Bra
 }
 
 describe('publish-gates: gate declaration', () => {
-  test('exactly the four gated ops carry publishGateKey', () => {
+  test('exactly the declared gated ops carry publishGateKey', () => {
     const declared = operations.filter(o => o.publishGateKey).map(o => o.name).sort();
     expect(declared).toEqual([...GATED_OPS].sort());
   });
 });
 
 describe('publish-gates: disabledOpsForPublishGates', () => {
-  test('gates absent on both planes → all four hidden (default-off posture)', async () => {
+  test('gates absent on both planes → all gated ops hidden (default-off posture)', async () => {
     const disabled = await disabledOpsForPublishGates(engineWithConfig({}), null);
     for (const name of GATED_OPS) expect(disabled.has(name)).toBe(true);
   });
@@ -44,6 +44,7 @@ describe('publish-gates: disabledOpsForPublishGates', () => {
     expect(disabled.has('list_brain_skillpack')).toBe(false);
     // advisor rides a SEPARATE gate and stays hidden.
     expect(disabled.has('advisor')).toBe(true);
+    expect(disabled.has('put_image')).toBe(true);
   });
 
   test('DB plane false wins over file plane true (DB > file)', async () => {
@@ -55,9 +56,10 @@ describe('publish-gates: disabledOpsForPublishGates', () => {
   });
 
   test('file plane fallback when DB plane is unset', async () => {
-    const cfg = { engine: 'pglite', mcp: { publish_advisor: true } } as unknown as GBrainConfig;
+    const cfg = { engine: 'pglite', mcp: { publish_advisor: true, publish_images: true } } as unknown as GBrainConfig;
     const disabled = await disabledOpsForPublishGates(engineWithConfig({}), cfg);
     expect(disabled.has('advisor')).toBe(false);
+    expect(disabled.has('put_image')).toBe(false);
     expect(disabled.has('list_skills')).toBe(true);
   });
 

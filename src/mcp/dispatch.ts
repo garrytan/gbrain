@@ -28,6 +28,7 @@ import {
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
 import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
+import { getNativeImagePayload } from '../core/native-image-result.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -108,8 +109,24 @@ function maybeAttachBackupNotice(out: ToolResult, opts: DispatchOpts): void {
   }
 }
 
+export interface ToolTextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolImageContent {
+  type: 'image';
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  /** Type-only compatibility key: native image blocks never serialize text. */
+  readonly text: never;
+}
+
+export type ToolContent = ToolTextContent | ToolImageContent;
+
 export interface ToolResult {
-  content: { type: 'text'; text: string }[];
+  /** Metadata JSON is always first; later blocks may be text notices or MCP-native pixels. */
+  content: ToolContent[];
   isError?: boolean;
   /**
    * v0.31 (eD3): MCP spec-blessed metadata slot for server-supplied data.
@@ -319,6 +336,44 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
     kind: typeof params,
     ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
   };
+}
+
+/**
+ * Even the explicit full-parameter debug mode must never persist image bytes.
+ * Keep the historical escape hatch for ordinary text parameters while
+ * replacing image payload fields with a fixed marker before SQL/SSE logging.
+ */
+export function redactImageBytesForLogging(opName: string, params: unknown): unknown {
+  if (!['put_image', 'search_by_image'].includes(opName)) return params;
+
+  const seen = new WeakSet<object>();
+  const binaryKey = (key: string): boolean => {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return normalized === 'contentbase64' || normalized === 'imagedata' ||
+      normalized === 'imagebytes' || normalized === 'binarydata' ||
+      /(?:image|content|file|binary).*(?:base64|bytes|data)/.test(normalized) ||
+      /(?:base64|bytes|data).*(?:image|content|file|binary)/.test(normalized);
+  };
+  const looksLikeLargeBase64 = (value: string): boolean =>
+    value.length >= 512 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+  const visit = (value: unknown, key = '', depth = 0): unknown => {
+    if (binaryKey(key)) return '[REDACTED_IMAGE_BYTES]';
+    if (typeof value === 'string') return looksLikeLargeBase64(value) ? '[REDACTED_IMAGE_BYTES]' : value;
+    if (value instanceof Uint8Array) return '[REDACTED_IMAGE_BYTES]';
+    if (value === null || typeof value !== 'object') return value;
+    if (depth >= 12) return '[REDACTED_NESTED_VALUE]';
+    if (seen.has(value)) return '[REDACTED_CIRCULAR_VALUE]';
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(item => visit(item, '', depth + 1));
+    const safe: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      safe[childKey] = visit(childValue, childKey, depth + 1);
+    }
+    return safe;
+  };
+
+  return visit(params);
 }
 
 /**
@@ -682,7 +737,21 @@ export async function dispatchToolCall(
         ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
       });
     }
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    const nativeImage = getNativeImagePayload(result);
+    const out: ToolResult = nativeImage
+      ? {
+          // Metadata stays first for old thin clients that parse content[0]
+          // only. Pixels are a real MCP image block, never base64 text.
+          content: [
+            { type: 'text', text: JSON.stringify(result, null, 2) },
+            ({
+              type: 'image',
+              data: Buffer.from(nativeImage.bytes).toString('base64'),
+              mimeType: nativeImage.mimeType,
+            } as ToolImageContent),
+          ],
+        }
+      : { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // D8: model-visible loudness for empty retrievals. The body stays a bare
     // array (D3 — deployed thin-clients parse content[0] only), and a SECOND
     // text block carries the diagnosis the model actually sees. Structured

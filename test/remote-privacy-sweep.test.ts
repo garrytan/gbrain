@@ -174,6 +174,10 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   find_trajectory: { entity_slug: WORLD_PAGE_SLUG },
   find_contradictions: {},
   search_by_image: {},
+  get_image: {
+    page_slug: WORLD_PAGE_SLUG,
+    image_ref: 'images/default/people/world-page-example/missing/sweep.png',
+  },
   sources_status: { id: 'default' },
   ontology_get: { entity: WORLD_PAGE_SLUG },
   get_skill: { name: 'query' },
@@ -181,6 +185,13 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   // put_page-into-fence-bearing-page restoration-echo class is explicitly
   // NOT covered here (write-side sweep TODO).
   put_page: { slug: 'notes/sweep-fresh-write', content: '# Fresh write\n\nNew content.\n' },
+  put_image: {
+    page_slug: WORLD_PAGE_SLUG,
+    filename: 'sweep.png',
+    mime_type: 'image/png',
+    content_base64:
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  },
   remember: { fact: 'fresh sweep fact', provenance: 'sweep', entity: 'people/sweep-fresh-entity' },
   capture: { content: 'fresh sweep capture' },
   add_tag: { slug: WORLD_PAGE_SLUG, tag: 'sweep-tag' },
@@ -291,6 +302,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   schema_explain_type: 'error',
   schema_review_orphans: 'ok',
   search_by_image: 'error',
+  get_image: 'error',
   synthesize: 'error',
   think: 'error',
   request_tools: 'ok',
@@ -305,6 +317,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   remember: 'ok',
   forget: 'error',
   put_page: 'ok',
+  put_image: 'error',
   delete_page: 'ok',
   restore_page: 'ok',
   capture: 'ok',
@@ -405,6 +418,7 @@ beforeAll(async () => {
   // mcp.publish_* enabled in ~/.gbrain config can't flip the denied arm.
   await engine.setConfig('mcp.publish_skills', 'false');
   await engine.setConfig('mcp.publish_advisor', 'false');
+  await engine.setConfig('mcp.publish_images', 'false');
 
   // ── Seed the corpus (source: default) ──────────────────────────────
   const put = operationsByName['put_page'];

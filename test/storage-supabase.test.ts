@@ -230,6 +230,52 @@ describe('SupabaseStorage upload routing (100 MB TUS threshold)', () => {
   }, 15_000); // the retry loop sleeps real 1s + 2s backoffs between attempts
 });
 
+describe('SupabaseStorage bounded download', () => {
+  test('rejects a declared oversized object before buffering the body', async () => {
+    const { impl } = stubFetch([
+      () => new Response(Buffer.alloc(32), { status: 200, headers: { 'content-length': '32' } }),
+    ]);
+    await expect(new SupabaseStorage(CONFIG, impl).download('large.bin', 16)).rejects.toThrow('download limit');
+  });
+
+  test('stream-counts chunked bodies whose Content-Length is absent', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(10));
+        controller.enqueue(new Uint8Array(10));
+        controller.close();
+      },
+    });
+    const { impl } = stubFetch([() => new Response(stream, { status: 200 })]);
+    await expect(new SupabaseStorage(CONFIG, impl).download('chunked.bin', 16)).rejects.toThrow('download limit');
+  });
+});
+
+describe('SupabaseStorage exists and transport timeout', () => {
+  test('returns false only for 404 and throws for authorization or backend failures', async () => {
+    const notFound = stubFetch([() => resp(404)]);
+    expect(await new SupabaseStorage(CONFIG, notFound.impl).exists('missing.png')).toBe(false);
+
+    for (const status of [401, 403, 500]) {
+      const failed = stubFetch([() => resp(status)]);
+      await expect(new SupabaseStorage(CONFIG, failed.impl).exists('unknown.png'))
+        .rejects.toThrow(`Supabase exists failed: ${status}`);
+    }
+  });
+
+  test('passes a real abort signal and aborts a hung upload', async () => {
+    let seenSignal: AbortSignal | undefined;
+    const hangingFetch: FetchImpl = async (_url, init) => new Promise((_resolve, reject) => {
+      seenSignal = init.signal as AbortSignal;
+      if (!seenSignal) return reject(new Error('missing abort signal'));
+      seenSignal.addEventListener('abort', () => reject(seenSignal!.reason), { once: true });
+    });
+    const storage = new SupabaseStorage({ ...CONFIG, requestTimeoutMs: 20 }, hangingFetch);
+    await expect(storage.upload('hung.png', Buffer.from('x'), 'image/png')).rejects.toThrow('timed out');
+    expect(seenSignal?.aborted).toBe(true);
+  });
+});
+
 describe('SupabaseStorage delete', () => {
   test('404 is swallowed (idempotent delete)', async () => {
     const { impl, calls } = stubFetch([() => resp(404)]);

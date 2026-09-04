@@ -29,6 +29,7 @@ beforeAll(async () => {
   // gated-op visibility assertions below.
   await engine.setConfig('mcp.publish_skills', 'false');
   await engine.setConfig('mcp.publish_advisor', 'false');
+  await engine.setConfig('mcp.publish_images', 'false');
 });
 
 afterAll(async () => {

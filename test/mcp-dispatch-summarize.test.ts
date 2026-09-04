@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { summarizeMcpParams, type ParamSummary } from '../src/mcp/dispatch.ts';
+import { redactImageBytesForLogging, summarizeMcpParams, type ParamSummary } from '../src/mcp/dispatch.ts';
 
 describe('summarizeMcpParams — declared-keys allow-list', () => {
   test('declared keys are preserved alphabetically', () => {
@@ -118,5 +118,40 @@ describe('summarizeMcpParams — declared-keys allow-list', () => {
     // Bucket cannot be less than the actual size and must round UP, so
     // a ~2KB payload lands in the 2KB or 3KB bucket.
     expect(medium.approx_bytes!).toBeGreaterThanOrEqual(2048);
+  });
+});
+
+describe('image bytes are never logged', () => {
+  test('redacts put_image base64 even in full-parameter debug mode', () => {
+    const encoded = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+    const safe = redactImageBytesForLogging('put_image', {
+      page_slug: 'docs/design',
+      filename: 'reference.png',
+      content_base64: encoded,
+      mime_type: 'image/png',
+    });
+    const serialized = JSON.stringify(safe);
+    expect(serialized).not.toContain(encoded);
+    expect(serialized).toContain('[REDACTED_IMAGE_BYTES]');
+    expect(serialized).toContain('docs/design');
+  });
+
+  test('recursively redacts binary aliases and large base64 values', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const safe = redactImageBytesForLogging('put_image', {
+      wrapper: {
+        contentBase64: 'secret',
+        payload: { unexpected: 'A'.repeat(512) },
+        bytes: new Uint8Array([1, 2, 3]),
+        circular,
+      },
+      alt_text: 'kept',
+    }) as Record<string, any>;
+    expect(safe.wrapper.contentBase64).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.payload.unexpected).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.bytes).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.circular.self).toBe('[REDACTED_CIRCULAR_VALUE]');
+    expect(safe.alt_text).toBe('kept');
   });
 });

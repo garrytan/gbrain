@@ -536,6 +536,18 @@ describe('http-transport: CORS', () => {
 describe('http-transport: body cap', () => {
   const TOK = 'body-cap-tok';
 
+  test('invalid auth wins before an oversized body can be read', async () => {
+    const srv = await startTest({ bodyCap: 100 });
+    try {
+      const r = await fetch(`${srv.url}/mcp`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer invalid', 'Content-Type': 'application/json' },
+        body: 'x'.repeat(200),
+      });
+      expect(r.status).toBe(401);
+    } finally { srv.stop(); }
+  });
+
   test('13. Content-Length over cap → 413', async () => {
     const srv = await startTest({
       validTokens: new Map([[hash(TOK), { id: 'b-1', name: 'b' }]]),

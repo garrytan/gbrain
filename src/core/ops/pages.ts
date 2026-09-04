@@ -26,6 +26,7 @@ import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from 
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
+import { listCurrentPageImages } from '../page-image-storage.ts';
 import {
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
@@ -35,9 +36,7 @@ import {
   parseSourceIdParam,
   validatePageSlug,
 } from './context.ts';
-
 // --- Page CRUD ---
-
 /**
  * #4329 (S1-tightened): write-authority gate for a per-call source_id on the
  * destructive page ops. Trusted local callers (ctx.remote === false) own the
@@ -241,6 +240,7 @@ const get_page: Operation = {
     // non-default page. We already hold the resolved page, so its source is
     // unambiguous.
     const tags = await ctx.engine.getTags(page.slug, { sourceId: page.source_id });
+    const images = await listCurrentPageImages(ctx.engine, page.id, page.source_id);
     // Privacy boundary for the per-token allow-list (v0.28.6 for takes,
     // v0.32.2 for facts).
     //
@@ -286,6 +286,7 @@ const get_page: Operation = {
     return {
       ...visibleBody,
       tags,
+      ...(images.length > 0 ? { images } : {}),
       ...(includeContent ? { content: serializePageToMarkdown(visibleBody as Page, tags) } : {}),
       ...(resolved_slug ? { resolved_slug } : {}),
       ...(content_flag ? { content_flag } : {}),

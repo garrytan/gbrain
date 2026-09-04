@@ -16,7 +16,8 @@
  *   - Rate limit: per-IP pre-auth (protects DB from brute-force load) + per-token-id post-auth
  *     (limits runaway clients). Default 30 req/min per IP, 60 req/min per token. Bounded LRU
  *     so attacker-controlled keys can't grow memory unbounded.
- *   - Body cap: 1 MiB default (GBRAIN_HTTP_MAX_BODY_BYTES). Stream-counted, not buffered —
+ *   - Body cap: 12 MiB default (GBRAIN_HTTP_MAX_BODY_BYTES), enough for one
+ *     8 MiB image encoded as base64. Stream-counted, not buffered —
  *     chunked transfers without Content-Length are still capped.
  *   - last_used_at debounce: only one UPDATE per token per 60s (SQL-level WHERE clause).
  *   - mcp_request_log: one row per request with token_name + operation + status + latency.
@@ -47,7 +48,7 @@ import { redactUrlsInText } from '../core/url-redact.ts';
 import { parseLegacyTokenScope, parseTakesHoldersAllowList, coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 export { parseLegacyTokenScope };
 
-const DEFAULT_BODY_CAP = 1024 * 1024; // 1 MiB
+const DEFAULT_BODY_CAP = 12 * 1024 * 1024;
 
 function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -369,17 +370,9 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
         );
       }
 
-      // Body cap (stream-counted; chunked transfers caught here, not at req.json).
-      const bodyText = await readBodyWithCap(req, bodyCap);
-      if (bodyText === null) {
-        logRequest(null, 'unknown', 'body_too_large', Date.now() - startedMs);
-        return Response.json(
-          { error: 'payload_too_large', message: `Request body exceeds ${bodyCap} bytes` },
-          { status: 413, headers: corsHeaders(origin) },
-        );
-      }
-
-      // Auth.
+      // Header-only auth runs BEFORE any body read. An invalid caller can
+      // therefore consume only the request stream's bounded socket buffer,
+      // never a 12 MiB base64/JSON allocation in this process.
       const auth = await validateToken(req.headers.get('Authorization'));
       if (!auth.ok) {
         logRequest(null, 'unknown', 'auth_failed', Date.now() - startedMs);
@@ -399,6 +392,16 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
             status: 429,
             headers: corsHeaders(origin, { extra: { 'Retry-After': String(tokCheck.retryAfter ?? 60) } }),
           },
+        );
+      }
+
+      // Body cap (stream-counted; chunked transfers caught here, not at req.json).
+      const bodyText = await readBodyWithCap(req, bodyCap);
+      if (bodyText === null) {
+        logRequest(auth.tokenName!, 'unknown', 'body_too_large', Date.now() - startedMs);
+        return Response.json(
+          { error: 'payload_too_large', message: `Request body exceeds ${bodyCap} bytes` },
+          { status: 413, headers: corsHeaders(origin) },
         );
       }
 

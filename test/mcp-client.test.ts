@@ -24,6 +24,7 @@ import {
   _clearMcpClientTokenCache,
 } from '../src/core/mcp-client.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
+import { getNativeImagePayload } from '../src/core/native-image-result.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let server: Server;
@@ -133,6 +134,26 @@ describe('callRemoteTool — happy path', () => {
     const res = await callRemoteTool(makeConfig(), 'echo', {});
     const parsed = unpackToolResult<{ greeting: string }>(res);
     expect(parsed.greeting).toBe('hello');
+  });
+
+  test('unpackToolResult preserves one native MCP image block on the structured result', () => {
+    const parsed = unpackToolResult<Record<string, unknown>>({
+      content: [
+        { type: 'text', text: JSON.stringify({ image_ref: 'images/x.png' }) },
+        { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+      ],
+    });
+    const payload = getNativeImagePayload(parsed);
+    expect(payload?.mimeType).toBe('image/png');
+    expect(Buffer.from(payload!.bytes).toString('utf8')).toBe('hello');
+    expect(JSON.stringify(parsed)).not.toContain('aGVsbG8=');
+  });
+
+  test('unpackToolResult rejects ambiguous or malformed native image blocks', () => {
+    const text = { type: 'text', text: JSON.stringify({ ok: true }) };
+    expect(() => unpackToolResult({ content: [text, { type: 'image', data: '%%%', mimeType: 'image/png' }] })).toThrow(RemoteMcpError);
+    const image = { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' };
+    expect(() => unpackToolResult({ content: [text, image, image] })).toThrow(RemoteMcpError);
   });
 
   test('caches the access token across multiple calls', async () => {

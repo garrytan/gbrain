@@ -1,7 +1,7 @@
 import { readFileSync, statSync, lstatSync } from 'fs';
 import { basename, extname } from 'path';
 import { createHash } from 'crypto';
-import type { BrainEngine, FileSpec } from './engine.ts';
+import type { BrainEngine } from './engine.ts';
 import { parseMarkdown } from './markdown.ts';
 import { classifyStoredType } from './schema-pack/type-usage.ts';
 import { chunkText } from './chunkers/recursive.ts';
@@ -17,7 +17,7 @@ import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // precedent as embed-stale.ts.
 import { embedBatchWithBackoff } from './embed-retry.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
-import type { ChunkInput, PageInput, PageType } from './types.ts';
+import type { ChunkInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
@@ -48,6 +48,10 @@ import { decorateEmbeddingDimError } from './embedding-dim-check.ts';
 import { computeCorpusGeneration, loadSourceRow } from './contextual-retrieval-service.ts';
 import { DEFAULT_SYNOPSIS_MODEL } from './page-summary.ts';
 import { runGuardrails } from './guardrails.ts';
+import { withImportTransaction } from './import-transaction.ts';
+import { nativeGitImageFileSpec, reconcileUnchangedImportedImage } from './import-image-file-state.ts';
+export { withImportTransaction } from './import-transaction.ts';
+export type { ImportTransactionSpec } from './import-transaction.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning } from './facts-fence.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 
@@ -1694,66 +1698,6 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const NEEDS_DECODE = new Set(['.heic', '.heif', '.avif']);
 
 /**
- * Phase 8 / Sec5 (DRY refactor): shared transaction wrapper for the markdown
- * + image import paths. Idempotent on content_hash (the caller skips when
- * existing.content_hash === hash, before calling here).
- *
- * Does NOT include type-specific work (tag reconciliation for markdown,
- * code-ref edges, EXIF auto-link for images). Callers compose those on top
- * via the optional `after` callback, which runs INSIDE the same transaction.
- */
-export interface ImportTransactionSpec {
-  slug: string;
-  hadExisting: boolean;
-  /** Source containing the page, chunks, file row, and type-specific writes. */
-  sourceId?: string;
-  page: PageInput;
-  /** When undefined, no chunk write happens. When [], deletes any prior chunks. */
-  chunks?: ChunkInput[];
-  /** Optional file-row insert (image ingest). Page link injected automatically. */
-  file?: FileSpec;
-  /**
-   * putPage empty-overwrite escape hatch. Set only when the page body is
-   * derived from an authoritative file (image ingest: OCR text of the current
-   * bytes may legitimately be blank where the prior import's wasn't).
-   */
-  allowEmptyOverwrite?: boolean;
-  /** Inside-transaction hook for type-specific work (tags, links). */
-  after?: (tx: BrainEngine) => Promise<void>;
-}
-
-export async function withImportTransaction(
-  engine: BrainEngine,
-  spec: ImportTransactionSpec,
-): Promise<void> {
-  const sourceId = spec.sourceId ?? 'default';
-  const txOpts = spec.sourceId ? { sourceId: spec.sourceId } : undefined;
-  await engine.transaction(async (tx) => {
-    if (spec.hadExisting) await tx.createVersion(spec.slug, txOpts);
-    await tx.putPage(spec.slug, spec.page,
-      spec.allowEmptyOverwrite === true ? { ...txOpts, allowEmptyOverwrite: true } : txOpts);
-    if (spec.file) {
-      // page_id resolution after putPage so the new row's id is available.
-      const stored = await tx.getPage(spec.slug, txOpts);
-      await tx.upsertFile({
-        ...spec.file,
-        source_id: sourceId,
-        page_slug: spec.slug,
-        page_id: stored?.id ?? null,
-      });
-    }
-    if (spec.chunks !== undefined) {
-      if (spec.chunks.length > 0) {
-        await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
-      } else {
-        await tx.deleteChunks(spec.slug, txOpts);
-      }
-    }
-    if (spec.after) await spec.after(tx);
-  });
-}
-
-/**
  * Eng-1C: pure-JS p-limit semaphore so OCR calls run with bounded
  * concurrency without pulling in a new dep. Returns a function that, when
  * called, returns a Promise that resolves when the wrapped function resolves
@@ -2078,9 +2022,6 @@ export async function importImageFile(
   const hash = createHash('sha256').update(buf).digest('hex');
 
   const existing = await engine.getPage(imageSlug, sourceOpts);
-  if (existing?.content_hash === hash) {
-    return { slug: imageSlug, status: 'skipped', chunks: 0 };
-  }
 
   // Decode HEIC/AVIF; pass-through for universal codecs.
   let decoded: { buf: Buffer; mime: string };
@@ -2093,6 +2034,17 @@ export async function importImageFile(
       chunks: 0,
       error: `Decode failed for ${relativePath}: ${err instanceof Error ? err.message : String(err)}`,
     };
+  }
+
+  const { filename, file: fileSpec } = nativeGitImageFileSpec({
+    sourceId: sourceOpts.sourceId, relativePath, bytes: buf,
+    decodedMime: decoded.mime, contentHash: hash,
+  });
+  if (existing?.content_hash === hash) {
+    await reconcileUnchangedImportedImage(
+      engine, imageSlug, sourceOpts.sourceId, filename, fileSpec,
+    );
+    return { slug: imageSlug, status: 'skipped', chunks: 0 };
   }
 
   // EXIF metadata (cherry-2). Pure JS, sub-ms; no concurrency knob needed.
@@ -2122,7 +2074,6 @@ export async function importImageFile(
     }
   }
 
-  const filename = basename(relativePath);
   const frontmatter: Record<string, unknown> = {
     type: 'image',
     title: filename,
@@ -2140,14 +2091,6 @@ export async function importImageFile(
     chunk_source: 'image_asset',
     modality: 'image',
     ...(embedding ? { embedding_image: embedding } : {}),
-  };
-
-  const fileSpec: FileSpec = {
-    filename,
-    storage_path: relativePath.replace(/[\\\/]/g, '/'),
-    mime_type: decoded.mime,
-    size_bytes: stat.size,
-    content_hash: hash,
   };
 
   await withImportTransaction(engine, {
@@ -2168,6 +2111,7 @@ export async function importImageFile(
     allowEmptyOverwrite: true,
     chunks: [chunk],
     file: fileSpec,
+    ...(!fileSpec ? { removeImageHeadFilename: filename } : {}),
     after: async (tx) => {
       // Cherry-3: path-proximity auto-link to a sibling text page. The first
       // matching candidate gets an image_of edge. Best-effort — addLink

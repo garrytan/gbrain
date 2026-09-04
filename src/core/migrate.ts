@@ -6440,6 +6440,210 @@ export const MIGRATIONS: Migration[] = [
       END $$;
     `,
   },
+  {
+    version: 146,
+    name: 'page_image_heads',
+    idempotent: true,
+    sql: `
+      DO $$
+      DECLARE collision RECORD;
+      BEGIN
+        SELECT candidate.id AS source_file_id, occupied.id AS conflicting_file_id,
+               'git/' || candidate.source_id || '/' ||
+                 COALESCE(candidate.metadata->>'git_path', candidate.storage_path) AS target_path
+        INTO collision
+        FROM files candidate
+        JOIN pages owner
+          ON owner.id = candidate.page_id AND owner.source_id = candidate.source_id AND owner.type = 'image'
+        JOIN files occupied
+          ON occupied.storage_path = 'git/' || candidate.source_id || '/' ||
+               COALESCE(candidate.metadata->>'git_path', candidate.storage_path)
+         AND occupied.id <> candidate.id
+        WHERE (
+          (COALESCE(candidate.metadata->>'kind', '') = '' AND
+           COALESCE(candidate.metadata->>'storage', '') = '')
+          OR
+          (candidate.metadata->>'storage' = 'git' AND candidate.metadata ? 'git_path' AND
+           candidate.storage_path = (candidate.metadata->>'git_path'))
+        )
+        ORDER BY candidate.id
+        LIMIT 1;
+        IF FOUND THEN
+          RAISE EXCEPTION
+            'page image Git storage_path collision: file_id %, conflicting_file_id %, target %',
+            collision.source_file_id, collision.conflicting_file_id, collision.target_path;
+        END IF;
+      END $$;
+      CREATE TABLE IF NOT EXISTS page_image_heads (
+        page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        filename    TEXT NOT NULL,
+        file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (page_id, filename)
+      );
+      CREATE INDEX IF NOT EXISTS idx_page_image_heads_source
+        ON page_image_heads(source_id, page_id);
+      CREATE TABLE IF NOT EXISTS page_image_gc_queue (
+        storage_path TEXT NOT NULL,
+        storage_identity TEXT NOT NULL,
+        source_id    TEXT NOT NULL,
+        reason       TEXT NOT NULL,
+        queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        attempts     INTEGER NOT NULL DEFAULT 0,
+        last_error   TEXT,
+        PRIMARY KEY (storage_identity, storage_path)
+      );
+      CREATE OR REPLACE FUNCTION queue_page_image_object_gc() RETURNS trigger SET search_path = pg_catalog, public AS $$
+      BEGIN
+        IF OLD.metadata->>'kind' = 'page_image' AND OLD.metadata->>'storage' = 'backend' THEN
+          INSERT INTO page_image_gc_queue (storage_path, storage_identity, source_id, reason, queued_at)
+          VALUES (OLD.storage_path, COALESCE(OLD.metadata->>'storage_identity', 'legacy'), OLD.source_id, 'files_row_deleted', now())
+          ON CONFLICT (storage_identity, storage_path) DO NOTHING;
+        END IF;
+        RETURN OLD;
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+      CREATE TRIGGER queue_page_image_object_gc_trigger
+        BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION queue_page_image_object_gc();
+      UPDATE files f SET metadata = f.metadata || jsonb_build_object(
+        'storage', 'git', 'kind', 'page_image', 'alt_text', f.filename,
+        'git_path', f.storage_path
+      )
+      FROM pages p
+      WHERE f.page_id = p.id AND f.source_id = p.source_id AND p.type = 'image'
+        AND COALESCE(f.metadata->>'kind', '') = ''
+        AND COALESCE(f.metadata->>'storage', '') = '';
+      UPDATE files SET storage_path = 'git/' || source_id || '/' || (metadata->>'git_path')
+      WHERE metadata->>'storage' = 'git' AND metadata ? 'git_path'
+        AND storage_path = (metadata->>'git_path');
+      INSERT INTO page_image_heads (page_id, source_id, filename, file_id, updated_at)
+      SELECT page_id, source_id, filename, id, now()
+      FROM (
+        SELECT f.*,
+               row_number() OVER (
+                 PARTITION BY f.page_id, f.filename
+                 ORDER BY f.created_at DESC, f.id DESC
+               ) AS image_rank
+        FROM files f JOIN pages p ON p.id = f.page_id AND p.source_id = f.source_id
+        WHERE p.type = 'image' AND f.metadata->>'kind' = 'page_image'
+          AND f.mime_type IN ('image/png', 'image/jpeg', 'image/webp')
+          AND COALESCE(f.size_bytes, 0) BETWEEN 1 AND 8388608
+          AND lower(f.filename) ~ '\\.(png|jpe?g|webp)$'
+      ) native_images
+      WHERE image_rank = 1
+      ON CONFLICT (page_id, filename) DO UPDATE SET
+        source_id = EXCLUDED.source_id, file_id = EXCLUDED.file_id, updated_at = now();
+      DO $$
+      DECLARE has_bypass BOOLEAN;
+      BEGIN
+        SELECT EXISTS (
+          SELECT 1 FROM pg_roles pr
+          WHERE pg_has_role(current_user, pr.oid, 'USAGE')
+            AND (pr.rolbypassrls OR pr.rolsuper)
+        ) INTO has_bypass;
+        IF has_bypass THEN
+          ALTER TABLE page_image_heads ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE page_image_gc_queue ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END $$;
+    `,
+    sqlFor: {
+      pglite: `
+        DO $$
+        DECLARE collision RECORD;
+        BEGIN
+          SELECT candidate.id AS source_file_id, occupied.id AS conflicting_file_id,
+                 'git/' || candidate.source_id || '/' ||
+                   COALESCE(candidate.metadata->>'git_path', candidate.storage_path) AS target_path
+          INTO collision
+          FROM files candidate
+          JOIN pages owner
+            ON owner.id = candidate.page_id AND owner.source_id = candidate.source_id AND owner.type = 'image'
+          JOIN files occupied
+            ON occupied.storage_path = 'git/' || candidate.source_id || '/' ||
+                 COALESCE(candidate.metadata->>'git_path', candidate.storage_path)
+           AND occupied.id <> candidate.id
+          WHERE (
+            (COALESCE(candidate.metadata->>'kind', '') = '' AND
+             COALESCE(candidate.metadata->>'storage', '') = '')
+            OR
+            (candidate.metadata->>'storage' = 'git' AND candidate.metadata ? 'git_path' AND
+             candidate.storage_path = (candidate.metadata->>'git_path'))
+          )
+          ORDER BY candidate.id
+          LIMIT 1;
+          IF FOUND THEN
+            RAISE EXCEPTION
+              'page image Git storage_path collision: file_id %, conflicting_file_id %, target %',
+              collision.source_file_id, collision.conflicting_file_id, collision.target_path;
+          END IF;
+        END $$;
+        CREATE TABLE IF NOT EXISTS page_image_heads (
+          page_id     INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+          source_id   TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+          filename    TEXT NOT NULL,
+          file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+          updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (page_id, filename)
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_image_heads_source
+          ON page_image_heads(source_id, page_id);
+        CREATE TABLE IF NOT EXISTS page_image_gc_queue (
+          storage_path TEXT NOT NULL,
+          storage_identity TEXT NOT NULL,
+          source_id    TEXT NOT NULL,
+          reason       TEXT NOT NULL,
+          queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+          attempts     INTEGER NOT NULL DEFAULT 0,
+          last_error   TEXT,
+          PRIMARY KEY (storage_identity, storage_path)
+        );
+        CREATE OR REPLACE FUNCTION queue_page_image_object_gc() RETURNS trigger SET search_path = pg_catalog, public AS $$
+        BEGIN
+          IF OLD.metadata->>'kind' = 'page_image' AND OLD.metadata->>'storage' = 'backend' THEN
+            INSERT INTO page_image_gc_queue (storage_path, storage_identity, source_id, reason, queued_at)
+            VALUES (OLD.storage_path, COALESCE(OLD.metadata->>'storage_identity', 'legacy'), OLD.source_id, 'files_row_deleted', now())
+            ON CONFLICT (storage_identity, storage_path) DO NOTHING;
+          END IF;
+          RETURN OLD;
+        END;
+        $$ LANGUAGE plpgsql;
+        DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+        CREATE TRIGGER queue_page_image_object_gc_trigger
+          BEFORE DELETE ON files FOR EACH ROW EXECUTE FUNCTION queue_page_image_object_gc();
+        UPDATE files SET metadata = files.metadata || jsonb_build_object(
+          'storage', 'git', 'kind', 'page_image', 'alt_text', files.filename,
+          'git_path', files.storage_path
+        )
+        FROM pages
+        WHERE files.page_id = pages.id AND files.source_id = pages.source_id AND pages.type = 'image'
+          AND COALESCE(files.metadata->>'kind', '') = ''
+          AND COALESCE(files.metadata->>'storage', '') = '';
+        UPDATE files SET storage_path = 'git/' || source_id || '/' || (metadata->>'git_path')
+        WHERE metadata->>'storage' = 'git' AND metadata ? 'git_path'
+          AND storage_path = (metadata->>'git_path');
+        INSERT INTO page_image_heads (page_id, source_id, filename, file_id, updated_at)
+        SELECT page_id, source_id, filename, id, now()
+        FROM (
+          SELECT f.*,
+                 row_number() OVER (
+                   PARTITION BY f.page_id, f.filename
+                   ORDER BY f.created_at DESC, f.id DESC
+                 ) AS image_rank
+          FROM files f JOIN pages p ON p.id = f.page_id AND p.source_id = f.source_id
+          WHERE p.type = 'image' AND f.metadata->>'kind' = 'page_image'
+            AND f.mime_type IN ('image/png', 'image/jpeg', 'image/webp')
+            AND COALESCE(f.size_bytes, 0) BETWEEN 1 AND 8388608
+            AND lower(f.filename) ~ '\\.(png|jpe?g|webp)$'
+        ) native_images
+        WHERE image_rank = 1
+        ON CONFLICT (page_id, filename) DO UPDATE SET
+          source_id = EXCLUDED.source_id, file_id = EXCLUDED.file_id, updated_at = now();
+      `,
+    },
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
