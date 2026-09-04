@@ -45,8 +45,14 @@ import {
   classifyQueryWithBrainPatterns,
   isAmbiguousModalityQuery,
   loadEngineIntentPatterns,
+  type ModalityMode,
   type QuerySuggestions,
 } from './query-intent.ts';
+import {
+  applyPreferredTypeCoverage,
+  isPreferredTypeWinner,
+  selectPreferredTypeWinners,
+} from './preferred-type-coverage.ts';
 import { isTitlePhraseMatch } from './title-match.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { stampEvidence, markKeywordHits } from './evidence.ts';
@@ -1020,6 +1026,17 @@ export interface HybridSearchOpts extends SearchOpts {
   _telemetryCacheStatus?: 'miss' | 'disabled';
 }
 
+/** Treat scalar and list page-type options as hard caller filters. */
+function hasExplicitTypeFilter(opts?: Pick<SearchOpts, 'type' | 'types'>): boolean {
+  return opts?.type !== undefined || Boolean(opts?.types?.length);
+}
+
+/** Reserve the final page slot when relational evidence still has precedence. */
+function preferredSecondaryMaxRank(limit: number, hasRelationalArm: boolean): number {
+  const available = hasRelationalArm ? limit - 1 : limit;
+  return Math.max(1, Math.min(15, available));
+}
+
 /**
  * v0.42.20.0 (Fix 3, #1775) — bound the query-time embed so a stalled provider
  * (the user's zeroentropy case) fails over to keyword instead of hanging past
@@ -1249,10 +1266,15 @@ export async function hybridSearch(
     // per-engine searchKeyword / searchVector apply the filters at SQL level.
     language: opts?.language,
     symbolKind: opts?.symbolKind,
-    // v0.33: multi-type filter for whoknows ('person','company'). Pushes
-    // type filter to SQL level so the limit budget goes to candidate-typed
-    // pages instead of being eaten by note/transcript/article pages.
-    types: opts?.types,
+    // Page-type filters, including multi-type whoknows ('person','company').
+    // Push both forms to SQL. PGLite's shared type-list path consumes `types`,
+    // so mirror a scalar there while preserving Postgres' scalar contract.
+    type: opts?.type,
+    types: opts?.types?.length
+      ? opts.types
+      : opts?.type
+        ? [opts.type]
+        : opts?.types,
     // v0.29.1: since/until take precedence over deprecated afterDate/beforeDate.
     // The engine still consumes the legacy field names; this aliasing keeps
     // PR #618 callers compiling while the new names are the public surface.
@@ -1354,9 +1376,41 @@ export async function hybridSearch(
   // We classify modality early (it's also computed after for the modality
   // branch). The classification is pure regex via classifyQuery; running it
   // here is cheap.
-  const earlyModality = (opts?.crossModal && opts.crossModal !== 'auto')
-    ? opts.crossModal
-    : (suggestions.suggestedModality ?? 'text');
+  const explicitModality =
+    opts?.crossModal && opts.crossModal !== 'auto' ? opts.crossModal : undefined;
+  const earlyModality = explicitModality ?? suggestions.suggestedModality ?? 'text';
+  const explicitTypeFilter = hasExplicitTypeFilter(opts);
+
+  // Preferred text recall must honor an opt-in LLM image-only decision. Resolve
+  // this narrow overlap before typed lexical work, then reuse the answer below
+  // so the tie-break still runs at most once.
+  let preResolvedPreferredModality: ModalityMode | undefined;
+  if (
+    suggestions.preferredTypes?.length &&
+    explicitModality === undefined &&
+    earlyModality === 'text' &&
+    resolvedMode.cross_modal_llm_intent &&
+    isAmbiguousModalityQuery(query)
+  ) {
+    preResolvedPreferredModality = 'text';
+    try {
+      const { classifyModalityWithLLM } = await import('./llm-intent.ts');
+      preResolvedPreferredModality = await classifyModalityWithLLM(query, 'text');
+    } catch {
+      // Fail-open: the text fallback stands.
+    }
+  }
+  const preferredTypeModality = preResolvedPreferredModality ?? earlyModality;
+  const preferredTypeSearchOpts: SearchOpts | null =
+    !explicitTypeFilter && preferredTypeModality !== 'image' && suggestions.preferredTypes?.length
+      ? {
+          ...searchOpts,
+          types: suggestions.preferredTypes,
+          // Typed vector exhaustion is arm-local and must not masquerade as
+          // ordinary vector-pool underfill in HybridSearchMeta.
+          onVectorPoolMeta: undefined,
+        }
+      : null;
   // D1 fix (fix/title-retrieval-arm): page-grain title candidate arm,
   // fetched CONCURRENTLY with the keyword arm (Reviewer F7 — independent
   // engine queries). The chunk FTS vector never includes the page title, so
@@ -1377,9 +1431,14 @@ export async function hybridSearch(
   // marker) then reaches the caller instead of a silent [].
   let keywordAccessError: unknown = null;
   let titleAccessError: unknown = null;
-  const [keywordResults, titleResults]: [SearchResult[], SearchResult[]] =
+  const [
+    keywordResults,
+    titleResults,
+    preferredTypeKeywordResults,
+    preferredTypeTitleResults,
+  ]: [SearchResult[], SearchResult[], SearchResult[], SearchResult[]] =
     earlyModality === 'image'
-      ? [[], []]
+      ? [[], [], [], []]
       : await Promise.all([
           engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
             if (isDbAccessFailure(err)) keywordAccessError = err;
@@ -1399,6 +1458,26 @@ export async function hybridSearch(
             );
             return [] as SearchResult[];
           }),
+          preferredTypeSearchOpts
+            ? engine.searchKeyword(query, preferredTypeSearchOpts).catch((err: unknown) => {
+                warnOncePerProcess(
+                  'search-preferred-types-keyword-arm-failed',
+                  `[gbrain] preferred-types keyword arm failed (fail-open, typed candidates skipped): ` +
+                    `${err instanceof Error ? err.message : String(err)}`,
+                );
+                return [] as SearchResult[];
+              })
+            : Promise.resolve([] as SearchResult[]),
+          preferredTypeSearchOpts
+            ? engine.searchTitles(query, preferredTypeSearchOpts).catch((err: unknown) => {
+                warnOncePerProcess(
+                  'search-preferred-types-title-arm-failed',
+                  `[gbrain] preferred-types title arm failed (fail-open, typed title candidates skipped): ` +
+                    `${err instanceof Error ? err.message : String(err)}`,
+                );
+                return [] as SearchResult[];
+              })
+            : Promise.resolve([] as SearchResult[]),
         ]);
   if (keywordAccessError && titleAccessError) {
     throw keywordAccessError;
@@ -1409,6 +1488,27 @@ export async function hybridSearch(
   // FTS + title FTS); vector/relational arms are deliberately NOT marked.
   markKeywordHits(keywordResults);
   markKeywordHits(titleResults);
+  markKeywordHits(preferredTypeKeywordResults);
+  markKeywordHits(preferredTypeTitleResults);
+
+  let preferredTypeVectorResults: SearchResult[] = [];
+  /** Collapse typed lexical and vector evidence into one neutral outer arm. */
+  const fusePreferredTypeCandidates = (): SearchResult[] => {
+    const lists = [
+      preferredTypeKeywordResults,
+      preferredTypeTitleResults,
+      preferredTypeVectorResults,
+    ].filter((list) => list.length > 0);
+    if (lists.length === 0) return [];
+    if (lists.length === 1) return lists[0]!;
+    const k = opts?.rrfK ?? RRF_K;
+    return rrfFusionWeighted(lists.map((list) => ({ list, k })), false);
+  };
+  let preferredTypeList = fusePreferredTypeCandidates();
+  let preferredTypeWinners = selectPreferredTypeWinners(
+    suggestions.preferredTypes ?? [],
+    preferredTypeList,
+  );
 
   // v0.29.1: resolve salience/recency from caller (back-compat aliases for
   // PR #618's `recencyBoost` numeric scale) or fall back to the heuristic.
@@ -1501,11 +1601,18 @@ export async function hybridSearch(
     // chunk-grain keyword FTS alone fails (D1).
     // issue #160: stamp unverified stubs BEFORE fusion so the compiled-truth
     // boost skips them (flag survives fusion's result spread).
-    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList]);
+    await stampUnverifiedExtractions(engine, [
+      ...preferredTypeList,
+      ...keywordResults,
+      ...titleResults,
+      ...relationalList,
+    ]);
     let noEmbedResults = keywordResults;
-    if (relationalList.length > 0 || titleResults.length > 0) {
+    if (preferredTypeList.length > 0 || relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
-      const noEmbedLists = [{ list: keywordResults, k: fk }];
+      const noEmbedLists: Array<{ list: SearchResult[]; k: number }> = [];
+      if (preferredTypeList.length > 0) noEmbedLists.push({ list: preferredTypeList, k: fk });
+      noEmbedLists.push({ list: keywordResults, k: fk });
       if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk });
       noEmbedResults = rrfFusionWeighted(noEmbedLists, shouldBoostCompiledTruth(detailResolved));
@@ -1516,13 +1623,19 @@ export async function hybridSearch(
     }
     // T3/T4 — alias hop + evidence stamp even without an embedding provider
     // (the named-thing fix is most valuable exactly when vector is unavailable).
-    const noEmbedPreExact = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
+    const noEmbedAliased = await applyAliasHop(engine, dedupResults(noEmbedResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       excludePrivate: opts?.excludePrivate,
     });
+    const noEmbedCovered = applyPreferredTypeCoverage(
+      noEmbedAliased,
+      preferredTypeWinners,
+      noEmbedResults,
+      { secondaryMaxRank: preferredSecondaryMaxRank(limit, relationalList.length > 0) },
+    );
     // #1663 — structural exact-lookup tier (slug / exact-title identity).
-    const noEmbedHopped = await applyExactLookupTier(engine, noEmbedPreExact, query, {
+    const noEmbedHopped = await applyExactLookupTier(engine, noEmbedCovered, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       titleCandidates: titleResults,
@@ -1614,15 +1727,15 @@ export async function hybridSearch(
   // Commit 4 (LLM intent escalation): when search.cross_modal.llm_intent
   // is true AND regex returned 'text' AND isAmbiguousModalityQuery fires,
   // await a Haiku tie-break. Fail-open to regex result on any error.
-  const explicitModality =
-    opts?.crossModal && opts.crossModal !== 'auto' ? opts.crossModal : undefined;
-  let regexModality = explicitModality ?? suggestions.suggestedModality ?? 'text';
+  let regexModality =
+    preResolvedPreferredModality ?? explicitModality ?? suggestions.suggestedModality ?? 'text';
   // LLM tie-break fires ONLY when:
   //   - no explicit per-call override
   //   - regex returned 'text' (not confident image/both)
   //   - operator opted in via search.cross_modal.llm_intent
   //   - isAmbiguousModalityQuery says the query is genuinely ambiguous
   if (
+    preResolvedPreferredModality === undefined &&
     explicitModality === undefined &&
     regexModality === 'text' &&
     resolvedMode.cross_modal_llm_intent &&
@@ -1884,6 +1997,29 @@ export async function hybridSearch(
     }
   }
 
+  // Preferred types are a recall hint, not a hard filter. Reuse the original
+  // query embedding for one bounded typed vector lookup, then collapse typed
+  // lexical/vector evidence into one outer RRF arm.
+  if (queryEmbedding && preferredTypeSearchOpts) {
+    const typedVectorOpts: SearchOpts = unifiedDone
+      ? { ...preferredTypeSearchOpts, embeddingColumn: 'embedding_multimodal' }
+      : preferredTypeSearchOpts;
+    preferredTypeVectorResults = await engine.searchVector(queryEmbedding, typedVectorOpts)
+      .catch((err: unknown) => {
+        warnOncePerProcess(
+          'search-preferred-types-vector-arm-failed',
+          `[gbrain] preferred-types vector arm failed (fail-open, typed vector candidates skipped): ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        return [] as SearchResult[];
+      });
+    preferredTypeList = fusePreferredTypeCandidates();
+    preferredTypeWinners = selectPreferredTypeWinners(
+      suggestions.preferredTypes ?? [],
+      preferredTypeList,
+    );
+  }
+
   if (vectorLists.length === 0) {
     // Embed/vector failed silently; record that vector did not run.
     // v0.29.1 codex pass-2 #4: this is the third return path. Apply
@@ -1894,11 +2030,18 @@ export async function hybridSearch(
     // here too (same rationale as the no-embedding-provider path — D1).
     // issue #160: stamp unverified stubs BEFORE fusion (see the
     // no-embedding-provider path for rationale).
-    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList]);
+    await stampUnverifiedExtractions(engine, [
+      ...preferredTypeList,
+      ...keywordResults,
+      ...titleResults,
+      ...relationalList,
+    ]);
     let fallbackResults = keywordResults;
-    if (relationalList.length > 0 || titleResults.length > 0) {
+    if (preferredTypeList.length > 0 || relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
-      const fallbackLists = [{ list: keywordResults, k: fk }];
+      const fallbackLists: Array<{ list: SearchResult[]; k: number }> = [];
+      if (preferredTypeList.length > 0) fallbackLists.push({ list: preferredTypeList, k: fk });
+      fallbackLists.push({ list: keywordResults, k: fk });
       if (titleResults.length > 0) fallbackLists.push({ list: titleResults, k: fk });
       if (relationalList.length > 0) fallbackLists.push({ list: relationalList, k: fk });
       fallbackResults = rrfFusionWeighted(fallbackLists, shouldBoostCompiledTruth(detail));
@@ -1907,13 +2050,19 @@ export async function hybridSearch(
       await runPostFusionStages(engine, fallbackResults, postFusionOpts);
       fallbackResults.sort((a, b) => b.score - a.score);
     }
-    const kwPreExact = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
+    const kwAliased = await applyAliasHop(engine, dedupResults(fallbackResults), query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       excludePrivate: opts?.excludePrivate,
     });
+    const kwCovered = applyPreferredTypeCoverage(
+      kwAliased,
+      preferredTypeWinners,
+      fallbackResults,
+      { secondaryMaxRank: preferredSecondaryMaxRank(limit, relationalList.length > 0) },
+    );
     // #1663 — structural exact-lookup tier (slug / exact-title identity).
-    const kwHopped = await applyExactLookupTier(engine, kwPreExact, query, {
+    const kwHopped = await applyExactLookupTier(engine, kwCovered, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       titleCandidates: titleResults,
@@ -1923,7 +2072,16 @@ export async function hybridSearch(
       excludeSlugs: opts?.exclude_slugs,
     });
     stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-    const kwSliced = kwHopped.slice(offset, offset + limit);
+    let kwPool = kwHopped;
+    let kwRelSlot: RelationalEvidenceSlotDecision | undefined;
+    if (relationalList.length > 0) {
+      const r = ensureRelationalEvidenceSlot(kwHopped, relationalList, limit, offset, {
+        cosineFloor: resolvedMode.evidence_cosine_floor,
+      });
+      kwPool = r.pool;
+      kwRelSlot = r.decision;
+    }
+    const kwSliced = kwPool.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, kwBudgeted);
@@ -1948,6 +2106,7 @@ export async function hybridSearch(
       ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
         ? { token_budget: kwBudgetMeta }
         : {}),
+      ...(kwRelSlot ? { relational_evidence_slot: kwRelSlot } : {}),
     });
     return kwBudgeted;
   }
@@ -2015,7 +2174,7 @@ export async function hybridSearch(
     pushDegraded(degraded, 'keyword_relaxed_carried');
   }
 
-  const allLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
+  const normalLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
     ? [
       // Last list in vectorLists is the image branch (we appended it above).
       // All preceding lists (1 or more text-query embeddings if expansion ran)
@@ -2028,6 +2187,11 @@ export async function hybridSearch(
       ...vectorLists.map(list => ({ list, k: vectorK })),
       { list: keywordFusionList, k: keywordK },
     ];
+  const allLists: Array<{ list: SearchResult[]; k: number }> = [];
+  if (preferredTypeList.length > 0) {
+    allLists.push({ list: preferredTypeList, k: baseRrfK });
+  }
+  allLists.push(...normalLists);
 
   // D1 fix (fix/title-retrieval-arm) — title candidate arm as a third
   // weighted list. Fuses at the keyword arm's intent-effective k (same
@@ -2134,11 +2298,19 @@ export async function hybridSearch(
 
   // Dedup
   const deduped = dedupResults(fused, dedupOpts);
+  // Select bounded page-type coverage before reranking so topNIn includes
+  // the typed winners, re-admitting from the fused pool when dedup removed one.
+  const coveredBeforeRerank = applyPreferredTypeCoverage(
+    deduped,
+    preferredTypeWinners,
+    fused,
+    { secondaryMaxRank: preferredSecondaryMaxRank(limit, relationalList.length > 0) },
+  );
 
   // Auto-escalate: if detail=low returned 0, retry with high. The inner
   // call's onMeta fires with the escalated detail_resolved; do NOT also
   // fire here (would double-emit and capture stale meta).
-  if (deduped.length === 0 && opts?.detail === 'low') {
+  if (coveredBeforeRerank.length === 0 && opts?.detail === 'low') {
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
@@ -2163,8 +2335,8 @@ export async function hybridSearch(
   // pass-through (#4648: provider answered 200 with an empty/malformed result
   // set) is stamped `rerank_passthrough`, so --explain, telemetry and eval rows
   // can tell "reranked" from "fell through in RRF order" — never stderr.
-  const reranked = rerankerOpts.enabled
-    ? await applyReranker(query, deduped, {
+  const rerankerOutput = rerankerOpts.enabled
+    ? await applyReranker(query, coveredBeforeRerank, {
         ...(rerankerOpts as any),
         onSkip: (reason: RerankSkipReason) => pushDegraded(degraded, 'reranker_skipped', reason),
         onPassThrough: (reason: RerankPassThroughReason) => {
@@ -2173,16 +2345,24 @@ export async function hybridSearch(
           (rerankerOpts as { onPassThrough?: (r: RerankPassThroughReason) => void }).onPassThrough?.(reason);
         },
       })
-    : deduped;
+    : coveredBeforeRerank;
 
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const preExact = await applyAliasHop(engine, reranked, query, {
+  const aliased = await applyAliasHop(engine, rerankerOutput, query, {
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
     excludePrivate: opts?.excludePrivate,
   });
+  // Rerankers may truncate typed winners and alias injection re-sorts by
+  // score. Restore coverage after both while keeping identity rows pinned.
+  const coveredAfterAlias = applyPreferredTypeCoverage(
+    aliased,
+    preferredTypeWinners,
+    coveredBeforeRerank,
+    { secondaryMaxRank: preferredSecondaryMaxRank(limit, relationalList.length > 0) },
+  );
 
   // #1663 — structural exact-lookup tier: a query that IS a page identity
   // (slug / exact normalized title) gets that page at rank-1 regardless of
@@ -2190,7 +2370,7 @@ export async function hybridSearch(
   // the already-fetched title arm (no extra queries); pure no-op for
   // non-lookup-shaped queries. Runs after the alias hop so all three
   // identity surfaces (alias, slug, title) share the same injection shape.
-  const aliasHopped = await applyExactLookupTier(engine, preExact, query, {
+  const aliasHopped = await applyExactLookupTier(engine, coveredAfterAlias, query, {
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
     titleCandidates: titleResults,
@@ -2261,7 +2441,12 @@ export async function hybridSearch(
       // be dropped whenever autocut cuts on the scored set (Codex P1).
       // #1663: same guarantee for structural exact-lookup tier hits (slug /
       // exact-title identity matches also arrive post-rerank, unscored).
-      (x) => x.alias_hit === true || x.exact_lookup !== undefined,
+      // Preferred winners have the same post-rerank coverage guarantee; the
+      // relational arm keeps its separate, final page-slot precedence below.
+      (x) =>
+        x.alias_hit === true ||
+        x.exact_lookup !== undefined ||
+        isPreferredTypeWinner(x, preferredTypeWinners),
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
@@ -2494,7 +2679,7 @@ export async function hybridSearchCached(
     // serving old-classification rows for the rest of the cache TTL.
     intentPatterns: intentStateForCache.fingerprint,
     // #4352 follow-up — fold the private-visibility posture into the key
-    // (xp=, v=23) for BOTH the lookup and the write below (they share this
+    // (xp=, v=24) for BOTH the lookup and the write below (they share this
     // one hash), instead of the original wholesale skipCache bypass. A
     // remote-default (excludePrivate=true) caller now caches normally, on
     // rows that can never be served to (or written by) a trusted
@@ -2509,6 +2694,9 @@ export async function hybridSearchCached(
       minKeep: adaptiveResolvedForCache.minKeep,
       intent: cacheSuggestions.intent,
     },
+    // v=29 — isolate semantic neighbors whose query intent activates a
+    // typed recall arm from ordinary queries with identical embeddings.
+    preferredTypes: cacheSuggestions.preferredTypes,
   });
 
   // Cache decision: opts.useCache (explicit) wins over global config; global
@@ -2541,10 +2729,11 @@ export async function hybridSearchCached(
   // now-relative timestamp, which a persisted cache row can't express.
   const dateFiltered =
     Boolean(opts?.since ?? opts?.afterDate) || Boolean(opts?.until ?? opts?.beforeDate);
-  // #3985: type-filtered requests skip the cache — `types` is not part of
+  // #3985: type-filtered requests skip the cache — scalar `type` and list
+  // `types` are not part of
   // knobsHash, so a filtered result set could be served to an unfiltered
   // lookup (and vice versa). Mirrors the #3442 date-filter bypass.
-  const typeFiltered = (opts?.types?.length ?? 0) > 0;
+  const typeFiltered = hasExplicitTypeFilter(opts);
   // Offset pages are cache-hostile until the pre-slice POOL itself is what's
   // stored: the cache holds the already offset/limit-sliced page (bare
   // hybridSearch slices before returning), so a hit for any other offset

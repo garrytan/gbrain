@@ -24,7 +24,7 @@
  */
 
 import { createHash } from 'crypto';
-import { CR_MODES, type CRMode } from '../types.ts';
+import { CR_MODES, type CRMode, type PageType } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
 // #3657 seam: the runtime/mode-bundle reranker default has ONE code home
@@ -964,7 +964,11 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // part; version-only invalidation (same class as the 13→14 detail=medium
 // boost-scope bump and the 21→22 stamp/injection epoch). One-time global
 // cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
-export const KNOBS_HASH_VERSION = 28;
+//
+// bump 28→29: quote-recall queries add a preferred page-type recall arm. The
+// canonical preference signature joins the cache key so semantic neighbors
+// cannot cross-hit across different candidate paths.
+export const KNOBS_HASH_VERSION = 29;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -1060,6 +1064,12 @@ export interface KnobsHashContext {
    * brain's rows under another brain's patterns in a multi-engine process.
    */
   intentPatterns?: string;
+  /**
+   * v=29: the classifier's effective page-type preferences for this query.
+   * Semantic lookup is embedding-based, so neighboring query text can
+   * otherwise cross-hit across different candidate-generation paths.
+   */
+  preferredTypes?: PageType[];
 }
 
 export function knobsHash(
@@ -1223,6 +1233,12 @@ export function knobsHash(
     `arom=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.otherMax : 'none'}`,
     `armk=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.minKeep : 'none'}`,
     `ari=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.intent : 'none'}`,
+    // v=29 addition (append-only): canonical preferred-type signature.
+    // De-duplicate and sort so the cache key represents a set, not caller
+    // ordering, while undefined and empty both retain the ordinary path.
+    `pref=${ctx?.preferredTypes?.length
+      ? [...new Set(ctx.preferredTypes)].sort().join(',')
+      : 'none'}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1525,4 +1541,3 @@ export async function loadSearchModeConfig(
     overrides: loadOverridesFromConfig(configMap),
   };
 }
-

@@ -24,6 +24,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as realEmbedding from '../src/core/embedding.ts';
+import type { PageType } from '../src/core/types.ts';
 
 /** Deterministic 1536d unit vector — same for every call, so an identical
  * query's second consult matches its first write at cosine 1.0. */
@@ -127,6 +128,30 @@ beforeAll(async () => {
   await engine.upsertChunks('bob-bar', [
     { chunk_index: 0, chunk_text: 'Bob Bar is a builder who reviews cache wiring fixtures.', chunk_source: 'compiled_truth' },
   ]);
+  await engine.putPage('conversations/kickoff-call-fixture', {
+    type: 'conversation',
+    title: 'Kickoff Call Fixture',
+    compiled_truth: 'What was actually said at the kickoff call? This recording fixture records each speaker turn.',
+  });
+  await engine.upsertChunks('conversations/kickoff-call-fixture', [
+    {
+      chunk_index: 0,
+      chunk_text: 'What was actually said at the kickoff call? This recording fixture records each speaker turn.',
+      chunk_source: 'compiled_truth',
+    },
+  ]);
+  await engine.putPage('notes/generic-call-fixture', {
+    type: 'note',
+    title: 'Generic Call Fixture',
+    compiled_truth: 'What was said at the kickoff call? This generic fixture records the ordinary summary.',
+  });
+  await engine.upsertChunks('notes/generic-call-fixture', [
+    {
+      chunk_index: 0,
+      chunk_text: 'What was said at the kickoff call? This generic fixture records the ordinary summary.',
+      chunk_source: 'compiled_truth',
+    },
+  ]);
 });
 
 afterAll(async () => {
@@ -146,6 +171,63 @@ beforeEach(async () => {
 });
 
 describe('hybridSearchCached — telemetry carries the cache outcome', () => {
+  test('preferred and adjacent non-preferred queries cannot cross-hit with identical embeddings', async () => {
+    let preferredMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const preferred = await hybridSearchCached(engine, 'What was actually said at the kickoff call?', {
+      limit: 5,
+      expansion: false,
+      autocut: false,
+      graph_signals: false,
+      relationalRetrieval: false,
+      onMeta: (m) => { preferredMeta = m; },
+    });
+    expect(preferred.length).toBeGreaterThan(0);
+    expect(preferredMeta?.cache?.status).toBe('miss');
+    await awaitPendingSearchCacheWrites();
+
+    let genericMeta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+    const generic = await hybridSearchCached(engine, 'What was said at the kickoff call?', {
+      limit: 5,
+      expansion: false,
+      autocut: false,
+      graph_signals: false,
+      relationalRetrieval: false,
+      onMeta: (m) => { genericMeta = m; },
+    });
+    expect(generic.length).toBeGreaterThan(0);
+    expect(genericMeta?.cache?.status).toBe('miss');
+    await awaitPendingSearchCacheWrites();
+
+    const rows = await engine.executeRaw<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM query_cache',
+    );
+    expect(rows[0].n).toBe(2);
+  });
+
+  test('explicit scalar and list type filters skip semantic caching', async () => {
+    const hardFilters: Array<{ type: PageType } | { types: PageType[] }> = [
+      { type: 'person' },
+      { types: ['person'] },
+    ];
+    for (const hardFilter of hardFilters) {
+      await engine.executeRaw('DELETE FROM query_cache');
+      let meta: import('../src/core/types.ts').HybridSearchMeta | undefined;
+      const results = await hybridSearchCached(engine, 'alice telemetry fixtures', {
+        limit: 5,
+        ...hardFilter,
+        onMeta: (m) => { meta = m; },
+      });
+      expect(results.length).toBeGreaterThan(0);
+      expect(meta?.cache?.status).toBe('disabled');
+      await awaitPendingSearchCacheWrites();
+
+      const rows = await engine.executeRaw<{ n: number }>(
+        'SELECT COUNT(*)::int AS n FROM query_cache',
+      );
+      expect(rows[0].n).toBe(0);
+    }
+  });
+
   test('miss then hit: one record per search, classified, hit keeps results/rank-1 telemetry', async () => {
     // Call 1 — cache consulted, empty → miss.
     const first = await hybridSearchCached(engine, 'alice telemetry fixtures', { limit: 5 });
