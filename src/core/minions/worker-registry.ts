@@ -142,22 +142,51 @@ function processLiveness(pid: number): 'alive' | 'dead' | 'unknown' {
   }
 }
 
+/** Parses portable `ps -o etime=` output (`[[dd-]hh:]mm:ss`) to milliseconds. */
+export function parseEtimeToMs(etime: string): number | null {
+  const raw = etime.trim();
+  if (!raw) return null;
+
+  let days = 0;
+  let rest = raw;
+  const dash = rest.indexOf('-');
+  if (dash !== -1) {
+    days = Number(rest.slice(0, dash));
+    rest = rest.slice(dash + 1);
+    if (!Number.isInteger(days) || days < 0) return null;
+  }
+
+  const parts = rest.split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+  if (!parts.every(part => part.length > 0 && /^\d+$/.test(part))) return null;
+
+  const numbers = parts.map(Number);
+  const [hours, minutes, seconds] =
+    numbers.length === 3 ? numbers : [0, numbers[0]!, numbers[1]!];
+
+  return (((days * 24 + hours!) * 60 + minutes!) * 60 + seconds!) * 1000;
+}
+
 /**
  * Best-effort process start time (epoch ms) via `ps`. Used for the PID-reuse
  * guard: a stale `worker-<pid>.json` plus an OS-reused pid would otherwise make
  * us report an unrelated process's niceness (Codex #8). Returns null when
  * undeterminable — callers must NOT treat null as "reused".
+ *
+ * Elapsed time avoids `lstart`'s timezone-less local timestamp, which
+ * `Date.parse` interprets as UTC and shifts worker starts on non-UTC hosts.
+ * `etime` is used instead of Linux-only `etimes` so this also works on macOS.
  */
 function processStartMs(pid: number): number | null {
   try {
-    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    const out = execFileSync('ps', ['-o', 'etime=', '-p', String(pid)], {
       encoding: 'utf8',
       timeout: 2000,
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
     if (!out) return null;
-    const t = Date.parse(out);
-    return Number.isNaN(t) ? null : t;
+    const elapsedMs = parseEtimeToMs(out);
+    return elapsedMs === null ? null : Date.now() - elapsedMs;
   } catch {
     return null;
   }
