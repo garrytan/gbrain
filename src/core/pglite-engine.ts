@@ -31,7 +31,7 @@ import type {
   TakeBatchInput, Take, TakesListOpts, TakeHit, StaleTakeRow, TakeEmbeddingInput,
   TakeResolution, SynthesisEvidenceInput,
   TakesScorecard, TakesScorecardOpts, CalibrationBucket, CalibrationCurveOpts,
-  FactRow, FactInsertStatus,
+  FactRow, FactInsertStatus, StaleFactRow, FactEmbeddingInput,
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
@@ -5304,7 +5304,13 @@ export class PGLiteEngine implements BrainEngine {
   /** Narrow deps for the peeled facts module. */
   private get factsDeps(): PgliteFactsDeps {
     const self = this;
-    return { get db() { return self.db; } };
+    return {
+      get db() { return self.db; },
+      batchRetry: <T>(auditSite: BatchAuditSite, signal: AbortSignal | undefined, fn: () => Promise<T>, batchSize: number) =>
+        self.batchRetry(auditSite, signal, fn, batchSize),
+      executeRawJsonb: <R = Record<string, unknown>>(sqlText: string, scalarParams: SqlValue[], jsonbParams: unknown[]) =>
+        executeRawJsonb<R>(self, sqlText, scalarParams, jsonbParams),
+    };
   }
 
   async insertFact(
@@ -5388,6 +5394,14 @@ export class PGLiteEngine implements BrainEngine {
 
   async getFactsHealth(source_id: string): Promise<FactsHealth> {
     return factsImpl.getFactsHealth(this.factsDeps, source_id);
+  }
+
+  async listFactsNeedingEmbedding(opts: { limit: number; afterId?: number; sourceId?: string | null }): Promise<StaleFactRow[]> {
+    return factsImpl.listFactsNeedingEmbedding(this.factsDeps, opts);
+  }
+
+  async updateFactEmbeddings(rowsIn: FactEmbeddingInput[], opts?: BatchOpts): Promise<number> {
+    return factsImpl.updateFactEmbeddings(this.factsDeps, rowsIn, opts);
   }
 
   // ============================================================

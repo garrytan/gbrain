@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import type { Page, PageInput, PageType, Chunk, SearchResult, StalePageRow } from './types.ts';
 import type { Take, TakeKind, TakeHit } from './engine.ts';
 import type { StaleTakeRow } from './takes-row-types.ts';
+import type { StaleFactRow } from './facts-row-types.ts';
 // Leaf modules (no imports) — safe here without a cycle. Single source of
 // truth for the hash-ephemeral frontmatter keys shared with the importer.
 import { QUARANTINE_KEY, CONTENT_FLAG_KEY } from './quarantine.ts';
@@ -580,6 +581,20 @@ export function staleTakeRowToRow(row: Record<string, unknown>): StaleTakeRow {
     page_slug: String(row.page_slug ?? ''),
     row_num: Number(row.row_num),
     claim: String(row.claim),
+  };
+}
+
+/**
+ * Convert a stale-fact SQL row to the numeric `StaleFactRow` contract (#4812).
+ * facts.id is BIGSERIAL: Postgres returns it as BigInt/string, PGLite as a
+ * number; normalize both engines at their shared boundary (same #4628 rule
+ * as takes, or `JSON.stringify` throws on the first real int8 row).
+ */
+export function staleFactRowToRow(row: Record<string, unknown>): StaleFactRow {
+  return {
+    fact_id: Number(row.fact_id),
+    fact: String(row.fact),
+    entity_slug: row.entity_slug == null ? null : String(row.entity_slug),
   };
 }
 

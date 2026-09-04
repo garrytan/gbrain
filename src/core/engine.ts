@@ -328,6 +328,8 @@ export interface TakeHit {
 
 import type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 export type { StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
+import type { StaleFactRow, FactEmbeddingInput } from './facts-row-types.ts';
+export type { StaleFactRow, FactEmbeddingInput } from './facts-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
 export interface TakeResolution {
@@ -2224,6 +2226,17 @@ export interface BrainEngine {
 
   /** Per-source operational metrics for `gbrain doctor` facts_health check. */
   getFactsHealth(source_id: string): Promise<FactsHealth>;
+
+  /**
+   * #4812: cursor-paged selector for `gbrain embed --stale --facts`. Same
+   * predicate as the `facts_pending` counter in the `migrate embeddings` status report
+   * (embedding IS NULL AND expired_at IS NULL). `sourceId` narrows to one
+   * source; `afterId` is the exclusive id cursor. Ordered by id ASC.
+   */
+  listFactsNeedingEmbedding(opts: { limit: number; afterId?: number; sourceId?: string | null }): Promise<StaleFactRow[]>;
+
+  /** Persist embeddings for active fact rows; expired rows are ignored. Wrapped in `batchRetry` like updateTakeEmbeddings. */
+  updateFactEmbeddings(rows: FactEmbeddingInput[], opts?: BatchOpts): Promise<number>;
 
   // Versions
   /**

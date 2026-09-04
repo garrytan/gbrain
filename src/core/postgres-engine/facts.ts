@@ -11,9 +11,12 @@ type PgSql = ReturnType<typeof postgres>;
 import type {
   FactRow, FactKind, FactVisibility, FactInsertStatus,
   NewFact, FactListOpts, FactsHealth,
+  BatchOpts, StaleFactRow, FactEmbeddingInput,
 } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
-import { tryParseEmbedding } from '../utils.ts';
+import type { BatchAuditSite } from '../retry.ts';
+import type { SqlValue } from '../sql-query.ts';
+import { staleFactRowToRow, tryParseEmbedding } from '../utils.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 import { escapeLikePattern } from '../cjk.ts';
@@ -34,6 +37,19 @@ export interface PgFactsDeps {
   readonly sql: PgSql;
   /** Cast-suffix probe for facts.embedding (cache state lives on the engine). */
   resolveFactsEmbeddingCast(): Promise<'::vector' | '::halfvec'>;
+  /** Engine batch retry wrapper (audit JSONL + backoff live on the engine). */
+  batchRetry<T>(
+    auditSite: BatchAuditSite,
+    signal: AbortSignal | undefined,
+    fn: () => Promise<T>,
+    batchSize: number,
+  ): Promise<T>;
+  /** JSONB-safe positional write helper, bound to the engine at the call site. */
+  executeRawJsonb<R = Record<string, unknown>>(
+    sql: string,
+    scalarParams: SqlValue[],
+    jsonbParams: unknown[],
+  ): Promise<R[]>;
 }
 
 export async function insertFact(
@@ -677,4 +693,82 @@ function rowToFactPg(row: FactRowSqlShape): FactRow {
 function toPgVectorLiteral(v: Float32Array | number[]): string {
   if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
   return '[' + v.join(',') + ']';
+}
+
+// ============================================================
+// #4812: `gbrain embed --stale --facts` (embedding backfill)
+// ============================================================
+
+/**
+ * Cursor-paged selector for the facts embedding backfill. The predicate is
+ * the `facts_pending` counter from the `migrate embeddings` status report, verbatim
+ * (embedding IS NULL AND expired_at IS NULL), so the two numbers agree.
+ */
+export async function listFactsNeedingEmbedding(
+  deps: PgFactsDeps,
+  opts: { limit: number; afterId?: number; sourceId?: string | null },
+): Promise<StaleFactRow[]> {
+  const sql = deps.sql;
+  const limit = Math.max(1, Math.floor(opts.limit) || 1);
+  const afterId = Math.max(0, Math.floor(opts.afterId ?? 0) || 0);
+  const sourceId = opts.sourceId ?? null;
+  const rows = await sql`
+    SELECT id AS fact_id, fact, entity_slug
+      FROM facts
+     WHERE embedding IS NULL AND expired_at IS NULL
+       AND (${sourceId}::text IS NULL OR source_id = ${sourceId})
+       AND id > ${afterId}
+     ORDER BY id
+     LIMIT ${limit}
+  `;
+  return rows.map((row) => staleFactRowToRow(row as Record<string, unknown>));
+}
+
+/** Persist embeddings for active fact rows. Expired rows are skipped, not errors. */
+export async function updateFactEmbeddings(
+  deps: PgFactsDeps,
+  rowsIn: FactEmbeddingInput[],
+  opts?: BatchOpts,
+): Promise<number> {
+  if (rowsIn.length === 0) return 0;
+  return deps.batchRetry(
+    opts?.auditSite ?? 'updateFactEmbeddings',
+    opts?.signal,
+    () => _updateFactEmbeddingsOnce(deps, rowsIn),
+    rowsIn.length,
+  );
+}
+
+async function _updateFactEmbeddingsOnce(
+  deps: PgFactsDeps,
+  rowsIn: FactEmbeddingInput[],
+): Promise<number> {
+  const seen = new Set<number>();
+  const rows = rowsIn.map(({ fact_id, embedding }) => {
+    if (!Number.isInteger(fact_id) || fact_id <= 0) throw new Error(`invalid fact_id: ${fact_id}`);
+    if (seen.has(fact_id)) throw new Error(`duplicate fact_id in embedding batch: ${fact_id}`);
+    seen.add(fact_id);
+    const values = Array.from(embedding);
+    if (values.length === 0 || values.some(v => !Number.isFinite(v))) {
+      throw new Error(`invalid embedding for fact_id=${fact_id}`);
+    }
+    return { fact_id, embedding: `[${values.join(',')}]` };
+  });
+  // Cast matches the actual column type (halfvec vs vector), same probe the
+  // insert path uses. facts has no updated_at column; embedded_at is the stamp.
+  const castSuffix = await deps.resolveFactsEmbeddingCast();
+  const result = await deps.executeRawJsonb(
+    `WITH updated AS (
+       UPDATE facts AS f
+          SET embedding = v.embedding${castSuffix},
+              embedded_at = now()
+         FROM jsonb_to_recordset(($1::jsonb)->'rows') AS v(fact_id bigint, embedding text)
+        WHERE f.id = v.fact_id AND f.expired_at IS NULL
+        RETURNING f.id
+     )
+     SELECT id FROM updated`,
+    [],
+    [{ rows }],
+  );
+  return result.length;
 }
