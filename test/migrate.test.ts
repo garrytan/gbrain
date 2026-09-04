@@ -2412,3 +2412,142 @@ describe('v134 — restore_chunks_embedding_null_partial_indexes', () => {
     }
   }, 30000);
 });
+
+describe('v146 — page_image_heads', () => {
+  test('deduplicates historical filenames deterministically and namespaces Git paths', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      await engine.runMigration(0, `
+        DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+        DROP FUNCTION IF EXISTS queue_page_image_object_gc();
+        DROP TABLE IF EXISTS page_image_heads;
+        DROP TABLE IF EXISTS page_image_gc_queue;
+      `);
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config) VALUES ('migration-source', 'migration-source', '{}'::jsonb)`,
+      );
+      await engine.putPage('assets/logo.png', {
+        type: 'image', page_kind: 'image', title: 'logo.png', compiled_truth: '', timeline: '',
+        frontmatter: {}, content_hash: 'page-hash',
+      }, { sourceId: 'migration-source', allowEmptyOverwrite: true });
+      const page = await engine.getPage('assets/logo.png', { sourceId: 'migration-source' });
+      await engine.executeRaw(
+        `INSERT INTO files
+           (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata, created_at)
+         VALUES
+           ('migration-source', 'assets/logo.png', $1, 'logo.png', 'old/logo.png', 'image/png', 10, 'old', '{}'::jsonb, now() - interval '1 day'),
+           ('migration-source', 'assets/logo.png', $1, 'logo.png', 'new/logo.png', 'image/png', 10, 'new', '{}'::jsonb, now())`,
+        [page!.id],
+      );
+
+      const migration = MIGRATIONS.find(candidate => candidate.version === 146);
+      expect(migration?.sqlFor?.pglite).toBeDefined();
+      await engine.runMigration(146, migration!.sqlFor!.pglite!);
+
+      const heads = await engine.executeRaw<{ content_hash: string }>(
+        `SELECT f.content_hash FROM page_image_heads h JOIN files f ON f.id = h.file_id`,
+      );
+      expect(heads).toEqual([{ content_hash: 'new' }]);
+      const files = await engine.executeRaw<{ storage_path: string; git_path: string }>(
+        `SELECT storage_path, metadata->>'git_path' AS git_path FROM files ORDER BY content_hash`,
+      );
+      expect(files).toEqual([
+        { storage_path: 'git/migration-source/new/logo.png', git_path: 'new/logo.png' },
+        { storage_path: 'git/migration-source/old/logo.png', git_path: 'old/logo.png' },
+      ]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('fails before rewriting a Git path whose namespaced target is occupied', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      await engine.runMigration(0, `
+        DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+        DROP FUNCTION IF EXISTS queue_page_image_object_gc();
+        DROP TABLE IF EXISTS page_image_heads;
+        DROP TABLE IF EXISTS page_image_gc_queue;
+      `);
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config) VALUES ('migration-source', 'migration-source', '{}'::jsonb)`,
+      );
+      await engine.putPage('assets/logo.png', {
+        type: 'image', page_kind: 'image', title: 'logo.png', compiled_truth: '', timeline: '',
+        frontmatter: {}, content_hash: 'page-hash',
+      }, { sourceId: 'migration-source', allowEmptyOverwrite: true });
+      const page = await engine.getPage('assets/logo.png', { sourceId: 'migration-source' });
+      await engine.executeRaw(
+        `INSERT INTO files
+           (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+         VALUES
+           ('migration-source', 'assets/logo.png', $1, 'logo.png', 'assets/logo.png', 'image/png', 10, 'legacy', '{}'::jsonb),
+           ('migration-source', 'assets/logo.png', $1, 'occupied.png', 'git/migration-source/assets/logo.png', 'image/png', 10, 'occupied', '{"storage":"backend"}'::jsonb)`,
+        [page!.id],
+      );
+
+      const migration = MIGRATIONS.find(candidate => candidate.version === 146)!;
+      await expect(engine.runMigration(146, migration.sqlFor!.pglite!))
+        .rejects.toThrow('page image Git storage_path collision');
+      const paths = await engine.executeRaw<{ storage_path: string; metadata: Record<string, unknown> }>(
+        `SELECT storage_path, metadata FROM files ORDER BY content_hash`,
+      );
+      expect(paths).toEqual([
+        { storage_path: 'assets/logo.png', metadata: {} },
+        { storage_path: 'git/migration-source/assets/logo.png', metadata: { storage: 'backend' } },
+      ]);
+      expect(await engine.executeRaw(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name IN ('page_image_heads', 'page_image_gc_queue')`,
+      )).toHaveLength(0);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+
+  test('ignores a historical file whose source differs from its owning page', async () => {
+    const engine = new PGLiteEngine();
+    await engine.connect({});
+    try {
+      await engine.initSchema();
+      await engine.runMigration(0, `
+        DROP TRIGGER IF EXISTS queue_page_image_object_gc_trigger ON files;
+        DROP FUNCTION IF EXISTS queue_page_image_object_gc();
+        DROP TABLE IF EXISTS page_image_heads;
+        DROP TABLE IF EXISTS page_image_gc_queue;
+      `);
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config) VALUES
+           ('migration-source', 'migration-source', '{}'::jsonb),
+           ('foreign-source', 'foreign-source', '{}'::jsonb)`,
+      );
+      await engine.putPage('assets/logo.png', {
+        type: 'image', page_kind: 'image', title: 'logo.png', compiled_truth: '', timeline: '',
+        frontmatter: {}, content_hash: 'page-hash',
+      }, { sourceId: 'migration-source', allowEmptyOverwrite: true });
+      const page = await engine.getPage('assets/logo.png', { sourceId: 'migration-source' });
+      await engine.executeRaw(
+        `INSERT INTO files
+           (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+         VALUES ('foreign-source', 'assets/logo.png', $1, 'logo.png', 'assets/foreign-logo.png',
+                 'image/png', 10, 'foreign', '{}'::jsonb)`,
+        [page!.id],
+      );
+
+      const migration = MIGRATIONS.find(candidate => candidate.version === 146)!;
+      await engine.runMigration(146, migration.sqlFor!.pglite!);
+      expect(await engine.executeRaw(
+        `SELECT file_id FROM page_image_heads WHERE source_id = 'foreign-source'`,
+      )).toHaveLength(0);
+      expect(await engine.executeRaw<{ storage_path: string; kind: string | null }>(
+        `SELECT storage_path, metadata->>'kind' AS kind FROM files WHERE content_hash = 'foreign'`,
+      )).toEqual([{ storage_path: 'assets/foreign-logo.png', kind: null }]);
+    } finally {
+      await engine.disconnect();
+    }
+  }, 30000);
+});

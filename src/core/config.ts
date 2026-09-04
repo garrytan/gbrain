@@ -5,7 +5,7 @@ import type { EngineConfig, EmbeddingColumnConfig } from './types.ts';
 import { applyDbPlaneReadSideMerge, type DbPlaneEngineReader } from './config-db-merge.ts';
 import { loadConfigSnapshot } from './config-snapshot.ts';
 import { loadGbrainEnvFile } from './gbrain-env-file.ts';
-
+import { IMAGE_MCP_CONFIG_KEYS, type ImageMcpConfig } from './image-config.ts';
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
  * attempt. Used by `gbrain doctor --fast` so the user gets a precise message
@@ -496,7 +496,6 @@ export interface GBrainConfig {
    * operator escape hatch.
    */
   schema_pack?: string;
-
   /**
    * PR1 — MCP skill-catalog publishing. Lets a thin MCP client (Codex desktop,
    * Claude Code, Perplexity) discover and follow this agent repo's skills over
@@ -557,7 +556,7 @@ export interface GBrainConfig {
      * over this file slot. Always bounded by the server ceiling (D2).
      */
     default_surface_dcr?: 'verbs' | 'starter' | 'full';
-  };
+  } & ImageMcpConfig;
 }
 
 /**
@@ -1494,6 +1493,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // the advisor exposes operational diagnostics (version/jobs/key presence),
   // not prose skills. Default OFF; read-only over MCP.
   'mcp.publish_advisor',
+  ...IMAGE_MCP_CONFIG_KEYS,
   // WP3 — unknown tool-call argument posture ('warn' default | 'reject').
   // Read dual-plane by src/mcp/validate-params.ts (DB > file > 'warn').
   'mcp.strict_params',

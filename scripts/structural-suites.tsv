@@ -172,6 +172,7 @@ test/jobs-thin-client-date-rehydration.test.ts	thin-client unpack sites route th
 test/jobs-worker-startup-recovery.test.ts	work-handler recovery placement (structural)	1	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	readFileSync
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync
+test/mcp-http-ingress-guards.test.ts	OAuth MCP ingress guards	5	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	readFileSync
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync
 test/migrate.test.ts	PR #356 — LATEST_VERSION is max(versions), not array[-1]	2	readFileSync
@@ -191,6 +192,7 @@ test/migrate.test.ts	migration v49 — eval_takes_quality_runs (v0.32)	6	readFil
 test/migrate.test.ts	resolvePoolSize — env var + explicit override	4	readFileSync
 test/migrate.test.ts	resolveSessionTimeouts — env var overrides	5	readFileSync
 test/migrate.test.ts	v117 — context_volunteer_events_table	5	readFileSync
+test/migrate.test.ts	v146 — page_image_heads	3	readFileSync
 test/migration-orchestrator-v0_46_3.serial.test.ts	v0.46.3 orchestrator behavior	4	readFileSync
 test/migration-resume.test.ts	Bug 3 — orchestrator no longer writes the ledger directly	6	bun-file
 test/migrations-v0_11_0.test.ts	AGENTS.md marker injection	6	readFileSync
@@ -229,6 +231,7 @@ test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/retrieval-reflex-recipe-routing.test.ts	retrieval-reflex recipe routing is MECE with the query skill (#4292)	5	readFileSync
 test/schema-cli-contract.test.ts	v0.39 T6 — schema CLI contract	7	readFileSync
+test/schema-generated-freshness.test.ts	(file-level)	1	readFileSync
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	readFileSync
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
 test/scripts/classify-tests.test.ts	classify-tests detectors	18	bun-file,doctor-source-helper,exec-scan,readFileSync

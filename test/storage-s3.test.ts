@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import type { S3Client } from '@aws-sdk/client-s3';
-import { HeadObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { S3Storage } from '../src/core/storage/s3.ts';
 
 const CONFIG = { backend: 's3' as const, bucket: 'blobs' };
@@ -12,22 +12,28 @@ const CONFIG = { backend: 's3' as const, bucket: 'blobs' };
  * command it was sent.
  */
 function stubClient(opts: {
-  send?: (command: any) => Promise<any>;
+  send?: (command: any, options?: { abortSignal?: AbortSignal }) => Promise<any>;
   endpoint?: unknown;
   region?: string;
-} = {}): { client: S3Client; sent: any[] } {
+} = {}): {
+  client: S3Client;
+  sent: any[];
+  sentOptions: Array<{ abortSignal?: AbortSignal } | undefined>;
+} {
   const sent: any[] = [];
+  const sentOptions: Array<{ abortSignal?: AbortSignal } | undefined> = [];
   const client = {
-    send: async (command: any) => {
+    send: async (command: any, options?: { abortSignal?: AbortSignal }) => {
       sent.push(command);
-      return (opts.send ?? (async () => ({})))(command);
+      sentOptions.push(options);
+      return (opts.send ?? (async () => ({})))(command, options);
     },
     config: {
       endpoint: opts.endpoint,
       region: async () => opts.region ?? 'us-east-1',
     },
   } as unknown as S3Client;
-  return { client, sent };
+  return { client, sent, sentOptions };
 }
 
 /** An error shaped like the AWS SDK's service exceptions. */
@@ -48,6 +54,22 @@ describe('S3Storage constructor seam', () => {
   test('without an injected client, missing credentials still throw', () => {
     expect(() => new S3Storage(CONFIG))
       .toThrow('S3 storage requires accessKeyId and secretAccessKey in config');
+  });
+});
+
+describe('S3Storage transport timeout', () => {
+  test('passes a real abort signal and aborts a hung upload', async () => {
+    const { client, sent, sentOptions } = stubClient({
+      send: async (_command, options) => new Promise((_resolve, reject) => {
+        const signal = options?.abortSignal;
+        if (!signal) return reject(new Error('missing abort signal'));
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+    });
+    const storage = new S3Storage({ ...CONFIG, requestTimeoutMs: 20 }, client);
+    await expect(storage.upload('hung.bin', Buffer.from('x'))).rejects.toThrow('timed out');
+    expect(sent[0]).toBeInstanceOf(PutObjectCommand);
+    expect(sentOptions[0]?.abortSignal?.aborted).toBe(true);
   });
 });
 
@@ -77,6 +99,30 @@ describe('S3Storage exists', () => {
     expect(await new S3Storage(CONFIG, client).exists('p/a.txt')).toBe(true);
     expect(sent[0]).toBeInstanceOf(HeadObjectCommand);
     expect(sent[0].input).toEqual({ Bucket: 'blobs', Key: 'p/a.txt' });
+  });
+});
+
+describe('S3Storage bounded download', () => {
+  test('rejects from HEAD metadata before issuing GET', async () => {
+    const { client, sent } = stubClient({ send: async () => ({ ContentLength: 33 }) });
+    await expect(new S3Storage(CONFIG, client).download('large.bin', 32)).rejects.toThrow('download limit');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toBeInstanceOf(HeadObjectCommand);
+  });
+
+  test('stream-counts a lying/unknown-length response and aborts above the cap', async () => {
+    const body = {
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.alloc(20, 1);
+        yield Buffer.alloc(20, 2);
+      },
+    };
+    const { client, sent } = stubClient({
+      send: async (command) => command instanceof HeadObjectCommand ? {} : { Body: body },
+    });
+    await expect(new S3Storage(CONFIG, client).download('large.bin', 32)).rejects.toThrow('download limit');
+    expect(sent[1]).toBeInstanceOf(GetObjectCommand);
+    expect(sent[1].input.Range).toBe('bytes=0-32');
   });
 });
 

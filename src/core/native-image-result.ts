@@ -13,6 +13,8 @@ export interface NativeImagePayload {
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
 }
 
+export const NATIVE_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
 const NATIVE_IMAGE_PAYLOAD = Symbol('gbrain.native-image-payload');
 
 export type NativeImageResult = Record<string, unknown> & {

@@ -109,14 +109,24 @@ function maybeAttachBackupNotice(out: ToolResult, opts: DispatchOpts): void {
   }
 }
 
+export interface ToolTextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolImageContent {
+  type: 'image';
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+  /** Type-only compatibility key: native image blocks never serialize text. */
+  readonly text: never;
+}
+
+export type ToolContent = ToolTextContent | ToolImageContent;
+
 export interface ToolResult {
-  /**
-   * The first block is always JSON text. Keep this historical public type so
-   * thin clients and typed consumers that parse content[0] remain source
-   * compatible. `get_image` appends an MCP ImageContent block at runtime;
-   * that protocol-only block is constructed through a narrow cast below.
-   */
-  content: { type: 'text'; text: string }[];
+  /** Metadata JSON is always first; later blocks may be text notices or MCP-native pixels. */
+  content: ToolContent[];
   isError?: boolean;
   /**
    * v0.31 (eD3): MCP spec-blessed metadata slot for server-supplied data.
@@ -334,14 +344,36 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
  * replacing image payload fields with a fixed marker before SQL/SSE logging.
  */
 export function redactImageBytesForLogging(opName: string, params: unknown): unknown {
-  if (!['put_image', 'search_by_image'].includes(opName) || params == null || Array.isArray(params) || typeof params !== 'object') {
-    return params;
-  }
-  const safe = { ...(params as Record<string, unknown>) };
-  for (const key of ['content_base64', 'image_data']) {
-    if (Object.prototype.hasOwnProperty.call(safe, key)) safe[key] = '[REDACTED_IMAGE_BYTES]';
-  }
-  return safe;
+  if (!['put_image', 'search_by_image'].includes(opName)) return params;
+
+  const seen = new WeakSet<object>();
+  const binaryKey = (key: string): boolean => {
+    const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return normalized === 'contentbase64' || normalized === 'imagedata' ||
+      normalized === 'imagebytes' || normalized === 'binarydata' ||
+      /(?:image|content|file|binary).*(?:base64|bytes|data)/.test(normalized) ||
+      /(?:base64|bytes|data).*(?:image|content|file|binary)/.test(normalized);
+  };
+  const looksLikeLargeBase64 = (value: string): boolean =>
+    value.length >= 512 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+  const visit = (value: unknown, key = '', depth = 0): unknown => {
+    if (binaryKey(key)) return '[REDACTED_IMAGE_BYTES]';
+    if (typeof value === 'string') return looksLikeLargeBase64(value) ? '[REDACTED_IMAGE_BYTES]' : value;
+    if (value instanceof Uint8Array) return '[REDACTED_IMAGE_BYTES]';
+    if (value === null || typeof value !== 'object') return value;
+    if (depth >= 12) return '[REDACTED_NESTED_VALUE]';
+    if (seen.has(value)) return '[REDACTED_CIRCULAR_VALUE]';
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(item => visit(item, '', depth + 1));
+    const safe: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      safe[childKey] = visit(childValue, childKey, depth + 1);
+    }
+    return safe;
+  };
+
+  return visit(params);
 }
 
 /**
@@ -716,7 +748,7 @@ export async function dispatchToolCall(
               type: 'image',
               data: Buffer.from(nativeImage.bytes).toString('base64'),
               mimeType: nativeImage.mimeType,
-            } as unknown as { type: 'text'; text: string }),
+            } as ToolImageContent),
           ],
         }
       : { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };

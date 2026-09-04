@@ -135,4 +135,23 @@ describe('image bytes are never logged', () => {
     expect(serialized).toContain('[REDACTED_IMAGE_BYTES]');
     expect(serialized).toContain('docs/design');
   });
+
+  test('recursively redacts binary aliases and large base64 values', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const safe = redactImageBytesForLogging('put_image', {
+      wrapper: {
+        contentBase64: 'secret',
+        payload: { unexpected: 'A'.repeat(512) },
+        bytes: new Uint8Array([1, 2, 3]),
+        circular,
+      },
+      alt_text: 'kept',
+    }) as Record<string, any>;
+    expect(safe.wrapper.contentBase64).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.payload.unexpected).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.bytes).toBe('[REDACTED_IMAGE_BYTES]');
+    expect(safe.wrapper.circular.self).toBe('[REDACTED_CIRCULAR_VALUE]');
+    expect(safe.alt_text).toBe('kept');
+  });
 });

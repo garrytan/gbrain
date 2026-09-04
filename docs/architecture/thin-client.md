@@ -40,6 +40,14 @@ carries the routing-seam picture):
   the transport under the routing seam. All transport errors normalize to
   `RemoteMcpError` via the `toRemoteMcpError` funnel, with a stable
   `RemoteMcpErrorReason` union the dispatcher's `never` switch keys off.
+  `unpackToolResult` keeps block 0 as the structured JSON contract, ignores
+  extra diagnosis text blocks, and reconstructs the non-enumerable native
+  image carrier when the server appends exactly one valid MCP image block;
+  programmatic thin-client/MCP consumers therefore preserve pixels without
+  leaking base64 into JSON/logging paths. The generic `gbrain get-image` CLI
+  formatter intentionally prints metadata only; it does not write the binary
+  to disk. Use an MCP client that consumes the native image block when pixels
+  are required.
   Full symbol-level detail: the `src/core/mcp-client.ts` entry in
   [`KEY_FILES.md`](./KEY_FILES.md).
 - `src/core/cli-options.ts` — `parseGlobalFlags` supports `--timeout=Ns`

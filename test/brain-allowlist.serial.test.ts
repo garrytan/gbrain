@@ -66,6 +66,10 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     expect(BRAIN_TOOL_ALLOWLIST.has('add_link')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('remove_link')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_recent_transcripts')).toBe(false);
+    // Native page images stay on the explicitly surfaced top-level MCP.
+    // Adding binary read/write to every minion is a separate trust decision.
+    expect(BRAIN_TOOL_ALLOWLIST.has('put_image')).toBe(false);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_image')).toBe(false);
   });
 
   test('does NOT contain destructive ops', () => {

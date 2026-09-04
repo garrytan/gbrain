@@ -418,6 +418,7 @@ beforeAll(async () => {
   // mcp.publish_* enabled in ~/.gbrain config can't flip the denied arm.
   await engine.setConfig('mcp.publish_skills', 'false');
   await engine.setConfig('mcp.publish_advisor', 'false');
+  await engine.setConfig('mcp.publish_images', 'false');
 
   // ── Seed the corpus (source: default) ──────────────────────────────
   const put = operationsByName['put_page'];

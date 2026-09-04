@@ -60,6 +60,7 @@ import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
 import { resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { loadConfig } from '../core/config.ts';
 import { buildError, serializeError } from '../core/errors.ts';
+import { buildMcpIngressGuards } from '../mcp/http-ingress-guards.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 import { sqlQueryForEngine, executeRawJsonb } from '../core/sql-query.ts';
@@ -978,6 +979,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // for the same purpose; T8 makes the Express path agree.
   app.set('trust proxy', resolveTrustProxy(process.env.GBRAIN_HTTP_TRUST_PROXY));
 
+  const { preAuth: mcpPreAuthGuard, parseJson: parseMcpJson, postAuth: mcpPostAuthGuard } = buildMcpIngressGuards();
   // ---------------------------------------------------------------------------
   // Cookie parsing — required for /admin auth (express 5 has no built-in)
   // ---------------------------------------------------------------------------
@@ -2323,7 +2325,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null });
   });
 
-  app.post('/mcp', requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), async (req: Request, res: Response) => {
+  app.post('/mcp', mcpPreAuthGuard, requireBearerAuth({ verifier: oauthProvider, resourceMetadataUrl }), mcpPostAuthGuard, parseMcpJson, async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -2339,9 +2341,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // Ambient writeback (opt-in, default off) resolves CONCURRENTLY with the
     // surface read (performance review, this wave — the two independent DB
     // waits must not serialize; an initialize-only resolve is NOT possible
-    // here because /mcp has no JSON middleware, so req.body is undefined
-    // until the SDK transport reads the stream — verified by the OAuth
-    // lifecycle test, which caught exactly that regression). Restart-free
+    // req.body is already parsed by the bounded ingress middleware. Restart-free
     // like the publish gates, fail-closed with a per-engine last-known-good
     // bundle so a transient config blip serves the previous bundle instead
     // of silently dropping the section mid-session. OV-A5: a token without

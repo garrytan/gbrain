@@ -32,7 +32,7 @@ describe('stdioVisibleTools (B1)', () => {
   });
 
   test('gates off (DB plane false): every gated op is subtracted, localOnly ops stay', async () => {
-    const engine = engineWithGates({ 'mcp.publish_skills': 'false', 'mcp.publish_advisor': 'false' });
+    const engine = engineWithGates({ 'mcp.publish_skills': 'false', 'mcp.publish_advisor': 'false', 'mcp.publish_images': 'false' });
     const visible = await stdioVisibleTools(engine, operations);
     const names = visible.map(op => op.name);
     for (const gated of GATED) expect(names).not.toContain(gated);
@@ -42,15 +42,15 @@ describe('stdioVisibleTools (B1)', () => {
   });
 
   test('one gate on: only that gate’s ops return', async () => {
-    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'false' });
+    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'false', 'mcp.publish_images': 'false' });
     const names = (await stdioVisibleTools(engine, operations)).map(op => op.name);
     expect(names).toContain('list_skills');
     expect(names).toContain('get_skill');
     expect(names).not.toContain('advisor');
   });
 
-  test('both gates on: full surfaced set returned unchanged', async () => {
-    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true' });
+  test('all gates on: full surfaced set returned unchanged', async () => {
+    const engine = engineWithGates({ 'mcp.publish_skills': 'true', 'mcp.publish_advisor': 'true', 'mcp.publish_images': 'true' });
     const visible = await stdioVisibleTools(engine, operations);
     expect(visible.length).toBe(operations.length);
   });

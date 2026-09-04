@@ -21,15 +21,48 @@ export class SupabaseStorage implements StorageBackend {
   private serviceRoleKey: string;
   private bucket: string;
   private fetchImpl: FetchImpl;
+  private requestTimeoutMs: number;
 
   constructor(config: StorageConfig, fetchImpl: FetchImpl = fetch) {
     this.projectUrl = config.projectUrl || '';
     this.serviceRoleKey = config.serviceRoleKey || '';
     this.bucket = config.bucket;
     this.fetchImpl = fetchImpl;
+    this.requestTimeoutMs = Number.isSafeInteger(config.requestTimeoutMs) && config.requestTimeoutMs! > 0
+      ? Math.min(config.requestTimeoutMs!, 10 * 60 * 1000)
+      : 60_000;
     if (!this.projectUrl || !this.serviceRoleKey) {
       throw new Error('Supabase storage requires projectUrl and serviceRoleKey in config');
     }
+  }
+
+  private async withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new Error('Supabase storage request timed out')),
+      this.requestTimeoutMs,
+    );
+    timer.unref?.();
+    try {
+      return await operation(controller.signal);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   private url(path: string): string {
@@ -44,17 +77,25 @@ export class SupabaseStorage implements StorageBackend {
   }
 
   async upload(path: string, data: Buffer, mime?: string): Promise<void> {
-    if (data.length >= TUS_THRESHOLD) {
-      await this.uploadTus(path, data, mime);
-    } else {
-      await this.uploadStandard(path, data, mime);
-    }
+    await this.withTimeout(async signal => {
+      if (data.length >= TUS_THRESHOLD) {
+        await this.uploadTus(path, data, mime, signal);
+      } else {
+        await this.uploadStandard(path, data, mime, signal);
+      }
+    });
   }
 
   /** Standard single-request upload for files < 100 MB */
-  private async uploadStandard(path: string, data: Buffer, mime?: string): Promise<void> {
+  private async uploadStandard(
+    path: string,
+    data: Buffer,
+    mime: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
     const res = await this.fetchImpl(this.url(path), {
       method: 'POST',
+      signal,
       headers: {
         ...this.headers(),
         'Content-Type': mime || 'application/octet-stream',
@@ -72,13 +113,19 @@ export class SupabaseStorage implements StorageBackend {
    * TUS resumable upload for files >= 100 MB.
    * Sends in 6 MB chunks with retry + exponential backoff.
    */
-  private async uploadTus(path: string, data: Buffer, mime?: string): Promise<void> {
+  private async uploadTus(
+    path: string,
+    data: Buffer,
+    mime: string | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
     const tusUrl = `${this.projectUrl}/storage/v1/upload/resumable`;
     const objectName = `${this.bucket}/${path}`;
 
     // Step 1: Create the upload session
     const createRes = await this.fetchImpl(tusUrl, {
       method: 'POST',
+      signal,
       headers: {
         ...this.headers(),
         'Tus-Resumable': '1.0.0',
@@ -111,6 +158,7 @@ export class SupabaseStorage implements StorageBackend {
           if (attempt > 0) {
             const headRes = await this.fetchImpl(uploadUrl, {
               method: 'HEAD',
+              signal,
               headers: { ...this.headers(), 'Tus-Resumable': '1.0.0' },
             });
             if (headRes.ok) {
@@ -124,6 +172,7 @@ export class SupabaseStorage implements StorageBackend {
 
           const patchRes = await this.fetchImpl(uploadUrl, {
             method: 'PATCH',
+            signal,
             headers: {
               ...this.headers(),
               'Tus-Resumable': '1.0.0',
@@ -146,68 +195,110 @@ export class SupabaseStorage implements StorageBackend {
           attempt++;
           if (attempt >= maxAttempts) throw err;
           // Exponential backoff: 1s, 2s, 4s
-          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)));
+          await this.abortableDelay(1000 * Math.pow(2, attempt - 1), signal);
         }
       }
     }
   }
 
-  async download(path: string): Promise<Buffer> {
-    const res = await this.fetchImpl(this.url(path), {
-      headers: this.headers(),
+  async download(path: string, maxBytes?: number): Promise<Buffer> {
+    return this.withTimeout(async signal => {
+      const res = await this.fetchImpl(this.url(path), {
+        headers: this.headers(),
+        signal,
+      });
+      if (!res.ok) throw new Error(`Supabase download failed: ${res.status}`);
+      const declaredLength = Number(res.headers.get('content-length'));
+      if (maxBytes !== undefined && Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+        throw new Error(`Storage object exceeds the ${maxBytes}-byte download limit`);
+      }
+      if (res.body) {
+        const reader = res.body.getReader();
+        const chunks: Buffer[] = [];
+        let total = 0;
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          total += value.byteLength;
+          if (maxBytes !== undefined && total > maxBytes) {
+            await reader.cancel();
+            throw new Error(`Storage object exceeds the ${maxBytes}-byte download limit`);
+          }
+          chunks.push(Buffer.from(value));
+        }
+        return Buffer.concat(chunks, total);
+      }
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (maxBytes !== undefined && bytes.length > maxBytes) {
+        throw new Error(`Storage object exceeds the ${maxBytes}-byte download limit`);
+      }
+      return bytes;
     });
-    if (!res.ok) throw new Error(`Supabase download failed: ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
   }
 
   async delete(path: string): Promise<void> {
-    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/${this.bucket}`, {
-      method: 'DELETE',
-      headers: { ...this.headers(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefixes: [path] }),
+    await this.withTimeout(async signal => {
+      const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/${this.bucket}`, {
+        method: 'DELETE',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefixes: [path] }),
+        signal,
+      });
+      if (!res.ok && res.status !== 404) throw new Error(`Supabase delete failed: ${res.status}`);
     });
-    if (!res.ok && res.status !== 404) throw new Error(`Supabase delete failed: ${res.status}`);
   }
 
   async exists(path: string): Promise<boolean> {
-    const res = await this.fetchImpl(this.url(path), {
-      method: 'HEAD',
-      headers: this.headers(),
+    return this.withTimeout(async signal => {
+      const res = await this.fetchImpl(this.url(path), {
+        method: 'HEAD',
+        headers: this.headers(),
+        signal,
+      });
+      if (res.status === 404) return false;
+      if (!res.ok) throw new Error(`Supabase exists failed: ${res.status}`);
+      return true;
     });
-    return res.ok;
   }
 
   async list(prefix: string): Promise<string[]> {
-    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/list/${this.bucket}`, {
-      method: 'POST',
-      headers: { ...this.headers(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix, limit: 1000 }),
+    return this.withTimeout(async signal => {
+      const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/list/${this.bucket}`, {
+        method: 'POST',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prefix, limit: 1000 }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`Supabase list failed: ${res.status}`);
+      const items = await res.json() as { name: string }[];
+      return items.map(i => `${prefix}/${i.name}`);
     });
-    if (!res.ok) throw new Error(`Supabase list failed: ${res.status}`);
-    const items = await res.json() as { name: string }[];
-    return items.map(i => `${prefix}/${i.name}`);
   }
 
   /** Generate a signed URL with 1-hour expiry for private bucket access */
   async getSignedUrl(path: string, expiresIn: number = SIGNED_URL_EXPIRY): Promise<string> {
-    const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${path}`, {
-      method: 'POST',
-      headers: { ...this.headers(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expiresIn }),
+    return this.withTimeout(async signal => {
+      const res = await this.fetchImpl(`${this.projectUrl}/storage/v1/object/sign/${this.bucket}/${path}`, {
+        method: 'POST',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresIn }),
+        signal,
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Supabase signed URL failed: ${res.status} ${body}`);
+      }
+      const result = await res.json() as { signedURL: string };
+      // Supabase returns `signedURL` relative to the Storage API root, e.g.
+      // "/object/sign/<bucket>/<path>?token=...". Prepend projectUrl + "/storage/v1"
+      // (not just projectUrl) or the link 404s. Tolerate an already-absolute URL or a
+      // value that already carries the /storage/v1 prefix.
+      const signed = result.signedURL;
+      if (/^https?:\/\//.test(signed)) return signed;
+      if (signed.startsWith('/storage/v1')) return `${this.projectUrl}${signed}`;
+      return `${this.projectUrl}/storage/v1${signed.startsWith('/') ? '' : '/'}${signed}`;
     });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Supabase signed URL failed: ${res.status} ${body}`);
-    }
-    const result = await res.json() as { signedURL: string };
-    // Supabase returns `signedURL` relative to the Storage API root, e.g.
-    // "/object/sign/<bucket>/<path>?token=...". Prepend projectUrl + "/storage/v1"
-    // (not just projectUrl) or the link 404s. Tolerate an already-absolute URL or a
-    // value that already carries the /storage/v1 prefix.
-    const signed = result.signedURL;
-    if (/^https?:\/\//.test(signed)) return signed;
-    if (signed.startsWith('/storage/v1')) return `${this.projectUrl}${signed}`;
-    return `${this.projectUrl}/storage/v1${signed.startsWith('/') ? '' : '/'}${signed}`;
   }
 
   async getUrl(path: string): Promise<string> {

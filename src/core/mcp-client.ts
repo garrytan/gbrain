@@ -21,6 +21,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { GBrainConfig } from './config.ts';
+import { nativeImageResult, NATIVE_IMAGE_MAX_BYTES } from './native-image-result.ts';
 import { discoverOAuth, mintClientCredentialsToken } from './remote-mcp-probe.ts';
 
 interface CachedToken {
@@ -393,8 +394,32 @@ export function unpackToolResult<T = unknown>(res: unknown): T {
     throw new RemoteMcpError('parse', 'Remote tool returned unexpected content shape');
   }
   try {
-    return JSON.parse(first.text) as T;
+    const parsed = JSON.parse(first.text) as unknown;
+    const imageBlocks = content.filter((block): block is { type: 'image'; data: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' } => {
+      if (block === null || typeof block !== 'object') return false;
+      const candidate = block as { type?: unknown; data?: unknown; mimeType?: unknown };
+      return candidate.type === 'image' && typeof candidate.data === 'string' &&
+        ['image/png', 'image/jpeg', 'image/webp'].includes(String(candidate.mimeType));
+    });
+    if (imageBlocks.length === 0) return parsed as T;
+    if (imageBlocks.length !== 1 || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new RemoteMcpError('parse', 'Remote tool returned an ambiguous native image result');
+    }
+    const image = imageBlocks[0]!;
+    if (image.data.length === 0 || image.data.length > Math.ceil(NATIVE_IMAGE_MAX_BYTES / 3) * 4 + 4 ||
+        image.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) {
+      throw new RemoteMcpError('parse', 'Remote tool returned malformed native image bytes');
+    }
+    const bytes = Buffer.from(image.data, 'base64');
+    if (bytes.length === 0 || bytes.length > NATIVE_IMAGE_MAX_BYTES || bytes.toString('base64') !== image.data) {
+      throw new RemoteMcpError('parse', 'Remote tool returned malformed native image bytes');
+    }
+    return nativeImageResult(parsed as Record<string, unknown>, {
+      bytes,
+      mimeType: image.mimeType,
+    }) as T;
   } catch (e) {
+    if (e instanceof RemoteMcpError) throw e;
     throw new RemoteMcpError('parse', `Remote tool result was not valid JSON: ${(e as Error).message}`);
   }
 }

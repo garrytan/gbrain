@@ -4422,9 +4422,10 @@ export class PostgresEngine implements BrainEngine {
         size_bytes = EXCLUDED.size_bytes,
         content_hash = EXCLUDED.content_hash,
         metadata = EXCLUDED.metadata
+      WHERE files.source_id = EXCLUDED.source_id
       RETURNING id, (xmax = 0) AS created
     `;
-    if (rows.length === 0) throw new Error(`upsertFile returned no rows for ${spec.storage_path}`);
+    if (rows.length === 0) throw new Error(`storage_path collision belongs to another source: ${spec.storage_path}`);
     return { id: rows[0].id, created: !!rows[0].created };
   }
 
@@ -4438,7 +4439,6 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows.length > 0 ? rows[0] : null;
   }
-
   async listFilesForPage(pageId: number): Promise<FileRow[]> {
     const sql = this.sql;
     const rows = await sql<Array<FileRow>>`
@@ -4449,7 +4449,6 @@ export class PostgresEngine implements BrainEngine {
     `;
     return rows as FileRow[];
   }
-
   // Dream-cycle triage verdict cache (v0.23 boolean era; widened by #4152 triage-v1).
   async getDreamVerdict(filePath: string, contentHash: string): Promise<DreamVerdict | null> {
     const sql = this.sql;

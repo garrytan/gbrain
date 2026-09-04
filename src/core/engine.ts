@@ -1778,7 +1778,6 @@ export interface BrainEngine {
   upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }>;
   getFile(sourceId: string, storagePath: string): Promise<FileRow | null>;
   listFilesForPage(pageId: number): Promise<FileRow[]>;
-
   // ============================================================
   // v0.28: Takes (typed/weighted/attributed claims) + synthesis evidence
   // ============================================================
