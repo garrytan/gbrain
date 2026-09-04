@@ -20,7 +20,13 @@
  * Lossless invariant: non-overlapping portions reassemble to original.
  */
 
-import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
+import {
+  countCJKAwareWords,
+  CJK_SENTENCE_DELIMITERS,
+  CJK_CLAUSE_DELIMITERS,
+  CJK_SLUG_CHARS,
+  CJK_DENSITY_THRESHOLD,
+} from '../cjk.ts';
 import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 
@@ -38,8 +44,14 @@ import { safeSplitIndex } from '../text-safe.ts';
  * re-embed (not re-chunk) so existing pages pick up the wrapper on the
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
+ *
+ * v4: CJK overlap uses the same char-as-word counting as countCJKAwareWords,
+ * aligns to 。！？ sentence boundaries, and refuses to split UTF-16 surrogate
+ * pairs in capByChars / extractTrailingContext / splitOnWhitespace.
+ * English-dominant paths are byte-identical to v3. Boundaries change for
+ * CJK-dominant text, so `reindex --markdown` rebuilds those pages.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = 4;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -201,7 +213,22 @@ function capByChars(
       }
     }
     if (end >= text.length) break;
-    const next = safeSplitIndex(text, Math.min(text.length, i + stride));
+    // For CJK-dominant text, try to start the next window at a sentence/
+    // clause boundary instead of a raw char index, but only within the
+    // intended overlap region so no characters are lost.
+    let next = safeSplitIndex(text, Math.min(text.length, i + stride));
+    if (isCJKDominant(text)) {
+      // The raw semantic boundary can land inside a UTF-16 surrogate pair
+      // (an astral emoji like 🚀 sits on two code units), which would split
+      // the pair across two chunks. Correct the index through safeSplitIndex
+      // so no pair is ever cut, but keep the semantic constraint intact:
+      // only keep the corrected index if it stays above `next` (the region's
+      // min); a correction that backs up to ≤ next would leave the window
+      // empty, so fall back to the min value.
+      const rawBoundary = findSemanticBoundaryStart(text, next, end);
+      const corrected = safeSplitIndex(text, rawBoundary);
+      next = corrected > next ? corrected : rawBoundary;
+    }
     i = next > i ? next : i + 1;
   }
   return out;
@@ -317,7 +344,19 @@ function splitOnWhitespace(text: string, target: number): string[] {
     const pieces: string[] = [];
     const charsPerPiece = Math.max(1, target);
     for (let i = 0; i < text.length; i += charsPerPiece) {
-      const slice = text.slice(i, i + charsPerPiece);
+      // Never cut a UTF-16 surrogate pair. If the stride landed i on a low
+      // surrogate (the previous end rounded down), back up to the pair start
+      // so no half is emitted and the pair itself is not lost (the previous
+      // slice stopped before it).
+      let start = i;
+      if (start > 0 && text.charCodeAt(start) >= 0xdc00 && text.charCodeAt(start) <= 0xdfff) {
+        start--;
+      }
+      // If the rounded end backs up all the way to start (tiny charsPerPiece
+      // over an astral char), advance past the pair so no chars are skipped.
+      let end = safeSplitIndex(text, start + charsPerPiece);
+      if (end <= start) end = Math.min(text.length, start + 2);
+      const slice = text.slice(start, end);
       if (slice.trim().length > 0) pieces.push(slice);
     }
     return pieces;
@@ -382,6 +421,12 @@ function applyOverlap(chunks: string[], overlapWords: number): string[] {
  * If a sentence boundary exists within the last N words, start there.
  */
 function extractTrailingContext(text: string, targetWords: number): string {
+  // CJK-dominant text needs char-aware tokenization and CJK sentence
+  // delimiters; keep the English path identical.
+  if (isCJKDominant(text)) {
+    return extractTrailingContextCJK(text, targetWords);
+  }
+
   const words = text.match(/\S+\s*/g) || [];
   if (words.length <= targetWords) return '';
 
@@ -401,6 +446,66 @@ function extractTrailingContext(text: string, targetWords: number): string {
 }
 
 /**
+ * CJK-aware trailing context. Matches the word-count semantics of
+ * countCJKAwareWords (one non-whitespace char = one word when CJK-dominant)
+ * and recognizes CJK sentence delimiters 。！？ as well as ASCII .!?
+ */
+function extractTrailingContextCJK(text: string, targetWords: number): string {
+  // Walk back targetWords non-whitespace chars so overlap spans line up with
+  // the density-based word count used everywhere else.
+  let count = 0;
+  let i = text.length;
+  while (i > 0 && count < targetWords) {
+    i--;
+    if (!/\s/.test(text[i])) count++;
+  }
+  // The walk-back counts code units, so i can land between the two units of
+  // an astral emoji (e.g. 🚀). Back up one more unit to keep the pair whole:
+  // an overlap prefix carrying one extra char is harmless; a lone surrogate
+  // sanitizes to U+FFFD and loses the glyph.
+  if (i > 0 && i < text.length && text.charCodeAt(i) >= 0xdc00 && text.charCodeAt(i) <= 0xdfff) {
+    i--;
+  }
+  const trailing = text.slice(i);
+
+  // Try to align the overlap start to a sentence boundary; CJK sentence
+  // delimiters may be followed by zero or more whitespace chars.
+  const sentenceStart = trailing.search(/[.!?。！？]\s*/);
+  if (sentenceStart !== -1 && sentenceStart < trailing.length / 2) {
+    const afterSentence = trailing.slice(sentenceStart).replace(/^[.!?。！？]\s*/, '');
+    if (afterSentence.trim().length > 0) {
+      return afterSentence;
+    }
+  }
+
+  return trailing;
+}
+
+/**
+ * Return the first semantic boundary index in [min, max) (sentence preferred,
+ * clause fallback), or min if none is found. Keeps the cut inside the intended
+ * overlap window so no characters are skipped.
+ */
+function findSemanticBoundaryStart(text: string, min: number, max: number): number {
+  if (min >= max) return min;
+  const segment = text.slice(min, max);
+
+  const sentenceMatch = segment.match(/[.!?。！？]\s*/);
+  if (sentenceMatch && sentenceMatch.index !== undefined) {
+    const boundary = min + sentenceMatch.index + sentenceMatch[0].length;
+    if (boundary > min && boundary < max) return boundary;
+  }
+
+  const clauseMatch = segment.match(/[；：，、;:,\n]\s*/);
+  if (clauseMatch && clauseMatch.index !== undefined) {
+    const boundary = min + clauseMatch.index + clauseMatch[0].length;
+    if (boundary > min && boundary < max) return boundary;
+  }
+
+  return min;
+}
+
+/**
  * Word count, CJK-aware (v0.32.7). For Latin-dominant text this behaves
  * exactly like the historical `text.match(/\S+/g).length`. When CJK char
  * density exceeds CJK_DENSITY_THRESHOLD (30%), each non-whitespace char is
@@ -414,4 +519,16 @@ function extractTrailingContext(text: string, targetWords: number): string {
  */
 function countWords(text: string): number {
   return countCJKAwareWords(text);
+}
+
+/**
+ * Mirror of countCJKAwareWords's density heuristic: true when non-whitespace
+ * CJK density reaches the threshold where each char is treated as a word.
+ */
+function isCJKDominant(text: string): boolean {
+  const cjkMatches = text.match(new RegExp(`[${CJK_SLUG_CHARS}]`, 'g'));
+  const cjkCount = cjkMatches ? cjkMatches.length : 0;
+  const nonWhitespace = text.replace(/\s/g, '').length;
+  if (nonWhitespace === 0) return false;
+  return cjkCount / nonWhitespace >= CJK_DENSITY_THRESHOLD;
 }
