@@ -2917,7 +2917,25 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
-    if (recipe.implementation !== 'openai-compatible') {
+    if (recipe.implementation === 'claude-cli') {
+      // claude-cli is NOT structured-output capable, despite being a 'native'
+      // tier recipe. ClaudeCliLanguageModel.doGenerate ignores
+      // `options.responseFormat` entirely (it renders prompt → `claude
+      // --print` subprocess → text), so generateObject's json_schema request
+      // is dropped on the floor and the CLI answers with markdown-fenced
+      // JSON as ordinary text. generateObject then sees no object,
+      // `result.object` is undefined, and expansion silently degrades to the
+      // bare query — on EVERY call, after paying for the subprocess round
+      // trip. The native branch below has no viaText fallback to catch it.
+      //
+      // The schemaless text path handles this exact shape: parseLlmJson
+      // strips ```json fences (src/core/llm-json.ts) before the
+      // ExpansionSchema validation. Same recovery the openai-compatible
+      // branches already rely on, reached by implementation rather than by
+      // capability flag because claude-cli's transport — not its model — is
+      // what cannot carry a schema.
+      expansions = await viaText();
+    } else if (recipe.implementation !== 'openai-compatible') {
       // Native providers (Anthropic, OpenAI, Google) support generateObject's
       // structured output natively — unchanged path.
       // (Typed structurally: ReturnType<GenerateObjectFn> erases the schema
