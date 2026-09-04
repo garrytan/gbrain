@@ -18,6 +18,7 @@ import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-conc
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
 import { canonicalLookup } from '../../src/core/model-pricing.ts';
+import { extractPageLinks, makeResolver } from '../../src/core/link-extraction.ts';
 
 let engine: PGLiteEngine;
 
@@ -701,5 +702,87 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
       `SELECT slug FROM pages WHERE slug = 'concepts/captive-portal' AND type = 'concept'`,
     );
     expect(concept.length).toBe(1);
+  });
+});
+
+/**
+ * A concept is derived, not imported — it has no source_uri/source_slug, so
+ * its provenance is its member atoms. The phase already fetches each atom's
+ * slug and used to discard it at grouping time, rendering the member list as
+ * plain text that no extractor could ever turn into an edge. These pin that
+ * the list is now real wikilinks: clickable in a reading view immediately,
+ * and picked up as concept -> atom edges by the normal link-extraction pass
+ * (importFromContent itself only extracts code refs, so the DB rows still
+ * arrive with that pass, not at write time).
+ */
+describe('concept member atoms are wikilinked at synthesis time', () => {
+  const atomsFor = (n: number, concept: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      slug: `atoms/2026-01-01/member-${i}`,
+      title: `Member atom ${i}`,
+      body: 'body text',
+      concept_refs: [concept],
+    }));
+
+  async function seedAtoms(atoms: Array<{ slug: string; title: string; body: string }>) {
+    for (const a of atoms) {
+      await engine.putPage(a.slug, { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' });
+    }
+  }
+
+  test('member atoms render as wikilinks the extractor resolves to the atom slugs', async () => {
+    const atoms = atomsFor(3, 'dive-entry-mechanics');
+    await seedAtoms(atoms);
+
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms });
+    expect(result.status).toBe('ok');
+
+    const page = await engine.getPage('concepts/dive-entry-mechanics', { sourceId: 'default' });
+    expect(page?.compiled_truth).toContain('[[atoms/2026-01-01/member-0|Member atom 0]]');
+
+    // The claim that matters: these are extractable into real edges.
+    const { candidates } = await extractPageLinks(
+      'concepts/dive-entry-mechanics',
+      page!.compiled_truth,
+      page!.frontmatter ?? {},
+      'concept' as never,
+      makeResolver(engine, { mode: 'live', sourceId: 'default' }),
+    );
+    const targets = candidates.map((c) => c.targetSlug);
+    expect(targets).toContain('atoms/2026-01-01/member-0');
+    expect(targets).toContain('atoms/2026-01-01/member-2');
+  });
+
+  test('caps the rendered list and says how many were elided', async () => {
+    const atoms = atomsFor(60, 'big-hub');
+    await seedAtoms(atoms);
+    // 60 atoms is T1, which takes the LLM path — stub it so no network call.
+    await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: stubChat('A hub concept.') });
+
+    const page = await engine.getPage('concepts/big-hub', { sourceId: 'default' });
+    const rendered = (page?.compiled_truth ?? '').match(/^- \[\[/gm) ?? [];
+    expect(rendered.length).toBe(50);
+    expect(page?.compiled_truth).toContain('and 10 more');
+  });
+
+  test('a title containing ]] or | cannot terminate the wikilink early', async () => {
+    const atoms = [
+      { slug: 'atoms/2026-01-01/tricky', title: 'Broken ]] title | with pipe', body: 'b', concept_refs: ['tricky-concept'] },
+      { slug: 'atoms/2026-01-01/tricky-2', title: 'Second atom', body: 'b', concept_refs: ['tricky-concept'] },
+    ];
+    await seedAtoms(atoms);
+    await runPhaseSynthesizeConcepts(engine, { _atoms: atoms });
+
+    const page = await engine.getPage('concepts/tricky-concept', { sourceId: 'default' });
+    const { candidates } = await extractPageLinks(
+      'concepts/tricky-concept',
+      page!.compiled_truth,
+      page!.frontmatter ?? {},
+      'concept' as never,
+      makeResolver(engine, { mode: 'live', sourceId: 'default' }),
+    );
+    const targets = candidates.map((c) => c.targetSlug);
+    expect(targets).toContain('atoms/2026-01-01/tricky');
+    expect(targets).toContain('atoms/2026-01-01/tricky-2');
   });
 });
