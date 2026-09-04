@@ -80,6 +80,8 @@ export interface SynthesizeConceptsOpts {
 
 interface AtomGroup {
   conceptSlug: string;
+  /** Parallel to atomTitles — the member atoms' slugs, for body wikilinks. */
+  atomSlugs: string[];
   atomTitles: string[];
   atomBodies: string[];
   tier: 'T1' | 'T2' | 'T3' | 'T4';
@@ -144,10 +146,11 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by concept slug
-  const groups = new Map<string, { titles: string[]; bodies: string[] }>();
+  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[] }>();
   for (const atom of atoms) {
     for (const conceptSlug of atom.concept_refs) {
-      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [] };
+      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [] };
+      existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
       groups.set(conceptSlug, existing);
@@ -163,6 +166,7 @@ export async function runPhaseSynthesizeConcepts(
       count >= TIER_T1_MIN ? 'T1' : count >= TIER_T2_MIN ? 'T2' : 'T3';
     atomGroups.push({
       conceptSlug,
+      atomSlugs: data.slugs,
       atomTitles: data.titles,
       atomBodies: data.bodies,
       tier,
@@ -318,6 +322,10 @@ export async function runPhaseSynthesizeConcepts(
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
+      // Every mode gets the member block — the LLM narrative is prose and
+      // never emits wikilinks of its own, so without this the LLM-written
+      // concepts would be the only ones left with no provenance edges.
+      const body = `${narrative}${memberAtomsBlock(group)}`;
       const md = serializeMarkdown(
         {
           tier: group.tier,
@@ -327,7 +335,7 @@ export async function runPhaseSynthesizeConcepts(
           synthesized_at: new Date().toISOString(),
           synthesized_by: 'synthesize_concepts-v0.41',
         },
-        narrative,
+        body,
         '',
         { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
       );
@@ -415,11 +423,48 @@ export async function runPhaseSynthesizeConcepts(
 function deterministicNarrative(group: AtomGroup): string {
   const tier = group.tier;
   const count = group.atomTitles.length;
-  return (
-    `${tier} concept. ${count} atom${count === 1 ? '' : 's'} reference this. ` +
-    `Top mentions:\n${group.atomTitles
-      .slice(0, 5)
-      .map((t) => `  - ${t}`)
-      .join('\n')}`
-  );
+  // The member list itself is appended for EVERY synthesis mode by
+  // memberAtomsBlock — as wikilinks, not the plain-text titles this used to
+  // inline. Repeating it here would duplicate it on the page.
+  return `${tier} concept. ${count} atom${count === 1 ? '' : 's'} reference this.`;
+}
+
+/**
+ * The atoms this concept was synthesized from, rendered as wikilinks.
+ *
+ * A concept is derived, not imported: it has no source_uri and no
+ * source_slug, so its provenance IS its member atoms. Emitting them as
+ * wikilinks means the canonical importFromContent pipeline extracts them into
+ * real link rows (link_source='markdown') at write time — no new link_source,
+ * no extra phase, and no waiting for a later pass. That matters because
+ * `concepts-ladder` runs separately and only records atom → concept; until it
+ * catches up a freshly synthesized concept has NO edges at all and reads as an
+ * orphan. This also supplies the missing direction: concept → member atom as
+ * provenance, where the only existing outbound edge is
+ * `atom-semantic-neighbor`, which is similarity rather than lineage.
+ *
+ * Capped: mention_count reaches 2,222 on this author's brain while p99 is 47,
+ * so an uncapped list would render a several-thousand-line body for a handful
+ * of hub concepts. Completeness is not lost — concepts-ladder still records
+ * every member on the inbound side.
+ */
+const MEMBER_ATOM_LINK_CAP = 50;
+
+function memberAtomsBlock(group: AtomGroup): string {
+  const rows: string[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < group.atomSlugs.length && rows.length < MEMBER_ATOM_LINK_CAP; i++) {
+    const slug = group.atomSlugs[i];
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    // `]`, `[` and `|` would terminate the wikilink early (see
+    // WIKILINK_GENERIC_RE); atom titles are model-authored and do contain
+    // punctuation, so strip those three and collapse the whitespace.
+    const display = (group.atomTitles[i] ?? '').replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim();
+    rows.push(display ? `- [[${slug}|${display}]]` : `- [[${slug}]]`);
+  }
+  if (rows.length === 0) return '';
+  const total = new Set(group.atomSlugs.filter(Boolean)).size;
+  const more = total > rows.length ? `\n\n_…and ${total - rows.length} more._` : '';
+  return `\n\n## Member atoms\n\n${rows.join('\n')}${more}\n`;
 }
