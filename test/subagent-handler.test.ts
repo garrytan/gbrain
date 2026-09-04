@@ -982,6 +982,69 @@ describe('write accounting (#4217)', () => {
     expect(result.pages_attempted).toBe(0);
   });
 
+  // ── #4823 D4: the child claims a write it never made ────────────────────
+  //
+  // Distinct from the three cases above: there is no artifact of an attempt to
+  // find. One message, zero tool calls, "Done. One page written" naming a slug
+  // that does not exist. `turns === 0` cannot separate it from a genuine skip —
+  // only the text can, via the job's own hash suffix that the prompt supplies.
+  test('zero attempts + claimed slug carrying the job hash suffix → UnrecoverableError', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient(
+        '**Done.** One page written.\n\n1. `wiki/originals/ideas/2026-04-13-sequence-first-abc123`',
+      ),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true, oneshot_slug_suffix: 'abc123' });
+    await expect(handler(ctx)).rejects.toThrow(/zero put_page writes and claims a page slug it never wrote/);
+  });
+
+  test('decline naming NO slug stays completed even with a suffix configured', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('Reviewed the transcript; nothing met the bar. No page warranted.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true, oneshot_slug_suffix: 'abc123' });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+    expect(result.stop_reason).toBe('end_turn');
+  });
+
+  test('suffix quoted in prose but not slug-shaped stays completed', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('The transcript hash suffix abc123 was supplied, but nothing met the bar.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true, oneshot_slug_suffix: 'abc123' });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+  });
+
+  test('claimed slug for a DIFFERENT suffix does not trip this job', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('Related prior work lives at `wiki/originals/ideas/something-999zzz`; nothing new to write.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true, oneshot_slug_suffix: 'abc123' });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+  });
+
+  test('claimed slug WITHOUT require_writes stays completed', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('**Done.** `wiki/originals/ideas/x-abc123`'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'answer', oneshot_slug_suffix: 'abc123' });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+  });
+
   test('non-put_page tool failures do not count toward write accounting', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'tool_use', id: 'tu_b', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },

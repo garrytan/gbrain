@@ -246,6 +246,47 @@ export function detectUnlandedWriteEvidence(text: string | undefined | null): st
 }
 
 /**
+ * #4823 D4 — a child that claims a write it never made.
+ *
+ * The three signals above all key on an ARTIFACT of a failed attempt (a
+ * mangled block, a rejection string, a forged result envelope), so they only
+ * fire when the child actually tried. The April re-run surfaced a child that
+ * did not try at all: one assistant message, zero tool calls, reading
+ * "**Done.** One page written" and naming a slug that was never created.
+ * There is no artifact to find — it confabulated the SUMMARY rather than the
+ * envelope, one level above every signal we had.
+ *
+ * `turns === 0` cannot separate it: a legitimate Task-D skip is also
+ * `turns: 0`. What separates them is WHAT the text says. A real skip explains
+ * why nothing was written; a confabulation cites the page it claims to have
+ * written — and that slug necessarily carries this job's own hash suffix,
+ * because the prompt hands it to the child ("Transcript hash suffix (USE THIS
+ * in slugs): <suffix>"). Verified on the pair: the confabulation cites it, the
+ * genuine decline never mentions it.
+ *
+ * Requiring a `/` before the suffix keeps this to slug-SHAPED tokens, so a
+ * child that merely quotes its suffix in prose does not trip the check.
+ *
+ * Deliberately fails toward flagging: a false positive dead-letters a job
+ * whose key then releases for the next cycle (one wasted retry, and the job is
+ * VISIBLE as dead). A false negative is permanent silent data loss. Given that
+ * asymmetry, a decline that names a slug it chose not to write is an
+ * acceptable cost.
+ */
+export function detectConfabulatedWriteClaim(
+  text: string | undefined | null,
+  slugSuffix: string | undefined | null,
+): string | null {
+  if (!text || !slugSuffix) return null;
+  const escaped = slugSuffix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // slug-shaped: at least one path separator before the job's own suffix
+  const slugLike = new RegExp(`[A-Za-z0-9._-]+/[A-Za-z0-9._/-]*${escaped}`);
+  const match = slugLike.exec(text);
+  if (!match) return null;
+  return `claims a page slug it never wrote (${match[0]})`;
+}
+
+/**
  * #4217 — structural write accounting. A subagent job's status used to reflect
  * only "the agent turn finished"; 22 consecutive jobs once reported
  * `completed` while every put_page failed (embedding-dimension mismatch) and
@@ -271,7 +312,7 @@ export async function finalizeWriteAccounting(
   engine: BrainEngine,
   jobId: number,
   result: SubagentResult,
-  opts: { requireWrites: boolean; scopeToolUseIdPrefix?: string },
+  opts: { requireWrites: boolean; scopeToolUseIdPrefix?: string; slugSuffix?: string },
 ): Promise<SubagentResult> {
   let rows: Array<{ status: string; error: string | null }>;
   try {
@@ -336,6 +377,13 @@ export async function finalizeWriteAccounting(
     if (evidence) {
       throw new UnrecoverableError(
         `job produced zero put_page writes but attempted one — ${evidence}`,
+      );
+    }
+    // D4: no artifact of an attempt, but the child says it wrote a page.
+    const confabulated = detectConfabulatedWriteClaim(result.result, opts.slugSuffix);
+    if (confabulated) {
+      throw new UnrecoverableError(
+        `job produced zero put_page writes and ${confabulated}`,
       );
     }
   }

@@ -306,6 +306,11 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         : inner;
     return finalizeWriteAccounting(engine, ctx.id, stamped, {
       requireWrites: dataForAccounting.require_writes === true,
+      // #4823 D4: the child's own hash suffix, so a claimed-but-unwritten slug
+      // is distinguishable from a genuine skip.
+      ...(typeof dataForAccounting.oneshot_slug_suffix === 'string'
+        ? { slugSuffix: dataForAccounting.oneshot_slug_suffix }
+        : {}),
       // OV-4: a successful oneshot job's verdict is scoped to its own
       // invocation family; a fallback wrote through the loop (no oneshot
       // rows exist — validation precedes all writes), so job-wide is exact.
