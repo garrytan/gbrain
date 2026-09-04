@@ -102,6 +102,13 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(freshnessBlock).toContain('pull: sourceConfigHasRemoteUrl(src.config)');
   });
 
+  test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {
+    const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
+    expect(freshnessIdx).toBeGreaterThan(-1);
+    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 900), freshnessIdx + 100);
+    expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path)');
+  });
+
   test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
     expect(AUTOPILOT_SRC).toContain(
       'idempotency_key: autopilotRemediationIdempotencyKey(step.idempotency_key, slot)',

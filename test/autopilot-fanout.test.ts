@@ -250,7 +250,9 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
       emit: (line: string) => events.push(line),
       log: (line: string) => logs.push(line),
     };
-    return { engine, queue, added, events, logs, fanoutOpts };
+    const optsWithPathSeam = fanoutOpts as Parameters<typeof dispatchPerSource>[2];
+    optsWithPathSeam.pathExists = (_path: string) => true;
+    return { engine, queue, added, events, logs, fanoutOpts: optsWithPathSeam };
   }
 
   test('empty sources list falls back to legacy single-job dispatch', async () => {
@@ -285,6 +287,42 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     // source_id threaded through job data
     const sourceIds = added.map(j => (j.data as Record<string, unknown>).source_id).sort();
     expect(sourceIds).toEqual(['alpha', 'beta']);
+  });
+
+  test('sources whose local_path is missing on this machine are skipped before dispatch', async () => {
+    const present = src('present');
+    present.local_path = '/present/brain';
+    const missing = src('foreign');
+    missing.local_path = '/foreign/brain';
+    const { engine, queue, added, events, fanoutOpts } = makeStubs([present, missing]);
+    fanoutOpts.pathExists = (p) => p === '/present/brain';
+
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual(['present']);
+    expect(result.skipped_unavailable_path).toEqual(['foreign']);
+    expect(added.length).toBe(1);
+    expect((added[0].data as Record<string, unknown>).source_id).toBe('present');
+    const skipped = events.find(e => e.includes('fanout_source_path_skipped'));
+    expect(skipped).toBeDefined();
+    expect(JSON.parse(skipped!).source_id).toBe('foreign');
+  });
+
+  test('relative local_path rows are skipped by the same fan-out guard', () => {
+    const relative = src('legacy');
+    relative.local_path = 'notes/brain';
+    const result = selectSourcesForDispatch(
+      [src('present'), relative],
+      10,
+      Date.parse('2026-05-22T12:00:00.000Z'),
+      60,
+      new Map(),
+      { baseMin: 0, capMin: 120 },
+      () => true,
+    );
+
+    expect(result.dispatch.map(s => s.id)).toEqual(['present']);
+    expect(result.skippedUnavailablePath.map(s => s.id)).toEqual(['legacy']);
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {
@@ -335,7 +373,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     } as unknown as Parameters<typeof dispatchPerSource>[1];
     const result = await dispatchPerSource(engine, queue, {
       repoPath: '/tmp', slot: 's', timeoutMs: 1, fanoutMax: 4, jsonMode: true,
-      emit: (l) => events.push(l), log: () => {},
+      emit: (l) => events.push(l), log: () => {}, pathExists: () => true,
     });
     // 2 of 3 dispatched (alpha + charlie); boom failed but didn't abort
     expect(result.dispatched.sort()).toEqual(['alpha', 'charlie']);
@@ -389,7 +427,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     let nextId = 200;
     const engine = {
       kind: 'postgres' as const,
-      listAllSources: async () => [src('a'), src('b')],
+      listAllSources: async () => [{ ...src('a'), local_path: null }, { ...src('b'), local_path: null }],
       getConfig: async () => null,
       executeRaw: async () => [],
     } as unknown as BrainEngine;
