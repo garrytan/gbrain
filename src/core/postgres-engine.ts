@@ -4403,10 +4403,10 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as RawData[];
   }
 
-  // Files (v0.27.1): binary asset metadata. Image bytes never touch the DB
-  // (storage_path references a path inside the brain repo). Identity is
-  // (source_id, storage_path); re-upsert with same content_hash is a no-op,
-  // different content_hash overwrites in place.
+  // Files (v0.27.1): binary asset metadata. Bytes never touch the DB;
+  // storage_path references either a configured backend object or a
+  // git-tracked path (distinguished by metadata.storage). The DB constraint
+  // keeps storage_path globally unique, so multi-source callers namespace it.
   async upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }> {
     const sql = this.sql;
     const sourceId = spec.source_id ?? 'default';

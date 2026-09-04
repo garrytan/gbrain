@@ -43,7 +43,7 @@ import {
 import { hasScope, ALLOWED_SCOPES_LIST, normalizeScopesInput } from '../core/scope.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { normalizeSourceInput, normalizeFederatedReadInput } from '../core/source-id.ts';
-import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
+import { summarizeMcpParams, redactImageBytesForLogging, dispatchToolCall, requestLogStatusForResult } from '../mcp/dispatch.ts';
 import { resolveStrictParamsMode } from '../mcp/validate-params.ts';
 import { buildToolDefs } from '../mcp/tool-defs.ts';
 import {
@@ -2541,9 +2541,9 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       // migration v41 in src/core/migrate.ts.
       const safeParamsSummary = summarizeMcpParams(name, params);
       const logParamsObj: unknown = logFullParams
-        ? (params || null)
+        ? (redactImageBytesForLogging(name, params) || null)
         : (safeParamsSummary || null);
-      const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
+      const broadcastParams = logFullParams ? (redactImageBytesForLogging(name, params) || {}) : safeParamsSummary;
 
       // v0.31 (D12 / eE1): refactor the inlined op.handler call to go through
       // src/mcp/dispatch.ts so HTTP MCP shares the same dispatch path as

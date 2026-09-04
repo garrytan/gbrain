@@ -105,6 +105,7 @@ const MATRIX: Row[] = [
   { name: 'synthesize', mode: 'skip', reason: 'LLM-dependent; keyless envs cannot run it — verbs conformance owns the error path' },
   { name: 'think', mode: 'skip', reason: 'LLM-dependent; think-source-isolation-pglite e2e owns its scoping' },
   { name: 'search_by_image', mode: 'skip', reason: 'needs image-embedding infra; cross-modal suites own it' },
+  { name: 'get_image', mode: 'skip', reason: 'page-owned binary backend + legacy source isolation are pinned in test/owned-images.test.ts' },
   { name: 'volunteer_context', mode: 'skip', reason: 'session/reflex machinery; volunteer-context suites own scoping' },
   { name: 'context_pack', mode: 'skip', reason: 'verbs conformance owns it; budget-packed composite of scoped reads' },
   { name: 'delta', mode: 'skip', reason: 'session-cursor verb; conformance suite owns it — page-delta arm is session-coupled (probe: fresh writes not listed)' },

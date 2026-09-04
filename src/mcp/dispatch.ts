@@ -28,6 +28,7 @@ import {
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
 import { maybeRefreshBackupStatusInProcess } from '../core/backup/coverage.ts';
+import { getNativeImagePayload } from '../core/native-image-result.ts';
 
 // WP3: normalization + validation moved to validate-params.ts (direct unit
 // surface). Re-exported here so existing imports/tests keep working.
@@ -109,6 +110,12 @@ function maybeAttachBackupNotice(out: ToolResult, opts: DispatchOpts): void {
 }
 
 export interface ToolResult {
+  /**
+   * The first block is always JSON text. Keep this historical public type so
+   * thin clients and typed consumers that parse content[0] remain source
+   * compatible. `get_image` appends an MCP ImageContent block at runtime;
+   * that protocol-only block is constructed through a narrow cast below.
+   */
   content: { type: 'text'; text: string }[];
   isError?: boolean;
   /**
@@ -319,6 +326,22 @@ export function summarizeMcpParams(opName: string, params: unknown): ParamSummar
     kind: typeof params,
     ...(approxBytes !== undefined ? { approx_bytes: approxBytes } : {}),
   };
+}
+
+/**
+ * Even the explicit full-parameter debug mode must never persist image bytes.
+ * Keep the historical escape hatch for ordinary text parameters while
+ * replacing image payload fields with a fixed marker before SQL/SSE logging.
+ */
+export function redactImageBytesForLogging(opName: string, params: unknown): unknown {
+  if (!['put_image', 'search_by_image'].includes(opName) || params == null || Array.isArray(params) || typeof params !== 'object') {
+    return params;
+  }
+  const safe = { ...(params as Record<string, unknown>) };
+  for (const key of ['content_base64', 'image_data']) {
+    if (Object.prototype.hasOwnProperty.call(safe, key)) safe[key] = '[REDACTED_IMAGE_BYTES]';
+  }
+  return safe;
 }
 
 /**
@@ -682,7 +705,21 @@ export async function dispatchToolCall(
         ...(name === 'remember' && typeof r?.status === 'string' ? { remember_status: r.status } : {}),
       });
     }
-    const out: ToolResult = { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    const nativeImage = getNativeImagePayload(result);
+    const out: ToolResult = nativeImage
+      ? {
+          // Metadata stays first for old thin clients that parse content[0]
+          // only. Pixels are a real MCP image block, never base64 text.
+          content: [
+            { type: 'text', text: JSON.stringify(result, null, 2) },
+            ({
+              type: 'image',
+              data: Buffer.from(nativeImage.bytes).toString('base64'),
+              mimeType: nativeImage.mimeType,
+            } as unknown as { type: 'text'; text: string }),
+          ],
+        }
+      : { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     // D8: model-visible loudness for empty retrievals. The body stays a bare
     // array (D3 — deployed thin-clients parse content[0] only), and a SECOND
     // text block carries the diagnosis the model actually sees. Structured
