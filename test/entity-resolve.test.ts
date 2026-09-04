@@ -184,6 +184,32 @@ describe('slugify', () => {
   it('strips accents', () => {
     expect(slugify('José García')).toBe('jose-garcia');
   });
+
+  // Stroke/bar/ligature letters carry no Unicode decomposition, so the NFKD
+  // pass cannot fold them and the non-alphanumeric sweep used to delete them:
+  // "Đăng Example" slugged to "ang-example", filing facts under an entity slug
+  // that no lookup by name could ever resolve.
+  it('folds stroke letters that NFKD cannot decompose', () => {
+    expect(slugify('Đăng Example')).toBe('dang-example');
+    expect(slugify('Bảo Đào Example')).toBe('bao-dao-example');
+  });
+
+  it('folds the same class across other Latin scripts', () => {
+    expect(slugify('Łukasz Example')).toBe('lukasz-example');
+    expect(slugify('Søren Example')).toBe('soren-example');
+    expect(slugify('Weiß Example')).toBe('weiss-example');
+    expect(slugify('Þór Example')).toBe('thor-example');
+  });
+
+  it('folds a stroke letter that also carries a combining accent', () => {
+    // "ǿ" decomposes to "ø" + U+0301: the mark strips, then the table folds.
+    expect(slugify('Ǿrn Example')).toBe('orn-example');
+  });
+
+  it('keeps a name that is only stroke letters reachable', () => {
+    // Pre-fix this collapsed to the empty string.
+    expect(slugify('Đ')).toBe('d');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────

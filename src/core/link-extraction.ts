@@ -18,6 +18,7 @@ import { stripCodeBlocks } from './markdown-code.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
 import { slugifyPath } from './sync.ts';
 import { SLUG_WORD_CHARS } from './cjk.ts';
+import { foldNonDecomposingLatin } from './latin-fold.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
@@ -1085,8 +1086,15 @@ export interface SlugResolver {
  */
 const BASENAME_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}\\s\\-]`, 'gu');
 export function normalizeBasename(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC')
-    .toLowerCase().replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
+  // The accent strip cannot fold stroke letters \u2014 Unicode gives them no
+  // decomposition \u2014 so the shared table runs after it, on both the index and
+  // the query side. Without it a display name keeps the unfolded letter while
+  // the ASCII page slug does not, and the lookup misses in silence:
+  // `[[\u0110\u1ee9c Example]]` keyed `\u0111uc-example` and never found `people/duc-example`.
+  const folded = foldNonDecomposingLatin(
+    s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC').toLowerCase(),
+  );
+  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
 }
 
 /** Stable order: shorter slug first (likely closer to brain root), then lexical. */

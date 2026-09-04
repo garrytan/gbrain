@@ -1901,6 +1901,30 @@ describe('normalizeBasename — CJK + accent folding (#2367)', () => {
       .toEqual(['meetings/루카텍-올핸즈-미팅']);
   });
 
+  // Stroke letters (đ ł ø ß …) have no Unicode decomposition, so the accent
+  // strip leaves them unfolded and the key diverges from the ASCII page slug
+  // — the lookup then misses in silence. Each name here carries BOTH a
+  // decomposing accent (folded by the strip) and a stroke letter (folded by
+  // the shared table), so a half-fix handling only one class still fails.
+  test('stroke letters fold to the ASCII form the page slug uses', () => {
+    expect(normalizeBasename('Đức Example')).toBe('duc-example');
+    expect(normalizeBasename('Łukasz Example')).toBe('lukasz-example');
+    expect(normalizeBasename('Søren Example')).toBe('soren-example');
+  });
+
+  test('basename index: a stroke-letter display name hits its ASCII slug tail', () => {
+    const idx = buildBasenameIndex(['people/duc-example', 'people/lukasz-example']);
+    expect(queryBasenameIndex(idx, 'Đức Example')).toEqual(['people/duc-example']);
+    expect(queryBasenameIndex(idx, 'Łukasz Example')).toEqual(['people/lukasz-example']);
+  });
+
+  test('index side folds too, so a stroke-letter slug stays reachable', () => {
+    // Symmetry: both sides run through normalizeBasename, so a page whose own
+    // slug kept the stroke letter still answers to the ASCII display name.
+    const idx = buildBasenameIndex(['people/đuc-example']);
+    expect(queryBasenameIndex(idx, 'Duc Example')).toEqual(['people/đuc-example']);
+  });
+
   test('end-to-end: bare CJK wikilink resolves via the basename index', async () => {
     const idx = buildBasenameIndex(['meetings/루카텍-올핸즈-미팅']);
     const resolver: SlugResolver = {
