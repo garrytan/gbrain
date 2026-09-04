@@ -218,6 +218,11 @@ describe('dims.dimsProviderOptions', () => {
     expect(opts).toEqual({ google: { outputDimensionality: 768 } });
   });
 
+  test('OpenAI-compatible gemini-embedding returns dimensions', () => {
+    const opts = dimsProviderOptions('openai-compatible', 'google/gemini-embedding-001', 1024);
+    expect(opts).toEqual({ openaiCompatible: { dimensions: 1024 } });
+  });
+
   test('Anthropic returns undefined (no embedding model)', () => {
     const opts = dimsProviderOptions('native-anthropic', 'claude-haiku-4-5', 1536);
     expect(opts).toBeUndefined();
