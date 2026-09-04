@@ -516,6 +516,8 @@ export interface Operation {
     aliases?: string[];
     positional?: string[];
     stdin?: string;
+    /** Parameter names whose CLI tokens are decoded as JSON containers. */
+    jsonParams?: string[];
     hidden?: boolean;
   };
 }

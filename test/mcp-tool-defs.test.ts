@@ -102,6 +102,17 @@ describe('buildToolDefs', () => {
     expect(buildToolDefs([])).toEqual([]);
   });
 
+  test('list_pages exposes both frontmatter filter clause shapes', () => {
+    const listPages = buildToolDefs(operations).find(def => def.name === 'list_pages');
+    const properties = listPages?.inputSchema.properties as Record<string, {
+      items?: { description?: string };
+    }>;
+    const description = properties.frontmatter_filters?.items?.description;
+
+    expect(description).toContain('operator:"eq_ci"');
+    expect(description).toContain('operator:"contains_any_ci"');
+  });
+
   test('every def has object inputSchema with properties + required array', () => {
     for (const def of buildToolDefs(operations)) {
       expect(def.inputSchema.type).toBe('object');

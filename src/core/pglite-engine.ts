@@ -120,6 +120,7 @@ import type { PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
 import * as salienceImpl from './pglite-engine/salience.ts';
 import type { PgliteSalienceDeps } from './pglite-engine/salience.ts';
 import { searchKeywordCJK } from './pglite-engine/cjk-search.ts';
+import { appendFrontmatterListPagePredicate } from './pglite-engine/page-list.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -2060,10 +2061,11 @@ export class PGLiteEngine implements BrainEngine {
     if (filters?.sourceIds && filters.sourceIds.length > 0) {
       params.push(filters.sourceIds);
       where.push(`p.source_id = ANY($${params.length}::text[])`);
-    } else if (filters?.sourceId) {
+    } else if (filters?.sourceId !== undefined) {
       params.push(filters.sourceId);
       where.push(`p.source_id = $${params.length}`);
     }
+    appendFrontmatterListPagePredicate(filters?.frontmatterFilters, params, where);
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');

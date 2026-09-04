@@ -121,12 +121,11 @@ describe('list_pages — offset threads through (regression: was silently ignore
     expect(rows.length).toBe(7);
   });
 
-  test('garbage offset (negative / NaN) is ignored, not fatal', async () => {
+  test('negative and non-integer offsets are rejected', async () => {
     const { ctx } = mkCtx({ remote: false });
-    const neg = (await op().handler(ctx, { limit: 10, offset: -5, sort: 'slug' })) as any[];
-    const nan = (await op().handler(ctx, { limit: 10, offset: NaN, sort: 'slug' })) as any[];
-    const base = (await op().handler(ctx, { limit: 10, sort: 'slug' })) as any[];
-    expect(neg.map(r => r.slug)).toEqual(base.map(r => r.slug));
-    expect(nan.map(r => r.slug)).toEqual(base.map(r => r.slug));
+    await expect(op().handler(ctx, { limit: 10, offset: -5, sort: 'slug' }))
+      .rejects.toThrow('offset must be a non-negative integer');
+    await expect(op().handler(ctx, { limit: 10, offset: NaN, sort: 'slug' }))
+      .rejects.toThrow('offset must be a non-negative integer');
   });
 });
