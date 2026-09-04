@@ -456,7 +456,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // 27→28: compiledTruthBoost suppresses the 2x boost for synthetic
     // chunkless title rows (#4256, fixes #3695's fusion path) — reorders
     // fused rows for identical knobs; version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(28);
+    // 28→29: preferred-type candidate generation and cache segmentation.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -486,7 +487,8 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // adaptive-on calls now cache instead of skipping.
     // 27→28: compiledTruthBoost synthetic-row suppression (#4256/#3695) —
     // version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(28);
+    // 28→29: preferred-type candidate generation and cache segmentation.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -538,6 +540,16 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     expect(cfgA).not.toBe(cfgB);
     // Undefined falls back to 'none' so pattern-less brains hash stably.
     expect(unset).toBe(none);
+  });
+
+  test('preferred-type cache state is isolated and canonicalized as a set', () => {
+    const knobs = resolveSearchMode({ mode: 'balanced' });
+    const none = knobsHash(knobs);
+    const meetingFirst = knobsHash(knobs, { preferredTypes: ['meeting', 'transcript'] });
+    const transcriptFirst = knobsHash(knobs, { preferredTypes: ['transcript', 'meeting', 'meeting'] });
+
+    expect(meetingFirst).not.toBe(none);
+    expect(transcriptFirst).toBe(meetingFirst);
   });
 
   test('T1 (codex): floor_ratio set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -702,8 +714,9 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 28 (…; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(28);
+  test('KNOBS_HASH_VERSION is 29 (…; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 preferred-type cache isolation)', () => {
+    // 28→29: preferred-type candidate generation and cache segmentation.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {

@@ -163,3 +163,17 @@ describe('classifyQuery — orthogonality of axes', () => {
     expect(r.suggestedSalience).toBe('off');
   });
 });
+
+describe('classifyQuery — preferred retrieval types', () => {
+  test('quote-recall meeting query prefers curated meeting pages and raw conversations', () => {
+    expect(classifyQuery('What was actually said at the Acme kickoff meeting?').preferredTypes)
+      .toEqual(['meeting', 'conversation']);
+    expect(classifyQuery('Give me the exact words from the Acme call').preferredTypes)
+      .toEqual(['meeting', 'conversation']);
+  });
+
+  test('generic meeting language does not prefer a page type', () => {
+    expect(classifyQuery('What happened last week?').preferredTypes).toBeUndefined();
+    expect(classifyQuery('Summarize the kickoff meeting').preferredTypes).toBeUndefined();
+  });
+});

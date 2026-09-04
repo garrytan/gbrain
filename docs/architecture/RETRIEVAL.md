@@ -129,6 +129,28 @@ specific miss with `gbrain search diagnose "<q>" --target <slug>`.
 
 The classifier is deterministic (no LLM call). Wrong classification degrades gracefully — the hybrid stack still works without it.
 
+One narrow query shape also emits a preferred page-type hint: meeting/call
+queries asking for exact words prefer `meeting` and `conversation`. The hint is
+not a filter. Hybrid search keeps the ordinary vector, keyword, and title arms, and
+adds one typed recall arm under the same source and private-visibility scope.
+That arm combines typed keyword/title candidates with one vector lookup that
+reuses the ordinary query embedding, then receives one neutral outer RRF vote.
+An absent or failed embedding provider keeps typed lexical recall available;
+effective image-only queries and explicit caller `type`/`types` filters suppress
+the arm.
+
+`src/core/search/preferred-type-coverage.ts` selects one page per preferred type
+by composite source-and-slug identity. It restores the first selected page
+immediately after any exact alias/title identity rows and keeps later selected
+types within the first 15 results, without changing ordinary relative order.
+Coverage runs before reranking and again after reranking plus alias injection,
+can re-admit a selected candidate removed by dedup or reranker truncation, and
+protects selected pages from autocut. The final relational-evidence slot still
+has precedence: when it fires, secondary preferred coverage leaves that last
+page-one slot available. Semantic cache rows include a canonical preferred-type
+signature; explicit hard type filters skip caching because their values are not
+otherwise represented in the key.
+
 ## Multi-query expansion
 
 For `detail: 'high'` searches, `src/core/search/expansion.ts` runs a Haiku-class LLM call to produce 2-3 query variants. Each variant runs through the full hybrid stack; results merge via RRF. Catches synonym misses without recall loss.
@@ -150,6 +172,7 @@ hybrid recall + fusion:
    ├── vector  (HNSW on chunk embeddings, per-page max-pool)
    ├── keyword (BM25 via tsvector)
    ├── title-phrase arm
+   ├── preferred type (one typed keyword/title/vector arm for matching intents)
    ├── relational (typed-edge recall arm — relational queries only)
    ├── source-aware re-rank (CASE in SQL)
    └── RRF fusion → cosine re-score → post-fusion boosts
@@ -159,7 +182,7 @@ hybrid recall + fusion:
 graph augment (optional two-pass structural expansion — walkDepth > 0)
        │
        ▼
-deduplication (4-layer: per-page cap, same-page Jaccard, type diversity)
+deduplication + preferred-type coverage
        │
        ▼
 reranker (cross-encoder — balanced/tokenmax; fail-open)
@@ -168,12 +191,19 @@ reranker (cross-encoder — balanced/tokenmax; fail-open)
 alias hop (exact alias match injects/boosts the canonical page)
        │
        ▼
+preferred-type coverage (typed winners restored after rerank + alias hop
+   without displacing identity rows — src/core/search/preferred-type-coverage.ts)
+       │
+       ▼
 exact-lookup tier (lookup-shaped queries only: slug + exact-title probes
    promote/inject the identity page at rank-1; supersession-filtered;
    fail-open — src/core/search/exact-lookup.ts)
        │
        ▼
 evidence stamp → adaptive return (opt-in) → autocut (reranked modes)
+       │
+       ▼
+final relational-evidence slot (when the relational arm fired)
        │
        ▼
 limit slice → token-budget enforcement (per mode bundle)
@@ -191,12 +221,14 @@ as the classified `database_error` envelope, never as a silent "no results".
 Schema-class arm failures (pre-migration brains) keep the fail-open contract.
 
 The stage order is pinned by `hybridSearch` in `src/core/search/hybrid.ts`:
-dedup runs BEFORE the reranker (so the reranker sees a diverse candidate pool,
-capped by its own `topNIn`; the reranker runs only on the full hybrid path — the
-no-embedding and keyword-fallback paths are never reranked), the alias hop runs AFTER the reranker (so a query
-that is a page's declared name reliably surfaces that page regardless of how
-the reranker scored body chunks), and the token budget is enforced last, on
-the final slice.
+dedup and initial preferred coverage run BEFORE the reranker (so the reranker
+sees a diverse pool that includes selected typed candidates, capped by its own
+`topNIn`; the reranker runs only on the full hybrid path — the no-embedding and
+keyword-fallback paths are never reranked), the alias hop runs AFTER the
+reranker, preferred coverage is restored without displacing identity matches,
+exact lookup runs after both, and the relational-evidence slot is composed after
+adaptive return and autocut. The token budget is enforced last, on the final
+slice.
 
 Two cross-cutting seams sit around the pipeline rather than inside it:
 
@@ -226,8 +258,9 @@ reranker and therefore no trustworthy cliff signal). `applyAutocut`
 (`src/core/search/autocut.ts`) cuts the ranked set at the largest
 cross-encoder rerank-score cliff, before the limit slice, first page only.
 Never-empty failsafe (`minKeep`), no-op when fewer than 2 results carry a
-finite rerank score (covers the fail-open reranker path), and alias-hop exact
-matches are preserved through the cut. Weak-top floor: when the top rerank
+finite rerank score (covers the fail-open reranker path), and alias-hop,
+structural exact-lookup, and selected preferred-type matches are preserved
+through the cut. Weak-top floor: when the top rerank
 score is below `minTopScore` (default 0.35, config `search.autocut_min_top`),
 cliff trimming is skipped entirely — a low-confidence list returns the full
 cluster for the caller to judge instead of collapsing to one result. Knobs:
