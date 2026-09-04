@@ -13,6 +13,7 @@
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { findResolverFile, findAllResolverFiles, RESOLVER_FILENAMES_LABEL } from './resolver-filenames.ts';
+import type { SkillsDirSource } from './repo-root.ts';
 import { loadOrDeriveManifest } from './skill-manifest.ts';
 import {
   indexResolverTriggers,
@@ -299,7 +300,10 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
  *
  * @param skillsDir — path to the `skills/` directory
  */
-export function checkResolvable(skillsDir: string): ResolvableReport {
+export function checkResolvable(
+  skillsDir: string,
+  opts?: { skillsDirSource?: SkillsDirSource | null },
+): ResolvableReport {
   const issues: ResolvableIssue[] = [];
 
   // Load inputs via the v0.41.11 shared primitive. UNION semantics
@@ -323,6 +327,7 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   // will create it on first write).
   const resolverPathOrNull = findPrimaryResolverPath(skillsDir);
   const resolverPath = resolverPathOrNull ?? join(skillsDir, 'RESOLVER.md');
+
   if (!resolverPathOrNull && triggerEntries.length === 0) {
     // No RESOLVER.md / AGENTS.md anywhere AND no skill ships frontmatter
     // triggers — the resolver tree is fully empty. Preserve the
@@ -354,47 +359,123 @@ export function checkResolvable(skillsDir: string): ResolvableReport {
   // and lint stages that still take string content. Re-emits both
   // frontmatter-derived AND RESOLVER.md-derived entries as one table.
   const resolverContent = entriesToResolverContent(triggerEntries);
-  const { skills: manifest } = loadOrDeriveManifest(skillsDir);
+  const { skills: manifest, derived: manifestIsDerived } = loadOrDeriveManifest(skillsDir);
 
   // Build lookup sets
   const resolverSkillPaths = new Set(
     entries.filter(e => !e.isGStack).map(e => e.skillPath)
   );
 
-  // 1. Check every manifest skill is reachable from RESOLVER.md
+  // 1. Check every manifest skill is reachable from RESOLVER.md. Two
+  // passes: resolve reachability for every skill first (no severity
+  // decision yet), THEN decide how to grade the unreachable ones using the
+  // final tally, THEN construct issues. This lets the severity call factor
+  // in how SPARSE trigger coverage is across the whole directory, not just
+  // whether this one skill has a trigger.
+  const resolved = manifest.map(skill => {
+    const expectedPath = `skills/${skill.path}`;
+    if (resolverSkillPaths.has(expectedPath)) return { skill, reachable: true };
+    // Also check if the skill name appears in any resolver entry
+    const nameInResolver = entries.some(
+      e => e.skillPath.includes(skill.name) || e.trigger.includes(skill.name)
+    );
+    return { skill, reachable: nameInResolver };
+  });
   let reachable = 0;
   let unreachable = 0;
+  for (const r of resolved) {
+    if (r.reachable) reachable++;
+    else unreachable++;
+  }
 
-  for (const skill of manifest) {
-    const expectedPath = `skills/${skill.path}`;
-    if (resolverSkillPaths.has(expectedPath)) {
-      reachable++;
-    } else {
-      // Also check if the skill name appears in any resolver entry
-      const nameInResolver = entries.some(
-        e => e.skillPath.includes(skill.name) || e.trigger.includes(skill.name)
-      );
-      if (nameInResolver) {
-        reachable++;
-      } else {
-        unreachable++;
-        // Find the best section for this skill based on its description
-        const section = 'Brain operations'; // default suggestion
-        issues.push({
-          type: 'unreachable',
-          severity: 'error',
-          skill: skill.name,
-          message: `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL}`,
-          action: `Add a trigger row for 'skills/${skill.path}' in RESOLVER.md under ${section}`,
-          fix: {
-            type: 'add_trigger',
-            file: resolverPath,
-            section,
-            skill_path: `skills/${skill.path}`,
-          },
-        });
-      }
-    }
+  // #1767: `cwd_walk_up` (tier 1b of autoDetectSkillsDir, repo-root.ts) is
+  // explicitly documented as ungated -- it accepts ANY `skills/` directory
+  // found by walking up from cwd, with no signal that the directory is
+  // actually a gbrain skillpack (in progress or otherwise). The soft
+  // missing_file fallback above only fires when the WHOLE tree is empty
+  // (zero triggers anywhere); a single unrelated skill that happens to ship
+  // a `triggers:` field (coincidence, not gbrain intent -- e.g. another
+  // tool's own frontmatter convention landing on the same field name) is
+  // enough to flip every other skill in a foreign directory into
+  // individual hard 'unreachable' errors under the un-refined version of
+  // this check. The `unreachable > reachable` guard narrows this further
+  // (Codex review): a skillpack that's mostly migrated to triggers: (say
+  // 20 of 26 skills already reachable) whose RESOLVER.md/AGENTS.md was
+  // merely deleted by accident should still fail loudly -- only a
+  // directory where triggers are themselves sparse gets the softer read.
+  // Directories reached via a higher-confidence tier (explicit env var,
+  // $OPENCLAW_WORKSPACE, or the read-only install-path fallback) keep full
+  // strict enforcement regardless -- those carry real operator intent that
+  // this is meant to be a gbrain skill root. A fourth condition (Codex
+  // review): an explicit `manifest.json` (loadOrDeriveManifest's
+  // `derived: false`) is itself a deliberate gbrain-skillpack declaration
+  // -- a foreign tool's directory never ships one. Requiring the manifest
+  // to be DERIVED (walked from the directory listing, not hand-authored)
+  // keeps a real, explicitly-declared skillpack with sparse trigger
+  // migration and no resolver file strict, even via cwd_walk_up.
+  //
+  // Two more refinements (automated-triage review on PR #4822):
+  //
+  // - `resolverPathOrNull` is filename-only (findAllResolverFiles just
+  //   checks existsSync) -- it does not care whether the file actually
+  //   contains a parseable resolver table. A foreign tool that happens to
+  //   ship its own generic AGENTS.md (an increasingly common convention
+  //   for prose agent instructions, unrelated to gbrain routing) makes
+  //   `resolverPathOrNull` non-null and used to disable the downgrade
+  //   entirely, even though that file contributes zero routing rows.
+  //   `entries` may still be non-empty from a coincidental frontmatter
+  //   `triggers:` field (source: 'frontmatter'), so we specifically check
+  //   whether any entry actually came FROM a resolver file
+  //   (source: 'resolver_md') rather than checking `entries.length`.
+  // - `loadOrDeriveManifest`'s `derived` flag is true both when
+  //   manifest.json is absent AND when it exists but fails to parse /
+  //   fails the shape gate (deliberately, per its own docstring, so a
+  //   corrupted manifest.json still resolves skills via the directory
+  //   walk instead of going dark). That's the right behavior for deriving
+  //   the skill list, but it's the wrong signal for "is this a foreign
+  //   directory" -- a corrupted manifest.json on a REAL skillpack (e.g. a
+  //   bad merge) is exactly the kind of corruption doctor exists to catch,
+  //   and silently downgrading its unreachable errors would mask it. Gate
+  //   on the manifest file's on-disk absence instead of the derived flag.
+  // `RESOLVER.md` is gbrain-NATIVE -- no foreign tool ships one by
+  // coincidence, so its mere presence (even still-empty, being
+  // populated) is real operator intent and must NOT be softened.
+  // `AGENTS.md` is the shared OpenClaw/agent-tooling convention -- many
+  // non-gbrain tools ship a generic prose AGENTS.md, so an AGENTS.md that
+  // contributes zero resolver rows is exactly as weak a signal as no
+  // resolver file at all.
+  const foundOnlyEmptyAgentsMd =
+    resolverPathOrNull !== null &&
+    resolverPathOrNull.endsWith('/AGENTS.md') &&
+    !triggerEntries.some(e => e.source === 'resolver_md');
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- `skillsDir` is this function's own `@param` (the local skills/ directory resolved by the caller's CLI args / auto-detected repo root, per the file header docstring), never remote/user input; same trusted-local shape as the pre-existing `join(skillsDir, 'RESOLVER.md')` two lines above this block, which is unflagged only because it predates this diff
+  const manifestJsonAbsent = !existsSync(join(skillsDir, 'manifest.json'));
+  const lowConfidenceForeignDir =
+    opts?.skillsDirSource === 'cwd_walk_up' &&
+    (!resolverPathOrNull || foundOnlyEmptyAgentsMd) &&
+    unreachable > reachable &&
+    manifestIsDerived &&
+    manifestJsonAbsent;
+
+  for (const { skill, reachable: isReachable } of resolved) {
+    if (isReachable) continue;
+    // Find the best section for this skill based on its description
+    const section = 'Brain operations'; // default suggestion
+    issues.push({
+      type: 'unreachable',
+      severity: lowConfidenceForeignDir ? 'warning' : 'error',
+      skill: skill.name,
+      message: lowConfidenceForeignDir
+        ? `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL} (this skills/ dir was found by walking up from cwd with no RESOLVER.md/AGENTS.md present -- if it belongs to a different tool, this can be ignored)`
+        : `Skill '${skill.name}' is in manifest but has no trigger row in ${RESOLVER_FILENAMES_LABEL}`,
+      action: `Add a trigger row for 'skills/${skill.path}' in RESOLVER.md under ${section}`,
+      fix: {
+        type: 'add_trigger',
+        file: resolverPath,
+        section,
+        skill_path: `skills/${skill.path}`,
+      },
+    });
   }
 
   // 2. Check every resolver entry points to a file that exists
