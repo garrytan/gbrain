@@ -774,6 +774,7 @@ export async function computeAtomProvenanceDriftCheck(
     const rows = await engine.executeRaw<{
       total: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
+      legacy_unbound: string | number;
       oldest_ext: string | null;
     }>(
       // extracted_at stays TEXT end to end (review fix): an unguarded
@@ -786,7 +787,7 @@ export async function computeAtomProvenanceDriftCheck(
       `WITH atom AS (
          SELECT a.source_id,
                 a.frontmatter->>'source_hash' AS sh,
-                a.frontmatter->>'source_slug' AS ss,
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
                 CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                      THEN a.frontmatter->>'extracted_at' END AS ext
            FROM pages a
@@ -812,7 +813,22 @@ export async function computeAtomProvenanceDriftCheck(
        SELECT count(*) AS total,
               count(*) FILTER (WHERE drifted) AS drifted,
               count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
-              count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
+              -- "gone" needs a slug binding to have failed. A slug-unbound
+              -- atom (source_path only, no source_slug — see
+              -- isCompatibleAtomBinding in extract-atoms.ts) can never match
+              -- p.slug, so counting it here reported every one of them as an
+              -- orphan even when its source page is alive. This is NOT a
+              -- closed legacy set: every transcript-kind atom is minted this
+              -- way today (extract-atoms.ts:994 sets source_path only,
+              -- never source_slug, for transcript origins) -- it is an
+              -- actively growing, structurally distinct binding kind, not a
+              -- shrinking cohort from before slug binding existed. Doctor
+              -- runs as a DB-only query and has no filesystem access to the
+              -- transcript corpus a source_path points at, so liveness for
+              -- this bucket genuinely cannot be resolved here (unlike
+              -- source_slug, which resolves against the pages table).
+              count(*) FILTER (WHERE drifted AND NOT src_alive AND ss IS NOT NULL) AS source_gone,
+              count(*) FILTER (WHERE drifted AND ss IS NULL) AS legacy_unbound,
               -- lexicographic min of ISO-shaped strings ≈ chronological min
               -- (oldest); informational only, never verdict-bearing
               min(ext) FILTER (WHERE drifted) AS oldest_ext
@@ -827,6 +843,7 @@ export async function computeAtomProvenanceDriftCheck(
     const drifted = num(r.drifted);
     const sourceChanged = num(r.source_changed);
     const sourceGone = num(r.source_gone);
+    const legacyUnbound = num(r.legacy_unbound);
     const oldestExtMs = r.oldest_ext ? new Date(String(r.oldest_ext)).getTime() : NaN;
     const oldestDays = Number.isFinite(oldestExtMs)
       ? Math.round(((Date.now() - oldestExtMs) / 86_400_000) * 10) / 10
@@ -837,6 +854,7 @@ export async function computeAtomProvenanceDriftCheck(
       drifted,
       source_changed: sourceChanged,
       source_gone: sourceGone,
+      legacy_unbound: legacyUnbound,
       drift_pct: total > 0 ? Math.round(ratio * 1000) / 10 : 0,
       oldest_drifted_days: oldestDays ?? undefined,
     };
@@ -855,6 +873,9 @@ export async function computeAtomProvenanceDriftCheck(
         message:
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
+          (legacyUnbound > 0
+            ? `, ${legacyUnbound} slug-unbound (source_path only, typically transcript-origin — liveness not resolvable against \`pages\` by slug)`
+            : '') +
           (oldestDays != null ? `; oldest ${oldestDays}d` : '') +
           `. These still surface in search with a source_quote that no current page contains. Fix: ${fix}`,
         details,

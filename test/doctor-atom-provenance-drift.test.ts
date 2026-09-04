@@ -207,4 +207,71 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('30/30');
     expect(c.message).toContain('source page is gone');
   });
+  it('does not count a slug-unbound atom (source_path only, no source_slug) as source_gone', async () => {
+    // Transcript-origin atoms carry `source_path` but no `source_slug`
+    // (isCompatibleAtomBinding in extract-atoms.ts) -- this is the CURRENT,
+    // ongoing binding kind for every transcript-kind atom, not a shrinking
+    // legacy cohort. They can never match p.slug, so the slug-only liveness
+    // probe reported every one of them as an orphan even while the source
+    // page was alive — measured on a real brain as 702 "gone" atoms whose
+    // source pages all still existed.
+    await seedSource('src-l', 'original body');
+    await engine.putPage('atoms/2026-01-01/l-000000', {
+      type: 'atom', title: 'l', compiled_truth: 'claim body',
+      frontmatter: {
+        type: 'atom',
+        source_path: '/imports/src-l.md',
+        source_hash: await hashOf('src-l'),
+        extracted_at: new Date().toISOString(),
+      },
+    });
+    await seedSource('src-l', 'rewritten body'); // hash moves → drifted
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.drifted).toBe(1);
+    expect(d.source_gone).toBe(0);
+    expect(d.source_changed).toBe(0);
+    expect(d.legacy_unbound).toBe(1);
+  });
+
+  it('treats an empty-string source_slug like a missing one', async () => {
+    await seedSource('src-k', 'original body');
+    await engine.putPage('atoms/2026-01-01/k-000000', {
+      type: 'atom', title: 'k', compiled_truth: 'claim body',
+      frontmatter: {
+        type: 'atom', source_slug: '', source_path: '/imports/src-k.md',
+        source_hash: 'deadbeefdeadbeef', extracted_at: new Date().toISOString(),
+      },
+    });
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.source_gone).toBe(0);
+    expect(d.legacy_unbound).toBe(1);
+  });
+
+  it('omits the slug-unbound bucket from the warn message when every drifted atom is slug-bound', async () => {
+    await seedSource('src-q', 'original body');
+    for (let i = 0; i < 30; i++) {
+      await seedAtom(`atoms/2026-01-01/q-${String(i).padStart(6, '0')}`, 'src-q', 'deadbeefdeadbeef');
+    }
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.status).toBe('warn');
+    expect((c.details as Record<string, number>).legacy_unbound).toBe(0);
+    expect(c.message).not.toContain('slug-unbound');
+  }, 60_000);
+
+  it('names the slug-unbound bucket in the warn message only when it is non-empty', async () => {
+    await seedSource('src-p', 'original body');
+    for (let i = 0; i < 30; i++) {
+      await engine.putPage(`atoms/2026-01-01/p-${String(i).padStart(6, '0')}`, {
+        type: 'atom', title: `p${i}`, compiled_truth: 'claim body',
+        frontmatter: {
+          type: 'atom', source_path: '/imports/src-p.md',
+          source_hash: 'deadbeefdeadbeef', extracted_at: new Date().toISOString(),
+        },
+      });
+    }
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    expect(c.status).toBe('warn');
+    expect(c.message).toContain('0 whose source page is gone');
+    expect(c.message).toContain('30 slug-unbound');
+  }, 60_000);
 });
