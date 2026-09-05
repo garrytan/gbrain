@@ -94,6 +94,8 @@ export interface FanoutResult {
   legacy_fallback: boolean;
   /** True when every enumerated source is inside the freshness window. */
   all_sources_fresh: boolean;
+  /** True when every enumerated source is either fresh or skipped locally. */
+  all_sources_handled: boolean;
 }
 
 /**
@@ -355,7 +357,7 @@ export function selectSourcesForDispatch(
   const cooldown: SourceRow[] = [];
   const unavailablePath: SourceRow[] = [];
   for (const s of sources) {
-    if (s.local_path && sourceLocalPathSkipWarning(s.id, s.local_path, pathExists)) {
+    if (s.local_path && sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config)) {
       unavailablePath.push(s);
       continue;
     }
@@ -450,6 +452,7 @@ export async function dispatchPerSource(
       skipped_unavailable_path: [],
       legacy_fallback: true,
       all_sources_fresh: false,
+      all_sources_handled: false,
     };
   }
 
@@ -482,7 +485,7 @@ export async function dispatchPerSource(
     );
 
   for (const src of skippedUnavailablePath) {
-    const warning = src.local_path ? sourceLocalPathSkipWarning(src.id, src.local_path, pathExists) : null;
+    const warning = src.local_path ? sourceLocalPathSkipWarning(src.id, src.local_path, pathExists, src.config) : null;
     if (!warning) continue;
     if (opts.jsonMode) {
       emit(JSON.stringify({ event: 'fanout_source_path_skipped', source_id: src.id, reason: warning }));
@@ -592,6 +595,7 @@ export async function dispatchPerSource(
     skipped_unavailable_path: skippedUnavailablePath.map(s => s.id),
     legacy_fallback: false,
     all_sources_fresh: skippedFresh.length === sources.length,
+    all_sources_handled: skippedFresh.length + skippedUnavailablePath.length === sources.length,
   };
 }
 

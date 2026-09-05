@@ -79,13 +79,17 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // all-coalesced tick (maxPending single-flight suppression) retakes the
     // full-cycle branch every tick and starves the targeted-plan path for the
     // whole in-flight window.
-    expect(AUTOPILOT_SRC).toMatch(
-      /result\.dispatched\.length > 0 \|\| result\.coalesced\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
-    );
+    const updateIdx = AUTOPILOT_SRC.indexOf('lastFullCycleAt = Date.now()');
+    expect(updateIdx).toBeGreaterThan(-1);
+    const advanceGate = AUTOPILOT_SRC.slice(Math.max(0, updateIdx - 400), updateIdx + 80);
+    expect(advanceGate).toContain('result.coalesced.length > 0');
+    expect(advanceGate).toContain('result.all_sources_fresh');
+    expect(advanceGate).toContain('result.all_sources_handled');
   });
 
   test('fanout_summary reports coalesced separately from dispatched (honest surfaces)', () => {
     expect(AUTOPILOT_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,200}coalesced: result\.coalesced/);
+    expect(AUTOPILOT_SRC).toMatch(/event: 'fanout_summary',[\s\S]{0,400}skipped_unavailable_path: result\.skipped_unavailable_path/);
   });
 
   test('targeted-plan dispatch honors the honest-dispatch contract (red-team finding)', () => {
@@ -106,7 +110,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
     const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 900), freshnessIdx + 100);
-    expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path)');
+    expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config)');
   });
 
   test('#4046: targeted dispatch scopes stable recommendation keys to the interval', () => {
@@ -142,9 +146,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     // must update so the next tick doesn't immediately re-fan-out.
     // Coalesced counts as work-in-flight (see the dedicated advance-gate
     // test below for the full condition).
-    expect(AUTOPILOT_SRC).toMatch(
-      /result\.dispatched\.length > 0 \|\| result\.coalesced\.length > 0 \|\| result\.legacy_fallback \|\| result\.all_sources_fresh/,
-    );
+    expect(AUTOPILOT_SRC).toContain('result.all_sources_handled');
     expect(AUTOPILOT_SRC).toMatch(/lastFullCycleAt\s*=\s*Date\.now\(\)/);
   });
 

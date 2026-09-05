@@ -1092,7 +1092,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               // it would sync a phantom path. Skip loudly; the fix is
               // re-registering with an absolute path (sources add now
               // resolves) or one successful `gbrain sync` (anchor self-heal).
-              const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path);
+              const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
               if (skipWarn) {
                 process.stderr.write(skipWarn + '\n');
                 continue;
@@ -1191,7 +1191,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
                     if (!src.local_path) continue;
                     // #3696: same relative-path skip as the freshness loop.
-                    const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path);
+                    const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
                     if (skipWarn) {
                       process.stderr.write(skipWarn + '\n');
                       continue;
@@ -1391,7 +1391,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // keep that behavior, or an all-coalesced tick (single-flight
           // suppression) would retake the full-cycle branch every tick and
           // starve the targeted-plan path for the whole in-flight window.
-          if (result.dispatched.length > 0 || result.coalesced.length > 0 || result.legacy_fallback || result.all_sources_fresh) {
+          if (
+            result.dispatched.length > 0 ||
+            result.coalesced.length > 0 ||
+            result.legacy_fallback ||
+            result.all_sources_fresh ||
+            result.all_sources_handled
+          ) {
             lastFullCycleAt = Date.now();
           }
           if (jsonMode) {
@@ -1402,6 +1408,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
+              skipped_unavailable_path: result.skipped_unavailable_path,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
               score,
@@ -1411,7 +1418,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               `[dispatch] fanout: ${result.dispatched.length} dispatched` +
               `${result.coalesced.length > 0 ? ` (${result.coalesced.length} coalesced onto in-flight)` : ''}, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown ` +
+              `${result.skipped_cooldown.length} cooldown, ` +
+              `${result.skipped_unavailable_path.length} unavailable-path ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }

@@ -308,6 +308,54 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(JSON.parse(skipped!).source_id).toBe('foreign');
   });
 
+  test('missing managed remote clones still dispatch so sync can re-clone them', async () => {
+    const managed = src('managed', undefined, {
+      remote_url: 'https://github.com/example/repo',
+      managed_clone: true,
+    });
+    managed.local_path = '/missing/managed';
+    const { engine, queue, added, fanoutOpts } = makeStubs([managed]);
+    fanoutOpts.pathExists = () => false;
+
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual(['managed']);
+    expect(result.skipped_unavailable_path).toEqual([]);
+    expect(added.length).toBe(1);
+  });
+
+  test('all unavailable non-managed sources are handled but not called fresh', async () => {
+    const missing = src('foreign');
+    missing.local_path = '/foreign/brain';
+    const { engine, queue, added, fanoutOpts } = makeStubs([missing]);
+    fanoutOpts.pathExists = () => false;
+
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.dispatched).toEqual([]);
+    expect(result.skipped_unavailable_path).toEqual(['foreign']);
+    expect(result.all_sources_fresh).toBe(false);
+    expect(result.all_sources_handled).toBe(true);
+    expect(added.length).toBe(0);
+  });
+
+  test('fresh plus unavailable sources are handled without implying every source is fresh', async () => {
+    const NOW = Date.now();
+    const fresh = src('fresh', new Date(NOW - 5 * 60_000).toISOString());
+    const missing = src('foreign');
+    missing.local_path = '/foreign/brain';
+    const { engine, queue, added, fanoutOpts } = makeStubs([fresh, missing]);
+    fanoutOpts.pathExists = (p) => p === fresh.local_path;
+
+    const result = await dispatchPerSource(engine, queue, fanoutOpts);
+
+    expect(result.skipped_fresh).toEqual(['fresh']);
+    expect(result.skipped_unavailable_path).toEqual(['foreign']);
+    expect(result.all_sources_fresh).toBe(false);
+    expect(result.all_sources_handled).toBe(true);
+    expect(added.length).toBe(0);
+  });
+
   test('relative local_path rows are skipped by the same fan-out guard', () => {
     const relative = src('legacy');
     relative.local_path = 'notes/brain';
@@ -458,6 +506,7 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
     expect(result.dispatched.length).toBe(0);
     expect(result.skipped_fresh.length).toBe(2);
     expect(result.all_sources_fresh).toBe(true);
+    expect(result.all_sources_handled).toBe(true);
     expect(added.length).toBe(0);
   });
 
@@ -471,5 +520,6 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
 
     expect(result.dispatched).toEqual([]);
     expect(result.all_sources_fresh).toBe(false);
+    expect(result.all_sources_handled).toBe(false);
   });
 });

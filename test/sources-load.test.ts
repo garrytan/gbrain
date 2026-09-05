@@ -220,4 +220,26 @@ describe('sourceLocalPathSkipWarning', () => {
     expect(warn).toContain('/missing/brain');
     expect(warn).toContain('does not exist on this machine');
   });
+
+  test('allows missing managed remote clones to reach sync recovery', () => {
+    expect(
+      sourceLocalPathSkipWarning(
+        'managed',
+        '/missing/managed',
+        () => false,
+        { remote_url: 'https://github.com/example/repo', managed_clone: true },
+      ),
+    ).toBeNull();
+  });
+
+  test('still skips missing unowned remote-url paths', () => {
+    const warn = sourceLocalPathSkipWarning(
+      'foreign',
+      '/Users/other/repo',
+      () => false,
+      { remote_url: 'https://github.com/example/repo' },
+    );
+    expect(warn).toContain("source 'foreign'");
+    expect(warn).toContain('does not exist on this machine');
+  });
 });

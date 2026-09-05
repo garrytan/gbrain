@@ -17,8 +17,9 @@
  * A shared helper hits the bar at lower cost.
  */
 import { existsSync } from 'fs';
-import { isAbsolute } from 'path';
+import { isAbsolute, resolve as resolvePath } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { gbrainPath } from './config.ts';
 
 export interface SourceRow {
   id: string;
@@ -156,19 +157,30 @@ export function sourceConfigHasRemoteUrl(config: unknown): boolean {
   return typeof remoteUrl === 'string' && remoteUrl.trim().length > 0;
 }
 
+function sourceHasRecoverableManagedClone(sourceId: string, localPath: string, config: unknown): boolean {
+  const cfg = parseSourceConfig(config);
+  const remoteUrl = cfg.remote_url;
+  if (typeof remoteUrl !== 'string' || remoteUrl.trim().length === 0) return false;
+  if (cfg.managed_clone === true) return true;
+  return resolvePath(localPath) === resolvePath(gbrainPath('clones', sourceId));
+}
+
 /**
  * Warning for a legacy source path that cannot be interpreted safely from a
  * daemon context. Relative paths are ambiguous; absent absolute paths belong to
- * another machine or an unmounted checkout.
+ * another machine or an unmounted checkout unless the row is an owned remote
+ * clone that sync can safely recover by re-cloning.
  */
 export function sourceLocalPathSkipWarning(
   sourceId: string,
   localPath: string,
   pathExists: (path: string) => boolean = existsSync,
+  config: unknown = {},
 ): string | null {
   const relative = relativeSourceLocalPathSkipWarning(sourceId, localPath);
   if (relative) return relative;
   if (pathExists(localPath)) return null;
+  if (sourceHasRecoverableManagedClone(sourceId, localPath, config)) return null;
   return (
     `[autopilot] skipping source '${sourceId}': local_path ` +
     `'${localPath}' does not exist on this machine. Clone/register this ` +
