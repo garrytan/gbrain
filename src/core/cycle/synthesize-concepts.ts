@@ -191,7 +191,26 @@ export async function runPhaseSynthesizeConcepts(
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  // #4529-shaped knob, mirroring the sibling phase. `extract_atoms` has read
+  // `cycle.extract_atoms.budget_usd` since it shipped (extract-atoms.ts); this
+  // one hardcoded its cap, so the only way past it was a source edit. The two
+  // phases run from the same cycle, on the same brain, against the same
+  // provider — the asymmetry was an omission, not a decision.
+  //
+  // Same validation as the sibling: a value that is not a finite positive
+  // number leaves the default in place rather than disabling the cap. Read
+  // failures are swallowed for the same reason the sibling swallows them — a
+  // config lookup must never be the thing that stops a maintenance phase.
+  let budgetCap = DEFAULT_BUDGET_USD;
+  try {
+    const configured = await engine.getConfig('cycle.synthesize_concepts.budget_usd');
+    if (configured) {
+      const n = Number(configured);
+      if (Number.isFinite(n) && n > 0) budgetCap = n;
+    }
+  } catch {
+    // keep the default
+  }
   const failures: Array<{ concept: string; error: string }> = [];
   // #3044 adoption: shared halt policy — auth/billing halt on the first
   // hit, a rate_limit streak halts after 3 consecutive failures, a
