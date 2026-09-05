@@ -74,7 +74,27 @@ export type OneshotOutcome =
 
 const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})*$`, 'u');
 const MAX_PAGES_PER_RESPONSE = 12;
-const ONESHOT_CALL_BUDGET_MS = 300_000;
+/**
+ * Per-call budget for the single provider call, overridable through
+ * GBRAIN_AI_ONESHOT_CALL_BUDGET_MS (same shape as `resolveAiTimeoutMs` in
+ * src/core/ai/gateway.ts). The gateway's own chat backstop
+ * (GBRAIN_AI_CHAT_TIMEOUT_MS) composes with the caller's signal and never
+ * reaches this constant, so raising it alone cannot lengthen an oneshot
+ * turn. The claude-cli provider passes no output cap, and a ~30k-token
+ * synthesis turn runs ~300 s at ~100 tok/s, which lands exactly on the
+ * 300 s default and drops the job into the oneshot -> loop fallback. Still
+ * clamped below by the job deadline (remaining / 4), so a 30-min job caps a
+ * call at 7.5 min whatever the env says.
+ */
+export function resolveOneshotCallBudgetMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.GBRAIN_AI_ONESHOT_CALL_BUDGET_MS;
+  if (raw === undefined) return 300_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 300_000;
+}
+const ONESHOT_CALL_BUDGET_MS = resolveOneshotCallBudgetMs();
 
 /**
  * One constant for the three coupled sites: the ledger LIKE pattern, the

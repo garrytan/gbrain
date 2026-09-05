@@ -23,6 +23,10 @@ import {
   extractWikilinkTargets,
   type OneshotArgs,
 } from '../../src/core/minions/handlers/subagent-oneshot.ts';
+// Namespace import for the budget resolver so a build without the export
+// fails the three budget tests at runtime instead of failing the file's
+// load (which would take the other 34 tests down with it).
+import * as oneshotModule from '../../src/core/minions/handlers/subagent-oneshot.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -617,5 +621,20 @@ describe('runSubagentOneshot', () => {
     expect(result.recovered).toBe(true);
     expect(result.written_refs).toEqual([{ slug: GOOD_SLUG_A, status: 'complete' }]);
     expect(chatCalls).toBe(0);
+  });
+});
+
+describe('resolveOneshotCallBudgetMs', () => {
+  const resolve = (env: Record<string, string | undefined>) => oneshotModule.resolveOneshotCallBudgetMs(env);
+  test('defaults to 300 s when the env var is unset', () => {
+    expect(resolve({})).toBe(300_000);
+  });
+  test('honours GBRAIN_AI_ONESHOT_CALL_BUDGET_MS', () => {
+    expect(resolve({ GBRAIN_AI_ONESHOT_CALL_BUDGET_MS: '1500000' })).toBe(1_500_000);
+  });
+  test('falls back to 300 s on a non-numeric or non-positive value', () => {
+    expect(resolve({ GBRAIN_AI_ONESHOT_CALL_BUDGET_MS: 'abc' })).toBe(300_000);
+    expect(resolve({ GBRAIN_AI_ONESHOT_CALL_BUDGET_MS: '0' })).toBe(300_000);
+    expect(resolve({ GBRAIN_AI_ONESHOT_CALL_BUDGET_MS: '-5' })).toBe(300_000);
   });
 });

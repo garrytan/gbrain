@@ -125,6 +125,15 @@ describe('buildBrainTools', () => {
     expect(slug.pattern).toBeUndefined();
   });
 
+  test('execute() names a missing required parameter instead of crashing', async () => {
+    const tools = buildBrainTools({ subagentId: 42, engine, config });
+    const search = tools.find(t => t.name === 'brain_search');
+    expect(search).toBeDefined();
+    const ctx: ToolCtx = { engine, jobId: 1, remote: true };
+    await expect(search!.execute({}, ctx)).rejects.toThrow(/brain_search: missing required parameter\(s\) query/);
+    await expect(search!.execute(undefined, ctx)).rejects.toThrow(/missing required parameter/);
+  });
+
   test('execute() on put_page with valid namespace slug succeeds', async () => {
     const tools = buildBrainTools({ subagentId: 42, engine, config });
     const putPage = tools.find(t => t.name === 'brain_put_page');

@@ -305,6 +305,20 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           deferEmbeds: opts.deferEmbeds,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        // Name a missing schema-required parameter instead of letting the op
+        // handler crash on it. A model that emits `{}` for brain_search would
+        // otherwise get back "undefined is not an object (evaluating
+        // 'query.trim')", an error it cannot act on. The schema already says
+        // what is required; say it back.
+        const required = Array.isArray((schema as { required?: unknown }).required)
+          ? (schema as { required: unknown[] }).required.filter((k): k is string => typeof k === 'string')
+          : [];
+        const missing = required.filter(k => params[k] === undefined || params[k] === null);
+        if (missing.length > 0) {
+          throw new Error(
+            `${toolName}: missing required parameter(s) ${missing.join(', ')} -- call again with them set`,
+          );
+        }
         return op.handler(opCtx, params);
       },
     };
