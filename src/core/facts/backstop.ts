@@ -333,7 +333,6 @@ export async function runFactsBackstop(
             // re-runnable), never a silent consume.
             max_attempts: 5,
             backoff_delay: 60_000,
-            timeout_ms: 180_000,
           },
         );
         return { mode: 'queue', enqueued: true, queueDepth: 0 };
