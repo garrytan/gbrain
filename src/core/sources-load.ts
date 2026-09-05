@@ -17,9 +17,8 @@
  * A shared helper hits the bar at lower cost.
  */
 import { existsSync } from 'fs';
-import { isAbsolute, resolve as resolvePath } from 'path';
+import { isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
-import { gbrainPath } from './config.ts';
 
 export interface SourceRow {
   id: string;
@@ -157,12 +156,11 @@ export function sourceConfigHasRemoteUrl(config: unknown): boolean {
   return typeof remoteUrl === 'string' && remoteUrl.trim().length > 0;
 }
 
-function sourceHasRecoverableManagedClone(sourceId: string, localPath: string, config: unknown): boolean {
+function sourceHasRecoverableManagedClone(config: unknown): boolean {
   const cfg = parseSourceConfig(config);
   const remoteUrl = cfg.remote_url;
   if (typeof remoteUrl !== 'string' || remoteUrl.trim().length === 0) return false;
-  if (cfg.managed_clone === true) return true;
-  return resolvePath(localPath) === resolvePath(gbrainPath('clones', sourceId));
+  return cfg.managed_clone === true;
 }
 
 /**
@@ -180,7 +178,7 @@ export function sourceLocalPathSkipWarning(
   const relative = relativeSourceLocalPathSkipWarning(sourceId, localPath);
   if (relative) return relative;
   if (pathExists(localPath)) return null;
-  if (sourceHasRecoverableManagedClone(sourceId, localPath, config)) return null;
+  if (sourceHasRecoverableManagedClone(config)) return null;
   return (
     `[autopilot] skipping source '${sourceId}': local_path ` +
     `'${localPath}' does not exist on this machine. Clone/register this ` +
