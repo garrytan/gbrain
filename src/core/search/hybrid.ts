@@ -51,6 +51,7 @@ import { isTitlePhraseMatch } from './title-match.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { stampEvidence, markKeywordHits } from './evidence.ts';
 import { applyExactLookupTier } from './exact-lookup.ts';
+import { applyExactTokenPrecedence, type ExactTokenDecision } from './exact-token.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget, searchSalvageEnabled, type TokenBudgetMeta } from './token-budget.ts';
 import { warnOncePerProcess } from '../utils.ts';
@@ -1202,8 +1203,27 @@ export async function hybridSearch(
       // would be a no-op (both branches resolve to the same mode default).
       relationalRetrieval: opts?.relationalRetrieval,
       relational_retrieval_depth: opts?.relationalRetrievalDepth,
+      // Exact opaque-identifier precedence per-call switch (eval A/B gates
+      // need it explicit; per-call wins over config wins over bundle).
+      exact_token_precedence: opts?.exact_token_precedence,
     },
   });
+
+  // Exact opaque-identifier precedence (search/exact-token.ts): after the
+  // structural exact-lookup tier on every return path, a single-token id
+  // query whose literal a strict lexical row carries ranks that row above
+  // every semantic-only candidate. Pure, in-memory, no re-query; the rows it
+  // can surface are keyword/title arm rows that already honor the caller's
+  // source, type and privacy filters. Off => identity.
+  const exactTokenPass = (
+    ranked: SearchResult[],
+    kw: SearchResult[],
+    ti: SearchResult[],
+  ): { results: SearchResult[]; decision: ExactTokenDecision | undefined } => {
+    if (!resolvedMode.exact_token_precedence) return { results: ranked, decision: undefined };
+    const r = applyExactTokenPrecedence(ranked, query, { keywordResults: kw, titleResults: ti });
+    return { results: r.results, decision: r.decision ?? undefined };
+  };
 
   // v0.36 (D7+D11): resolve embedding column once at entry. Single
   // round-trip to read DB-plane config (mirrors loadSearchModeConfig).
@@ -1531,15 +1551,17 @@ export async function hybridSearch(
       types: opts?.types,
       excludeSlugs: opts?.exclude_slugs,
     });
-    stampEvidence(noEmbedHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+    const { results: noEmbedRanked, decision: noEmbedExactToken } =
+      exactTokenPass(noEmbedHopped, keywordResults, titleResults);
+    stampEvidence(noEmbedRanked, { cosineFloor: resolvedMode.evidence_cosine_floor });
     // #3995 — guaranteed page-1 relational evidence: a fired arm's answer is
     // often lexically unrecoverable, so its single-arm fused row can land
     // beyond the limit slice on keyword-heavy corpora. Promote/inject before
     // slicing (first page only; pure no-op when the arm didn't fire).
-    let noEmbedPool = noEmbedHopped;
+    let noEmbedPool = noEmbedRanked;
     let noEmbedRelSlot: RelationalEvidenceSlotDecision | undefined;
     if (relationalList.length > 0) {
-      const r = ensureRelationalEvidenceSlot(noEmbedHopped, relationalList, limit, offset, {
+      const r = ensureRelationalEvidenceSlot(noEmbedRanked, relationalList, limit, offset, {
         cosineFloor: resolvedMode.evidence_cosine_floor,
       });
       noEmbedPool = r.pool;
@@ -1589,6 +1611,7 @@ export async function hybridSearch(
         ? { token_budget: noEmbedBudgetMeta }
         : {}),
       ...(noEmbedRelSlot ? { relational_evidence_slot: noEmbedRelSlot } : {}),
+      ...(noEmbedExactToken ? { exact_token: noEmbedExactToken } : {}),
     });
     return noEmbedBudgeted;
   }
@@ -1922,8 +1945,10 @@ export async function hybridSearch(
       types: opts?.types,
       excludeSlugs: opts?.exclude_slugs,
     });
-    stampEvidence(kwHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
-    const kwSliced = kwHopped.slice(offset, offset + limit);
+    const { results: kwRanked, decision: kwExactToken } =
+      exactTokenPass(kwHopped, keywordResults, titleResults);
+    stampEvidence(kwRanked, { cosineFloor: resolvedMode.evidence_cosine_floor });
+    const kwSliced = kwRanked.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
     await stampContentFlags(engine, kwBudgeted);
@@ -1948,6 +1973,7 @@ export async function hybridSearch(
       ...(resolvedMode.tokenBudget && resolvedMode.tokenBudget > 0
         ? { token_budget: kwBudgetMeta }
         : {}),
+      ...(kwExactToken ? { exact_token: kwExactToken } : {}),
     });
     return kwBudgeted;
   }
@@ -2204,7 +2230,9 @@ export async function hybridSearch(
   // decision keys off WHY a page matched, not a raw blended score. Stamp on
   // the full alias-hopped set before any adaptive trim so the kept results
   // carry evidence regardless of where the cap lands.
-  stampEvidence(aliasHopped, { cosineFloor: resolvedMode.evidence_cosine_floor });
+  const { results: ranked, decision: exactTokenDecision } =
+    exactTokenPass(aliasHopped, keywordResults, titleResults);
+  stampEvidence(ranked, { cosineFloor: resolvedMode.evidence_cosine_floor });
 
   // v0.42 — intent-aware adaptive return-sizing (opt-in, default off). Trim
   // the ranked candidate set to an intent-driven cap BEFORE the limit slice,
@@ -2216,14 +2244,14 @@ export async function hybridSearch(
     opts?.adaptiveReturn,
     adaptiveReturnFromConfig(cfgForColumn as Record<string, unknown> | null),
   );
-  let returnPool = aliasHopped;
+  let returnPool = ranked;
   let adaptiveDecision: AdaptiveReturnDecision | undefined;
   if (adaptiveCfg.enabled && offset === 0) {
     // 2026-08 fix wave (E5c): AdaptiveQueryIntent now equals the full
     // QueryIntent union, so the classifier's intent passes through unchanged
     // ('concept' → otherMax, the breadth cap). The cache key folds this SAME
     // intent class (ari= in knobsHash v=27) so cross-intent rows never serve.
-    const r = applyAdaptiveReturn(aliasHopped, suggestions.intent, adaptiveCfg);
+    const r = applyAdaptiveReturn(ranked, suggestions.intent, adaptiveCfg);
     returnPool = r.kept;
     adaptiveDecision = r.decision;
   }
@@ -2260,8 +2288,9 @@ export async function hybridSearch(
       // page AFTER reranking, so it has no rerank_score. Without this it would
       // be dropped whenever autocut cuts on the scored set (Codex P1).
       // #1663: same guarantee for structural exact-lookup tier hits (slug /
-      // exact-title identity matches also arrive post-rerank, unscored).
-      (x) => x.alias_hit === true || x.exact_lookup !== undefined,
+      // exact-title identity matches also arrive post-rerank, unscored), and
+      // for exact opaque-identifier rows (a literal id hit is the answer).
+      (x) => x.alias_hit === true || x.exact_lookup !== undefined || x.exact_token === true,
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
@@ -2310,6 +2339,7 @@ export async function hybridSearch(
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
     ...(relationalSlotDecision ? { relational_evidence_slot: relationalSlotDecision } : {}),
+    ...(exactTokenDecision ? { exact_token: exactTokenDecision } : {}),
   });
   return budgeted;
 }

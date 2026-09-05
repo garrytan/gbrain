@@ -326,6 +326,16 @@ export interface ModeBundle {
   relationalRetrieval: boolean;
   /** v0.43 — max hops for relational traversal. Default 2, hard-capped at 3. */
   relational_retrieval_depth: number;
+  /**
+   * Exact opaque-identifier precedence (search/exact-token.ts). When the
+   * query is one opaque token (an external record id) and a strict lexical
+   * row carries it as a whole-token literal, that row ranks above every
+   * semantic-only candidate before the limit slice. Correctness rule for
+   * id lookups (cheap, in-memory, no re-query): ON in all bundles.
+   * Override: per-call SearchOpts.exact_token_precedence →
+   * `search.exact_token_precedence` config → bundle.
+   */
+  exact_token_precedence: boolean;
 }
 
 /**
@@ -380,6 +390,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // matches graph_signals posture). Power users opt in per-call.
     relationalRetrieval: false,
     relational_retrieval_depth: 2,
+    exact_token_precedence: true,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -443,6 +454,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // ships default-false everywhere if the gate flags any regression).
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
+    exact_token_precedence: true,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -498,6 +510,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // v0.43 — relational recall ON for tokenmax (max-recall tier).
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
+    exact_token_precedence: true,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -557,6 +570,7 @@ export interface SearchKeyOverrides {
   // v0.43 — relational recall overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
+  exact_token_precedence?: boolean;
   autocut_jump?: number;
   autocut_min_top?: number;
   autocut_min_keep?: number;
@@ -614,6 +628,7 @@ export interface SearchPerCallOpts {
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
+  exact_token_precedence?: boolean;
 }
 
 /**
@@ -713,6 +728,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
+    exact_token_precedence: pick('exact_token_precedence'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -964,7 +980,13 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // part; version-only invalidation (same class as the 13→14 detail=medium
 // boost-scope bump and the 21→22 stamp/injection epoch). One-time global
 // cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
-export const KNOBS_HASH_VERSION = 28;
+//
+// bump 28→29: exact opaque-identifier precedence (search/exact-token.ts)
+// adds the `etp=` key part. A single-token id query cached under the plain
+// fused order (literal hit buried) must not be served once the rule is on,
+// and a rule-on write must not serve a rule-off lookup. Same one-time global
+// cold-miss pattern; refills within cache.ttl_seconds.
+export const KNOBS_HASH_VERSION = 29;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -1223,6 +1245,11 @@ export function knobsHash(
     `arom=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.otherMax : 'none'}`,
     `armk=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.minKeep : 'none'}`,
     `ari=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.intent : 'none'}`,
+    // v=29 addition (append-only): exact opaque-identifier precedence. A
+    // rule-on write (literal id row promoted) must not serve a rule-off
+    // lookup and vice versa. `?? true` mirrors the defensive reads above so
+    // a partial-knobs caller cannot crash the hash.
+    `etp=${(knobs.exact_token_precedence ?? true) ? 1 : 0}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1428,6 +1455,12 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 1 && n <= 3) out.relational_retrieval_depth = n;
   }
 
+  // Exact opaque-identifier precedence (boolean; on in every bundle).
+  const etp = get('search.exact_token_precedence');
+  if (etp !== undefined) {
+    out.exact_token_precedence = etp === '1' || etp.toLowerCase() === 'true';
+  }
+
   return out;
 }
 
@@ -1474,6 +1507,8 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.autocut_jump',
   'search.autocut_min_top',
   'search.autocut_min_keep',
+  // exact opaque-identifier precedence
+  'search.exact_token_precedence',
 ]);
 
 /**

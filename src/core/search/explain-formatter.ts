@@ -30,6 +30,7 @@
 
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import type { AutocutDecision } from './autocut.ts';
+import type { ExactTokenDecision } from './exact-token.ts';
 
 /**
  * Format a single result with per-stage attribution. Returns a string
@@ -121,6 +122,16 @@ export function formatAutocutSummary(decision: AutocutDecision | undefined): str
 }
 
 /**
+ * One-line exact opaque-identifier precedence summary for `--explain`
+ * (null when the rule did not fire). Names the token and how many literal
+ * rows were promoted from the ranked set or injected above it.
+ */
+export function formatExactTokenSummary(decision: ExactTokenDecision | undefined): string | null {
+  if (!decision) return null;
+  return `exact token: "${decision.token}" literal hit ranked first (promoted ${decision.promoted}, injected ${decision.injected})`;
+}
+
+/**
  * v0.48.2 — one-line degraded summary for `--explain` (null when the run was
  * clean). Reads the closed `degraded[]` vocabulary, e.g.
  * `degraded: reranker_skipped (no_key)` — the only place a silently skipped
@@ -144,8 +155,11 @@ export function formatResultsExplain(
   const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
   // v0.42.3.0 — prepend the autocut summary when meta carries a decision;
   // v0.48.2 — and the degraded summary when any stage was skipped.
-  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded)]
-    .filter((l): l is string => l !== null);
+  const head = [
+    formatExactTokenSummary(meta?.exact_token),
+    formatAutocutSummary(meta?.autocut),
+    formatDegradedSummary(meta?.degraded),
+  ].filter((l): l is string => l !== null);
   return head.length > 0 ? `${head.join('\n')}\n\n${body}` : body;
 }
 
