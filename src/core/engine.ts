@@ -1729,9 +1729,9 @@ export interface BrainEngine {
   /** Events/timeline rows on or after `date`, optionally filtered by event.kind. */
   getSince(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]>;
   /** "On this day" — events from the same month-day in PRIOR years (default: today). */
-  getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]>;
+  getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<ChronicleTimelineRow[]>;
   /** Most recent date an entity appears (its own page or an event's `who`). */
-  getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult>;
+  getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<LastSeenResult>;
   /**
    * Upsert the date-index projection row for an event page: page_id = depth
    * page, event_page_id = event page, keyed (event_page_id, date). Re-extraction
@@ -1755,7 +1755,7 @@ export interface BrainEngine {
   /** Meta-ontology: which dimensions exist across the brain, and how widely. */
   discoverOntologyDimensions(opts?: { sourceId?: string; sourceIds?: string[] }): Promise<OntologyDimensionStat[]>;
   /** Dimensions with ≥2 distinct current-open values from ≥2 provenances. */
-  findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]>;
+  findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number; excludePrivate?: boolean }): Promise<OntologyConflict[]>;
 
   // Raw data
   /**

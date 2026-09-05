@@ -9,6 +9,23 @@
 
 import type { Operation, OperationContext } from './contract.ts';
 import { sourceScopeOpts } from './context.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+
+// ── Page visibility (fail-closed) ────────────────────────────────────────
+// The chronicle reads join pages, so they carry the same `visibility:
+// private` gate as get_page / search for untrusted callers: the source scope
+// plus the resolved private-page predicate, both applied by the engine in
+// SQL before LIMIT. A private page yields neither content nor a pointer for
+// a caller who cannot read it; trusted local callers (`remote === false`)
+// and the operator opt-outs resolve to "see everything".
+async function chronicleReadScope(
+  ctx: OperationContext,
+): Promise<{ sourceId?: string; sourceIds?: string[]; excludePrivate: boolean }> {
+  return {
+    ...sourceScopeOpts(ctx),
+    excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+  };
+}
 
 // ── Remote diary redaction (fail-closed) ─────────────────────────────────
 // The exact mechanism the ontology siblings use (`ctx.remote !== false` →
@@ -48,7 +65,7 @@ const chronicle_day: Operation = {
     const rows = redactDiaryTimeline(ctx, await ctx.engine.getTimelineForDate(String(p.date), {
       week: p.week === true,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     }));
     if (p.narrative === true) {
       const { renderTimelineNarrative } = await import('../chronicle/narrative.ts');
@@ -72,7 +89,7 @@ const chronicle_on_this_day: Operation = {
   handler: async (ctx, p) => redactDiaryTimeline(ctx, await ctx.engine.getOnThisDay({
     date: typeof p.date === 'string' ? p.date : undefined,
     limit: typeof p.limit === 'number' ? p.limit : undefined,
-    ...sourceScopeOpts(ctx),
+    ...(await chronicleReadScope(ctx)),
   })),
   cliHints: { name: 'on-this-day' },
 };
@@ -92,7 +109,7 @@ const chronicle_since: Operation = {
     return redactDiaryTimeline(ctx, await ctx.engine.getSince(String(p.date), {
       kind: typeof p.kind === 'string' ? p.kind : undefined,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     }));
   },
   cliHints: { name: 'since', positional: ['date'] },
@@ -109,9 +126,12 @@ const chronicle_last_seen: Operation = {
     asof: { type: 'string', description: 'Reference day YYYY-MM-DD for days_ago (default today).' },
   },
   handler: async (ctx, p) => {
+    // A private entity page (or private evidence) resolves to the never-seen
+    // shape for an untrusted caller: the predicate runs inside the engine, so
+    // there is no existence oracle to probe.
     const res = await ctx.engine.getLastSeen(String(p.entity), {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     });
     // Fail-closed diary redaction: when the evidence is a life/diary event
     // (or a life/diary page is queried AS the entity), remote callers get
@@ -142,7 +162,7 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     });
     // Remote redaction: never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
@@ -210,7 +230,7 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     });
     if (ctx.remote === false) return conflicts;
     // Remote: redact diary-sourced values; drop conflicts that no longer have
@@ -227,7 +247,7 @@ const volunteer_chronicle: Operation = {
   description:
     'Life Chronicle agent-orientation: the recent timeline (last N days) + the current ' +
     'validity-resolved ontology for the named entities, in one zero-LLM payload, so an agent ' +
-    'orients before acting. Diary-sourced ontology is redacted for remote callers. ' +
+    'orients before acting. Diary-sourced ontology and `visibility: private` pages are hidden from remote callers. ' +
     'CLI: `gbrain orient [--days 7] [--entities people/a,people/b]`.',
   scope: 'read',
   params: {
@@ -245,7 +265,7 @@ const volunteer_chronicle: Operation = {
       entities,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
       remote: ctx.remote !== false,
-      ...sourceScopeOpts(ctx),
+      ...(await chronicleReadScope(ctx)),
     });
     // Same fail-closed diary redaction as the timeline reads: the loader
     // redacts diary-sourced ONTOLOGY; the recent timeline is redacted here.

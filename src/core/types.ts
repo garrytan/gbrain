@@ -1520,6 +1520,13 @@ export interface ChronicleTimelineOpts {
   /** Source scope (scalar). Federated `sourceIds` takes precedence when set. */
   sourceId?: string;
   sourceIds?: string[];
+  /**
+   * Hide rows whose depth page or joined event page is `visibility: private`
+   * (the same page-visibility predicate search / get_page apply for untrusted
+   * callers). Applied in SQL before LIMIT so pagination stays correct. Set by
+   * the op layer from resolveExcludePrivatePages; engines never decide trust.
+   */
+  excludePrivate?: boolean;
 }
 
 export interface LastSeenResult {
@@ -1578,6 +1585,13 @@ export interface OntologyReadOpts {
   includeQuarantined?: boolean;
   sourceId?: string;
   sourceIds?: string[];
+  /**
+   * Drop observations whose provenance page (`source_markdown_slug` in the
+   * fact's own source) is `visibility: private`. Applied before the
+   * per-dimension resolution so an untrusted caller resolves the newest value
+   * they are allowed to see, never a private one and never a hole where one was.
+   */
+  excludePrivate?: boolean;
 }
 
 // Raw data

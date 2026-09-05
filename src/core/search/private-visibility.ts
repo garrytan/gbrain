@@ -36,6 +36,30 @@ export function privatePagesFilterFragment(pageAlias: string): string {
 }
 
 /**
+ * Chronicle twin of privatePagesFilterFragment: a timeline projection row is
+ * hidden when its depth page (`depthAlias`) is private, or when its joined
+ * event page (`eventAlias`, a LEFT JOIN that may be NULL for depth-only rows
+ * and for out-of-scope events) is private. Same fail-closed shape as the
+ * diary redaction in the chronicle ops: either endpoint being private hides
+ * the whole row, summary and pointer included.
+ */
+export function privateChronicleRowFilterFragment(depthAlias: string, eventAlias: string): string {
+  return `${privatePagesFilterFragment(depthAlias)} AND (${eventAlias}.id IS NULL OR ${privatePagesFilterFragment(eventAlias)})`;
+}
+
+/**
+ * Fact-row twin for ontology provenance: hide an observation whose provenance
+ * page (`source_markdown_slug`, looked up in the fact's own source) is
+ * private. Provenance that is not a page (for example `manual`) has no page
+ * row and passes. Deleted page rows still count (fail-closed, mirrors
+ * slugHiddenFromCaller's includeDeleted probe).
+ */
+export function privateProvenanceFilterFragment(factAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp')}))`;
+}
+
+/**
  * Row-side twin of privatePagesFilterFragment for pages already fetched
  * (get_page / fetch read one row by slug; re-querying just to filter would
  * be a second round-trip). Same semantics: only the exact string 'private'

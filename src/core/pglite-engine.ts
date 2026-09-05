@@ -94,7 +94,7 @@ import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateChronicleRowFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
@@ -4822,7 +4822,12 @@ export class PGLiteEngine implements BrainEngine {
   // date). Source scope: federated sourceIds[] > scalar sourceId > unscoped.
   // Returns the ep-side fragment (same param slot): the event-page LEFT JOIN carries
   // the caller's scope so out-of-scope event fields null out (#2200 origin-join shape).
-  private pushChronicleSource(where: string[], params: unknown[], opts?: { sourceId?: string; sourceIds?: string[] }): string {
+  private pushChronicleSource(where: string[], params: unknown[], opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): string {
+    // Page visibility rides the same predicate list as source scope so it is
+    // applied before LIMIT (a post-filter would let hidden rows eat limit
+    // slots and break pagination). The op layer decides trust; see
+    // ChronicleTimelineOpts.excludePrivate.
+    if (opts?.excludePrivate === true) where.push(privateChronicleRowFilterFragment('p', 'ep'));
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       params.push(opts.sourceIds);
       where.push(`p.source_id = ANY($${params.length}::text[])`);
@@ -4892,7 +4897,7 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows as unknown as ChronicleTimelineRow[];
   }
 
-  async getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]> {
+  async getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<ChronicleTimelineRow[]> {
     const limit = opts?.limit ?? 50;
     const params: unknown[] = [];
     let target: string;
@@ -4916,7 +4921,7 @@ export class PGLiteEngine implements BrainEngine {
     return result.rows as unknown as ChronicleTimelineRow[];
   }
 
-  async getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult> {
+  async getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<LastSeenResult> {
     const params: unknown[] = [entitySlug, `%${entitySlug}%`];
     const where: string[] = [
       `(te.event_page_id IS NULL OR ep.deleted_at IS NULL)`,
@@ -5033,12 +5038,16 @@ export class PGLiteEngine implements BrainEngine {
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    // Provenance visibility is applied BEFORE the DISTINCT ON resolution so
+    // an untrusted caller resolves the newest value they may see (see
+    // OntologyReadOpts.excludePrivate).
+    const privacy = opts?.excludePrivate === true ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
     const r = await this.db.query(
       `SELECT DISTINCT ON (dimension) dimension, value, confidence,
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -5066,17 +5075,21 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
-  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]> {
+  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number; excludePrivate?: boolean }): Promise<OntologyConflict[]> {
     const minConf = opts?.minConfidence ?? 0;
     const params: unknown[] = [minConf];
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    // Private-provenance rows leave the candidate set before the >=2 values
+    // test, so a conflict that only exists because of a hidden page is not
+    // reported to a caller who cannot read that page.
+    const privacy = opts?.excludePrivate === true ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
     const r = await this.db.query(
       `WITH cur AS (
          SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
          FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
-           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope}
+           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy}
        )
        SELECT entity_slug, dimension,
               json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values
