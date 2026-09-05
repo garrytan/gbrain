@@ -91,6 +91,9 @@ interface FakeGoogle {
   historyResponseId: string;
   historyExpired: boolean;
   failThreads: Set<string>;
+  /** Threads that 429 (rate-limited) on every fetch — retry-after: 0 so tests
+   *  don't actually sleep through the client's real backoff schedule. */
+  rateLimitThreads: Set<string>;
   contacts: unknown[];
   contactsDelta: unknown[];
   calendarEvents: unknown[];
@@ -111,6 +114,7 @@ function emptyFx(): FakeGoogle {
     historyResponseId: '1000',
     historyExpired: false,
     failThreads: new Set(),
+    rateLimitThreads: new Set(),
     contacts: [],
     contactsDelta: [],
     calendarEvents: [],
@@ -127,8 +131,8 @@ function b64url(s: string): string {
 }
 
 function buildFetch(fx: FakeGoogle): FetchImpl {
-  const json = (body: unknown, status = 200): Response =>
-    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
   return async (url: string): Promise<Response> => {
     const u = new URL(url);
@@ -174,6 +178,11 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
       fx.threadFetches++;
       fx.onThreadFetch?.();
       if (fx.failThreads.has(tid)) return json({ error: { code: 500, message: 'backend error' } }, 500);
+      if (fx.rateLimitThreads.has(tid)) {
+        // retry-after: 0 → the client's real (patient) retry loop still
+        // runs its full attempt budget, but with zero actual delay.
+        return json({ error: { message: 'rate limit' } }, 429, { 'retry-after': '0' });
+      }
       const msgs = fx.messages
         .filter((m) => m.threadId === tid)
         .sort((a, b) => b.internalDateMs - a.internalDateMs); // served newest-first
@@ -832,6 +841,54 @@ describe('google-source materialize', () => {
         expect(state5.gmail_fail_counts ?? {}).toEqual({}); // reset + success
         const slugs5 = await slugsWhere(`slug LIKE 'emails/%'`);
         expect(slugs5.some((s) => s.includes('contract-question'))).toBe(true);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('rate-limited thread: partial every run like a real failure, but NEVER poisoned — the ledger stays empty across many runs', async () => {
+    // The production bug this pins: a transient 429/403 rate-limit failure
+    // used to count toward MAX_THREAD_FAILURES exactly like a hard failure,
+    // so a burst of rate limiting during a big backfill would poison
+    // (silently skip, without --full) mail that was never actually bad.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-ratelimit-'));
+    const fx = emptyFx();
+    gmailFixture(fx);
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        fx.rateLimitThreads.add(T_B);
+        // Run this MORE times than MAX_THREAD_FAILURES (3) would take to
+        // poison a hard failure — if rate-limit failures were still counted,
+        // run 4 would already skip T_B instead of retrying it.
+        for (let run = 1; run <= 5; run++) {
+          const res = await sweep(dir, fx, vault, {}, 'gmail');
+          expect(res.status).toBe('partial');
+          expect(res.failedFiles).toBe(1);
+          const state = readGoogleState(dir);
+          // The ledger entry for T_B never appears — a rate-limit failure is
+          // never counted toward the poison threshold, no matter how many
+          // times it happens in a row.
+          expect(state.gmail_fail_counts?.[T_B]).toBeUndefined();
+          expect(state.gmail_backfill_done).toBe(false);
+        }
+
+        // The thread was actually FETCHED every run (never skipped as
+        // poisoned) — proof the loop kept retrying it, not silently giving up.
+        const fetchCalls = fx.calls.filter((c) => c.includes(`/threads/${T_B}`));
+        expect(fetchCalls.length).toBeGreaterThan(0);
+
+        // Once the rate limit clears, the thread imports normally and the
+        // backfill completes — nothing was permanently lost.
+        fx.rateLimitThreads.clear();
+        const resFinal = await sweep(dir, fx, vault, {}, 'gmail');
+        expect(resFinal.status).toBe('synced');
+        const stateFinal = readGoogleState(dir);
+        expect(stateFinal.gmail_backfill_done).toBe(true);
+        const slugsFinal = await slugsWhere(`slug LIKE 'emails/%'`);
+        expect(slugsFinal.some((s) => s.includes('contract-question'))).toBe(true);
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
