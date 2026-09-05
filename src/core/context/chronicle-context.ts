@@ -18,6 +18,13 @@ export interface ChronicleContextOpts {
   remote?: boolean;
   sourceId?: string;
   sourceIds?: string[];
+  /**
+   * Hide `visibility: private` pages (timeline rows whose depth or event page
+   * is private; ontology rows whose provenance page is private). Resolved by
+   * the op layer (resolveExcludePrivatePages) and applied by the engine
+   * before LIMIT, the same gate get_page / search use.
+   */
+  excludePrivate?: boolean;
 }
 
 export interface ChronicleContext {
@@ -36,7 +43,7 @@ export async function loadChronicleContext(
 ): Promise<ChronicleContext> {
   const days = typeof opts.days === 'number' && opts.days > 0 ? opts.days : 7;
   const since = daysAgoIso(days);
-  const scope = { sourceId: opts.sourceId, sourceIds: opts.sourceIds };
+  const scope = { sourceId: opts.sourceId, sourceIds: opts.sourceIds, excludePrivate: opts.excludePrivate === true };
 
   const recent_timeline = await engine.getSince(since, { ...scope, limit: opts.limit ?? 50 });
 
