@@ -13,6 +13,19 @@ export const ALL_GOOGLE_SERVICES: readonly GoogleService[] = ['gmail', 'calendar
 /** The account's primary calendar — the Calendar API's own alias, and the default a google source sweeps. */
 export const DEFAULT_CALENDAR_ID = 'primary';
 
+/** Gmail initial-backfill batch size (older threads processed per floor-commit chunk). */
+export const DEFAULT_BACKFILL_BATCH_THREADS = 25;
+
+/**
+ * Upper clamp on a configured backfill batch size. Matches the pagination
+ * safety cap the Gmail client already enforces per listing call
+ * (`PAGINATION_CAP` in google-clients.ts) — a batch larger than one listing
+ * pass could ever return buys nothing and just raises the blast radius of a
+ * single rate-limited/failed batch (the floor only commits per fully-
+ * successful batch).
+ */
+export const MAX_BACKFILL_BATCH_THREADS = 500;
+
 export interface GoogleSourceConfig {
   /** Account email — vault credential pointer in vault mode; identity only
    *  (From/To matching, deep-link authuser) in command/env modes. */
@@ -37,6 +50,14 @@ export interface GoogleSourceConfig {
   access: 'vault' | 'command' | 'env';
   tokenCommand?: string;
   tokenEnv?: string;
+  /**
+   * Older threads processed per floor-commit chunk during Gmail's initial
+   * backfill (default DEFAULT_BACKFILL_BATCH_THREADS, clamped to
+   * [1, MAX_BACKFILL_BATCH_THREADS]). Raising it trades a bigger blast
+   * radius per rate-limited/failed batch for fewer listing round-trips on a
+   * very large mailbox; see docs/guides/google-connect.md#backfill-pace.
+   */
+  backfillBatchThreads: number;
 }
 
 /** Cursor state persisted at <dir>/.google-source.json. */

@@ -52,7 +52,11 @@ import {
   type SourceRow as OpsSourceRow,
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
-import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
+import {
+  ALL_GOOGLE_SERVICES,
+  DEFAULT_CALENDAR_ID,
+  MAX_BACKFILL_BATCH_THREADS,
+} from '../core/google/types.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -139,7 +143,8 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
-        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
+        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '                    [--backfill-batch <n>]   (Gmail initial-backfill batch size, 1-500, default 25 — see docs/guides/google-connect.md#backfill-pace)',
     );
     process.exit(2);
   }
@@ -170,6 +175,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
   let gHistoryDays = 90;
   let gCalendarId: string = DEFAULT_CALENDAR_ID;
+  let gBackfillBatch: number | undefined;
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -229,6 +235,18 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         process.exit(2);
       }
       gCalendarId = v;
+      continue;
+    }
+    if (a === '--backfill-batch') {
+      const v = Number(args[++i]);
+      if (!Number.isInteger(v) || v < 1 || v > MAX_BACKFILL_BATCH_THREADS) {
+        console.error(
+          `--backfill-batch must be an integer between 1 and ${MAX_BACKFILL_BATCH_THREADS} ` +
+            '(Gmail initial-backfill batch size; see docs/guides/google-connect.md#backfill-pace).',
+        );
+        process.exit(2);
+      }
+      gBackfillBatch = v;
       continue;
     }
     if (a === '--scope') {
@@ -433,6 +451,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
             access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
+            backfillBatchThreads: gBackfillBatch,
           },
         }
       : {}),
