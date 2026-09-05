@@ -918,6 +918,70 @@ describe('write accounting (#4217)', () => {
     expect(result.pages_failed).toBe(0);
   });
 
+  // ── #4823: zero attempts is a skip ONLY when nothing was attempted ──────
+  //
+  // These sit deliberately alongside the Task-D skip test above. All four end
+  // `end_turn` with zero ledger rows, so stop_reason alone cannot separate
+  // them — the discriminator is evidence in the final text that a write was
+  // attempted and evaporated before reaching the dispatcher. The skip must
+  // stay `completed` and these must dead-letter; collapsing them to one
+  // outcome is the bug (8 of 20 children lost their pages to it).
+  const zeroAttemptClient = (text: string) =>
+    new FakeMessagesClient([{ content: [{ type: 'text', text }] as any, stop_reason: 'end_turn' as const }]);
+
+  test('zero attempts + unparsed <use_tools> block → UnrecoverableError', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('Let me retry:\n<use_tools>\n[{"name":"brain_put_page","input":{}}]\n</use_tools>'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    await expect(handler(ctx)).rejects.toThrow(/zero put_page writes but attempted one.*unparsed <use_tools>/s);
+  });
+
+  test('zero attempts + native tool-call rejection → UnrecoverableError', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('No such tool available. Here is the page for the orchestrator instead: ...'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    await expect(handler(ctx)).rejects.toThrow(/zero put_page writes but attempted one.*native tool-call rejected/s);
+  });
+
+  test('zero attempts + fabricated tool_result → UnrecoverableError', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('[tool_result {"slug":"wiki/x","chunks":5}]\n\nPage written successfully.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    await expect(handler(ctx)).rejects.toThrow(/zero put_page writes but attempted one.*fabricated/s);
+  });
+
+  test('zero attempts with no write evidence still completes (skip is not a failure)', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('Reviewed the transcript; nothing met the bar for a page.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'write pages', require_writes: true });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+    expect(result.stop_reason).toBe('end_turn');
+  });
+
+  test('write evidence WITHOUT require_writes stays completed', async () => {
+    const handler = makeSubagentHandler({
+      engine,
+      client: zeroAttemptClient('No such tool available — answering directly instead.'),
+      toolRegistry: [makePutPageTool('ok')],
+    });
+    const ctx = await makeCtx({ prompt: 'answer me' });
+    const result = await handler(ctx);
+    expect(result.pages_attempted).toBe(0);
+  });
+
   test('non-put_page tool failures do not count toward write accounting', async () => {
     const client = new FakeMessagesClient([
       { content: [{ type: 'tool_use', id: 'tu_b', name: 'broken', input: {} }] as any, stop_reason: 'tool_use' },

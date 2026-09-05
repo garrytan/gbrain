@@ -219,6 +219,33 @@ export async function persistToolExecComplete(
 }
 
 /**
+ * #4823 — evidence that the child TRIED to write a page and the write never
+ * reached the tool dispatcher, so no `subagent_tool_executions` row exists.
+ *
+ * The claude-cli recipe registers no native tools (`--tools ''`); tool calls
+ * travel as a prompt-taught `<use_tools>` text block that `extractToolCalls`
+ * parses back out. Three ways a real write evaporates without a ledger row:
+ *
+ *  1. an unparsed `<use_tools>` block — the block reached the final text
+ *     instead of being consumed (a parse failure reclassifies it as prose);
+ *  2. `No such tool available` — the model used native tool-calling syntax,
+ *     which the CLI rejects because every built-in tool is disabled;
+ *  3. a fabricated `[tool_result ...]` — the model wrote the result envelope
+ *     itself and reported success for a call that never happened.
+ *
+ * All three are indistinguishable from a clean Task-D skip by stop_reason
+ * alone: each ends `end_turn` with prose. A genuine skip contains none of
+ * them, which is what keeps the legitimate no-op completing.
+ */
+export function detectUnlandedWriteEvidence(text: string | undefined | null): string | null {
+  if (!text) return null;
+  if (text.includes('<use_tools>')) return 'unparsed <use_tools> block in final text';
+  if (text.includes('No such tool available')) return 'native tool-call rejected by the CLI (tools are disabled)';
+  if (text.includes('[tool_result')) return 'fabricated [tool_result] envelope — no such call was dispatched';
+  return null;
+}
+
+/**
  * #4217 — structural write accounting. A subagent job's status used to reflect
  * only "the agent turn finished"; 22 consecutive jobs once reported
  * `completed` while every put_page failed (embedding-dimension mismatch) and
@@ -295,6 +322,22 @@ export async function finalizeWriteAccounting(
     throw new UnrecoverableError(
       `job produced zero put_page writes and did not finish cleanly (stop_reason: ${result.stop_reason}) — not a legitimate skip`,
     );
+  }
+  // #4823: a clean `end_turn` with zero attempts is a legitimate skip ONLY
+  // when the child never tried to write. The April-2026 backfill lost 8 of 20
+  // children here: each composed a full page, failed to land it through the
+  // text tool protocol, narrated the page as prose, and ended `end_turn` — so
+  // `attempted === 0` sailed past both guards above and the run reported
+  // `status: ok` with `dead_jobs: 0`. Evidence of an unlanded write turns that
+  // silent loss into a dead-letter (the idempotency key releases and the next
+  // cycle re-synthesizes the transcript).
+  if (opts.requireWrites && attempted === 0) {
+    const evidence = detectUnlandedWriteEvidence(result.result);
+    if (evidence) {
+      throw new UnrecoverableError(
+        `job produced zero put_page writes but attempted one — ${evidence}`,
+      );
+    }
   }
   return accounted;
 }
