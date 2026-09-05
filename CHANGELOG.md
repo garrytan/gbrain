@@ -2,6 +2,20 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.48.6.0] - 2026-09-05
+
+**Dream reports stay readable and count extracted pages correctly.**
+
+Scheduled jobs can parse `gbrain dream --json` directly: extraction progress no longer appears before the report. Page totals count processed pages rather than created links, including pages processed by the bounded database-only stale drain. A successful drain-only cycle now reports work even when its filesystem pass finds no pages.
+
+Standalone `gbrain extract --stale --json` keeps its existing output. No configuration change, migration or re-embedding is needed.
+
+### Itemized changes
+
+- Embedded stale extraction supports a quiet output mode, and the cycle suppresses filesystem extraction progress on stdout.
+- `totals.pages_extracted` combines filesystem/targeted and stale-drain page counts independently of link creation.
+- Regression tests cover work/no-op stdout, mixed and DB-only counts, quiet dry-run/JSON combinations, and standalone JSON output.
+
 ## [0.48.2.0] - 2026-09-02
 
 **Your search reranker now runs on Voyage, and every surface tells you whether it is actually running.**
