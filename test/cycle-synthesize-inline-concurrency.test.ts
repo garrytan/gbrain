@@ -202,6 +202,19 @@ describe('loadSynthConfig knob validation (#4194/#4216)', () => {
     await engine.unsetConfig('dream.synthesize.mode');
   });
 
+  test('oneshot_max_tokens defaults high, honors overrides, and validates invalid values', async () => {
+    expect((await loadSynthConfig(engine)).oneshotMaxTokens).toBe(32_000);
+    await engine.setConfig('dream.synthesize.oneshot_max_tokens', '48000');
+    expect((await loadSynthConfig(engine)).oneshotMaxTokens).toBe(48_000);
+    await engine.setConfig('dream.synthesize.oneshot_max_tokens', '0');
+    expect((await loadSynthConfig(engine)).oneshotMaxTokens).toBe(8192);
+    await engine.setConfig('dream.synthesize.oneshot_max_tokens', '-50');
+    expect((await loadSynthConfig(engine)).oneshotMaxTokens).toBe(8192);
+    await engine.setConfig('dream.synthesize.oneshot_max_tokens', 'garbage');
+    expect((await loadSynthConfig(engine)).oneshotMaxTokens).toBe(32_000);
+    await engine.unsetConfig('dream.synthesize.oneshot_max_tokens');
+  });
+
   test("link_manifest: default ON; only explicit false/0/off disables (case/space-insensitive)", async () => {
     expect((await loadSynthConfig(engine)).linkManifest).toBe(true);
     for (const off of ['false', ' OFF ', '0']) {

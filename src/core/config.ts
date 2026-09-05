@@ -434,6 +434,7 @@ export interface GBrainConfig {
       verdict_model?: string;
       max_prompt_tokens?: number;
       max_chunks_per_transcript?: number;
+      oneshot_max_tokens?: number;
       subagent_timeout_ms?: number;
       subagent_wait_timeout_ms?: number;
     };
@@ -1092,6 +1093,7 @@ export async function loadConfigWithEngine(
   const dbVerdictModel = await dbStr('dream.synthesize.verdict_model');
   const dbMaxPromptTokens = await dbInt('dream.synthesize.max_prompt_tokens');
   const dbMaxChunksPerTranscript = await dbInt('dream.synthesize.max_chunks_per_transcript');
+  const dbOneshotMaxTokens = await dbInt('dream.synthesize.oneshot_max_tokens');
   const dbSubagentTimeoutMs = await dbNum('dream.synthesize.subagent_timeout_ms');
   const dbSubagentWaitTimeoutMs = await dbNum('dream.synthesize.subagent_wait_timeout_ms');
   const dbLookbackDays = await dbInt('dream.patterns.lookback_days');
@@ -1117,6 +1119,9 @@ export async function loadConfigWithEngine(
   }
   if (mergedSynth.max_chunks_per_transcript === undefined && dbMaxChunksPerTranscript !== undefined) {
     mergedSynth.max_chunks_per_transcript = dbMaxChunksPerTranscript;
+  }
+  if (mergedSynth.oneshot_max_tokens === undefined && dbOneshotMaxTokens !== undefined) {
+    mergedSynth.oneshot_max_tokens = dbOneshotMaxTokens;
   }
   if (mergedSynth.subagent_timeout_ms === undefined && dbSubagentTimeoutMs !== undefined) {
     mergedSynth.subagent_timeout_ms = dbSubagentTimeoutMs;
@@ -1425,6 +1430,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.verdict_model',
   'dream.synthesize.max_prompt_tokens',
   'dream.synthesize.max_chunks_per_transcript',
+  'dream.synthesize.oneshot_max_tokens',
   // #2415: top-level namespace for synthesize/patterns output (default 'wiki').
   'dream.synthesize.output_root',
   'dream.synthesize.subagent_timeout_ms',

@@ -455,11 +455,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-describe('E2E synthesize — max_turns (#4152 REGRESSION pin) + triage map injection', () => {
+describe('E2E synthesize — child budgets (#4152/#4785 REGRESSION pins) + triage map injection', () => {
   // IRON-RULE REGRESSION TEST: the default turn budget dropped 30 → 16 with
   // the two-stage cascade. Pin BOTH the new default AND the config path that
   // restores the old behavior.
-  test('submitted subagent jobs carry max_turns=16 by default; dream.synthesize.max_turns=30 restores 30', async () => {
+  test('oneshot children carry their output cap; explicit agentic children keep the generic cap', async () => {
     const rig = await setupRig();
     try {
       await rig.engine.setConfig('dream.synthesize.enabled', 'true');
@@ -467,6 +467,7 @@ describe('E2E synthesize — max_turns (#4152 REGRESSION pin) + triage map injec
       // Two back-to-back runs in this test — disable the cooldown so the
       // second run isn't skipped (configured 0 is honored).
       await rig.engine.setConfig('dream.synthesize.cooldown_hours', '0');
+      await rig.engine.setConfig('dream.synthesize.oneshot_max_tokens', '48000');
       const basename = '2026-08-14-turns.txt';
       const filePath = corpusPath(rig.corpusDir, basename);
       const content = 'a substantive conversation line\n'.repeat(200);
@@ -478,23 +479,26 @@ describe('E2E synthesize — max_turns (#4152 REGRESSION pin) + triage map injec
           await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
         });
       });
-      let rows = await rig.engine.executeRaw<{ data: { max_turns?: number; prompt?: string } }>(
+      let rows = await rig.engine.executeRaw<{ data: { max_turns?: number; max_tokens?: number; prompt?: string } }>(
         `SELECT data FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
       );
       expect(rows[0].data.max_turns).toBe(16);
+      expect(rows[0].data.max_tokens).toBe(48_000);
 
       // Restore path: config override back to the pre-#4152 value. Cancelled
       // rows release the idempotency key, so a re-run resubmits fresh.
       await rig.engine.setConfig('dream.synthesize.max_turns', '30');
+      await rig.engine.setConfig('dream.synthesize.mode', 'agentic');
       await withoutAnthropicKey(async () => {
         await withSubagentAutoCancel(rig.engine, async () => {
           await runPhaseSynthesize(rig.engine, { brainDir: rig.brainDir, dryRun: false });
         });
       });
-      rows = await rig.engine.executeRaw<{ data: { max_turns?: number } }>(
+      rows = await rig.engine.executeRaw<{ data: { max_turns?: number; max_tokens?: number } }>(
         `SELECT data FROM minion_jobs WHERE name = 'subagent' ORDER BY id DESC LIMIT 1`,
       );
       expect(rows[0].data.max_turns).toBe(30);
+      expect(rows[0].data.max_tokens).toBeUndefined();
     } finally {
       await rig.cleanup();
     }

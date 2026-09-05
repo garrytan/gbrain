@@ -3418,6 +3418,8 @@ export interface ChatOpts {
   messages: ChatMessage[];
   tools?: ChatToolDef[];
   maxTokens?: number;
+  /** Provider-neutral sampling temperature. Omitted preserves the provider default. */
+  temperature?: number;
   abortSignal?: AbortSignal;
   /**
    * Per-call provider options keyed by recipe id, deep-merged LAST — after
@@ -3992,6 +3994,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
