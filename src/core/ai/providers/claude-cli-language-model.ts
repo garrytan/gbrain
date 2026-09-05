@@ -457,6 +457,34 @@ interface ParsedToolCall {
 }
 
 /**
+ * #4823 — process-wide count of `<use_tools>` blocks that failed to parse.
+ * Each one is a tool call the model made and the runtime dropped, so a run
+ * with a non-zero count wrote less than the model believed it did. Read (and
+ * reset) by the dream cycle to populate `details.synthesis.tool_block_parse_failures`.
+ */
+let toolBlockParseFailures = 0;
+let lastToolBlockParseError: string | null = null;
+
+function recordToolBlockParseFailure(message: string): void {
+  toolBlockParseFailures += 1;
+  lastToolBlockParseError = message;
+  process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${message}\n`);
+}
+
+/** Returns the running count plus the most recent parse error, without resetting. */
+export function peekToolBlockParseFailures(): { count: number; lastError: string | null } {
+  return { count: toolBlockParseFailures, lastError: lastToolBlockParseError };
+}
+
+/** Returns the running count and resets it — for per-phase telemetry. */
+export function drainToolBlockParseFailures(): { count: number; lastError: string | null } {
+  const snapshot = { count: toolBlockParseFailures, lastError: lastToolBlockParseError };
+  toolBlockParseFailures = 0;
+  lastToolBlockParseError = null;
+  return snapshot;
+}
+
+/**
  * Locate and parse the `<use_tools>...</use_tools>` block in the assistant's
  * raw text response. Returns the parsed tool calls plus whatever prose
  * surrounded the block. Returns an empty `toolCalls` array when no block is
@@ -470,13 +498,22 @@ function extractToolCalls(raw: string): {
 } {
   const openTag = '<use_tools>';
   const closeTag = '</use_tools>';
-  const openIdx = raw.indexOf(openTag);
-  if (openIdx === -1) {
+  // #4823: anchor on the CLOSING tag first, then take the LAST opening tag
+  // before it. The old `indexOf(openTag)` anchored on the FIRST occurrence,
+  // so a model that *mentions* the tag in prose before using it — e.g.
+  // "Let me use the correct `<use_tools>` format:" — shifted the slice origin
+  // onto the backticked mention. `inner` then began "` format:\n\n<use_tools>…",
+  // JSON.parse threw, and the catch below discarded a complete, valid tool
+  // call as prose. Scanning back from the close tag (not `lastIndexOf` over
+  // the whole string, which trailing prose could re-break) picks the real
+  // block in both the plain and the mentioned-then-used shapes.
+  const closeIdx = raw.indexOf(closeTag);
+  if (closeIdx === -1) {
+    // Unterminated block (or none at all) — recover gracefully.
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
-  const closeIdx = raw.indexOf(closeTag, openIdx + openTag.length);
-  if (closeIdx === -1) {
-    // Unterminated block — recover gracefully.
+  const openIdx = raw.lastIndexOf(openTag, closeIdx);
+  if (openIdx === -1) {
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
 
@@ -491,7 +528,12 @@ function extractToolCalls(raw: string): {
   let parsed: unknown;
   try {
     parsed = JSON.parse(inner);
-  } catch {
+  } catch (e) {
+    // #4823: never swallow silently. A malformed block is a LOST tool call —
+    // the caller sees prose and the job completes having written nothing.
+    // Counted so the dream phase can surface `tool_block_parse_failures`
+    // instead of reporting a clean run over discarded work.
+    recordToolBlockParseFailure(e instanceof Error ? e.message : String(e));
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
   if (!Array.isArray(parsed)) {
