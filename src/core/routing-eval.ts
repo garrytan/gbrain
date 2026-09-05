@@ -94,10 +94,19 @@ export interface RoutingCaseResult {
  * a routing match should do. The cost is slightly over-permissive
  * matching; the benefit is reliable matches across quote/punctuation
  * variants that agents emit in practice.
+ *
+ * Punctuation is what we strip — not scripts. The class is Unicode
+ * (`\p{L}\p{N}`), so Korean, CJK, Cyrillic, and accented Latin survive
+ * normalization. An ASCII-only `[^a-z0-9]` erases them to '', which
+ * breaks routing eval two ways: a non-English trigger normalizes to ''
+ * and is dropped by the length filter (its fixtures can never match),
+ * and a mixed trigger like `"<email> 처리됨"` collapses to the single
+ * token `email`, which then matches every English intent mentioning
+ * email.
  */
 export function normalizeText(s: string): string {
   if (!s) return '';
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
 /**
