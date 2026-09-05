@@ -457,6 +457,31 @@ interface ParsedToolCall {
 }
 
 /**
+ * Keys the `<use_tools>` protocol reserves on an entry. `type` and `id` are
+ * tolerated leftovers of the Anthropic tool_use shape; nothing reads them.
+ */
+const RESERVED_ENTRY_KEYS: ReadonlySet<string> = new Set(['type', 'name', 'id', 'input']);
+
+/**
+ * Resolve the tool input of one `<use_tools>` entry. The protocol asks for
+ * `{name, input}`, but the model sometimes emits the arguments flat on the
+ * entry itself (`{"name": "brain_search", "query": "..."}`), the Anthropic
+ * tool_use shape with the `input` wrapper dropped. Reading only `e.input`
+ * turned every such call into `{}`, and the tool then failed on its missing
+ * required parameter with nothing the model could act on. When `input` is
+ * absent, the entry's non-reserved keys ARE the input; when it is present
+ * it wins verbatim, stray sibling keys ignored.
+ */
+function resolveEntryInput(e: Record<string, unknown>): unknown {
+  if (e.input !== undefined && e.input !== null) return e.input;
+  const flat: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(e)) {
+    if (!RESERVED_ENTRY_KEYS.has(k)) flat[k] = v;
+  }
+  return flat;
+}
+
+/**
  * Locate and parse the `<use_tools>...</use_tools>` block in the assistant's
  * raw text response. Returns the parsed tool calls plus whatever prose
  * surrounded the block. Returns an empty `toolCalls` array when no block is
@@ -514,7 +539,7 @@ function extractToolCalls(raw: string): {
     // is deliberately ignored — nothing round-trips it (renderPrompt strips
     // ids on replay; the loop pairs results in-memory within one turn).
     const id = `toolu_claude_cli_${randomUUIDv7()}`;
-    const inputJson = JSON.stringify(e.input ?? {});
+    const inputJson = JSON.stringify(resolveEntryInput(e));
     toolCalls.push({ id, name, input: inputJson });
   }
 
