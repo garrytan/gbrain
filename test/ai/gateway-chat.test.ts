@@ -386,6 +386,33 @@ describe('chat touchpoint — provider_chat_options passthrough', () => {
     expect(providerOptions).toBeUndefined();
   });
 
+  test('temperature is provider-neutral and omitted unless explicitly set', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    __setGenerateTextTransportForTests(async (args: any) => {
+      calls.push(args);
+      return {
+        content: [{ type: 'text', text: 'ok' }],
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any;
+    });
+    configureGateway({
+      chat_model: 'anthropic:claude-sonnet-4-6',
+      env: { ANTHROPIC_API_KEY: 'fake' },
+    });
+
+    await chat({
+      messages: [{ role: 'user', content: 'deterministic' }],
+      temperature: 0,
+    });
+    await chat({
+      messages: [{ role: 'user', content: 'provider default' }],
+    });
+
+    expect(calls[0]!.temperature).toBe(0);
+    expect('temperature' in calls[1]!).toBe(false);
+  });
+
   test('call-scoped providerOptions merge last without dropping configured siblings', async () => {
     const providerOptions = await captureProviderOptions({
       chat_model: 'deepseek:deepseek-v4-flash',

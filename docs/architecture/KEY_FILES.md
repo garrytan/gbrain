@@ -8,6 +8,11 @@ lives in `CHANGELOG.md` + `git log` / `git blame`, NOT here. Do not append
 per-release `**vX.Y.Z:**` narration — CI enforces this
 (`scripts/check-key-files-current-state.sh`).
 
+- `src/core/ai/gateway.ts` (chat sampling contract) — `ChatOpts.temperature` is provider-neutral and reaches the AI SDK's `generateText` call only when explicitly set, so existing callers retain provider defaults while contract-sensitive callers can pin deterministic sampling. Pinned by `test/ai/gateway-chat.test.ts`.
+- `src/core/config.ts` (dream oneshot headroom) — `dream.synthesize.oneshot_max_tokens` is a known, merged file/DB-plane setting. The synthesis loader owns runtime validation: default 32000, floor 8192 for finite zero/negative/small values, and default fallback for non-numeric values.
+- `src/core/cycle/synthesize.ts` (oneshot JSON prompt contract) — `buildSynthesisPrompt` is mode-aware: explicit agentic children retain search-tool and final-summary guidance; tool-less oneshot children receive neither. Oneshot children alone carry the resolved `oneshot_max_tokens` through `SubagentHandlerData.max_tokens`, leaving explicit agentic children on the generic cap.
+- `src/core/minions/handlers/subagent-oneshot.ts` (deterministic completion contract) — the single gateway call pins temperature 0 and reinforces JSON string escaping. A parse failure at reported output usage greater than or equal to the requested cap falls back as `length` even for normalized `end`/`other`; below-cap malformed output remains `unparseable`, and valid JSON at the cap proceeds normally. The existing paid agentic fallback policy is unchanged.
+
 - `docs/operations/conversation-parser-llm-fallback.md` — operator and maintainer contract for the default-off LLM parse fallback: exact config key, deterministic-first dispatch boundary, sampled data surface, untrusted-content prompt handling, page-date/cache-key coupling, timestamp validation, cache/checkpoint behavior, observability, limitations, and focused test commands.
 
 
