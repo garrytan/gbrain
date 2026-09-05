@@ -211,7 +211,7 @@ export async function runServe(
 
   // MEMORY_VERBS v1: tool-surface mode. Flag > config `mcp_surface` > 'full'.
   // 'verbs' exposes exactly the seven protocol verbs (the quickstart surface);
-  // 'starter' the ~20-op daily-driver set; 'full' (default) keeps every
+  // 'starter' the reviewed starter set; 'full' (default) keeps every
   // operation — existing installs see no change.
   const { parseSurfaceFlag, resolveSurface } = await import('../mcp/surface.ts');
   const { loadConfig } = await import('../core/config.ts');

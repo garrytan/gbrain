@@ -2157,8 +2157,8 @@ review-deferred, not fix-now). Grouped by component.
   strict_params, default_surface_dcr); (4) use `isMcpSurface` at the three
   literal `'verbs'|'starter'|'full'` validation sites; (5) shared `toIso`
   (mcp-usage.ts vs siblings); (6) export the MCP_USAGE window bounds
-  ([1, 3650]) from mcp-usage.ts and consume in parseAuthClientsArgs +
-  derive-starter-ops instead of re-typing; (7) reuse buildQueueDepths
+  ([1, 3650]) from mcp-usage.ts and consume in parseAuthClientsArgs
+  instead of re-typing; (7) reuse buildQueueDepths
   (status.ts) in doctor's waitingByQueue + the supervisor probe instead of
   three copies of the same GROUP BY; (8) compose rescopeClient's
   optional-column branch matrix instead of enumerating it. **Why:** each is

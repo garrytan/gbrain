@@ -1,7 +1,7 @@
 /**
  * T12 (amendment 30) — src/core/mcp-usage.ts, the shared mcp_request_log
- * usage reader. Pins the row-hygiene rules that three consumers (auth
- * clients --usage, the advisor starter-fit collector, derive-starter-ops)
+ * usage reader. Pins the row-hygiene rules that two consumers (auth
+ * clients --usage and the advisor starter-fit collector)
  * must agree on:
  *   - JSON-RPC method rows ('tools/list', 'initialize', ...) are not op calls
  *   - 'surface_change' audit rows (ENG-8) are excluded
@@ -64,7 +64,7 @@ beforeAll(async () => {
   await seed(null, 'query', 1);
 
   // client-denied: denial/error traffic must not count as usage — a client
-  // bouncing off a gated op can't "use" its way into starter derivation.
+  // bouncing off a gated op can't influence the advisor usage observation.
   await seed('client-denied', 'advisor', 20, 0, 'denied_after_list');
   await seed('client-denied', 'query', 3, 0, 'error');
   // warn-mode successes DO count.

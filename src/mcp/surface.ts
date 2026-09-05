@@ -3,9 +3,9 @@
  *
  *   'full'    (default) — every operation, verbs included. Existing installs
  *                         see no change; e2e tool-count assertions hold.
- *   'starter'           — the ~20-op daily-driver set (STARTER_OPS below):
- *                         the seven frozen verbs + the fallback daily ops +
- *                         whoami + the request_tools discovery meta-op. The
+ *   'starter'           — the reviewed starter set (STARTER_OPS below): the
+ *                         seven frozen verbs + reviewed daily ops + whoami +
+ *                         the request_tools discovery meta-op. The
  *                         answer to the "85-tool wall" consumer complaint.
  *   'verbs'             — EXACTLY the seven frozen protocol verbs (ops marked
  *                         `verb: true`). The quickstart surface. Its semantics
@@ -56,54 +56,14 @@ export function surfaceWiderThan(a: McpSurface, b: McpSurface): boolean {
 }
 
 /**
- * WP4 FOV-6b fallback for the daily-driver slice of STARTER_OPS.
+ * The reviewed compatibility/security core of the starter surface. Keep this
+ * set in sync with the starter contract: future edits trigger starter review.
+ * It includes the frozen verbs, identity/discovery, the agent lane, and
+ * `capture` for the starter lanes. `capture` is intentionally absent from
+ * BRAIN_TOOL_ALLOWLIST so subagents do not gain a new write tool.
  *
- * Provenance: the plan's STARTER_OPS derivation from the production
- * `mcp_request_log` histogram (30d window, keyed by token_name) had NOT
- * landed at implementation time (2026-08-13), so per FOV-6b this v1 set is
- * the fallback: the reviewed subagent brain-tool allow-list
- * (BRAIN_TOOL_ALLOWLIST — imported, never name-copied) plus the agent lane
- * (`submit_agent` / `get_agent_job`, FOV-4 — agent-scope clients must not be
- * stranded). Corrected later by `scripts/derive-starter-ops.ts` + the E3
- * advisor drift check once the histogram pull lands.
- */
-const FALLBACK_DAILY_OPS: readonly string[] = [
-  ...BRAIN_TOOL_ALLOWLIST,
-  'submit_agent',
-  'get_agent_job',
-];
-
-/**
- * The 'starter' surface membership set (WP4). Composed PROGRAMMATICALLY —
- * the verb slice is a spread of VERB_NAMES (ENG-1: post-#4028 that is SEVEN
- * verbs including context_pack/delta; never a hand-count), the daily slice
- * is the FOV-6b fallback above, plus `whoami` (identity) and `request_tools`
- * (the D4 discovery meta-op: listed on starter + full, never verbs).
- *
- * Membership is pinned by test/mcp-surface.test.ts: every name here must
- * exist in `operations`, and allowedOpNames(verbs) ⊆ starter ⊆ full holds
- * (monotonicity, ENG-1).
- */
-export const STARTER_OPS: ReadonlySet<string> = new Set([
-  ...VERB_NAMES,
-  ...FALLBACK_DAILY_OPS,
-  'whoami',
-  'request_tools',
-  // [EV8] capture joins as a DIRECT literal — deliberately NOT via
-  // BRAIN_TOOL_ALLOWLIST (that would grant every minion subagent a new write
-  // tool and require the skillopt mutating-exclusion update). The plugin +
-  // starter connect lanes retire the "unknown tool: capture" FAQ, which only
-  // works if the starter surface actually lists it.
-  'capture',
-]);
-
-/**
- * The never-remove STARTER_OPS core: the seven frozen verbs, identity
- * (`whoami`), discovery (`request_tools`), and the agent lane
- * (`submit_agent`/`get_agent_job` — FOV-4: agent-scope clients must not be
- * stranded). Usage-driven re-derivation (`scripts/derive-starter-ops.ts`)
- * and the advisor drift check (collect-mcp-client-fit) both consume THIS
- * set so "always included" has exactly one definition.
+ * The allowlist coupling below is intentional: changes to either contract
+ * require a starter-surface review.
  */
 export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   ...VERB_NAMES,
@@ -111,10 +71,20 @@ export const ALWAYS_INCLUDED_STARTER_OPS: ReadonlySet<string> = new Set([
   'request_tools',
   'submit_agent',
   'get_agent_job',
-  // [EV8] capture is contract-bearing on the starter lanes (the retired FAQ
-  // points agents at it) — usage-driven re-derivation must never propose
-  // evicting it as a zero-usage newcomer.
+  // Capture is part of the starter core, not the subagent allowlist; full
+  // still includes it through the complete operation catalog.
   'capture',
+]);
+
+/**
+ * The 'starter' surface membership set. Composed from the reviewed core and
+ * the imported subagent allowlist; do not hand-copy either membership list.
+ * The allowlist coupling is intentional and security-sensitive: future edits
+ * to either list trigger starter review.
+ */
+export const STARTER_OPS: ReadonlySet<string> = new Set([
+  ...ALWAYS_INCLUDED_STARTER_OPS,
+  ...BRAIN_TOOL_ALLOWLIST,
 ]);
 
 /** Strict flag parser — unknown values reject loudly (parseStdioIdleTimeout pattern). */
@@ -126,7 +96,7 @@ export function parseSurfaceFlag(args: string[]): McpSurface | null {
     throw new Error(`--surface requires a value: verbs | starter | full`);
   }
   if (!isMcpSurface(raw)) {
-    throw new Error(`Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the ~20 daily-driver ops) | full (all operations, default)`);
+    throw new Error(`Unknown --surface "${raw}". Use: verbs (the 7 memory verbs) | starter (the reviewed starter set) | full (all operations, default)`);
   }
   return raw;
 }

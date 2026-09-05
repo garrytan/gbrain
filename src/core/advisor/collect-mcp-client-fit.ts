@@ -2,30 +2,25 @@
  * advisor/collect-mcp-client-fit.ts — E3: MCP surface right-sizing over
  * `mcp_request_log` (amendment 29 + D12).
  *
- * Two checks, both read-only, both riding the shared usage reader
- * (src/core/mcp-usage.ts — the same hygiene rules as the E4 CLI and the
- * derive-starter-ops script):
+ * The read-only fit check rides the shared usage reader
+ * (src/core/mcp-usage.ts — the same hygiene rules as the E4 CLI):
  *
- *  (a) Per-client fit: a client resolving to the FULL surface whose 30d
- *      distinct-op set fits inside STARTER_OPS is paying the ~100-tool
- *      catalog for a starter-sized workload. Finding carries the exact fix:
- *      `gbrain auth rescope-client <id> --surface starter`.
- *  (b) Set-level drift (the standing STARTER_OPS curator): top-10 most-used
- *      ops (ranked by CLIENT COUNT, not raw calls — D12) missing from
- *      STARTER_OPS, and starter members (excluding
- *      ALWAYS_INCLUDED_STARTER_OPS — verbs + whoami + request_tools + the
- *      agent lane) unused for 90d.
+ *  Per-client fit: a client resolving to the FULL surface whose observed
+ *  successful HTTP calls in the trailing 30d window fit inside STARTER_OPS
+ *  gets a read-only usage-review action. This is deliberately not a global
+ *  STARTER_OPS curator: usage logging is incomplete and cannot establish
+ *  set-level drift.
  *
  * Privacy (amendment 29): when the advisor runs REMOTE (ctx.remote), client
  * identifiers are REDACTED to aggregate counts ("2 clients fit the starter
  * surface — run gbrain advisor on the host for details"). Full per-client
  * detail is local-CLI-only. Op NAMES are not client identifiers and stay
- * visible in the drift finding on both surfaces.
+ * visible only in the aggregate count on the remote surface.
  *
  * D12 exclusions: automation-shaped clients (>90% of calls are the
  * context_pack/delta boundary verbs — the hook-lane/turn-context signature;
  * there is no registered-name convention to key on, the hook lane is stdio
- * and never logs) are excluded from BOTH checks via
+ * and never logs) are excluded from the fit check via
  * `ClientOpUsage.likely_automation`.
  *
  * Dismiss/snooze: the skillpack nag-state engine (escalate-then-suppress,
@@ -41,11 +36,9 @@
  */
 
 import { gbrainPath } from '../config.ts';
-import { operations } from '../operations.ts';
 import { readClientOpUsage, type ClientOpUsage } from '../mcp-usage.ts';
 import {
   STARTER_OPS,
-  ALWAYS_INCLUDED_STARTER_OPS,
   isMcpSurface,
   resolveDefaultClientSurface,
 } from '../../mcp/surface.ts';
@@ -62,12 +55,6 @@ import type { AdvisorCollector, AdvisorContext, AdvisorFinding } from './types.t
 
 /** Minimum 30d call volume before a per-client fit finding fires. */
 export const MIN_CALLS_FOR_FIT = 10;
-
-/** How many top-used ops the drift check inspects for starter membership. */
-export const DRIFT_TOP_N = 10;
-
-/** Window for the "starter member unused" drift arm. */
-export const DRIFT_UNUSED_WINDOW_DAYS = 90;
 
 /** Nag-state file for this collector (separate from the skillpack ledger). */
 export function usageNagStatePath(): string {
@@ -145,7 +132,7 @@ export const collectMcpClientFit: AdvisorCollector = {
       const fits: ClientOpUsage[] = [];
       for (const u of real30) {
         if (u.total_calls < MIN_CALLS_FOR_FIT) continue;
-        if (!surfaces.has(u.token_name)) continue; // legacy bearer token — no per-client surface row to rescope
+        if (!surfaces.has(u.token_name)) continue; // legacy bearer token — no per-client surface row to inspect
         const resolved = clientResolvedSurface(surfaces.get(u.token_name), defaultSurface);
         if (resolved !== 'full') continue; // already narrowed (row or DCR default)
         if (!u.distinct_ops.every((op) => STARTER_OPS.has(op))) continue;
@@ -157,10 +144,13 @@ export const collectMcpClientFit: AdvisorCollector = {
           findings.push({
             id: 'mcp_starter_fit_aggregate',
             severity: 'info',
-            title: `${fits.length} MCP client${fits.length === 1 ? '' : 's'} fit the starter surface — run \`gbrain advisor\` on the host for details.`,
+            title: `${fits.length} MCP client${fits.length === 1 ? '' : 's'} had observed successful HTTP calls in the trailing 30d window within STARTER_OPS — run \`gbrain advisor\` on the host for details.`,
             detail:
-              'Each has 30 days of usage entirely inside STARTER_OPS while resolving to the full ' +
-              'catalog. Client identifiers are shown on the host CLI only.',
+              'This is incomplete logging: stdio calls are not logged, and denied or error calls are not ' +
+              'observations. A client row or default is not its effective surface for every request; ' +
+              'scope and server-ceiling constraints can narrow it. Treat this as a deliberate operator ' +
+              'review signal for future or infrequent needs. `rescope-client` can create an operator pin ' +
+              'that prevents self-widening. Client identifiers are shown on the host CLI only.',
             fix: { command_argv: null },
             collector: 'mcp-client-fit',
             ask_user: true,
@@ -174,87 +164,22 @@ export const collectMcpClientFit: AdvisorCollector = {
             findings.push({
               id: `mcp_starter_fit:${u.token_name}`,
               severity: 'info',
-              title: `MCP client "${u.token_name}" used only starter-surface ops for 30d (${u.distinct_ops.length} ops, ${u.total_calls} calls) but sees the full catalog.`,
+              title: `MCP client "${u.token_name}" had ${u.total_calls} observed successful HTTP calls in the trailing 30d window within STARTER_OPS (${u.distinct_ops.length} ops).`,
               detail:
-                'A right-sized catalog means fewer wrong-tool calls and a smaller tools/list ' +
-                'prompt for that agent. The rescope takes effect on its next request; the client ' +
-                'should re-issue tools/list. (HTTP clients only — stdio usage is not logged. ' +
-                'Automation-shaped clients, >90% context_pack/delta, are excluded.)',
-              fix: { command_argv: ['gbrain', 'auth', 'rescope-client', u.token_name, '--surface', 'starter'] },
+                'This is incomplete logging: stdio calls are not logged, and denied or error calls are not ' +
+                'observations. The client row or default resolves to the full surface here, but that is ' +
+                'not the effective surface for every request; scope and server-ceiling constraints can ' +
+                'narrow it. Treat this as a deliberate operator review signal, not a claim about future ' +
+                'or infrequent needs. Review the JSON usage report before acting; `rescope-client` can ' +
+                'create an operator pin that prevents self-widening. Automation-shaped clients, >90% ' +
+                'context_pack/delta, are excluded.',
+              fix: { command_argv: ['gbrain', 'auth', 'clients', '--usage', '--days', '30', '--json'] },
               collector: 'mcp-client-fit',
               ask_user: true,
             });
           }
         }
       }
-    }
-
-    // ---- (b) set-level drift (the standing curator) ----------------------
-    try {
-      // Rank by CLIENT COUNT (D12: distinct-op sets, not raw call volume).
-      const clientCountByOp = new Map<string, number>();
-      for (const u of real30) {
-        for (const op of u.distinct_ops) {
-          clientCountByOp.set(op, (clientCountByOp.get(op) ?? 0) + 1);
-        }
-      }
-      const topOps = [...clientCountByOp.entries()]
-        .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-        .slice(0, DRIFT_TOP_N)
-        .map(([op]) => op);
-      // localOnly ops are never proposable for a network surface (mirrors
-      // derive-starter-ops); a logged localOnly name (old rows, CLI-actor
-      // audit exception) must not produce an unactionable recommendation.
-      const localOnlyOps = new Set(operations.filter((o) => o.localOnly).map((o) => o.name));
-      const missingFromStarter = topOps.filter((op) => !STARTER_OPS.has(op) && !localOnlyOps.has(op));
-
-      const usage90 = await readClientOpUsage(ctx.engine, { days: DRIFT_UNUSED_WINDOW_DAYS });
-      const seen90 = new Set<string>();
-      for (const u of usage90) {
-        if (u.likely_automation) continue;
-        for (const op of u.distinct_ops) seen90.add(op);
-      }
-      // Always-included-by-construction members (shared with surface.ts +
-      // derive-starter-ops) never count as drift — including the agent lane,
-      // whose usage would otherwise flag it "unused" forever.
-      const unusedStarter = [...STARTER_OPS]
-        .filter((op) => !ALWAYS_INCLUDED_STARTER_OPS.has(op) && !seen90.has(op))
-        .sort();
-
-      // Only meaningful once there is real traffic to curate against.
-      if (real30.length > 0 && (missingFromStarter.length > 0 || unusedStarter.length > 0)) {
-        const parts: string[] = [];
-        if (missingFromStarter.length > 0) {
-          parts.push(`top-used ops missing from STARTER_OPS: ${missingFromStarter.join(', ')}`);
-        }
-        if (unusedStarter.length > 0) {
-          parts.push(`starter members unused for ${DRIFT_UNUSED_WINDOW_DAYS}d: ${unusedStarter.join(', ')}`);
-        }
-        const fingerprint = `drift:${missingFromStarter.join(',')}|${unusedStarter.join(',')}`;
-        let show = true;
-        if (local) {
-          const gate = nagAllows(nag!, 'starter-drift', fingerprint);
-          nag = gate.next;
-          show = gate.show;
-        }
-        if (show) {
-          findings.push({
-            id: 'mcp_starter_ops_drift',
-            severity: 'info',
-            title: `STARTER_OPS has drifted from production usage (${parts.length === 2 ? 'both directions' : parts[0]!.split(':')[0]}).`,
-            detail:
-              parts.join('; ') +
-              '. Re-derive with `bun run scripts/derive-starter-ops.ts` and paste the proposed ' +
-              'block into src/mcp/surface.ts (the monotonicity test pins verbs ⊆ starter ⊆ full). ' +
-              'Automation-shaped clients are excluded from these stats.',
-            fix: { command_argv: null },
-            collector: 'mcp-client-fit',
-            ask_user: true,
-          });
-        }
-      }
-    } catch {
-      /* drift check is best-effort — never blocks the fit findings */
     }
 
     // Persist nag displays (local only, best-effort — a failed write costs one

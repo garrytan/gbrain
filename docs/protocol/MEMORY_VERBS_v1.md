@@ -82,12 +82,17 @@ each client.
 **Surface modes:** `--surface verbs` exposes EXACTLY the seven verbs —
 advertised list AND dispatch are filtered fail-closed (a hidden op returns
 `unknown_tool` even when called by name). `--surface starter` exposes the
-~27-op daily-driver set (`STARTER_OPS` in `src/mcp/surface.ts`): the seven
-verbs plus the daily brain-tool slice, the agent lane, `whoami`, `capture`, and the
-`request_tools` discovery meta-op (re-derivable from production usage via
-`scripts/derive-starter-ops.ts`). Monotonic by construction: verbs ⊆ starter ⊆ full
-(pinned by test) — starter extends the ladder ABOVE verbs and never changes
-verb semantics. `--surface full` (the default) exposes every operation,
+exact 27-member raw starter contract (`STARTER_OPS` in `src/mcp/surface.ts`),
+defined once as `ALWAYS_INCLUDED_STARTER_OPS` plus the existing
+`BRAIN_TOOL_ALLOWLIST`. The core includes the seven verbs, the agent lane,
+`whoami`, `capture`, and the `request_tools` discovery meta-op; `capture` is
+deliberately excluded from the subagent allowlist. This membership is reviewed
+for compatibility/security when the allowlist, operation registry, or client
+workflow changes, not re-derived from traffic. Raw membership is not
+necessarily a 27-tool HTTP count because `file_list` and `file_url` are
+`localOnly` and structurally absent from HTTP. Monotonic by construction:
+verbs ⊆ starter ⊆ full (pinned by test) — starter extends the ladder ABOVE
+verbs and never changes verb semantics. `--surface full` (the default) exposes every operation,
 verbs included. Why default full: verbs/starter are for agents and
 quickstarts; full preserves existing advanced tooling. Persist a default
 with `gbrain config set mcp_surface verbs`.

@@ -292,7 +292,7 @@ export function resolvePreset(flags: AgentRegisterArgs): ResolvedPreset {
         scopes: explicit(flags.scopes, 'read write'),
         writeSource: explicit(flags.source, 'default'),
         federatedRead: flags.federatedRead ?? 'snapshot',
-        // starter is literally "the ~20-op daily-driver set" (mcp/surface.ts).
+        // starter is the reviewed daily-driver contract (mcp/surface.ts).
         surface: explicit(flags.surface, 'starter'),
         workspaceDerived: false,
       };
