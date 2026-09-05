@@ -69,6 +69,10 @@ export interface EvidenceOpts {
 export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evidence {
   if (r.alias_hit) return 'alias_hit';
   if (r.title_match_boost && r.title_match_boost > 1.0) return 'exact_title_match';
+  // Exact opaque-identifier precedence: the row carries the query token as
+  // a whole-token literal (verified in text, not inferred from score), which
+  // is the definition of a keyword-exact match regardless of the fused score.
+  if (r.exact_token === true) return 'keyword_exact';
   const floor = typeof opts.cosineFloor === 'number' ? opts.cosineFloor : DEFAULT_HIGH_COSINE_FLOOR;
   if (typeof r.cosine === 'number' && Number.isFinite(r.cosine) && r.cosine >= floor) {
     return 'high_vector_match';

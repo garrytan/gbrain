@@ -975,6 +975,15 @@ export interface SearchResult {
    */
   exact_lookup?: 'slug' | 'title';
   /**
+   * Exact opaque-identifier precedence (search/exact-token.ts): set when the
+   * query was a single opaque token (an external record id) and this row
+   * carries that token as a whole-token literal in its chunk text or title.
+   * Such rows sort above every semantic-only candidate before the limit
+   * slice. Drives the autocut preserve predicate and `--explain`;
+   * classifyEvidence reads it as `keyword_exact`.
+   */
+  exact_token?: boolean;
+  /**
    * T4 — the strongest signal that surfaced this page (alias_hit >
    * exact_title_match > high_vector_match > keyword_exact > weak_semantic).
    * Computed by classifyEvidence at the end of the hybrid pipeline.
@@ -1326,6 +1335,13 @@ export interface SearchOpts {
    */
   relationalRetrieval?: boolean;
   relationalRetrievalDepth?: number;
+  /**
+   * Exact opaque-identifier precedence per-call override. Per-call wins over
+   * the `search.exact_token_precedence` config key wins over the mode bundle
+   * (on in every bundle). `false` restores the plain fused order for
+   * single-token id queries; eval A/B gates need the explicit switch.
+   */
+  exact_token_precedence?: boolean;
 }
 
 /**
@@ -1929,6 +1945,13 @@ export interface HybridSearchMeta {
    * `gbrain search --explain`.
    */
   autocut?: import('./search/autocut.ts').AutocutDecision;
+  /**
+   * Exact opaque-identifier precedence decision (token, promoted, injected).
+   * Present only when the query was a single opaque token AND a strict
+   * lexical row carried it as a whole-token literal. Omitted otherwise.
+   * Surfaced for `gbrain search --explain`.
+   */
+  exact_token?: import('./search/exact-token.ts').ExactTokenDecision;
   /**
    * #3995 — guaranteed page-1 relational evidence slot. Present only when a
    * fired relational arm's answer had to be promoted from beyond the limit

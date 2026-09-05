@@ -173,6 +173,13 @@ exact-lookup tier (lookup-shaped queries only: slug + exact-title probes
    fail-open — src/core/search/exact-lookup.ts)
        │
        ▼
+exact opaque-identifier precedence (single opaque-token queries only, such
+   as an external record id: strict keyword/title rows carrying the token
+   as a whole-token literal rank above every semantic-only candidate;
+   pure, no re-query; knob `search.exact_token_precedence`, on in every
+   bundle; src/core/search/exact-token.ts)
+       │
+       ▼
 evidence stamp → adaptive return (opt-in) → autocut (reranked modes)
        │
        ▼

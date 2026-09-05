@@ -57,6 +57,8 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.43 relational recall
   relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
   relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
+  // exact opaque-identifier precedence
+  exact_token_precedence: 'Single opaque-token (record id) queries: a whole-token literal keyword hit ranks above semantic-only candidates',
 };
 
 /**
