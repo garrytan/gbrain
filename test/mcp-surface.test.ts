@@ -22,12 +22,14 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import { VERB_NAMES } from '../src/core/verbs.ts';
 import { BRAIN_TOOL_ALLOWLIST } from '../src/core/minions/tools/brain-allowlist.ts';
+import { buildToolDefs } from '../src/mcp/tool-defs.ts';
 import {
   filterOpsForSurface,
   allowedOpNames,
   parseSurfaceFlag,
   resolveSurface,
   STARTER_OPS,
+  ALWAYS_INCLUDED_STARTER_OPS,
   minSurface,
   clampSurface,
   effectiveSurfaceForClient,
@@ -73,19 +75,124 @@ describe('filterOpsForSurface', () => {
 });
 
 describe('STARTER_OPS (WP4)', () => {
+  const EXPECTED_STARTER_NAMES = [
+    'add_timeline_entry',
+    'capture',
+    'context_pack',
+    'delta',
+    'entity',
+    'file_list',
+    'file_url',
+    'find_anomalies',
+    'forget',
+    'get_agent_job',
+    'get_backlinks',
+    'get_ingest_log',
+    'get_page',
+    'get_recent_salience',
+    'list_link_sources',
+    'list_pages',
+    'put_page',
+    'query',
+    'recall',
+    'remember',
+    'request_tools',
+    'resolve_slugs',
+    'search',
+    'submit_agent',
+    'synthesize',
+    'traverse_graph',
+    'whoami',
+  ];
+  const EXPECTED_CORE_NAMES = [
+    'capture',
+    'context_pack',
+    'delta',
+    'entity',
+    'forget',
+    'get_agent_job',
+    'recall',
+    'remember',
+    'request_tools',
+    'submit_agent',
+    'synthesize',
+    'whoami',
+  ];
+  const EXPECTED_ALLOWLIST_NAMES = [
+    'add_timeline_entry',
+    'file_list',
+    'file_url',
+    'find_anomalies',
+    'get_backlinks',
+    'get_ingest_log',
+    'get_page',
+    'get_recent_salience',
+    'list_link_sources',
+    'list_pages',
+    'put_page',
+    'query',
+    'resolve_slugs',
+    'search',
+    'traverse_graph',
+  ];
+
+  it('pins the exact sorted 27-member starter contract', () => {
+    expect([...STARTER_OPS].sort()).toEqual(EXPECTED_STARTER_NAMES);
+  });
+
+  it('pins the exact reviewed core and subagent allowlist contracts', () => {
+    expect([...ALWAYS_INCLUDED_STARTER_OPS].sort()).toEqual(EXPECTED_CORE_NAMES);
+    expect([...BRAIN_TOOL_ALLOWLIST].sort()).toEqual(EXPECTED_ALLOWLIST_NAMES);
+    expect(ALWAYS_INCLUDED_STARTER_OPS.size).toBe(EXPECTED_CORE_NAMES.length);
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(EXPECTED_ALLOWLIST_NAMES.length);
+    expect(BRAIN_TOOL_ALLOWLIST.has('capture')).toBe(false);
+    expect([...ALWAYS_INCLUDED_STARTER_OPS].filter(name => BRAIN_TOOL_ALLOWLIST.has(name))).toEqual([]);
+  });
+
+  it('emits starter definitions in registry order', () => {
+    expect(buildToolDefs(filterOpsForSurface(operations, 'starter')).map(def => def.name)).toEqual([
+      'remember',
+      'entity',
+      'synthesize',
+      'forget',
+      'get_page',
+      'put_page',
+      'list_pages',
+      'capture',
+      'search',
+      'query',
+      'get_backlinks',
+      'list_link_sources',
+      'traverse_graph',
+      'add_timeline_entry',
+      'resolve_slugs',
+      'get_ingest_log',
+      'file_list',
+      'file_url',
+      'submit_agent',
+      'get_agent_job',
+      'whoami',
+      'request_tools',
+      'get_recent_salience',
+      'find_anomalies',
+      'recall',
+      'context_pack',
+      'delta',
+    ]);
+  });
+
   it('every member exists in operations (membership pin)', () => {
     const known = new Set(operations.map(o => o.name));
     const missing = [...STARTER_OPS].filter(name => !known.has(name));
     expect(missing).toEqual([]);
   });
 
-  it('is composed programmatically: verbs + FOV-6b fallback daily ops + whoami + request_tools', () => {
-    // ENG-1: the verb slice is a spread of VERB_NAMES — all SEVEN post-#4028
-    // verbs (context_pack/delta included), never a hand-count.
-    for (const v of VERB_NAMES) expect(STARTER_OPS.has(v)).toBe(true);
-    // FOV-6b fallback: the reviewed brain-tool allow-list, imported not copied.
+  it('is composed programmatically from the reviewed core and imported allowlist', () => {
+    // The core is a reviewed compatibility/security contract, not a hand-count.
+    for (const name of ALWAYS_INCLUDED_STARTER_OPS) expect(STARTER_OPS.has(name)).toBe(true);
+    // The reviewed subagent allowlist is imported, not copied.
     for (const name of BRAIN_TOOL_ALLOWLIST) expect(STARTER_OPS.has(name)).toBe(true);
-    // FOV-4: the agent lane must not strand agent-scope clients.
+    // The agent lane must not strand agent-scope clients.
     expect(STARTER_OPS.has('submit_agent')).toBe(true);
     expect(STARTER_OPS.has('get_agent_job')).toBe(true);
     expect(STARTER_OPS.has('whoami')).toBe(true);

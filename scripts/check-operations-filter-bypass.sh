@@ -56,7 +56,7 @@ ALLOWED=(
   # The four below predate the widened specifier regex (they import via
   # '../operations.ts', invisible to the old 'core/operations.ts' pattern) —
   # all internal consumers, none a transport surface:
-  "src/core/advisor/collect-mcp-client-fit.ts"  # advisor collector; uses op.localOnly names to SCORE client fit, never serves the list
+  "src/core/advisor/collect-mcp-client-fit.ts"
   "src/core/bootstrap/verify.ts"                # bootstrap wiring verifier; finds ops by name to probe local wiring, remote=false context
   "src/core/skillopt/rollout.ts"                # skillopt internals; iterates op metadata for rollout planning, not exposed
   "src/core/skillopt/write-capture.ts"          # skillopt internals; iterates op params for capture schema, not exposed
