@@ -1569,8 +1569,16 @@ export async function buildChecks(
         const gitPath = join(cur, '.git');
         try {
           const st = statSync(gitPath);
-          // Either a directory (main repo) or a file (linked worktree pointer).
-          if (st.isDirectory() || st.isFile()) {
+          // A `.git` FILE is a linked-worktree / submodule pointer — always real.
+          // A `.git` DIRECTORY is only a repo if it actually contains a HEAD.
+          // An EMPTY `.git/` (stray mkdir, aborted clone, a tool that created
+          // the dir and bailed) satisfies statSync but is not a worktree, and
+          // git itself reports "not a git repository" for it. Accepting any
+          // directory made this check fire on a phantom `.git` at $HOME and
+          // report a commit-the-brain risk that did not exist.
+          const isRealWorktree =
+            st.isFile() || (st.isDirectory() && existsSync(join(gitPath, 'HEAD')));
+          if (isRealWorktree) {
             worktreeRoot = cur;
             break;
           }

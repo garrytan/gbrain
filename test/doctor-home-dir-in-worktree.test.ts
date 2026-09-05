@@ -101,11 +101,13 @@ describe('home_dir_in_worktree doctor check', () => {
   });
 
   test('gbrain home inside dir-style .git worktree → warn', async () => {
-    // scratch/home/myrepo/.git/    (directory)
-    // scratch/home/myrepo/.gbrain/ ← gbrain home is inside the worktree
+    // scratch/home/myrepo/.git/HEAD  (directory holding a real HEAD)
+    // scratch/home/myrepo/.gbrain/   ← gbrain home is inside the worktree
     const home = join(scratch, 'home');
     const repo = join(home, 'myrepo');
     mkdirSync(join(repo, '.git'), { recursive: true });
+    // HEAD is what distinguishes a real repo from a stray empty `.git/`.
+    writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
     mkdirSync(repo, { recursive: true });
     const check = await getCheck('home_dir_in_worktree', {
       HOME: home,
@@ -132,6 +134,23 @@ describe('home_dir_in_worktree doctor check', () => {
     expect(check).toBeDefined();
     expect(check!.status).toBe('warn');
     expect(check!.message).toContain('linked-wt');
+  });
+
+  test('EMPTY .git directory → ok, not a worktree (regression 2026-09-05)', async () => {
+    // Observed live: an empty `/home/eash/.git` (created by some tool that
+    // mkdir'd and bailed) made this check warn that ~/.gbrain sat inside a
+    // worktree and the brain could be committed by accident. It could not —
+    // `git rev-parse` reported "not a git repository" for that same path.
+    // statSync alone cannot tell a repo from a directory named `.git`.
+    const home = join(scratch, 'home');
+    const repo = join(home, 'phantom');
+    mkdirSync(join(repo, '.git'), { recursive: true }); // empty: no HEAD
+    const check = await getCheck('home_dir_in_worktree', {
+      HOME: home,
+      GBRAIN_HOME: repo,
+    });
+    expect(check).toBeDefined();
+    expect(check!.status).toBe('ok');
   });
 
   test('walk terminates at $HOME — .git ABOVE $HOME does NOT trigger warn (F4)', async () => {
