@@ -45,6 +45,7 @@ import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
+import { sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -65,6 +66,7 @@ import {
   MIGRATE_PAUSE_MARKER_PREFIX,
 } from '../core/autopilot-paths.ts';
 export { autopilotLockPath, autopilotDisabledMarkerPath, autopilotPausedMarkerPath, autopilotLaunchdLabel };
+export { relativeSourceLocalPathSkipWarning as relativeLocalPathSkipWarning };
 
 /**
  * v0.37.7.0 #1162 — classify autopilot reconnect-loop errors.
@@ -1090,9 +1092,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               // it would sync a phantom path. Skip loudly; the fix is
               // re-registering with an absolute path (sources add now
               // resolves) or one successful `gbrain sync` (anchor self-heal).
-              const relWarn = relativeLocalPathSkipWarning(src.id, src.local_path);
-              if (relWarn) {
-                process.stderr.write(relWarn + '\n');
+              const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
+              if (skipWarn) {
+                process.stderr.write(skipWarn + '\n');
                 continue;
               }
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
@@ -1189,9 +1191,9 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                     if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
                     if (!src.local_path) continue;
                     // #3696: same relative-path skip as the freshness loop.
-                    const relWarn = relativeLocalPathSkipWarning(src.id, src.local_path);
-                    if (relWarn) {
-                      process.stderr.write(relWarn + '\n');
+                    const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
+                    if (skipWarn) {
+                      process.stderr.write(skipWarn + '\n');
                       continue;
                     }
                     const backlog = await countExtractAtomsBacklog(engine, src.id);
@@ -1389,7 +1391,13 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // keep that behavior, or an all-coalesced tick (single-flight
           // suppression) would retake the full-cycle branch every tick and
           // starve the targeted-plan path for the whole in-flight window.
-          if (result.dispatched.length > 0 || result.coalesced.length > 0 || result.legacy_fallback || result.all_sources_fresh) {
+          if (
+            result.dispatched.length > 0 ||
+            result.coalesced.length > 0 ||
+            result.legacy_fallback ||
+            result.all_sources_fresh ||
+            result.all_sources_handled
+          ) {
             lastFullCycleAt = Date.now();
           }
           if (jsonMode) {
@@ -1400,6 +1408,7 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               skipped_fresh: result.skipped_fresh,
               skipped_cap: result.skipped_cap,
               skipped_cooldown: result.skipped_cooldown,
+              skipped_unavailable_path: result.skipped_unavailable_path,
               legacy_fallback: result.legacy_fallback,
               fanout_max: fanoutMax,
               score,
@@ -1409,7 +1418,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
               `[dispatch] fanout: ${result.dispatched.length} dispatched` +
               `${result.coalesced.length > 0 ? ` (${result.coalesced.length} coalesced onto in-flight)` : ''}, ` +
               `${result.skipped_fresh.length} fresh, ${result.skipped_cap.length} capped, ` +
-              `${result.skipped_cooldown.length} cooldown ` +
+              `${result.skipped_cooldown.length} cooldown, ` +
+              `${result.skipped_unavailable_path.length} unavailable-path ` +
               `(score=${score}, max=${fanoutMax})`,
             );
           }
@@ -1974,23 +1984,6 @@ export function pgliteDaemonGuardMessage(engineKind: string, force: boolean): st
     `maintenance sweep, and delegates \`gbrain sync\`/\`gbrain sweep --once\` through its ` +
     `IPC socket.\n` +
     `  To install the daemon anyway (dedicated-brain setups), re-run with --force.`
-  );
-}
-
-/**
- * #3696 — the autopilot dispatch loops refuse to enqueue work for a source
- * whose local_path is RELATIVE: the daemon's cwd is launchd's (typically `/`),
- * not the shell that registered the source, so the path would resolve to a
- * phantom directory and the sync/extract job would fail (or worse, walk the
- * wrong tree). Returns the stderr warning line when the path must be skipped,
- * or null when it is dispatchable. Pure — the unit-test surface.
- */
-export function relativeLocalPathSkipWarning(sourceId: string, localPath: string): string | null {
-  if (isAbsolute(localPath)) return null;
-  return (
-    `[autopilot] skipping source '${sourceId}': relative local_path ` +
-    `'${localPath}' cannot be resolved from a daemon. Re-register with an ` +
-    `absolute --path or run 'gbrain sync --source ${sourceId}' once to self-heal.`
   );
 }
 
