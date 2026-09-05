@@ -1346,6 +1346,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       typeof cfgRows[0]?.config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    // #3356-adjacent: EVERY caller that is not the `--all` fan-out passes no
+    // strategy — the autopilot freshness lane (commands/autopilot.ts -> jobs.ts),
+    // the dream cycle (core/cycle.ts), the MCP `sync` op (core/operations.ts) and
+    // the single-source CLI path below. `isSyncable` then falls back to
+    // 'markdown' (core/sync.ts), which drops every code file in the range. Two
+    // consequences, both measured: the run imports nothing yet still advances the
+    // anchor (`Update sync state even with no syncable changes`), freezing the
+    // index at HEAD forever; and every MODIFIED code file reaches the
+    // un-syncable delete loop, whose only exemptions are 'metafile' (#1433) and
+    // 'pruned-dir' (#2404), so its page is DELETED. Observed on 7 of 10 sources.
+    //
+    // Resolve the source's own strategy when the caller states none. An explicit
+    // --strategy still wins, so the `--all` fan-out and the CLI flag are unchanged.
+    if (opts.strategy === undefined && typeof cfg.strategy === 'string') {
+      const persisted = cfg.strategy;
+      if (persisted === 'markdown' || persisted === 'code' || persisted === 'auto') {
+        // Assign the PROPERTY, never `opts = {...opts}`: this block runs inside
+        // `if (opts.sourceId)`, and replacing the object discards that narrowing,
+        // so three downstream call sites stop compiling.
+        opts.strategy = persisted;
+      }
+    }
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {

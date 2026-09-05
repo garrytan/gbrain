@@ -377,6 +377,14 @@ const PRUNE_DIR_NAMES = new Set<string>([
  * existing callers stay back-compat; new callers (sync walker, extract
  * walker) thread it through.
  */
+/**
+ * Dot-directories a CODE source still refuses. Deliberately short: enumeration
+ * runs through `git ls-files --exclude-standard`, so every gitignored cache is
+ * already gone before `classifySync` sees it. These two are named because a
+ * repo does not gitignore its own `.git`, and `.gbrain` is gbrain's own state.
+ */
+const CODE_DOT_DIR_DENY = new Set<string>(['.git', '.gbrain', '.hg', '.svn']);
+
 export function pruneDir(name: string, parentDir?: string): boolean {
   if (!name) return true;
   if (name.startsWith('.')) return false;
@@ -437,8 +445,35 @@ export function pruneDir(name: string, parentDir?: string): boolean {
  * git-listing fast path this function guards, so the gap is scoped to
  * importing a bare (non-git) directory.
  */
-export function isPathPruned(path: string, includeHidden?: string[]): boolean {
+export function isPathPruned(
+  path: string,
+  includeHidden?: string[],
+  strategy?: SyncStrategy,
+): boolean {
   const segments = path.split('/');
+  const basename = segments[segments.length - 1] || '';
+
+  // `strategy`: a CODE/AUTO source must see its own `.github/`, `.claude/`,
+  // `.vscode/` — versioned content people search for. The old blanket
+  // leading-dot rule did not merely hide them: `git ls-files` still lists
+  // them, so pages imported by earlier walks survived while the expected-set
+  // could no longer contain them, and they read as ghosts — a reconcile then
+  // deletes a page whose file is alive on disk.
+  //
+  // DIRECTORY segments only. The basename keeps `pruneDir` unchanged, so
+  // dot-FILES stay excluded; `.git`/`.gbrain`/`.hg`/`.svn` (CODE_DOT_DIR_DENY)
+  // and `*.raw` stay refused as directories too. Only machinery is refused,
+  // because enumeration already runs through `git ls-files --exclude-standard`:
+  // anything gitignored (`.venv`, `.dart_tool`, `.terraform`) never reaches
+  // this function. For every other strategy `pruneDirForStrategy` IS
+  // `pruneDir`, so this branch reduces to the rule below and changes nothing.
+  if (
+    segments.slice(0, -1).every((seg) => pruneDirForStrategy(seg, strategy)) &&
+    pruneDir(basename)
+  ) {
+    return false;
+  }
+
   if (segments.some((seg) => PRUNE_DIR_NAMES.has(seg) || seg.endsWith('.raw'))) return true;
   const dotPruned = segments.some((seg) => seg.startsWith('.'));
   if (!dotPruned) return false;
@@ -548,6 +583,26 @@ export const SYNC_SKIP_FILES = ['schema.md', 'index.md', 'log.md', 'README.md', 
  * re-implementation. Funnelling both public APIs through `classifySync` means
  * TypeScript enforces consistency at the compiler level.
  */
+/**
+ * Descent gate for a DIRECTORY segment, strategy-aware. The one place the
+ * dot-directory rule lives: `classifySync` (path admission) and the importer's
+ * walker (descent) must agree, and they are in different files, so a second
+ * copy is a drift waiting to happen — the same reason `unsyncableReason` was
+ * funnelled through `classifySync` rather than reimplemented.
+ *
+ * Applies to directory names only. A dot-FILE still goes through `pruneDir`.
+ */
+export function pruneDirForStrategy(
+  name: string,
+  strategy: string | undefined,
+  parentDir?: string,
+): boolean {
+  if ((strategy === 'code' || strategy === 'auto') && name.startsWith('.')) {
+    return !(CODE_DOT_DIR_DENY.has(name) || name.endsWith('.raw'));
+  }
+  return pruneDir(name, parentDir);
+}
+
 function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason | null {
   const strategy = opts.strategy || 'markdown';
 
@@ -563,7 +618,8 @@ function classifySync(path: string, opts: SyncableOptions = {}): SyncableReason 
   // vendor/generated trees (`node_modules/`, `vendor/`, …) at any depth.
   // `opts.includeHidden` can waive the leading-dot part of this — see
   // `isPathPruned`'s doc comment for exactly what is and isn't waivable.
-  if (isPathPruned(path, opts.includeHidden)) return 'pruned-dir';
+  // `strategy` waives it for a code source's DIRECTORIES (`.github/`, …).
+  if (isPathPruned(path, opts.includeHidden, strategy)) return 'pruned-dir';
 
   // Skip meta files that aren't pages
   const segments = path.split('/');
