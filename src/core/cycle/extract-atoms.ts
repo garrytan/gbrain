@@ -68,7 +68,8 @@ import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } f
 import { importFromContent } from '../import-file.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
-import { BudgetExhausted, BudgetTracker, isModelPriceable } from '../budget/budget-tracker.ts';
+import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
+import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
@@ -786,22 +787,42 @@ export async function runPhaseExtractAtoms(
     // Keep safe defaults on any config-read failure: key-aware utility-tier
     // model, $0.30 cap, default input cap (max_input_chars).
   }
-  // A cost cap is only meaningful for a model the tracker can price.
-  // BudgetTracker.reserve() hard-fails with BudgetExhausted(reason:'no_pricing')
-  // when the model is absent from the pricing maps AND a cap is set; with no cap
-  // it warns once and proceeds. Because this phase always set a cap, every
-  // non-Anthropic model tripped that hard-fail on the first item, latched
-  // `budgetExhausted`, and skipped the entire workload while reporting ok.
-  const priceable = isModelPriceable(extractModel, 'chat');
-  if (!priceable) {
+  // A cost cap is only meaningful when the tracker can price EVERY call made
+  // under it. BudgetTracker.reserve() hard-fails with
+  // BudgetExhausted(reason:'no_pricing') when a model is absent from the pricing
+  // maps AND a cap is set; with no cap it warns once and proceeds. Because this
+  // phase always set a cap, every non-Anthropic chat model tripped that
+  // hard-fail on the first item, latched `budgetExhausted`, and skipped the
+  // entire workload while reporting ok.
+  //
+  // The chat model is not the only call under this tracker: the atom write
+  // site below goes through importFromContent, which chunks AND embeds inside
+  // the same withBudgetTracker scope. So the embedding model must be priceable
+  // too. Pre-fix, a $0 local chat model (ollama/llama-server) kept the cap on
+  // while an unpriced embedding route (e.g. `litellm:*`, which is deliberately
+  // NOT assumed free because a proxy can front a paid provider) threw
+  // no_pricing on the FIRST atom import — 0 atoms, `budget_exhausted: true`,
+  // $0 spent, on every run. The operator escape hatch the error message
+  // advertises (`pricing.overrides`, #4312) was also never loaded here, unlike
+  // enrich / ingest-facts / extract-conversation-facts.
+  const pricingOverrides = await loadPricingOverrides(engine);
+  const costGate = resolveExtractAtomsCostGate(
+    extractModel,
+    resolveEmbedModelForCostGate(),
+    pricingOverrides,
+  );
+  if (!costGate.enforceCap) {
     console.error(
-      `[extract_atoms] model "${extractModel}" is not in the pricing maps; ` +
-        `running without a cost gate (a cap cannot be enforced on an unpriced model).`,
+      `[extract_atoms] ${costGate.unpricedKind} model "${costGate.unpricedModel}" is not in the pricing maps; ` +
+        `running without a cost gate (a cap cannot be enforced on an unpriced model). ` +
+        `Declare an operator rate to restore the cap: ` +
+        `gbrain config set pricing.overrides '{"${costGate.unpricedModel}": <usd-per-1M-tokens>}' (0 for local inference).`,
     );
   }
   const budgetTracker = new BudgetTracker({
-    maxCostUsd: priceable ? budgetCap : undefined,
+    maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
+    pricingOverrides,
   });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
