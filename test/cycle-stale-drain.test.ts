@@ -13,14 +13,15 @@
  * GBRAIN_HOME is isolated per test because the PGLite cycle path takes a
  * file lock at ~/.gbrain/cycle.lock (see cycle-extract-source.test.ts).
  */
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'fs';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runCycle } from '../src/core/cycle.ts';
+import { extractStaleFromDB } from '../src/commands/extract.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -64,6 +65,82 @@ afterEach(() => {
 });
 
 describe('cycle extract phase stale drain (#4062)', () => {
+  test('extraction totals count scanned pages rather than links', async () => {
+    writeFileSync(join(brainDir, 'quiet.md'), '# Quiet page\nNo outgoing links.\n');
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      const report = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+      expect(report.phases[0]?.details?.linksCreated).toBe(0);
+      expect(report.phases[0]?.details?.pages_processed).toBe(1);
+      expect(report.phases[0]?.details?.stale_pages_drained).toBe(2);
+      expect(report.totals.pages_extracted).toBe(3);
+    });
+  });
+
+  test('working and no-op drains leave stdout available for the cycle JSON report', async () => {
+    writeFileSync(join(brainDir, 'quiet.md'), '# Quiet page\nNo outgoing links.\n');
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+        const first = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+        const second = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+        expect(first.phases[0]?.details?.stale_pages_drained).toBe(2);
+        expect(second.phases[0]?.details?.stale_pages_drained).toBe(0);
+      });
+      expect(log).not.toHaveBeenCalled();
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      stdout.mockRestore();
+    }
+  });
+  for (const dryRun of [false, true]) {
+    for (const jsonMode of [false, true]) {
+      test(`quiet stale helper suppresses output (dryRun=${dryRun}, jsonMode=${jsonMode})`, async () => {
+        const log = spyOn(console, 'log').mockImplementation(() => {});
+        const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
+        try {
+          const result = await extractStaleFromDB(engine, {
+            dryRun, jsonMode, quiet: true, includeFrontmatter: false,
+            sourceIdFilter: 'wiki', catchUp: false,
+          });
+          expect(result.pagesProcessed).toBe(dryRun ? 0 : 2);
+          expect(log).not.toHaveBeenCalled();
+          expect(stdout).not.toHaveBeenCalled();
+        } finally {
+          log.mockRestore();
+          stdout.mockRestore();
+        }
+      });
+    }
+  }
+
+  test('standalone stale helper still emits its JSON result', async () => {
+    const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: true, includeFrontmatter: false,
+        sourceIdFilter: 'wiki', catchUp: false,
+      });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      const result = JSON.parse(String(stdout.mock.calls[0]?.[0]));
+      expect(result.action).toBe('extract_stale_done');
+      expect(result.pages_processed).toBe(2);
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+
+  test('DB-only extraction contributes to totals and a working status', async () => {
+    await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+      const report = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+      expect(report.phases[0]?.details?.pages_processed).toBe(0);
+      expect(report.phases[0]?.details?.stale_pages_drained).toBe(2);
+      expect(report.totals.pages_extracted).toBe(2);
+      expect(report.status).toBe('ok');
+    });
+  });
+
   test('drains stale DB-only pages after the targeted pass and reports staleRemaining', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const report = await runCycle(engine, {

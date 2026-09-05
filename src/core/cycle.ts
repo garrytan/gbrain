@@ -1386,6 +1386,7 @@ async function runPhaseExtract(
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
     const result = await runExtractCore(engine, {
       mode: 'all',
+      jsonMode: true, // helper suppresses human progress; cycle owns the JSON result
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
       signal,
@@ -1414,6 +1415,7 @@ async function runPhaseExtract(
       const drained = await extractStaleFromDB(engine, {
         dryRun: false,
         jsonMode: false,
+        quiet: true,
         includeFrontmatter,
         sourceIdFilter: sourceId,
         catchUp: false,
@@ -3112,7 +3114,7 @@ function extractTotals(phases: PhaseResult[]): CycleReport['totals'] {
     } else if (p.phase === 'sync' && p.details) {
       t.pages_synced = Number(p.details.added ?? 0) + Number(p.details.modified ?? 0);
     } else if (p.phase === 'extract' && p.details) {
-      t.pages_extracted = Number(p.details.linksCreated ?? 0);
+      t.pages_extracted = Number(p.details.pages_processed ?? 0) + Number(p.details.stale_pages_drained ?? 0);
     } else if (p.phase === 'embed' && p.details) {
       // In dry-run, use would_embed as the "activity" measure; else embedded.
       const dryRun = p.details.dryRun === true;
