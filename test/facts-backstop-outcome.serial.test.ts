@@ -352,4 +352,92 @@ describe('coverage-gap additions (ship review)', () => {
     // The cause stays reachable for local debugging.
     expect(String((err as { cause?: unknown }).cause)).toContain('401');
   });
+
+  test('FactsExtractionError surfaces the cause CONSTRUCTOR name, never its .name or .message', () => {
+    class FakeApiCallError extends Error {
+      constructor(message: string) {
+        super(message);
+        // Deliberately different from the class name, so a test that reads
+        // `.name` instead of `.constructor.name` would fail here — pinning
+        // WHICH property the breadcrumb reads, not just that some name shows up.
+        this.name = 'org_abc123_over_quota';
+      }
+    }
+    const err = new FactsExtractionError('provider_error', 'claude-cli:claude-sonnet-5',
+      new FakeApiCallError('rate limited: over quota'));
+    // The class name is a diagnostic breadcrumb — it survives into the
+    // persisted message so a durable job's `error_text` (which is all that
+    // remains once the in-process `cause` is gone) can still distinguish
+    // "which kind of provider failure" across occurrences.
+    expect(err.message).toContain('(cause=FakeApiCallError)');
+    // The message-carried breadcrumb is the CONSTRUCTOR name, never `.name`
+    // and never `.message` — no room for a provider body to leak through it.
+    expect(err.message).not.toContain('org_abc123');
+    expect(err.message).not.toContain('rate limited');
+    expect(JSON.stringify(err)).not.toContain('org_abc123');
+  });
+
+  test('FactsExtractionError drops a cause-constructor name that is not a plain identifier', () => {
+    // A dependency could in principle construct an Error whose
+    // `constructor.name` is an attacker-chosen string (this needs the
+    // dependency to already run arbitrary code — not a normal provider
+    // error path). The breadcrumb is validated against a plain-identifier
+    // shape and DROPPED (not substituted) rather than trusted verbatim.
+    class WeirdError extends Error {}
+    Object.defineProperty(WeirdError, 'name', { value: 'org_example_secret sk-proj-fake123' });
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', new WeirdError('x'));
+    expect(err.message).not.toContain('cause=');
+    expect(err.message).not.toContain('org_example_secret');
+    expect(err.message).not.toContain('sk-proj');
+  });
+
+  test('FactsExtractionError construction never throws when cause.constructor is missing', () => {
+    const cause = new Error('original failure');
+    Object.defineProperty(cause, 'constructor', { value: null });
+    // Must not throw — a malformed cause must never mask the original
+    // FactsExtractionError with a fresh, unrelated TypeError.
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', cause);
+    expect(err).toBeInstanceOf(FactsExtractionError);
+    expect(err.message).not.toContain('cause=');
+  });
+
+  test('FactsExtractionError construction never throws when constructor is a throwing getter', () => {
+    const cause = new Error('original failure');
+    Object.defineProperty(cause, 'constructor', {
+      get() { throw new Error('getter blew up'); },
+    });
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', cause);
+    expect(err).toBeInstanceOf(FactsExtractionError);
+    expect(err.message).not.toContain('cause=');
+  });
+
+  test('FactsExtractionError never validates one string and emits a different one', () => {
+    // A `.name` whose value is an object (not a string) with an impure
+    // `toString()` could otherwise pass a `regex.test()` coercion on one
+    // read and interpolate a different value on a later read of the SAME
+    // property. `.name` must be read exactly once and rejected outright
+    // unless it is already a string primitive.
+    let reads = 0;
+    class ImpureName extends Error {}
+    Object.defineProperty(ImpureName, 'name', {
+      value: { toString: () => (++reads === 1 ? 'TypeError' : 'org_secret_leak') },
+    });
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', new ImpureName('x'));
+    expect(err.message).not.toContain('cause=');
+    expect(err.message).not.toContain('org_secret_leak');
+    expect(err.message).not.toContain('TypeError');
+  });
+
+  test('FactsExtractionError omits the cause breadcrumb when there is no cause', () => {
+    const err = new FactsExtractionError('truncated_output', 'openai:gpt-5.2');
+    expect(err.message).toBe('[facts-extract] truncated_output (model=openai:gpt-5.2)');
+    expect(err.message).not.toContain('cause=');
+  });
+
+  test('FactsExtractionError omits the cause breadcrumb when cause is not an Error', () => {
+    const err = new FactsExtractionError('provider_error', 'openai:gpt-5.2', 'a raw string cause');
+    expect(err.message).not.toContain('cause=');
+    // The raw cause still stays reachable for local debugging.
+    expect((err as { cause?: unknown }).cause).toBe('a raw string cause');
+  });
 });

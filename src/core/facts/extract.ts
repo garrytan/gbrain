@@ -348,6 +348,40 @@ export type ExtractFactsOutcome =
     };
 
 /**
+ * Best-effort diagnostic breadcrumb: the cause's constructor name (never its
+ * message, never its `.name` property). A real class name like `TypeError`
+ * or `APICallError` identifies which error class was thrown — not every
+ * underlying cause, since e.g. auth, quota, and malformed-request failures
+ * can all share the same class — but it's a plain identifier with no
+ * interpolated content, so an ordinary provider error response can't
+ * smuggle a key/org id through it the way `cause.message` can. This is
+ * defense-in-depth, not a hard security boundary — a dependency that
+ * already runs arbitrary code could in principle construct an Error whose
+ * constructor name is attacker-chosen, so the value is validated against a
+ * plain-identifier shape and dropped (not substituted) if it doesn't match.
+ *
+ * `constructor`/`name` are each read into a local EXACTLY ONCE — a getter
+ * could otherwise return a different value on a second read (validate one
+ * string, emit another), and `typeof === 'string'` runs before the regex so
+ * a non-string `.name` (e.g. an object whose `toString()` is impure) can't
+ * be coerced twice with two different results. The whole thing is wrapped
+ * in try/catch so a hostile or throwing `constructor`/`name` getter can
+ * never mask the real `FactsExtractionError` with an unrelated crash.
+ */
+function extractSafeCauseLabel(cause: unknown): string | undefined {
+  try {
+    if (!(cause instanceof Error)) return undefined;
+    const ctor: unknown = cause.constructor;
+    if (typeof ctor !== 'function') return undefined;
+    const name: unknown = ctor.name;
+    if (typeof name !== 'string') return undefined;
+    return /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Typed carrier for extraction failures that must PROPAGATE (throw) rather
  * than collapse to zero counts — `truncated_output` has no underlying error
  * object to rethrow and `provider_error.error` is optional, so a synthesized
@@ -361,12 +395,19 @@ export class FactsExtractionError extends Error {
   readonly reason: ExtractFailureReason;
   readonly model?: string;
   constructor(reason: ExtractFailureReason, model?: string, cause?: unknown) {
-    // The MESSAGE deliberately carries only reason + model — never
-    // `cause.message`. This error's message flows to remote MCP callers
-    // (dispatch returns e.message) and into persisted logs (ingest_log,
-    // mcp_request_log), and provider 4xx bodies echo partially-redacted API
-    // keys / org ids. The full cause stays attached for local debugging.
-    super(`[facts-extract] ${reason}${model ? ` (model=${model})` : ''}`);
+    // The MESSAGE deliberately carries only reason + model + a safe cause
+    // breadcrumb (see `extractSafeCauseLabel`) — never `cause.message`. This
+    // error's message flows to remote MCP callers (dispatch returns
+    // e.message) and into persisted logs (ingest_log, mcp_request_log), and
+    // provider 4xx bodies echo partially-redacted API keys / org ids. The
+    // full cause stays attached for local debugging.
+    //
+    // Without the breadcrumb, a `provider_error` in a durable job's
+    // persisted `error_text` (dead_jobs, minion_jobs) can't be told apart
+    // from any other occurrence once the in-process `cause` is gone — a
+    // timeout, an auth failure, and a malformed request all read identically.
+    const causeName = extractSafeCauseLabel(cause);
+    super(`[facts-extract] ${reason}${model ? ` (model=${model})` : ''}${causeName ? ` (cause=${causeName})` : ''}`);
     this.name = 'FactsExtractionError';
     this.reason = reason;
     this.model = model;
