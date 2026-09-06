@@ -1247,33 +1247,97 @@ export function parseAtomsOutcome(raw: string): AtomsParseOutcome {
   return direct;
 }
 
+/**
+ * Bound on how many `[` offsets the anchor scan will try. Completions are
+ * already capped by `max_output_tokens`, so this is a belt-and-braces guard
+ * against a pathological bracket-dense response, not a functional limit —
+ * every failing candidate fails at ~offset 0 of its own slice, so the scan is
+ * cheap. Reached-the-cap behaves exactly like found-nothing: the FIRST
+ * offset's outcome is returned, i.e. today's behaviour.
+ */
+const MAX_ARRAY_ANCHOR_CANDIDATES = 64;
+
+/**
+ * Parse the JSON array anchored at ONE `[` offset, reproducing the historical
+ * two-step exactly: whole-slice parse, then a trim-back to the last `]` to
+ * recover from trailing prose. Split out of parseAtomsOutcomeInner so the
+ * anchor scan can try successive offsets without duplicating the reason
+ * strings — those are asserted by tests and ride the drain's `last_error`.
+ */
+function parseArrayAtOffset(
+  cleaned: string,
+  start: number,
+): { ok: true; parsed: unknown[] } | { ok: false; reason: string } {
+  const slice = cleaned.slice(start);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(slice);
+  } catch {
+    // Try trimming back from the end to recover from trailing prose.
+    const arrayEnd = slice.lastIndexOf(']');
+    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
+    try {
+      parsed = JSON.parse(slice.slice(0, arrayEnd + 1));
+    } catch {
+      return { ok: false, reason: 'unparseable JSON array' };
+    }
+  }
+  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
+  return { ok: true, parsed };
+}
+
 function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // Strip markdown code fences if the LLM wrapped JSON in them.
   let cleaned = raw.trim();
   const fenceMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenceMatch) cleaned = fenceMatch[1].trim();
 
-  // Find the first JSON array bracket.
-  const arrayStart = cleaned.indexOf('[');
-  if (arrayStart === -1) return { ok: false, reason: 'no JSON array in response' };
-  cleaned = cleaned.slice(arrayStart);
+  const firstStart = cleaned.indexOf('[');
+  if (firstStart === -1) return { ok: false, reason: 'no JSON array in response' };
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    // Try trimming back from the end to recover from trailing prose.
-    const arrayEnd = cleaned.lastIndexOf(']');
-    if (arrayEnd === -1) return { ok: false, reason: 'unterminated JSON array' };
-    try {
-      parsed = JSON.parse(cleaned.slice(0, arrayEnd + 1));
-    } catch {
-      return { ok: false, reason: 'unparseable JSON array' };
+  // ANCHOR SCAN. Pre-fix this committed to `indexOf('[')` — the FIRST bracket
+  // anywhere in the response. Any bracket in a preamble hijacked the anchor,
+  // and a brain whose house style mandates inline `[Source: …]` citations and
+  // `[[wikilink]]` backlinks (or whose transcripts carry `[user]` / `[tool: …]`
+  // role markers) makes the model echo one while narrating, so a response
+  // carrying a perfectly good array was reported `unparseable JSON array`.
+  //
+  // Acceptance requires the candidate to parse AND to yield >= 1 atom-shaped
+  // element. Parseability alone is NOT enough: `atomsFromParsedArray` skips
+  // every element that fails the shape gate, so an array-of-strings scraped
+  // out of prose would parse to `ok: true, atoms: []` — and a zero-yield
+  // result is exactly what TOMBSTONES a page (#2144). A shape-blind scan would
+  // therefore permanently retire pages that still had real content: strictly
+  // worse than the bug it fixes. `coerceAtom` is the single source of truth
+  // for "atom-shaped" so this gate cannot drift from the one that builds them.
+  let firstAttempt: ReturnType<typeof parseArrayAtOffset> | null = null;
+  let candidates = 0;
+  for (
+    let start = firstStart;
+    start !== -1 && candidates < MAX_ARRAY_ANCHOR_CANDIDATES;
+    start = cleaned.indexOf('[', start + 1)
+  ) {
+    candidates++;
+    const attempt = parseArrayAtOffset(cleaned, start);
+    // Captured on the FIRST iteration only — every reason string this function
+    // can return still describes the first bracket, unchanged.
+    if (firstAttempt === null) firstAttempt = attempt;
+    if (attempt.ok) {
+      const atoms = atomsFromParsedArray(attempt.parsed);
+      if (atoms.length > 0) return { ok: true, atoms };
     }
   }
 
-  if (!Array.isArray(parsed)) return { ok: false, reason: 'JSON value is not an array' };
-  return { ok: true, atoms: atomsFromParsedArray(parsed) };
+  // Nothing later yielded a real atom. Fall back to the FIRST offset's outcome
+  // VERBATIM — never a later one. That keeps this function byte-identical to
+  // pre-fix behaviour for every response that already parsed, and confines the
+  // new leniency to the one case that motivated it: a later offset held a
+  // genuinely atom-shaped array. In particular an honest `[]` still returns
+  // `ok: true, atoms: []` and keeps its #4148 zero-yield tombstone semantics,
+  // rather than being reclassified as malformed output.
+  if (firstAttempt === null) return { ok: false, reason: 'no JSON array in response' };
+  if (firstAttempt.ok) return { ok: true, atoms: atomsFromParsedArray(firstAttempt.parsed) };
+  return firstAttempt;
 }
 
 /**
@@ -1286,39 +1350,54 @@ export function parseAtomsResponse(raw: string): ExtractedAtom[] {
   return outcome.ok ? outcome.atoms : [];
 }
 
-function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
+/**
+ * Coerce ONE parsed element into an ExtractedAtom, or null when it fails the
+ * shape gate (not an object, or missing/invalid title, atom_type, or body).
+ *
+ * Lifted verbatim out of atomsFromParsedArray's loop body so that "is this
+ * element atom-shaped?" has exactly ONE definition. The anchor scan in
+ * parseAtomsOutcomeInner needs that predicate to reject a parseable-but-wrong
+ * array, and a second hand-written copy of these checks would be free to drift
+ * from the one that actually builds atoms — at which point the scan would
+ * accept candidates that then yield nothing and tombstone a live page.
+ */
+function coerceAtom(item: unknown): ExtractedAtom | null {
+  if (typeof item !== 'object' || item === null) return null;
+  const obj = item as Record<string, unknown>;
+  const title = typeof obj.title === 'string' ? obj.title.slice(0, 200) : null;
+  const atomType = typeof obj.atom_type === 'string' ? obj.atom_type.trim().toLowerCase() : null;
+  const body = typeof obj.body === 'string' ? obj.body : null;
+  if (!title || !atomType || !body) return null;
+  if (!ATOM_TYPES.includes(atomType as typeof ATOM_TYPES[number])) return null;
+  return {
+    title,
+    atom_type: atomType as typeof ATOM_TYPES[number],
+    body,
+    source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
+    lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
+    concepts: (() => {
+      if (!Array.isArray(obj.concepts)) return undefined;
+      const labels = obj.concepts
+        .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
+        .slice(0, 3);
+      return labels.length > 0 ? labels : undefined;
+    })(),
+    virality_score:
+      typeof obj.virality_score === 'number' &&
+      obj.virality_score >= 0 &&
+      obj.virality_score <= 100
+        ? obj.virality_score
+        : undefined,
+    emotional_register:
+      typeof obj.emotional_register === 'string' ? obj.emotional_register : undefined,
+  };
+}
 
+function atomsFromParsedArray(parsed: unknown[]): ExtractedAtom[] {
   const atoms: ExtractedAtom[] = [];
   for (const item of parsed) {
-    if (typeof item !== 'object' || item === null) continue;
-    const obj = item as Record<string, unknown>;
-    const title = typeof obj.title === 'string' ? obj.title.slice(0, 200) : null;
-    const atomType = typeof obj.atom_type === 'string' ? obj.atom_type.trim().toLowerCase() : null;
-    const body = typeof obj.body === 'string' ? obj.body : null;
-    if (!title || !atomType || !body) continue;
-    if (!ATOM_TYPES.includes(atomType as typeof ATOM_TYPES[number])) continue;
-    atoms.push({
-      title,
-      atom_type: atomType as typeof ATOM_TYPES[number],
-      body,
-      source_quote: typeof obj.source_quote === 'string' ? obj.source_quote.slice(0, 500) : undefined,
-      lesson: typeof obj.lesson === 'string' ? obj.lesson : undefined,
-      concepts: (() => {
-        if (!Array.isArray(obj.concepts)) return undefined;
-        const labels = obj.concepts
-          .filter((c): c is string => typeof c === 'string' && CONCEPT_LABEL_RE.test(c))
-          .slice(0, 3);
-        return labels.length > 0 ? labels : undefined;
-      })(),
-      virality_score:
-        typeof obj.virality_score === 'number' &&
-        obj.virality_score >= 0 &&
-        obj.virality_score <= 100
-          ? obj.virality_score
-          : undefined,
-      emotional_register:
-        typeof obj.emotional_register === 'string' ? obj.emotional_register : undefined,
-    });
+    const atom = coerceAtom(item);
+    if (atom) atoms.push(atom);
   }
   return atoms;
 }

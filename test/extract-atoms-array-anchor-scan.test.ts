@@ -1,0 +1,137 @@
+/**
+ * Atoms-array ANCHOR SCAN (`parseAtomsOutcomeInner`).
+ *
+ * The extractor used to commit to `cleaned.indexOf('[')` — the FIRST left
+ * bracket anywhere in the response. Any bracket in a preamble hijacked that
+ * anchor, so a response carrying a perfectly good atoms array was reported as
+ * `unparseable JSON array` and the page counted a deterministic failure.
+ *
+ * This is not a hypothetical: a brain whose house style mandates inline
+ * `[Source: …]` citations and `[[wikilink]]` backlinks, and whose transcripts
+ * carry `[user]` / `[assistant]` / `[tool: …]` role markers, hands the model
+ * bracketed prose to echo while it narrates its answer.
+ *
+ * THE HAZARD the scan must avoid: `atomsFromParsedArray` skips every element
+ * failing the shape gate, so a parseable-but-wrong array (say an array of
+ * strings lifted out of prose) yields `ok: true, atoms: []`. A zero-yield
+ * result is what TOMBSTONES a page (#2144), so a shape-blind scan would
+ * permanently retire pages that still had real content — worse than the bug.
+ * Acceptance therefore requires >= 1 atom-shaped element, not mere parseability.
+ *
+ * NOTE: assertions go through the PUBLIC `parseAtomsOutcome` entry point, which
+ * exists pre-fix, so a reverted-source run fails on BEHAVIOUR rather than dying
+ * with a module-load SyntaxError (the vacuous failure class in CONTRIBUTING.md).
+ */
+import { describe, expect, test } from 'bun:test';
+import { parseAtomsOutcome } from '../src/core/cycle/extract-atoms.ts';
+
+/** A minimally valid atom: title + atom_type (in ATOM_TYPES) + body. */
+const ATOM = {
+  title: 'Brackets in prose hijack the parse anchor',
+  atom_type: 'insight',
+  body: 'The extractor anchored on the first bracket, not the first array.',
+};
+const ATOM_ARRAY = JSON.stringify([ATOM]);
+
+function atomsOf(raw: string) {
+  const outcome = parseAtomsOutcome(raw);
+  if (!outcome.ok) throw new Error(`expected ok, got reason: ${outcome.reason}`);
+  return outcome.atoms;
+}
+
+describe('anchor scan — bracketed preamble no longer hijacks the parse', () => {
+  test('recovers the array after a preamble carrying a [Source: …] citation', () => {
+    const raw =
+      'Looking at the page, the claim is supported by ' +
+      '[Source: Mario, Claude Code session, 2026-09-03], so here are the atoms:\n' +
+      ATOM_ARRAY;
+    expect(atomsOf(raw)).toHaveLength(1);
+    expect(atomsOf(raw)[0]!.title).toBe(ATOM.title);
+  });
+
+  test('recovers the array after a preamble naming a [[wikilink]]', () => {
+    const raw = 'The page backlinks [[people/mario]] and [[companies/firecrawl]].\n' + ATOM_ARRAY;
+    expect(atomsOf(raw)).toHaveLength(1);
+  });
+
+  test('recovers the array after a transcript [user] role marker in the preamble', () => {
+    const raw = 'The [user] turn sets up the problem and [assistant] answers it.\n' + ATOM_ARRAY;
+    expect(atomsOf(raw)).toHaveLength(1);
+  });
+
+  test('HAZARD: skips a parseable-but-WRONG array rather than reporting zero atoms', () => {
+    // The dangerous case. `["a","b"]` parses cleanly, so a scan that accepted
+    // the first *parseable* candidate would return atoms: [] — a zero-yield
+    // that TOMBSTONES the page and silently discards the real payload below.
+    const raw = 'Candidate labels were ["a","b"] before I settled on:\n' + ATOM_ARRAY;
+    const atoms = atomsOf(raw);
+    expect(atoms).toHaveLength(1);
+    expect(atoms[0]!.title).toBe(ATOM.title);
+  });
+
+  test('HAZARD: skips an array of atom-shaped-but-empty objects', () => {
+    // Objects, but every one fails the shape gate (no title/atom_type/body).
+    const raw = 'Draft skeleton: [{"note":"tbd"},{"note":"tbd"}] — final answer:\n' + ATOM_ARRAY;
+    expect(atomsOf(raw)).toHaveLength(1);
+  });
+});
+
+describe('anchor scan — preserved behaviour', () => {
+  test('an honest empty array is still a zero-yield SUCCESS, not malformed output', () => {
+    // #4148 keeps "malformed output" and "the model found nothing" distinct:
+    // only the latter is a legitimate tombstone. The scan must not blur that
+    // by reclassifying `[]` as a parse failure just because it yields no atom.
+    const outcome = parseAtomsOutcome('[]');
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.atoms).toEqual([]);
+  });
+
+  test('an empty array after prose is still a zero-yield success', () => {
+    const outcome = parseAtomsOutcome('Nothing worth extracting here.\n[]');
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.atoms).toEqual([]);
+  });
+
+  test('a clean array with no preamble is unchanged', () => {
+    expect(atomsOf(ATOM_ARRAY)).toHaveLength(1);
+  });
+
+  test('a fenced array is unchanged', () => {
+    expect(atomsOf('```json\n' + ATOM_ARRAY + '\n```')).toHaveLength(1);
+  });
+
+  test('trailing prose after a valid array is still recovered', () => {
+    expect(atomsOf(ATOM_ARRAY + '\n\nThose are the atoms I found.')).toHaveLength(1);
+  });
+
+  test('a parseable array that yields no atoms still reports ok with zero atoms', () => {
+    // Byte-identical to pre-fix: nothing later in the response holds a real
+    // atom, so the FIRST offset's successful parse is returned verbatim.
+    const outcome = parseAtomsOutcome('[{"claim":"Water is wet","kind":"fact"}]');
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) expect(outcome.atoms).toEqual([]);
+  });
+});
+
+describe('anchor scan — failure reasons still describe the FIRST bracket', () => {
+  test('no bracket at all', () => {
+    const outcome = parseAtomsOutcome('I could not extract anything from this content.');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toBe('no JSON array in response');
+  });
+
+  test('an opened-but-never-closed array reports unterminated, not unparseable', () => {
+    const outcome = parseAtomsOutcome('here goes [{"title":"a"');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toBe('unterminated JSON array');
+  });
+
+  test('bracketed prose with no recoverable array anywhere still reports unparseable', () => {
+    // The scan exhausts every candidate and falls back to the FIRST offset's
+    // reason — never a later offset's, which would silently change the string
+    // the drain surfaces as `last_error`.
+    const outcome = parseAtomsOutcome('see [Source: X] and [[people/mario]] for details]');
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.reason).toBe('unparseable JSON array');
+  });
+});
