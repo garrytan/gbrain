@@ -25,18 +25,19 @@ import type { BrainEngine } from '../engine.ts';
  *
  * **Related to doctor's predicate, but deliberately not the same one.** Doctor
  * asks "does ANY live page in this source still carry the stored hash", which
- * lets it split `source_changed` from `source_gone` and leaves it unaffected by
- * a second page that happens to hold identical content. This asks the narrower
- * question the phase can answer for free — "does this atom match the content
- * this page currently has" — so it never distinguishes edited from deleted, and
- * it does count an atom whose hash is still carried by some OTHER live page.
- * Doctor stays the authoritative brain-wide view; this is a cheap in-run signal
- * pointing at it, not a replacement for it.
+ * lets it split `source_changed` from `source_gone`, and means a twin page that
+ * happens to hold the old content keeps the atom OUT of its drifted set. This
+ * asks the narrower question the phase can answer for free — "does this atom
+ * match the content this page currently has" — so it never distinguishes edited
+ * from deleted, and it DOES count an atom whose hash some other live page still
+ * carries. Doctor stays the authoritative brain-wide view; this is a cheap
+ * in-run signal pointing at it, not a replacement for it.
  *
  * `currentHash16` is the hash DISCOVERY captured for the page, i.e. the content
  * the run actually extracted from, so atoms this run just wrote are correctly
- * not counted. An edit that lands mid-run is therefore reported by the NEXT
- * run, not this one.
+ * not counted. An edit that lands mid-run is therefore invisible to this run;
+ * later runs report whatever is still stale once they have extracted, which may
+ * legitimately be nothing.
  *
  * Fail-soft: any query error returns 0. A reporting counter must never fail a
  * phase.
