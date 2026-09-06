@@ -24,6 +24,7 @@ import {
   runExtractAtomsDrain,
   type ExtractAtomsDrainDeps,
 } from '../../src/core/cycle/extract-atoms-drain.ts';
+import { countSourceChangedAtoms } from '../../src/core/cycle/extract-atoms-source-drift.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
 
@@ -91,6 +92,18 @@ async function seedSourcePage(slug = PAGE_SLUG): Promise<void> {
     compiled_truth: 'A long essay with extractable claims.',
     timeline: '',
   });
+}
+
+/** Every persisted page row, verbatim, for before/after write assertions. */
+async function snapshotPages(): Promise<string> {
+  const rows = await engine.executeRaw<{ dump: string }>(
+    `SELECT source_id || '|' || slug || '|' || type || '|' || COALESCE(content_hash, '')
+            || '|' || compiled_truth || '|' || timeline || '|' || frontmatter::text
+            || '|' || created_at::text || '|' || updated_at::text
+            || '|' || COALESCE(deleted_at::text, '') AS dump
+       FROM pages ORDER BY source_id, slug`,
+  );
+  return rows.map((r) => r.dump).join('\n');
 }
 
 function runPage(chatTitle: string | null, opts: { dryRun?: boolean } = {}) {
@@ -189,32 +202,114 @@ describe('extract_atoms per-page atoms_source_changed', () => {
     expect(result.details?.atoms_source_changed).toBe(1);
   });
 
-  test('transcript-only runs never query (no page slug to bind)', async () => {
+  test('the drift query IS issued for a page item (positive control for the next case)', async () => {
+    await seedSourcePage();
+    const seen: string[] = [];
+    const realExecuteRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = ((
+      sql: string,
+      ...rest: unknown[]
+    ) => {
+      seen.push(sql);
+      return (realExecuteRaw as (...a: unknown[]) => unknown)(sql, ...rest);
+    }) as typeof realExecuteRaw;
+    try {
+      await runPage('Prototypes beat renders');
+    } finally {
+      (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = realExecuteRaw;
+    }
+    expect(seen.some((sql) => sql.includes("NOT LIKE 'pending:%'"))).toBe(true);
+  });
+
+  test('transcript-only runs never issue the drift query (no page slug to bind)', async () => {
     await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
 
-    const result = await runPhaseExtractAtoms(engine, {
-      _transcripts: [
-        { filePath: '/fake/meeting.txt', content: 'transcript content here', contentHash: 'abc123def4567890' },
-      ],
-      _pages: [],
-      _chat: stubChat('Transcript atom'),
-    });
+    // 0 alone would also pass if the query ran and returned 0, or threw into
+    // the fail-soft catch — so record the SQL and assert it was never issued.
+    const seen: string[] = [];
+    const realExecuteRaw = engine.executeRaw.bind(engine);
+    (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = ((
+      sql: string,
+      ...rest: unknown[]
+    ) => {
+      seen.push(sql);
+      return (realExecuteRaw as (...a: unknown[]) => unknown)(sql, ...rest);
+    }) as typeof realExecuteRaw;
+
+    let result;
+    try {
+      result = await runPhaseExtractAtoms(engine, {
+        _transcripts: [
+          { filePath: '/fake/meeting.txt', content: 'transcript content here', contentHash: 'abc123def4567890' },
+        ],
+        _pages: [],
+        _chat: stubChat('Transcript atom'),
+      });
+    } finally {
+      (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = realExecuteRaw;
+    }
     expect(result.details?.atoms_source_changed).toBe(0);
+    expect(seen.some((sql) => sql.includes("NOT LIKE 'pending:%'"))).toBe(false);
   });
 
   test('dry-run takes the same code path and reports the same read', async () => {
     await seedSourcePage();
     await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
 
+    // A row count alone would still permit in-place edits to bodies,
+    // frontmatter, or the source page's atoms_scan_hash stamp — compare every
+    // persisted page column instead.
+    const before = await snapshotPages();
     const result = await runPage('Prototypes beat renders', { dryRun: true });
     expect(result.details?.dry_run).toBe(true);
     expect(result.details?.atoms_source_changed).toBe(1);
-    // Read-only: dry-run wrote nothing, so the seeded row is untouched.
-    const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM pages
-        WHERE type = 'atom' AND deleted_at IS NULL AND source_id = 'default'`,
+    expect(await snapshotPages()).toBe(before);
+  });
+
+  test('a normal run leaves the stale sibling rows themselves untouched', async () => {
+    await seedSourcePage();
+    await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
+    const before = await engine.executeRaw<{ dump: string }>(
+      `SELECT compiled_truth || '|' || frontmatter::text || '|' || updated_at::text AS dump
+         FROM pages WHERE source_id = 'default' AND slug = $1`,
+      ['atoms/seeded/stale-one'],
     );
-    expect(rows[0]!.n).toBe(1);
+
+    const result = await runPage('Prototypes beat renders');
+    expect(result.details?.atoms_source_changed).toBe(1);
+    // Counting is not retiring: the drifted atom is reported, never rewritten.
+    const after = await engine.executeRaw<{ dump: string }>(
+      `SELECT compiled_truth || '|' || frontmatter::text || '|' || updated_at::text AS dump
+         FROM pages WHERE source_id = 'default' AND slug = $1`,
+      ['atoms/seeded/stale-one'],
+    );
+    expect(after[0]!.dump).toBe(before[0]!.dump);
+  });
+
+  test('deliberately NOT doctor: an atom whose hash another live page still carries is counted', async () => {
+    // Doctor's atom_provenance_drift asks "does ANY live page in this source
+    // still carry the stored hash", so a twin page holding the same content
+    // keeps the atom out of its drifted set. This counter asks the narrower
+    // per-page question, so the atom IS counted. Pinned so the divergence is a
+    // documented choice rather than a silent surprise.
+    await seedSourcePage();
+    await engine.putPage('writings/twin-essay', {
+      type: 'note', title: 'Twin', compiled_truth: 'twin body', timeline: '',
+    });
+    await engine.executeRaw(
+      `UPDATE pages SET content_hash = $1 WHERE source_id = 'default' AND slug = $2`,
+      [`${OLD_HASH16}deadbeef`, 'writings/twin-essay'],
+    );
+    await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
+
+    expect(await countSourceChangedAtoms(engine, 'default', PAGE_SLUG, CURRENT_HASH16)).toBe(1);
+  });
+
+  test('fails soft to 0 when the query throws', async () => {
+    const brokenEngine = {
+      executeRaw: async () => { throw new Error('connection refused'); },
+    } as unknown as typeof engine;
+    expect(await countSourceChangedAtoms(brokenEngine, 'default', PAGE_SLUG, CURRENT_HASH16)).toBe(0);
   });
 });
 
