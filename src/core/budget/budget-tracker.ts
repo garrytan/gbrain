@@ -16,6 +16,10 @@
  *   - TX2: When `maxCostUsd` is set AND the model is not in the pricing
  *     maps, `reserve()` HARD-FAILS with BudgetExhausted(reason:'no_pricing').
  *     When `maxCostUsd` is unset, legacy warn-once behavior is preserved.
+ *     Carve-out: a CLI-login chat provider with no per-token rate to bill
+ *     (UNMETERED_CLI_CHAT_PROVIDERS, e.g. `claude-cli:*`) takes the
+ *     warn-once-and-proceed path too, cap set or not — the cap can never be
+ *     enforced against it, so hard-failing only blocks real work.
  *   - A3 amended: `record()` is best called from try/finally on every
  *     gateway site. When the call threw without usage, callers feed
  *     `extractUsageFromError(err, fallback)` — fallback is the pessimistic
@@ -256,6 +260,42 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Provider ids that dispatch chat calls via a CLI subprocess authenticating
+ * with its own login/OAuth session rather than an operator API key — the
+ * recipe declares `auth_env.required: []` (e.g. `claude-cli`, which shells
+ * out to the local `claude` binary and rides the caller's Claude Code/Max
+ * subscription). Unlike FREE_LOCAL_CHAT_PROVIDERS (local inference — the
+ * real cost is genuinely $0, electricity not tokens), a CLI-login model may
+ * cost the underlying provider real money against a flat-rate subscription;
+ * gbrain simply has no per-token API rate to bill it at, so a USD cap is
+ * unenforceable rather than zero. Pre-fix, EVERY `gbrain enrich --thin`
+ * run against `chat_model = claude-cli:haiku` TX2 hard-failed at reserve()
+ * with `budget_exhausted_reason: "no_pricing"` and `spent_usd: 0`, at any
+ * `--max-usd` (5, 1000, 100000) — the cap's magnitude was never the
+ * problem, the model can't be priced at all. See `reserve()`'s
+ * `unmetered` branch: instead of TX2's hard fail, these providers warn
+ * once ("--max-usd cannot be enforced, proceeding unmetered") and proceed,
+ * same as the cap-unset legacy path. An operator who wants the cap
+ * enforced anyway can still declare a real rate via
+ * `pricing.overrides` (#4312) — an override always wins over this fallback.
+ */
+const UNMETERED_CLI_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
+  'claude-cli',
+]);
+
+/**
+ * True when `modelId` (chat kind only) belongs to a CLI-login provider whose
+ * cost cannot be metered — see UNMETERED_CLI_CHAT_PROVIDERS. Reserve() uses
+ * this to turn TX2's hard fail into a warn-and-proceed for exactly these
+ * providers, leaving the hard fail intact for every other unpriced model.
+ */
+function isUnmeteredCliChatProvider(modelId: string, kind: BudgetKind): boolean {
+  if (kind !== 'chat') return false;
+  const { provider } = splitProviderModelId(modelId);
+  return provider !== null && UNMETERED_CLI_CHAT_PROVIDERS.has(provider);
+}
+
+/**
  * Look up `modelId` in the chat or embedding pricing maps. Returns a
  * per-1M-token price tuple, or null when unknown.
  *
@@ -412,7 +452,12 @@ export class BudgetTracker {
    *   - maxCostUsd set AND pricing missing (reason: 'no_pricing') -- TX2
    *
    * When maxCostUsd is unset, missing pricing warns-once but does not throw
-   * (legacy behavior preserved for non-priced providers).
+   * (legacy behavior preserved for non-priced providers). Carve-out: a
+   * CLI-login chat provider with no per-token rate to bill (see
+   * UNMETERED_CLI_CHAT_PROVIDERS, e.g. `claude-cli:*`) takes the same
+   * warn-once-and-proceed path even when a cap IS set — the cap's presence
+   * doesn't matter when the provider can never be priced, so hard-failing
+   * would only block real work without protecting anyone's budget.
    */
   reserve(estimate: BudgetEstimate): void {
     this.assertRuntime(estimate.modelId);
@@ -426,7 +471,8 @@ export class BudgetTracker {
     );
 
     if (projected === null) {
-      if (this.opts.maxCostUsd !== undefined) {
+      const unmetered = isUnmeteredCliChatProvider(estimate.modelId, estimate.kind);
+      if (this.opts.maxCostUsd !== undefined && !unmetered) {
         // TX2: hard-fail when a cap is set but pricing is missing — without
         // pricing we can't enforce the cap, and silently ignoring it would
         // void the contract.
@@ -457,19 +503,28 @@ export class BudgetTracker {
           modelId: estimate.modelId,
         });
       }
-      // Legacy warn-once path — cap unset.
+      // Legacy warn-once path — cap unset, OR an unmetered CLI-login
+      // provider under a cap it has no rate to enforce (see reserve()'s
+      // doc comment / UNMETERED_CLI_CHAT_PROVIDERS).
       const memoKey = `${estimate.modelId}:${estimate.kind}`;
       if (!_unpricedWarnings.has(memoKey)) {
         _unpricedWarnings.add(memoKey);
-        process.stderr.write(
-          `[budget] BUDGET_TRACKER_NO_PRICING: model "${estimate.modelId}" (kind=${estimate.kind}) not in pricing maps. ` +
-            `Cost gate disabled for this call.\n`,
-        );
+        if (unmetered) {
+          process.stderr.write(
+            `[budget] ${this.opts.label}: model "${estimate.modelId}" has no pricing entry; ` +
+              `--max-usd cannot be enforced, proceeding unmetered.\n`,
+          );
+        } else {
+          process.stderr.write(
+            `[budget] BUDGET_TRACKER_NO_PRICING: model "${estimate.modelId}" (kind=${estimate.kind}) not in pricing maps. ` +
+              `Cost gate disabled for this call.\n`,
+          );
+        }
       }
       appendAuditLine(this.auditPath, {
         schema_version: 1,
         ts: new Date().toISOString(),
-        event: 'reserve_unpriced',
+        event: unmetered ? 'reserve_unmetered' : 'reserve_unpriced',
         label: this.opts.label,
         kind: estimate.kind,
         model: estimate.modelId,

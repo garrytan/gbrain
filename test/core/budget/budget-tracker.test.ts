@@ -229,6 +229,112 @@ describe('BudgetTracker.reserve', () => {
     expect(audit.filter((e) => e.event === 'reserve_unpriced').length).toBe(2);
   });
 
+  test('#4914: claude-cli:<alias> chat model under a cap does NOT no_pricing throw, warns "proceeding unmetered"', () => {
+    // Observed (0.48.2.0): `gbrain enrich --thin` with chat_model =
+    // claude-cli:haiku (the claude-cli recipe routes through the local
+    // `claude` binary via OAuth; auth_env.required is []) TX2 hard-failed
+    // at reserve() with budget_exhausted_reason: "no_pricing" and
+    // spent_usd: 0, at EVERY --max-usd tried (5, 1000, 100000). Root cause:
+    // reserve() prices the PRE-alias-resolution model string (comment above
+    // claims resolveChatProvider "would map aliases the same way for the
+    // cost lookup" — it does not; lookupPricing has no access to the
+    // recipe's alias table), and "haiku" is an alias, not a real model id,
+    // so it misses ANTHROPIC_PRICING entirely. UNMETERED_CLI_CHAT_PROVIDERS
+    // turns that hard fail into a one-time warning + proceed, same as the
+    // cap-unset legacy path.
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'claude-cli:haiku',
+        estimatedInputTokens: 100,
+        maxOutputTokens: 100,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    expect(stderrCapture).toMatch(
+      /has no pricing entry; --max-usd cannot be enforced, proceeding unmetered/,
+    );
+    const audit = readAudit();
+    expect(audit.filter((e) => e.event === 'reserve_unmetered').map((e) => e.model)).toEqual([
+      'claude-cli:haiku',
+    ]);
+    // No no_pricing hard-fail event fired.
+    expect(audit.some((e) => e.event === 'reserve_no_pricing')).toBe(false);
+  });
+
+  test('#4914: claude-cli:<dated-id> already resolves real Anthropic pricing (modelTail hit) — not part of the carve-out', () => {
+    // Unlike the alias form above, the DATED id tail
+    // ("claude-haiku-4-5-20251001") is itself a bare ANTHROPIC_PRICING key
+    // (anthropic-pricing.ts carries both dateless and dated snapshot ids),
+    // so lookupPricing's modelTail fallback finds it and prices this call
+    // at the real Anthropic per-token rate — it was never blocked, and
+    // does NOT take the unmetered carve-out path.
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({
+        modelId: 'claude-cli:claude-haiku-4-5-20251001',
+        estimatedInputTokens: 1_000_000,
+        maxOutputTokens: 0,
+        kind: 'chat',
+      }),
+    ).not.toThrow();
+    const audit = readAudit();
+    expect(audit[0].event).toBe('reserve');
+    // $1.00/1M input tokens (ANTHROPIC_PRICING['claude-haiku-4-5-20251001']).
+    expect(audit[0].projected_cost_usd).toBeCloseTo(1.0, 6);
+    expect(audit.some((e) => e.event === 'reserve_unmetered')).toBe(false);
+  });
+
+  test('#4914: claude-cli unmetered warning fires once per (modelId, kind), like the legacy warn-once path', () => {
+    const t = new BudgetTracker({ maxCostUsd: 5.0, label: 'test', auditPath });
+    t.reserve({ modelId: 'claude-cli:haiku', estimatedInputTokens: 10, maxOutputTokens: 10, kind: 'chat' });
+    const before = stderrCapture.length;
+    t.reserve({ modelId: 'claude-cli:haiku', estimatedInputTokens: 10, maxOutputTokens: 10, kind: 'chat' });
+    expect(stderrCapture.length).toBe(before);
+    const audit = readAudit();
+    expect(audit.filter((e) => e.event === 'reserve_unmetered').length).toBe(2);
+  });
+
+  test('#4914: claude-cli carve-out is chat-only — embed/rerank kinds still TX2 hard-fail under a cap', () => {
+    // isUnmeteredCliChatProvider gates on kind === 'chat'. claude-cli has no
+    // embed/rerank touchpoints; a hypothetical claude-cli:* embed/rerank
+    // call must not silently slip past the cost gate.
+    for (const kind of ['embed', 'rerank'] as const) {
+      const t = new BudgetTracker({ maxCostUsd: 1.0, label: 'test', auditPath });
+      let caught: unknown = null;
+      try {
+        t.reserve({
+          modelId: 'claude-cli:some-model',
+          estimatedInputTokens: 100,
+          maxOutputTokens: 0,
+          kind,
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BudgetExhausted);
+      expect((caught as BudgetExhausted).reason).toBe('no_pricing');
+    }
+  });
+
+  test('#4914: an operator pricing.overrides rate for claude-cli:* wins over the unmetered fallback', () => {
+    // #4312 overrides are consulted first in costForUsage — an operator who
+    // wants the cap enforced against claude-cli can still declare a real
+    // rate, and it must actually gate (not silently pass through unmetered).
+    const overrides = { 'claude-cli:haiku': { input: 1.0, output: 5.0 } };
+    const t = new BudgetTracker({ maxCostUsd: 0.001, label: 'test', auditPath, pricingOverrides: overrides });
+    let caught: unknown = null;
+    try {
+      // 1000 in + 1000 out at $1/$5 per 1M = $0.001 + $0.005 = $0.006 > $0.001 cap.
+      t.reserve({ modelId: 'claude-cli:haiku', estimatedInputTokens: 1000, maxOutputTokens: 1000, kind: 'chat' });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(BudgetExhausted);
+    expect((caught as BudgetExhausted).reason).toBe('cost');
+    expect(stderrCapture).not.toMatch(/proceeding unmetered/);
+  });
+
   test('v0.40.6.1: rerank kind for llama-server-reranker prices at $0 (no TX2 throw under --max-cost)', () => {
     // The FREE_LOCAL_RERANK_PROVIDERS contract — local inference costs
     // electricity, not API tokens. Pre-v0.40.6.1 setting --max-cost while
