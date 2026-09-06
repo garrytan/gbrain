@@ -44,8 +44,24 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-finance-2':       { pricePerMTok: 0.12 },
   'voyage:voyage-law-2':           { pricePerMTok: 0.12 },
   'voyage:voyage-multimodal-3':    { pricePerMTok: 0.12 },
-  // Voyage rerankers (same pricing page, verified 2026-08-21). Same
-  // budget-tracker rerank-kind fallback rationale as the zerank-2 row below.
+  // Voyage rerankers (same pricing page; 2.5 pair verified 2026-08-21, the
+  // rerank-3 pair 2026-09-06). Same budget-tracker rerank-kind fallback
+  // rationale as the zerank-2 row below.
+  //
+  // #4938: Voyage's pricing table grants rerank-3 / rerank-3-lite 200M
+  // complimentary tokens each (the page contradicts itself on whether the 2.5
+  // pair gets the same grant, so nothing here claims it either way).
+  // Every row carries the POST-free-tier list rate,
+  // not an effective rate — the free grant is per-account and gbrain has no
+  // way to know how much of it a given key has already spent, so pricing the
+  // rows at 0 would under-report every install past its grant. Over-reporting
+  // inside the grant is the safe direction for a max-cost spend gate.
+  // (Flag name deliberately unprefixed: the flag-registry generator
+  // regex-scans this file's raw text as a one-level import of the `providers`
+  // command, and a literal `--`-prefixed token in prose registers a phantom
+  // flag — the prose-bleed class documented in generate-flag-registry.ts.)
+  'voyage:rerank-3':               { pricePerMTok: 0.05 },
+  'voyage:rerank-3-lite':          { pricePerMTok: 0.02 },
   'voyage:rerank-2.5':             { pricePerMTok: 0.05 },
   'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
   // voyage-4-nano is deliberately absent: it's the open-weight variant (see
