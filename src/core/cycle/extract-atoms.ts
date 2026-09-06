@@ -804,6 +804,7 @@ export async function runPhaseExtractAtoms(
         reason: 'no_work',
         source_id: sourceId,
         atoms_extracted: 0,
+        atoms_source_changed: 0,
         transcripts_processed: 0,
         transcripts_total: 0,
         transcripts_skipped_budget: 0,
@@ -820,6 +821,8 @@ export async function runPhaseExtractAtoms(
 
   // 4. Per work-item: extract atoms via the configured extract_atoms model
   let totalAtomsExtracted = 0;
+  // Read-only drift visibility; see countSourceChangedAtoms for what it counts.
+  let atomsSourceChanged = 0;
   let transcriptsProcessed = 0;
   let pagesProcessed = 0;
   let transcriptsSkipped = 0;
@@ -972,6 +975,35 @@ export async function runPhaseExtractAtoms(
   // EXCEPT the ones TRANSIENT_EXTRACT_ERROR_RE + the rate_limit abort class
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
+
+  /**
+   * Per-page slice of the population doctor's `atom_provenance_drift` check
+   * measures brain-wide and on demand: live atoms bound to THIS page whose
+   * stored `source_hash` no longer matches its current hash16 (the page was
+   * edited after they were extracted). `pending:%` excluded for the same
+   * reason doctor excludes it — in-flight marker, not drift. Diagnostic only:
+   * one SELECT, no writes, no control-flow change, so unlike
+   * `recordPageFailureCount`/`stampAtomsScanHash` there is no `opts.dryRun`
+   * guard. Transcripts skip the query (no page slug to bind).
+   */
+  async function countSourceChangedAtoms(item: { kind: string; slug?: string; contentHash: string }): Promise<number> {
+    if (item.kind !== 'page' || !item.slug) return 0;
+    try {
+      const rows = await engine.executeRaw<{ cnt: number | string }>(
+        `SELECT COUNT(*)::int AS cnt FROM pages
+          WHERE type = 'atom' AND deleted_at IS NULL AND source_id = $1
+            AND frontmatter->>'source_slug' = $2
+            AND frontmatter->>'source_hash' IS NOT NULL
+            AND frontmatter->>'source_hash' NOT LIKE 'pending:%'
+            AND frontmatter->>'source_hash' <> $3`,
+        [sourceId, item.slug, item.contentHash.slice(0, 16)],
+      );
+      const cnt = rows[0]?.cnt;
+      return cnt == null ? 0 : Number(cnt);
+    } catch {
+      return 0; // fail-soft: a reporting counter must never fail a run
+    }
+  }
 
   /** Stamp the zero-yield/complete tombstone (hash-keyed; edits re-eligibilize). */
   async function stampAtomsScanHash(item: { slug: string; contentHash: string }): Promise<void> {
@@ -1160,6 +1192,9 @@ export async function runPhaseExtractAtoms(
           if (item.kind === 'page') await stampAtomsScanHash(item);
           else await stampTranscriptTombstone(item.filePath, item.contentHash);
         }
+        // Zero yield this run does NOT mean zero atoms on the page: earlier
+        // extractions can have left rows an edit since made stale.
+        atomsSourceChanged += await countSourceChangedAtoms(item);
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
         continue;
@@ -1304,6 +1339,11 @@ export async function runPhaseExtractAtoms(
       } else {
         totalAtomsExtracted += atoms.length; // count for dry-run reporting
       }
+      // After the completion flip, so atoms this run refreshed carry the
+      // current hash16 and are correctly NOT counted — what remains are
+      // siblings an earlier extraction left behind. Dry-run wrote nothing, so
+      // the same query reports the pre-run state; same code path either way.
+      atomsSourceChanged += await countSourceChangedAtoms(item);
       if (item.kind === 'transcript') transcriptsProcessed++;
       else pagesProcessed++;
       // v0.41.19.0 (T4): one tick per processed item, with a count note.
@@ -1409,9 +1449,11 @@ export async function runPhaseExtractAtoms(
       (failures.length > 0 ? ` (${failures.length} failed)` : '') +
       (transcriptsSkipped + pagesSkipped > 0
         ? ` (${transcriptsSkipped + pagesSkipped} budget-skipped)`
-        : ''),
+        : '') +
+      (atomsSourceChanged > 0 ? ` (${atomsSourceChanged} source-changed atoms)` : ''),
     details: {
       atoms_extracted: totalAtomsExtracted,
+      atoms_source_changed: atomsSourceChanged,
       transcripts_processed: transcriptsProcessed,
       transcripts_total: transcripts.length,
       transcripts_skipped_budget: transcriptsSkipped,

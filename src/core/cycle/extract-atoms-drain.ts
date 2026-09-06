@@ -91,6 +91,12 @@ export interface ExtractAtomsDrainDeps {
   runBatch: () => Promise<{
     extracted: number;
     skipped: number;
+    /**
+     * Diagnostic-only: live atoms whose source page was edited after they were
+     * extracted, counted per page by the phase. Optional so count-only
+     * adapters (and existing test fakes) keep compiling; absent reads as 0.
+     */
+    sourceChanged?: number;
     providerFailure?: boolean;
     failureCount?: number;
     firstError?: string;
@@ -123,6 +129,14 @@ export interface ExtractAtomsDrainResult {
   status: 'ok' | 'provider_failure';
   extracted: number;
   skipped: number;
+  /**
+   * Diagnostic-only, summed across batches: live atoms on the pages this run
+   * touched whose stored `source_hash` no longer matches their source page's
+   * current hash — the same population doctor's `atom_provenance_drift`
+   * reports brain-wide, surfaced here so `--json` shows it without a separate
+   * `gbrain doctor` run. Nothing acts on it; it is a number, not a trigger.
+   */
+  atoms_source_changed: number;
   /** Eligible pages still pending after the window. null if the count errored. */
   remaining: number | null;
   /** Batches actually processed. */
@@ -179,6 +193,10 @@ export async function runExtractAtomsDrain(
     const deadline = deps.now() + opts.windowMs;
     let extracted = 0;
     let skipped = 0;
+    // Diagnostic-only drift visibility, accumulated the same way as extracted/
+    // skipped. Non-finite/negative adapter values are floored to 0 so a broken
+    // adapter cannot turn the total into NaN.
+    let sourceChanged = 0;
     let batches = 0;
     let stopped: ExtractAtomsDrainResult['stopped'] = 'window';
     // issue #3218: latched once any batch reports providerFailure — drives
@@ -200,6 +218,10 @@ export async function runExtractAtomsDrain(
       const r = await deps.runBatch();
       extracted += r.extracted;
       skipped += r.skipped;
+      sourceChanged +=
+        typeof r.sourceChanged === 'number' && Number.isFinite(r.sourceChanged) && r.sourceChanged > 0
+          ? Math.floor(r.sourceChanged)
+          : 0;
       batches++;
       // #4730: preserve typed per-item records (bounded, sanitized) while
       // keeping failure_count exact and reconcilable — count-only adapters
@@ -280,6 +302,7 @@ export async function runExtractAtomsDrain(
       status: providerFailure ? 'provider_failure' : 'ok',
       extracted,
       skipped,
+      atoms_source_changed: sourceChanged,
       remaining,
       batches,
       stopped,
@@ -377,6 +400,7 @@ export async function runExtractAtomsDrainForSource(
         return {
           extracted: Number(d.atoms_extracted ?? 0),
           skipped: Number(d.duplicates_skipped ?? 0),
+          sourceChanged: Number(d.atoms_source_changed ?? 0),
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
           failures: typedFailures,
