@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -15,6 +15,18 @@ let sourceRoot: string;
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from('bounded-ocr-fixture'),
+]);
+
+const JPEG = Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff]),
+  Buffer.from('bounded-jpeg-ocr-fixture'),
+]);
+
+const WEBP = Buffer.concat([
+  Buffer.from('RIFF'),
+  Buffer.from([0x04, 0x00, 0x00, 0x00]),
+  Buffer.from('WEBP'),
+  Buffer.from('bounded-webp-ocr-fixture'),
 ]);
 
 const digest = (value: Buffer | string): string =>
@@ -208,6 +220,70 @@ describe('files ocr — attachment-derived searchable text', () => {
       '--manifest', seeded.manifestPath, '--manifest-sha256', digest(json), '--apply',
     ], deps(async () => { calls++; return { status: 'empty' }; })))
       .rejects.toThrow(/prompt_version must be visible-text-v1/);
+    expect(calls).toBe(0);
+  });
+
+  test('rejects malformed manifest shapes before engine or provider work', async () => {
+    const malformed: unknown[] = [
+      [],
+      { version: 2, source_id: 'notes-export', model: 'test:ocr-model', prompt_version: 'visible-text-v1', rows: [{}] },
+      { version: 1, source_id: 'notes-export', model: 'test:ocr-model', prompt_version: 'visible-text-v1', rows: [], extra: true },
+      { version: 1, source_id: 'notes-export', model: 'test:ocr-model', prompt_version: 'visible-text-v1', rows: [{}] },
+    ];
+    for (const [index, value] of malformed.entries()) {
+      const json = JSON.stringify(value);
+      const path = join(sourceRoot, `malformed-${index}.json`);
+      writeFileSync(path, json);
+      await expect(runFilesOcr({} as BrainEngine, [
+        '--manifest', path, '--manifest-sha256', digest(json), '--apply',
+      ], deps(async () => ({ status: 'succeeded', text: 'forbidden' })))).rejects.toThrow();
+    }
+  });
+
+  test('accepts JPEG and WebP magic bytes and passes their sniffed MIME to OCR', async () => {
+    for (const fixture of [
+      { path: 'assets/roster.jpg', bytes: JPEG, mime: 'image/jpeg' },
+      { path: 'assets/roster.webp', bytes: WEBP, mime: 'image/webp' },
+    ]) {
+      const seeded = await seedFile(fixture.path, fixture.bytes);
+      let admittedMime = '';
+      await runFilesOcr(engine, argsFor(seeded, true), deps(async (_bytes, mime) => {
+        admittedMime = mime;
+        return { status: 'empty' };
+      }));
+      expect(admittedMime).toBe(fixture.mime);
+    }
+  });
+
+  test('rejects invalid, missing, and source-root-escaping local assets before OCR', async () => {
+    const invalid = await seedFile('assets/invalid.png', Buffer.from('not-an-image'));
+    let calls = 0;
+    const injected = deps(async () => {
+      calls++;
+      return { status: 'succeeded', text: 'forbidden' };
+    });
+    await expect(runFilesOcr(engine, argsFor(invalid, true), injected))
+      .rejects.toThrow(/accepts only PNG, JPEG, or WebP/);
+
+    const missing = await seedFile('assets/missing.png');
+    unlinkSync(join(sourceRoot, 'assets/missing.png'));
+    await expect(runFilesOcr(engine, argsFor(missing, true), injected))
+      .rejects.toThrow(/requires a symlink-free local source-root asset/);
+
+    const escaped = await seedFile('assets/escaped.png');
+    const outside = join(tmpdir(), `outside-${escaped.fileId}.png`);
+    writeFileSync(outside, PNG);
+    await engine.upsertFile({
+      source_id: 'notes-export', page_id: escaped.pageId, page_slug: 'school/roster',
+      filename: 'escaped.png', storage_path: 'assets/escaped.png', mime_type: 'image/png',
+      size_bytes: PNG.length, content_hash: escaped.hash, metadata: { source_asset: outside },
+    });
+    try {
+      await expect(runFilesOcr(engine, argsFor(escaped, true), injected))
+        .rejects.toThrow(/local path escapes source root/);
+    } finally {
+      unlinkSync(outside);
+    }
     expect(calls).toBe(0);
   });
 
@@ -457,6 +533,16 @@ Body.`, { sourceId: 'notes-export', noEmbed: true, forceRechunk: true });
     expect((await engine.getFile('notes-export', 'assets/roster.png'))!.metadata.ocr).toBeUndefined();
   });
 
+  test('a thrown provider error is redacted and leaves no OCR mutation', async () => {
+    const seeded = await seedFile();
+    await expect(runFilesOcr(engine, argsFor(seeded, true), {
+      ...deps(async () => ({ status: 'empty' })),
+      runOcrGated: async () => { throw new Error('provider secret detail'); },
+    })).rejects.toThrow(`files ocr provider failed for file_id=${seeded.fileId}`);
+    expect(await engine.getChunks('school/roster', { sourceId: 'notes-export' })).toHaveLength(0);
+    expect((await engine.getFile('notes-export', 'assets/roster.png'))!.metadata.ocr).toBeUndefined();
+  });
+
   test('empty OCR removes stale derived text and records an empty result', async () => {
     const seeded = await seedFile('assets/roster.png', PNG, 'test:ocr-v1');
     await runFilesOcr(engine, argsFor(seeded, true), deps(async () => ({
@@ -520,6 +606,21 @@ Body.`, { sourceId: 'notes-export', noEmbed: true, forceRechunk: true });
       await engine.executeRaw(`UPDATE files SET size_bytes = size_bytes + 1 WHERE id = $1`, [seeded.fileId]);
       return { status: 'succeeded', text: 'must never commit' };
     }))).rejects.toThrow(/apply identity mismatch/);
+    expect(await engine.getChunks('school/roster', { sourceId: 'notes-export' })).toHaveLength(0);
+    expect((await engine.getFile('notes-export', 'assets/roster.png'))!.metadata.ocr).toBeUndefined();
+  });
+
+  test('apply-time local byte drift fails after provider work without a successful receipt', async () => {
+    const seeded = await seedFile();
+    const changed = Buffer.from(PNG);
+    changed[changed.length - 1] ^= 0xff;
+    let calls = 0;
+    await expect(runFilesOcr(engine, argsFor(seeded, true), deps(async () => {
+      calls++;
+      writeFileSync(join(sourceRoot, 'assets/roster.png'), changed);
+      return { status: 'succeeded', text: 'must never commit' };
+    }))).rejects.toThrow(/apply-time byte hash mismatch/);
+    expect(calls).toBe(1);
     expect(await engine.getChunks('school/roster', { sourceId: 'notes-export' })).toHaveLength(0);
     expect((await engine.getFile('notes-export', 'assets/roster.png'))!.metadata.ocr).toBeUndefined();
   });

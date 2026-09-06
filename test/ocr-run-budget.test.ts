@@ -17,8 +17,13 @@ import {
   _maybeOcrGatedForTests,
   _resetOcrRunBudgetForTests,
   _getOcrRunBudgetForTests,
+  runOcrGated,
 } from '../src/core/import-file.ts';
-import { __setGenerateTextTransportForTests } from '../src/core/ai/gateway.ts';
+import {
+  __setGenerateTextTransportForTests,
+  configureGateway,
+  resetGateway,
+} from '../src/core/ai/gateway.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -34,6 +39,7 @@ afterAll(async () => {
   await engine.disconnect();
   _resetOcrRunBudgetForTests();
   __setGenerateTextTransportForTests(null);
+  resetGateway();
 });
 
 beforeEach(async () => {
@@ -108,6 +114,31 @@ describe('per-run OCR budget gate (#3973)', () => {
       expect(_getOcrRunBudgetForTests().images).toBe(100_001);
     } finally {
       __setGenerateTextTransportForTests(null);
+    }
+  });
+
+  test('provider failures emit a stable redacted warning through the real gate', async () => {
+    configureGateway({
+      expansion_model: 'anthropic:claude-haiku-4-5-20251001',
+      env: { ANTHROPIC_API_KEY: 'sk-test-fake' },
+    });
+    __setGenerateTextTransportForTests(async () => {
+      throw new Error('secret provider URL and request body');
+    });
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(' '));
+    try {
+      const result = await runOcrGated(engine, buf, 'image/png', 'anthropic:claude-haiku-4-5-20251001');
+      expect(result.status).toBe('provider-failure');
+      expect(warnings).toEqual([
+        '[gbrain] OCR call failed (continuing without OCR text; provider details redacted)',
+      ]);
+      expect(warnings.join('\n')).not.toContain('secret provider URL');
+    } finally {
+      console.warn = originalWarn;
+      __setGenerateTextTransportForTests(null);
+      resetGateway();
     }
   });
 });

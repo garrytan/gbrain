@@ -64,7 +64,7 @@ interface FileOcrDeps {
 interface PreparedRow {
   manifest: FileOcrManifestRow;
   file: FileRow;
-  bytes: Buffer;
+  source: SourceRow;
   mime: string;
   sourceHash: string;
   signature: string;
@@ -229,7 +229,10 @@ function sniffImageMime(bytes: Buffer): string {
   throw new Error('files ocr accepts only PNG, JPEG, or WebP magic bytes');
 }
 
-function candidateLocalPaths(source: SourceRow, file: FileRow): string[] {
+function candidateLocalPaths(
+  source: Pick<SourceRow, 'local_path'>,
+  file: Pick<FileRow, 'metadata' | 'storage_path'>,
+): string[] {
   if (!source.local_path) return [];
   const metadata = file.metadata ?? {};
   const values = [metadata.source_asset, metadata.original_path, metadata.local_path, metadata.path, file.storage_path];
@@ -262,9 +265,8 @@ async function assertSymlinkFreeContainedPath(root: string, candidate: string): 
 }
 
 async function loadImageBytes(
-  source: SourceRow,
-  file: FileRow,
-  deps: FileOcrDeps,
+  source: Pick<SourceRow, 'local_path'>,
+  file: Pick<FileRow, 'id' | 'metadata' | 'storage_path'>,
 ): Promise<{ bytes: Buffer; mime: string }> {
   for (const candidate of candidateLocalPaths(source, file)) {
     const stat = await lstat(candidate).catch(() => null);
@@ -278,6 +280,23 @@ async function loadImageBytes(
   }
 
   throw new Error(`files ocr requires a symlink-free local source-root asset for file_id=${file.id}`);
+}
+
+async function loadVerifiedImageBytes(
+  source: Pick<SourceRow, 'local_path'>,
+  file: Pick<FileRow, 'id' | 'metadata' | 'storage_path'>,
+  row: FileOcrManifestRow,
+  phase = '',
+): Promise<{ bytes: Buffer; mime: string }> {
+  const loaded = await loadImageBytes(source, file);
+  const prefix = phase ? `${phase} ` : '';
+  if (loaded.bytes.length !== row.size_bytes) {
+    throw new Error(`files ocr ${prefix}byte size mismatch for file_id=${row.file_id}`);
+  }
+  if (sha256(loaded.bytes) !== row.content_hash) {
+    throw new Error(`files ocr ${prefix}byte hash mismatch for file_id=${row.file_id}`);
+  }
+  return loaded;
 }
 
 function receiptFromMetadata(file: FileRow): Record<string, unknown> | null {
@@ -315,7 +334,6 @@ async function prepareRows(
   engine: BrainEngine,
   manifest: FileOcrManifest,
   model: string,
-  deps: FileOcrDeps,
 ): Promise<PreparedRow[]> {
   const source = (await engine.listAllSources()).find(row => row.id === manifest.source_id);
   if (!source) throw new Error(`files ocr source does not exist: ${manifest.source_id}`);
@@ -334,10 +352,8 @@ async function prepareRows(
       throw new Error(`files ocr file_id=${row.file_id} is not registered as an image`);
     }
     assertNotReadwise(source, page, file);
-    const loaded = await loadImageBytes(source, file, deps);
-    if (loaded.bytes.length !== row.size_bytes) throw new Error(`files ocr byte size mismatch for file_id=${row.file_id}`);
-    const sourceHash = sha256(loaded.bytes);
-    if (sourceHash !== row.content_hash) throw new Error(`files ocr byte hash mismatch for file_id=${row.file_id}`);
+    const loaded = await loadVerifiedImageBytes(source, file, row);
+    const sourceHash = row.content_hash;
     const signature = sha256(JSON.stringify({
       version: MANIFEST_VERSION,
       source_content_hash: sourceHash,
@@ -347,7 +363,7 @@ async function prepareRows(
     prepared.push({
       manifest: row,
       file,
-      bytes: loaded.bytes,
+      source,
       mime: loaded.mime,
       sourceHash,
       signature,
@@ -472,6 +488,14 @@ async function applyPreparedRows(
       const page = lockedPages.get(row.manifest.page_id)!;
       const file = locked.get(row.manifest.file_id)!;
       assertNotReadwise(sourceRows[0], page, file);
+      const loaded = await loadVerifiedImageBytes(sourceRows[0], {
+        id: file.file_id,
+        metadata: file.metadata,
+        storage_path: file.storage_path,
+      }, row.manifest, 'apply-time');
+      if (loaded.mime !== row.mime) {
+        throw new Error(`files ocr apply-time MIME mismatch for file_id=${row.manifest.file_id}`);
+      }
     }
 
     const groups = new Map<string, PreparedRow[]>();
@@ -597,7 +621,7 @@ async function applyPreparedRows(
         version: 1,
         status: text ? 'succeeded' : 'empty',
         source_content_hash: row.sourceHash,
-        source_byte_count: row.bytes.length,
+        source_byte_count: row.manifest.size_bytes,
         sniffed_mime: row.mime,
         text_sha256: textHash,
         derived_chunk_index: chunkIndex,
@@ -671,7 +695,7 @@ export async function runFilesOcr(
   const model = (deps.getImageOcrModel ?? getImageOcrModel)();
   if (model !== manifest.model) throw new Error(`files ocr runtime model does not match manifest model`);
   const mode = applying ? 'apply' : 'dry-run';
-  const prepared = await prepareRows(engine, manifest, model, deps);
+  const prepared = await prepareRows(engine, manifest, model);
 
   if (mode === 'dry-run') {
     const pendingGroups = new Map<string, PreparedRow[]>();
@@ -733,9 +757,10 @@ export async function runFilesOcr(
   const ocrBudget = await assertOcrBudgetCapacity(engine, providerGroups.length);
   for (const group of providerGroups) {
     const row = group[0];
+    const loaded = await loadVerifiedImageBytes(row.source, row.file, row.manifest, 'provider-time');
     let result: OcrGatedResult;
     try {
-      result = await runOcr(engine, row.bytes, row.mime, model);
+      result = await runOcr(engine, loaded.bytes, loaded.mime, model);
     } catch {
       throw new Error(`files ocr provider failed for file_id=${row.manifest.file_id}`);
     }

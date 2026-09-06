@@ -1898,6 +1898,7 @@ export function _resetOcrRunBudgetForTests(preset?: { images?: number; estUsd?: 
   _ocrRunBudget.images = preset?.images ?? 0;
   _ocrRunBudget.estUsd = preset?.estUsd ?? 0;
   _ocrRunBudget.warned = false;
+  _ocrWarnedThisSession = false;
 }
 
 /** Test seam: read the per-run OCR budget state. */
@@ -2006,9 +2007,9 @@ export async function runOcrGated(engine: BrainEngine, imgBuf: Buffer, mime: str
     const text = await generateOcrText(imgBuf, mime, ocrModel);
     await bump('ocr_succeeded');
     return text.trim() ? { status: 'succeeded', text: text.trim() } : { status: 'empty' };
-  } catch (err) {
+  } catch {
     if (!_ocrWarnedThisSession) {
-      console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
+      console.warn('[gbrain] OCR call failed (continuing without OCR text; provider details redacted)');
       _ocrWarnedThisSession = true;
     }
     await bump('ocr_failed_other');

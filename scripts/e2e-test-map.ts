@@ -102,6 +102,12 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     // #3391: the NULL-signature stale predicates differ per engine.
     "test/e2e/migrate-embeddings-postgres.test.ts",
   ],
+  // Manifest-bound attachment OCR mutates negative-index derived chunks and
+  // JSONB file receipts together. Command dispatch, validation, and file-row
+  // preservation must all retain live Postgres parity.
+  "src/commands/files.ts": ["test/e2e/file-ocr-postgres.test.ts"],
+  "src/commands/files-ocr.ts": ["test/e2e/file-ocr-postgres.test.ts"],
+  "src/core/import-file.ts": ["test/e2e/file-ocr-postgres.test.ts"],
   // #3390: runSchemaTransition's DDL path + the stale predicates behave
   // differently on real pgvector than on PGLite.
   "src/core/embedding-migration.ts": ["test/e2e/migrate-embeddings-postgres.test.ts"],
