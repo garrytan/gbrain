@@ -355,3 +355,67 @@ describe('sources add --kind google --calendar-id', () => {
     expect(sameCal.err).toContain('already syncs alice@example.com (calendar)');
   });
 });
+
+// ── --backfill-batch ─────────────────────────────────────────────────────────
+//
+// Gmail initial-backfill batch size (default 25, clamped to
+// [1, MAX_BACKFILL_BATCH_THREADS]). See src/core/google/google-source.ts
+// (parseGoogleSourceConfig / resolveBackfillBatchThreads) and
+// docs/guides/google-connect.md#backfill-pace.
+
+describe('sources add --kind google --backfill-batch', () => {
+  test('an in-range value is stored as g_backfill_batch_threads', async () => {
+    const r = await addGoogle('gbatch', ['--backfill-batch', '100'], { seed: seedVault });
+    expect(r.exitCalled).toBeUndefined();
+    expect(r.out).toContain('Created source "gbatch"');
+    const cfg = (await sourceConfig('gbatch'))!;
+    expect(cfg.g_backfill_batch_threads).toBe(100);
+  });
+
+  test('omitting the flag registers with no g_backfill_batch_threads key at all (default-preserving)', async () => {
+    const r = await addGoogle('gbatch-default', [], { seed: seedVault });
+    expect(r.exitCalled).toBeUndefined();
+    const cfg = (await sourceConfig('gbatch-default'))!;
+    expect('g_backfill_batch_threads' in cfg).toBe(false);
+  });
+
+  test('passing the default value explicitly (25) also omits the key (matches g_calendar_id convention)', async () => {
+    const r = await addGoogle('gbatch-explicit-default', ['--backfill-batch', '25'], { seed: seedVault });
+    expect(r.exitCalled).toBeUndefined();
+    const cfg = (await sourceConfig('gbatch-explicit-default'))!;
+    expect('g_backfill_batch_threads' in cfg).toBe(false);
+  });
+
+  test('0 → exit 2, nothing registered', async () => {
+    const r = await addGoogle('gbatch-zero', ['--backfill-batch', '0'], { seed: seedVault });
+    expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain('--backfill-batch must be an integer between 1 and');
+    expect(await sourceConfig('gbatch-zero')).toBeNull();
+  });
+
+  test('above the cap (501) → exit 2, nothing registered', async () => {
+    const r = await addGoogle('gbatch-toobig', ['--backfill-batch', '501'], { seed: seedVault });
+    expect(r.exitCalled).toBe(2);
+    expect(r.err).toContain('--backfill-batch must be an integer between 1 and 500');
+    expect(await sourceConfig('gbatch-toobig')).toBeNull();
+  });
+
+  test('exactly the cap (500) is accepted', async () => {
+    const r = await addGoogle('gbatch-cap', ['--backfill-batch', '500'], { seed: seedVault });
+    expect(r.exitCalled).toBeUndefined();
+    const cfg = (await sourceConfig('gbatch-cap'))!;
+    expect(cfg.g_backfill_batch_threads).toBe(500);
+  });
+
+  test('a non-integer value → exit 2', async () => {
+    const r = await addGoogle('gbatch-frac', ['--backfill-batch', '12.5'], { seed: seedVault });
+    expect(r.exitCalled).toBe(2);
+    expect(await sourceConfig('gbatch-frac')).toBeNull();
+  });
+
+  test('a non-numeric value → exit 2', async () => {
+    const r = await addGoogle('gbatch-nan', ['--backfill-batch', 'lots'], { seed: seedVault });
+    expect(r.exitCalled).toBe(2);
+    expect(await sourceConfig('gbatch-nan')).toBeNull();
+  });
+});

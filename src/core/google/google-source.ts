@@ -53,7 +53,9 @@ import {
 } from './google-render.ts';
 import {
   ALL_GOOGLE_SERVICES,
+  DEFAULT_BACKFILL_BATCH_THREADS,
   DEFAULT_CALENDAR_ID,
+  MAX_BACKFILL_BATCH_THREADS,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
@@ -69,6 +71,33 @@ const G_KIND = 'google';
 
 export function isGoogleSourceConfig(config: Record<string, unknown>): boolean {
   return config.kind === G_KIND;
+}
+
+/**
+ * Resolve the Gmail initial-backfill batch size: per-source config
+ * (`g_backfill_batch_threads`) wins when set, then the
+ * GBRAIN_GOOGLE_BACKFILL_BATCH_THREADS env override (operator-wide default
+ * across sources, mirrors the GBRAIN_SYNC_* knobs in sync.ts), else
+ * DEFAULT_BACKFILL_BATCH_THREADS. Always clamped to
+ * [1, MAX_BACKFILL_BATCH_THREADS] — an invalid/out-of-range value falls back
+ * to the default rather than throwing, matching historyDays' clamp-not-throw
+ * behavior above.
+ */
+function resolveBackfillBatchThreads(config: Record<string, unknown>): number {
+  const clamp = (n: number): number => Math.min(MAX_BACKFILL_BATCH_THREADS, Math.max(1, Math.floor(n)));
+  if (
+    typeof config.g_backfill_batch_threads === 'number' &&
+    Number.isFinite(config.g_backfill_batch_threads) &&
+    config.g_backfill_batch_threads > 0
+  ) {
+    return clamp(config.g_backfill_batch_threads);
+  }
+  const envRaw = process.env.GBRAIN_GOOGLE_BACKFILL_BATCH_THREADS;
+  if (envRaw) {
+    const n = Number(envRaw);
+    if (Number.isFinite(n) && n > 0) return clamp(n);
+  }
+  return DEFAULT_BACKFILL_BATCH_THREADS;
 }
 
 export function parseGoogleSourceConfig(
@@ -98,6 +127,7 @@ export function parseGoogleSourceConfig(
     typeof config.g_dir === 'string' && config.g_dir.length > 0 ? config.g_dir : fallbackDir;
   const access =
     config.g_access === 'command' || config.g_access === 'env' ? config.g_access : 'vault';
+  const backfillBatchThreads = resolveBackfillBatchThreads(config);
   return {
     account,
     services: services.length > 0 ? services : [...ALL_GOOGLE_SERVICES],
@@ -105,6 +135,7 @@ export function parseGoogleSourceConfig(
     calendarId,
     dir,
     access,
+    backfillBatchThreads,
     ...(typeof config.g_token_command === 'string' && config.g_token_command.trim()
       ? { tokenCommand: config.g_token_command }
       : {}),
@@ -461,8 +492,11 @@ async function sweepCalendar(
 }
 
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
-
-const BACKFILL_BATCH_THREADS = 25;
+//
+// The initial-backfill batch size (`deps.cfg.backfillBatchThreads`, default
+// DEFAULT_BACKFILL_BATCH_THREADS) is resolved once by parseGoogleSourceConfig
+// per source — see g_backfill_batch_threads / GBRAIN_GOOGLE_BACKFILL_BATCH_THREADS
+// there.
 
 async function processThread(
   deps: GoogleSyncDeps,
@@ -675,9 +709,9 @@ async function sweepGmail(
       let processedAny = false;
       let batchFailed = false;
       let batchOldest = floorMs;
-      for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
+      for (let i = 0; i < threadIds.length; i += deps.cfg.backfillBatchThreads) {
         if (deps.opts.signal?.aborted) break;
-        const batch = threadIds.slice(i, i + BACKFILL_BATCH_THREADS);
+        const batch = threadIds.slice(i, i + deps.cfg.backfillBatchThreads);
         for (const tid of batch) {
           if (deps.opts.signal?.aborted) break;
           if (poisoned(tid)) continue;

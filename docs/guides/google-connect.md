@@ -155,6 +155,39 @@ consecutive failures instead of wedging the sync forever;
 `gbrain sync --source <id> --full` retries skipped threads with a fresh
 ledger.
 
+## Backfill pace
+
+Gmail's INITIAL backfill (the one-time pass over `--history-days` of
+pre-existing mail before the source switches to incremental delta sync)
+processes older threads in floor-commit chunks so a killed run resumes
+where it left off instead of restarting. The chunk size defaults to **25
+threads** and is configurable per source:
+
+```bash
+gbrain sources add work --kind google --account you@example.com \
+  --backfill-batch 100   # 1-500, default 25
+```
+
+Or set it once for every google source you add from this shell/host:
+
+```bash
+export GBRAIN_GOOGLE_BACKFILL_BATCH_THREADS=100   # --backfill-batch on a source wins over this
+```
+
+A larger batch commits the resume floor less often, which means fewer
+`messages.list` re-queries against a very large mailbox (tens of thousands of
+threads) at the cost of a bigger blast radius per batch: a single
+rate-limited or failing thread fails the WHOLE batch (the floor only
+advances after a fully-successful one), so raising this trades resume
+granularity for round-trip count. Gmail returns HTTP 403 with a rate-limit
+reason under bursty request volume; the client already retries those with
+exponential backoff (honoring `Retry-After` when Google sends one) before
+giving up, so an occasional 403 during a large backfill is expected and
+self-heals — a batch size so large that failures become routine is the
+signal to dial it back down, not the client misbehaving. The upper bound
+(500) matches the client's own per-listing-call pagination safety cap; a
+batch larger than that buys nothing.
+
 ## Other ways to reach Google (no gbrain OAuth)
 
 If your stack already holds Google access another way — a Google CLI with its

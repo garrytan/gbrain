@@ -53,7 +53,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
-import { DEFAULT_CALENDAR_ID } from './google/types.ts';
+import { DEFAULT_BACKFILL_BATCH_THREADS, DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -196,6 +196,9 @@ export interface AddSourceOpts {
     access?: 'vault' | 'command' | 'env';
     tokenCommand?: string;
     tokenEnv?: string;
+    /** Gmail initial-backfill batch size (default DEFAULT_BACKFILL_BATCH_THREADS,
+     *  clamped to [1, MAX_BACKFILL_BATCH_THREADS] by parseGoogleSourceConfig). */
+    backfillBatchThreads?: number;
   };
 }
 
@@ -651,6 +654,12 @@ export async function addSource(
       // its exact shape (DEFAULT_CALENDAR_ID stays the parse-time fallback).
       ...(opts.google.calendarId && opts.google.calendarId !== DEFAULT_CALENDAR_ID
         ? { g_calendar_id: opts.google.calendarId }
+        : {}),
+      // Same non-default-only convention as g_calendar_id: every source
+      // registered before this option existed keeps its exact config shape.
+      ...(opts.google.backfillBatchThreads !== undefined &&
+      opts.google.backfillBatchThreads !== DEFAULT_BACKFILL_BATCH_THREADS
+        ? { g_backfill_batch_threads: opts.google.backfillBatchThreads }
         : {}),
       // Non-vault access (v0.47): 'command' runs g_token_command locally at
       // sync time (same trust class as recipe health_check argv — the google
