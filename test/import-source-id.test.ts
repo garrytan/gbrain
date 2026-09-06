@@ -80,6 +80,35 @@ describe('import --source-id (#1167)', () => {
     }
   });
 
+  // The --json payload reports counts; without a destination field a caller
+  // (gstack's memory-ingest is the one in tree — see
+  // test/import-json-stdout.serial.test.ts) cannot tell a routed import from
+  // one that fell through the resolver to `default`. Both directions are
+  // pinned so the field can't be "fixed" by hardcoding either answer.
+  async function importPayload(args: string[]): Promise<Record<string, unknown>> {
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+    try {
+      await runImport(engine, args);
+    } finally {
+      console.log = origLog;
+    }
+    const jsonLine = lines.find((l) => l.trimStart().startsWith('{'));
+    expect(jsonLine).toBeDefined();
+    return JSON.parse(jsonLine!) as Record<string, unknown>;
+  }
+
+  test('--json payload names default as the destination when unrouted', async () => {
+    const payload = await importPayload([scratchDir, '--no-embed', '--json']);
+    expect(payload.source_id).toBe('default');
+  });
+
+  test('--json payload names the routed source', async () => {
+    const payload = await importPayload([scratchDir, '--source-id', 'dept-x', '--no-embed', '--json']);
+    expect(payload.source_id).toBe('dept-x');
+  });
+
   test('--source-id value is NOT treated as a positional dir arg', async () => {
     // Regression: flag-value-as-dirArg was a real bug class in early
     // CLI parsers. Pre-fix the parser at line 82-83 would have

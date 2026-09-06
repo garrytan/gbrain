@@ -752,6 +752,13 @@ export async function runImport(
       status: 'success', duration_s: parseFloat(totalTime),
       imported, skipped, errors, chunks: chunksCreated,
       total_files: allFiles.length,
+      // The payload reported how much was imported but never WHERE, so a
+      // programmatic caller could not tell a routed import from one that
+      // fell through the resolver to `default` — the tier chain above runs
+      // entirely inside this function and is invisible from outside. Same
+      // `sourceId ?? 'default'` effective-source expression the schema-warn
+      // block below already uses.
+      source_id: sourceId ?? 'default',
     }));
   } else {
     console.log(`\nImport complete (${totalTime}s):`);
