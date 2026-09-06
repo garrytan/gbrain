@@ -13,6 +13,22 @@ primitive (finds thin pages and enriches at scale), and the `enrich` skill
 (`skills/enrich/`) is the agent-driven page-at-a-time workflow. The pipeline
 below is the pattern they implement — use it to customize or extend.
 
+### Citation validation (`gbrain enrich --thin`)
+
+The batch primitive's synthesized pages are only trustworthy if their
+`[Source: ...]` citations actually check out. Before a synthesized page is
+written, every citation is resolved against the brain (bare `slug` or
+`source-id:slug`; a citation naming several comma/semicolon-separated slugs
+must resolve all of them), and every factual sentence/bullet is required to
+carry one. Anything that fails — an unresolvable slug, a malformed target
+(a date range, prose glued onto a slug, plain English text), or a factual
+claim with no citation at all — is never left to read as a verified fact: by
+default it's moved verbatim into a trailing `## Unverified (needs review)`
+section (counts surface as `citations_ok` / `citations_invalid` /
+`sentences_quarantined`); `--strict-citations` refuses to write the page at
+all instead. See `gbrain enrich --help` and
+`src/core/enrich/citation-validation.ts`.
+
 ```
 on enrich(entity, trigger):
     # trigger: meeting mention, email thread, social interaction, user request

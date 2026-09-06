@@ -36,7 +36,7 @@ import type { OperationContext } from '../core/operations.ts';
 import { configureGatewayIfUninitialized, isAvailable, chat, getChatModel, withBudgetTracker } from '../core/ai/gateway.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason } from '../core/budget/budget-tracker.ts';
 import { hybridSearch } from '../core/search/hybrid.ts';
-import { serializeMarkdown } from '../core/markdown.ts';
+import { serializeMarkdown, splitBody } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
 import {
   loadOpCheckpoint,
@@ -61,6 +61,10 @@ import {
   parseSynthesis,
   type EnrichEvidence,
 } from '../core/enrich/thin.ts';
+import {
+  validateEnrichCitations,
+  type CitationTarget,
+} from '../core/enrich/citation-validation.ts';
 
 // ---------------------------------------------------------------------------
 // Tunables (exported for tests).
@@ -135,6 +139,15 @@ export interface EnrichCoreOpts {
   force?: boolean;
   /** Test seam — inject synthesis so tests skip the real gateway. */
   synthesizeFn?: SynthesizeFn;
+  /**
+   * Fail-closed citation gate: when a synthesized page carries any invalid
+   * `[Source: ...]` citation (unresolvable, malformed, or a factual claim
+   * with none), skip writing the page entirely instead of quarantining the
+   * bad claims into an Unverified section. Default false (the quarantine
+   * behavior always applies regardless of this flag — this only controls
+   * whether a page with problems gets WRITTEN at all).
+   */
+  strictCitations?: boolean;
 }
 
 export interface EnrichResult {
@@ -155,6 +168,18 @@ export interface EnrichResult {
   pages_skipped_disappeared: number;
   /** Synthesis or write errors (best-effort; pool continued). */
   pages_failed: number;
+  /** Skipped under `--strict-citations` because the page had an invalid
+   *  citation (unresolvable/malformed target, or a factual claim with none). */
+  pages_skipped_citations?: number;
+  /** Count of `[Source: ...]` brackets across all pages this run whose every
+   *  target resolved. */
+  citations_ok?: number;
+  /** Count of `[Source: ...]` brackets that were malformed/unresolvable, PLUS
+   *  one per factual claim with no citation at all. */
+  citations_invalid?: number;
+  /** Count of claims (sentences/bullets) moved to a page's "## Unverified
+   *  (needs review)" section because their citation didn't check out. */
+  sentences_quarantined?: number;
   /** Dry-run only: candidates that WOULD be enriched (passed grounding). */
   would_enrich?: number;
   spent_usd?: number;
@@ -335,6 +360,21 @@ interface EnrichOneCtx {
   done: Set<string>;
   signal?: AbortSignal;
   config: ReturnType<typeof loadConfig>;
+  strictCitations: boolean;
+}
+
+/**
+ * Resolve one citation target against the brain. Bare slugs resolve within
+ * the candidate's own source (the only evidence scope enrich has ever
+ * retrieved from); a `source-id:slug` target is checked against exactly the
+ * source it names, regardless of scope — the model was precise, so honor it.
+ */
+function makeCitationResolver(engine: BrainEngine, ownSourceId: string) {
+  return async (target: CitationTarget): Promise<boolean> => {
+    const scope = target.sourceId ? { sourceId: target.sourceId } : { sourceId: ownSourceId };
+    const page = await engine.getPage(target.slug, scope).catch(() => null);
+    return page !== null;
+  };
 }
 
 async function enrichOne(ctx: EnrichOneCtx, candidate: EnrichCandidate): Promise<void> {
@@ -420,10 +460,41 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     return;
   }
 
+  // Citation gate: the prompt tells the model to cite every non-obvious
+  // claim with [Source: <slug>]. Nothing before this point checked it kept
+  // that promise. `splitBody` (core/markdown.ts — the engine's own
+  // compiled_truth/timeline split) scopes validation to the compiled-truth
+  // region; a genuinely timeline-shaped section the model produced (dated
+  // bullets under a "## Timeline"/"## History" heading — KIND_SECTION_GUIDANCE
+  // suggests exactly that heading for person pages) is validated as its own
+  // field instead and merged into the page's existing timeline, not scanned
+  // here (timeline entries have their own citation convention elsewhere —
+  // core/timeline-citations.ts). For ordinary output (no such section) this
+  // is a no-op split: modelCompiledTruth === parsed.body, modelTimeline === ''.
+  const { compiled_truth: modelCompiledTruth, timeline: modelTimelineSection } = splitBody(parsed.body);
+  const citationResult = await validateEnrichCitations(modelCompiledTruth, makeCitationResolver(engine, sourceId));
+  ctx.result.citations_ok = (ctx.result.citations_ok ?? 0) + citationResult.citationsOk;
+  ctx.result.citations_invalid = (ctx.result.citations_invalid ?? 0) + citationResult.citationsInvalid;
+  ctx.result.sentences_quarantined = (ctx.result.sentences_quarantined ?? 0) + citationResult.sentencesQuarantined;
+  if (citationResult.sentencesQuarantined > 0) {
+    process.stderr.write(
+      `[enrich] WARN: ${slug}: ${citationResult.sentencesQuarantined} claim(s) quarantined to Unverified ` +
+      `(${citationResult.citationsInvalid} invalid citation event(s))\n`,
+    );
+  }
+  if (ctx.strictCitations && citationResult.sentencesQuarantined > 0) {
+    ctx.result.pages_skipped_citations = (ctx.result.pages_skipped_citations ?? 0) + 1;
+    // Not banked in `done`: a bad-citation synthesis is a quality problem
+    // that may not recur on retry (like empty output), not a durable
+    // grounding verdict — suppressing it for the checkpoint TTL would be wrong.
+    return;
+  }
+
   // Write via the put_page op handler (trusted local: remote=false) so
   // auto-link + disk write-through fire, exactly like `gbrain capture`. The
   // retrieved context was sanitized in buildEnrichPrompt; the synthesized body
-  // is the model's grounded output.
+  // is the model's grounded output, now with any unverifiable claims
+  // quarantined into a trailing "## Unverified (needs review)" section.
   const tags = await engine.getTags(slug, { sourceId }).catch(() => [] as string[]);
   const newFrontmatter: Record<string, unknown> = {
     ...page.frontmatter,
@@ -432,7 +503,10 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
     enriched_at: new Date().toISOString(),
     enriched_by: ENRICHED_BY,
   };
-  const content = serializeMarkdown(newFrontmatter, parsed.body, page.timeline ?? '', {
+  const finalTimeline = modelTimelineSection
+    ? [page.timeline, modelTimelineSection].filter((t) => (t ?? '').trim()).join('\n\n')
+    : (page.timeline ?? '');
+  const content = serializeMarkdown(newFrontmatter, citationResult.compiledTruth, finalTimeline, {
     type: page.type,
     title: page.title,
     tags,
@@ -479,6 +553,10 @@ export async function runEnrichCore(
     pages_skipped_lock: 0,
     pages_skipped_disappeared: 0,
     pages_failed: 0,
+    pages_skipped_citations: 0,
+    citations_ok: 0,
+    citations_invalid: 0,
+    sentences_quarantined: 0,
   };
 
   const sourceId = opts.sourceId;
@@ -549,6 +627,7 @@ export async function runEnrichCore(
       done,
       signal,
       config,
+      strictCitations: !!opts.strictCitations,
     };
 
     let lastFlush = 0;
@@ -677,6 +756,7 @@ interface ParsedArgs {
   yes?: boolean;
   json?: boolean;
   help?: boolean;
+  strictCitations?: boolean;
   error?: string;
 }
 
@@ -709,6 +789,7 @@ export function parseArgs(args: string[]): ParsedArgs {
       continue;
     }
     if (a === '--yes' || a === '-y') { out.yes = true; continue; }
+    if (a === '--strict-citations') { out.strictCitations = true; continue; }
     if (a === '--json') { out.json = true; continue; }
     if (a === '--source' || a === '--source-id') { out.sourceId = args[++i]; continue; }
     if (a === '--model') { out.model = args[++i]; continue; }
@@ -805,12 +886,26 @@ Options:
   --resume               Resume from the prior checkpoint (default behavior).
   --force                Clear the checkpoint and re-process every candidate.
   --background           Submit as Minion job(s); print job_id(s); exit.
+  --strict-citations     Refuse to write a page that has any invalid
+                         [Source: ...] citation (unresolvable/malformed
+                         target, or a factual claim with none) instead of
+                         quarantining it into "## Unverified (needs review)".
+                         Default off (quarantine, still write).
   --json                 Machine-readable summary.
   --yes, -y              Auto-confirm cost preview in non-TTY contexts.
   --help, -h             Show this help.
 
 Provenance: enriched pages get frontmatter enriched_at + enriched_by=${ENRICHED_BY}
 (survives put_page write-through). The recency guard reads enriched_at.
+
+Citation validation: every [Source: ...] in the synthesized page is checked
+against the brain (bare "slug" or qualified "source-id:slug"; multiple
+comma/semicolon-separated targets must all resolve). A factual claim with no
+citation, a malformed target (a date range, prose glued onto a slug, plain
+text), or a target that doesn't resolve to a real page is never written as if
+it were verified: by default the claim is moved verbatim into a trailing
+"## Unverified (needs review)" section and counted in citations_invalid /
+sentences_quarantined; --strict-citations skips writing the page instead.
 `;
 
 function buildJobParams(args: string[]): Record<string, unknown> {
@@ -828,6 +923,7 @@ function buildJobParams(args: string[]): Record<string, unknown> {
     reenrichAfterMs: p.reenrichAfterMs,
     dryRun: p.dryRun,
     force: p.force,
+    strictCitations: p.strictCitations,
   };
 }
 
@@ -856,6 +952,10 @@ function emptyAgg(): EnrichResult {
     pages_skipped_lock: 0,
     pages_skipped_disappeared: 0,
     pages_failed: 0,
+    pages_skipped_citations: 0,
+    citations_ok: 0,
+    citations_invalid: 0,
+    sentences_quarantined: 0,
     would_enrich: 0,
   };
 }
@@ -870,6 +970,10 @@ function addInto(agg: EnrichResult, r: EnrichResult): void {
   agg.pages_skipped_lock += r.pages_skipped_lock;
   agg.pages_skipped_disappeared += r.pages_skipped_disappeared;
   agg.pages_failed += r.pages_failed;
+  agg.pages_skipped_citations = (agg.pages_skipped_citations ?? 0) + (r.pages_skipped_citations ?? 0);
+  agg.citations_ok = (agg.citations_ok ?? 0) + (r.citations_ok ?? 0);
+  agg.citations_invalid = (agg.citations_invalid ?? 0) + (r.citations_invalid ?? 0);
+  agg.sentences_quarantined = (agg.sentences_quarantined ?? 0) + (r.sentences_quarantined ?? 0);
   agg.would_enrich = (agg.would_enrich ?? 0) + (r.would_enrich ?? 0);
   if (r.budget_exhausted) agg.budget_exhausted = true;
   // #4032: no_pricing is the actionable reason — it wins over cost when
@@ -1023,6 +1127,7 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         reenrichAfterMs: parsed.reenrichAfterMs,
         dryRun: parsed.dryRun,
         force: parsed.force,
+        strictCitations: parsed.strictCitations,
       });
       addInto(aggregate, r);
       if (r.spent_usd) totalSpent += r.spent_usd;
@@ -1053,9 +1158,16 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     console.log(
       `\nDone: enriched ${aggregate.pages_enriched} page(s) ` +
       `(${aggregate.pages_skipped_insufficient} skipped insufficient, ` +
-      `${aggregate.pages_skipped_lock} lock-busy, ${aggregate.pages_failed} failed) ` +
+      `${aggregate.pages_skipped_lock} lock-busy, ${aggregate.pages_failed} failed, ` +
+      `${aggregate.pages_skipped_citations ?? 0} skipped strict-citations) ` +
       `across ${sourceIds.length} source(s). Spent ~$${totalSpent.toFixed(4)}.`,
     );
+    if ((aggregate.sentences_quarantined ?? 0) > 0) {
+      console.log(
+        `  Citations: ${aggregate.citations_ok ?? 0} ok, ${aggregate.citations_invalid ?? 0} invalid; ` +
+        `${aggregate.sentences_quarantined} claim(s) quarantined to "## Unverified (needs review)".`,
+      );
+    }
     if (anyBudgetExhausted) {
       console.log(
         budgetExhaustedMessage(aggregate.budget_exhausted_reason, aggregate.budget_exhausted_model),
