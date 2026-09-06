@@ -94,16 +94,25 @@ async function seedSourcePage(slug = PAGE_SLUG): Promise<void> {
   });
 }
 
-/** Every persisted page row, verbatim, for before/after write assertions. */
+/**
+ * Every column of every `pages` row, via `to_jsonb`, so a column added later is
+ * covered without editing this helper. Scoped to `pages` — that is where this
+ * feature could plausibly write, and the phase's other writes are unchanged.
+ */
 async function snapshotPages(): Promise<string> {
   const rows = await engine.executeRaw<{ dump: string }>(
-    `SELECT source_id || '|' || slug || '|' || type || '|' || COALESCE(content_hash, '')
-            || '|' || compiled_truth || '|' || timeline || '|' || frontmatter::text
-            || '|' || created_at::text || '|' || updated_at::text
-            || '|' || COALESCE(deleted_at::text, '') AS dump
-       FROM pages ORDER BY source_id, slug`,
+    `SELECT to_jsonb(p)::text AS dump FROM pages p ORDER BY p.source_id, p.slug`,
   );
   return rows.map((r) => r.dump).join('\n');
+}
+
+/** Every column of one page row (same rationale as snapshotPages). */
+async function snapshotPage(slug: string, sourceId = 'default'): Promise<string> {
+  const rows = await engine.executeRaw<{ dump: string }>(
+    `SELECT to_jsonb(p)::text AS dump FROM pages p WHERE p.source_id = $1 AND p.slug = $2`,
+    [sourceId, slug],
+  );
+  return rows[0]?.dump ?? '';
 }
 
 function runPage(chatTitle: string | null, opts: { dryRun?: boolean } = {}) {
@@ -123,12 +132,16 @@ describe('extract_atoms per-page atoms_source_changed', () => {
     await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
     await seedAtom('atoms/seeded/stale-two', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
 
+    const before = await snapshotPages();
     const result = await runPage('Prototypes beat renders');
     expect(result.details?.atoms_extracted).toBe(1);
     // The atom this run just wrote carries CURRENT_HASH16 after the completion
     // flip, so only the two pre-existing stale rows are counted.
     expect(result.details?.atoms_source_changed).toBe(2);
     expect(String(result.summary)).toContain('2 source-changed atoms');
+    // Positive control for the dry-run zero-write assertion below: a writing
+    // run DOES move snapshotPages(), so equality there means something.
+    expect(await snapshotPages()).not.toBe(before);
   });
 
   test('an atom bound to a DIFFERENT page in the same source is not counted', async () => {
@@ -258,7 +271,7 @@ describe('extract_atoms per-page atoms_source_changed', () => {
 
     // A row count alone would still permit in-place edits to bodies,
     // frontmatter, or the source page's atoms_scan_hash stamp — compare every
-    // persisted page column instead.
+    // column of every page row instead.
     const before = await snapshotPages();
     const result = await runPage('Prototypes beat renders', { dryRun: true });
     expect(result.details?.dry_run).toBe(true);
@@ -269,21 +282,14 @@ describe('extract_atoms per-page atoms_source_changed', () => {
   test('a normal run leaves the stale sibling rows themselves untouched', async () => {
     await seedSourcePage();
     await seedAtom('atoms/seeded/stale-one', { source_slug: PAGE_SLUG, source_hash: OLD_HASH16 });
-    const before = await engine.executeRaw<{ dump: string }>(
-      `SELECT compiled_truth || '|' || frontmatter::text || '|' || updated_at::text AS dump
-         FROM pages WHERE source_id = 'default' AND slug = $1`,
-      ['atoms/seeded/stale-one'],
-    );
+    const before = await snapshotPage('atoms/seeded/stale-one');
+    expect(before).not.toBe(''); // guard: the row really is there to compare
 
     const result = await runPage('Prototypes beat renders');
     expect(result.details?.atoms_source_changed).toBe(1);
-    // Counting is not retiring: the drifted atom is reported, never rewritten.
-    const after = await engine.executeRaw<{ dump: string }>(
-      `SELECT compiled_truth || '|' || frontmatter::text || '|' || updated_at::text AS dump
-         FROM pages WHERE source_id = 'default' AND slug = $1`,
-      ['atoms/seeded/stale-one'],
-    );
-    expect(after[0]!.dump).toBe(before[0]!.dump);
+    // Counting is not retiring: the drifted atom is reported, never rewritten
+    // and never soft-deleted (deleted_at rides in the full-row comparison).
+    expect(await snapshotPage('atoms/seeded/stale-one')).toBe(before);
   });
 
   test('deliberately NOT doctor: an atom whose hash another live page still carries is counted', async () => {

@@ -130,11 +130,12 @@ export interface ExtractAtomsDrainResult {
   extracted: number;
   skipped: number;
   /**
-   * Diagnostic-only, summed across batches: live atoms on the pages this run
-   * touched whose stored `source_hash` no longer matches their source page's
-   * current hash — the same population doctor's `atom_provenance_drift`
-   * reports brain-wide, surfaced here so `--json` shows it without a separate
-   * `gbrain doctor` run. Nothing acts on it; it is a number, not a trigger.
+   * Diagnostic-only, summed across batches: for each page this run extracted
+   * from, its live atoms whose stored `source_hash` differs from the hash the
+   * run extracted from. A per-page, discovery-hash comparison — related to but
+   * deliberately narrower than doctor's brain-wide `atom_provenance_drift`
+   * bucket; see `./extract-atoms-source-drift.ts` for exactly how they differ.
+   * Nothing acts on it; it is a number, not a trigger.
    */
   atoms_source_changed: number;
   /** Eligible pages still pending after the window. null if the count errored. */
