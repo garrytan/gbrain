@@ -38,6 +38,7 @@ import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason
 import { hybridSearch } from '../core/search/hybrid.ts';
 import { serializeMarkdown } from '../core/markdown.ts';
 import { listSources } from '../core/sources-ops.ts';
+import { readFileSync } from 'node:fs';
 import {
   loadOpCheckpoint,
   recordCompleted,
@@ -92,6 +93,21 @@ const COST_ESTIMATE_PER_PAGE_USD = 0.01;
 export const ENRICH_ORDERS = ['inbound-links', 'salience', 'updated'] as const;
 export type EnrichOrder = (typeof ENRICH_ORDERS)[number];
 
+/**
+ * Evidence retrieval scope (#4032-adjacent gap: a curated page in a small
+ * `workspace` source got zero evidence even though the entity has thousands
+ * of mentions in OTHER federated sources — retrieveEvidence hard-scoped
+ * facts/backlinks/hybrid search to the candidate's own source).
+ *   'own'       — unchanged default: only the candidate's own source.
+ *   'federated' — the candidate's source + every OTHER source with
+ *                 `config.federated === true` (the same set unqualified
+ *                 `gbrain search` widens into). Falls back to 'own' when no
+ *                 other federated source exists.
+ *   'all'       — every known (non-archived) source, federated flag ignored.
+ */
+export const EVIDENCE_SCOPES = ['own', 'federated', 'all'] as const;
+export type EvidenceScope = (typeof EVIDENCE_SCOPES)[number];
+
 // ---------------------------------------------------------------------------
 // Public types.
 // ---------------------------------------------------------------------------
@@ -135,6 +151,23 @@ export interface EnrichCoreOpts {
   force?: boolean;
   /** Test seam — inject synthesis so tests skip the real gateway. */
   synthesizeFn?: SynthesizeFn;
+  /**
+   * Enrich exactly these slugs (within `sourceId`), regardless of the thin
+   * threshold — a curated page an operator wants re-grounded is not
+   * necessarily short. Still subject to the grounding gate (assessGrounding)
+   * and the resume checkpoint (pass `force: true` to bypass a prior verdict).
+   * Bypasses `engine.listEnrichCandidates` entirely: a slug that doesn't
+   * currently resolve to a page is counted `pages_skipped_disappeared`, same
+   * as a normal candidate that vanished between enumeration and fetch.
+   * Order is preserved as given.
+   */
+  slugs?: string[];
+  /**
+   * Evidence retrieval scope for `retrieveEvidence` (facts / backlinks /
+   * hybrid search). Default 'own' (unchanged: only `sourceId`). See
+   * `EvidenceScope`.
+   */
+  evidenceScope?: EvidenceScope;
 }
 
 export interface EnrichResult {
@@ -190,6 +223,14 @@ export function enrichFingerprint(opts: {
    * checkpoint keeps its key (no one-time re-bill on upgrade).
    */
   minContextChars?: number;
+  /**
+   * Same rationale as `minContextChars`: the grounding gate's verdict
+   * depends on what evidence was actually retrievable, so a page SKIP'd
+   * under 'own' must not stay banked once evidence retrieval widens.
+   * Folded only when it differs from the 'own' default (no one-time re-bill
+   * on upgrade for every existing default-scope checkpoint).
+   */
+  evidenceScope?: EvidenceScope;
 }): string {
   return fingerprint({
     sourceId: opts.sourceId,
@@ -199,6 +240,9 @@ export function enrichFingerprint(opts: {
     model: opts.model,
     ...(opts.minContextChars !== undefined && opts.minContextChars !== MIN_CONTEXT_CHARS
       ? { minContextChars: opts.minContextChars }
+      : {}),
+    ...(opts.evidenceScope !== undefined && opts.evidenceScope !== 'own'
+      ? { evidenceScope: opts.evidenceScope }
       : {}),
   });
 }
@@ -251,27 +295,76 @@ export function assembleEvidence(parts: {
   ];
 }
 
+/**
+ * Resolve `--evidence-scope` into the sourceIds retrieveEvidence should read
+ * from. `undefined` means "scalar sourceId, unchanged default behavior" —
+ * the caller falls back to `{ sourceId }` reads exactly like before this
+ * option existed.
+ *
+ * 'federated' mirrors the SAME set unqualified `gbrain search` widens an
+ * anchor source into (`config.federated === true` sources; #2561's
+ * `localFederatedSourceIds`) rather than inventing a second notion of
+ * "federated" — but is computed directly from `listSources` here (not via
+ * that helper) because #2561's tiers answer a different question ("should
+ * THIS resolved source's reads widen automatically") and an explicit
+ * `--evidence-scope federated` is itself the deliberate opt-in, independent
+ * of how `sourceId` was resolved.
+ */
+export async function resolveEvidenceSourceIds(
+  engine: BrainEngine,
+  sourceId: string,
+  scope: EvidenceScope | undefined,
+): Promise<string[] | undefined> {
+  if (!scope || scope === 'own') return undefined;
+  const sources = await listSources(engine);
+  if (scope === 'all') {
+    const ids = sources.map((s) => s.id);
+    return ids.includes(sourceId) ? ids : [sourceId, ...ids];
+  }
+  // 'federated'
+  const others = sources.filter((s) => s.federated && s.id !== sourceId).map((s) => s.id);
+  if (others.length === 0) return undefined; // fallback: own source only
+  return [sourceId, ...others];
+}
+
 async function retrieveEvidence(
   engine: BrainEngine,
   sourceId: string,
   slug: string,
   title: string,
+  evidenceSourceIds?: string[],
 ): Promise<EnrichEvidence[]> {
   const facts: EnrichEvidence[] = [];
   const backlinks: EnrichEvidence[] = [];
   const hybrid: EnrichEvidence[] = [];
   const seen = new Set<string>();
+  const federated = evidenceSourceIds && evidenceSourceIds.length > 0;
+  // Both engines' raw SQL support (postgres.js and PGLite's pg-wire query
+  // path both take `= ANY($n::text[])`); getPage/getBacklinks/hybridSearch
+  // already accept `sourceIds` on both engine implementations (array wins
+  // over scalar there too) — this scope object is just handed straight
+  // through to each.
+  const scopeOpts = federated ? { sourceIds: evidenceSourceIds } : { sourceId };
 
   // 1. Facts the brain has extracted about this entity (highest signal/char).
   try {
-    const rows = await engine.executeRaw<{ fact: string; context: string | null }>(
-      `SELECT fact, context FROM facts
-        WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
-          AND (valid_until IS NULL OR valid_until > now())
-        ORDER BY confidence DESC, id DESC
-        LIMIT $3`,
-      [sourceId, slug, FACT_LIMIT],
-    );
+    const rows = federated
+      ? await engine.executeRaw<{ fact: string; context: string | null }>(
+          `SELECT fact, context FROM facts
+            WHERE source_id = ANY($1::text[]) AND entity_slug = $2 AND expired_at IS NULL
+              AND (valid_until IS NULL OR valid_until > now())
+            ORDER BY confidence DESC, id DESC
+            LIMIT $3`,
+          [evidenceSourceIds, slug, FACT_LIMIT],
+        )
+      : await engine.executeRaw<{ fact: string; context: string | null }>(
+          `SELECT fact, context FROM facts
+            WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
+              AND (valid_until IS NULL OR valid_until > now())
+            ORDER BY confidence DESC, id DESC
+            LIMIT $3`,
+          [sourceId, slug, FACT_LIMIT],
+        );
     for (const r of rows) {
       const text = r.context ? `${r.fact} (${r.context})` : r.fact;
       facts.push({ source_slug: slug, text });
@@ -282,7 +375,7 @@ async function retrieveEvidence(
 
   // 2. Inbound-link context — how OTHER pages describe this entity.
   try {
-    const rows = await engine.getBacklinks(slug, { sourceId });
+    const rows = await engine.getBacklinks(slug, scopeOpts);
     let n = 0;
     for (const l of rows) {
       if (n >= BACKLINK_LIMIT) break;
@@ -302,7 +395,7 @@ async function retrieveEvidence(
   try {
     const hits = await hybridSearch(engine, title || slug, {
       limit: HYBRID_SEARCH_LIMIT,
-      sourceId,
+      ...scopeOpts,
     });
     for (const h of hits) {
       if (h.slug === slug) continue; // don't feed the stub its own body twice
@@ -335,6 +428,8 @@ interface EnrichOneCtx {
   done: Set<string>;
   signal?: AbortSignal;
   config: ReturnType<typeof loadConfig>;
+  /** Resolved once per run via resolveEvidenceSourceIds; undefined = scalar sourceId (default). */
+  evidenceSourceIds?: string[];
 }
 
 async function enrichOne(ctx: EnrichOneCtx, candidate: EnrichCandidate): Promise<void> {
@@ -369,7 +464,7 @@ async function enrichOneLocked(ctx: EnrichOneCtx, candidate: EnrichCandidate): P
   }
 
   const kind = inferEnrichKind(page.type, slug);
-  const evidence = await retrieveEvidence(engine, sourceId, slug, page.title || slug);
+  const evidence = await retrieveEvidence(engine, sourceId, slug, page.title || slug, ctx.evidenceSourceIds);
   const rendered = renderEvidence(evidence);
   const grounding = assessGrounding(rendered, ctx.minContextChars);
 
@@ -498,7 +593,7 @@ export async function runEnrichCore(
   const workersResolved = resolveWorkersWithClamp(engine, opts.workers, 'enrich', 0);
   const workers = workersResolved.workers;
 
-  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model, minContextChars });
+  const fp = enrichFingerprint({ sourceId, types, order, thinThreshold, model, minContextChars, evidenceScope: opts.evidenceScope });
   const cpKey = checkpointKey(fp);
 
   // #3629: load the checkpoint BEFORE enumerating candidates. SKIP'd pages
@@ -509,19 +604,34 @@ export async function runEnrichCore(
   if (opts.force && !dryRun) await clearOpCheckpoint(engine, cpKey);
   const done = new Set<string>(opts.force ? [] : await loadOpCheckpoint(engine, cpKey));
 
-  // Candidate enumeration — ONE source-aware, memory-bounded SQL query.
+  // Candidate enumeration. `--slugs` bypasses the thin-threshold SQL query
+  // entirely: the operator named exact pages, so build minimal candidate
+  // stubs directly (order preserved, deduped). enrichOneLocked re-fetches
+  // the real page anyway (only `candidate.slug` is used downstream) — a
+  // slug that doesn't currently resolve to a page falls through the normal
+  // `pages_skipped_disappeared` path, same as a vanished normal candidate.
+  const explicitSlugs = opts.slugs && opts.slugs.length > 0 ? [...new Set(opts.slugs)] : undefined;
   // #3629: over-fetch by the number of checkpointed keys so already-done
   // pages sitting at the top of the ranking can't wedge the limit window
   // (limit=N with N done candidates used to yield pending=[] forever while
   // lower-ranked candidates never got a turn), then slice back to `limit`.
-  const candidates = await engine.listEnrichCandidates({
-    types,
-    sourceId,
-    thinThreshold,
-    order,
-    limit: limit + done.size,
-    reenrichAfterMs,
-  });
+  const candidates: EnrichCandidate[] = explicitSlugs
+    ? explicitSlugs.map((slug) => ({
+        slug,
+        source_id: sourceId,
+        title: '',
+        type: types[0] ?? 'note',
+        body_len: 0,
+        inbound_count: 0,
+      }))
+    : await engine.listEnrichCandidates({
+        types,
+        sourceId,
+        thinThreshold,
+        order,
+        limit: limit + done.size,
+        reenrichAfterMs,
+      });
   result.candidates_considered = candidates.length;
   if (candidates.length === 0) return result;
 
@@ -537,6 +647,11 @@ export async function runEnrichCore(
   // the immediate one).
   if (pending.length === 0) return result;
 
+  // Resolved once per run (not per page): which sources retrieveEvidence
+  // should read facts/backlinks/hybrid-search from. undefined → scalar
+  // sourceId, the pre-existing default.
+  const evidenceSourceIds = await resolveEvidenceSourceIds(engine, sourceId, opts.evidenceScope);
+
   const body = async () => {
     const oneCtx: EnrichOneCtx = {
       engine,
@@ -549,6 +664,7 @@ export async function runEnrichCore(
       done,
       signal,
       config,
+      evidenceSourceIds,
     };
 
     let lastFlush = 0;
@@ -677,6 +793,8 @@ interface ParsedArgs {
   yes?: boolean;
   json?: boolean;
   help?: boolean;
+  slugs?: string[];
+  evidenceScope?: EvidenceScope;
   error?: string;
 }
 
@@ -712,6 +830,40 @@ export function parseArgs(args: string[]): ParsedArgs {
     if (a === '--json') { out.json = true; continue; }
     if (a === '--source' || a === '--source-id') { out.sourceId = args[++i]; continue; }
     if (a === '--model') { out.model = args[++i]; continue; }
+    if (a === '--slugs') {
+      const v = args[++i] ?? '';
+      const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
+      if (parts.length === 0) { out.error = '--slugs requires a comma-separated list'; return out; }
+      out.slugs = [...(out.slugs ?? []), ...parts];
+      continue;
+    }
+    if (a === '--slug-file') {
+      const path = args[++i];
+      if (!path) { out.error = '--slug-file requires a path'; return out; }
+      let raw: string;
+      try {
+        raw = readFileSync(path, 'utf8');
+      } catch (e) {
+        out.error = `--slug-file: cannot read ${path}: ${(e as Error).message}`;
+        return out;
+      }
+      const parts = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0 && !l.startsWith('#'));
+      if (parts.length === 0) { out.error = `--slug-file: ${path} has no slugs`; return out; }
+      out.slugs = [...(out.slugs ?? []), ...parts];
+      continue;
+    }
+    if (a === '--evidence-scope') {
+      const v = args[++i] as EvidenceScope;
+      if (!EVIDENCE_SCOPES.includes(v)) {
+        out.error = `Invalid --evidence-scope: ${v}. Allowed: ${EVIDENCE_SCOPES.join(', ')}`;
+        return out;
+      }
+      out.evidenceScope = v;
+      continue;
+    }
     if (a === '--order') {
       const v = args[++i] as EnrichOrder;
       if (!ENRICH_ORDERS.includes(v)) {
@@ -800,7 +952,23 @@ Options:
                          Default ${DEFAULT_REENRICH_DAYS}d.
   --source <id>          Source to enrich. When omitted, all sources are
                          enumerated (CLI loops; --background fans out one job
-                         per source).
+                         per source). REQUIRED with --slugs/--slug-file
+                         (slug lookup is per-source).
+  --slugs <a,b,c>        Enrich exactly these slugs, regardless of the thin
+                         threshold (still subject to the grounding gate and
+                         the resume checkpoint). Repeatable/comma-separated;
+                         combines with --slug-file. Requires --source.
+  --slug-file <path>     Same as --slugs, one slug per line (blank lines and
+                         "#"-prefixed lines ignored). Requires --source.
+  --evidence-scope <s>   How widely retrieveEvidence (facts/backlinks/hybrid
+                         search) reads: own (default, unchanged — only
+                         --source) | federated (--source + every OTHER
+                         source with config.federated=true, the same set
+                         unqualified 'gbrain search' widens into; falls back
+                         to own if none) | all (every known source).
+                         A curated page in a small source otherwise sees
+                         zero evidence even when the entity is thoroughly
+                         covered elsewhere (mail/calendar/meetings sources).
   --dry-run              List candidates + cost estimate; no LLM, no write.
   --resume               Resume from the prior checkpoint (default behavior).
   --force                Clear the checkpoint and re-process every candidate.
@@ -828,6 +996,8 @@ function buildJobParams(args: string[]): Record<string, unknown> {
     reenrichAfterMs: p.reenrichAfterMs,
     dryRun: p.dryRun,
     force: p.force,
+    slugs: p.slugs,
+    evidenceScope: p.evidenceScope,
   };
 }
 
@@ -955,6 +1125,16 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
     process.exit(1);
   }
 
+  // --slugs/--slug-file target exact pages within ONE source (candidate
+  // lookup is per-slug via engine.getPage(slug, {sourceId})); letting it
+  // fall through to the omitted-source multi-source loop below would run
+  // the same slug list against every source in turn, matching nothing but
+  // its actual source. Fail loud instead of silently no-op-ing N-1 times.
+  if (parsed.slugs && parsed.slugs.length > 0 && !parsed.sourceId) {
+    console.error('--slugs/--slug-file requires --source (slug lookup is per-source).');
+    process.exit(1);
+  }
+
   // Chat gateway is required for non-dry-run. Recover a cold singleton before
   // reporting an availability error (#2590).
   if (!parsed.dryRun && !isAvailable('chat')) configureGatewayIfUninitialized();
@@ -994,7 +1174,9 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
 
   // Dry-run cost preview (TTY) before spending.
   if (!parsed.dryRun && process.stdout.isTTY && !parsed.yes && parsed.maxCostUsd === undefined && !uncapped) {
-    const limit = parsed.limit ?? DEFAULT_LIMIT;
+    const limit = parsed.slugs && parsed.slugs.length > 0
+      ? Math.min(parsed.slugs.length, parsed.limit ?? DEFAULT_LIMIT)
+      : (parsed.limit ?? DEFAULT_LIMIT);
     const est = (limit * sourceIds.length * COST_ESTIMATE_PER_PAGE_USD).toFixed(2);
     console.error(`About to enrich up to ${limit} page(s) per source across ${sourceIds.length} source(s), est. ~$${est}. Re-run with --max-usd or --yes to confirm.`);
     process.exit(2);
@@ -1023,6 +1205,8 @@ export async function runEnrich(engine: BrainEngine, args: string[]): Promise<vo
         reenrichAfterMs: parsed.reenrichAfterMs,
         dryRun: parsed.dryRun,
         force: parsed.force,
+        slugs: parsed.slugs,
+        evidenceScope: parsed.evidenceScope,
       });
       addInto(aggregate, r);
       if (r.spent_usd) totalSpent += r.spent_usd;
