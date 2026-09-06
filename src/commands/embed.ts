@@ -4,7 +4,7 @@ import type { ChunkInput } from '../core/types.ts';
 import { carryChunkMetadata, probeEmbedder } from '../core/embed-stale.ts';
 import { chunkText } from '../core/chunkers/recursive.ts';
 import { resolveMaxChunkTokens } from '../core/embedding-input-limit.ts';
-import { healOversizedPageChunks, healedChunksToStaleRows } from '../core/embed-oversize-heal.ts';
+import { healOversizedPageChunks, healedChunksToStaleRows, primaryChunks } from '../core/embed-oversize-heal.ts';
 import {
   createEmbedStallWatchdog,
   resolveEmbedStallAbortSeconds,
@@ -986,7 +986,7 @@ async function embedPage(
   // Get existing chunks or create new ones.
   // In dryRun, we still chunk the text locally to count what WOULD be
   // embedded — but we never write chunks or call the embedding model.
-  let chunks = await engine.getChunks(slug, opts);
+  let chunks = primaryChunks(await engine.getChunks(slug, opts));
   if (chunks.length === 0) {
     const inputs: ChunkInput[] = [];
     // #4530: respect the active embedding model's per-input token limit.
@@ -1012,7 +1012,7 @@ async function embedPage(
 
     if (inputs.length > 0) {
       await engine.upsertChunks(slug, inputs, opts);
-      chunks = await engine.getChunks(slug, opts);
+      chunks = primaryChunks(await engine.getChunks(slug, opts));
     }
   } else if (!dryRun) {
     // SUP-3874: legacy chunks may predate the model input-cap. Split them
@@ -1226,7 +1226,7 @@ async function embedAll(
     // target the correct (source_id, slug) row, not the 'default' source.
     const pageSourceId = page.source_id;
     const pageOpts = pageSourceId ? { sourceId: pageSourceId } : undefined;
-    const chunks = await observed(pacer, () => engine.getChunks(page.slug, pageOpts));
+    const chunks = primaryChunks(await observed(pacer, () => engine.getChunks(page.slug, pageOpts)));
     const toEmbed = chunks; // staleOnly path handled above via embedAllStale
 
     result.total_chunks += chunks.length;
@@ -1499,7 +1499,7 @@ async function healChunklessPages(
         // page since we listed it.
         const [livePage, stillChunkless] = await Promise.all([
           observed(activePacer, () => engine.getPage(page.slug, { sourceId: page.source_id })),
-          observed(activePacer, () => engine.getChunks(page.slug, { sourceId: page.source_id })),
+          observed(activePacer, () => engine.getChunks(page.slug, { sourceId: page.source_id })).then(primaryChunks),
         ]);
         if (!livePage || stillChunkless.length > 0) continue;
         const inputs = buildInputs(livePage.compiled_truth, livePage.timeline);
@@ -1955,7 +1955,7 @@ async function embedAllStale(
             { abortSignal: effectiveSignal },
           );
           // Re-fetch existing chunks and merge to avoid deleting non-stale chunks.
-          const existing = await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId }));
+          const existing = primaryChunks(await observed(pacer, () => engine.getChunks(slug, { sourceId: keySourceId })));
           const staleIdxToEmbedding = new Map<number, Float32Array>();
           for (let j = 0; j < stale.length; j++) {
             const emb = embeddings[j];

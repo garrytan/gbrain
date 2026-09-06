@@ -50,6 +50,7 @@ import {
   sanitizeTitle,
   wrapChunkForEmbedding,
 } from './embedding-context.ts';
+import { primaryChunks } from './embed-oversize-heal.ts';
 import {
   DEFAULT_SYNOPSIS_MODEL,
   generatePerChunkSynopsis,
@@ -332,7 +333,7 @@ export async function reembedPageWithContextualRetrieval(
     return { kind: 'skipped', reason: 'mode_none' };
   }
 
-  const chunks = await args.engine.getChunks(args.pageSlug, { sourceId: args.sourceId });
+  const chunks = primaryChunks(await args.engine.getChunks(args.pageSlug, { sourceId: args.sourceId }));
   if (chunks.length === 0) {
     // No chunks but page exists (frontmatter-only or empty). Stamp the
     // column anyway so subsequent reindex sweeps don't keep visiting.

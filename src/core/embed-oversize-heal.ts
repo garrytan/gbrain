@@ -31,6 +31,13 @@ export interface HealOversizedChunksResult {
   chunks: ChunkInput[];
 }
 
+/** Attachment-derived negative chunks are lexical-only and never enter embedding rewrites. */
+export function primaryChunks<T extends { chunk_index: number }>(chunks: ReadonlyArray<T>): T[] {
+  return chunks.every(chunk => chunk.chunk_index >= 0)
+    ? chunks as T[]
+    : chunks.filter(chunk => chunk.chunk_index >= 0);
+}
+
 type HealableChunk = Pick<
   Chunk,
   | 'chunk_index'
@@ -79,7 +86,7 @@ export function healOversizedChunks(
   const out: ChunkInput[] = [];
   let splitCount = 0;
 
-  for (const c of chunks) {
+  for (const c of primaryChunks(chunks)) {
     const tokens = estimateEmbedTokens(c.chunk_text);
     if (tokens <= maxTokens) {
       // Metadata fields are optional: upsertChunks COALESCEs them when
@@ -176,7 +183,7 @@ export async function healOversizedPageChunks(
   } = {},
 ): Promise<{ changed: boolean; splitCount: number; chunks: Chunk[] }> {
   const getOpts = opts.sourceId ? { sourceId: opts.sourceId } : undefined;
-  const existing = await engine.getChunks(slug, getOpts);
+  const existing = primaryChunks(await engine.getChunks(slug, getOpts));
   const healed = healOversizedChunks(existing, opts.maxTokens ?? resolveMaxChunkTokens());
   if (!healed.changed) {
     return { changed: false, splitCount: 0, chunks: existing };
@@ -188,7 +195,7 @@ export async function healOversizedPageChunks(
   // edit. Re-read and skip on drift; the next drain pass heals the fresh
   // rows. (Window shrinks to one query; the upsert itself is keyed on
   // (chunk_index, chunk_text) so an exact-tie write is content-identical.)
-  const recheck = await engine.getChunks(slug, getOpts);
+  const recheck = primaryChunks(await engine.getChunks(slug, getOpts));
   const drifted =
     recheck.length !== existing.length ||
     recheck.some((c, i) => c.chunk_index !== existing[i].chunk_index || c.chunk_text !== existing[i].chunk_text);
@@ -197,6 +204,6 @@ export async function healOversizedPageChunks(
   }
   opts.onSplit?.(healed.splitCount);
   await engine.upsertChunks(slug, healed.chunks, getOpts);
-  const refreshed = await engine.getChunks(slug, getOpts);
+  const refreshed = primaryChunks(await engine.getChunks(slug, getOpts));
   return { changed: true, splitCount: healed.splitCount, chunks: refreshed };
 }

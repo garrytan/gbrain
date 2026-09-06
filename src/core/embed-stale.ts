@@ -21,7 +21,7 @@ import type { BrainEngine } from './engine.ts';
 import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
-import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
+import { healOversizedPageChunks, healedChunksToStaleRows, primaryChunks } from './embed-oversize-heal.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
@@ -229,12 +229,13 @@ export async function embedStalePages(
       // SUP-3874: split legacy oversized rows before embedding so a single
       // pre-cap chunk cannot permanently fail the page.
       await healOversizedPageChunks(engine, slug, { sourceId });
-      const existing = await engine.getChunks(slug, { sourceId });
+      const existing = primaryChunks(await engine.getChunks(slug, { sourceId }));
       const staleIdx = new Set(
         (await engine.executeRaw<{ chunk_index: number }>(
           `SELECT cc.chunk_index
              FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
             WHERE p.slug = $1 AND p.source_id = $2 AND cc.${staleColId} IS NULL
+              AND cc.chunk_index >= 0
             ORDER BY cc.chunk_index`,
           [slug, sourceId],
         )).map(r => r.chunk_index),
@@ -416,9 +417,9 @@ export async function embedStaleForSource(
           wrapChunkTextsForStoredMode(pageRow, stale),
           { abortSignal: signal },
         );
-        const existing = await observed(pacer, () =>
+        const existing = primaryChunks(await observed(pacer, () =>
           engine.getChunks(slug, { sourceId: keySourceId }),
-        );
+        ));
         const staleIdxToEmbedding = new Map<number, Float32Array>();
         for (let j = 0; j < stale.length; j++) {
           staleIdxToEmbedding.set(stale[j].chunk_index, embeddings[j]);

@@ -475,6 +475,8 @@ function nullifyUndefinedColumns<T extends Record<string, unknown>>(row: T): T {
 /** Per-page sub-row copy counts, accumulated into the per-table summary (#4350). */
 export interface PageCopyCounts {
   chunks: number;
+  derived_ocr_chunks_omitted: number;
+  target_derived_ocr_chunks_preserved: number;
   tags: number;
   timeline_entries: number;
   raw_data: number;
@@ -519,17 +521,21 @@ export async function copyPageToTarget(
   }
 
   // Copy chunks with embeddings.
-  const chunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
-  if (chunks.length > 0) {
-    await target.upsertChunks(page.slug, chunks.map(c => ({
-      chunk_index: c.chunk_index,
-      chunk_text: c.chunk_text,
-      chunk_source: c.chunk_source,
-      embedding: c.embedding || undefined,
-      model: c.model,
-      token_count: c.token_count || undefined,
-    })), sourceOpts);
-  }
+  const allChunks = await source.getChunksWithEmbeddings(page.slug, sourceOpts);
+  const chunks = allChunks.filter(chunk => chunk.chunk_index >= 0);
+  const targetDerived = await target.executeRaw<{ count: number | string }>(
+    `SELECT count(*)::int AS count FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE p.slug = $1 AND p.source_id = $2 AND cc.chunk_index < 0`,
+    [page.slug, page.source_id],
+  );
+  await target.upsertChunks(page.slug, chunks.map(c => ({
+    chunk_index: c.chunk_index,
+    chunk_text: c.chunk_text,
+    chunk_source: c.chunk_source,
+    embedding: c.embedding || undefined,
+    model: c.model,
+    token_count: c.token_count || undefined,
+  })), sourceOpts);
 
   // Copy tags
   const tags = await source.getTags(page.slug, sourceOpts);
@@ -559,6 +565,8 @@ export async function copyPageToTarget(
 
   return {
     chunks: chunks.length,
+    derived_ocr_chunks_omitted: allChunks.length - chunks.length,
+    target_derived_ocr_chunks_preserved: Number(targetDerived[0]?.count ?? 0),
     tags: tags.length,
     timeline_entries: timeline.length,
     raw_data: rawData.length,
@@ -957,7 +965,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   // the migration touches reports what actually landed, so an omitted table
   // is visible instead of silent.
   let sourcesCopied = 0;
-  const rowCounts: PageCopyCounts = { chunks: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
+  const rowCounts: PageCopyCounts = { chunks: 0, derived_ocr_chunks_omitted: 0, target_derived_ocr_chunks_preserved: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
   let linksCopied = 0;
   let factsResult: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
   let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
@@ -985,6 +993,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
       try {
         const counts = await copyPageToTarget(sourceEngine, targetEngine, page);
         rowCounts.chunks += counts.chunks;
+        rowCounts.derived_ocr_chunks_omitted += counts.derived_ocr_chunks_omitted;
+        rowCounts.target_derived_ocr_chunks_preserved += counts.target_derived_ocr_chunks_preserved;
         rowCounts.tags += counts.tags;
         rowCounts.timeline_entries += counts.timeline_entries;
         rowCounts.raw_data += counts.raw_data;
@@ -1121,6 +1131,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   summaryRow('sources', String(sourcesCopied));
   summaryRow('pages', failures.length > 0 ? `${migrated} (${failures.length} FAILED)` : String(migrated));
   summaryRow('chunks', String(rowCounts.chunks));
+  summaryRow('derived OCR', rowCounts.derived_ocr_chunks_omitted > 0
+    ? `${rowCounts.derived_ocr_chunks_omitted} source row(s) omitted; ${rowCounts.target_derived_ocr_chunks_preserved} target row(s) preserved`
+    : `0 source rows omitted; ${rowCounts.target_derived_ocr_chunks_preserved} target row(s) preserved`);
   summaryRow('tags', String(rowCounts.tags));
   summaryRow('timeline entries', String(rowCounts.timeline_entries));
   summaryRow('raw data rows', String(rowCounts.raw_data));

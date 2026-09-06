@@ -106,8 +106,14 @@ describe('importImageFile happy path (noEmbed)', () => {
     const chunks = await engine.getChunks('originals/photos/photo.png');
     expect(chunks.length).toBe(1);
     expect((chunks[0] as { chunk_source: string }).chunk_source).toBe('image_asset');
+    expect(chunks[0].modality).toBe('image');
     // chunk_text falls back to filename when OCR is off (default).
     expect(chunks[0].chunk_text).toBe('photo.png');
+    // Standalone image imports remain image-modality pages; filename text is
+    // not a lexical OCR surrogate. Attachment OCR uses a separate text-
+    // modality negative chunk on the owning note page.
+    const keywordHits = await engine.searchKeyword('photo.png', { limit: 10 });
+    expect(keywordHits.map(hit => hit.slug)).not.toContain('originals/photos/photo.png');
   });
 
   test('idempotent on content_hash: re-import same bytes returns skipped', async () => {

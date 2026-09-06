@@ -114,7 +114,7 @@ export async function runReindexMultimodal(
   const pendingRows = await sql`
     SELECT COUNT(*)::text AS count
     FROM content_chunks
-    WHERE embedding_multimodal IS NULL
+    WHERE embedding_multimodal IS NULL AND chunk_index >= 0
   `;
   const pendingBefore = parseInt(String(pendingRows[0]?.count ?? '0'), 10);
 
@@ -124,7 +124,7 @@ export async function runReindexMultimodal(
     ? await sql`
       SELECT COALESCE(SUM(LENGTH(chunk_text)), 0)::text AS chars
       FROM content_chunks
-      WHERE embedding_multimodal IS NULL
+      WHERE embedding_multimodal IS NULL AND chunk_index >= 0
     `
     : [{ chars: '0' }];
   const totalChars = parseInt(String(statsRows[0]?.chars ?? '0'), 10);
@@ -231,6 +231,7 @@ export async function runReindexMultimodal(
         SELECT id::text AS id, chunk_text
         FROM content_chunks
         WHERE embedding_multimodal IS NULL
+          AND chunk_index >= 0
           AND id > ${lastId}
         ORDER BY id
         LIMIT ${batchSize}
@@ -302,7 +303,7 @@ export async function runReindexMultimodal(
   const pendingAfterRows = await sql`
     SELECT COUNT(*)::text AS count
     FROM content_chunks
-    WHERE embedding_multimodal IS NULL
+    WHERE embedding_multimodal IS NULL AND chunk_index >= 0
   `;
   const pendingAfter = parseInt(String(pendingAfterRows[0]?.count ?? '0'), 10);
   let unifiedFlagPrompted = false;

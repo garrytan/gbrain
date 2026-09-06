@@ -53,7 +53,7 @@ export async function runInitNudge(engine: BrainEngine): Promise<void> {
     // Run 4 cheap counts in parallel against the 3s budget.
     const results = await Promise.allSettled([
       engine.executeRaw<{ count: string | number }>(
-        `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+        `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL AND chunk_index >= 0`,
         [],
         { signal: controller.signal },
       ),

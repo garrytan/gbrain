@@ -100,6 +100,16 @@ describe('healedChunksToStaleRows', () => {
 });
 
 describe('healOversizedChunks', () => {
+  test('excludes reserved negative OCR chunks from splitting and reindexing', () => {
+    const result = healOversizedChunks([
+      { chunk_index: -7, chunk_text: fatParagraph(40), chunk_source: 'image_asset' as never, token_count: 5000 },
+      { chunk_index: 0, chunk_text: 'primary body', chunk_source: 'compiled_truth', token_count: 3 },
+    ], MXBAI_CAP);
+    expect(result.changed).toBe(false);
+    expect(result.chunks.map(chunk => chunk.chunk_index)).toEqual([0]);
+    expect(result.chunks.map(chunk => chunk.chunk_text)).toEqual(['primary body']);
+  });
+
   test('no-op when every chunk already fits', () => {
     const chunks = [
       { chunk_index: 0, chunk_text: 'short one', chunk_source: 'compiled_truth' as const, token_count: 2 },

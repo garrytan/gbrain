@@ -21,6 +21,7 @@ function emb(idx: number, dim: number): Float32Array {
 
 let eng: PGLiteEngine;
 let DIM = 0;
+let investorBPrimaryChunkId = 0;
 
 beforeAll(async () => {
   eng = new PGLiteEngine();
@@ -43,6 +44,20 @@ beforeAll(async () => {
   // investor-b carries a chunk (→ canonical_chunk_id non-null); investor-a stays chunkless.
   const chunk: ChunkInput[] = [{ chunk_index: 0, chunk_text: 'b', chunk_source: 'compiled_truth', embedding: emb(2, DIM), token_count: 1 }];
   await eng.upsertChunks('people/investor-b', chunk);
+  const chunkPages = await eng.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug FROM pages WHERE slug IN ('people/investor-a', 'people/investor-b')`,
+  );
+  const investorA = chunkPages.find(page => page.slug === 'people/investor-a')!;
+  const investorB = chunkPages.find(page => page.slug === 'people/investor-b')!;
+  investorBPrimaryChunkId = (await eng.executeRaw<{ id: number }>(
+    `SELECT id FROM content_chunks WHERE page_id = $1 AND chunk_index = 0`, [investorB.id],
+  ))[0].id;
+  await eng.executeRaw(
+    `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality)
+     VALUES ($1, -10, 'derived only', 'image_asset', 'text'),
+            ($2, -11, 'derived alongside primary', 'image_asset', 'text')`,
+    [investorA.id, investorB.id],
+  );
 
   // Edges into widget-co.
   await eng.addLink('people/investor-a', 'companies/widget-co', '', 'invested_in', 'manual');
@@ -87,12 +102,12 @@ describe('relationalFanout', () => {
     expect(on.map(r => r.slug)).toContain('people/mentioner');
   });
 
-  test('canonical_chunk_id: non-null for chunked page, null for chunkless', async () => {
+  test('canonical_chunk_id uses primary evidence and stays null for derived-only pages', async () => {
     const rows = await eng.relationalFanout(['companies/widget-co'], { direction: 'in', linkTypes: ['invested_in'] });
     const a = rows.find(r => r.slug === 'people/investor-a')!;
     const b = rows.find(r => r.slug === 'people/investor-b')!;
     expect(a.canonical_chunk_id).toBeNull();
-    expect(b.canonical_chunk_id).not.toBeNull();
+    expect(b.canonical_chunk_id).toBe(investorBPrimaryChunkId);
   });
 
   test('connects: shared midpoint reachable from both seeds with a path', async () => {

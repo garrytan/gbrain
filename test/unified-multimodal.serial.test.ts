@@ -97,6 +97,23 @@ describe('reindex --multimodal command (Phase 3)', () => {
     expect(result.reembedded).toBe(0);
     expect(result.failed).toBe(0);
   });
+
+  test('negative attachment OCR is excluded from pending coverage and provider work', async () => {
+    await engine.putPage('attachment-only', { type: 'note', title: 'Attachment only', compiled_truth: '' }, { allowEmptyOverwrite: true });
+    const page = await engine.getPage('attachment-only');
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality)
+       VALUES ($1, -7, 'lexical attachment text', 'image_asset', 'text')`,
+      [page!.id],
+    );
+    let calls = 0;
+    fetchHandler = async () => { calls++; throw new Error('provider must not run'); };
+    const result = await runReindexMultimodal(engine, { yes: true });
+    expect(result.pending_before).toBe(0);
+    expect(result.pending_after).toBe(0);
+    expect(result.reembedded).toBe(0);
+    expect(calls).toBe(0);
+  });
 });
 
 describe('hybridSearch unified routing (Phase 3)', () => {

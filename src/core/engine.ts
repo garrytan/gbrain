@@ -1270,12 +1270,8 @@ export interface BrainEngine {
     afterPageId?: number;
     sourceId?: string;
   }): Promise<ChunklessPageRow[]>;
-  /**
-   * Delete every chunk for a page. Internal page-id lookup is sourceId-scoped
-   * when `opts.sourceId` is given; otherwise the bare-slug subquery returns
-   * the wrong row count in multi-source brains.
-   */
-  deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void>;
+  /** Delete every chunk unless an import preserves negative-index attachment text. Source-scoped. */
+  deleteChunks(slug: string, opts?: { sourceId?: string; preserveDerivedFileText?: boolean }): Promise<void>;
 
   // ============================================================
   // v0.42.7 (#1696): link/timeline extraction freshness watermark.

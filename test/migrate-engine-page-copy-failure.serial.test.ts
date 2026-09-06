@@ -27,7 +27,7 @@ import { copyPageToTarget, runMigrateEngine } from '../src/commands/migrate-engi
 import { saveConfig, loadConfigFileOnly } from '../src/core/config.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import type { Page } from '../src/core/types.ts';
+import type { ChunkInput, Page } from '../src/core/types.ts';
 
 function fakePage(overrides: Partial<Page> = {}): Page {
   return {
@@ -46,6 +46,55 @@ function fakePage(overrides: Partial<Page> = {}): Page {
 }
 
 describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
+  test('deliberately omits derived OCR chunks because files are not migrated', async () => {
+    const upserts: ChunkInput[][] = [];
+    const target = {
+      putPage: async () => fakePage(),
+      executeRaw: async (sql: string) => /SELECT count\(\*\).*chunk_index < 0/s.test(sql) ? [{ count: 2 }] : [],
+      upsertChunks: async (_slug: string, chunks: ChunkInput[]) => { upserts.push(chunks); },
+      addTag: async () => {}, addTimelineEntry: async () => {}, putRawData: async () => {},
+    } as unknown as BrainEngine;
+    const source = {
+      getChunksWithEmbeddings: async () => [
+        { chunk_index: -3, chunk_text: 'derived OCR', chunk_source: 'image_asset' },
+        { chunk_index: 0, chunk_text: 'primary', chunk_source: 'compiled_truth' },
+      ],
+      getTags: async () => [], getTimeline: async () => [], getRawData: async () => [],
+    } as unknown as BrainEngine;
+
+    const counts = await copyPageToTarget(source, target, fakePage());
+    expect(upserts.flat().map(chunk => chunk.chunk_index)).toEqual([0]);
+    expect(counts).toMatchObject({ chunks: 1, derived_ocr_chunks_omitted: 1, target_derived_ocr_chunks_preserved: 2 });
+  });
+
+  test('derived-only source clears stale target primary chunks and preserves target-derived OCR', async () => {
+    const source = new PGLiteEngine();
+    const target = new PGLiteEngine();
+    try {
+      await source.connect({}); await source.initSchema();
+      await target.connect({}); await target.initSchema();
+      await source.putPage('derived-only', { type: 'note', title: 'Derived only', compiled_truth: '' }, { allowEmptyOverwrite: true });
+      await target.putPage('derived-only', { type: 'note', title: 'Old target', compiled_truth: 'stale target body' });
+      await target.upsertChunks('derived-only', [{ chunk_index: 0, chunk_text: 'stale primary', chunk_source: 'compiled_truth' }]);
+      const sourcePage = await source.getPage('derived-only');
+      const targetPage = await target.getPage('derived-only');
+      await source.executeRaw(
+        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality) VALUES ($1, -7, 'source OCR omitted', 'image_asset', 'text')`,
+        [sourcePage!.id],
+      );
+      await target.executeRaw(
+        `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality) VALUES ($1, -9, 'target OCR preserved', 'image_asset', 'text')`,
+        [targetPage!.id],
+      );
+      await copyPageToTarget(source, target, sourcePage!);
+      const chunks = await target.getChunks('derived-only');
+      expect(chunks.map(chunk => chunk.chunk_index)).toEqual([-9]);
+      expect(chunks[0].chunk_text).toBe('target OCR preserved');
+    } finally {
+      await source.disconnect(); await target.disconnect();
+    }
+  });
+
   test('undefined page fields become explicit null before reaching target.putPage', async () => {
     const putPageCalls: unknown[] = [];
     const target = {
@@ -56,6 +105,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      upsertChunks: async () => {},
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
@@ -101,6 +151,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      upsertChunks: async () => {},
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],

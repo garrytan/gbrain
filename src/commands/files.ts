@@ -131,6 +131,11 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
     case 'status':
       await filesStatus(args.slice(1));
       break;
+    case 'ocr': {
+      const { runFilesOcr } = await import('./files-ocr.ts');
+      await runFilesOcr(engine, args.slice(1));
+      break;
+    }
     default:
       console.error(`Usage: gbrain files <command> [args]`);
       console.error(`  list [slug]               List files for a page (or all)`);
@@ -145,6 +150,7 @@ export async function runFiles(engine: BrainEngine, args: string[]) {
       console.error(`  restore <dir>             Download from storage, recreate local files`);
       console.error(`  clean <dir> [--yes]       Delete redirect pointers (irreversible)`);
       console.error(`  status                    Show migration status of directories`);
+      console.error(`  ocr --manifest <path> --manifest-sha256 <hex> [--apply]  Index attachment OCR (dry-run default)`);
       process.exit(1);
   }
 }

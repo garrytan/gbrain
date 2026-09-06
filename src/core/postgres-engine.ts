@@ -2247,6 +2247,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<void> {
+    if (chunks.some(chunk => chunk.chunk_index < 0)) throw new Error('upsertChunks reserves negative chunk indexes for attachment-derived text');
     // Normalize the same way putPage does — pages.slug is stored lowercased,
     // so a raw mixed-case slug here would miss the row it just wrote (#430).
     slug = validateSlug(slug);
@@ -2260,38 +2261,15 @@ export class PostgresEngine implements BrainEngine {
     if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const pageId = pages[0].id;
 
-    // Remove chunks that no longer exist (chunk_index beyond new count)
     const newIndices = chunks.map(c => c.chunk_index);
     if (newIndices.length > 0) {
-      await sql`DELETE FROM content_chunks WHERE page_id = ${pageId} AND chunk_index != ALL(${newIndices})`;
+      await sql`DELETE FROM content_chunks WHERE page_id = ${pageId} AND chunk_index >= 0 AND chunk_index != ALL(${newIndices})`;
     } else {
-      await sql`DELETE FROM content_chunks WHERE page_id = ${pageId}`;
+      await sql`DELETE FROM content_chunks WHERE page_id = ${pageId} AND chunk_index >= 0`;
       return;
     }
 
-    // Batch upsert: build a single multi-row INSERT ON CONFLICT statement.
-    // v0.19.0: includes language/symbol_name/symbol_type/start_line/end_line
-    // so code chunks carry tree-sitter metadata into the DB. Markdown chunks
-    // pass NULL for all five.
-    // v0.20.0 Cathedral II Layer 6: adds parent_symbol_path / doc_comment /
-    // symbol_name_qualified so nested-chunk emission (A3) can round-trip
-    // scope metadata through upserts.
-    // v0.27.1 (Phase 8): added `modality` + `embedding_image` to the column
-    // list. Image chunks pass embedding=null + embedding_image=Float32Array.
-    //
-    // #1262: the text-embedding column is registry-resolved, not the literal
-    // `embedding`. A caller-resolved descriptor wins; otherwise the DB-plane
-    // registry rows route the write to the SAME active column the read side
-    // searches (a Voyage-routed brain must not fail every write with a
-    // dimension mismatch against the legacy 1536d column). Config-table read
-    // failure (pre-v36 brain mid-migration) falls back to the legacy column;
-    // an unregistered `search_embedding_column` throws the resolver's loud
-    // paste-ready hint. Mirrored in pglite-engine.ts (parity).
-    // Resolution MUST stay on the local sql handle: callers (import-file)
-    // invoke this inside their own transaction — re-entering the engine's
-    // public surface via resolveActiveEmbeddingColumnFromEngine deadlocks
-    // the connection path. Same rows, same pure resolver, no re-entrancy.
-    // Mirrored in pglite-engine.ts (parity).
+    // Registry resolution stays on the transaction-local handle.
     let writeCol: ResolvedColumn;
     if (opts?.embeddingColumn) {
       writeCol = normalizeEngineColumn(opts.embeddingColumn);
@@ -2304,9 +2282,7 @@ export class PostgresEngine implements BrainEngine {
           if (r.key === 'search_embedding_column') searchEmbeddingColumn = r.value as string;
           else if (r.key === 'embedding_columns') embeddingColumnsJson = r.value as string;
         }
-      } catch {
-        // config table unreadable — legacy column via the resolver default.
-      }
+      } catch { /* config table unreadable — use the legacy resolver default */ }
       writeCol = resolveWriteColumnFromConfigRows({ searchEmbeddingColumn, embeddingColumnsJson });
     }
     const writeColId = quoteIdentifier(writeCol.name);
@@ -2320,23 +2296,7 @@ export class PostgresEngine implements BrainEngine {
     const params: unknown[] = [];
     let paramIdx = 1;
 
-    // Provenance fallback for chunks that don't carry an explicit `model`:
-    // resolve the model the gateway ACTUALLY uses at runtime, not the
-    // compile-time DEFAULT_EMBEDDING_MODEL constant. Callers like `embed`
-    // build ChunkInputs without a `model` field (src/commands/embed.ts), so
-    // the old `chunk.model || DEFAULT_EMBEDDING_MODEL` fallback stamped the
-    // hardcoded default (e.g. zeroentropyai:zembed-1) onto rows whose vectors
-    // were produced by a different, config-resolved model — corrupting the
-    // provenance that signature-drift staleness + dim-migration logic trust.
-    //
-    // #3461: getEmbeddingModel() THROWS when the gateway is unconfigured —
-    // it never returns falsy — so an `||` guard here is dead code and the
-    // catch path used to stamp the compile-time default onto rows whose
-    // vectors came from the config-resolved provider. On the throw path we
-    // now fall back to the brain's own `config.embedding_model` row (kept
-    // current by init / migrate / retrieval-upgrade), which names the model
-    // that actually produced this brain's vectors. The compile-time default
-    // is the LAST resort (fresh brain whose config row doesn't exist yet).
+    // Model provenance falls back through gateway, brain config, then default.
     let resolvedModel: string | null = null;
     try {
       // Keep the gateway lazy so module-load failure remains inside this soft
@@ -2532,7 +2492,7 @@ export class PostgresEngine implements BrainEngine {
    */
   private buildStaleChunkWhere(staleColRef: string, opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean }): { where: string; params: unknown[] } {
     const params: unknown[] = [];
-    const conds: string[] = [];
+    const conds: string[] = ['cc.chunk_index >= 0'];
     if (opts?.signature !== undefined) {
       params.push(opts.signature);
       conds.push(
@@ -2701,6 +2661,7 @@ export class PostgresEngine implements BrainEngine {
             FROM content_chunks cc
             JOIN pages p ON p.id = cc.page_id
             WHERE cc.${tx.unsafe(staleColId)} IS NULL
+              AND cc.chunk_index >= 0
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
             LIMIT ${limit}
@@ -2711,6 +2672,7 @@ export class PostgresEngine implements BrainEngine {
             FROM content_chunks cc
             JOIN pages p ON p.id = cc.page_id
             WHERE cc.${tx.unsafe(staleColId)} IS NULL
+              AND cc.chunk_index >= 0
               AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
               AND (
                 p.updated_at < ${afterUpdated}::timestamptz
@@ -2729,6 +2691,7 @@ export class PostgresEngine implements BrainEngine {
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
           WHERE cc.${tx.unsafe(staleColId)} IS NULL
+            AND cc.chunk_index >= 0
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           ORDER BY p.updated_at DESC NULLS LAST, p.id ASC, cc.chunk_index ASC
@@ -2740,6 +2703,7 @@ export class PostgresEngine implements BrainEngine {
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
           WHERE cc.${tx.unsafe(staleColId)} IS NULL
+            AND cc.chunk_index >= 0
             AND p.source_id = ${opts.sourceId}
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (
@@ -2760,6 +2724,7 @@ export class PostgresEngine implements BrainEngine {
           FROM content_chunks cc
           JOIN pages p ON p.id = cc.page_id
           WHERE cc.${tx.unsafe(staleColId)} IS NULL
+            AND cc.chunk_index >= 0
             AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
             AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
           ORDER BY cc.page_id, cc.chunk_index
@@ -2773,6 +2738,7 @@ export class PostgresEngine implements BrainEngine {
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE cc.${tx.unsafe(staleColId)} IS NULL
+          AND cc.chunk_index >= 0
           AND p.source_id = ${opts.sourceId}
           AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
           AND (cc.page_id, cc.chunk_index) > (${afterPid}, ${afterIdx})
@@ -2797,7 +2763,7 @@ export class PostgresEngine implements BrainEngine {
       `(p.compiled_truth <> '' OR p.timeline <> '')`,
       EMBED_SKIP_FILTER_FRAGMENT,
       QUARANTINE_FILTER_FRAGMENT,
-      'NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id)',
+      'NOT EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id AND cc.chunk_index >= 0)',
     ];
     const params: unknown[] = [];
     if (opts?.sourceId) {
@@ -2855,13 +2821,21 @@ export class PostgresEngine implements BrainEngine {
     });
   }
 
-  async deleteChunks(slug: string, opts?: { sourceId?: string }): Promise<void> {
+  async deleteChunks(slug: string, opts?: { sourceId?: string; preserveDerivedFileText?: boolean }): Promise<void> {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
-    await sql`
-      DELETE FROM content_chunks
-      WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
-    `;
+    if (opts?.preserveDerivedFileText) {
+      await sql`
+        DELETE FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+          AND chunk_index >= 0
+      `;
+    } else {
+      await sql`
+        DELETE FROM content_chunks
+        WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId})
+      `;
+    }
   }
 
   // ── v0.42.7 (#1696): link/timeline extraction freshness watermark ──
@@ -3670,7 +3644,7 @@ export class PostgresEngine implements BrainEngine {
                ORDER BY n.depth ASC, array_length(n.path, 1) ASC,
                         array_to_string(n.path, chr(9)) ASC))[1] AS path_str,
              (SELECT cc.id FROM content_chunks cc
-               WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
+               WHERE cc.page_id = n.id AND cc.chunk_index >= 0 ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
       FROM walk n
       WHERE n.depth > 0
       GROUP BY n.source_id, n.slug, n.id
@@ -4403,31 +4377,55 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as RawData[];
   }
 
-  // Files (v0.27.1): binary asset metadata. Image bytes never touch the DB
-  // (storage_path references a path inside the brain repo). Identity is
-  // (source_id, storage_path); re-upsert with same content_hash is a no-op,
-  // different content_hash overwrites in place.
+  // Binary asset metadata; storage_path points to bytes outside the DB.
   async upsertFile(spec: FileSpec): Promise<{ id: number; created: boolean }> {
     const sql = this.sql;
+    if (typeof (sql as unknown as { begin?: unknown }).begin === 'function') return this.transaction(tx => tx.upsertFile(spec));
     const sourceId = spec.source_id ?? 'default';
-    const metadata = (spec.metadata ?? {}) as Parameters<typeof sql.json>[0];
-    const rows = await sql<Array<{ id: number; created: boolean }>>`
+    const inputMetadata = spec.metadata ?? {};
+    if (!inputMetadata || typeof inputMetadata !== 'object' || Array.isArray(inputMetadata)) throw new Error(`upsertFile metadata must be a JSON object for ${spec.storage_path}`);
+    const metadata = Object.fromEntries(Object.entries(inputMetadata).filter(([key]) => key !== 'ocr')) as Parameters<typeof sql.json>[0];
+    const seeded = await sql`
       INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
       VALUES (${sourceId}, ${spec.page_slug ?? null}, ${spec.page_id ?? null}, ${spec.filename}, ${spec.storage_path}, ${spec.mime_type ?? null}, ${spec.size_bytes ?? null}, ${spec.content_hash}, ${sql.json(metadata)})
-      ON CONFLICT (storage_path) DO UPDATE SET
-        page_slug = EXCLUDED.page_slug,
-        page_id = EXCLUDED.page_id,
-        filename = EXCLUDED.filename,
-        mime_type = EXCLUDED.mime_type,
-        size_bytes = EXCLUDED.size_bytes,
-        content_hash = EXCLUDED.content_hash,
-        metadata = EXCLUDED.metadata
-      RETURNING id, (xmax = 0) AS created
+      ON CONFLICT (storage_path) DO NOTHING RETURNING id
     `;
-    if (rows.length === 0) throw new Error(`upsertFile returned no rows for ${spec.storage_path}`);
-    return { id: rows[0].id, created: !!rows[0].created };
+    const priorRows = await sql<Array<{ id: number; source_id: string; page_slug: string | null; page_id: number | null; content_hash: string; metadata: unknown }>>`
+      SELECT id, source_id, page_slug, page_id, content_hash, metadata FROM files WHERE storage_path = ${spec.storage_path} FOR UPDATE`;
+    const prior = priorRows[0];
+    if (!prior || prior.source_id !== sourceId || !prior.metadata || typeof prior.metadata !== 'object' || Array.isArray(prior.metadata))
+      throw new Error(`upsertFile refused cross-source collision or non-object metadata for ${spec.storage_path}`);
+    const normalizeDigest = (value: string) => value.toLowerCase().replace(/^sha256:/, '');
+    const identityChanged = prior.page_id !== (spec.page_id ?? null) || prior.page_slug !== (spec.page_slug ?? null) || normalizeDigest(prior.content_hash) !== normalizeDigest(spec.content_hash);
+    if (identityChanged) {
+      await sql`DELETE FROM content_chunks WHERE page_id = ${prior.page_id} AND chunk_index = ${-prior.id}`;
+      await sql`UPDATE files dependent SET metadata = dependent.metadata - 'ocr'
+        WHERE dependent.id <> ${prior.id} AND dependent.source_id = ${prior.source_id}
+          AND dependent.page_id IS NOT DISTINCT FROM ${prior.page_id} AND dependent.page_slug IS NOT DISTINCT FROM ${prior.page_slug}
+          AND regexp_replace(lower(dependent.content_hash), '^sha256:', '') = ${normalizeDigest(prior.content_hash)}
+          AND dependent.metadata -> 'ocr' ->> 'canonical_file_id' = ${String(prior.id)} AND jsonb_typeof(dependent.metadata) = 'object'
+      `;
+    }
+    const rows = await sql<Array<{ id: number; created: boolean }>>`
+        INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+        VALUES (${sourceId}, ${spec.page_slug ?? null}, ${spec.page_id ?? null}, ${spec.filename}, ${spec.storage_path}, ${spec.mime_type ?? null}, ${spec.size_bytes ?? null}, ${spec.content_hash}, ${sql.json(metadata)})
+        ON CONFLICT (storage_path) DO UPDATE SET
+          page_slug = EXCLUDED.page_slug, page_id = EXCLUDED.page_id, filename = EXCLUDED.filename,
+          mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes, content_hash = EXCLUDED.content_hash,
+          metadata = CASE
+            WHEN files.source_id = EXCLUDED.source_id
+             AND files.page_id IS NOT DISTINCT FROM EXCLUDED.page_id AND files.page_slug IS NOT DISTINCT FROM EXCLUDED.page_slug
+             AND regexp_replace(lower(files.content_hash), '^sha256:', '') = regexp_replace(lower(EXCLUDED.content_hash), '^sha256:', '')
+            THEN (EXCLUDED.metadata - 'ocr') ||
+              CASE WHEN files.metadata ? 'ocr' THEN jsonb_build_object('ocr', files.metadata -> 'ocr') ELSE '{}'::jsonb END
+            ELSE EXCLUDED.metadata - 'ocr'
+          END
+        WHERE files.source_id = EXCLUDED.source_id AND jsonb_typeof(files.metadata) = 'object' AND jsonb_typeof(EXCLUDED.metadata) = 'object'
+        RETURNING id, (xmax = 0) AS created
+    `;
+    if (rows.length === 0) throw new Error(`upsertFile refused non-object metadata or returned no row for ${spec.storage_path}`);
+    return { id: rows[0].id, created: seeded.length > 0 };
   }
-
   async getFile(sourceId: string, storagePath: string): Promise<FileRow | null> {
     const sql = this.sql;
     const rows = await sql<Array<FileRow>>`
@@ -5006,7 +5004,8 @@ export class PostgresEngine implements BrainEngine {
               / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
          END
          FROM content_chunks cc
-         JOIN scoped_pages p ON p.id = cc.page_id) as embed_coverage,
+         JOIN scoped_pages p ON p.id = cc.page_id
+        WHERE cc.chunk_index >= 0) as embed_coverage,
         0 as stale_pages,
         0 as orphan_pages,
         (SELECT count(*) FROM links l
@@ -5031,6 +5030,7 @@ export class PostgresEngine implements BrainEngine {
         (SELECT count(*) FROM content_chunks cc
            JOIN scoped_pages p ON p.id = cc.page_id
           WHERE cc.${sql.unsafe(colId)} IS NULL
+            AND cc.chunk_index >= 0
             AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
         ) as missing_embeddings,
         (SELECT count(*) FROM links l

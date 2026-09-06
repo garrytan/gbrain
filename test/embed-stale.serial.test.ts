@@ -14,7 +14,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { embedStaleForSource } from '../src/core/embed-stale.ts';
+import { embedStaleForSource, embedStalePages } from '../src/core/embed-stale.ts';
 import type { ChunkInput } from '../src/core/types.ts';
 
 let engine: PGLiteEngine;
@@ -64,6 +64,46 @@ function fakeEmbedFn(texts: string[]): Promise<Float32Array[]> {
 }
 
 describe('embedStaleForSource', () => {
+  test('negative OCR stays lexical-only and out of stale count, cost, queue, and upsert', async () => {
+    await seedPageWithStaleChunks('with-ocr', 1);
+    const page = await engine.getPage('with-ocr');
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality)
+       VALUES ($1, -7, 'attachment roster words', 'image_asset', 'text')`,
+      [page!.id],
+    );
+    expect(await engine.countStaleChunks({ sourceId: 'default' })).toBe(1);
+    expect(await engine.sumStaleChunkChars({ sourceId: 'default' })).toBe('chunk 0 of with-ocr'.length);
+    expect((await engine.listStaleChunks({ sourceId: 'default' })).map(row => row.chunk_index)).toEqual([0]);
+
+    const result = await embedStaleForSource(engine, 'default', { embedFn: fakeEmbedFn });
+    expect(result.embedded).toBe(1);
+    const chunks = await engine.getChunks('with-ocr');
+    expect(chunks.map(chunk => chunk.chunk_index)).toEqual([-7, 0]);
+    expect(chunks.find(chunk => chunk.chunk_index === -7)?.chunk_text).toBe('attachment roster words');
+  });
+
+  test('explicit-slug embedding ignores a negative-only page without provider or signature writes', async () => {
+    await engine.putPage('ocr-only', { type: 'note', title: 'OCR only', compiled_truth: 'body awaiting primary chunk' });
+    const page = await engine.getPage('ocr-only');
+    await engine.executeRaw(
+      `INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality)
+       VALUES ($1, -9, 'lexical only', 'image_asset', 'text')`, [page!.id],
+    );
+    let calls = 0;
+    const result = await embedStalePages(engine, ['ocr-only'], 'default', {
+      embeddingSignature: 'must-not-stamp',
+      embedFn: async () => { calls++; return []; },
+    });
+    expect(result).toEqual({ embedded: 0, pagesProcessed: 0, aborted: false });
+    expect(calls).toBe(0);
+    const signatures = await engine.executeRaw<{ embedding_signature: string | null }>(
+      `SELECT embedding_signature FROM pages WHERE slug = 'ocr-only'`,
+    );
+    expect(signatures[0].embedding_signature).toBeNull();
+  });
+
+
   test('empty stale set returns done:true with zero embedded', async () => {
     const result = await embedStaleForSource(engine, 'default', {
       embedFn: fakeEmbedFn,

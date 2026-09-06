@@ -83,6 +83,41 @@ async function seedTitleOnlyPage(): Promise<void> {
 }
 
 describe('searchTitles — D1 title candidate arm', () => {
+  test('source-qualified year ranges match ASCII hyphen, Unicode dashes, and spaces', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('school', 'School', '{}'::jsonb)`,
+    );
+    await engine.putPage('records/class-list', {
+      type: 'note',
+      title: 'Example Academy Class List 2025-26',
+      compiled_truth: 'Roster attachment registered separately.',
+    }, { sourceId: 'school' });
+    await engine.upsertChunks('records/class-list', [{
+      chunk_index: 0,
+      chunk_text: 'Roster attachment registered separately.',
+      chunk_source: 'compiled_truth',
+    }], { sourceId: 'school' });
+    await engine.putPage('records/class-list-2025-27', {
+      type: 'note',
+      title: 'Example Academy Class List 2025-27',
+      compiled_truth: 'A nearby but different school-year roster.',
+    }, { sourceId: 'school' });
+    await engine.upsertChunks('records/class-list-2025-27', [{
+      chunk_index: 0,
+      chunk_text: 'A nearby but different school-year roster.',
+      chunk_source: 'compiled_truth',
+    }], { sourceId: 'school' });
+
+    for (const query of ['Example Academy Class List 2025-26', 'Example Academy Class List 2025–26', 'Example Academy Class List 2025—26', 'Example Academy Class List 2025 26']) {
+      const titleHits = await engine.searchTitles(query, { sourceId: 'school', limit: 10 });
+      expect(titleHits[0]?.slug, query).toBe('records/class-list');
+      const hybridHits = await hybridSearch(engine, query, { sourceId: 'school', limit: 10 });
+      expect(hybridHits[0]?.slug, query).toBe('records/class-list');
+    }
+    expect((await engine.searchTitles('Example Academy Class List 2025–26', { sourceId: 'default', limit: 10 })))
+      .toHaveLength(0);
+  });
+
   test('exact-title query retrieves a page whose title tokens are absent from its body', async () => {
     await seedTitleOnlyPage();
 

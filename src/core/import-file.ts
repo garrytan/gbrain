@@ -819,9 +819,8 @@ export async function importFromContent(
   // Chunk compiled_truth and timeline.
   // v0.41 content-sanity soft-block: if the gate marked this page as
   // embed-skipped (oversize without junk-pattern), skip chunking
-  // entirely. The empty-chunks branch in the transaction below
-  // triggers tx.deleteChunks(slug) which purges any pre-existing
-  // chunks (D9 transition invariant: embed_skip means no live chunks).
+  // entirely. The empty-chunks branch below purges every pre-existing
+  // chunk (D9 transition invariant: embed_skip means no live chunks).
   const chunks: ChunkInput[] = [];
   // Skip chunking for embed-skip (oversize) OR quarantine (junk hidden).
   // Both → zero chunks → the empty-chunks branch in the transaction fires
@@ -1051,8 +1050,11 @@ export async function importFromContent(
         }
       }
     } else {
-      // Content is empty — delete stale chunks so they don't ghost in search results
-      await tx.deleteChunks(slug, txOpts);
+      // Quarantine/embed-skip means no live chunks. An ordinary empty body
+      // preserves attachment-derived OCR while removing stale body chunks.
+      await tx.deleteChunks(slug, embedSkipped
+        ? txOpts
+        : { ...txOpts, preserveDerivedFileText: true });
     }
 
     // v0.19.0 E1 — doc↔impl linking: if this markdown page cites code paths
@@ -1578,7 +1580,7 @@ export async function importCodeFile(
         }
       }
     } else {
-      await tx.deleteChunks(slug, txOpts);
+      await tx.deleteChunks(slug, { ...txOpts, preserveDerivedFileText: true });
     }
   });
 
@@ -1746,7 +1748,7 @@ export async function withImportTransaction(
       if (spec.chunks.length > 0) {
         await tx.upsertChunks(spec.slug, spec.chunks, txOpts);
       } else {
-        await tx.deleteChunks(spec.slug, txOpts);
+        await tx.deleteChunks(spec.slug, { ...txOpts, preserveDerivedFileText: true });
       }
     }
     if (spec.after) await spec.after(tx);
@@ -1873,38 +1875,24 @@ async function readExifSafe(buf: Buffer): Promise<Record<string, unknown>> {
   }
 }
 
-/**
- * Cherry-1 OCR: optional vision-model pass extracting visible text from an
- * image. Returns '' when:
- * - the embedding_image_ocr config flag is off (default)
- * - the configured OCR model (embedding_image_ocr_model, else the expansion
- *   model — #4107) is unavailable (no API key / no expansion touchpoint)
- * - the OCR call itself fails (logged once per session)
- * - the per-run OCR budget is exhausted (#3973 — see _ocrRunBudget below)
- *
- * Eng-1B: per-call result is reflected in counters the doctor `ocr_health`
- * check reads. Counter writes are best-effort; never fail the import.
- *
- * The system prompt explicitly tells the model not to follow instructions
- * embedded in the image (mitigation for the OCR-as-prompt-injection vector).
- */
+/** Cherry-1 OCR extracts visible image text. Its discriminated result keeps
+ * disabled/unavailable, budget, provider-failure, empty, and success distinct;
+ * the legacy importer still treats non-success as non-fatal. Doctor reads its
+ * best-effort counters. The system prompt rejects image-borne instructions. */
 let _ocrWarnedThisSession = false;
-
 // #3973: per-run OCR ceiling. A bulk import over a large image corpus with
-// OCR opted-in is an unbounded per-image LLM spend; cap it per process run.
-// Config keys (both finite by default; <= 0 disables that cap):
-//   embedding_image_ocr_max_images — max OCR calls per run (default 200)
-//   embedding_image_ocr_max_usd    — estimated-USD ceiling per run (default 1.0,
-//     estimated at OCR_EST_USD_PER_IMAGE per call — a documented constant,
-//     not a billing read; actual spend lands on the budget tracker (#4121)).
-// Over-cap: skip OCR (import continues with filename-only chunk text), warn
-// once, bump the persistent `ocr_skipped_budget` counter that doctor's
-// ocr_health check surfaces.
+// OCR opted in is otherwise unbounded spend. Both caps are finite by default;
+// <=0 disables one cap. USD is estimated, not billed. Exact manifests preflight
+// their whole pending provider batch against this shared state before any call.
 const OCR_EST_USD_PER_IMAGE = 0.002;
 const OCR_MAX_IMAGES_DEFAULT = 200;
 const OCR_MAX_USD_DEFAULT = 1.0;
 const _ocrRunBudget = { images: 0, estUsd: 0, warned: false };
 
+export interface OcrBudgetCapacity {
+  current_images: number; current_estimated_usd: number; pending_images: number; projected_images: number;
+  projected_estimated_usd: number; max_images: number; max_estimated_usd: number;
+}
 /** Test seam: reset (and optionally preset) the per-run OCR budget state. */
 export function _resetOcrRunBudgetForTests(preset?: { images?: number; estUsd?: number }): void {
   _ocrRunBudget.images = preset?.images ?? 0;
@@ -1917,56 +1905,67 @@ export function _getOcrRunBudgetForTests(): { images: number; estUsd: number; wa
   return { ..._ocrRunBudget };
 }
 
-/** Returns a human reason when this run's OCR cap is exhausted, else null. */
-async function ocrBudgetExceeded(engine: BrainEngine): Promise<string | null> {
+export async function inspectOcrBudgetCapacity(engine: BrainEngine, pendingImages: number): Promise<OcrBudgetCapacity> {
+  if (!Number.isSafeInteger(pendingImages) || pendingImages < 0) throw new Error('pending OCR image count must be a nonnegative safe integer');
   let maxImages = OCR_MAX_IMAGES_DEFAULT;
   let maxUsd = OCR_MAX_USD_DEFAULT;
   try {
     const rawImages = await engine.getConfig('embedding_image_ocr_max_images');
-    if (rawImages != null && rawImages !== '') {
-      const n = Number(rawImages);
-      if (Number.isFinite(n)) maxImages = n;
-    }
+    if (rawImages != null && rawImages !== '') { const n = Number(rawImages); if (Number.isFinite(n)) maxImages = n; }
     const rawUsd = await engine.getConfig('embedding_image_ocr_max_usd');
-    if (rawUsd != null && rawUsd !== '') {
-      const n = Number(rawUsd);
-      if (Number.isFinite(n)) maxUsd = n;
-    }
+    if (rawUsd != null && rawUsd !== '') { const n = Number(rawUsd); if (Number.isFinite(n)) maxUsd = n; }
   } catch { /* config unavailable → finite defaults still apply */ }
-  if (maxImages > 0 && _ocrRunBudget.images >= maxImages) {
-    return `per-run image cap reached (${_ocrRunBudget.images}/${maxImages}; raise embedding_image_ocr_max_images to OCR more)`;
-  }
-  if (maxUsd > 0 && _ocrRunBudget.estUsd >= maxUsd) {
-    return `per-run estimated-USD cap reached (~$${_ocrRunBudget.estUsd.toFixed(3)} of $${maxUsd}; raise embedding_image_ocr_max_usd to OCR more)`;
-  }
+  return { current_images: _ocrRunBudget.images, current_estimated_usd: _ocrRunBudget.estUsd,
+    pending_images: pendingImages, projected_images: _ocrRunBudget.images + pendingImages,
+    projected_estimated_usd: _ocrRunBudget.estUsd + pendingImages * OCR_EST_USD_PER_IMAGE,
+    max_images: maxImages, max_estimated_usd: maxUsd };
+}
+
+function ocrCapacityReason(capacity: OcrBudgetCapacity): string | null {
+  if (capacity.max_images > 0 && capacity.projected_images > capacity.max_images)
+    return `per-run image cap would be exceeded (${capacity.projected_images}/${capacity.max_images}; raise embedding_image_ocr_max_images to OCR more)`;
+  if (capacity.max_estimated_usd > 0 && capacity.projected_estimated_usd > capacity.max_estimated_usd)
+    return `per-run estimated-USD cap would be exceeded (~$${capacity.projected_estimated_usd.toFixed(3)} of $${capacity.max_estimated_usd}; raise embedding_image_ocr_max_usd to OCR more)`;
   return null;
 }
 
-async function maybeOcr(
-  engine: BrainEngine,
-  imgBuf: Buffer,
-  mime: string,
-): Promise<string> {
+export async function assertOcrBudgetCapacity(engine: BrainEngine, pendingImages: number): Promise<OcrBudgetCapacity> {
+  const capacity = await inspectOcrBudgetCapacity(engine, pendingImages);
+  const reason = ocrCapacityReason(capacity);
+  if (reason) throw new Error(`OCR batch rejected before provider work: ${reason}`);
+  return capacity;
+}
+
+/** Returns a human reason when this run's OCR cap is exhausted, else null. */
+async function ocrBudgetExceeded(engine: BrainEngine): Promise<string | null> {
+  return ocrCapacityReason(await inspectOcrBudgetCapacity(engine, 1));
+}
+
+async function maybeOcr(engine: BrainEngine, imgBuf: Buffer, mime: string): Promise<string> {
   const opt = process.env.GBRAIN_EMBEDDING_IMAGE_OCR;
   if (opt !== 'true') return '';
   return maybeOcrGated(engine, imgBuf, mime);
 }
 
 /** #3973: body of maybeOcr past the opt-in check; exported for budget tests. */
-export async function _maybeOcrGatedForTests(
-  engine: BrainEngine,
-  imgBuf: Buffer,
-  mime: string,
-): Promise<string> {
+export async function _maybeOcrGatedForTests(engine: BrainEngine, imgBuf: Buffer, mime: string): Promise<string> {
   return maybeOcrGated(engine, imgBuf, mime);
 }
 
-async function maybeOcrGated(
-  engine: BrainEngine,
-  imgBuf: Buffer,
-  mime: string,
-): Promise<string> {
+async function maybeOcrGated(engine: BrainEngine, imgBuf: Buffer, mime: string): Promise<string> {
+  const result = await runOcrGated(engine, imgBuf, mime);
+  return result.status === 'succeeded' ? result.text : '';
+}
 
+export type OcrGatedResult = { status: 'succeeded'; text: string } |
+  { status: 'empty' | 'skipped-budget' | 'unavailable' | 'provider-failure' };
+
+/**
+ * Shared paid-OCR gate. Callers receive a discriminated result so an empty
+ * image is not confused with a budget refusal, missing credentials, or a
+ * provider failure. The latter three must not be persisted as successful OCR.
+ */
+export async function runOcrGated(engine: BrainEngine, imgBuf: Buffer, mime: string, expectedModel?: string): Promise<OcrGatedResult> {
   // Counter helpers — quiet failure if config table is unavailable.
   async function bump(key: string) {
     try {
@@ -1984,7 +1983,7 @@ async function maybeOcrGated(
       _ocrRunBudget.warned = true;
     }
     await bump('ocr_skipped_budget');
-    return '';
+    return { status: 'skipped-budget' };
   }
   _ocrRunBudget.images += 1;
   _ocrRunBudget.estUsd += OCR_EST_USD_PER_IMAGE;
@@ -1995,25 +1994,25 @@ async function maybeOcrGated(
     // getImageOcrModel throws on an unconfigured gateway; count that as
     // no-key (the pre-#4107 isAvailable gate returned false there).
     let ocrModel: string | null = null;
-    try { ocrModel = getImageOcrModel(); } catch { /* unconfigured gateway */ }
+    try { ocrModel = expectedModel ?? getImageOcrModel(); } catch { /* unconfigured gateway */ }
     if (!ocrModel || !isAvailable('expansion', ocrModel)) {
       if (!_ocrWarnedThisSession) {
         console.warn(`[gbrain] OCR opt-in is true but the OCR model (${ocrModel ?? 'gateway unconfigured'}) is unavailable; skipping OCR for this session`);
         _ocrWarnedThisSession = true;
       }
       await bump('ocr_failed_no_key');
-      return '';
+      return { status: 'unavailable' };
     }
-    const text = await generateOcrText(imgBuf, mime);
+    const text = await generateOcrText(imgBuf, mime, ocrModel);
     await bump('ocr_succeeded');
-    return text;
+    return text.trim() ? { status: 'succeeded', text: text.trim() } : { status: 'empty' };
   } catch (err) {
     if (!_ocrWarnedThisSession) {
       console.warn(`[gbrain] OCR call failed (continuing without OCR text): ${err instanceof Error ? err.message : String(err)}`);
       _ocrWarnedThisSession = true;
     }
     await bump('ocr_failed_other');
-    return '';
+    return { status: 'provider-failure' };
   }
 }
 

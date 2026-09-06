@@ -674,7 +674,7 @@ export async function planEmbeddingMigration(
     // Column ABSENT: the stale predicates reference cc.embedding and would
     // throw. Every chunk needs embedding once the column is (re)built.
     const rows = await engine.executeRaw<{ n: number; chars: number }>(
-      `SELECT count(*)::int AS n, COALESCE(sum(length(chunk_text)), 0)::bigint AS chars FROM content_chunks`,
+      `SELECT count(*)::int AS n, COALESCE(sum(length(chunk_text)), 0)::bigint AS chars FROM content_chunks WHERE chunk_index >= 0`,
     );
     wide = Number(rows[0]?.n ?? 0);
     narrow = wide;
@@ -1066,7 +1066,7 @@ export async function verifyMigrationComplete(
   } else {
     // Absent column: the stale predicate would throw; every chunk is pending.
     const rows = await engine.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM content_chunks`,
+      `SELECT count(*)::int AS n FROM content_chunks WHERE chunk_index >= 0`,
     );
     staleWide = Number(rows[0]?.n ?? 0);
   }
@@ -1482,10 +1482,10 @@ export async function reconcilePageSignatures(
         SET embedding_signature = $1
       WHERE p.deleted_at IS NULL
         AND (p.embedding_signature IS DISTINCT FROM $1)
-        AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)
+        AND EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.chunk_index >= 0)
         AND NOT EXISTS (
           SELECT 1 FROM content_chunks c
-           WHERE c.page_id = p.id AND c.embedding IS NULL
+           WHERE c.page_id = p.id AND c.chunk_index >= 0 AND c.embedding IS NULL
         )
         AND NOT EXISTS (
           -- Model-truth conjunct: chunks carry the gateway-resolved
@@ -1494,7 +1494,7 @@ export async function reconcilePageSignatures(
           -- must NOT be relabeled as target-space — the final census relies on
           -- the old signature/model evidence this stamp would erase.
           SELECT 1 FROM content_chunks c
-           WHERE c.page_id = p.id AND c.model IS DISTINCT FROM $2
+           WHERE c.page_id = p.id AND c.chunk_index >= 0 AND c.model IS DISTINCT FROM $2
         )
       RETURNING p.slug`,
     [sig, plan.to_model],

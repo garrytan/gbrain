@@ -238,6 +238,19 @@ describe('resolveContextualChunkConcurrency', () => {
 });
 
 describe('per-chunk synopsis concurrency', () => {
+  test('keeps attachment OCR out of contextual embedding rewrites', async () => {
+    const out = await runWithChatStub({
+      chunks: [
+        { chunk_index: -8, chunk_text: 'private attachment OCR', chunk_source: 'image_asset', modality: 'text' },
+        { chunk_index: 0, chunk_text: 'primary body', chunk_source: 'compiled_truth' },
+      ],
+      concurrency: 1,
+    });
+    expect(out.result.kind).toBe('success');
+    expect(out.embedInputs.join('\n')).not.toContain('private attachment OCR');
+    expect(out.embeddedChunks.map(chunk => chunk.chunk_index)).toEqual([0]);
+  });
+
   test('threads a provider-neutral synopsis model to gateway chat byte-for-byte', async () => {
     const chatModels: string[] = [];
     const out = await runWithChatStub({

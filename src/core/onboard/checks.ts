@@ -128,7 +128,7 @@ export async function checkEmbedStaleness(
 ): Promise<OnboardCheckResult> {
   const staleCount = await safeCount(
     engine,
-    `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+    `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL AND chunk_index >= 0`,
   );
   const remediations: RemediationStep[] = [];
   let status: 'ok' | 'warn' | 'fail' = 'ok';

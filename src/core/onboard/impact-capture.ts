@@ -47,7 +47,7 @@ export async function captureMetric(
     switch (metric) {
       case 'stale_count': {
         const rows = await engine.executeRaw<{ count: string | number }>(
-          `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL`,
+          `SELECT COUNT(*) AS count FROM content_chunks WHERE embedding IS NULL AND chunk_index >= 0`,
         );
         return rows.length > 0 ? Number(rows[0].count) : 0;
       }

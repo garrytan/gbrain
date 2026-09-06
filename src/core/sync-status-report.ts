@@ -152,7 +152,7 @@ export async function buildSyncStatusReport(
                 COUNT(*) FILTER (WHERE cc.${embeddingColIdent} IS NULL) AS chunks_unembedded
          FROM content_chunks cc
          JOIN pages pg ON pg.id = cc.page_id
-         WHERE pg.deleted_at IS NULL
+         WHERE pg.deleted_at IS NULL AND cc.chunk_index >= 0
          GROUP BY pg.source_id
        ) c ON c.source_id = s.source_id`,
       [sourceIds],

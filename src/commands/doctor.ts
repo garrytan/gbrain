@@ -2873,6 +2873,7 @@ export async function buildChecks(
            SUM(CASE WHEN cc.embedding_multimodal IS NOT NULL THEN 1 ELSE 0 END)::text AS covered
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
+         WHERE cc.chunk_index >= 0
          GROUP BY p.source_id`,
       );
       const perSource = rows.map(r => ({
