@@ -9,6 +9,11 @@ Vector search alone underdelivers on real personal-knowledge queries. This doc e
 3. **Reciprocal-rank fusion (RRF)** — merges vector + keyword rankings without weighting one over the other globally. Each strategy gets to vote.
 4. **Knowledge graph traversal** — follows typed edges. Catches "what did Bob invest in this quarter?" by walking `bob ── invested_in ──> company ── dated ──> Q1`. Vector search can't see causal chains; the graph can.
 
+Attachment OCR joins only the BM25 keyword arm. Its negative-index
+`image_asset` chunks are deliberately excluded from vector embedding, embedding
+migration, and multimodal reindex paths. Search for literal words visible in the
+image; semantic paraphrases require a future reviewed vector lane.
+
 ## Why each one alone fails
 
 **Vector only.** Returns chunks semantically close to the query. Misses any factual relationship not directly encoded in the embedding. "Companies in alice-example's portfolio" returns essays about portfolios, not company pages.

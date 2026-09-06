@@ -1,8 +1,11 @@
 # System of record
 
-**The GitHub repo (markdown + frontmatter) is the system of record.
-The Postgres/PGLite database is a derived cache. We do not back up
-the database — we rebuild it from the repo.**
+**The GitHub repo (markdown + frontmatter) is the system of record for authored
+knowledge. Registered attachment bytes are the source of record for
+attachment-derived search evidence. The Postgres/PGLite database is a derived
+cache: we rebuild authored state from the repo, and attachment OCR from
+re-registered retained bytes plus a new reviewed manifest bound to the rebuilt
+database's current page and file IDs.**
 
 This document is the canonical reference for that contract. Every code
 path that writes user-knowledge state should match the pattern
@@ -13,9 +16,13 @@ enforces it programmatically.
 
 The DB is a derived index over the markdown content. It exists to make
 search fast, to dedup embedding-similar claims, to materialize the
-cross-page graph. None of that data is irreplaceable — as long as the
-markdown is intact, `gbrain sync && gbrain extract all` rebuilds the
-entire DB from scratch.
+cross-page graph. None of that data is irreplaceable. Markdown-derived state is
+rebuilt with `gbrain sync && gbrain extract all`. Negative-index attachment OCR
+chunks and `files.metadata.ocr` instead derive from source-root image bytes plus
+a manifest-bound model and prompt. Normal sync preserves them; disaster recovery
+must restore and re-register the attachment bytes, then issue and run a new
+reviewed manifest against the rebuilt database's current IDs. The prior manifest
+is audit evidence, not a portable replay artifact.
 
 This means:
 
@@ -69,8 +76,17 @@ chunker + embedder rebuild these on import.
 | Table | Source | Notes |
 |---|---|---|
 | `pages` | The markdown file as a whole | One row per file; `compiled_truth` + `frontmatter` come from parse |
-| `content_chunks` | `pages.compiled_truth` after chunker strip | Re-chunked on content_hash change; embedded via configured model |
+| `content_chunks` | `pages.compiled_truth` after chunker strip, plus reviewed attachment OCR | Body chunks are re-chunked on content-hash change and embedded via the configured model. Negative-index OCR chunks are lexical-only and rebuilt from re-registered source-root images plus a new current-ID manifest. |
 | `page_versions` | Each `pages` UPDATE | Audit history; rebuildable in principle but not in practice |
+
+`files.metadata.ocr` is the receipt for the attachment-derived rows. It is not
+user-authored knowledge and normal sync preserves it, but `gbrain sync && gbrain
+extract all` does not recreate it. Retain the original image bytes and reviewed
+manifest with the recovery material. After the ordinary markdown rebuild,
+re-register the image files through the original importer or supported file
+registration path, audit the new `pages` and `files` identities, and issue a new
+manifest before running `gbrain files ocr`. A v1 manifest contains transient
+`page_id` and `file_id` values, so the old manifest cannot be assumed replayable.
 
 ### DB-only by design (named exceptions)
 
@@ -156,13 +172,24 @@ psql -c 'DELETE FROM facts; DELETE FROM takes; DELETE FROM links; DELETE FROM ti
 gbrain sync
 gbrain extract all
 
+# Restore and re-register attachment bytes through the original importer or
+# supported file-registration path. Audit the rebuilt pages/files rows and issue
+# a NEW reviewed manifest using their current IDs. Keep the old manifest only as
+# evidence; v1 page_id/file_id values are not portable across a full rebuild.
+# Preview must validate before apply uses the same new-manifest hash.
+MANIFEST_SHA=$(shasum -a 256 reviewed-image-ocr.json | awk '{print $1}')
+gbrain files ocr --manifest reviewed-image-ocr.json --manifest-sha256 "$MANIFEST_SHA"
+gbrain files ocr --manifest reviewed-image-ocr.json --manifest-sha256 "$MANIFEST_SHA" --apply
+
 # Counts match
 gbrain stats > /tmp/after.txt
 diff /tmp/before.txt /tmp/after.txt
 ```
 
 The invariant E2E test at `test/e2e/system-of-record-invariant.test.ts`
-exercises this exact flow on every CI run.
+exercises the markdown-derived flow on every CI run. Attachment OCR has its own
+manifest, idempotency, and rollback coverage in
+`test/file-ocr-derived-text.test.ts`.
 
 ## Rule for new code
 

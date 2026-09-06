@@ -146,6 +146,7 @@ detail on demand.)
 |---|---|
 | any file in `src/` (what it does + its invariants) | `docs/architecture/KEY_FILES.md` — find the file's entry |
 | search / ranking / hybrid / retrieval | `docs/architecture/RETRIEVAL.md` + the `search/*` entries in `KEY_FILES.md` |
+| derived knowledge persistence / attachment OCR rebuildability | `docs/architecture/system-of-record.md` + the `files-ocr.ts` entry in `KEY_FILES.md` |
 | search modes / cost knobs | `docs/guides/search-modes.md` |
 | engine detection / Postgres adoption / DB-access repair / degraded serve (`engine status`, `db-repair`, `init --prefer-postgres`, `GBRAIN_DB_ACCESS`) | `docs/ENGINES.md` ("Engine detection and access repair" + "Local Postgres") |
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |

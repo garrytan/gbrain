@@ -310,6 +310,75 @@ Third-party skillpacks can ship custom ingestion sources (Granola, Linear,
 voice, OCR) against the versioned `IngestionSource` contract at
 `gbrain/ingestion`. See [`docs/skillpack-anatomy.md`](docs/skillpack-anatomy.md).
 
+### Add searchable text from registered image attachments
+
+`gbrain files ocr` adds text from a reviewed set of image attachments without
+rewriting the owning notes. It accepts only an exact manifest: one source, the
+runtime OCR model and prompt version, plus each page ID, page slug, file ID,
+storage path, byte count, and SHA-256. The default is a dry run. It validates
+the database rows and local source bytes, reports the OCR budget, and makes no
+provider call or database change.
+
+The manifest has this exact v1 shape:
+
+```json
+{
+  "version": 1,
+  "source_id": "notes-export",
+  "model": "<effective OCR model>",
+  "prompt_version": "visible-text-v1",
+  "rows": [
+    {
+      "page_id": 123,
+      "page_slug": "school/roster",
+      "file_id": 456,
+      "storage_path": "assets/roster.png",
+      "content_hash": "<64-character SHA-256>",
+      "size_bytes": 123456
+    }
+  ]
+}
+```
+
+Candidate discovery is deliberately outside this command: there is no automatic
+manifest builder or `--all` mode. Prepare the IDs and byte facts from a reviewed
+audit of the `pages` and `files` rows in the same resolved brain, and resolve
+`model` from the runtime `embedding_image_ocr_model` setting (falling back to
+the expansion model). This keeps the selection decision separate from the paid,
+mutating operation.
+
+```bash
+# Preview the exact manifest. This performs no OCR and writes nothing.
+MANIFEST_SHA=$(shasum -a 256 reviewed-image-ocr.json | awk '{print $1}')
+gbrain files ocr \
+  --manifest reviewed-image-ocr.json \
+  --manifest-sha256 "$MANIFEST_SHA"
+
+# Apply only after reviewing the JSON receipt from the dry run.
+gbrain files ocr \
+  --manifest reviewed-image-ocr.json \
+  --manifest-sha256 "$MANIFEST_SHA" \
+  --apply
+```
+
+**Say to your agent:** *"Add searchable text from these reviewed image
+attachments. Build the exact manifest, run `gbrain files ocr` as a dry run,
+and show me its receipt before any apply."*
+
+The command reads PNG, JPEG, or WebP files of at most 20 MB from the registered
+source's local root. It rejects path escapes, symlinks, stale identities,
+changed bytes, a model mismatch, incomplete same-page duplicate groups, and
+anything with Readwise lineage. Apply finishes every paid OCR call before one
+database transaction, then re-confines and re-hashes the locked files before
+the first write. Image bytes are loaded one unique group at a time rather than
+retained for the whole manifest. It stores attachment-derived text as a negative-index
+`image_asset` chunk and an OCR receipt on the file row; the note body, links,
+source files, and storage objects stay unchanged. An identical replay is a
+no-op and reuses the prior receipt instead of paying for OCR again.
+OCR-derived text participates in keyword/BM25 retrieval only. It is deliberately
+excluded from vector embedding, embedding migration, and multimodal reindex
+paths, so search for words visible in the image.
+
 ## Your brain's shape (schema packs)
 
 Most personal-knowledge tools force one fixed layout: their idea of "notes" + "people" + "tags." Drop a Notion export or your own years-old Obsidian vault on top, and the agent doesn't know what a `Projects/` folder means or whether `Reading/` is people or sources.
@@ -493,7 +562,7 @@ flowchart LR
 
 **Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared / large / multi-machine deployments. The contract-first `BrainEngine` interface in [`src/core/engine.ts`](src/core/engine.ts) defines the 140+ methods both engines implement; CLI and MCP server are generated from one source.
 
-**Brain repo is the system of record.** Your knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
+**Brain repo is the system of record.** Your authored knowledge lives in a regular git repo (your "brain repo") as markdown files. GBrain syncs the repo into Postgres for retrieval; deletes in git become soft-deletes in DB. Attachment OCR is derived from separately retained source bytes; after a full rebuild, re-register those bytes and issue a new reviewed manifest against the current page and file IDs. See the full [system-of-record and recovery contract](docs/architecture/system-of-record.md). You can publish public subsets, share team mounts, run thin-client setups pointing at a colleague's brain server. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
 **Two organizational axes (brain ⊥ source).** A *brain* is a database (your personal brain, a team mount you joined). A *source* is a repo inside that brain (wiki, gstack, an essay, a knowledge base). Routing lives in `.gbrain-source` dotfiles and resolves via a documented 6-tier precedence chain. Full diagrams in [`docs/architecture/brains-and-sources.md`](docs/architecture/brains-and-sources.md).
 

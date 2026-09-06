@@ -2,6 +2,86 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.49.0.0] - 2026-09-06
+
+**You can make text inside selected image attachments searchable without changing the notes that own them.**
+
+Old exports often contain the missing detail in screenshots: a roster, a diagram,
+or a photographed document attached to a short note. `gbrain files ocr` now adds
+that visible text to the owning note's search evidence. You choose the exact
+attachments first, preview the complete batch with a dry run, and apply the same
+byte-pinned manifest only after its receipt looks right. The note itself stays
+untouched, so later source syncs cannot overwrite or duplicate the extracted text.
+
+**Say to your agent:** *"Add searchable text from these reviewed image
+attachments. Prepare an exact manifest, run the OCR dry run, and show me the
+receipt before applying it."*
+
+### How to use it
+
+```bash
+MANIFEST_SHA=$(shasum -a 256 reviewed-image-ocr.json | awk '{print $1}')
+gbrain files ocr --manifest reviewed-image-ocr.json --manifest-sha256 "$MANIFEST_SHA"
+gbrain files ocr --manifest reviewed-image-ocr.json --manifest-sha256 "$MANIFEST_SHA" --apply
+```
+
+### The four outcomes that matter
+
+| Run | Provider calls | Database changes | What you get |
+|---|---:|---:|---|
+| First dry run | 0 | 0 | Validated identities, bytes, model, and budget |
+| Approved apply | One per unique pending image | Exact manifest rows only | Searchable attachment text plus a receipt |
+| Identical replay | 0 | 0 | `noop`, with the prior derived text preserved |
+| Preflight identity or byte drift | 0 | 0 | A hard refusal before OCR starts |
+
+### Things to watch
+
+- Only PNG, JPEG, and WebP files up to 20 MB are accepted. Bytes must exist
+  under the registered local source root; storage-only fallback is intentionally absent.
+- The command rejects Readwise lineage, incomplete duplicate groups, symlinks,
+  path escapes, stale page or file identities, and model or prompt drift.
+- Apply completes OCR before one database transaction. It changes only a
+  derived search chunk and the file's OCR receipt. Page bodies, links,
+  embeddings, source files, and storage objects do not move.
+- Apply-time identity, lineage, or local-byte drift refuses the transaction
+  after any provider calls already completed; no OCR row or receipt is committed.
+- OCR-derived text is lexical-only: keyword/BM25 search can find visible words,
+  while vector, embedding-migration, and multimodal-reindex paths ignore it.
+
+## To take advantage of v0.49.0.0
+
+`gbrain upgrade` installs the command automatically. No schema migration or
+background backfill runs. Build and review a manifest before choosing any images.
+
+1. Run `gbrain apply-migrations --yes` if `gbrain doctor` reports a partial upgrade.
+2. Ask your agent to prepare and dry-run the exact attachment manifest.
+3. Verify the receipt and brain health:
+   ```bash
+   gbrain files ocr --manifest reviewed-image-ocr.json --manifest-sha256 <sha256>
+   gbrain stats
+   ```
+4. If the command or health check fails, file an issue at
+   https://github.com/garrytan/gbrain/issues with `gbrain doctor` output, the
+   redacted dry-run receipt, and the step that failed.
+
+### Itemized changes
+
+### Added
+
+- Added the manifest-bound `gbrain files ocr` command, dry-run receipts,
+  preflight spend caps, local-byte verification, duplicate collapse, and
+  transactional apply with idempotent replays.
+- Added attachment-derived search chunks that survive normal note re-imports
+  without becoming part of the source-authored body.
+
+### Changed
+
+- Import, embed, migration, health, and multimodal paths now preserve or exclude
+  negative attachment chunks according to their role, so body maintenance does
+  not erase OCR evidence or embed it through the wrong lane.
+- Image OCR uses the configured OCR model consistently across preview and apply,
+  and provider failures cannot leave a partially applied manifest.
+
 ## [0.48.2.0] - 2026-09-02
 
 **Your search reranker now runs on Voyage, and every surface tells you whether it is actually running.**
