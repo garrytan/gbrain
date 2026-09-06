@@ -472,8 +472,8 @@ export interface Operation {
   /**
    * MEMORY_VERBS v1: marks the seven frozen protocol verbs (recall, remember,
    * entity, synthesize, forget, context_pack, delta). `gbrain serve --surface
-   * verbs` exposes EXACTLY the ops with `verb: true`; 'starter' (the ~20-op
-   * daily-driver tier) sits between verbs and `full` (default), which exposes
+   * verbs` exposes EXACTLY the ops with `verb: true`; 'starter' (the reviewed
+   * starter tier) sits between verbs and `full` (default), which exposes
    * everything.
    */
   verb?: boolean;

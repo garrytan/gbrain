@@ -3956,7 +3956,7 @@ ADMIN
   storage status [--repo <path>]     Storage tier status and health
         [--json]                     (git-tracked vs supabase-only)
   serve                              MCP server (stdio)
-    --surface verbs|starter|full     Tool surface: the 7 memory verbs, the ~20-op
+    --surface verbs|starter|full     Tool surface: the 7 memory verbs, the reviewed
                                      starter set, or every op (default full).
                                      On --http this is the per-client CEILING.
   serve --http [--port N]            HTTP MCP server with OAuth 2.1

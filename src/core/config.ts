@@ -179,7 +179,7 @@ export interface GBrainConfig {
   /**
    * MEMORY_VERBS v1 (Cathedral 1): default MCP tool surface for `gbrain serve`.
    * 'verbs' = exactly the 7 protocol verbs (the quickstart surface);
-   * 'starter' (WP4) = the ~20-op daily-driver set (STARTER_OPS in
+   * 'starter' (WP4) = the reviewed starter set (STARTER_OPS in
    * src/mcp/surface.ts); 'full' (default) = every operation. The `--surface`
    * flag overrides per-run. On the OAuth HTTP transport this resolves the
    * server CEILING (D2): per-client row surfaces can narrow below it but

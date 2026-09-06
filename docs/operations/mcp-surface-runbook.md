@@ -32,13 +32,20 @@ resolves to hidden (fail-closed consent posture), never a failed list.
 ## Move 2 — rescope a client's surface
 
 ```bash
-gbrain auth clients --usage            # who needs it? (op counts, surface, last seen)
+gbrain auth clients --usage --days 30 --json   # usage evidence (full JSON objects)
 gbrain auth rescope-client <client_id> --surface starter   # verbs | starter | full | clear
 ```
 
 Usage counts only successful calls (`success` / `success_with_warnings`) —
 a client flooding denials or errors shows zero usage, so denied traffic can
-never argue its way into a wider surface or the starter derivation.
+never argue its way into a wider surface. The JSON form includes the full
+per-client usage objects; human output intentionally renders only the top five
+ops. Usage is evidence, not registry truth: historical or unknown log names do
+not establish operation membership, and missing or quiet rows do not prove an
+op is unused. This reader sees HTTP clients only; stdio is structurally
+invisible, successful-call logging continuity is not established, and
+`file_list` / `file_url` are `localOnly` and therefore structurally absent from
+HTTP.
 
 **Expected outcomes:**
 - The client's NEXT request resolves the new surface (per-request
@@ -58,8 +65,11 @@ SELECT created_at, params FROM mcp_request_log
   `request_tools` persist cannot override it. (The persist itself is
   rate-limited per client and meters actual writes only — `dry_run`
   previews are free.)
-- The advisor's `mcp-client-fit` collector proposes exactly this command
-  for full-surface clients whose 30d usage fits STARTER_OPS.
+- The advisor's `mcp-client-fit` collector is observational and read-only: it
+  can report usage evidence with a read-only usage-report fix, but it does not
+  propose or perform a rescope. This manual command is a distinct, deliberate
+  operator choice; review the client's scopes, source grants, surface ceiling,
+  and the operator-pin warning before using it.
 
 **Default for NULL-surface clients** (including future DCR
 self-registrations):
@@ -108,27 +118,37 @@ config outage. `test/mcp-tool-defs.test.ts` pins
 both emission states; the default stays `warn` until the project-level
 flip (see TODOS.md, strict_params reject-flip).
 
-## Move 4 — change STARTER_OPS
+## Move 4 — review STARTER_OPS intentionally
 
 ```bash
-bun run scripts/derive-starter-ops.ts [--days 30]
+gbrain auth clients --usage --days 30 --json
 ```
 
-reads production `mcp_request_log` through the shared usage reader
-(automation-shaped clients excluded, per-client DISTINCT-op sets weighted
-by client count), prints a proposed daily-driver block with a provenance
-header. Paste it into `src/mcp/surface.ts` (replacing
-`FALLBACK_DAILY_OPS`) — the script never edits files. Then:
+Use the existing auth-client usage view as evidence during an intentional
+compatibility/security review when the subagent allowlist, operation registry,
+or client workflow changes. Do not derive or paste a replacement set from
+traffic. The JSON form has the full usage objects; human output shows only the
+top five ops. Historical/unknown log names are not registry truth; absence is
+not proof of disuse; only successful calls are counted; HTTP-only logging means
+stdio clients are invisible; and logging continuity is not established.
+
+The starter contract is exactly 27 raw operation names, pinned by
+`test/mcp-surface.test.ts`: the core defined by
+`ALWAYS_INCLUDED_STARTER_OPS` plus the existing `BRAIN_TOOL_ALLOWLIST`.
+`capture` is deliberately in the core but excluded from the subagent allowlist;
+that does not merge or widen subagent permissions. Raw membership is not
+necessarily a 27-tool HTTP count: `file_list` and `file_url` are `localOnly`
+and structurally absent from HTTP. The seven frozen verbs remain unchanged.
+
+After an intentional edit, run the focused contract test:
 
 ```bash
 bun test test/mcp-surface.test.ts        # membership + monotonicity: verbs ⊆ starter ⊆ full
-bun run scripts/generate-tool-catalog.ts # refresh the Starter column; freshness guard fails CI otherwise
 ```
 
-`VERB_NAMES` + `whoami` + `request_tools` + the agent lane are composed in
-`surface.ts` and always included — the derivation only proposes the daily
-slice. The advisor's drift finding (`mcp_starter_ops_drift`) is the
-standing prompt to re-run this move.
+`VERB_NAMES` + `whoami` + `request_tools` + the agent lane + `capture` are
+defined once in `surface.ts` as the always-included core; the allowlist is
+composed into the raw starter set without hand-copying either list.
 
 ## Move 5 — expose `visibility: private` pages to remote callers (opt-out)
 

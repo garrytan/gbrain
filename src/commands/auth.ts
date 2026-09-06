@@ -901,8 +901,8 @@ async function rescopeClient(clientId: string, args: string[]) {
  * Lists OAuth clients with their scopes + per-client MCP tool surface
  * (`surface` / `surface_set_by`, WP4), and with `--usage` joins the
  * per-client op-call usage from `mcp_request_log` via the shared reader
- * (src/core/mcp-usage.ts — same hygiene rules as the E3 advisor collector
- * and scripts/derive-starter-ops.ts). Legacy bearer tokens that called in
+ * (src/core/mcp-usage.ts — same hygiene rules as the E3 advisor collector).
+ * Legacy bearer tokens that called in
  * the window appear too (they log under their token name) but carry no
  * per-client surface row. stdio clients never appear — that transport does
  * not write mcp_request_log.

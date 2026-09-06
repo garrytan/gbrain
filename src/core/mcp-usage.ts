@@ -1,11 +1,10 @@
 /**
  * mcp-usage.ts — the ONE shared reader over `mcp_request_log` (amendment 30).
  *
- * Consumed by three surfaces that must never disagree on what counts as an
+ * Consumed by two surfaces that must never disagree on what counts as an
  * "operation call":
  *   - `gbrain auth clients --usage` (E4, src/commands/auth.ts)
  *   - the advisor starter-fit collector (E3, src/core/advisor/collect-mcp-client-fit.ts)
- *   - `scripts/derive-starter-ops.ts` (amendment 23 / D12)
  *
  * Row hygiene (amendments 23 + 30) — encoded HERE, nowhere else:
  *   - JSON-RPC method rows are NOT op calls: 'tools/list', 'initialize',
@@ -16,8 +15,8 @@
  *     bookkeeping, not usage — dropped.
  *   - Only successful calls count ('success' / 'success_with_warnings').
  *     Denied and errored rows are not usage: a client repeatedly bouncing off
- *     a gated op must not "use" its way into starter-set derivation or an
- *     advisor fit finding (that would let denial traffic curate the catalog).
+ *     a gated op must not influence an advisor fit finding (denial traffic must not
+ *     curate the usage observation).
  *
  * Windowed on `created_at` so the query rides `idx_mcp_log_time_agent`
  * (created_at, token_name). Plain SQL through `engine.executeRaw` — works on
@@ -33,7 +32,7 @@
  * clients carry operator-chosen names), so automation is detected
  * BEHAVIORALLY — a client whose calls are >90% ambient-recall boundary ops
  * (`context_pack` / `delta`) is flagged `likely_automation` and excluded from
- * starter-set derivation + advisor fit findings. The threshold and op set are
+ * advisor fit findings. The threshold and op set are
  * exported so consumers cite one definition.
  */
 
