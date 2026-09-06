@@ -57,6 +57,36 @@ describe('parseLlmJson — reasoning ladder', () => {
     expect(parseLlmJson('<think>only reasoning, no answer</think>')).toBeNull();
     expect(parseLlmJson('')).toBeNull();
   });
+
+  test('recovers the ANSWER from a closed <thinking> block (Claude-family tag)', () => {
+    // Claude models prompted to reason in tags emit <thinking>, not <think>.
+    // Pre-fix the tag was unrecognised, the strip was a no-op, and the retry
+    // never ran — so this returned null.
+    const raw = '<thinking>I will answer {"answer":"draft"} probably</thinking>{"answer":"final"}';
+    expect(parseLlmJson<{ answer: string }>(raw)).toEqual({ answer: 'final' });
+  });
+
+  test('is case-insensitive about the <thinking> tag too', () => {
+    const raw = '<THINKING>draft {"answer":"draft"}</THINKING>{"answer":"final"}';
+    expect(parseLlmJson<{ answer: string }>(raw)).toEqual({ answer: 'final' });
+  });
+
+  test('is a ladder for <thinking> as well: valid JSON containing the literal tag is untouched', () => {
+    // Twin of the <think> ladder-ordering guard above. Without it, widening the
+    // tag would silently narrow that protection to half the vocabulary.
+    const raw = '{"note":"the <thinking> tag is literal here"}';
+    expect(parseLlmJson<{ note: string }>(raw)).toEqual({
+      note: 'the <thinking> tag is literal here',
+    });
+  });
+
+  test('a MISMATCHED pair still falls through to the open-ended arm (unchanged semantics)', () => {
+    // The closed-pair arm backreferences its opening tag, so <think>…</thinking>
+    // is not a pair. It is then eaten by the unclosed arm to end-of-string —
+    // exactly what pre-change code did with an unclosed <think>. Nothing is
+    // recoverable here, and null is the honest answer.
+    expect(parseLlmJson('<think>draft {"a":1}</thinking>{"answer":"final"}')).toBeNull();
+  });
 });
 
 describe('extractors route through the ladder', () => {
@@ -86,6 +116,30 @@ describe('extractors route through the ladder', () => {
     const outcome = parseAtomsOutcome(raw);
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.reason).toBe('unterminated JSON array');
+  });
+
+  test('atoms extractor recovers a <thinking>-wrapped array whose reasoning cites [Source: …]', () => {
+    // The real-world shape this fix exists for. parseAtomsOutcomeInner anchors
+    // on the FIRST '[' in the response; a brain whose house style mandates
+    // inline `[Source: …]` citations makes the model echo one while reasoning,
+    // so the anchor lands in the reasoning and the parse dies as
+    // "unparseable JSON array". Verified to fail on unmodified 8c70f62.
+    const raw =
+      '<thinking>The page cites [Source: Mario, Claude Code session, 2026-09-03], ' +
+      'so the quote should come from there.</thinking>' +
+      '[{"claim":"Water is wet","kind":"fact"}]';
+    const outcome = parseAtomsOutcome(raw);
+    expect(outcome.ok).toBe(true);
+  });
+
+  test('atoms extractor recovers a <thinking>-wrapped array whose reasoning names a [[wikilink]]', () => {
+    // Same anchor defect, second bracket source: backlink markup. Also verified
+    // to fail pre-fix with "unparseable JSON array".
+    const raw =
+      '<thinking>It links [[people/mario]] and [[companies/firecrawl]].</thinking>' +
+      '[{"claim":"Backlinks are mandatory","kind":"fact"}]';
+    const outcome = parseAtomsOutcome(raw);
+    expect(outcome.ok).toBe(true);
   });
 
   test('atoms extractor: non-reasoning garbage returns the direct reason untouched (strip is a no-op)', () => {

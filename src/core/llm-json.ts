@@ -16,20 +16,42 @@
  * Strip a reasoning model's chain-of-thought block.
  *
  * Reasoning models (DeepSeek-R1, MiniMax M2.x/M3, and any model configured to
- * emit visible thinking) put a `<think>` block BEFORE the answer, in the same
+ * emit visible thinking) put a reasoning block BEFORE the answer, in the same
  * text channel. That reasoning routinely contains braces, because the model
  * drafts its JSON while thinking. This defeats strategy 3 in parseLlmJson: the
  * greedy `/\{[\s\S]*\}/` spans from the FIRST brace inside the reasoning to
  * the LAST brace of the real answer, so the parse fails and the caller records
  * an "unparseable" result even though a perfectly good object was returned.
  *
- * Handles both shapes: a closed `<think>…</think>` pair, and a truncated block
- * that was opened and never closed (the model exhausted its output budget).
+ * TAG COVERAGE — `<think>` AND `<thinking>`. The original stripper matched only
+ * `<think>`, which silently excluded every Claude-family model: prompted to
+ * reason in tags, they emit `<thinking>…</thinking>`. The effect was worst for
+ * the ARRAY callers (`array: true` / parseAtomsOutcome), because a brain whose
+ * prose carries bracketed citations — `[Source: …]`, `[[wikilink]]`, transcript
+ * role markers like `[user]` — makes the model echo a bracket while reasoning.
+ * The first-`[` anchor then lands inside the reasoning, the parse fails as
+ * "unparseable JSON array", and the ladder's stripped retry could never repair
+ * it because the tag was not recognised. Widening the tag is what arms that
+ * retry for these models.
+ *
+ * Deliberately NOT covered: `<reasoning>` and MiniMax's `◁think▷` sentinel.
+ * Neither appears anywhere in this repo's providers or fixtures, and this
+ * helper is a recovery path, not a general sanitiser — add a wrapper here only
+ * with a provider or a captured payload that demonstrates it.
+ *
+ * Handles both shapes: a closed `<think(ing)>…</think(ing)>` pair, and a
+ * truncated block that was opened and never closed (the model exhausted its
+ * output budget). The closed-pair arm backreferences the opening tag so a
+ * `<think>` is only ever closed by `</think>` — that keeps behaviour on
+ * `<think>` input byte-identical to before, with `<thinking>` purely additive;
+ * a MISMATCHED pair still falls through to the open-ended arm exactly as it
+ * did pre-change. Order matters: closed pairs first, then any surviving
+ * unclosed opener to end-of-string.
  */
 export function stripReasoningBlocks(raw: string): string {
   return raw
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think>[\s\S]*$/i, '')
+    .replace(/<(think|thinking)>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(?:think|thinking)>[\s\S]*$/i, '')
     .trim();
 }
 
@@ -39,7 +61,7 @@ export function parseLlmJson<T>(raw: string, opts: { array?: boolean } = {}): T 
   if (direct !== null) return direct;
   // A fallback LADDER, not a pre-filter: the raw text is parsed first, so every
   // existing call site behaves byte-for-byte as before and a payload that
-  // legitimately contains "<think>" is unaffected. The stripped retry runs only
+  // legitimately contains "<think>"/"<thinking>" is unaffected. The retry runs only
   // after the raw parse has already failed, and text with no reasoning block
   // strips to itself — so the added cost on the success path is zero.
   const stripped = stripReasoningBlocks(raw);
