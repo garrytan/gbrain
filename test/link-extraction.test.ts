@@ -11,6 +11,7 @@ import {
   isAutoLinkEnabled,
   FRONTMATTER_LINK_MAP,
   unwrapWikilink,
+  stripAttendeeEmailSuffix,
   buildBasenameIndex,
   queryBasenameIndex,
   normalizeBasename,
@@ -1279,6 +1280,94 @@ describe('extractFrontmatterLinks — field-map coverage', () => {
     );
     expect(candidates).toHaveLength(0);
   });
+
+  // reported: a 264-page Granola meeting source ("granola-upgraded")
+  // with `participants: ["Name <email>", ...]` frontmatter produced zero
+  // attendee-derived timeline entries. Root cause: FRONTMATTER_LINK_MAP only
+  // read `attendees:` (Google Calendar's bare-email field), and even for
+  // `attendees:` a "Name <email>" pair was never stripped to its display-name
+  // half before resolution.
+  test('meeting.participants (alias of attendees) → INCOMING attended', async () => {
+    const { candidates } = await extractFrontmatterLinks(
+      'meetings/2026-04-03', 'meeting' as never, { participants: ['Pedro', 'Garry'] }, resolver,
+    );
+    expect(candidates).toHaveLength(2);
+    for (const c of candidates) {
+      expect(c.targetSlug).toBe('meetings/2026-04-03');
+      expect(c.linkType).toBe('attended');
+      expect(c.originField).toBe('participants');
+      expect(c.fromSlug).toMatch(/^people\/(pedro|garry)$/);
+    }
+  });
+
+  test('meeting.participants "Name <email>" entries resolve on the display name', async () => {
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'meetings/2026-04-03', 'meeting' as never,
+      { participants: ['Pedro <pedro@example.com>', 'Garry Tan <garry@example.com>'] }, resolver,
+    );
+    // "Garry Tan" doesn't resolve (fixture only has 'people/garry', slugified
+    // "Garry Tan" → "garry-tan") — the point of this test is that the email
+    // half is stripped, not that display-name variants magically resolve.
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].fromSlug).toBe('people/pedro');
+    expect(candidates[0].targetSlug).toBe('meetings/2026-04-03');
+    // The ORIGINAL "Name <email>" string is preserved in the unresolved
+    // report and edge context — only the resolver's lookup target is
+    // stripped, so diagnostics still show the full source value.
+    expect(unresolved).toEqual([{ field: 'participants', name: 'Garry Tan <garry@example.com>' }]);
+  });
+
+  test('meeting.attendees "Name <email>" entries also resolve on the display name (shared code path)', async () => {
+    // Google Calendar's own attendees: field is bare emails today, but the
+    // stripping is field-agnostic — prove attendees: gets it too, not just
+    // the new participants: alias.
+    const { candidates } = await extractFrontmatterLinks(
+      'meetings/2026-04-03', 'meeting' as never,
+      { attendees: ['Pedro <pedro@example.com>'] }, resolver,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].fromSlug).toBe('people/pedro');
+  });
+
+  test('a bare email attendee (no display name) is left unstripped, as before', async () => {
+    // Nothing to strip — the fixture resolver has no email-keyed lookup, so
+    // this stays unresolved exactly as it did pre-fix (no regression for
+    // Google Calendar's real attendees: shape).
+    const { candidates, unresolved } = await extractFrontmatterLinks(
+      'meetings/2026-04-03', 'meeting' as never,
+      { attendees: ['pedro@example.com'] }, resolver,
+    );
+    expect(candidates).toHaveLength(0);
+    expect(unresolved).toEqual([{ field: 'attendees', name: 'pedro@example.com' }]);
+  });
+});
+
+describe('stripAttendeeEmailSuffix', () => {
+  test('strips a trailing "<email>" suffix, keeping the display name', () => {
+    expect(stripAttendeeEmailSuffix('Pedro <pedro@example.com>')).toBe('Pedro');
+    expect(stripAttendeeEmailSuffix('Garry Tan <garry@example.com>')).toBe('Garry Tan');
+  });
+
+  test('tolerates extra whitespace before the bracket', () => {
+    expect(stripAttendeeEmailSuffix('Pedro   <pedro@example.com>')).toBe('Pedro');
+  });
+
+  test('no-op when there is no "<email>" suffix', () => {
+    expect(stripAttendeeEmailSuffix('Pedro')).toBe('Pedro');
+    expect(stripAttendeeEmailSuffix('Stripe')).toBe('Stripe');
+    expect(stripAttendeeEmailSuffix('')).toBe('');
+  });
+
+  test('no-op on a bare email (nothing before the bracket to extract)', () => {
+    expect(stripAttendeeEmailSuffix('pedro@example.com')).toBe('pedro@example.com');
+    expect(stripAttendeeEmailSuffix('<pedro@example.com>')).toBe('<pedro@example.com>');
+  });
+
+  test('no-op when the bracketed content is not email-shaped (no "@")', () => {
+    // Defensive: only strips when the bracket content looks like an email,
+    // so an unrelated "<...>" value (e.g. a codename) is never mangled.
+    expect(stripAttendeeEmailSuffix('Project <Codename>')).toBe('Project <Codename>');
+  });
 });
 
 describe('makeResolver — fallback chain', () => {
@@ -1559,6 +1648,17 @@ describe('FRONTMATTER_LINK_MAP integrity', () => {
     expect(m!.direction).toBe('incoming');
     expect(m!.pageType).toBe('meeting');
     expect(m!.type).toBe('attended');
+  });
+
+  // `participants:` (e.g. a Granola meeting export) is an alias of
+  // `attendees:` (Google Calendar's field) — both must produce the SAME
+  // mapping entry (not a separate one) so they emit identical 'attended'
+  // edges for the same meeting semantics.
+  test('participants is an alias of attendees on the SAME mapping entry', () => {
+    const attendeesMapping = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('attendees'));
+    const participantsMapping = FRONTMATTER_LINK_MAP.find(m => m.fields.includes('participants'));
+    expect(participantsMapping).toBeDefined();
+    expect(participantsMapping).toBe(attendeesMapping);
   });
 
   test('investors uses multi-dir hint (companies/funds/people)', () => {

@@ -62,6 +62,15 @@ on new_meeting_transcript(meeting):
 # Automation: the built-in `extract-timeline-from-meetings` Minion job
 # automates step 3 (entity timeline propagation) for already-ingested
 # meeting pages: gbrain jobs submit extract-timeline-from-meetings --follow
+# (CLI: gbrain extract timeline --from-meetings --source db). It scans pages
+# WHERE type = 'meeting' (or type = 'note' with frontmatter.legacy_type =
+# 'meeting'), following each page's `attendees:` OR `participants:`
+# frontmatter (either name is accepted; entries may be a bare name, a
+# "Name <email>" pair, or an object with `name`/`slug`/`title`) plus a
+# body-mention scan. A page written via `put_page` rather than a `gbrain
+# sync` file import falls back to `updated_at` for the timeline date when
+# frontmatter has no parseable `date`/`event_date`/`published` and no
+# `effective_date` was set explicitly.
 ```
 
 ## Tricky Spots

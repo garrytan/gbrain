@@ -72,16 +72,33 @@ export async function extractTimelineFromMeetings(
   const sinceMs = opts.since ? new Date(opts.since).getTime() : null;
 
   // 1. Fetch all meeting pages (one round-trip).
+  //
+  // `effective_date` reads COALESCE(effective_date, updated_at,
+  // created_at) — the SAME fallback chain every other date-range consumer in
+  // the codebase uses (postgres-engine.ts / pglite-engine.ts date filters,
+  // the pages_coalesce_date_idx expression index). `effective_date` the raw
+  // column is populated ONLY by computeEffectiveDate() at file-sync import
+  // time (import-file.ts) or by the effective-date backfill; a page written
+  // directly via put_page (the path bulk/custom importers use — e.g. a
+  // meeting corpus loaded via `put_page` calls rather than `gbrain sync`)
+  // never gets it computed and the column stays NULL forever. Pre-fix, the
+  // loop below did `if (!meeting.effective_date) continue` — which SKIPPED
+  // the meeting without ever incrementing `meetingsScanned`, so a brain
+  // full of type='meeting' pages with a real frontmatter `date:` but a NULL
+  // `effective_date` column reported "0 meetings matched" (indistinguishable
+  // from having no meeting pages at all) even though the initial WHERE
+  // clause matched every one of them.
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const meetingParams = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
   const meetings = await engine.executeRaw<MeetingRow>(
-    `SELECT slug, source_id, title, effective_date, updated_at,
-            compiled_truth, COALESCE(timeline, '') AS timeline
+    `SELECT slug, source_id, title,
+            COALESCE(effective_date, updated_at, created_at) AS effective_date,
+            updated_at, compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
         ${sourceFilter}
-      ORDER BY effective_date DESC NULLS LAST, slug`,
+      ORDER BY COALESCE(effective_date, updated_at, created_at) DESC, slug`,
     meetingParams,
   );
 
@@ -150,6 +167,10 @@ export async function extractTimelineFromMeetings(
       const updatedMs = new Date(meeting.updated_at).getTime();
       if (Number.isFinite(updatedMs) && updatedMs <= sinceMs) continue;
     }
+    // Defensive only: the SELECT above already COALESCEs to updated_at/
+    // created_at (both NOT NULL), so this should be unreachable in practice.
+    // Kept as a guard rather than a non-null assertion in case a future
+    // engine/column change reintroduces a NULL path.
     if (!meeting.effective_date) continue; // can't write a timeline entry without a date
 
     meetingsScanned++;

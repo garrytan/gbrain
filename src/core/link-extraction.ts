@@ -984,6 +984,10 @@ export function inferLinkType(pageType: PageType, context: string, globalContext
 //   key_people: [Patrick Collison, John]    # company page (incoming works_at)
 //   investors: [{name: Sequoia}, Benchmark] # deal page (incoming invested_in)
 //   attendees: [Pedro, Garry]               # meeting page (incoming attended)
+//   participants: ["Pedro <p@x.com>"]       # meeting page (alias of attendees;
+//                                            # "Name <email>" entries resolve
+//                                            # on the Name half — see
+//                                            # extractFrontmatterLinks)
 //
 // Each maps to a typed graph edge. The mapping lives here (one source of
 // truth) so the three entry points — operations.ts auto-link, extract.ts
@@ -1040,8 +1044,13 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
     dirHint: ['companies', 'funds', 'people'] },
   { fields: ['lead'], pageType: 'deal', type: 'led_round', direction: 'incoming',
     dirHint: ['companies', 'funds', 'people'] },
-  // Meeting pages
-  { fields: ['attendees'], pageType: 'meeting', type: 'attended', direction: 'incoming', dirHint: 'people' },
+  // Meeting pages. `participants` is an alias of `attendees` — some
+  // importers (e.g. a Granola meeting corpus) write `participants:
+  // ["Name <email>", ...]` instead of Google Calendar's bare-email
+  // `attendees:` list. Both feed the same 'attended' edge; entry parsing
+  // in extractFrontmatterLinks strips a trailing `<email>` so either shape
+  // resolves against a person page's title.
+  { fields: ['attendees', 'participants'], pageType: 'meeting', type: 'attended', direction: 'incoming', dirHint: 'people' },
   // Any page type
   { fields: ['sources'], type: 'discussed_in', direction: 'incoming', dirHint: ['source', 'media'] },
   { fields: ['source'], type: 'source', direction: 'outgoing', dirHint: '' /* already slug-shaped */ },
@@ -1288,6 +1297,31 @@ export function unwrapWikilink(value: string): string {
   return target.trim();
 }
 
+/**
+ * Strip a trailing `<email@domain>` suffix from an attendee-style
+ * frontmatter value, keeping the display-name half for slug resolution.
+ *
+ * Two attendee shapes exist in the wild: Google Calendar's `attendees:`
+ * field renders bare emails only (renderCalendarEventPage in
+ * google-render.ts), while other importers (e.g. a Granola meeting export's
+ * `participants:` field) write `"Name <email>"` pairs. A person page's
+ * TITLE is a display name, not an email, so resolver.resolve() — which
+ * fuzzy-matches on title — needs the Name half; feeding it the full
+ * "Name <email>" string (or a bare email) makes every such attendee edge
+ * silently unresolved.
+ *
+ * No-op when there's no `<...@...>` suffix (bare emails, plain names, and
+ * every other frontmatter field's values pass through unchanged) or when
+ * the part before `<` is empty (a bare `<email>` has no name to extract —
+ * left as-is so it at least attempts email-shaped resolution rather than
+ * resolving to an empty string).
+ */
+export function stripAttendeeEmailSuffix(value: string): string {
+  const match = /^(.*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$/.exec(value);
+  if (match && match[1].trim()) return match[1].trim();
+  return value;
+}
+
 export interface UnresolvedFrontmatterRef {
   /** The frontmatter field name. */
   field: string;
@@ -1372,8 +1406,11 @@ export async function extractFrontmatterLinks(
         // Accept Obsidian `[[wikilink]]` values in frontmatter link fields by
         // unwrapping to the bare target before resolution. Bare titles pass
         // through unchanged; the original `name` is preserved for the
-        // unresolved report and edge context.
-        const linkTarget = unwrapWikilink(name);
+        // unresolved report and edge context. Also strip a trailing
+        // "<email>" suffix (attendees:/participants: entries) so
+        // resolution runs on the display name, not the full "Name <email>"
+        // string or a bare email — see stripAttendeeEmailSuffix.
+        const linkTarget = unwrapWikilink(stripAttendeeEmailSuffix(name));
         let resolved = await resolver.resolve(linkTarget, mapping.dirHint);
         if (!resolved && globalBasename && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
