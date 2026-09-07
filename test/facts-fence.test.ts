@@ -661,6 +661,29 @@ Prose here.
       expect(out.split('---\n')).toHaveLength(4); // two frontmatter delimiters + the sentinel, no extra
     });
 
+    // The frontmatter skip itself: with NO prose between the closing YAML
+    // delimiter and `## Timeline`, an unskipped closing `---` reads as the
+    // legacy bare-`---` sentinel and the fence lands INSIDE the YAML block.
+    test('frontmatter immediately followed by ## Timeline: the fence lands after the frontmatter, never inside the YAML', () => {
+      const frontmatter = '---\ntype: person\n---\n';
+      const body = `${frontmatter}\n## Timeline\n- 2020: Founded\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.startsWith(frontmatter)).toBe(true);
+      expect(out.split(FACTS_FENCE_BEGIN)).toHaveLength(2); // exactly one fence
+      const fenceAt = out.indexOf(FACTS_FENCE_BEGIN);
+      expect(fenceAt).toBeGreaterThan(out.indexOf('\n---\n')); // below the closing delimiter
+    });
+
+    test('empty frontmatter (bare --- / ---) immediately followed by ## History: fence after the block, never between the delimiters', () => {
+      const frontmatter = '---\n---\n';
+      const body = `${frontmatter}\n## History\n- 1999: Started\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.startsWith(frontmatter)).toBe(true);
+      expect(out.split(FACTS_FENCE_BEGIN)).toHaveLength(2); // exactly one fence
+      const fenceAt = out.indexOf(FACTS_FENCE_BEGIN);
+      expect(fenceAt).toBeGreaterThan(out.indexOf('\n---\n'));
+    });
+
     test('a bare --- horizontal rule with no ## Timeline after it is NOT a sentinel', () => {
       const body = `# Entity\n\nProse.\n\n---\n\nMore prose.\n`;
       const { body: out } = upsertFactRow(body, newRow);
