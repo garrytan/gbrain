@@ -64,11 +64,14 @@ Options:
   --source <id>          Scope the walk to this source. Defaults to the
                          resolved source (GBRAIN_SOURCE, .gbrain-source,
                          path match, brain default); __all__ spans every
-                         source. An unknown source is a hard error.
+                         source. An unknown source is a hard error. Local
+                         installs only: a thin client rejects it (the server
+                         scopes the walk to your grant).
   --include-foreign      Include edges to pages in other sources (v0.37.7.0).
                          Off by default; the walk stays inside the resolved
                          source, and a footer reports the count of
                          foreign-source edges hidden so users discover they exist.
+                         Not forwarded on a thin client.
   -h, --help             Show this message.
 
 Examples:
@@ -155,6 +158,22 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
   let scoped = false;
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
+    // The remote traverse_graph op has no source_id param: the server scopes
+    // the walk to the caller's grant. --source used to be dropped silently
+    // (a grant-wide walk with exit 0), contradicting the "unknown source is a
+    // hard error" contract above; reject it the way applyThinClientSourceScope
+    // does for op commands. --include-foreign is meaningless there (the grant
+    // already bounds the walk) — say so instead of pretending it applied.
+    if (args.source !== undefined) {
+      console.error(
+        'gbrain graph-query does not accept --source on a thin-client install ' +
+        '(the remote op has no source_id parameter; the server scopes it to your grant).',
+      );
+      process.exit(1);
+    }
+    if (args.includeForeign) {
+      console.error('[thin-client] --include-foreign is not forwarded; the server scopes the walk to your grant.');
+    }
     const raw = await callRemoteTool(cfg!, 'traverse_graph', {
       slug: args.slug,
       depth: args.depth,
