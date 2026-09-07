@@ -291,6 +291,34 @@ describe('GoogleApiClient request core', () => {
     expect(h.tokenPosts()).toBe(0); // no refresh on a rate limit
   });
 
+  test('429 with NO Retry-After falls back to the jittered backoff: logs a delay inside the attempt-0 bounds, sleeps, retries once', async () => {
+    let apiCalls = 0;
+    const h = makeHarness(() => {
+      apiCalls++;
+      if (apiCalls === 1) return json({ error: { message: 'rate limit' } }, 429); // no retry-after header
+      return json({ ok: true });
+    });
+    const logs: string[] = [];
+    const client = new GoogleApiClient(h.tokens, h.fetchImpl, (m) => logs.push(m));
+    const t0 = Date.now();
+    const body = await client.fetchJSON<{ ok: boolean }>('https://gmail.googleapis.com/gmail/v1/fake', 'gmail', {
+      rateLimitRetries: 1,
+    });
+    const elapsedMs = Date.now() - t0;
+    expect(body.ok).toBe(true);
+    expect(apiCalls).toBe(2); // exactly one retry
+    expect(h.tokenPosts()).toBe(0);
+    // rateLimitBackoffMs(0) ∈ [1000, 2000] → the log's rounded delay is 1s or 2s, never 0s.
+    const line = logs.find((l) => l.startsWith('[google] HTTP 429; retrying in '));
+    expect(line).toBeDefined();
+    expect(line).toContain('(rate limit, attempt 1/1)');
+    const secs = Number(/retrying in (\d+)s/.exec(line ?? '')?.[1]);
+    expect(secs).toBeGreaterThanOrEqual(1);
+    expect(secs).toBeLessThanOrEqual(2);
+    // The jittered sleep really ran (not a fixed 0 delay): at least the lower bound, minus timer slack.
+    expect(elapsedMs).toBeGreaterThanOrEqual(950);
+  });
+
   test('403 accessNotConfigured maps to api_not_enabled with the project deep link', async () => {
     const h = makeHarness(() =>
       json(
