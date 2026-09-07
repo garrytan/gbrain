@@ -823,8 +823,11 @@ describe('#4589: synthesize_concepts persists concept<->atom provenance edges', 
     });
     expect(await provenanceCount()).toBe(0);
     expect(result.status).toBe('warn');
-    const failures = result.details?.failures as Array<{ concept: string; error: string }>;
-    expect(failures.some((f) => f.concept === CONCEPT && /0 of 6/.test(f.error))).toBe(true);
+    // Provenance problems ride `link_warnings`, not `failures` (which means
+    // "LLM-failed → template fallback" downstream and would count a halt).
+    expect(result.details?.failures).toEqual([]);
+    const warnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+    expect(warnings.some((w) => w.concept === CONCEPT && /0 of 6/.test(w.warning))).toBe(true);
     // The page write stands (best-effort edges, mirrors the thrown case below).
     expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'repo-a' })).not.toBeNull();
   });
@@ -836,11 +839,48 @@ describe('#4589: synthesize_concepts persists concept<->atom provenance edges', 
     try {
       const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
       expect(result.status).toBe('warn');
-      const failures = result.details?.failures as Array<{ concept: string; error: string }>;
-      expect(failures.some((f) => f.concept === CONCEPT && /links table unavailable/.test(f.error))).toBe(true);
+      expect(result.details?.failures).toEqual([]);
+      const warnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+      expect(warnings.some((w) => w.concept === CONCEPT && /links table unavailable/.test(w.warning))).toBe(true);
       expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'default' })).not.toBeNull();
     } finally {
       engine.addLinksBatch = orig;
     }
+  });
+});
+
+// ─── wave review: provenance-link problems are warnings, not LLM failures ──
+describe('synthesize_concepts — provenance-link warnings stay out of `failures`', () => {
+  test('zero provenance edges landed → status warn, link_warnings recorded, narrative kept, no halt', async () => {
+    // Atoms are NOT persisted, so the provenance batch JOIN drops every edge.
+    // Pre-fix that was pushed into `failures`, which downstream reads as
+    // "LLM-failed → template fallback": the summary lied about the narrative
+    // (the LLM call succeeded and was persisted as-is), the rollup counted a
+    // halt, and round_completed_delta flipped to 0.
+    const atoms = Array.from({ length: 5 }, (_, i) => ({
+      slug: `orphan-${i}`,
+      title: `Orphan ${i}`,
+      body: `Orphan body ${i}`,
+      concept_refs: ['orphan-theme'],
+    }));
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: atoms,
+      _chat: stubChat('A real narrative.'),
+    });
+    expect(result.status).toBe('warn');
+    expect(result.details?.failures).toEqual([]);
+    const linkWarnings = result.details?.link_warnings as Array<{ concept: string; warning: string }>;
+    expect(linkWarnings).toHaveLength(1);
+    expect(linkWarnings[0].concept).toBe('orphan-theme');
+    expect(linkWarnings[0].warning).toContain('provenance links');
+    expect(result.summary).not.toContain('template fallback');
+    expect((await engine.getPage('concepts/orphan-theme'))?.frontmatter.synthesis_mode).toBe('llm');
+
+    const rollup = await engine.executeRaw<{ halt_count: number; round_completed_count: number }>(
+      `SELECT halt_count, round_completed_count FROM extract_rollup_7d WHERE kind = 'concepts'`,
+    );
+    expect(rollup).toHaveLength(1);
+    expect(Number(rollup[0].halt_count)).toBe(0);
+    expect(Number(rollup[0].round_completed_count)).toBe(1);
   });
 });

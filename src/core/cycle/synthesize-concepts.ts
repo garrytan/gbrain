@@ -26,7 +26,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat, isAvailable, isThinkingModel } from '../ai/gateway.ts';
+import { chat as gatewayChat, isAvailable, isThinkingModel, THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 // #2163: concept pages route through importFromContent (the same
 // parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
@@ -63,17 +63,19 @@ const TIER_T3_MIN = 2;
  * `tier: 'reasoning'`, so a thinking model here is the expected case.
  */
 const DEFAULT_SYNTH_MAX_OUTPUT_TOKENS = 500;
-/** Answer budget plus reasoning headroom (under DeepSeek's 8192 hard cap). */
-const THINKING_SYNTH_MAX_OUTPUT_TOKENS = 8000;
 
 /**
  * Narrative output cap for the resolved model. `isThinkingModel` is the
  * gateway's shared predicate (name-matched Claude 5 OR recipe-declared
  * `thinking_by_default`; unknown providers count as non-thinking), the same
- * check think's maxOutputTokensFor and the subagent handler use.
+ * check think's maxOutputTokensFor and the subagent handler use. Thinking
+ * models get the gateway's verified THINKING_MODEL_MAX_OUTPUT_TOKENS rather
+ * than a phase-private number: a local 8000 contradicted it, and DeepSeek v4
+ * truncates at 8192-class caps — the reasoning budget was gone before any
+ * answer text.
  */
 export function resolveSynthMaxOutputTokens(modelStr: string): number {
-  return isThinkingModel(modelStr) ? THINKING_SYNTH_MAX_OUTPUT_TOKENS : DEFAULT_SYNTH_MAX_OUTPUT_TOKENS;
+  return isThinkingModel(modelStr) ? THINKING_MODEL_MAX_OUTPUT_TOKENS : DEFAULT_SYNTH_MAX_OUTPUT_TOKENS;
 }
 
 export interface SynthesizeConceptsOpts {
@@ -140,11 +142,16 @@ export async function runPhaseSynthesizeConcepts(
         compiled_truth: string;
         frontmatter: { concepts?: string[]; imported_from?: string };
       }>(
+        // Codex P2: scoped to the cycle source — the provenance edges below
+        // are pinned to it, so a brain-global scan grouped same-slug atoms
+        // from OTHER sources into this source's concepts.
         `SELECT slug, title, compiled_truth, frontmatter
            FROM pages
           WHERE type = 'atom'
+            AND source_id = $1
             AND deleted_at IS NULL
             AND (frontmatter->>'imported_from') IS NULL`,
+        [opts.sourceId ?? 'default'],
       );
       atoms = rows
         .filter((r) => Array.isArray(r.frontmatter?.concepts) && r.frontmatter.concepts.length > 0)
@@ -221,6 +228,11 @@ export async function runPhaseSynthesizeConcepts(
   let estimatedSpendUsd = 0;
   const budgetCap = DEFAULT_BUDGET_USD;
   const failures: Array<{ concept: string; error: string }> = [];
+  // #4589 provenance-link problems. Kept OUT of `failures`: that list means
+  // "the LLM call failed → template fallback" downstream (summary wording,
+  // rollup halt_delta / round_completed_delta), which a missing edge is not —
+  // the narrative was synthesized and persisted as-is. Warn-only.
+  const linkWarnings: Array<{ concept: string; warning: string }> = [];
   // #3044 adoption: shared halt policy — auth/billing halt on the first
   // hit, a rate_limit streak halts after 3 consecutive failures, a
   // successful chat call resets the streak.
@@ -389,12 +401,12 @@ export async function runPhaseSynthesizeConcepts(
           const banked = (await engine.getLinks(conceptSlug, { sourceId: src }))
             .some((l) => l.link_source === 'concept-provenance');
           if (!banked) {
-            failures.push({ concept: group.conceptSlug, error: `provenance links: 0 of ${provenanceLinks.length} edges landed (member atoms not in source '${src}'?)` });
+            linkWarnings.push({ concept: group.conceptSlug, warning: `provenance links: 0 of ${provenanceLinks.length} edges landed (member atoms not in source '${src}'?)` });
           }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        failures.push({ concept: group.conceptSlug, error: `provenance links failed: ${msg}` });
+        linkWarnings.push({ concept: group.conceptSlug, warning: `provenance links failed: ${msg}` });
         console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
       }
     }
@@ -447,12 +459,13 @@ export async function runPhaseSynthesizeConcepts(
 
   return {
     phase: 'synthesize_concepts',
-    status: failures.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
-      (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : ''),
+      (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
+      (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -460,6 +473,7 @@ export async function runPhaseSynthesizeConcepts(
       groups_found: atomGroups.length,
       atoms_seen: atoms.length,
       failures,
+      link_warnings: linkWarnings,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,

@@ -18,18 +18,23 @@ import {
   resolveSynthMaxOutputTokens,
 } from '../../src/core/cycle/synthesize-concepts.ts';
 import { getProviderCapabilities } from '../../src/core/ai/capabilities.ts';
+import { THINKING_MODEL_MAX_OUTPUT_TOKENS } from '../../src/core/ai/gateway.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
 
 describe('resolveSynthMaxOutputTokens', () => {
-  test('grants reasoning headroom to a recipe-declared thinking-by-default model', () => {
+  test('grants the gateway\'s verified thinking cap to a recipe-declared thinking-by-default model', () => {
     // Guard the premise: if the recipe drops the flag this fails here, loudly.
     expect(getProviderCapabilities('deepseek:deepseek-v4-flash').supportsThinking).toBe(true);
-    expect(resolveSynthMaxOutputTokens('deepseek:deepseek-v4-flash')).toBe(8000);
+    // Not a local constant: a phase-private 8000 contradicted the gateway's
+    // THINKING_MODEL_MAX_OUTPUT_TOKENS (DeepSeek v4 truncates at 8192-class
+    // caps), so the reasoning budget was spent before any answer text.
+    expect(THINKING_MODEL_MAX_OUTPUT_TOKENS).toBeGreaterThan(8192);
+    expect(resolveSynthMaxOutputTokens('deepseek:deepseek-v4-flash')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
   });
 
-  test('grants reasoning headroom to a name-matched Claude 5 model', () => {
-    expect(resolveSynthMaxOutputTokens('anthropic:claude-sonnet-5')).toBe(8000);
+  test('grants the same cap to a name-matched Claude 5 model', () => {
+    expect(resolveSynthMaxOutputTokens('anthropic:claude-sonnet-5')).toBe(THINKING_MODEL_MAX_OUTPUT_TOKENS);
   });
 
   test('keeps the 500 default for a non-thinking model', () => {
@@ -84,12 +89,12 @@ describe('synthesize_concepts wires the cap into the narrative call', () => {
     };
   }
 
-  test('a thinking-by-default models.dream.synthesize gets 8000; a non-thinking one keeps 500', async () => {
+  test('a thinking-by-default models.dream.synthesize gets the gateway thinking cap; a non-thinking one keeps 500', async () => {
     await engine.setConfig('models.dream.synthesize', 'deepseek:deepseek-v4-flash');
     const thinking: Array<number | undefined> = [];
     await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms(), _chat: capturingChat(thinking) });
     expect(thinking.length).toBeGreaterThan(0);
-    expect(new Set(thinking)).toEqual(new Set([8000]));
+    expect(new Set(thinking)).toEqual(new Set([THINKING_MODEL_MAX_OUTPUT_TOKENS]));
 
     // An explicit non-thinking model (not "unset"): resolveModel's unset path
     // falls through to GBRAIN_MODEL and a key-aware tier default, so the 500
