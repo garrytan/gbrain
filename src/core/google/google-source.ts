@@ -622,6 +622,14 @@ function isRateLimitFailure(e: unknown): boolean {
   return isCredentialError(e) && e.code === 'rate_limited';
 }
 
+/** One wording for a failed thread fetch, shared by the backfill and delta lanes. */
+function threadFailureMessage(tid: string, rateLimited: boolean, e: unknown): string {
+  return (
+    `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward the poison threshold)' : ''}: ` +
+    `${e instanceof Error ? e.message : String(e)}`
+  );
+}
+
 /**
  * Returns true when every gmail thread this run either imported or was
  * deliberately skipped (404-vanished, poison ledger). False = real failures
@@ -719,10 +727,7 @@ async function sweepGmail(
             batchFailed = true;
             summary.failedFiles++;
             summary.status = 'partial';
-            deps.log(
-              `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward the poison threshold)' : ''}: ` +
-                `${e instanceof Error ? e.message : String(e)}`,
-            );
+            deps.log(threadFailureMessage(tid, rateLimited, e));
             // A rate limit is per-user, not per-thread: the rest of this batch
             // would hit the same exhausted quota, and its work is never banked
             // anyway (batchFailed already holds the floor), so defer it to the
@@ -832,10 +837,11 @@ async function sweepGmail(
       failed++;
       summary.failedFiles++;
       summary.status = 'partial';
-      deps.log(
-        `[google] thread ${tid} failed${rateLimited ? ' (rate limited; not counted toward the poison threshold)' : ''}: ` +
-          `${e instanceof Error ? e.message : String(e)}`,
-      );
+      deps.log(threadFailureMessage(tid, rateLimited, e));
+      // Per-user quota, same as the backfill: the remaining threads would burn
+      // the client's retry budget against the same exhausted window, and the
+      // cursor is already held (failed > 0) so the next run re-lists them.
+      if (rateLimited) break;
     }
   }
   // The delta cursor advances only when every flagged thread landed —

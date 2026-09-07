@@ -588,6 +588,47 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('delta lane: a rate-limited thread is not poisoned, the sweep stops at it, and the cursor is held (wave review)', async () => {
+    // The backfill loop broke out of a batch on the first rate-limited thread;
+    // the delta loop kept walking every remaining flagged thread through the
+    // client's full retry budget against the same exhausted per-user quota.
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-delta-ratelimit-'));
+    const fx = emptyFx();
+    gmailFixture(fx);
+    const vault = makeVault();
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'gmail');
+        expect(readGoogleState(dir).gmail_history_id).toBe('1000');
+
+        // History flags A then B; A is throttled on every fetch.
+        fx.history = [[T_A], [T_B]];
+        fx.historyResponseId = '1010';
+        fx.rateLimitThreads.add(T_A);
+        const callsBefore = fx.calls.length;
+
+        const res = await sweep(dir, fx, vault, {}, 'gmail');
+        expect(res.status).toBe('partial');
+        expect(res.failedFiles).toBe(1);
+        const state = readGoogleState(dir);
+        expect(state.gmail_fail_counts?.[T_A]).toBeUndefined(); // never poisoned
+        expect(state.gmail_history_id).toBe('1000'); // cursor held
+        // The sweep stopped at the throttled thread: B (behind A) was not fetched.
+        expect(fx.calls.slice(callsBefore).some((c) => c.includes(`/threads/${T_B}`))).toBe(false);
+
+        // Quota back: the same window drains (unchanged content → up_to_date)
+        // and the cursor advances.
+        fx.rateLimitThreads.clear();
+        const res2 = await sweep(dir, fx, vault, {}, 'gmail');
+        expect(res2.status).not.toBe('partial');
+        expect(readGoogleState(dir).gmail_history_id).toBe('1010');
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('history 404 falls back to a bookmark window and re-anchors a fresh historyId', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-expired-'));
     const fx = emptyFx();
