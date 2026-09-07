@@ -3876,7 +3876,9 @@ Above the triage cascade sit the execution dials:
   backfilled at phase end by a bounded pass over just the pages the phase
   wrote — never a source-wide sweep). A response that fails any check automatically
   falls back to the classic agentic loop **in the same job** — no lost work,
-  no resubmission. Typical effect: 10+ provider round-trips per transcript
+  no resubmission. The oneshot attempt and its fallback calls are both paid
+  provider work and both are included in synthesis token/spend telemetry.
+  Typical effect: 10+ provider round-trips per transcript
   (up to the 16-turn default cap, more on raised `max_turns`) → 1. Revert
   dial: `gbrain config set dream.synthesize.mode agentic`.
 - `dream.synthesize.link_manifest` (default on) — the zero-embed
@@ -3892,7 +3894,9 @@ Above the triage cascade sit the execution dials:
 Reading the phase report (`details.synthesis`): `mode`, `oneshot_jobs` /
 `fallback_jobs` / `agentic_jobs` + a `fallback_reasons` histogram (a rising
 fallback rate means the model is failing the output contract — check the
-top reason before considering the agentic revert), `queue_wait_ms_p50/p95`
+top reason before considering the agentic revert; `length` includes malformed
+responses whose output usage reached the requested output cap even when the
+provider stop reason was ambiguous), `queue_wait_ms_p50/p95`
 and `child_runtime_ms_p50/p95` (a slow-but-healthy drain is visible instead
 of indistinguishable from a stuck one), and `dead_jobs`/`degraded`. A run
 with any non-completed child does NOT stamp the cooldown, so the next
@@ -5431,7 +5435,10 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   pages; both present ⇒ both arms run.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
   reference implementation also accepts relative phrases like `"8 hours ago"`
-  as a convenience; only ISO 8601 is part of the frozen contract.)
+  as a convenience; only ISO 8601 is part of the frozen contract.) The window
+  is measured on event time (`valid_from`, falling back to `created_at`) and
+  composes with `entity` and `session_id` in the same query, before the
+  per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `budget_tokens`: SERVER-side packing — facts pack first (limit-capped
   one-liners, so search-arm starvation is bounded), search results take the
