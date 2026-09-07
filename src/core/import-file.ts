@@ -1263,7 +1263,7 @@ export async function importFromFile(
     return { slug: relativePath, status: 'skipped', chunks: 0, error: `File too large (${stat.size} bytes)` };
   }
 
-  let content = readFileSync(filePath, 'utf-8');
+  let content = readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, ''); // #4798: a BOM is encoding noise, not content
 
   // Defense-in-depth for callers that bypass the sync/import classifiers
   // (direct importFromFile, reindex, capture paths): a malformed filename is

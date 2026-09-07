@@ -143,6 +143,23 @@ This is the compiled truth.
     expect(chunkCall).toBeTruthy();
   });
 
+  test('strips a UTF-8 BOM so the heading title is used (#4798)', async () => {
+    // Written as bytes so no editor can silently strip the BOM from a fixture.
+    const filePath = join(TMP, 'bom-note.md');
+    writeFileSync(filePath, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('# My Real Title\n\nbody text\n'),
+    ]));
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'notes/bom-note.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+    const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].title).toBe('My Real Title');
+    expect(putCall.args[1].compiled_truth).not.toContain('\uFEFF');
+  });
+
   test('skips files larger than MAX_FILE_SIZE (5MB)', async () => {
     const filePath = join(TMP, 'big-file.md');
     const bigContent = '---\ntitle: Big\n---\n' + 'x'.repeat(5_100_000);
