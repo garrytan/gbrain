@@ -307,7 +307,7 @@ quote, or short essay angle. Each atom must:
   - Have a clear point (not just descriptive)
   - Be specific (not a generic platitude)
 
-Output a JSON array of atoms (1-3 per transcript, never more than 3).
+Output a JSON array of atoms (0-3 per transcript, never more than 3).
 Each atom: {title (≤80 chars), atom_type, body (2-4 sentences),
 source_quote (verbatim ≤200 chars), lesson (one sentence), concepts
 (1-3 topic labels), virality_score (0-100), emotional_register (one of:
@@ -319,6 +319,10 @@ concepts are kebab-case English TOPIC labels used to cluster atoms into
 concept pages (e.g. "captive-portal", "channel-pricing-strategy") — never
 entity or brand names. Use the same label for the same topic across atoms;
 prefer a label you already used over coining a near-synonym.
+
+If the transcript has no extractable idea (metadata rows, status dumps,
+empty fields, boilerplate), output exactly [] — never invent an atom and
+never explain in prose.
 
 Output ONLY the JSON array, no prose.`;
 
