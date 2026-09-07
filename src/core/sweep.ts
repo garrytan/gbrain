@@ -190,6 +190,9 @@ export async function runMaintenanceSweep(
             signal: budgetController.signal,
           });
           report.factsReconciled = r.factsInserted;
+          // The reconcile's refusals (FACTS_PAGE_CACHE_STALE, LOCK_TIMEOUT, …)
+          // ride r.warnings; dropped, a refused pass reads as "nothing to do".
+          for (const w of r.warnings) log(`[sweep] facts reconcile: ${w}`);
           if (r.guardTriggered) skip('facts_fence_guard');
           if (budgetController.signal.aborted) skip('budget_exhausted:facts_fence');
         }

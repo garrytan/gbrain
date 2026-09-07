@@ -29,6 +29,7 @@ import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gate
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { runExtract } from '../src/commands/extract.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 
 const KEYLESS: CapabilityReport = {
   embeddings: { available: false },
@@ -1059,5 +1060,46 @@ describe('#4611 sweep honors link_resolution.cross_source + sources.default', ()
     await seedForeignTarget('main-vault');
     await sweep();
     expect(await edgesInto('main-vault')).toBe(1);
+  });
+});
+
+// ─── wave review: the facts pass surfaces the reconcile's refusals ──
+describe('runMaintenanceSweep — facts reconcile warnings reach the sweep log', () => {
+  test('a stale pages cache (canonical file newer than the DB body) logs FACTS_PAGE_CACHE_STALE instead of vanishing', async () => {
+    // runExtractFacts REFUSES destructive reconcile when the canonical file
+    // disagrees with pages.compiled_truth and says so in r.warnings. The sweep
+    // dropped r.warnings on the floor, so an operator saw factsReconciled: 0
+    // and nothing else — indistinguishable from "nothing to do".
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-sweep-stale-cache-'));
+    tmpDirs.push(root);
+    _resetWriteThroughCacheForTest();
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [root]);
+    try {
+      await seedPage('people/alice-example', 'person', FENCE_BODY);
+      // A fence-owned DB row the fence no longer carries: the reconcile must
+      // take its destructive branch, which is where the stale-cache refusal lives.
+      await engine.insertFacts(
+        [{ fact: 'Stale indexed row', kind: 'fact', source: 'stale', row_num: 7, source_markdown_slug: 'people/alice-example' }],
+        { source_id: 'default' },
+      );
+      mkdirSync(join(root, 'people'), { recursive: true });
+      // The file carries a row the DB body does not: the cache is stale.
+      writeFileSync(join(root, 'people', 'alice-example.md'), FENCE_BODY.replace(
+        '<!--- gbrain:facts:end -->',
+        '| 3 | Joined the board of widget-co | fact | 1.0 | world | high | 2026-09-01 |  | test |  |\n<!--- gbrain:facts:end -->',
+      ), 'utf-8');
+
+      const lines: string[] = [];
+      const r = await runMaintenanceSweep(engine, {
+        sourceId: 'default',
+        capabilities: KEYLESS,
+        log: (msg: string) => { lines.push(msg); },
+      });
+      expect(r.factsReconciled).toBe(0);
+      expect(lines.some((l) => l.includes('FACTS_PAGE_CACHE_STALE'))).toBe(true);
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+      _resetWriteThroughCacheForTest();
+    }
   });
 });
