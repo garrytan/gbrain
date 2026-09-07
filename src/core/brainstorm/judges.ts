@@ -62,6 +62,7 @@ export const MAX_OUTPUT_TOKENS_CEIL = 32_000;
  */
 export const ANTHROPIC_OUTPUT_CAPS: Record<string, number> = {
   'claude-fable-5': 64_000,
+  'claude-fable-5-1': 64_000,
   'claude-opus-5': 32_000,
   'claude-sonnet-5': 64_000,
   'claude-opus-4-8': 32_000,
