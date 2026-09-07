@@ -412,7 +412,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
       for (const { slug, source_path: sourcePath } of rows) {
         if (dbOnlyDirs.some(dir => slug.startsWith(dir))) continue;
         if (sourcePath) {
-          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath);
+          const filePath = resolveSourceLocalFilePath(src.local_path!, sourcePath, slug);
           if (filePath && existsSync(filePath)) continue;
         } else {
           backedWithoutSourcePath ??= collectMarkdownSlugs(src.local_path!);

@@ -168,7 +168,7 @@ async function resolveTakesFilePath(
   const recordedUri = rows[0]?.source_uri ?? null;
   if (sourceLocalPath) {
     const recordedPath =
-      resolveSourceLocalFilePath(sourceLocalPath, recordedSourcePath) ??
+      resolveSourceLocalFilePath(sourceLocalPath, recordedSourcePath, slug) ??
       (() => {
         const fromUri = recordedPathFromFileUri(recordedUri, sourceLocalPath);
         return fromUri ? join(sourceLocalPath, fromUri) : null;

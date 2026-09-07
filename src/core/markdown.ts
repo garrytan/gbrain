@@ -1012,7 +1012,10 @@ export function resolvePageFilePath(
  * `sources.local_path` points at a subdirectory. A direct join duplicates the
  * scope (`.../public/changelog/public/changelog/...`). Find the same Git root
  * sync uses without spawning a subprocess, then remove that exact scope.
- * Non-Git vaults and Git-root local paths keep the direct path.
+ * Non-Git vaults and Git-root local paths keep the direct path. Historical
+ * rows may carry a basename-relative `source_path`; when the direct path is
+ * absent and the caller provides the page slug, resolve that spelling under
+ * the slug's directory before reporting the file as missing.
  *
  * Returns null for an unsafe or non-markdown source path. Callers must still
  * enforce their normal realpath containment check before a write.
@@ -1029,9 +1032,19 @@ function splitLocalPathSegments(value: string): string[] {
   return (pathSep === '\\' ? value.split(/[\\/]+/) : value.split(/\/+/)).filter(Boolean);
 }
 
+function safeSlugDirSegments(rawSlug: string | null | undefined): string[] | null {
+  if (!rawSlug) return null;
+  const value = rawSlug.trim();
+  if (!value || value.includes('\0') || isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value)) return null;
+  const segments = splitLocalPathSegments(value);
+  if (segments.length === 0 || segments.some(segment => segment === '..')) return null;
+  return segments.slice(0, -1);
+}
+
 export function resolveSourceLocalFilePath(
   localPath: string,
   rawSourcePath: string | null | undefined,
+  pageSlug?: string | null,
 ): string | null {
   if (!rawSourcePath) return null;
   const value = rawSourcePath.trim();
@@ -1041,12 +1054,15 @@ export function resolveSourceLocalFilePath(
   if (sourceSegments.length === 0 || sourceSegments.some(segment => segment === '..')) return null;
 
   const absoluteLocalPath = resolve(localPath);
+  let sourceScopeSegments: string[] = [];
+  let resolvedSegments = sourceSegments;
   let cursor = absoluteLocalPath;
   while (true) {
     if (existsSync(join(cursor, '.git'))) {
       const scope = splitLocalPathSegments(relative(cursor, absoluteLocalPath));
+      sourceScopeSegments = scope;
       if (scope.length > 0 && scope.every((segment, index) => segment === sourceSegments[index])) {
-        return join(absoluteLocalPath, ...sourceSegments.slice(scope.length));
+        resolvedSegments = sourceSegments.slice(scope.length);
       }
       break;
     }
@@ -1054,5 +1070,19 @@ export function resolveSourceLocalFilePath(
     if (parent === cursor) break;
     cursor = parent;
   }
-  return join(absoluteLocalPath, ...sourceSegments);
+  const directPath = join(absoluteLocalPath, ...resolvedSegments);
+  if (existsSync(directPath)) return directPath;
+
+  const slugDirSegments = safeSlugDirSegments(pageSlug);
+  if (sourceSegments.length === 1 && slugDirSegments && slugDirSegments.length > 0) {
+    const scopedSlugDir =
+      sourceScopeSegments.length > 0 &&
+      sourceScopeSegments.every((segment, index) => segment === slugDirSegments[index])
+        ? slugDirSegments.slice(sourceScopeSegments.length)
+        : slugDirSegments;
+    const slugRelativePath = join(absoluteLocalPath, ...scopedSlugDir, ...sourceSegments);
+    if (existsSync(slugRelativePath)) return slugRelativePath;
+  }
+
+  return directPath;
 }
