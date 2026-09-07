@@ -1493,15 +1493,18 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
   // carrying a perfectly good array was reported `unparseable JSON array`.
   //
   // Acceptance requires the candidate to parse AND to yield >= 1 atom-shaped
-  // element. Parseability alone is NOT enough: `atomsFromParsedArray` skips
-  // every element that fails the shape gate, so an array-of-strings scraped
-  // out of prose would parse to `ok: true, atoms: []` — and a zero-yield
-  // result is exactly what TOMBSTONES a page (#2144). A shape-blind scan would
-  // therefore permanently retire pages that still had real content: strictly
-  // worse than the bug it fixes. `atomsFromParsedArray` is the single source
-  // of truth for "atom-shaped" so this gate cannot drift from the one that
-  // builds them.
+  // element (`atomsFromParsedArray` is the single source of truth for
+  // "atom-shaped"). Parseability alone is NOT enough: a zero-yield result is
+  // exactly what TOMBSTONES an item (#2144), so only ONE parseable shape may
+  // produce it — the literal `[]` the #4948 prompt asks for when nothing is
+  // extractable, accepted at ANY offset (a model that echoes a `[Source: …]`
+  // citation before obeying must not lose its honest `[]` to this gate and
+  // burn three strikes into a tombstone + halt). A NON-empty array whose
+  // elements all fail the shape gate is malformed output: it rides the
+  // failure streak like every other parse failure instead of tombstoning the
+  // item forever on the first try.
   let firstAttempt: ReturnType<typeof parseArrayAtOffset> | null = null;
+  let sawEmptyArray = false;
   let candidates = 0;
   for (
     let start = firstStart;
@@ -1514,20 +1517,20 @@ function parseAtomsOutcomeInner(raw: string): AtomsParseOutcome {
     // can return still describes the first bracket, unchanged.
     if (firstAttempt === null) firstAttempt = attempt;
     if (attempt.ok) {
+      if (attempt.parsed.length === 0) { sawEmptyArray = true; continue; }
       const atoms = atomsFromParsedArray(attempt.parsed);
       if (atoms.length > 0) return { ok: true, atoms };
     }
   }
 
-  // Nothing later yielded a real atom. Fall back to the FIRST offset's outcome
-  // VERBATIM — never a later one. That keeps this function byte-identical to
-  // pre-fix behaviour for every response that already parsed, and confines the
-  // new leniency to the one case that motivated it: a later offset held a
-  // genuinely atom-shaped array. In particular an honest `[]` still returns
-  // `ok: true, atoms: []` and keeps its #4148 zero-yield tombstone semantics,
-  // rather than being reclassified as malformed output.
+  // Nothing yielded a real atom. An honest `[]` anywhere is the zero-yield
+  // success (#4148 keeps "found nothing" distinct from "malformed"); otherwise
+  // fall back to the FIRST offset's outcome — never a later one — so the
+  // failure reason the drain surfaces as `last_error` still describes the
+  // first bracket.
+  if (sawEmptyArray) return { ok: true, atoms: [] };
   if (firstAttempt === null) return { ok: false, reason: 'no JSON array in response' };
-  if (firstAttempt.ok) return { ok: true, atoms: atomsFromParsedArray(firstAttempt.parsed) };
+  if (firstAttempt.ok) return { ok: false, reason: 'array had no atom-shaped elements' };
   return firstAttempt;
 }
 

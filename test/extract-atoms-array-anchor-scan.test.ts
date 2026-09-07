@@ -137,12 +137,28 @@ describe('anchor scan — preserved behaviour', () => {
     expect(atomsOf(ATOM_ARRAY + '\n\nThose are the atoms I found.')).toHaveLength(1);
   });
 
-  test('a parseable array that yields no atoms still reports ok with zero atoms', () => {
-    // Byte-identical to pre-fix: nothing later in the response holds a real
-    // atom, so the FIRST offset's successful parse is returned verbatim.
-    const outcome = parseAtomsOutcome('[{"claim":"Water is wet","kind":"fact"}]');
-    expect(outcome.ok).toBe(true);
-    if (outcome.ok) expect(outcome.atoms).toEqual([]);
+  test('an empty array after BRACKETED prose is a zero-yield success (#4948 rule holds at any offset)', () => {
+    // The #4948 prompt tells the model to answer exactly `[]` when nothing is
+    // extractable. A model that first echoes a bracketed citation and then
+    // obeys used to lose the `[]` to the shape gate: the first offset failed
+    // to parse, no later offset yielded an atom, so the FIRST offset's failure
+    // was returned — three strikes and the transcript was tombstoned + the
+    // phase halted for content that was honestly empty.
+    expect(parseAtomsOutcome('[Source: x] nothing here.\n[]')).toEqual({ ok: true, atoms: [] });
+    expect(parseAtomsOutcome('Checked [[people/alice-example]] — no atoms.\n\n[]')).toEqual({ ok: true, atoms: [] });
+  });
+
+  test('a NON-empty array with no atom-shaped element is a counted failure, not a zero-yield success', () => {
+    // Pre-fix this returned `ok: true, atoms: []` — the zero-yield shape that
+    // tombstones the item FOREVER on the first try — for output that was
+    // simply malformed (wrong keys). Malformed output rides the failure streak
+    // (retries, then the bounded MAX_DETERMINISTIC_FAILURES tombstone), like
+    // every other parse failure; only a literal `[]` is an honest zero-yield.
+    expect(parseAtomsOutcome('[{"claim":"Water is wet","kind":"fact"}]')).toEqual({
+      ok: false,
+      reason: 'array had no atom-shaped elements',
+    });
+    expect(parseAtomsOutcome('["a","b"]')).toEqual({ ok: false, reason: 'array had no atom-shaped elements' });
   });
 });
 

@@ -100,7 +100,7 @@ describe('extractors route through the ladder', () => {
   });
 
   test('atoms extractor parses a think-wrapped array instead of halting', () => {
-    const raw = '<think>I could emit [ "draft" ]</think>[{"claim":"Water is wet","kind":"fact"}]';
+    const raw = '<think>I could emit [ "draft" ]</think>[{"title":"Water is wet","atom_type":"insight","body":"Observed in the transcript."}]';
     const outcome = parseAtomsOutcome(raw);
     expect(outcome.ok).toBe(true);
   });
@@ -127,7 +127,7 @@ describe('extractors route through the ladder', () => {
     const raw =
       '<thinking>The page cites [Source: alice-example, agent session, 2026-01-01], ' +
       'so the quote should come from there.</thinking>' +
-      '[{"claim":"Water is wet","kind":"fact"}]';
+      '[{"title":"Water is wet","atom_type":"insight","body":"Observed in the transcript."}]';
     const outcome = parseAtomsOutcome(raw);
     expect(outcome.ok).toBe(true);
   });
@@ -137,7 +137,7 @@ describe('extractors route through the ladder', () => {
     // to fail pre-fix with "unparseable JSON array".
     const raw =
       '<thinking>It links [[people/alice-example]] and [[companies/acme-example]].</thinking>' +
-      '[{"claim":"Backlinks are mandatory","kind":"fact"}]';
+      '[{"title":"Backlinks are mandatory","atom_type":"insight","body":"House style requires them."}]';
     const outcome = parseAtomsOutcome(raw);
     expect(outcome.ok).toBe(true);
   });

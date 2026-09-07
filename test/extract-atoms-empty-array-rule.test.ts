@@ -69,6 +69,9 @@ describe('extract_atoms prompt — content-free transcript rule', () => {
 
   test('[] is an honest zero-yield, not a parse failure (the path the rule steers into)', () => {
     expect(parseAtomsOutcome('[]')).toEqual({ ok: true, atoms: [] });
+    // The rule must survive a bracketed preamble too: a model that echoes a
+    // `[Source: …]` citation before obeying still yields an honest `[]`.
+    expect(parseAtomsOutcome('[Source: x] nothing here.\n[]')).toEqual({ ok: true, atoms: [] });
     // Positive control: the prose the rule prevents IS a failure.
     expect(parseAtomsOutcome('This page has no extractable ideas.')).toEqual({
       ok: false,
