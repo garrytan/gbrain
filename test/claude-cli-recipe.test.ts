@@ -465,6 +465,55 @@ describe('claude-cli LanguageModel — tool use', () => {
     });
   });
 
+  test('flat entries (arguments beside `name`, no `input` wrapper) are parsed as the input', async () => {
+    await withStubEnv(async () => {
+      // The Anthropic tool_use shape with the `input` wrapper dropped. A dream
+      // subagent that emitted this called brain_search eight times in a row
+      // with input {} and never received a result it could use.
+      stageResponse(
+        baseEnvelope(
+          [
+            '<use_tools>',
+            '[',
+            '  {"type": "tool_use", "id": "toolu_01", "name": "search", "query": "n+1 query", "limit": 5},',
+            '  {"name": "search", "input": {"query": "wrapped wins"}, "query": "stray key ignored"},',
+            '  {"name": "search"},',
+            '  {"name": "search", "type": "person", "id": "areas/x"}',
+            ']',
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('flat')],
+        tools: [
+          {
+            type: 'function',
+            name: 'search',
+            description: 'Search the brain',
+            inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+          },
+        ],
+      } as LanguageModelV2CallOptions);
+
+      expect(result.finishReason).toBe('tool-calls');
+      const calls = result.content.filter(c => c.type === 'tool-call') as Array<{ toolName: string; input: string }>;
+      expect(calls).toHaveLength(4);
+      // Flat entry: the non-reserved keys become the input; the Anthropic
+      // tool_use leftovers (type: "tool_use", toolu_* id) and name do not leak in.
+      expect(JSON.parse(calls[0].input)).toEqual({ query: 'n+1 query', limit: 5 });
+      // A wrapped `input` wins verbatim over stray sibling keys.
+      expect(JSON.parse(calls[1].input)).toEqual({ query: 'wrapped wins' });
+      // Nothing beside `name` still yields an empty input.
+      expect(JSON.parse(calls[2].input)).toEqual({});
+      // A `type`/`id` that is NOT the Anthropic leftover is a real argument
+      // (list_pages has a `type` filter) and survives flat mode.
+      expect(JSON.parse(calls[3].input)).toEqual({ type: 'person', id: 'areas/x' });
+    });
+  });
+
   test('falls back to text on malformed JSON', async () => {
     await withStubEnv(async () => {
       stageResponse(
