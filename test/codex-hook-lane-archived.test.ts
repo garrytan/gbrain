@@ -25,16 +25,13 @@ import {
   confineCodexTranscriptPath,
   discoverNewestCodexRollout,
 } from '../src/core/transcripts/codex-hook-lane.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let dir: string;
-let prevCodexHome: string | undefined;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'gb-cdx-arch-'));
-  prevCodexHome = process.env.CODEX_HOME;
 });
 afterEach(() => {
-  if (prevCodexHome === undefined) delete process.env.CODEX_HOME;
-  else process.env.CODEX_HOME = prevCodexHome;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -75,84 +72,89 @@ describe('confineCodexTranscriptPath — the missing_path rung', () => {
 });
 
 describe('confineCodexTranscriptPath — the archived store is inside the fence', () => {
-  test('a rollout under archived_sessions is accepted by the PRODUCTION default (root undefined)', () => {
-    process.env.CODEX_HOME = dir;
-    mkdirSync(join(dir, 'sessions'), { recursive: true });
-    const archived = seedArchived(dir);
-    expect(confineCodexTranscriptPath(archived)).toEqual({
-      ok: true,
-      path: archived,
-      size: expect.any(Number),
+  test('a rollout under archived_sessions is accepted by the PRODUCTION default (root undefined)', async () => {
+    await withEnv({ CODEX_HOME: dir }, async () => {
+      mkdirSync(join(dir, 'sessions'), { recursive: true });
+      const archived = seedArchived(dir);
+      expect(confineCodexTranscriptPath(archived)).toEqual({
+        ok: true,
+        path: archived,
+        size: expect.any(Number),
+      });
+
+      // The live store still resolves through that same default.
+      const day = join(dir, 'sessions', '2026', '08', '25');
+      mkdirSync(day, { recursive: true });
+      const live = join(day, 'rollout-live-sess-b.jsonl');
+      writeFileSync(live, meta + '\n');
+      expect(confineCodexTranscriptPath(live)).toEqual({ ok: true, path: live, size: expect.any(Number) });
     });
-
-    // The live store still resolves through that same default.
-    const day = join(dir, 'sessions', '2026', '08', '25');
-    mkdirSync(day, { recursive: true });
-    const live = join(day, 'rollout-live-sess-b.jsonl');
-    writeFileSync(live, meta + '\n');
-    expect(confineCodexTranscriptPath(live)).toEqual({ ok: true, path: live, size: expect.any(Number) });
   });
 
-  test('PRESERVED: an explicitly pinned root stays single-root — the test seam never widens', () => {
-    process.env.CODEX_HOME = dir; // the production default WOULD accept it
-    const root = join(dir, 'sessions');
-    mkdirSync(root, { recursive: true });
-    const archived = seedArchived(dir);
-    expect(confineCodexTranscriptPath(archived, { root })).toEqual({
-      ok: false,
-      reason: 'outside_projects_dir',
+  test('PRESERVED: an explicitly pinned root stays single-root — the test seam never widens', async () => {
+    await withEnv({ CODEX_HOME: dir }, async () => {
+      const root = join(dir, 'sessions');
+      mkdirSync(root, { recursive: true });
+      const archived = seedArchived(dir);
+      expect(confineCodexTranscriptPath(archived, { root })).toEqual({
+        ok: false,
+        reason: 'outside_projects_dir',
+      });
+      expect(discoverNewestCodexRollout('sess-arch', { root })).toBeNull();
     });
-    expect(discoverNewestCodexRollout('sess-arch', { root })).toBeNull();
   });
 
-  test('PRESERVED: paths outside BOTH stores are still refused', () => {
-    process.env.CODEX_HOME = dir;
-    mkdirSync(join(dir, 'sessions'), { recursive: true });
-    mkdirSync(join(dir, 'archived_sessions'), { recursive: true });
+  test('PRESERVED: paths outside BOTH stores are still refused', async () => {
+    await withEnv({ CODEX_HOME: dir }, async () => {
+      mkdirSync(join(dir, 'sessions'), { recursive: true });
+      mkdirSync(join(dir, 'archived_sessions'), { recursive: true });
 
-    const outside = join(dir, 'outside.jsonl');
-    writeFileSync(outside, meta + '\n');
-    expect(confineCodexTranscriptPath(outside)).toEqual({ ok: false, reason: 'outside_projects_dir' });
+      const outside = join(dir, 'outside.jsonl');
+      writeFileSync(outside, meta + '\n');
+      expect(confineCodexTranscriptPath(outside)).toEqual({ ok: false, reason: 'outside_projects_dir' });
 
-    // A directory that merely shares the archived NAME but sits elsewhere is
-    // not a root — the widening is two pinned paths, not a name match.
-    const decoy = join(dir, 'nested', 'archived_sessions');
-    mkdirSync(decoy, { recursive: true });
-    const decoyFile = join(decoy, 'rollout-decoy-sess-d.jsonl');
-    writeFileSync(decoyFile, meta + '\n');
-    expect(confineCodexTranscriptPath(decoyFile)).toEqual({ ok: false, reason: 'outside_projects_dir' });
+      // A directory that merely shares the archived NAME but sits elsewhere is
+      // not a root — the widening is two pinned paths, not a name match.
+      const decoy = join(dir, 'nested', 'archived_sessions');
+      mkdirSync(decoy, { recursive: true });
+      const decoyFile = join(decoy, 'rollout-decoy-sess-d.jsonl');
+      writeFileSync(decoyFile, meta + '\n');
+      expect(confineCodexTranscriptPath(decoyFile)).toEqual({ ok: false, reason: 'outside_projects_dir' });
+    });
   });
 
-  test('PRESERVED: the whole ladder applies to the archived root in the same order', () => {
-    process.env.CODEX_HOME = dir;
-    mkdirSync(join(dir, 'sessions'), { recursive: true });
-    const arch = join(dir, 'archived_sessions');
-    mkdirSync(arch, { recursive: true });
+  test('PRESERVED: the whole ladder applies to the archived root in the same order', async () => {
+    await withEnv({ CODEX_HOME: dir }, async () => {
+      mkdirSync(join(dir, 'sessions'), { recursive: true });
+      const arch = join(dir, 'archived_sessions');
+      mkdirSync(arch, { recursive: true });
 
-    expect(confineCodexTranscriptPath('')).toEqual({ ok: false, reason: 'missing_path' });
-    expect(confineCodexTranscriptPath(join(arch, 'x.txt'))).toEqual({ ok: false, reason: 'not_jsonl' });
+      expect(confineCodexTranscriptPath('')).toEqual({ ok: false, reason: 'missing_path' });
+      expect(confineCodexTranscriptPath(join(arch, 'x.txt'))).toEqual({ ok: false, reason: 'not_jsonl' });
 
-    const evil = join(dir, 'evil.jsonl');
-    writeFileSync(evil, meta + '\n');
-    const link = join(arch, 'rollout-link-sess-e.jsonl');
-    symlinkSync(evil, link);
-    expect(confineCodexTranscriptPath(link)).toEqual({ ok: false, reason: 'symlink' });
+      const evil = join(dir, 'evil.jsonl');
+      writeFileSync(evil, meta + '\n');
+      const link = join(arch, 'rollout-link-sess-e.jsonl');
+      symlinkSync(evil, link);
+      expect(confineCodexTranscriptPath(link)).toEqual({ ok: false, reason: 'symlink' });
 
-    const fat = join(arch, 'rollout-fat-sess-f.jsonl');
-    writeFileSync(fat, 'x'.repeat(64));
-    expect(confineCodexTranscriptPath(fat, { maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
+      const fat = join(arch, 'rollout-fat-sess-f.jsonl');
+      writeFileSync(fat, 'x'.repeat(64));
+      expect(confineCodexTranscriptPath(fat, { maxBytes: 16 })).toEqual({ ok: false, reason: 'too_large' });
+    });
   });
 });
 
 describe('discoverNewestCodexRollout — reaches the flat archived store', () => {
-  test('an id match in archived_sessions is found and is NOT labelled a guess', () => {
-    process.env.CODEX_HOME = dir;
-    mkdirSync(join(dir, 'sessions'), { recursive: true });
-    const archived = seedArchived(dir);
-    // Production default: root undefined → both stores.
-    expect(discoverNewestCodexRollout('sess-arch')).toEqual({
-      path: archived,
-      degrade: 'transcript_discovered',
+  test('an id match in archived_sessions is found and is NOT labelled a guess', async () => {
+    await withEnv({ CODEX_HOME: dir }, async () => {
+      mkdirSync(join(dir, 'sessions'), { recursive: true });
+      const archived = seedArchived(dir);
+      // Production default: root undefined → both stores.
+      expect(discoverNewestCodexRollout('sess-arch')).toEqual({
+        path: archived,
+        degrade: 'transcript_discovered',
+      });
     });
   });
 
