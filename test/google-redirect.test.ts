@@ -110,6 +110,20 @@ describe('parsePastedRedirect', () => {
     );
   });
 
+  it('a scheme-less consent-page URL (address bar without https://) → pasted_wrong_url', () => {
+    // Browsers hide the scheme in the address bar; the paste then misses the
+    // URL branch and must not fall through to the bare-code branch (which
+    // skips the state check and hands the whole consent URL to token exchange).
+    expectCodeSync(
+      () =>
+        parsePastedRedirect(
+          'accounts.google.com/o/oauth2/v2/auth?client_id=abc&response_type=code&state=st&code_challenge=zzz',
+          'st',
+        ),
+      'pasted_wrong_url',
+    );
+  });
+
   it('a real loopback redirect carrying RFC 9207 iss=accounts.google.com parses normally (#regression)', () => {
     // Google's OAuth 2.0 authorization response now appends
     // `iss=https://accounts.google.com` (OpenID Connect issuer
