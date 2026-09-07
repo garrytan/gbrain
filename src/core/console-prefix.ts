@@ -61,6 +61,21 @@ const __prefixStore = new AsyncLocalStorage<string>();
 // (the serve process is stdio-MCP for its whole lifetime).
 let __stdoutLoggingRedirected = false;
 
+// CLI `--json` mode: stdout is reserved for the JSON envelope (and any JSON
+// status lines). Scoped, not process-wide: rebinding console.log here would
+// also push the envelope itself to stderr. slog consults it; serr is stderr
+// already; direct console.log(JSON.stringify(..)) sites are untouched.
+const __humanToStderr = new AsyncLocalStorage<true>();
+
+/**
+ * Run `fn` with every `slog` line (prefixed or not) routed to stderr, so a
+ * command's human output cannot interleave with the JSON it emits on
+ * stdout. Propagates through `await` like `withSourcePrefix`; nests with it.
+ */
+export function withHumanLogsToStderr<T>(fn: () => Promise<T>): Promise<T> {
+  return __humanToStderr.run(true, fn);
+}
+
 /**
  * Route ALL stdout-bound logging to stderr for the lifetime of this
  * process. Called once by the stdio MCP serve path before the transport
@@ -131,15 +146,17 @@ export function getSourcePrefix(): string | null {
  */
 export function slog(...args: unknown[]): void {
   const prefix = getSourcePrefix();
+  const toStderr = __stdoutLoggingRedirected || __humanToStderr.getStore() === true;
   if (prefix === null) {
     // Back-compat fast path: bare console.log semantics. (Under the stdio
     // MCP redirect, console.log is rebound to stderr — see
-    // redirectStdoutLoggingToStderr.)
+    // redirectStdoutLoggingToStderr; under withHumanLogsToStderr the line
+    // is routed to stderr here instead.)
     // eslint-disable-next-line no-console
-    console.log(...args);
+    if (toStderr) console.error(...args); else console.log(...args);
     return;
   }
-  const out = __stdoutLoggingRedirected ? process.stderr : process.stdout;
+  const out = toStderr ? process.stderr : process.stdout;
   out.write(prefixLines(formatArgs(args), prefix) + '\n');
 }
 

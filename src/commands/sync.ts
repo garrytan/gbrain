@@ -56,6 +56,7 @@ import {
   syncLockId,
 } from '../core/db-lock.ts';
 import {
+  withHumanLogsToStderr,
   withSourcePrefix,
   slog,
   serr,
@@ -4409,6 +4410,16 @@ function manageGitignoreAtGitRoot(path: string, engineKind?: 'pglite' | 'postgre
 }
 
 export async function runSync(engine: BrainEngine, args: string[]) {
+  // #4888: under --json, stdout is reserved for JSON lines (the envelope and
+  // any JSON status lines); every slog() human line from performSync and its
+  // callees routes to stderr instead. serr/progress are stderr already, and
+  // the console.log(JSON.stringify(..)) sites are untouched by the wrap.
+  return args.includes('--json')
+    ? withHumanLogsToStderr(() => runSyncInner(engine, args))
+    : runSyncInner(engine, args);
+}
+
+async function runSyncInner(engine: BrainEngine, args: string[]) {
   // v0.40 Federated Sync v2: `gbrain sync trigger` subcommand
   // Routes to runSyncTrigger which queues a 'sync' minion job with
   // auto_embed_backfill=true. Falls through to the normal sync path
@@ -4505,8 +4516,9 @@ Options:
                        ok_count, error_count, skipped_count}). Sources
                        skipped by --missing-path skip appear with
                        status 'skipped_missing_path' and their
-                       local_path. Human banners route to stderr so
-                       '--json | jq' parses cleanly.
+                       local_path. All human output routes to stderr
+                       (single-source runs too) so '--json | jq'
+                       parses cleanly.
                        Exit codes: 0 = all sources ok or skipped,
                        1 = any error, 2 = cost-prompt-not-confirmed.
   --yes                Accept any interactive prompts (CI / non-TTY).
@@ -4819,7 +4831,7 @@ See also:
   // refusal is lifted below.
   if (skipFailed) {
     const acked = syncAll ? acknowledgeFailures() : acknowledgeFailures(sourceId);
-    if (acked.count > 0) console.log(`Acknowledged ${acked.count} pre-existing failure(s).`);
+    if (acked.count > 0) slog(`Acknowledged ${acked.count} pre-existing failure(s).`);
   }
 
   // v0.19.0 — `sync --all` iterates all registered sources with a
@@ -4852,7 +4864,7 @@ See also:
       );
     }
     if (!sources || sources.length === 0) {
-      console.log('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
+      slog('No sources with local_path configured. Use `gbrain sources add <id> --path <path>` first.');
       return;
     }
 
@@ -5279,9 +5291,9 @@ See also:
     // another source's failures.
     const failures = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
     if (failures.length === 0) {
-      console.log('No unacknowledged sync failures to retry.');
+      slog('No unacknowledged sync failures to retry.');
     } else {
-      console.log(`Retrying ${failures.length} previously-failed file(s)...`);
+      slog(`Retrying ${failures.length} previously-failed file(s)...`);
       // Don't acknowledge them yet — they must succeed to clear.
     }
   }
@@ -5363,7 +5375,7 @@ See also:
 
   // Watch mode
   let consecutiveErrors = 0;
-  console.log(`Watching for changes every ${interval}s... (Ctrl+C to stop)`);
+  slog(`Watching for changes every ${interval}s... (Ctrl+C to stop)`);
 
   while (true) {
     try {
@@ -5371,7 +5383,7 @@ See also:
       consecutiveErrors = 0;
       if (result.status === 'synced') {
         const ts = new Date().toISOString().slice(11, 19);
-        console.log(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
+        slog(`[${ts}] Synced: +${result.added} ~${result.modified} -${result.deleted} R${result.renamed}`);
       }
       // Same gate as non-watch: only manage .gitignore on successful sync.
       // v0.41.13.0 (T7 / D-V3-5): partial joins the deferred posture.
