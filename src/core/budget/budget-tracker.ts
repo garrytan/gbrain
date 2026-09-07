@@ -154,10 +154,31 @@ export async function loadPricingOverrides(
   }
 }
 
-/** Exact-key override lookup (keys normalized to lowercase at parse time). */
+/**
+ * Recipe-alias normalization shared by the override and table lookups:
+ * `claude-cli:haiku` → `claude-cli:claude-haiku-4-5-20251001`. Bare ids and
+ * unknown providers throw out of resolveRecipe and keep the raw id, so the
+ * downstream chains decide those exactly as before.
+ */
+function canonicalPricingKey(modelId: string): string {
+  try {
+    const { parsed } = resolveRecipe(modelId);
+    return `${parsed.providerId}:${parsed.modelId}`;
+  } catch {
+    return modelId;
+  }
+}
+
+/**
+ * Override lookup (keys normalized to lowercase at parse time): the raw key
+ * first, then the recipe-canonical key — an override written against the
+ * dated id must also price the alias the operator configured, or the alias
+ * silently bills at list price while the table lookup below resolves it.
+ */
 function overrideFor(modelId: string, overrides?: PricingOverrides): ModelPricing | null {
   if (!overrides) return null;
-  return overrides[modelId.trim().toLowerCase()] ?? null;
+  const raw = modelId.trim().toLowerCase();
+  return overrides[raw] ?? overrides[canonicalPricingKey(modelId.trim()).toLowerCase()] ?? null;
 }
 
 export class BudgetExhausted extends Error {
@@ -304,15 +325,9 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // hard-fail with no_pricing while the dated id it maps to priced fine.
   // Normalize once here; the chain below then prices the canonical id, and
   // alias vs dated id agree at reserve(), record() and isModelPriceable().
-  // Bare ids and unknown providers throw out of resolveRecipe: the existing
-  // chain decides those exactly as before.
-  let key = modelId;
-  try {
-    const { parsed } = resolveRecipe(modelId);
-    key = `${parsed.providerId}:${parsed.modelId}`;
-  } catch {
-    /* bare id or unknown provider — fall through on the raw id */
-  }
+  // Bare ids and unknown providers keep the raw id (canonicalPricingKey): the
+  // existing chain decides those exactly as before.
+  const key = canonicalPricingKey(modelId);
   const { provider: providerId, model: modelTail } = splitProviderModelId(key);
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
