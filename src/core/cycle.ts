@@ -1386,7 +1386,8 @@ async function runPhaseExtract(
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
     const result = await runExtractCore(engine, {
       mode: 'all',
-      jsonMode: true, // stdout belongs to the dream --json report; batch errors still reach stderr
+      jsonMode: false, // batch errors stay human-readable on stderr, as in a plain `gbrain extract`
+      quiet: true, // the cycle owns the report — no helper summary on stdout (keeps dream --json pure)
       dir: brainDir,
       slugs: changedSlugs,  // undefined = full walk (first run / manual)
       signal,

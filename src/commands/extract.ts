@@ -690,6 +690,14 @@ export interface ExtractOpts {
   /** Emit JSON (progress to stderr, result to stdout) instead of human text. */
   jsonMode?: boolean;
   /**
+   * Embedded callers (the cycle) own the report: emit nothing on stdout —
+   * no per-item dry-run lines, no `created N` summary. Independent of
+   * jsonMode, which also selects the stderr batch-error channel (JSON events
+   * vs human text); the cycle used `jsonMode: true` as a stand-in for this
+   * and flipped that channel in a plain `gbrain dream`.
+   */
+  quiet?: boolean;
+  /**
    * Incremental mode: only extract from these specific slugs.
    * When provided, skips the full directory walk and reads only the
    * files corresponding to these slugs. Massive perf win on large brains.
@@ -760,6 +768,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
 
   const dryRun = !!opts.dryRun;
   const jsonMode = !!opts.jsonMode;
+  const quiet = !!opts.quiet;
   const result: ExtractResult = { links_created: 0, timeline_entries_created: 0, pages_processed: 0 };
 
   // v0.41.15.0 (D9): resolve workers via the PGLite-clamp wrapper.
@@ -780,7 +789,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
       // Nothing changed — skip entirely.
       return result;
     }
-    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal, opts.sourceId, opts.includeFrontmatter);
+    const r = await extractForSlugs(engine, opts.dir, opts.slugs, opts.mode, dryRun, jsonMode, workers, opts.signal, opts.sourceId, opts.includeFrontmatter, quiet);
     result.links_created = r.links_created;
     result.timeline_entries_created = r.timeline_created;
     result.pages_processed = r.pages;
@@ -800,12 +809,12 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
     stampRefs = refsWithSnapshotStamps(walkRefs, await snapshotStampTimes(engine, walkRefs));
   }
   if (opts.mode === 'links' || opts.mode === 'all') {
-    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId);
+    const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId, quiet);
     result.links_created = r.created;
     result.pages_processed = r.pages;
   }
   if (opts.mode === 'timeline' || opts.mode === 'all') {
-    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId);
+    const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId, quiet);
     result.timeline_entries_created = r.created;
     result.pages_processed = Math.max(result.pages_processed, r.pages);
   }
@@ -1269,7 +1278,10 @@ async function extractForSlugs(
   // Default false preserves the body-only incremental behavior. Gated upstream
   // by `autopilot.incremental_extract_include_frontmatter`.
   includeFrontmatter: boolean = false,
+  // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
+  quiet: boolean = false,
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
+  const stdoutQuiet = jsonMode || quiet;
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(allFiles.map(f => pathToSlug(f.relPath)));
@@ -1373,7 +1385,7 @@ async function extractForSlugs(
           const links = await extractLinksFromFile(content, relPath, allSlugs, { globalBasename, includeFrontmatter, pack });
           for (const link of links) {
             if (dryRun) {
-              if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
+              if (!stdoutQuiet) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
               linksCreated++;
             } else {
               linkBatch.push(sourceId
@@ -1388,7 +1400,7 @@ async function extractForSlugs(
           const entries = extractTimelineFromContent(content, slug);
           for (const entry of entries) {
             if (dryRun) {
-              if (!jsonMode) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
+              if (!stdoutQuiet) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
               timelineCreated++;
             } else {
               timelineBatch.push({ slug: entry.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail, ...(sourceId ? { source_id: sourceId } : {}) });
@@ -1417,7 +1429,7 @@ async function extractForSlugs(
   }
   progress.finish();
 
-  if (!jsonMode) {
+  if (!stdoutQuiet) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Incremental extract: ${label} ${linksCreated} link(s), ${timelineCreated} timeline entries from ${pagesProcessed}/${slugs.length} page(s)`);
   }
@@ -1433,7 +1445,10 @@ async function extractLinksFromDir(
   // #1747/#1503: stamp resolved brain source id on batch rows so the
   // addLinksBatch JOIN matches non-'default' source pages.
   sourceId?: string,
+  // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
+  quiet: boolean = false,
 ): Promise<{ created: number; pages: number }> {
+  const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
 
@@ -1488,7 +1503,7 @@ async function extractLinksFromDir(
             const key = `${link.from_slug}::${link.to_slug}::${link.link_type}`;
             if (dryRunSeen.has(key)) continue;
             dryRunSeen.add(key);
-            if (!jsonMode) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
+            if (!stdoutQuiet) console.log(`  ${link.from_slug} → ${link.to_slug} (${link.link_type})`);
             created++;
           } else {
             batch.push(sourceId
@@ -1504,7 +1519,7 @@ async function extractLinksFromDir(
   await flush();
   progress.finish();
 
-  if (!jsonMode) {
+  if (!stdoutQuiet) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${files.length} pages`);
   }
@@ -1519,7 +1534,10 @@ async function extractTimelineFromDir(
   // #1747/#1503: stamp resolved brain source id so addTimelineEntriesBatch
   // matches non-'default' source pages.
   sourceId?: string,
+  // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
+  quiet: boolean = false,
 ): Promise<{ created: number; pages: number }> {
+  const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
@@ -1562,7 +1580,7 @@ async function extractTimelineFromDir(
             const key = `${entry.slug}::${entry.date}::${entry.summary}`;
             if (dryRunSeen.has(key)) continue;
             dryRunSeen.add(key);
-            if (!jsonMode) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
+            if (!stdoutQuiet) console.log(`  ${entry.slug}: ${entry.date} — ${entry.summary}`);
             created++;
           } else {
             batch.push({ slug: entry.slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail, ...(sourceId ? { source_id: sourceId } : {}) });
@@ -1576,7 +1594,7 @@ async function extractTimelineFromDir(
   await flush();
   progress.finish();
 
-  if (!jsonMode) {
+  if (!stdoutQuiet) {
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Timeline: ${label} ${created} entries from ${files.length} pages`);
   }
