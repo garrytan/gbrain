@@ -18,11 +18,18 @@
  *  - the cutoff lands before the SQL LIMIT: a limit never refills with rows
  *    from outside the window
  *  - an unparseable since is rejected with invalid_params
+ *  - the CLI's entity-TEXT fallback (a bare positional that resolves to no
+ *    entity is retried as a fact-text grep, #4720) keeps the window: an
+ *    explicit `--since` on event time, `--since-last-run` on the cursor's
+ *    creation-time watermark. Without it a windowed recall for an unknown
+ *    term returned the term's whole history.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { rmSync } from 'node:fs';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { runRecall } from '../src/commands/recall.ts';
+import { writeCursor } from '../src/core/recall-cursor-state.ts';
 import { withEnv, emptyHome } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
@@ -32,6 +39,8 @@ const DAY = 24 * HOUR;
 const NOW = Date.now();
 // Fixed cutoff for the boundary test (well inside every "48 hours ago" window).
 const CUTOFF = new Date(NOW - 2 * HOUR);
+// GBRAIN_HOME for the --since-last-run case (the cursor file lives under it).
+const cursorHome = emptyHome();
 
 async function seed(fact: string, opts: { entity?: string; session?: string; validFrom: Date }): Promise<void> {
   await engine.insertFact(
@@ -55,7 +64,7 @@ async function recallFacts(params: Record<string, unknown>): Promise<string[]> {
   return (payload.facts as { fact: string }[]).map((f) => f.fact);
 }
 
-async function recallCli(args: string[]): Promise<string[]> {
+async function recallCli(args: string[], home = emptyHome()): Promise<string[]> {
   const origWrite = process.stdout.write;
   let captured = '';
   process.stdout.write = ((chunk: string | Uint8Array) => {
@@ -63,7 +72,7 @@ async function recallCli(args: string[]): Promise<string[]> {
     return true;
   }) as typeof process.stdout.write;
   try {
-    await withEnv({ GBRAIN_HOME: emptyHome() }, async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
       await runRecall(engine, [...args, '--json']);
     });
   } finally {
@@ -97,10 +106,20 @@ beforeAll(async () => {
   await seed('page-old-1', { entity: 'ent-page', validFrom: new Date(NOW - 10 * DAY) });
   await seed('page-old-2', { entity: 'ent-page', validFrom: new Date(NOW - 20 * DAY) });
   await seed('page-old-3', { entity: 'ent-page', validFrom: new Date(NOW - 30 * DAY) });
+
+  // Entity-text fallback rows: no entity, the query term only appears in the
+  // TEXT. Same event-time split as above; the old row's created_at is also
+  // backdated so the creation-time (--since-last-run) window excludes it.
+  await seed('textfb-zebrule recent', { validFrom: new Date(NOW - HOUR) });
+  await seed('textfb-zebrule old', { validFrom: new Date(NOW - 10 * DAY) });
+  await engine.executeRaw(
+    `UPDATE facts SET created_at = now() - interval '10 days' WHERE fact = 'textfb-zebrule old'`,
+  );
 });
 
 afterAll(async () => {
   await engine.disconnect();
+  rmSync(cursorHome, { recursive: true, force: true });
 });
 
 describe('recall op: entity / session_id / since compose before the SQL LIMIT', () => {
@@ -177,5 +196,18 @@ describe('gbrain recall CLI (local path) composes the same way', () => {
     const facts = await recallCli(['--session-id', 'sess-window', '--since', '48 hours ago']);
     expect(facts).toContain('window-session-recent');
     expect(facts).not.toContain('window-session-old');
+  });
+});
+
+describe('gbrain recall CLI entity-text fallback honors the window', () => {
+  test('unknown positional + --since matches by text but only inside the event-time window', async () => {
+    // Sanity: without a window the fallback returns the term's full history.
+    expect((await recallCli(['zebrule'])).sort()).toEqual(['textfb-zebrule old', 'textfb-zebrule recent']);
+    expect(await recallCli(['zebrule', '--since', '48 hours ago'])).toEqual(['textfb-zebrule recent']);
+  });
+
+  test('unknown positional + --since-last-run keeps the cursor watermark (creation time)', async () => {
+    await withEnv({ GBRAIN_HOME: cursorHome }, () => writeCursor('default', new Date(NOW - 2 * DAY)));
+    expect(await recallCli(['zebrule', '--since-last-run'], cursorHome)).toEqual(['textfb-zebrule recent']);
   });
 });
