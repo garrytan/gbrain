@@ -251,3 +251,87 @@ describe('meetings with NULL effective_date (put_page-style insert)', () => {
     expect(rows[0]!.date).toBe('2026-08-01');
   });
 });
+
+// ─── wave review: attendee cross-source gate, date sources, private meetings ──
+describe('wave review — attendee gate, date derivation, private meetings', () => {
+  async function seedMeeting(slug: string, frontmatter: Record<string, unknown>, sourceId?: string): Promise<void> {
+    await engine.putPage(slug, {
+      type: 'meeting',
+      title: `Meeting ${slug.split('/').pop()}`,
+      compiled_truth: 'Notes.',
+      timeline: '',
+      frontmatter,
+      // No effective_date — a raw put_page row.
+    }, sourceId ? { sourceId } : undefined);
+  }
+  const datesBySource = () => engine.executeRaw<{ date: string; source: string }>(
+    `SELECT date::text AS date, source FROM timeline_entries ORDER BY date, source`,
+  );
+
+  it('dates a NULL-effective_date meeting from its slug tail or import_filename, like the effective_date backfill', async () => {
+    await seedEntity('people/alice-example', 'Alice Example');
+    // Slug tail carries the date (the common vault layout: meetings/YYYY-MM-DD-*).
+    await seedMeeting('meetings/2026-05-02-standup', {});
+    await addAttended('meetings/2026-05-02-standup', 'people/alice-example');
+    // Slug has no date; the imported filename does.
+    await seedMeeting('meetings/standup-two', {});
+    await engine.executeRaw(`UPDATE pages SET import_filename = '2026-05-03-standup-two.md' WHERE slug = 'meetings/standup-two'`);
+    await addAttended('meetings/standup-two', 'people/alice-example');
+
+    const result = await extractTimelineFromMeetings(engine, { gazetteer: new Map() });
+    expect(result).toMatchObject({ meetings_scanned: 2, entries_created: 2, batch_errors: 0 });
+    expect((await datesBySource()).map((r) => [r.date, r.source])).toEqual([
+      ['2026-05-02', 'extract-timeline-from-meetings:meetings/2026-05-02-standup'],
+      ['2026-05-03', 'extract-timeline-from-meetings:meetings/standup-two'],
+    ]);
+  });
+
+  it('skips a meeting whose only date is the import timestamp instead of dating it from updated_at', async () => {
+    // Nothing in frontmatter, slug, or filename parses as a date. Pre-fix the
+    // row was dated from updated_at (today) — a twin that survives dedup next
+    // to the correctly dated row a later backfill + re-run writes.
+    await seedEntity('people/alice-example', 'Alice Example');
+    await seedMeeting('meetings/undated-sync', {});
+    await addAttended('meetings/undated-sync', 'people/alice-example');
+
+    const result = await extractTimelineFromMeetings(engine, { gazetteer: new Map() });
+    expect(result).toMatchObject({ meetings_scanned: 0, entries_created: 0, entities_touched: 0 });
+    expect(await datesBySource()).toEqual([]);
+  });
+
+  it('attended edges into another source are gated by link_resolution.cross_source, like body mentions', async () => {
+    await seedEntity('people/alice-example', 'Alice Example'); // source 'default'
+    await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ('team-b', 'Team B') ON CONFLICT (id) DO NOTHING`, []);
+    await seedNote('meetings/board-sync', { title: 'Board Sync', legacyType: 'meeting', sourceId: 'team-b' });
+    await engine.addLinksBatch([{
+      from_slug: 'meetings/board-sync', to_slug: 'people/alice-example',
+      link_type: 'attended', link_source: 'manual',
+      from_source_id: 'team-b', to_source_id: 'default',
+    }]);
+
+    const off = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: undefined }, () =>
+      extractTimelineFromMeetings(engine, { gazetteer: new Map() }));
+    expect(off).toMatchObject({ meetings_scanned: 1, entries_created: 0, entities_touched: 0 });
+
+    const on = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' }, () =>
+      extractTimelineFromMeetings(engine, { gazetteer: new Map() }));
+    expect(on).toMatchObject({ meetings_scanned: 1, entries_created: 1, entities_touched: 1 });
+  });
+
+  it('a visibility: private meeting never lands on another page\'s timeline', async () => {
+    // The fan-out row carries the meeting's title + slug + date but no
+    // event_page_id (the (event_page_id, date) unique index forbids one per
+    // attendee), so the remote private-event filter could never hide it.
+    await seedEntity('people/alice-example', 'Alice Example');
+    await seedMeeting('meetings/2026-05-04-private-1on1', { visibility: 'private' });
+    await addAttended('meetings/2026-05-04-private-1on1', 'people/alice-example');
+    await seedMeeting('meetings/2026-05-05-public-sync', {});
+    await addAttended('meetings/2026-05-05-public-sync', 'people/alice-example');
+
+    const result = await extractTimelineFromMeetings(engine, { gazetteer: new Map() });
+    expect(result).toMatchObject({ meetings_scanned: 1, entries_created: 1, entities_touched: 1 });
+    expect((await datesBySource()).map((r) => r.source)).toEqual([
+      'extract-timeline-from-meetings:meetings/2026-05-05-public-sync',
+    ]);
+  });
+});

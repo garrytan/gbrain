@@ -15,6 +15,7 @@ import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-ment
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { parseFrontmatter } from './backfill-effective-date.ts';
+import { isPrivatePage } from './search/private-visibility.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -95,9 +96,9 @@ export async function extractTimelineFromMeetings(
     return { meetings_scanned: 0, entries_created: 0, entities_touched: 0, batch_errors: 0 };
   }
 
-  // 2. Fetch all 'attended' edges (one round-trip, scoped to the loaded
-  // meeting source_ids). Build a Map<meetingSlug → attendees[]> for O(1)
-  // attendee lookup per meeting.
+  // 2. Fetch all 'attended' edges (one brain-wide round-trip — the SQL is NOT
+  // source-scoped; rows are filtered in JS to the loaded meetings below).
+  // Build a Map<meetingKey → attendees[]> for O(1) attendee lookup per meeting.
   const meetingKeys = new Set(meetings.map((m) => `${m.source_id}::${m.slug}`));
   const attendedEdges = await engine.executeRaw<AttendedEdgeRow>(
     `SELECT pf.slug AS from_slug, pf.source_id AS from_source_id,
@@ -129,6 +130,8 @@ export async function extractTimelineFromMeetings(
   const entitiesTouched = new Set<string>();
   let meetingsScanned = 0;
   let dateFallbacks = 0;
+  let undated = 0;
+  let privateSkipped = 0;
   let batchErrors = 0;
   let firstBatchError: string | undefined;
 
@@ -158,19 +161,29 @@ export async function extractTimelineFromMeetings(
       const updatedMs = new Date(meeting.updated_at).getTime();
       if (Number.isFinite(updatedMs) && updatedMs <= sinceMs) continue;
     }
+    const frontmatter = parseFrontmatter(meeting.frontmatter);
+    // A private meeting must not fan its title/slug/date out onto other pages'
+    // timelines: the row carries no event_page_id (the (event_page_id, date)
+    // unique index allows one row per event, not one per attendee), so the
+    // remote private-event filter could never hide it. Fail closed: skip.
+    if (isPrivatePage(frontmatter)) { privateSkipped++; continue; }
     // put_page-written pages never get effective_date computed (column stays
-    // NULL); derive it exactly as `gbrain backfill effective_date` would so a
-    // later backfill + re-run dedups against this row instead of doubling it.
+    // NULL); derive it exactly as `gbrain backfill effective_date` would —
+    // same filename recipe (import_filename, else the slug tail) — so a later
+    // backfill + re-run dedups against this row instead of doubling it. The
+    // 'fallback' source is updated_at/created_at: an import timestamp, never
+    // the meeting's date. A row dated from it would survive dedup as a twin of
+    // the correctly dated row, so such meetings are skipped, not dated.
     let date = meeting.effective_date;
     if (!date) {
-      const computed = computeEffectiveDate({
+      const { date: computed, source } = computeEffectiveDate({
         slug: meeting.slug,
-        frontmatter: parseFrontmatter(meeting.frontmatter),
-        filename: meeting.import_filename ? meeting.import_filename.replace(/\.[a-z0-9]+$/i, '') : null,
+        frontmatter,
+        filename: meeting.import_filename || meeting.slug.split('/').pop()!,
         createdAt: new Date(meeting.created_at),
         updatedAt: new Date(meeting.updated_at),
-      }).date;
-      if (!computed) continue; // can't write a timeline entry without a date
+      });
+      if (!computed || source === 'fallback') { undated++; continue; }
       date = computed.toISOString().slice(0, 10);
       dateFallbacks++;
     }
@@ -182,10 +195,13 @@ export async function extractTimelineFromMeetings(
     const summary = `Discussed in ${meeting.title}`;
     const sourceKey = `extract-timeline-from-meetings:${meeting.slug}`;
 
-    // Attendees (from 'attended' links).
+    // Attendees (from 'attended' links). An edge into ANOTHER source fans out
+    // only under `link_resolution.cross_source` — the same gate the mention
+    // lane below applies (the edge fetch above is brain-wide, not scoped).
     const attendees = attendeesByMeeting.get(meetingKey) ?? [];
     const targets = new Map<string, { slug: string; source_id: string }>();
     for (const e of attendees) {
+      if (!allowCrossSource && e.to_source_id !== meeting.source_id) continue;
       targets.set(`${e.to_source_id}::${e.to_slug}`, {
         slug: e.to_slug,
         source_id: e.to_source_id,
@@ -228,8 +244,19 @@ export async function extractTimelineFromMeetings(
   await flush();
   if (dateFallbacks > 0) {
     console.error(
-      `[extract timeline] ${dateFallbacks} meeting(s) have no effective_date; dated from frontmatter/filename. ` +
+      `[extract timeline] ${dateFallbacks} meeting(s) have no effective_date column value; dated from their frontmatter date or filename instead. ` +
       `Run \`gbrain backfill effective_date\` to persist it.`,
+    );
+  }
+  if (undated > 0) {
+    console.error(
+      `[extract timeline] ${undated} meeting(s) skipped: no date in frontmatter or filename (import timestamps are never used as the meeting date). ` +
+      `Add a \`date:\` field or a YYYY-MM-DD filename prefix.`,
+    );
+  }
+  if (privateSkipped > 0) {
+    console.error(
+      `[extract timeline] ${privateSkipped} visibility: private meeting(s) skipped: a timeline row on another page cannot be hidden from remote readers.`,
     );
   }
   return {
