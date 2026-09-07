@@ -546,7 +546,10 @@ async function assembleDelta(
           slug: p.slug,
           source_id: opts.sourceId,
           title: p.title,
-          updated_at: p.updated_at instanceof Date ? p.updated_at.toISOString() : String(p.updated_at),
+          // Column-precision cursor: `next_cursor.since` minted from a JS Date
+          // re-selects every same-millisecond row on the next wake.
+          updated_at:
+            p.updated_at_iso ?? (p.updated_at instanceof Date ? p.updated_at.toISOString() : String(p.updated_at)),
         }));
       } catch {
         acc.pages = [];

@@ -66,14 +66,6 @@ function normSession(sessionId: string): string {
   return String(sessionId).slice(0, ID_MAX_LEN);
 }
 
-/** Normalize a DB timestamp text to ISO 8601 so downstream cursor comparisons
- * are format-stable (PGLite's ::text cast returns local-tz text, not ISO). */
-function toIso(v: string | null): string | null {
-  if (!v) return null;
-  const t = Date.parse(v);
-  return Number.isFinite(t) ? new Date(t).toISOString() : v;
-}
-
 function toStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
   if (typeof v === 'string') {
@@ -100,7 +92,11 @@ export async function getSessionContextState(
       surfaced_slugs: unknown;
       last_wake_at: string | null;
     }>(
-      `SELECT standing_entities, surfaced_slugs, last_wake_at::text AS last_wake_at
+      // ISO UTC at the column's microsecond precision (not ::text — PGLite
+      // renders local-tz text, and a JS Date round-trip would re-round the
+      // keyset cursor to milliseconds, re-delivering same-millisecond pages).
+      `SELECT standing_entities, surfaced_slugs,
+              to_char(last_wake_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS last_wake_at
        FROM session_context_state
        WHERE source_id = $1 AND client_id = $2 AND session_id = $3`,
       [sourceId, resolveClientId(clientId), normSession(sessionId)],
@@ -110,7 +106,7 @@ export async function getSessionContextState(
     return {
       standing_entities: toStringArray(r.standing_entities),
       surfaced_slugs: toStringArray(r.surfaced_slugs),
-      last_wake_at: toIso(r.last_wake_at ?? null),
+      last_wake_at: r.last_wake_at ?? null,
     };
   } catch {
     return null;

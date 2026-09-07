@@ -624,8 +624,16 @@ const delta: Operation = {
     }
     // NORMALIZE to ISO immediately (red-team F4): the raw string is echoed
     // into the injectable `text` block, so an attacker-shaped-but-parseable
-    // `since` must never reach rendering verbatim.
-    const explicitSince = rawSince !== null ? new Date(Date.parse(rawSince)).toISOString() : null;
+    // `since` must never reach rendering verbatim. A value already in the
+    // canonical microsecond shape `listPages` projects (`next_cursor.since`
+    // passed back) is kept verbatim: rounding it through a JS Date would
+    // re-select every same-millisecond row on the resumed wake.
+    const explicitSince =
+      rawSince === null
+        ? null
+        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince)
+          ? rawSince
+          : new Date(Date.parse(rawSince)).toISOString();
     const sessionId = typeof p.session_id === 'string' && p.session_id.trim() ? p.session_id : null;
     // Cursor namespace (pre-landing review, fail-closed): 'local' is RESERVED
     // for the trusted CLI/hook lane, gated on STRICT ctx.remote === false —
