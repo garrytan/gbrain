@@ -1,5 +1,10 @@
 # TODOS
 
+## Community fix wave follow-ups (filed 2026-09-07, atoms/extraction/facts train)
+
+- [ ] **P3 — extract_atoms parser: bracketed prose AFTER the array, and the sibling first-`[` anchors.**
+  **What:** `parseAtomsOutcomeInner` (`src/core/cycle/extract-atoms.ts`) now scans successive `[` offsets so bracketed preamble (`[Source: …]`, `[[wikilink]]`, `[user]`) no longer hijacks the anchor (#4913). The symmetric case still fails: bracketed prose AFTER the array (e.g. `[atoms]\nSee [Source: X].`) because the trim-back runs to the LAST `]`. The sibling first-`[` anchors in `propose-takes.ts`, `extract-events.ts`, and `calibration-profile.ts` are independent copies and remain unfixed. **How:** a shared "find the first parseable array that yields >= 1 shaped element" helper (scan forward on `[`, trim back over candidate `]`s) that all four callers route through. **Effort:** S. **Priority:** P3.
+
 ## Ranker wave follow-ups (filed 2026-09-06, v0.48.4.0 wave; plan: ~/.claude/plans/do-a-gbrain-evals-fix-snug-starlight.md)
 
 - [ ] **P2 — session-aware autocut (the next pre-registered mechanism for `search.autocut`).**
