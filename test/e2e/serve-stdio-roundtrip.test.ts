@@ -106,10 +106,12 @@ describe('serve stdio round-trip E2E (local PGLite → real MCP tool calls)', ()
     execFixture(['run', 'src/cli.ts', 'import', federatedNotes, '--no-embed', '--source-id', 'federated-source'], env);
 
     // 3. Let the MCP SDK spawn `gbrain serve` (stdio) and run the initialize
-    //    handshake — exactly what `claude mcp add gbrain -- gbrain serve` does.
+    //    handshake with the opt-in idle timeout enabled. This pins the
+    //    production wrapper shape that previously let the timeout's activity
+    //    listener consume initialize before the SDK transport attached.
     transport = new StdioClientTransport({
       command: 'bun',
-      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve'],
+      args: ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--stdio-idle-timeout', '14400'],
       cwd: process.cwd(),
       env, // includes PATH (to find `bun`) + GBRAIN_HOME
     });
