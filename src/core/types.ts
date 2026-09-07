@@ -313,7 +313,8 @@ export interface PageFilters {
    * v0.45.7 — keyset cursor for deterministic pagination through pages sharing
    * one `updated_at`. `WHERE p.updated_at > ts OR (p.updated_at = ts AND
    * p.slug > slug)`. Supersedes `updated_after` when set; pair with
-   * `sort: 'updated_asc'` (total order). Used by the `delta` verb's session
+   * `sort: 'updated_asc'` (a total order: updated_at, slug, source_id, id —
+   * slug alone is unique only per source). Used by the `delta` verb's session
    * cursor so a >limit same-timestamp cluster pages cleanly instead of
    * livelocking. `slug` empty ⇒ start of the `ts` bucket. `updatedAt` should
    * be the row's `updated_at_iso` (column precision); a millisecond-rounded
@@ -407,8 +408,10 @@ export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
   // now() across a transaction). Without the tiebreaker, rows at the same
   // timestamp order arbitrarily and a >limit tie cluster is unpageable.
   // The cursor must carry the column's microsecond precision to be exact:
-  // resume from `Page.updated_at_iso`, never from a JS Date.
-  updated_asc:  'p.updated_at ASC, p.slug ASC',
+  // resume from `Page.updated_at_iso`, never from a JS Date. Slug is unique
+  // only per source, so a federated listing needs source_id + id behind it to
+  // stay a total order (same tiebreakers as `slug` below).
+  updated_asc:  'p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC',
   created_desc: 'p.created_at DESC',
   // Slug uniqueness is per (source_id, slug), so a federated listing can hold
   // the same slug from several sources; source_id + id make slug+offset paging
