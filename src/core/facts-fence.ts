@@ -505,31 +505,36 @@ export function upsertFactRow(
     },
   ];
 
-  const newFence = renderFactsTable(allRows);
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable(allRows)), rowNum: nextRowNum };
+}
 
+/**
+ * The ONE fence-placement rule, shared by every writer that materializes a
+ * fence into a page body (upsertFactRow, the phantom-redirect canonical
+ * append, the importer's hidden-row merge). Replaces an existing fence in
+ * place; otherwise inserts a fresh `## Facts` section carrying `fenceBlock`.
+ *
+ * #4756: the FIRST fence must land in compiled_truth — ABOVE the timeline
+ * sentinel. splitBody() files everything below the sentinel into
+ * page.timeline, where extract_facts refuses to reconcile it
+ * (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that already
+ * had a timeline froze the fence permanently. No sentinel → EOF append.
+ */
+export function replaceOrInsertFactsFence(body: string, fenceBlock: string): string {
   const beginIdx = body.indexOf(FACTS_FENCE_BEGIN);
   const endIdx   = body.indexOf(FACTS_FENCE_END, beginIdx + FACTS_FENCE_BEGIN.length);
-  let out: string;
   if (beginIdx !== -1 && endIdx !== -1) {
-    out = body.slice(0, beginIdx) + newFence + body.slice(endIdx + FACTS_FENCE_END.length);
-  } else {
-    // #4756: the FIRST fence must land in compiled_truth — ABOVE the timeline
-    // sentinel. splitBody() files everything below the sentinel into
-    // page.timeline, where extract_facts refuses to reconcile it
-    // (FACTS_FENCE_BELOW_SENTINEL) — a blind EOF append on any page that
-    // already had a timeline froze the fence permanently.
-    const section = `## Facts\n\n${newFence}\n`;
-    const sentinelAt = timelineSentinelOffset(body);
-    if (sentinelAt !== -1) {
-      const head = body.slice(0, sentinelAt);
-      const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
-      out = `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
-    } else {
-      const sep = body.endsWith('\n') ? '\n' : '\n\n';
-      out = `${body}${sep}${section}`;
-    }
+    return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
   }
-  return { body: out, rowNum: nextRowNum };
+  const section = `## Facts\n\n${fenceBlock}\n`;
+  const sentinelAt = timelineSentinelOffset(body);
+  if (sentinelAt !== -1) {
+    const head = body.slice(0, sentinelAt);
+    const sep = head === '' ? '' : head.endsWith('\n\n') ? '' : head.endsWith('\n') ? '\n' : '\n\n';
+    return `${head}${sep}${section}\n${body.slice(sentinelAt)}`;
+  }
+  const sep = body.endsWith('\n') ? '\n' : '\n\n';
+  return `${body}${sep}${section}`;
 }
 
 /**
