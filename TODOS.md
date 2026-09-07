@@ -185,18 +185,25 @@
   and render it from both wrappers. **Why:** same ephemeral-container wipe
   class; one guard, two callers. **Context:** #4728 deliberately did not widen
   into `core/`. **Effort:** S. **Priority:** P3.
-- [ ] **P1 — Fix-wave 2: the 27 deferred M-effort verified issues.**
-  **What:** the v0.48.1.0 community fix wave triaged every open issue; 22
-  were fixed in-wave and 27 verified M-effort issues were deferred to a
-  second wave. Full triage records (verdict, rationale, fix sketch, key
-  files per issue) live in `.context/fix-wave-triage.json` (gitignored —
-  wave working state, not repo content). Deferred issue numbers: #4744
-  #4741 #4738 #4732 #4729 #4728 #4696 #4684 #4679 #4653 #4652 #4649 #4620
-  #4616 #4609 #4606 #4605 #4603 #4601 #4597 #4589 #4588 #4586 #4578 #4563
-  #4558 #4359. (#4636 and #4564 were also triaged M but got fixed in-wave —
-  #4636 by the #4279 adoption, #4564 by the #4583 default-write guard.)
-  **How:** same discipline as wave 1 — red-proven regression test per fix,
-  themed trains, per-train targeted sweeps.
+- [ ] **P1 — Fix-wave 3: the 27 verified issues deferred by the 0.48.5.0 wave.**
+  **What:** the 0.48.5.0 community fix wave re-verified every open issue
+  against master (first-pass verifier + adversarial refuter per issue) and
+  fixed 42 directly; 26 verified M-effort bugs and one S-effort bug on the
+  retrieval-gate path were deferred. Triage records (verdict, evidence, fix
+  sketch, key files per issue) live in the wave workspace
+  `.context/wave/triage/issue/` + `.context/wave/refute/issue/` (gitignored
+  wave working state, not repo content). Deferred: #4381 #4558 #4576 #4578
+  #4586 #4588 #4600 #4603 #4605 #4613 #4616 #4622 #4649 #4653 #4670 #4684
+  #4741 #4761 #4766 #4772 #4795 #4797 #4852 #4879 #4910 #4921, plus #4359
+  (S, but it lives in `search/hybrid.ts` and needs an eval-replay receipt).
+  Of the 0.48.1.0 wave's 27 deferrals, ten shipped in 0.48.5.0 (#4744 via
+  #4933, #4729 via #4865, #4728, #4696, #4652, #4620, #4606, #4597, #4589,
+  #4563), five were re-classified on verification (#4738 and #4732
+  needs-info, #4679 and #4609 feature requests, #4601 docs-only), and the
+  rest carry forward above.
+  **How:** same discipline — red-proven regression test per fix, themed
+  trains in isolated worktrees, composed-collector `verify` + full suite,
+  composite hostile review before ship.
 - [ ] **P2 — Enforce pack vocabulary at the put_page choke point, not
   per-surface.** **What:** #4655's write-time vocabulary enforcement
   (`src/core/schema-pack/write-vocabulary.ts`) is wired at three surfaces
