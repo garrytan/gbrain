@@ -144,8 +144,10 @@ const run_doctor: Operation = {
   handler: async (ctx) => {
     const { doctorReportRemote } = await import('../../commands/doctor.ts');
     // Source isolation (cross-model P1): a source-bound caller's report must
-    // not aggregate other sources' activity. Scope-aware checks (currently
-    // volunteer_channels) filter on these ids; unscoped ctx = brain-wide.
+    // not aggregate other sources' activity. Scope-aware checks (connection,
+    // brain_score, chronicle_projection_health, multi_source_drift,
+    // volunteer_channels, extract_atoms_backlog) filter on these ids;
+    // unscoped ctx = brain-wide.
     const scope = sourceScopeOpts(ctx);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined);
     return doctorReportRemote(ctx.engine, { sourceIds });

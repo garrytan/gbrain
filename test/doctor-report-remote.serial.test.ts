@@ -182,4 +182,23 @@ describe('doctorReportRemote — source scope (#4592)', () => {
     expect(message(after, 'connection')).toBe(message(before, 'connection'));
     expect(message(after, 'brain_score')).toBe(message(before, 'brain_score'));
   });
+
+  test('extract_atoms_backlog / drift / orphan probes never name or count an excluded source (wave review)', async () => {
+    // 12 eligible-but-unextracted pages in the EXCLUDED source: brain-wide the
+    // backlog is >= 12 (and the drain hint may name the source); a caller
+    // granted only SRCA must see a zero backlog and no trace of SRCB anywhere
+    // in the report — details.backlog_by_source, messages, fix hints.
+    const body = 'x'.repeat(600);
+    for (let i = 0; i < 12; i++) {
+      await engine.putPage(`articles/leak-${i}`, { title: `leak-${i}`, type: 'article', compiled_truth: body }, { sourceId: SRCB });
+    }
+    const wide = await doctorReportRemote(engine);
+    const wideBacklog = wide.checks.find(c => c.name === 'extract_atoms_backlog')!;
+    expect(Number((wideBacklog.details as { backlog: number }).backlog)).toBeGreaterThanOrEqual(12);
+
+    const scoped = await doctorReportRemote(engine, { sourceIds: [SRCA] });
+    const scopedBacklog = scoped.checks.find(c => c.name === 'extract_atoms_backlog')!;
+    expect(Number((scopedBacklog.details as { backlog: number }).backlog)).toBe(0);
+    expect(JSON.stringify(scoped)).not.toContain(SRCB);
+  });
 });

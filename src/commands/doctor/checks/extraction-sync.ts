@@ -509,11 +509,17 @@ type ExtractAtomsBacklogCounter = (engine: BrainEngine, sourceId?: string) => Pr
 async function countExtractAtomsBacklogBySource(
   engine: BrainEngine,
   countBacklog: ExtractAtomsBacklogCounter,
+  sourceIds?: string[],
 ): Promise<Array<{ source_id: string; backlog: number }> | null> {
   try {
-    const sources = await engine.executeRaw<{ source_id: string }>(
-      `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
-    );
+    // Source isolation: a scoped caller (remote run_doctor with a source
+    // grant) only ever sees its own ids — the brain-wide roster is for the
+    // unscoped local/host path.
+    const sources = sourceIds
+      ? [...sourceIds].sort().map((source_id) => ({ source_id }))
+      : await engine.executeRaw<{ source_id: string }>(
+        `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
+      );
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);
@@ -524,6 +530,22 @@ async function countExtractAtomsBacklogBySource(
   } catch {
     return null;
   }
+}
+
+/** Total backlog: brain-wide when unscoped, else the sum over the granted ids. */
+async function countExtractAtomsBacklogScoped(
+  engine: BrainEngine,
+  countBacklog: ExtractAtomsBacklogCounter,
+  sourceIds?: string[],
+): Promise<number | null> {
+  if (!sourceIds) return countBacklog(engine);
+  let total = 0;
+  for (const id of sourceIds) {
+    const n = await countBacklog(engine, id);
+    if (n === null) return null;
+    total += n;
+  }
+  return total;
 }
 
 function buildExtractAtomsDrainCommand(
@@ -635,12 +657,15 @@ async function brainShapeCanCarryCycleStamps(engine: BrainEngine): Promise<boole
  */
 export async function computeExtractAtomsBacklogCheck(
   engine: BrainEngine,
+  opts: { sourceIds?: string[] } = {},
 ): Promise<Check> {
   const name = 'extract_atoms_backlog';
   const approx = 'page backlog only; transcript corpus not counted';
   try {
     const { countExtractAtomsBacklog } = await import('../../../core/cycle/extract-atoms.ts');
-    const backlog = await countExtractAtomsBacklog(engine); // brain-wide
+    // undefined = brain-wide (local doctor); an array = the remote caller's
+    // source grant — counts, roster and drain hints all stay inside it.
+    const backlog = await countExtractAtomsBacklogScoped(engine, countExtractAtomsBacklog, opts.sourceIds);
     if (backlog === null) {
       return { name, status: 'warn', message: 'backlog query failed (could not count eligible pages)' };
     }
@@ -660,7 +685,7 @@ export async function computeExtractAtomsBacklogCheck(
     // The incident: pack does NOT run the phase but a real backlog exists →
     // it will grow forever without a signal. WARN with the drain command.
     if (!declared && backlog > 10) {
-      const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+      const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
       const fix = buildExtractAtomsBacklogFixHint(backlogBySource);
       return {
         name, status: 'warn',
@@ -690,7 +715,7 @@ export async function computeExtractAtomsBacklogCheck(
         };
       }
       if (evidence && (evidence.state === 'never' || evidence.state === 'stale')) {
-        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog);
+        const backlogBySource = await countExtractAtomsBacklogBySource(engine, countExtractAtomsBacklog, opts.sourceIds);
         const drain = buildExtractAtomsDrainCommand(backlogBySource);
         const since = evidence.state === 'never'
           ? 'no full cycle has ever completed'
