@@ -19,6 +19,7 @@ import type { GraphPath } from '../core/types.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../core/engine-constants.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
+import { resolveSourceId, ALL_SOURCES } from '../core/source-resolver.ts';
 
 interface Args {
   slug?: string;
@@ -27,6 +28,7 @@ interface Args {
   direction: 'in' | 'out' | 'both';
   showHelp: boolean;
   includeForeign: boolean;
+  source?: string;
 }
 
 function parseArgs(args: string[]): Args {
@@ -40,6 +42,8 @@ function parseArgs(args: string[]): Args {
       if (d === 'in' || d === 'out' || d === 'both') out.direction = d;
     }
     else if (a === '--include-foreign') out.includeForeign = true;
+    else if (a === '--source' && i + 1 < args.length) out.source = args[++i];
+    else if (a.startsWith('--source=')) out.source = a.slice('--source='.length);
     else if (a === '--help' || a === '-h') out.showHelp = true;
     else if (!a.startsWith('-') && !out.slug) out.slug = a;
   }
@@ -57,10 +61,14 @@ Options:
                          founded, advises, mentions, source).
   --depth <N>            Max traversal depth (default 5).
   --direction <dir>      'out' (default), 'in', or 'both'.
+  --source <id>          Scope the walk to this source. Defaults to the
+                         resolved source (GBRAIN_SOURCE, .gbrain-source,
+                         path match, brain default); __all__ spans every
+                         source. An unknown source is a hard error.
   --include-foreign      Include edges to pages in other sources (v0.37.7.0).
-                         Off by default; scoped traversal continues as today,
-                         and a footer reports the count of foreign-source
-                         edges hidden so users discover they exist.
+                         Off by default; the walk stays inside the resolved
+                         source, and a footer reports the count of
+                         foreign-source edges hidden so users discover they exist.
   -h, --help             Show this message.
 
 Examples:
@@ -140,6 +148,11 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
   // traverse_graph op returns GraphPath[] when link_type or direction is
   // set (which the CLI always does); unpackToolResult parses the JSON.
   let paths: GraphPath[];
+  // True only when the local walk was narrowed to one source — the footer
+  // reports what that narrowing hid, so it must never print for an unscoped
+  // walk (--include-foreign, --source __all__, or the thin-client path, where
+  // the server scopes to the caller's grant).
+  let scoped = false;
   const cfg = loadConfig();
   if (isThinClient(cfg)) {
     const raw = await callRemoteTool(cfg!, 'traverse_graph', {
@@ -150,10 +163,18 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     }, { timeoutMs: 30_000 });
     paths = unpackToolResult<GraphPath[]>(raw);
   } else {
+    // #4765: the walk used to run unscoped (the traverse_graph op scopes via
+    // sourceScopeOpts; this CLI twin never did), so --include-foreign was
+    // inert and the footer described a filter that never applied. Resolve
+    // the source the way every other local command does; an explicit
+    // --source that fails to resolve throws loudly (#1712 policy).
+    const sourceId = await resolveSourceId(engine, args.source ?? null);
+    scoped = !args.includeForeign && sourceId !== ALL_SOURCES;
     const walk = await engine.traversePathsDetailed(args.slug, {
       depth: args.depth,
       linkType: args.linkType,
       direction: args.direction,
+      ...(scoped ? { sourceId } : {}),
     });
     paths = walk.paths;
     if (walk.truncated) {
@@ -165,7 +186,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
     console.log(`No edges found from ${args.slug}${args.linkType ? ` (--type ${args.linkType})` : ''}.`);
     // Still report foreign edges so the user knows they exist in other
     // sources even when the scoped traversal returned nothing.
-    if (!args.includeForeign && !isThinClient(cfg)) {
+    if (scoped) {
       const foreign = await countForeignEdges(engine, args.slug, args.direction);
       if (foreign > 0) {
         console.error(
@@ -183,7 +204,7 @@ export async function runGraphQuery(engine: BrainEngine, argv: string[]) {
   // scoped traversal silently dropped. Thin-client path skips this
   // (engine query not available); local path runs the count and prints
   // the footer when there are hidden edges AND the user didn't opt in.
-  if (!args.includeForeign && !isThinClient(cfg)) {
+  if (scoped) {
     const foreign = await countForeignEdges(engine, args.slug, args.direction);
     if (foreign > 0) {
       console.error(

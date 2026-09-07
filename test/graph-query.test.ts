@@ -170,6 +170,48 @@ describe('graph-query foreign-edge footer (#1153)', () => {
     expect(joined).toMatch(/--include-foreign/);
   });
 
+  // #4765: the walk itself was never scoped, so carol (other-src) was in the
+  // tree while the footer claimed her edge was hidden, and --include-foreign
+  // only silenced the footer. The default walk is now scoped to the resolved
+  // source; --include-foreign genuinely widens it.
+  test('default traversal is scoped: foreign-source edge is not in the tree (#4765)', async () => {
+    const { out } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1']);
+    });
+    const joined = out.join('\n');
+    expect(joined).toContain('people/bob');
+    expect(joined).not.toContain('people/carol');
+  });
+
+  test('--include-foreign walks the foreign edge', async () => {
+    const { out } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1', '--include-foreign']);
+    });
+    const joined = out.join('\n');
+    expect(joined).toContain('people/bob');
+    expect(joined).toContain('people/carol');
+  });
+
+  test('--source <id> scopes the root (alice is not in other-src)', async () => {
+    const { out } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1', '--source', 'other-src']);
+    });
+    expect(out.join('\n').toLowerCase()).toContain('no edges found');
+  });
+
+  test('--source __all__ spans every source (sentinel never scopes literally)', async () => {
+    const { out, err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1', '--source=__all__']);
+    });
+    expect(out.join('\n')).toContain('people/carol');
+    // An unscoped walk hid nothing, so the footer must not claim it did.
+    expect(err.join('\n')).not.toMatch(/foreign-source pages hidden/);
+  });
+
+  test('an unknown --source is rejected loudly', async () => {
+    await expect(runGraphQuery(engine, ['people/alice', '--source', 'nope-source'])).rejects.toThrow(/nope-source/);
+  });
+
   test('--include-foreign suppresses the footer', async () => {
     const { err } = await captureBoth(async () => {
       await runGraphQuery(engine, ['people/alice', '--depth', '1', '--include-foreign']);
