@@ -191,11 +191,17 @@ describe('slugify', () => {
 // ─────────────────────────────────────────────────────────────────────
 //
 // Same resolution chain as resolveEntitySlug, but returns the source
-// tag (`exact_page` | `fuzzy_match` | `fallback_slugify`) so trajectory
-// routing in `gbrain think` (Commit 2) can gate on
-// `resolution_source !== 'fallback_slugify'` and avoid querying invented
-// slugs in production. The longmemeval harness accepts fallback_slugify
-// because its extractor uses the same slugify fallback (they cohere).
+// tag (`exact_page` | `alias_exact` | `prefix_expansion` | `fuzzy_match` |
+// `fallback_slugify`) so trajectory routing in `gbrain think` (Commit 2)
+// can gate on `resolution_source !== 'fallback_slugify'` and avoid
+// querying invented slugs in production. The longmemeval harness accepts
+// fallback_slugify because its extractor uses the same slugify fallback
+// (they cohere).
+//
+// `prefix_expansion` split out from `fuzzy_match` so facts/backstop.ts can
+// flag fact-fence writes that land on an existing page through the weaker
+// bare-name-cardinality path — see the ResolutionSource doc comment in
+// src/core/entities/resolve.ts for the full rationale.
 //
 // These tests pin the source-tag contract per branch.
 
@@ -235,19 +241,25 @@ describe('resolveEntitySlugWithSource — fuzzy_match branch', () => {
     expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
   });
 
-  it('returns fuzzy_match for prefix-expansion (bare first name "Alice")', async () => {
+});
+
+describe('resolveEntitySlugWithSource — prefix_expansion branch', () => {
+  it('returns prefix_expansion for a bare first name ("Alice")', async () => {
     // Bare name "Alice" doesn't exact-match any slug, fuzzy fails the
     // 0.4 threshold on short trigrams, so prefix expansion fires and
-    // resolves to people/alice-example. We tag this branch as
-    // fuzzy_match (not fallback_slugify) so trajectory routing knows
-    // it's a real-page resolution.
+    // resolves to people/alice-example. Tagged prefix_expansion (not
+    // fuzzy_match, not fallback_slugify) — it's a real-page resolution,
+    // but a lower-confidence one than fuzzy_match: it's picked purely
+    // because it's the ONLY people/alice-* page, not because anything
+    // confirms this "Alice" is the same Alice. facts/backstop.ts uses
+    // this tag to flag fact-fence writes made through this path.
     const result = await resolveEntitySlugWithSource(
       engine as unknown as BrainEngine,
       'default',
       'Alice',
     );
     expect(result!.slug).toBe('people/alice-example');
-    expect(result!.source).toBe<ResolutionSource>('fuzzy_match');
+    expect(result!.source).toBe<ResolutionSource>('prefix_expansion');
   });
 });
 
