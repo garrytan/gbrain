@@ -124,6 +124,44 @@ describe('parsePastedRedirect', () => {
     );
   });
 
+  it('consent-host anchor: look-alike hosts are NOT the consent page and proceed to state binding', () => {
+    // The host test is anchored at `^` or a `.` label boundary. A substring
+    // test would reject both of these; they are not accounts.google.com, so a
+    // code-bearing paste from them parses and binds state like any redirect.
+    for (const host of ['myaccounts.google.com', 'accounts.google.com.evil.com']) {
+      const parsed = parsePastedRedirect(`https://${host}/o/oauth2/v2/auth?code=4%2Fabc&state=st`, 'st');
+      expect(parsed.code).toBe('4/abc');
+      expect(parsed.state).toBe('st');
+      expectCodeSync(
+        () => parsePastedRedirect(`https://${host}/o/oauth2/v2/auth?code=4%2Fabc&state=stale`, 'st'),
+        'state_mismatch',
+      );
+    }
+  });
+
+  it('consent-host anchor: a port or userinfo on the consent host is still the consent page', () => {
+    // Host normalization drops `user@` and `:port` BEFORE the anchored test.
+    // Without that the tail no longer ends in accounts.google.com: the
+    // scheme-less+port paste would fall through to the bare-code branch and
+    // the userinfo paste would parse as a legitimate redirect.
+    expectCodeSync(
+      () =>
+        parsePastedRedirect(
+          'accounts.google.com:443/o/oauth2/v2/auth?client_id=abc&response_type=code&state=st&code_challenge=zzz',
+          'st',
+        ),
+      'pasted_wrong_url',
+    );
+    expectCodeSync(
+      () =>
+        parsePastedRedirect(
+          'https://x@accounts.google.com/o/oauth2/v2/auth?client_id=abc&code=4%2Ffake&state=st',
+          'st',
+        ),
+      'pasted_wrong_url',
+    );
+  });
+
   it('a real loopback redirect carrying RFC 9207 iss=accounts.google.com parses normally (#regression)', () => {
     // Google's OAuth 2.0 authorization response now appends
     // `iss=https://accounts.google.com` (OpenID Connect issuer
