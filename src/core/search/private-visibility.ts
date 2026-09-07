@@ -54,6 +54,20 @@ export function privateTimelineEventFilterFragment(timelineAlias: string): strin
 }
 
 /**
+ * Fact-row twin for ontology provenance: hide an observation whose provenance
+ * page (`source_markdown_slug`, looked up in the fact's own source) is
+ * private. Non-page provenance (e.g. `manual`) has no page row and passes;
+ * deleted page rows still count (fail-closed). Keys on (facts.source_id, slug),
+ * so a provenance page living in a DIFFERENT source than the fact is not
+ * consulted — fail-open for cross-source provenance, acceptable under source
+ * isolation because ontology_propose stamps the fact with ctx.sourceId.
+ */
+export function privateProvenanceFilterFragment(factAlias: string): string {
+  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id ` +
+    `AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${privatePagesFilterFragment('pp')}))`;
+}
+
+/**
  * Row-side twin of privatePagesFilterFragment for pages already fetched
  * (get_page / fetch read one row by slug; re-querying just to filter would
  * be a second round-trip). Same semantics: only the exact string 'private'

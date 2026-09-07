@@ -9114,3 +9114,20 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
   **Context:** filed from the ranker wave R1 fix (v0.48.4.0); the per-brain
   opt-out is `gbrain config set search.relational_rerank_pin off`. **Effort:** M.
 
+
+- [ ] **P2 — ontology reads ignore fact-level `visibility` for remote
+  callers.** **What:** `getOntology` / `findOntologyConflicts` (both engines)
+  now hide observations whose PROVENANCE PAGE is `visibility: private`
+  (#4881 wave adoption), but they still return facts regardless of the
+  fact row's own `visibility` column, while every other facts read pushes
+  `visibility = 'world'` for untrusted callers (`pglite-engine/facts.ts`
+  listFacts, meta-hook, entity-card). `mergeOntologyFact` defaults
+  `visibility` to `'private'`, so nearly every ontology fact is
+  fact-private today. **Why:** the page-level gate closes the
+  "private page leaks through its extracted values + slug" hole; the
+  fact-level column is the larger remaining gap and deserves its own
+  fail-closed fix (thread `excludePrivate` into a `visibility = 'world'`
+  predicate on the same two queries, mirror in `loadChronicleContext`,
+  pin in `test/chronicle-ontology-private-visibility.test.ts` and the
+  e2e content-privacy suite). **Context:** filed from the #4881 adoption
+  (refuter amendment). **Effort:** S.

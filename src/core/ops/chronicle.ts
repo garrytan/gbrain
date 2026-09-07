@@ -142,7 +142,7 @@ const ontology_get: Operation = {
       asof: typeof p.asof === 'string' ? p.asof : undefined,
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
       includeQuarantined: p.include_quarantined === true,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     // Remote redaction: never surface diary-sourced ontology to untrusted callers.
     return ctx.remote !== false ? rows.filter((r) => !(r.source ?? '').startsWith('life/diary/')) : rows;
@@ -210,7 +210,7 @@ const ontology_conflicts: Operation = {
   handler: async (ctx, p) => {
     const conflicts = await ctx.engine.findOntologyConflicts({
       minConfidence: typeof p.min_confidence === 'number' ? p.min_confidence : undefined,
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
     });
     if (ctx.remote === false) return conflicts;
     // Remote: redact diary-sourced values; drop conflicts that no longer have

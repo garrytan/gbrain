@@ -97,7 +97,7 @@ import { PAGE_SORT_SQL, MIN_ENTITY_PAGES_FOR_COVERAGE } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { shouldExcludeFromOrphanReporting, loadOrphanPolicyOverrides } from './orphan-policy.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from './link-extraction.ts';
@@ -4850,12 +4850,15 @@ export class PGLiteEngine implements BrainEngine {
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
+    // so the untrusted caller resolves the newest value they may see.
+    const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
     const r = await this.db.query(
       `SELECT DISTINCT ON (dimension) dimension, value, confidence,
          source_markdown_slug AS source, valid_from, valid_until AS valid_to,
          COALESCE(dim_status,'active') AS status, id AS fact_id
        FROM facts
-       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope}
+       WHERE entity_slug = $1 AND dimension IS NOT NULL AND expired_at IS NULL ${scope} ${privacy}
          AND COALESCE(valid_from,'-infinity'::timestamptz) <= COALESCE($2::timestamptz, now())
          AND COALESCE(valid_until,'infinity'::timestamptz) > COALESCE($2::timestamptz, now())
          AND confidence >= $3
@@ -4883,17 +4886,20 @@ export class PGLiteEngine implements BrainEngine {
     });
   }
 
-  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]> {
+  async findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number }): Promise<OntologyConflict[]> {
     const minConf = opts?.minConfidence ?? 0;
     const params: unknown[] = [minConf];
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
+    // Same provenance-page gate as getOntology, inside the CTE so a conflict
+    // that only exists because of a hidden provenance is never reported.
+    const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
     const r = await this.db.query(
       `WITH cur AS (
          SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
          FROM facts WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
-           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope}
+           AND (dim_status IS NULL OR dim_status = 'active') AND confidence >= $1 ${scope} ${privacy}
        )
        SELECT entity_slug, dimension,
               json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values

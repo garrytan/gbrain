@@ -88,7 +88,7 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
@@ -4079,6 +4079,9 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
+    // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
+    // so the untrusted caller resolves the newest value they may see.
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
     const rows = await sql<OntologyValue[]>`
       SELECT DISTINCT ON (dimension)
         dimension, value, confidence,
@@ -4086,7 +4089,7 @@ export class PostgresEngine implements BrainEngine {
         COALESCE(dim_status, 'active') AS status, id AS fact_id
       FROM facts
       WHERE entity_slug = ${entitySlug} AND dimension IS NOT NULL AND expired_at IS NULL
-        ${scope}
+        ${scope} ${privacy}
         AND COALESCE(valid_from, '-infinity'::timestamptz) <= COALESCE(${asof}::timestamptz, now())
         AND COALESCE(valid_until, 'infinity'::timestamptz) > COALESCE(${asof}::timestamptz, now())
         AND confidence >= ${minConf}
@@ -4108,19 +4111,22 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r) => ({ dimension: r.dimension, entities: Number(r.entities), observations: Number(r.observations) }));
   }
 
-  async findOntologyConflicts(opts?: { sourceId?: string; sourceIds?: string[]; minConfidence?: number }): Promise<OntologyConflict[]> {
+  async findOntologyConflicts(opts?: PageReadScope & { minConfidence?: number }): Promise<OntologyConflict[]> {
     const sql = this.sql;
     const minConf = opts?.minConfidence ?? 0;
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
+    // Same provenance-page gate as getOntology, inside the CTE so a conflict
+    // that only exists because of a hidden provenance is never reported.
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
     const rows = await sql<{ entity_slug: string; dimension: string; values: OntologyConflict['values'] }[]>`
       WITH cur AS (
         SELECT entity_slug, dimension, value, source_markdown_slug AS source, confidence, id AS fact_id
         FROM facts
         WHERE dimension IS NOT NULL AND expired_at IS NULL AND valid_until IS NULL
           AND (dim_status IS NULL OR dim_status = 'active')
-          AND confidence >= ${minConf} ${scope}
+          AND confidence >= ${minConf} ${scope} ${privacy}
       )
       SELECT entity_slug, dimension,
              json_agg(json_build_object('value', value, 'source', source, 'confidence', confidence, 'fact_id', fact_id)) AS values

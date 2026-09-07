@@ -38,6 +38,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
     }, 120_000);
 
     beforeEach(async () => {
+      await engine.executeRaw('DELETE FROM facts WHERE source_id = ANY($1::text[])', [SOURCES]);
       await engine.executeRaw('DELETE FROM pages WHERE source_id = ANY($1::text[])', [SOURCES]);
       await engine.executeRaw('DELETE FROM slug_aliases WHERE source_id = ANY($1::text[])', [SOURCES]);
       await engine.unsetConfig('entity_identity.union');
@@ -45,6 +46,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
 
     afterAll(async () => {
       if (engine) {
+        await engine.executeRaw('DELETE FROM facts WHERE source_id = ANY($1::text[])', [SOURCES]);
         await engine.executeRaw('DELETE FROM sources WHERE id = ANY($1::text[])', [SOURCES]);
         await engine.unsetConfig('entity_identity.union');
         await engine.disconnect();
@@ -244,6 +246,39 @@ for (const kind of ['pglite', 'postgres'] as const) {
       }
       const local = { engine, remote: false, sourceId: A } as OperationContext;
       expect(JSON.stringify(await operationsByName.chronicle_since.handler(local, { date: '2026-08-10' }))).toContain(PRIVATE);
+    });
+
+    test('Ontology reads drop private-provenance observations before resolution and conflict detection', async () => {
+      await page('meetings/open-sync');
+      await page('meetings/secret-sync', A, true);
+      // Newer private-sourced value + older world-sourced value stay open side
+      // by side (backdated shape); the pair is also a two-provenance conflict.
+      for (const [entitySlug, value, source, validFrom] of [
+        ['people/ontology-subject', PRIVATE, 'meetings/secret-sync', '2026-05-01'],
+        ['people/ontology-subject', 'openvalue', 'meetings/open-sync', '2026-01-01'],
+        ['people/ontology-conflict', PRIVATE, 'meetings/secret-sync', '2026-05-01'],
+        ['people/ontology-conflict', 'yes', 'meetings/open-sync', '2026-01-01'],
+      ] as const) {
+        await engine.mergeOntologyFact({ entitySlug, dimension: 'role', value, source, validFrom, sourceId: A });
+      }
+      const scope = { sourceId: A, excludePrivate: true };
+      expect((await engine.getOntology('people/ontology-subject', scope)).map(v => v.value)).toEqual(['openvalue']);
+      expect((await engine.getOntology('people/ontology-subject', { sourceIds: [A, B], excludePrivate: true })).map(v => v.value)).toEqual(['openvalue']);
+      expect((await engine.getOntology('people/ontology-subject', { sourceId: A })).map(v => v.value)).toEqual([PRIVATE]);
+      expect((await engine.findOntologyConflicts(scope)).map(c => c.entity_slug)).toEqual([]);
+      expect((await engine.findOntologyConflicts({ sourceId: A })).map(c => c.entity_slug)).toEqual(['people/ontology-conflict', 'people/ontology-subject']);
+      for (const remote of [true, undefined]) {
+        const ctx = { engine, remote, sourceId: A, auth: { allowedSources: [A, B] } } as OperationContext;
+        for (const [op, args] of [
+          ['ontology_get', { entity: 'people/ontology-subject' }],
+          ['ontology_conflicts', {}],
+          ['volunteer_chronicle', { days: 1, limit: 1, entities: 'people/ontology-subject' }],
+        ] as const) {
+          expect(JSON.stringify(await operationsByName[op].handler(ctx, args))).not.toContain(PRIVATE);
+        }
+      }
+      const local = { engine, remote: false, sourceId: A } as OperationContext;
+      expect(JSON.stringify(await operationsByName.ontology_get.handler(local, { entity: 'people/ontology-subject' }))).toContain(PRIVATE);
     });
 
     test('takes require both a visible concrete page and an allowed holder in every read arm', async () => {

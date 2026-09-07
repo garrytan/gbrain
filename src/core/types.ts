@@ -1608,7 +1608,12 @@ export interface OntologyConflict {
   dimension: string;
   values: { value: string; source: string | null; confidence: number; fact_id: number }[];
 }
-export interface OntologyReadOpts {
+// excludePrivate (from PageReadScope) drops observations whose provenance page
+// is `visibility: private` BEFORE per-dimension resolution, so an untrusted
+// caller resolves the newest value they may see — never a private one, never
+// a hole where one was. Set by the op layer (readPolicyOpts); engines never
+// decide trust.
+export interface OntologyReadOpts extends PageReadScope {
   asof?: string;
   minConfidence?: number;
   includeQuarantined?: boolean;
