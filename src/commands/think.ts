@@ -165,8 +165,9 @@ prints what would have been the input (exit 0).
       // table) keeps the legacy unscoped gather.
       let sourceId: string | undefined;
       let allowedSources: string[] | undefined;
-      const { resolveSourceWithTier, localFederatedSourceIds, SourceTargetError, ALL_SOURCES } =
+      const { resolveSourceWithTier, localFederatedSourceIds, ALL_SOURCES } =
         await import('../core/source-resolver.ts');
+      const { isUndefinedTableError } = await import('../core/utils.ts');
       try {
         const resolved = await resolveSourceWithTier(engine, source ?? null);
         // __all__ spans the brain; runThink has no sentinel handling of its
@@ -174,7 +175,10 @@ prints what would have been the input (exit 0).
         sourceId = resolved.source_id === ALL_SOURCES ? undefined : resolved.source_id;
         allowedSources = await localFederatedSourceIds(engine, resolved.source_id, resolved.tier);
       } catch (err) {
-        if (source !== undefined || err instanceof SourceTargetError) throw err;
+        // Only the structural pre-init failure (no sources table) keeps the
+        // legacy unscoped gather; every other resolver error — an unknown
+        // ambient source, a connection failure, a genuine bug — propagates.
+        if (source !== undefined || !isUndefinedTableError(err)) throw err;
       }
       result = await runThink(engine, {
         question, anchor, rounds, save, take, model, since, until,

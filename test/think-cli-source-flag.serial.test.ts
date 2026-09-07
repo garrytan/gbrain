@@ -50,12 +50,18 @@ const realResolver = await import('../src/core/source-resolver.ts');
 // Bind the real function BEFORE mocking: the namespace binding is re-pointed
 // at the mock, so calling through `realResolver.` later would recurse.
 const realResolveSourceWithTier = realResolver.resolveSourceWithTier;
+/** What the AMBIENT (no --source) resolution does; tests flip it per case. */
+const ambient: { mode: 'default' | 'target_error' | 'structural' } = { mode: 'default' };
 mock.module('../src/core/source-resolver.ts', () => ({
   ...realResolver,
-  resolveSourceWithTier: async (engine: unknown, explicit: string | null | undefined) =>
-    explicit
-      ? realResolveSourceWithTier(engine as never, explicit)
-      : { source_id: 'default', tier: 'seed_default' as const },
+  resolveSourceWithTier: async (engine: unknown, explicit: string | null | undefined) => {
+    if (explicit) return realResolveSourceWithTier(engine as never, explicit);
+    if (ambient.mode === 'target_error') {
+      throw new realResolver.SourceTargetError('Source "ghost-src" not found or is archived.');
+    }
+    if (ambient.mode === 'structural') throw new Error('relation "sources" does not exist');
+    return { source_id: 'default', tier: 'seed_default' as const };
+  },
   localFederatedSourceIds: async (_engine: unknown, _id: string, tier: string) =>
     tier === 'seed_default' ? ['default', 'team-wiki'] : undefined,
 }));
@@ -155,5 +161,32 @@ describe('#4508 think --source CLI surface', () => {
   test('think --help documents --source', async () => {
     const r = await runCli(['--help']);
     expect(r.out.join('\n')).toContain('--source');
+  });
+
+  // Wave review: the catch used to swallow EVERY ambient resolver error into
+  // an unscoped gather — only the structural pre-init failure may do that.
+  test('an ambient SourceTargetError (stale GBRAIN_SOURCE / dotfile) is exit 1, never an unscoped gather', async () => {
+    ambient.mode = 'target_error';
+    try {
+      const r = await runCli(['plain', 'question']);
+      expect(r.code).toBe(1);
+      expect(r.err.join('\n')).toContain('ghost-src');
+      expect(captured.opts).toHaveLength(0);
+    } finally {
+      ambient.mode = 'default';
+    }
+  });
+
+  test('a structural pre-init failure (no sources table) keeps the legacy unscoped gather', async () => {
+    ambient.mode = 'structural';
+    try {
+      const r = await runCli(['plain', 'question']);
+      expect(r.code).toBe(0);
+      expect(captured.opts).toHaveLength(1);
+      expect(captured.opts[0].sourceId).toBeUndefined();
+      expect(captured.opts[0].allowedSources).toBeUndefined();
+    } finally {
+      ambient.mode = 'default';
+    }
   });
 });
