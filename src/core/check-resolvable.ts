@@ -441,6 +441,9 @@ export function checkResolvable(
   // skill needs a manifest.json entry. Value = RESOLVER.md skillPath, or
   // null when every trigger for the skill came from SKILL.md frontmatter.
   const orphans = new Map<string, string | null>();
+  // Missing files are likewise one issue per SKILL PATH, not per trigger row
+  // (a skill with six triggers is one missing file, not six).
+  const missingFiles = new Map<string, string>();
   for (const entry of triggerEntries) {
     if (entry.isGStack) continue;
 
@@ -449,16 +452,7 @@ export function checkResolvable(
     const relPath = entry.skillPath.replace(/^skills\//, '');
     const fullPath = join(skillsDir, relPath);
 
-    if (!existsSync(fullPath)) {
-      issues.push({
-        type: 'missing_file',
-        severity: 'error',
-        skill: entry.skillPath,
-        message: `RESOLVER.md references '${entry.skillPath}' but the file doesn't exist`,
-        action: `Create the skill at '${fullPath}' or remove the resolver entry`,
-        fix: { type: 'create_stub', file: fullPath },
-      });
-    }
+    if (!existsSync(fullPath)) missingFiles.set(entry.skillPath, fullPath);
 
     // Check if in manifest
     const skillName = relPath.replace(/\/SKILL\.md$/, '');
@@ -467,6 +461,16 @@ export function checkResolvable(
       if (entry.source === 'resolver_md') orphans.set(skillName, entry.skillPath);
       else if (!orphans.has(skillName)) orphans.set(skillName, null);
     }
+  }
+  for (const [skillPath, fullPath] of missingFiles) {
+    issues.push({
+      type: 'missing_file',
+      severity: 'error',
+      skill: skillPath,
+      message: `RESOLVER.md references '${skillPath}' but the file doesn't exist`,
+      action: `Create the skill at '${fullPath}' or remove the resolver entry`,
+      fix: { type: 'create_stub', file: fullPath },
+    });
   }
   for (const [skillName, resolverSkillPath] of orphans) {
     if (resolverSkillPath !== null) {

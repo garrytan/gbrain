@@ -698,3 +698,25 @@ describe("checkResolvable — low-confidence foreign skills dir", () => {
     expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
   });
 });
+
+describe("missing_file is reported once per skill path, not once per trigger row (wave review)", () => {
+  test("three trigger rows for one absent skill file → one missing_file issue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gbrain-missing-file-"));
+    try {
+      writeFileSync(
+        join(dir, "RESOLVER.md"),
+        "## Test\n| Trigger | Skill |\n|-----|-----|\n" +
+          '| "first" | `skills/ghost-skill/SKILL.md` |\n' +
+          '| "second" | `skills/ghost-skill/SKILL.md` |\n' +
+          '| "third" | `skills/ghost-skill/SKILL.md` |\n',
+      );
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify({ skills: [] }));
+      const report = checkResolvable(dir);
+      const missing = report.issues.filter(i => i.type === "missing_file");
+      expect(missing).toHaveLength(1);
+      expect(missing[0].skill).toBe("skills/ghost-skill/SKILL.md");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
