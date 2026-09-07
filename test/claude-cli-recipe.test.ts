@@ -380,6 +380,42 @@ describe('claude-cli LanguageModel — tool use', () => {
     });
   });
 
+  // Regression: prose that MENTIONS the tag before using it.
+  //
+  // Shape taken from a real dream-synthesis child that produced no page while
+  // its job reported `completed`. The model opened with a self-correction that
+  // named the tag inside backticks, THEN emitted a valid block. The old parser
+  // anchored on `indexOf(openTag)`, landing on the backticked mention, so
+  // `inner` began "` format:\n\n<use_tools>…" — JSON.parse threw and the catch
+  // discarded a complete tool call as prose. Content here is synthetic; only
+  // the structure (mention-then-use, multi-line string payload) is reproduced.
+  test('anchors on the real block when the tag is mentioned in prose first', async () => {
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope(
+          [
+            'I used the wrong invocation format. Let me use the correct `<use_tools>` format:',
+            '',
+            '<use_tools>',
+            '[{"name": "search", "input": {"query": "line one\\nline two\\nline three"}}]',
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('mention then use')],
+        tools: [{ type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } }],
+      } as LanguageModelV2CallOptions);
+
+      const calls = result.content.filter(c => c.type === 'tool-call');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ type: 'tool-call', toolName: 'search' });
+      expect(result.finishReason).toBe('tool-calls');
+    });
+  });
+
   test('tolerates fenced JSON inside <use_tools>', async () => {
     await withStubEnv(async () => {
       stageResponse(

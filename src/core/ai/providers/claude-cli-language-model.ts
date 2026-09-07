@@ -470,13 +470,26 @@ function extractToolCalls(raw: string): {
 } {
   const openTag = '<use_tools>';
   const closeTag = '</use_tools>';
-  const openIdx = raw.indexOf(openTag);
-  if (openIdx === -1) {
+  // Anchor on the CLOSING tag first, then take the LAST opening tag before
+  // it. Anchoring on `indexOf(openTag)` landed on the FIRST occurrence, so a
+  // model that *mentions* the tag in prose before using it — e.g. "Let me use
+  // the correct `<use_tools>` format:" — shifted the slice origin onto the
+  // backticked mention. `inner` then began "` format:\n\n<use_tools>…",
+  // JSON.parse threw, and the catch below discarded a complete, valid tool
+  // call as prose. Scanning back from the close tag (not `lastIndexOf` over
+  // the whole string, which trailing prose could re-break) picks the real
+  // block in both the plain and the mentioned-then-used shapes. Residual
+  // ceiling: a prose mention of `</use_tools>` BEFORE the block (with no
+  // `<use_tools>` mention ahead of it) now anchors on that mention and drops
+  // the call; the observed production shape is the open-tag mention, so this
+  // is accepted rather than scanning every close tag.
+  const closeIdx = raw.indexOf(closeTag);
+  if (closeIdx === -1) {
+    // Unterminated block (or none at all) — recover gracefully.
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
-  const closeIdx = raw.indexOf(closeTag, openIdx + openTag.length);
-  if (closeIdx === -1) {
-    // Unterminated block — recover gracefully.
+  const openIdx = raw.lastIndexOf(openTag, closeIdx);
+  if (openIdx === -1) {
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
 
@@ -491,7 +504,10 @@ function extractToolCalls(raw: string): {
   let parsed: unknown;
   try {
     parsed = JSON.parse(inner);
-  } catch {
+  } catch (e) {
+    // A malformed block is a LOST tool call — the caller sees prose and the
+    // turn ends as if the model never called anything. Say so on stderr.
+    process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${e instanceof Error ? e.message : String(e)}\n`);
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
   if (!Array.isArray(parsed)) {
