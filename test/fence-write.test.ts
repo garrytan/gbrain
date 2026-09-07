@@ -923,3 +923,23 @@ afterAll(() => {
     /* best-effort */
   }
 });
+
+describe('writeFactsToFence — DB-body mirror never persists an empty content_hash (wave review)', () => {
+  test('a page row with no content_hash gets a non-empty one from the mirror', async () => {
+    const target = { sourceId: 'default', localPath: brainDir, slug: 'people/hashless', resolutionSource: 'exact_page' as const };
+    await writeFactsToFence(engine, target, [baseInput()]);
+    // The fence writer only stub-creates the FILE; sync creates the row. Import
+    // it, then drop the hash to model a row that lost it.
+    const stub = readFileSync(join(brainDir, 'people/hashless.md'), 'utf-8');
+    await importFromContent(engine, 'people/hashless', stub, { noEmbed: true, sourceId: 'default' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (engine as any).db.query(`UPDATE pages SET content_hash = NULL WHERE slug = 'people/hashless'`);
+
+    const r = await writeFactsToFence(engine, target, [baseInput({ fact: 'Raised a seed round' })]);
+    expect(r.inserted).toBe(1);
+    const page = await engine.getPage('people/hashless', { sourceId: 'default' });
+    expect(page?.compiled_truth).toContain('Raised a seed round');
+    expect(typeof page?.content_hash).toBe('string');
+    expect(page!.content_hash!.length).toBeGreaterThan(0);
+  });
+});

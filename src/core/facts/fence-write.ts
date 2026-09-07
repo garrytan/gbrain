@@ -48,6 +48,7 @@ import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence } from '../facts-fence.ts';
+import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 
@@ -473,14 +474,17 @@ export async function writeFactsToFence(
       // does. Body-only: content_chunks are untouched, so the row KEEPS its
       // old content_hash and the next sync re-imports + re-chunks. Stamping
       // the importer's hash here made sync skip the page and left search
-      // blind to the new row forever. Best-effort: the file is already
-      // committed; a stub page with no DB row is created by sync.
+      // blind to the new row forever. Never persist an EMPTY hash: a row
+      // that had none gets a row-shaped hash of its pre-mirror content,
+      // which the rewritten file can't match. Best-effort: the file is
+      // already committed; a stub page with no DB row is created by sync.
       try {
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
         const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
         if (existing) {
           await engine.refreshPageBody(target.slug, target.sourceId,
-            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline), existing.content_hash ?? '');
+            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+            existing.content_hash || contentHash(existing));
         }
       } catch { /* degrades to the pre-#4872 window (stale until the next sync) */ }
 

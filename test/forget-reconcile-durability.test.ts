@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { forgetFactInFence } from '../src/core/facts/forget.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { acquirePageLock } from '../src/core/page-lock.ts';
 
 let engine: PGLiteEngine;
 let brainDir: string;
@@ -124,5 +125,59 @@ describe('forget survives the extract_facts reconcile (#4696)', () => {
     const r = await forgetFactInFence(engine, id, { reason: 'test' });
     expect(r).toMatchObject({ ok: true, path: 'legacy_db' });
     await expectForgetHeld(id);
+  });
+});
+
+// ─── wave review: legacy-tier hash, page lock, never an empty hash ──
+describe('forget DB-body mirror — hash + lock discipline (wave review)', () => {
+  test('legacy path (no local_path): the row stops claiming the unchanged file\'s hash, so the next sync re-imports', async () => {
+    // The legacy tier does NOT rewrite the file. Keeping the importer's hash
+    // on the struck row made the next sync `skipped` the page: the DB body
+    // said struck while content_chunks kept the live claim, forever.
+    const id = await seed();
+    const before = (await engine.getPage(SLUG, { sourceId: 'default' }))!.content_hash;
+    await engine.executeRaw(`UPDATE sources SET local_path = NULL WHERE id = 'default'`);
+    try {
+      const r = await forgetFactInFence(engine, id, { reason: 'test' });
+      expect(r).toMatchObject({ ok: true, path: 'legacy_db' });
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      expect(page.compiled_truth).toContain('~~Founded acme-example~~');
+      expect(page.content_hash).toBeTruthy();
+      expect(page.content_hash).not.toBe(before);
+      // The importer's own idempotency check: same file bytes must now re-import.
+      const imp = await importFromContent(engine, SLUG, FILE, { noEmbed: true, sourceId: 'default' });
+      expect(imp.status).toBe('imported');
+    } finally {
+      await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [brainDir]);
+    }
+  });
+
+  test('legacy path honors the page lock: a live holder defers the DB-body strike (Codex P1)', async () => {
+    // strikeDbBody is a read-modify-write on pages.compiled_truth; the fence
+    // writers hold the per-page lock around theirs. Pre-fix the legacy tier
+    // ran it lock-free and could clobber a concurrent fence write.
+    const id = await seed();
+    rmSync(join(brainDir, `${SLUG}.md`));
+    const handle = await acquirePageLock(SLUG, { timeoutMs: 0 });
+    expect(handle).not.toBeNull();
+    try {
+      const r = await forgetFactInFence(engine, id, { reason: 'test' });
+      expect(r).toMatchObject({ ok: true, path: 'legacy_db' }); // the facts row still expires
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      expect(page.compiled_truth).not.toContain('~~'); // strike waited on the lock and gave up
+    } finally {
+      await handle!.release();
+    }
+  }, 20_000);
+
+  test('fence path never persists an empty content_hash', async () => {
+    const id = await seed();
+    await engine.executeRaw(`UPDATE pages SET content_hash = NULL WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+    const r = await forgetFactInFence(engine, id, { reason: 'test' });
+    expect(r).toMatchObject({ ok: true, path: 'fence' });
+    const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+    expect(page.compiled_truth).toContain('~~Founded acme-example~~');
+    expect(typeof page.content_hash).toBe('string');
+    expect(page.content_hash!.length).toBeGreaterThan(0);
   });
 });

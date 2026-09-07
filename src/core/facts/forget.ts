@@ -46,6 +46,7 @@ import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
+import { contentHash } from '../utils.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -181,15 +182,28 @@ export async function forgetFactInFence(
     if (!page) return;
     const struck = strikeFenceRow(page.compiled_truth ?? '', row.row_num, reason, today);
     if (struck === null) return;
-    // Body-only write: keep the row's content_hash so the next sync re-chunks.
-    await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '', page.content_hash ?? '');
+    // The FILE was not rewritten on this tier, so the row must NOT keep the
+    // importer's hash: sync would see file == row and skip, leaving
+    // content_chunks with the live claim for good. A row-shaped hash over the
+    // struck body can never equal the unchanged file's, so the next sync
+    // re-imports + re-chunks — and, the fence being canonical, legitimately
+    // revives a row the file still carries, in body AND chunks as one state.
+    await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '',
+      contentHash({ ...page, compiled_truth: struck }));
   };
 
   // Legacy path — DB-only forget. Doesn't survive `gbrain rebuild` (the
   // canonical fence is untouched) but does survive the reconcile (#4696).
-  const legacyExpire = async (): Promise<ForgetFactResult> => {
+  // The DB-body strike is a read-modify-write on pages.compiled_truth, so it
+  // holds the same per-page lock the fence writers do (`locked` = the fence
+  // tier is calling from inside its own withPageLock).
+  const legacyExpire = async (locked = false): Promise<ForgetFactResult> => {
     const ok = await engine.expireFact(factId); // gbrain-allow-direct-insert: legacy fallback path inside forgetFactInFence — fence rewrite not possible (pre-v51 row / missing local_path / file deleted / row_num drift)
-    if (ok) await strikeDbBody().catch(() => { /* best-effort, see above */ });
+    if (ok && row.source_markdown_slug !== null) {
+      const slug = row.source_markdown_slug;
+      await (locked ? strikeDbBody() : withPageLock(slug, strikeDbBody, { timeoutMs: 5_000 }))
+        .catch(() => { /* best-effort, see above */ });
+    }
     return { ok, path: 'legacy_db', reason };
   };
 
@@ -234,7 +248,7 @@ export async function forgetFactInFence(
     // corruption): fall through to legacy expire so the user's intent
     // succeeds; doctor surfaces the drift separately.
     const newBody = strikeFenceRow(body, targetRowNum, reason, today);
-    if (newBody === null) return legacyExpire();
+    if (newBody === null) return legacyExpire(true);
 
     // Atomic .tmp + parse-validate + rename.
     writeFileSync(tmpPath, newBody, 'utf-8');
@@ -243,7 +257,7 @@ export async function forgetFactInFence(
     if (validate.warnings.length > 0) {
       // Quarantine .tmp; leave the canonical file alone; fall back to
       // DB expire so the user's forget intent still succeeds.
-      return legacyExpire();
+      return legacyExpire(true);
     }
     renameSync(tmpPath, filePath);
 
@@ -265,13 +279,16 @@ export async function forgetFactInFence(
     // live claim, so the row KEEPS its old content_hash and the next sync
     // re-imports + re-chunks. Stamping the importer's hash here made sync
     // skip the page and the struck claim kept surfacing in chunk search.
+    // Never persist an EMPTY hash: a row that had none gets a row-shaped
+    // hash of its pre-mirror content, which the rewritten file can't match.
     // Best-effort — file + facts row are already correct.
     try {
       const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
       const page = await engine.getPage(slug, { sourceId: row.source_id });
       if (page) {
         await engine.refreshPageBody(slug, row.source_id,
-          sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline), page.content_hash ?? '');
+          sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+          page.content_hash || contentHash(page));
       }
     } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
 
