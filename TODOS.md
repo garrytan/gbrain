@@ -1,5 +1,10 @@
 # TODOS
 
+## Community fix wave follow-ups (filed 2026-09-07, search-eval train)
+
+- [ ] **P2 — bump MARKDOWN_CHUNKER_VERSION to 5 so already-indexed CJK-dominant pages pick up the CJK overlap fix.**
+  **What:** #4871 (wave adoption) made `extractTrailingContext` count chars for CJK-dominant chunks (the unit `countCJKAwareWords` uses) instead of whitespace tokens, so CJK pages get a real, bounded overlap instead of none / a near-total duplicate; the L4 char-slice fallback also stopped halving astral pairs. Both change chunk boundaries for CJK-dominant text only and apply to pages chunked from now on — pages already in the index keep their old boundaries until the chunker version moves. **How:** `export const MARKDOWN_CHUNKER_VERSION = 5;` in `src/core/chunkers/recursive.ts`, DECOUPLED from `SAFE_FENCE_CHUNKER_VERSION` (stays 4 as the safe-chunks provenance floor; `safeChunksFilter` is `>= 4`, so 5 passes); update the `MARKDOWN_CHUNKER_VERSION is 4` pin in `test/chunkers/recursive.test.ts`. **Cost (why this is a maintainer decision, not a fix-wave change):** the post-upgrade sweep re-chunks AND re-embeds every markdown page in every brain (markdown import has no embedding reuse) — the same full-brain re-embed shape as the v4 bump in 0.48.3.0, for a boundary change that only affects CJK-dominant pages. Coalescing it with the next planned chunker bump spares a standalone sweep. English output is byte-identical (pinned by `test/chunkers/recursive-cjk-overlap.test.ts`). **Effort:** S.
+
 ## Community fix wave follow-ups (filed 2026-09-07, atoms/extraction/facts train)
 
 - [ ] **P3 — stamp `effective_date` at the `put_page` write seam.**
@@ -5019,10 +5024,12 @@ into one committed wave with a target version.
   Switch to `\p{Script=Han}` / `\p{Script=Hiragana}` / `\p{Script=Katakana}`
   / `\p{Script=Hangul}`. Astral-plane support also requires
   `Array.from(str)` codepoint iteration in chunker's char-slice fallback.
-- [ ] **v0.42 — CJK-aware overlap context in chunker.** `extractTrailingContext`
+- [x] **v0.42 — CJK-aware overlap context in chunker.** `extractTrailingContext`
   is whitespace-token-based today; CJK chunks under maxChars cap have no
   useful overlap with previous chunk. Switch to char-count when
-  `countCJKAwareWords` would have triggered the CJK branch.
+  `countCJKAwareWords` would have triggered the CJK branch. Landed via
+  #4871 (wave adoption) for newly chunked pages; already-indexed pages
+  re-chunk on the MARKDOWN_CHUNKER_VERSION bump filed at the top of this file.
 - [ ] **v0.42 — Thai / Arabic / Cyrillic / Devanagari script support.**
   Same five-layer fix pattern as CJK: slugify ranges, chunker density
   threshold, PGLite keyword fallback with script-aware tokenization.
@@ -5715,14 +5722,16 @@ contributor traps.
   Affects `src/commands/sync.ts:buildDetachedWorkingTreeManifest` +
   `buildSyncManifest`. Defer until someone files a tab-in-filename issue.
 
-- [ ] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
+- [x] **v0.33+: CJK-aware overlap context in chunker.** v0.32.7
   `extractTrailingContext` is still whitespace-token-based, so CJK chunks
   under the maxChars cap have no useful overlap with the previous chunk.
   Search continuity across chunk boundaries degrades for pure CJK content.
   The maxChars sliding-window in v0.32.7 IS overlap-protected for the
   hard-cap path, so this only affects normal-size chunks. Plan: switch
   `extractTrailingContext` to char-count when `countCJKAwareWords` would
-  have triggered the CJK branch.
+  have triggered the CJK branch. Landed via #4871 (wave adoption) for newly
+  chunked pages; the version bump that re-chunks existing pages is filed at
+  the top of this file.
 
 - [ ] **v0.33+: other non-Latin scripts (Thai, Arabic, Cyrillic,
   Devanagari).** Same five-layer fix pattern as CJK applies: slugify

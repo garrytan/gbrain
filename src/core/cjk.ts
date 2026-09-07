@@ -78,15 +78,23 @@ export function hasCJK(s: string): boolean {
  */
 export function countCJKAwareWords(s: string): number {
   if (s.length === 0) return 0;
+  return isCJKDominant(s)
+    ? s.replace(/\s/g, '').length
+    : (s.match(/\S+/g) || []).length;
+}
+
+/**
+ * The ONE density test behind countCJKAwareWords: true when CJK chars make
+ * up at least CJK_DENSITY_THRESHOLD of the non-whitespace chars. Callers
+ * that need to branch on "would countCJKAwareWords count chars here?" (the
+ * chunker's overlap extractor) route through this so the two cannot drift.
+ */
+export function isCJKDominant(s: string): boolean {
+  const nonWhitespace = s.replace(/\s/g, '').length;
+  if (nonWhitespace === 0) return false;
   const cjkMatches = s.match(new RegExp(`[${CJK_SLUG_CHARS}]`, 'g'));
   const cjkCount = cjkMatches ? cjkMatches.length : 0;
-  const nonWhitespace = s.replace(/\s/g, '').length;
-  if (nonWhitespace === 0) return 0;
-  const density = cjkCount / nonWhitespace;
-  if (density >= CJK_DENSITY_THRESHOLD) {
-    return nonWhitespace;
-  }
-  return (s.match(/\S+/g) || []).length;
+  return cjkCount / nonWhitespace >= CJK_DENSITY_THRESHOLD;
 }
 
 /**
