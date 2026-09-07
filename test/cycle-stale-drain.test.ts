@@ -131,6 +131,28 @@ describe('cycle extract phase stale drain (#4062)', () => {
     }
   });
 
+  test('standalone stale helper prints its human summary when neither quiet nor JSON', async () => {
+    // The quiet/JSON variants above pin silence; this pins that the default
+    // CLI path (`gbrain extract --stale`) still tells the operator what ran.
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      const result = await extractStaleFromDB(engine, {
+        dryRun: false, jsonMode: false, includeFrontmatter: false,
+        sourceIdFilter: 'wiki', catchUp: false,
+      });
+      expect(result.pagesProcessed).toBe(2);
+      const summary = log.mock.calls.map(c => String(c[0])).find(l => l.startsWith('Extract --stale:'));
+      expect(summary).toBeDefined();
+      expect(summary).toContain('from 2 page(s)');
+      // Human output goes through console.log; nothing is written raw to stdout.
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      stdout.mockRestore();
+    }
+  });
+
   test('DB-only extraction contributes to totals and a working status', async () => {
     await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
       const report = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
