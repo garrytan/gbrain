@@ -1590,7 +1590,12 @@ describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)
     expect(pglite!.standing_entities).toEqual(pg!.standing_entities);
     expect(pg!.surfaced_slugs).toEqual(['ks/tie-04']); // single-element keyset slug
     expect(pglite!.surfaced_slugs).toEqual(pg!.surfaced_slugs);
-    expect(pg!.last_wake_at).toBe(KS_TIE_TS);
+    // last_wake_at is rendered at the column's microsecond precision (#4681:
+    // the keyset cursor must not re-round to milliseconds). Compare instants
+    // and pin the engines to the same text so parity, not a fixed format, is
+    // the contract.
+    expect(new Date(pg!.last_wake_at!).toISOString()).toBe(KS_TIE_TS);
+    expect(pg!.last_wake_at).toMatch(/\.\d{6}Z$/);
     expect(pglite!.last_wake_at).toBe(pg!.last_wake_at);
 
     // The read helper JSON.parses string scalars (fail-open), so it would MASK
@@ -1620,7 +1625,7 @@ describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)
     ]) {
       expect(st!.standing_entities).toEqual(entities);
       expect(st!.surfaced_slugs).toEqual(['ks/tie-04']);
-      expect(st!.last_wake_at).toBe(KS_LATE_TS);
+      expect(new Date(st!.last_wake_at!).toISOString()).toBe(KS_LATE_TS);
     }
   });
 });
