@@ -36,7 +36,13 @@ export async function assertStdioSourceBindable(
       `SELECT id FROM sources WHERE id = $1 AND archived = false`,
       [env],
     );
-  } catch {
+  } catch (e) {
+    // Fail-open by design (this guards config, not connectivity) — but never
+    // silently: an operator debugging a blind stdio lane needs to know the
+    // preflight did not run.
+    process.stderr.write(
+      `[gbrain] GBRAIN_SOURCE preflight skipped (could not read sources): ${e instanceof Error ? e.message : String(e)}\n`,
+    );
     return;
   }
   if (rows.length === 0) {
