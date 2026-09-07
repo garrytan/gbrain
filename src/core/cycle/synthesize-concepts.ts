@@ -26,7 +26,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
-import { chat as gatewayChat, isAvailable } from '../ai/gateway.ts';
+import { chat as gatewayChat, isAvailable, isThinkingModel } from '../ai/gateway.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 // #2163: concept pages route through importFromContent (the same
 // parse→chunk→embed pipeline put_page uses) instead of a bare engine.putPage,
@@ -51,6 +51,30 @@ const FALLBACK_PRICING: ModelPricing = canonicalLookup('anthropic:claude-sonnet-
 const TIER_T1_MIN = 10;
 const TIER_T2_MIN = 5;
 const TIER_T3_MIN = 2;
+/**
+ * Output cap for the per-concept narrative. 500 sizes the *answer* (a
+ * 1-paragraph summary) and is ample for a non-reasoning model. It is NOT ample
+ * for a thinking-by-default model: reasoning bills as output and counts against
+ * max_tokens, so the budget is spent before any answer text is emitted — hosted
+ * DeepSeek returns empty content (→ `deterministicNarrative` ships a template
+ * stub as 'error_fallback'), while the native deepseek: recipe promotes the
+ * truncated reasoning_content into content (→ chain-of-thought persisted as
+ * the narrative with synthesis_mode 'llm'). This phase resolves at
+ * `tier: 'reasoning'`, so a thinking model here is the expected case.
+ */
+const DEFAULT_SYNTH_MAX_OUTPUT_TOKENS = 500;
+/** Answer budget plus reasoning headroom (under DeepSeek's 8192 hard cap). */
+const THINKING_SYNTH_MAX_OUTPUT_TOKENS = 8000;
+
+/**
+ * Narrative output cap for the resolved model. `isThinkingModel` is the
+ * gateway's shared predicate (name-matched Claude 5 OR recipe-declared
+ * `thinking_by_default`; unknown providers count as non-thinking), the same
+ * check think's maxOutputTokensFor and the subagent handler use.
+ */
+export function resolveSynthMaxOutputTokens(modelStr: string): number {
+  return isThinkingModel(modelStr) ? THINKING_SYNTH_MAX_OUTPUT_TOKENS : DEFAULT_SYNTH_MAX_OUTPUT_TOKENS;
+}
 
 export interface SynthesizeConceptsOpts {
   brainDir?: string;
@@ -234,6 +258,7 @@ export async function runPhaseSynthesizeConcepts(
     tier: 'reasoning',
     fallback: 'sonnet',
   });
+  const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
   for (const group of atomGroups) {
     tierCounts[group.tier]++;
     let narrative: string;
@@ -260,7 +285,7 @@ export async function runPhaseSynthesizeConcepts(
                     .join('\n\n')}`,
               },
             ],
-            maxTokens: 500,
+            maxTokens: synthMaxOutputTokens,
           });
           // Post-await yield (T3): the LLM call is the main TTL hazard
           // codex flagged. Throttle inside maybeYield bounds the actual
