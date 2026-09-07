@@ -266,6 +266,31 @@ write ops are local-only. Retrieval-side union — `get_links` /
 by the `entity_identity.union` config key (default off) and never widens a
 federated caller's source grant.
 
+## Cross-source link edges
+
+Wikilink and markdown-link edges stay inside one source by default. When a
+page in source A links a target that exists only in source B (typically via
+`link_resolution.global_basename`), the edge is NOT written; instead the drop
+is counted so graph sparsity is observable — `gbrain extract links --source db`
+and `gbrain extract --stale` print `Skipped N cross-source candidate(s)` (JSON:
+`skipped_cross_source`), and the serve sweep records it as `cross_source_link`
+in its skip ledger.
+
+To write those edges, opt in:
+
+```
+gbrain config set link_resolution.cross_source true   # or env GBRAIN_LINK_RESOLUTION_CROSS_SOURCE=1
+gbrain extract links --source db                      # re-extract once; --stale will not revisit stamped pages
+```
+
+Without the flag, an isolated (`federated=false`) source only writes edges
+whose both endpoints live in that source; a federated source may also link
+into the configured default source (`sources.default`). With the flag on, a
+target that exists only in other sources resolves to the lexicographically
+smallest source id, so repeated extracts converge on the same row. The read
+side is unchanged: a federated caller's source grant still scopes every link
+read.
+
 ## What confines remote callers (and what does not)
 
 When a brain is served to remote agents (HTTP MCP, stdio MCP treated as
