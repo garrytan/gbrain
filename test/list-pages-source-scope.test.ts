@@ -25,6 +25,8 @@ function makeCtx(overrides: Partial<OperationContext> = {}): {
         calls.push(opts);
         return [];
       },
+      // #4620: an explicit source_id is checked against the live registry.
+      listAllSources: async () => [{ id: 'default' }, { id: 'hermes-coding-agent' }, { id: 'a' }, { id: 'b' }],
     } as any,
     config: {} as any,
     logger: console as any,

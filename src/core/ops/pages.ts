@@ -26,6 +26,7 @@ import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descr
 import { OperationError } from './contract.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import {
+  assertExplicitSourceLive,
   enforceSubagentSlugFence,
   slugOutsideCallerFence,
   enforceClientSlugFence,
@@ -126,6 +127,8 @@ const get_page: Operation = {
     // #3242: federatedSearchScope (not bare sourceScopeOpts) so an unqualified
     // read sees pages in `federated: true` sources, matching search/query.
     const sourceOpts = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     const fuzzyScope = sourceOpts;
 
     // #4352 remediation: untrusted callers never read `visibility: private`
@@ -1281,6 +1284,8 @@ const list_pages: Operation = {
     // every source.
     const sourceIdParam = parseSourceIdParam(p.source_id, 'list_pages', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
+    // #4620: an explicit source_id must name a live source (after the grant check).
+    await assertExplicitSourceLive(ctx, sourceIdParam);
     // #4352 remediation: untrusted listing never enumerates
     // `visibility: private` pages (slugs + titles are the leak surface here).
     // Composes with the #4400 per-call source_id and the v0.34.1 grant scope
