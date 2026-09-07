@@ -308,8 +308,17 @@ describe('runDream — output format', () => {
   test('--json emits parsable CycleReport JSON with schema_version', async () => {
     const lines: string[] = [];
     const logSpy = spyOn(console, 'log').mockImplementation((msg: string) => { lines.push(String(msg)); });
-    await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
-    logSpy.mockRestore();
+    // The JSON payload itself goes through console.log (captured above), so a
+    // raw process.stdout.write during the run can only be a progress/summary
+    // leak that would corrupt the payload — progress belongs on stderr.
+    const stdoutSpy = spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      await runDream(engine, ['--dir', repo, '--phase', 'lint', '--json']);
+      expect(stdoutSpy).not.toHaveBeenCalled();
+    } finally {
+      stdoutSpy.mockRestore();
+      logSpy.mockRestore();
+    }
     const parsed = JSON.parse(lines.join('\n'));
     expect(parsed.schema_version).toBe('1');
     expect(parsed).toHaveProperty('status');

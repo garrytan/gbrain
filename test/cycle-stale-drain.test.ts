@@ -78,17 +78,30 @@ describe('cycle extract phase stale drain (#4062)', () => {
 
   test('working and no-op drains leave stdout available for the cycle JSON report', async () => {
     writeFileSync(join(brainDir, 'quiet.md'), '# Quiet page\nNo outgoing links.\n');
+    // A checkout page whose [[link]] resolves to another checkout page (both
+    // present in the DB under the same source) so the fs-walk link-extraction
+    // branch actually runs — and writes an edge — under the stdout spy.
+    writeFileSync(join(brainDir, 'linker.md'), '# Linker\nSee [[quiet]].\n');
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('quiet', 'wiki', 'concept', 'Quiet page', 'No outgoing links.', ''),
+              ('linker', 'wiki', 'concept', 'Linker', 'See [[quiet]].', '')`,
+    );
     const log = spyOn(console, 'log').mockImplementation(() => {});
     const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
     try {
       await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
         const first = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
         const second = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+        expect(first.phases[0]?.details?.pages_processed).toBe(2);
+        expect(first.phases[0]?.details?.linksCreated).toBe(1);
         expect(first.phases[0]?.details?.stale_pages_drained).toBe(2);
         expect(second.phases[0]?.details?.stale_pages_drained).toBe(0);
       });
       expect(log).not.toHaveBeenCalled();
       expect(stdout).not.toHaveBeenCalled();
+      const links = await engine.getLinks('linker', { sourceId: 'wiki' });
+      expect(links.some(l => l.to_slug === 'quiet')).toBe(true);
     } finally {
       log.mockRestore();
       stdout.mockRestore();
