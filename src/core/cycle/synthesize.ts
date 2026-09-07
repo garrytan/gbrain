@@ -634,10 +634,8 @@ async function runPhaseSynthesizeInner(
     const skipReports: Array<{ filePath: string; reason: string }> = [];
 
     const maxCharsPerChunk = computeChunkCharBudget(config.model, config.maxPromptTokens);
-    const successfulLegacyKeys = await loadSuccessfulLegacySynthesisKeys(
-      engine,
-      cycleSourceId,
-    );
+    const successfulLegacyKeys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth:');
+    const successfulV2Keys = await loadSuccessfulSynthesisKeys(engine, cycleSourceId, 'dream:synth-v2:');
 
     // Per-source daily submission cap (D2D: default 0 = disabled; opt-in
     // backstop via dream.synthesize.max_submissions_per_source_per_day).
@@ -699,6 +697,25 @@ async function runPhaseSynthesizeInner(
           reason: legacyCompletion === 'chunked'
             ? 'already_synthesized_legacy_chunked'
             : 'already_synthesized_legacy_single_chunk',
+        });
+        continue;
+      }
+
+      // Same rule for the synth-v2 key family. Without it a transcript whose
+      // children already COMPLETED coalesced onto them via queue.add's
+      // idempotency key — free for the daily cap, but only AFTER the link
+      // manifest (up to 20 searches) was built — and the coalesced children
+      // re-entered writtenRefs, so their old pages were quote-repaired,
+      // restamped and re-embedded every night with nothing new written.
+      const v2Completion = findSynthV2Completion(
+        successfulV2Keys, t.filePath, hash16, opts.sourceId ?? 'default',
+      );
+      if (v2Completion) {
+        skipReports.push({
+          filePath: t.filePath,
+          reason: v2Completion === 'chunked'
+            ? 'already_synthesized_v2_chunked'
+            : 'already_synthesized_v2_single_chunk',
         });
         continue;
       }
@@ -2752,12 +2769,15 @@ async function collectChildPutPageSlugs(
 }
 
 /**
- * D8: load every `completed` legacy job key in the pre-v2 path-based
- * family `dream:synth:<filePath>:<hash16>[:c<i>of<n>]`. Used at fan-out
- * time to detect transcripts already synthesized under an old key shape;
- * those should NOT be re-submitted under v2 keys. (v2 keys start with
- * `dream:synth-v2:` and don't match the LIKE prefix — the queue's own
- * idempotency dedupe already covers them.)
+ * Load every `completed` subagent job key in one synthesis key family for
+ * one source. Called once per phase per family so the submit loop can skip
+ * transcripts already synthesized BEFORE building their link manifest:
+ *  - D8 legacy `dream:synth:<filePath>:<hash16>[:c<i>of<n>]` (pre-v2 shape;
+ *    must not be re-submitted under v2 keys);
+ *  - current `dream:synth-v2:<source>:filename:<basename>:<hash16>[:c<i>of<n>]`
+ *    (the queue's idempotency dedupe would coalesce these too, but only after
+ *    the manifest build, and the coalesced children would re-enter writtenRefs).
+ * `dream:synth:%` does not match `dream:synth-v2:` keys.
  *
  * Plain `status = 'completed'` deliberately mirrors the queue-level
  * idempotency semantics the legacy keys relied on: a completed job blocks
@@ -2769,9 +2789,10 @@ async function collectChildPutPageSlugs(
  * Loads source-scoped completions once per phase; no schema additions
  * and no repeated history scan for each transcript.
  */
-async function loadSuccessfulLegacySynthesisKeys(
+async function loadSuccessfulSynthesisKeys(
   engine: BrainEngine,
   sourceId: string,
+  keyPrefix: 'dream:synth:' | 'dream:synth-v2:',
 ): Promise<string[]> {
   const rows = await engine.executeRaw<{ idempotency_key: string }>(
     `SELECT idempotency_key
@@ -2779,10 +2800,44 @@ async function loadSuccessfulLegacySynthesisKeys(
       WHERE name = 'subagent'
         AND status = 'completed'
         AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND idempotency_key LIKE 'dream:synth:%'`,
-    [sourceId],
+        AND idempotency_key LIKE $2`,
+    [sourceId, `${keyPrefix}%`],
   );
   return rows.map(row => row.idempotency_key);
+}
+
+/**
+ * Mirror of findLegacyCompletion for the synth-v2 key family (grammar as
+ * produced by the submit loop / parsed by `parseSynthV2Key`): `'single'` when
+ * the unchunked key completed, `'chunked'` when a FULL `:c0of<n>`..`:c<n-1>of<n>`
+ * set completed, null otherwise (a cancelled row never counts).
+ */
+function findSynthV2Completion(
+  successfulKeys: string[],
+  filePath: string,
+  hash16: string,
+  sourceId: string,
+): 'single' | 'chunked' | null {
+  const prefix =
+    `dream:synth-v2:${encodeURIComponent(sourceId)}` +
+    `:filename:${encodeURIComponent(basename(filePath))}:${hash16}`;
+  const chunkSets = new Map<number, Set<number>>();
+  for (const key of successfulKeys) {
+    if (key === prefix) return 'single';
+    if (!key.startsWith(prefix + ':c')) continue;
+    const chunk = /:c(\d+)of(\d+)$/.exec(key);
+    if (!chunk) continue;
+    const i = Number(chunk[1]);
+    const n = Number(chunk[2]);
+    if (n < 1 || i < 0 || i >= n) continue;
+    let seen = chunkSets.get(n);
+    if (!seen) chunkSets.set(n, seen = new Set());
+    seen.add(i);
+  }
+  for (const [n, seen] of chunkSets) {
+    if (seen.size === n) return 'chunked';
+  }
+  return null;
 }
 
 /**
