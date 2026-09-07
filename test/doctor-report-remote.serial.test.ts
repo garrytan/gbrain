@@ -13,6 +13,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { doctorReportRemote, computeDoctorReport, type DoctorReport, type Check } from '../src/commands/doctor.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
 let tmpHome: string;
@@ -135,5 +136,50 @@ describe('computeDoctorReport — score + status math', () => {
   test('schema_version is always 2', () => {
     const r: DoctorReport = computeDoctorReport([check('ok')]);
     expect(r.schema_version).toBe(2);
+  });
+});
+
+// #4592 — the thin-client doctor report is an admin-scope aggregate on the same
+// trust boundary as get_stats/get_health: a source-scoped remote grant must not
+// read the brain-wide page count back out of the `connection` check (the same
+// subtraction leak, one op over). Seeded AFTER the fresh-brain suite above so
+// those assertions keep their empty brain.
+describe('doctorReportRemote — source scope (#4592)', () => {
+  const SRCA = 'scopesrca';
+  const SRCB = 'scopesrcb';
+  const message = (r: DoctorReport, name: string) => r.checks.find(c => c.name === name)!.message;
+  const put = (sourceId: string, slug: string) =>
+    engine.putPage(slug, { title: slug, type: 'note', compiled_truth: `# ${slug}\n\nbody\n` }, { sourceId });
+
+  beforeAll(async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('${SRCA}', '${SRCA}'), ('${SRCB}', '${SRCB}') ON CONFLICT (id) DO NOTHING`,
+    );
+    await put(SRCA, 'notes/alpha');
+    await put(SRCA, 'notes/beta');
+    await put(SRCB, 'notes/gamma');
+  });
+
+  test('sourceIds confines the connection page count instead of reporting brain-wide', async () => {
+    const report = await doctorReportRemote(engine, { sourceIds: [SRCA] });
+    expect(message(report, 'connection')).toBe('Connected, 2 pages');
+  });
+
+  test('run_doctor threads a remote federated grant into the count', async () => {
+    const ctx = {
+      engine,
+      remote: true,
+      auth: { token: 't', clientId: 'c', scopes: ['admin'], allowedSources: [SRCB] },
+    } as unknown as OperationContext;
+    const report = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    expect(message(report, 'connection')).toBe('Connected, 1 pages');
+  });
+
+  test('differential: mutating an EXCLUDED source moves nothing a scoped report shows', async () => {
+    const before = await doctorReportRemote(engine, { sourceIds: [SRCA] });
+    await put(SRCB, 'notes/delta');
+    const after = await doctorReportRemote(engine, { sourceIds: [SRCA] });
+    expect(message(after, 'connection')).toBe(message(before, 'connection'));
+    expect(message(after, 'brain_score')).toBe(message(before, 'brain_score'));
   });
 });

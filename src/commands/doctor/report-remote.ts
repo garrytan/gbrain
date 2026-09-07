@@ -70,10 +70,12 @@ export async function doctorReportRemote(
 ): Promise<DoctorReport> {
   const checks: Check[] = [];
 
-  // 1. Connection
+  // 1. Connection. #4592: confined to the caller's source scope (undefined =
+  // brain-wide, the local/unscoped path) — an admin-scope aggregate on the
+  // remote trust boundary leaks an excluded source's size by subtraction.
   let pageCount = 0;
   try {
-    const stats = await engine.getStats();
+    const stats = await engine.getStats({ sourceIds: opts.sourceIds });
     pageCount = stats.page_count ?? 0;
     checks.push({
       name: 'connection',
@@ -184,9 +186,9 @@ export async function doctorReportRemote(
     checks.push({ name: 'chronicle_projection_health', status: 'ok', message: 'no event projections yet' });
   }
 
-  // 3. Brain score
+  // 3. Brain score (#4592: same scope as the connection count above)
   try {
-    const health = await engine.getHealth();
+    const health = await engine.getHealth({ sourceIds: opts.sourceIds });
     const score = health.brain_score ?? 0;
     checks.push({
       name: 'brain_score',
