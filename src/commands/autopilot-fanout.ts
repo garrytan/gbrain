@@ -351,14 +351,23 @@ export function selectSourcesForDispatch(
   recentFailures: Map<string, SourceFailure> = new Map(),
   cooldownOpts: CooldownOpts = { baseMin: FAILURE_COOLDOWN_BASE_MIN, capMin: FAILURE_COOLDOWN_CAP_MIN },
   pathExists: (path: string) => boolean = () => true,
-): { dispatch: SourceRow[]; skippedFresh: SourceRow[]; skippedCap: SourceRow[]; skippedCooldown: SourceRow[]; skippedUnavailablePath: SourceRow[] } {
+): {
+  dispatch: SourceRow[];
+  skippedFresh: SourceRow[];
+  skippedCap: SourceRow[];
+  skippedCooldown: SourceRow[];
+  /** Each row carries the warning that excluded it, so the caller logs it
+   *  directly instead of recomputing (a second existsSync per row). */
+  skippedUnavailablePath: Array<SourceRow & { skip_warning: string }>;
+} {
   const stale: SourceRow[] = [];
   const fresh: SourceRow[] = [];
   const cooldown: SourceRow[] = [];
-  const unavailablePath: SourceRow[] = [];
+  const unavailablePath: Array<SourceRow & { skip_warning: string }> = [];
   for (const s of sources) {
-    if (s.local_path && sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config)) {
-      unavailablePath.push(s);
+    const skipWarning = s.local_path ? sourceLocalPathSkipWarning(s.id, s.local_path, pathExists, s.config) : null;
+    if (skipWarning) {
+      unavailablePath.push({ ...s, skip_warning: skipWarning });
       continue;
     }
     if (!isSourceStale(s, now, floorMin)) { fresh.push(s); continue; }
@@ -485,12 +494,10 @@ export async function dispatchPerSource(
     );
 
   for (const src of skippedUnavailablePath) {
-    const warning = src.local_path ? sourceLocalPathSkipWarning(src.id, src.local_path, pathExists, src.config) : null;
-    if (!warning) continue;
     if (opts.jsonMode) {
-      emit(JSON.stringify({ event: 'fanout_source_path_skipped', source_id: src.id, reason: warning }));
+      emit(JSON.stringify({ event: 'fanout_source_path_skipped', source_id: src.id, reason: src.skip_warning }));
     } else {
-      log(warning);
+      log(src.skip_warning);
     }
   }
 

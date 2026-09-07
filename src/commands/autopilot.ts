@@ -45,7 +45,7 @@ import { detectInstallMethod } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
-import { sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -1081,20 +1081,22 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
         try {
           const { isFederatedV2Enabled } = await import('../core/feature-flags.ts');
           if (await isFederatedV2Enabled(engine)) {
-            const { loadAllSources, sourceConfigHasRemoteUrl } = await import('../core/sources-load.ts');
             const sources = await loadAllSources(engine);
             const intervalMs = baseInterval * 1000;
             const now = Date.now();
             for (const src of sources) {
               if (!src.local_path) continue;
-              // #3696: a RELATIVE local_path is meaningless in the daemon
-              // (cwd is launchd's, not the registering shell's) — dispatching
-              // it would sync a phantom path. Skip loudly; the fix is
-              // re-registering with an absolute path (sources add now
-              // resolves) or one successful `gbrain sync` (anchor self-heal).
+              // A local_path this machine cannot use — relative (#3696: cwd is
+              // launchd's, not the registering shell's) or absent on disk and
+              // not a managed clone sync can re-create — would sync a phantom
+              // path. Skip loudly (sourceLocalPathSkipWarning carries the
+              // fix); under --json the skip is an NDJSON event like every
+              // other daemon line on stderr, never bare prose in the stream.
               const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
               if (skipWarn) {
-                process.stderr.write(skipWarn + '\n');
+                process.stderr.write(
+                  (jsonMode ? JSON.stringify({ event: 'freshness_source_path_skipped', source_id: src.id, reason: skipWarn }) : skipWarn) + '\n',
+                );
                 continue;
               }
               const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
@@ -1184,16 +1186,18 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
                 }
 
                 if (submittedToday < maxJobsToday) {
-                  const { loadAllSources } = await import('../core/sources-load.ts');
                   const { countExtractAtomsBacklog } = await import('../core/cycle/extract-atoms.ts');
                   const sources = await loadAllSources(engine);
                   for (const src of sources) {
                     if (submittedToday >= maxJobsToday) break; // brain-wide daily cap (fairness)
                     if (!src.local_path) continue;
-                    // #3696: same relative-path skip as the freshness loop.
+                    // Same unavailable-path skip (relative / missing on this
+                    // machine) as the freshness loop above, same --json shape.
                     const skipWarn = sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config);
                     if (skipWarn) {
-                      process.stderr.write(skipWarn + '\n');
+                      process.stderr.write(
+                        (jsonMode ? JSON.stringify({ event: 'freshness_source_path_skipped', source_id: src.id, reason: skipWarn }) : skipWarn) + '\n',
+                      );
                       continue;
                     }
                     const backlog = await countExtractAtomsBacklog(engine, src.id);
@@ -1391,11 +1395,12 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
           // keep that behavior, or an all-coalesced tick (single-flight
           // suppression) would retake the full-cycle branch every tick and
           // starve the targeted-plan path for the whole in-flight window.
+          // (all_sources_handled subsumes all_sources_fresh: fresh + locally
+          // skipped === every source.)
           if (
             result.dispatched.length > 0 ||
             result.coalesced.length > 0 ||
             result.legacy_fallback ||
-            result.all_sources_fresh ||
             result.all_sources_handled
           ) {
             lastFullCycleAt = Date.now();

@@ -83,8 +83,21 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
     expect(updateIdx).toBeGreaterThan(-1);
     const advanceGate = AUTOPILOT_SRC.slice(Math.max(0, updateIdx - 400), updateIdx + 80);
     expect(advanceGate).toContain('result.coalesced.length > 0');
-    expect(advanceGate).toContain('result.all_sources_fresh');
+    // all_sources_handled subsumes all_sources_fresh (fresh + locally skipped
+    // === every source); the redundant arm is gone (wave review).
+    expect(advanceGate).not.toContain('result.all_sources_fresh');
     expect(advanceGate).toContain('result.all_sources_handled');
+  });
+
+  test('unavailable-path skips in the daemon loops are NDJSON events under --json, and sources-load is a static import (wave review)', () => {
+    // Bare prose on stderr breaks the --json NDJSON stream every other daemon
+    // line keeps; the two skip sites now emit an event in jsonMode.
+    expect(AUTOPILOT_SRC.match(/event: 'freshness_source_path_skipped'/g)?.length).toBe(2);
+    expect(AUTOPILOT_SRC).not.toContain("await import('../core/sources-load.ts')");
+    // The stale "#3696 RELATIVE path" narration is gone: the skip covers any
+    // unavailable path (relative OR missing on this machine).
+    expect(AUTOPILOT_SRC).not.toContain('a RELATIVE local_path is meaningless');
+    expect(AUTOPILOT_SRC).not.toContain('same relative-path skip as the freshness loop');
   });
 
   test('fanout_summary reports coalesced separately from dispatched (honest surfaces)', () => {
@@ -109,7 +122,7 @@ describe('autopilot.ts ↔ dispatchPerSource wiring', () => {
   test('freshness sync dispatch skips unavailable source paths before enqueueing', () => {
     const freshnessIdx = AUTOPILOT_SRC.indexOf('idempotency_key: `autopilot-sync:');
     expect(freshnessIdx).toBeGreaterThan(-1);
-    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 900), freshnessIdx + 100);
+    const freshnessBlock = AUTOPILOT_SRC.slice(Math.max(0, freshnessIdx - 1400), freshnessIdx + 100);
     expect(freshnessBlock).toContain('sourceLocalPathSkipWarning(src.id, src.local_path, undefined, src.config)');
   });
 

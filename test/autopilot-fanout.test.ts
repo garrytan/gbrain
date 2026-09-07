@@ -370,6 +370,10 @@ describe('dispatchPerSource — integration with stubbed engine + queue', () => 
 
     expect(result.dispatch.map(s => s.id)).toEqual(['present']);
     expect(result.skippedUnavailablePath.map(s => s.id)).toEqual(['legacy']);
+    // The row carries the warning that excluded it (dispatchPerSource logs it
+    // directly rather than recomputing it with a second path probe).
+    expect(result.skippedUnavailablePath[0].skip_warning).toContain('legacy');
+    expect(result.skippedUnavailablePath[0].skip_warning).toContain('notes/brain');
   });
 
   test('pull: true only when source.config.remote_url is set', async () => {
