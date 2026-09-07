@@ -18,6 +18,7 @@ import {
 } from './context.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
+import { normalizeSlugKey } from '../utils.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 // #4655: write-time pack vocabulary enforcement for explicit link verbs.
@@ -55,10 +56,14 @@ const add_link: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    // #4807 follow-up: endpoints key on the stored (extension-stripped) slug so
+    // the getPage preflight and the addLink mutation address the same rows.
+    const from = normalizeSlugKey(p.from as string);
+    const to = normalizeSlugKey(p.to as string);
     // Client fence on the `from` endpoint only: the edge originates from
     // (and renders on) the from page; linking TO a page outside the
     // binding is a reference, not a mutation of the target.
-    enforceClientSlugFence(ctx, p.from as string, 'add_link');
+    enforceClientSlugFence(ctx, from, 'add_link');
     // #4655: an EXPLICIT link verb must be declared by the active pack (when
     // one resolves — best-effort, no pack means no vocabulary to enforce).
     // Runs before the dry-run return so a dry run previews the rejection.
@@ -74,7 +79,7 @@ const add_link: Operation = {
         );
       }
     }
-    if (ctx.dryRun) return { dry_run: true, action: 'add_link', from: p.from, to: p.to };
+    if (ctx.dryRun) return { dry_run: true, action: 'add_link', from, to };
     // v114 (#1941): default omitted provenance to 'manual' (NOT the engine's
     // 'markdown' default) so hand/tool-created CLI edges are honestly manual,
     // and forbid forging the reconciliation-managed built-ins.
@@ -92,11 +97,11 @@ const add_link: Operation = {
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId, originSourceId: ctx.sourceId }
       : undefined;
     // #4109: per-endpoint source-boundary diagnostics before the mutation.
-    await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
-    await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
+    await requireWritablePage(ctx, from, 'add_link', 'from');
+    await requireWritablePage(ctx, to, 'add_link', 'to');
     try {
       await ctx.engine.addLink( // gbrain-allow-direct-insert: add_link MCP op is the explicit canonical surface for manual link creation; auto-link reconciliation runs separately via auto_link post-hook
-        p.from as string, p.to as string,
+        from, to,
         (p.context as string) || '', linkType,
         linkSource, undefined, undefined,
         linkOpts,
@@ -126,8 +131,10 @@ const remove_link: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    enforceClientSlugFence(ctx, p.from as string, 'remove_link');
-    if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
+    const from = normalizeSlugKey(p.from as string); // #4807 follow-up: same key as add_link
+    const to = normalizeSlugKey(p.to as string);
+    enforceClientSlugFence(ctx, from, 'remove_link');
+    if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from, to };
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId }
       : undefined;
@@ -135,7 +142,7 @@ const remove_link: Operation = {
     // `{ status: 'ok' }` made a zero-match delete (typo'd slug, wrong
     // link_type, already removed) indistinguishable from a real removal.
     const removed = await ctx.engine.removeLink(
-      p.from as string, p.to as string,
+      from, to,
       (p.link_type as string) || undefined,
       (p.link_source as string) || undefined,
       linkOpts,

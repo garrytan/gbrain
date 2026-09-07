@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { validateSlug, contentHash, parseEmbedding, tryParseEmbedding, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
+import { validateSlug, normalizeSlugKey, contentHash, parseEmbedding, tryParseEmbedding, rowToPage, rowToChunk, rowToSearchResult } from '../src/core/utils.ts';
 
 describe('validateSlug', () => {
   test('accepts valid slugs', () => {
@@ -54,6 +54,30 @@ describe('validateSlug', () => {
   test('rejects a slug that is only a markdown extension', () => {
     expect(() => validateSlug('.md')).toThrow('Invalid slug');
     expect(() => validateSlug('foo/.md')).toThrow('Invalid slug');
+  });
+});
+
+describe('normalizeSlugKey', () => {
+  // #4807 follow-up: validateSlug strips the extension on WRITE, so put_page('x.md')
+  // stores 'x'. Every op that keys a page on a caller-supplied slug (get/delete/
+  // restore/link/timeline, put_page's overwrite probe) must apply the same strip
+  // or the caller's own string misses the row it just wrote.
+  test('strips every trailing .md/.mdx case-insensitively, nothing else, never throws', () => {
+    expect(normalizeSlugKey('notes/foo.md')).toBe('notes/foo');
+    expect(normalizeSlugKey('notes/foo.MDX')).toBe('notes/foo');
+    expect(normalizeSlugKey('notes/foo.mdx.md')).toBe('notes/foo');
+    expect(normalizeSlugKey('notes/v1.0.0')).toBe('notes/v1.0.0');
+    // No lowercasing: reads stay exact-case (validateSlug lowercases on write only).
+    expect(normalizeSlugKey('People/Alice')).toBe('People/Alice');
+    // Validation is validateSlug's job — the key normalizer is non-throwing.
+    expect(normalizeSlugKey('../x.md')).toBe('../x');
+    expect(normalizeSlugKey('.md')).toBe('');
+  });
+
+  test('agrees with validateSlug on the stored key for lowercase slugs', () => {
+    for (const s of ['notes/foo.md', 'daily/2026-08-28.mdx', 'plain', 'a/b.c.md.md']) {
+      expect(normalizeSlugKey(s)).toBe(validateSlug(s));
+    }
   });
 });
 
