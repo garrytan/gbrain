@@ -435,7 +435,13 @@ export function checkResolvable(
   }
 
   // 2. Check every resolver entry points to a file that exists
-  for (const entry of entries) {
+  // Orphans (skill on disk, not in manifest.json) are collected per SKILL,
+  // not per trigger, and worded by where the trigger came from: only a
+  // RESOLVER.md row can be removed from RESOLVER.md; a frontmatter-only
+  // skill needs a manifest.json entry. Value = RESOLVER.md skillPath, or
+  // null when every trigger for the skill came from SKILL.md frontmatter.
+  const orphans = new Map<string, string | null>();
+  for (const entry of triggerEntries) {
     if (entry.isGStack) continue;
 
     // Resolver uses 'skills/query/SKILL.md', manifest uses 'query/SKILL.md'
@@ -458,13 +464,27 @@ export function checkResolvable(
     const skillName = relPath.replace(/\/SKILL\.md$/, '');
     const inManifest = manifest.some(s => s.name === skillName);
     if (!inManifest && existsSync(fullPath)) {
+      if (entry.source === 'resolver_md') orphans.set(skillName, entry.skillPath);
+      else if (!orphans.has(skillName)) orphans.set(skillName, null);
+    }
+  }
+  for (const [skillName, resolverSkillPath] of orphans) {
+    if (resolverSkillPath !== null) {
       issues.push({
         type: 'orphan_trigger',
         severity: 'warning',
         skill: skillName,
         message: `RESOLVER.md has a trigger for '${skillName}' which is not in manifest.json`,
         action: `Register '${skillName}' in skills/manifest.json or remove from RESOLVER.md`,
-        fix: { type: 'remove_trigger', file: resolverPath, skill_path: entry.skillPath },
+        fix: { type: 'remove_trigger', file: resolverPath, skill_path: resolverSkillPath },
+      });
+    } else {
+      issues.push({
+        type: 'orphan_trigger',
+        severity: 'warning',
+        skill: skillName,
+        message: `Skill '${skillName}' declares triggers in ${join(skillsDir, skillName, 'SKILL.md')} frontmatter but is not registered in ${join(skillsDir, 'manifest.json')}`,
+        action: `Add {"name":"${skillName}","path":"${skillName}/SKILL.md"} to manifest.json (or delete the skill directory)`,
       });
     }
   }
