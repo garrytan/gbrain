@@ -28,6 +28,7 @@ import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { runExtract } from '../src/commands/extract.ts';
 
 const KEYLESS: CapabilityReport = {
   embeddings: { available: false },
@@ -985,5 +986,78 @@ describe('runSweep CLI arg parsing [CX2-5]', () => {
     expect(out).toContain('Sweep complete');
     expect(out).toContain('source=my-src');
     expect(out).toContain('budget_exhausted:facts_fence');
+  });
+});
+
+/**
+ * #4611 residual — the sweep is the third caller of the shared
+ * resolveCandidateSources helper and must thread the same two knobs the
+ * extract paths do (`link_resolution.cross_source`, `sources.default`).
+ * Pre-fix it passed none, so on the sweep path the fallback compared against
+ * the LITERAL 'default' and the flag was ignored — and reconciliation then
+ * REMOVED the cross-source edge a flag-on `extract links` had just written.
+ */
+describe('#4611 sweep honors link_resolution.cross_source + sources.default', () => {
+  const sweep = () => runMaintenanceSweep(engine, {
+    sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+  });
+  const edgesInto = async (toSource: string) => {
+    const rows = await engine.executeRaw<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE pf.slug = 'notes/writer-example' AND pf.source_id = 'default'
+          AND pt.slug = 'people/alice-example' AND pt.source_id = $1`,
+      [toSource],
+    );
+    return parseInt(rows[0].n, 10);
+  };
+  async function seedForeignTarget(source: string) {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [source],
+    );
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('people/alice-example', $1, 'person', 'Alice', 'A person page.', '')`, [source],
+    );
+    await seedPage('notes/writer-example', 'note', 'See [Alice](people/alice-example).');
+  }
+
+  afterEach(async () => {
+    await engine.executeRaw(`DELETE FROM config WHERE key IN ('link_resolution.cross_source', 'sources.default')`);
+    await engine.executeRaw(`UPDATE sources SET config = config - 'federated' WHERE id = 'default'`);
+    await engine.executeRaw('DELETE FROM links');
+    await engine.executeRaw('DELETE FROM pages');
+    await engine.executeRaw(`DELETE FROM sources WHERE id <> 'default'`);
+  });
+
+  test('flag on: a link whose target lives only in another source produces the edge', async () => {
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await seedForeignTarget('vault-a');
+    await sweep();
+    expect(await edgesInto('vault-a')).toBe(1);
+  });
+
+  test('flag on: the sweep keeps the cross-source edge a flag-on extract just wrote', async () => {
+    await engine.setConfig('link_resolution.cross_source', 'true');
+    await seedForeignTarget('vault-a');
+    await runExtract(engine, ['links', '--source', 'db']);
+    expect(await edgesInto('vault-a')).toBe(1);
+    // extract stamped links_extracted_at; a later edit makes the page stale
+    // again so the sweep's batch actually re-selects (and reconciles) it.
+    await engine.executeRaw(`UPDATE pages SET updated_at = now() WHERE slug = 'notes/writer-example'`);
+    const r = await sweep();
+    expect(r.linksRemoved).toBe(0);
+    expect(await edgesInto('vault-a')).toBe(1);
+  });
+
+  test('flag off, federated origin: the fallback lane follows the configured sources.default', async () => {
+    await engine.setConfig('sources.default', 'main-vault');
+    await engine.executeRaw(
+      `UPDATE sources SET config = jsonb_set(config, '{federated}', 'true'::jsonb) WHERE id = 'default'`,
+    );
+    await seedForeignTarget('main-vault');
+    await sweep();
+    expect(await edgesInto('main-vault')).toBe(1);
   });
 });
