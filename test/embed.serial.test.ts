@@ -57,6 +57,10 @@ __setEmbedTransportForTests(async () => ({ embeddings: [], usage: { tokens: 0 } 
 
 // Proxy-based mock engine that matches test/import-file.test.ts pattern.
 function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
+  // Raw SQL the stale drain issues (the page-provenance stamp check) reads an
+  // empty result set unless a test models it — the Proxy's null default would
+  // throw on indexing and count the page as a failed embed.
+  overrides = { executeRaw: async () => [], ...overrides };
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
