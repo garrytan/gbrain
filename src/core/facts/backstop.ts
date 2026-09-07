@@ -42,6 +42,19 @@ import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 
+/**
+ * Notability-filter vocabulary shared by the durable facts-absorb payload
+ * writer (queue mode below) and its only reader, the minion handler in
+ * commands/jobs.ts. #4870: the reader must accept every value the writer can
+ * send; `coerceNotabilityFilter` is the validated pass-through (unknown or
+ * absent → 'all', the documented default).
+ */
+export const NOTABILITY_FILTERS = ['all', 'high-only', 'medium-and-up'] as const;
+export type FactNotabilityFilter = typeof NOTABILITY_FILTERS[number];
+export function coerceNotabilityFilter(v: unknown): FactNotabilityFilter {
+  return (NOTABILITY_FILTERS as readonly unknown[]).includes(v) ? (v as FactNotabilityFilter) : 'all';
+}
+
 export interface FactsBackstopCtx {
   engine: BrainEngine;
   /** Brain source identifier; default 'default'. */
@@ -63,7 +76,7 @@ export interface FactsBackstopCtx {
   mode?: 'queue' | 'inline';
   /** Notability filter — D4. Default 'all'; sync uses 'high-only'; the
    * ambient-writeback lane uses 'medium-and-up' in salient mode. */
-  notabilityFilter?: 'all' | 'high-only' | 'medium-and-up';
+  notabilityFilter?: FactNotabilityFilter;
   /** Abort signal for shutdown propagation. */
   abortSignal?: AbortSignal;
   /** Mirrors OperationContext.remote for trust-aware logging paths. */
