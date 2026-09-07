@@ -118,41 +118,6 @@ describe('put_page write-through — happy path', () => {
     expect(await engine.getPage('inbox/report')).not.toBeNull();
   });
 
-  test("#4807 follow-up: the caller's own .md-suffixed slug keys every op — get, link, timeline, overwrite probe, delete, restore", async () => {
-    const ctx = makeCtx();
-    const op = (name: string) => operations.find((o) => o.name === name)!;
-    const raw = 'inbox/report.md';
-    await putPage.handler(ctx, { slug: raw, content: '---\ntitle: Dbl\n---\n\nround-trip body' });
-    await putPage.handler(ctx, { slug: 'inbox/target', content: '---\ntitle: T\n---\n\ntarget body' });
-
-    // Read back with the same string the caller wrote with.
-    const got = (await op('get_page').handler(ctx, { slug: raw })) as { slug: string };
-    expect(got.slug).toBe('inbox/report');
-
-    // Graph mutators: preflight (getPage) and mutation must key the same row.
-    await op('add_link').handler(ctx, { from: raw, to: 'inbox/target' });
-    expect((await engine.getLinks('inbox/report', { sourceId: 'default' })).map((l) => l.to_slug)).toEqual(['inbox/target']);
-    const unlinked = (await op('remove_link').handler(ctx, { from: raw, to: 'inbox/target' })) as { removed: number };
-    expect(unlinked.removed).toBe(1);
-    await op('add_timeline_entry').handler(ctx, { slug: raw, date: '2026-09-01', summary: 'noted' });
-    const timeline = (await op('get_timeline').handler(ctx, { slug: raw })) as Array<{ summary: string }>;
-    expect(timeline.map((e) => e.summary)).toEqual(['noted']);
-
-    // The op-level empty-overwrite guard probes the row the write targets.
-    await expect(putPage.handler(ctx, { slug: raw, content: '   ' })).rejects.toThrow(/Refusing to overwrite existing non-empty page/);
-
-    // Delete + restore address the row AND its single-extension file.
-    const del = (await op('delete_page').handler(ctx, { slug: raw })) as { status: string };
-    expect(del.status).toBe('soft_deleted');
-    expect(await engine.getPage('inbox/report')).toBeNull();
-    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md'))).toBe(false);
-    const restored = (await op('restore_page').handler(ctx, { slug: raw })) as { status: string };
-    expect(restored.status).toBe('restored');
-    expect(await engine.getPage('inbox/report')).not.toBeNull();
-    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md'))).toBe(true);
-    expect(fs.existsSync(path.join(brainDir, 'inbox/report.md.md'))).toBe(false);
-  });
-
   test('stamps provenance frontmatter (ingested_via=put_page for local CLI)', async () => {
     const ctx = makeCtx({ remote: false });
     const result = (await putPage.handler(ctx, {

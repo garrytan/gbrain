@@ -67,31 +67,14 @@ export function validateSlug(slug: string): string {
   // extension so the canonical write slug matches how `slugifyPath` derives
   // slugs from disk paths (`/\.mdx?$/i`), keeping the DB row and the `.md` file
   // in agreement.
-  const normalized = normalizeSlugKey(slug);
-  if (normalized !== slug && (!normalized || /\/$/.test(normalized))) {
-    throw new Error(`Invalid slug: "${slug}". Stripping the markdown extension left an empty or malformed slug.`);
-  }
-  return normalized.toLowerCase();
-}
-
-/**
- * The read-side twin of `validateSlug`'s #4807 extension strip: every trailing
- * `.md`/`.mdx` removed, nothing else touched, never throws. `putPage` stores the
- * stripped slug, so an op that keys a page on a CALLER-supplied slug (get_page,
- * delete_page, restore_page, add/remove_link, add_timeline_entry/get_timeline,
- * put_page's overwrite probe + write-through path) applies this first — otherwise
- * `put_page('x.md')` followed by `get_page('x.md')` misses the row it just wrote
- * and delete_page's write-through derives the wrong file (`x.md.md`).
- * Lowercasing stays write-only (reads have always been exact-case). Engine
- * methods take canonical slugs and do NOT normalize: migration v147 needs
- * `updateSlug`/raw SQL to address a legacy `x.md` row by its stored key.
- */
-export function normalizeSlugKey(slug: string): string {
   let normalized = slug;
   while (/\.mdx?$/i.test(normalized)) {
     normalized = normalized.replace(/\.mdx?$/i, '');
   }
-  return normalized;
+  if (normalized !== slug && (!normalized || /\/$/.test(normalized))) {
+    throw new Error(`Invalid slug: "${slug}". Stripping the markdown extension left an empty or malformed slug.`);
+  }
+  return normalized.toLowerCase();
 }
 
 /**

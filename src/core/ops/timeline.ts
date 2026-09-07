@@ -16,7 +16,6 @@ import {
 } from './context.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { writeTimelineEntryThrough } from '../timeline-write-through.ts';
-import { normalizeSlugKey } from '../utils.ts';
 
 // --- Timeline ---
 
@@ -36,16 +35,13 @@ const add_timeline_entry: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    // #4807 follow-up: key on the stored (extension-stripped) slug so the
-    // preflight, the write-through target and the insert address one row.
-    const slug = normalizeSlugKey(p.slug as string);
     // #2778: same fail-closed slug fence as put_page. add_timeline_entry is
     // subagent-allowlisted (brain-allowlist.ts), so timeline writes must be
     // confined to the same namespace/allow-list as page writes. Runs before
     // the dry-run short-circuit so preview calls surface the same rejection.
-    enforceSubagentSlugFence(ctx, slug, 'add_timeline_entry');
-    enforceClientSlugFence(ctx, slug, 'add_timeline_entry');
-    if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug };
+    enforceSubagentSlugFence(ctx, p.slug as string, 'add_timeline_entry');
+    enforceClientSlugFence(ctx, p.slug as string, 'add_timeline_entry');
+    if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
     // a real calendar day. PG DATE accepts year 5874897 silently — that's a
@@ -67,7 +63,7 @@ const add_timeline_entry: Operation = {
     // #4109: source-boundary diagnostics before the write-through/insert —
     // a page readable only from another granted source must come back as
     // permission_denied, not the engine's exact-source "not found".
-    await requireWritablePage(ctx, slug, 'add_timeline_entry', 'page');
+    await requireWritablePage(ctx, p.slug as string, 'add_timeline_entry', 'page');
     // #1856: on an FS/git-canonical brain (a disk target resolves for this
     // page), route the entry through the page/facts write-through seam so the
     // canonical markdown gains the bullet too — a DB-only insert stranded the
@@ -88,7 +84,7 @@ const add_timeline_entry: Operation = {
     if (!isSandboxSubagent) {
       writeThrough = await writeTimelineEntryThrough(
         ctx.engine,
-        slug,
+        p.slug as string,
         ctx.sourceId ?? 'default',
         entryInput,
         { logger: ctx.logger },
@@ -116,7 +112,7 @@ const add_timeline_entry: Operation = {
     const canonical = writeThrough?.entry;
     let inserted: boolean;
     try {
-      inserted = await ctx.engine.addTimelineEntry(slug, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries on DB-only brains; FS-canonical brains route through writeTimelineEntryThrough above
+      inserted = await ctx.engine.addTimelineEntry(p.slug as string, { // gbrain-allow-direct-insert: add_timeline_entry MCP op is the explicit canonical surface for manual timeline entries on DB-only brains; FS-canonical brains route through writeTimelineEntryThrough above
         date: canonical?.date ?? date,
         source: canonical ? canonical.source : entryInput.source,
         summary: canonical ? canonical.summary : entryInput.summary,
@@ -165,7 +161,7 @@ const get_timeline: Operation = {
     const after = typeof p.after === 'string' ? p.after : typeof p.since === 'string' ? p.since : undefined;
     const before = typeof p.before === 'string' ? p.before : typeof p.until === 'string' ? p.until : undefined;
     const limit = typeof p.limit === 'number' ? p.limit : undefined;
-    return ctx.engine.getTimeline(normalizeSlugKey(p.slug as string), { // #4807 follow-up: same key as add_timeline_entry
+    return ctx.engine.getTimeline(p.slug as string, {
       ...scope,
       ...(after ? { after } : {}),
       ...(before ? { before } : {}),

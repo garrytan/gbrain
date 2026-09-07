@@ -21,7 +21,6 @@ import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { WriterLintPayload } from '../output/post-write.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
-import { normalizeSlugKey } from '../utils.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { OperationError } from './contract.ts';
@@ -111,8 +110,7 @@ const get_page: Operation = {
     source_id: { type: 'string', description: "#4329: scope the lookup to a single source (a multi-source brain can hold the same slug in several sources). Defaults to ctx.sourceId / the caller's grant. '__all__' spans every source for trusted local callers, your granted sources for remote callers." },
   },
   handler: async (ctx, p) => {
-    // #4807 follow-up: key on the same string put_page stored (extension stripped).
-    const slug = normalizeSlugKey(p.slug as string);
+    const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
     const includeDeleted = (p.include_deleted as boolean) === true;
     const includeContent = (p.include_content as boolean) === true;
@@ -351,8 +349,7 @@ const put_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    // #4807 follow-up: fences, overwrite probe and dry-run echo address the slug importFromContent stores.
-    const slug = normalizeSlugKey(p.slug as string);
+    const slug = p.slug as string;
     validatePageSlug(slug);
 
     // v0.39.3.0 CV6 trust gate for provenance write-through (WARN-8).
@@ -389,7 +386,7 @@ const put_page: Operation = {
     enforceSubagentSlugFence(ctx, slug, 'put_page');
     enforceClientSlugFence(ctx, slug, 'put_page');
 
-    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug };
+    if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
 
     // Empty-overwrite guard: empty/whitespace-only content over an existing
     // non-empty page is almost always an input-plumbing failure (e.g. a
@@ -1111,8 +1108,7 @@ const delete_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    // #4807 follow-up: the row AND the write-through target (`<slug>.md`) derive from the stored slug.
-    const slug = normalizeSlugKey(p.slug as string);
+    const slug = p.slug as string;
     enforceClientSlugFence(ctx, slug, 'delete_page');
     // #4329: honor a per-call source_id (pre-fix it was silently dropped and
     // the delete landed on ctx.sourceId's row — the wrong-source soft-delete).
@@ -1176,7 +1172,7 @@ const restore_page: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    const slug = normalizeSlugKey(p.slug as string); // #4807 follow-up: same key as delete_page
+    const slug = p.slug as string;
     enforceClientSlugFence(ctx, slug, 'restore_page');
     // #4329: honor a per-call source_id (pre-fix it was silently dropped).
     const requestedSource = parseSourceIdParam(p.source_id, 'restore_page');
