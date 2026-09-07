@@ -31,6 +31,7 @@ import {
 } from '../src/core/schema-pack/index.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractStaleFromDB } from '../src/commands/extract.ts';
+import { slugifyPath } from '../src/core/sync.ts';
 
 const nullResolver: SlugResolver = { resolve: async () => null };
 
@@ -89,6 +90,27 @@ describe('#3190 gate 1 — same-directory markdown links', () => {
       { skipFrontmatter: true },
     );
     expect(candidates.map(c => c.targetSlug)).toEqual(['people/alice-chen']);
+  });
+
+  // #4873: an explicit `./` prefix is the same intent as a bare sibling link
+  // (the FS walker's join(fileDir, target) eats it). The DB path dropped it,
+  // so the #4196 sweep reconcile pruned every FS-created `./` edge.
+  test('#4873 leading ./ same-dir link is a sameDir ref', () => {
+    const refs = extractEntityRefs('See [Beta](./beta.md).');
+    expect(refs).toHaveLength(1);
+    expect(refs[0].slug).toBe('beta');
+    expect(refs[0].sameDir).toBe(true);
+  });
+
+  test('#4873 ./ nested path resolves against the page dir', async () => {
+    const { candidates } = await extractPageLinks(
+      'docs/readme', 'See [Vietnamese](./i18n/README.vi.md).', {}, 'concept', nullResolver,
+      { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual([slugifyPath('docs/i18n/README.vi')]);
+    // Anchors and schemes stay excluded on the ./ arm too.
+    expect(extractEntityRefs('[x](./beta.md#section)').filter(r => r.sameDir)).toEqual([]);
+    expect(extractEntityRefs('[x](./https://example.com/a.md)').filter(r => r.sameDir)).toEqual([]);
   });
 });
 

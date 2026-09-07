@@ -49,6 +49,8 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
+// 2026-09-06: #4873 — pass 1b accepts a leading `./`, so pages whose `./`
+// links were pruned by the sweep reconcile re-extract on `extract --stale`.
 // 2026-08-21: re-bumped for #2367 — normalizeBasename semantics changed
 // (non-Latin scripts kept, accents folded like the slug grammar), so
 // pre-#2367 extractions must re-run to pick up the newly-resolvable links.
@@ -63,7 +65,7 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // PRE-wave code after this date reads as fresh and won't re-extract until
 // the page is next edited; no fixed watermark can cover code that keeps
 // running past it.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-08-21T00:00:00Z';
+export const LINK_EXTRACTOR_VERSION_TS = '2026-09-06T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -238,12 +240,15 @@ const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]
 /**
  * #3190: same-directory markdown link — `[Name](slug.md)` whose target has
  * NO directory segment and NO scheme/anchor (`/`, `:`, `#` all excluded).
+ * #4873: an explicit `./` prefix (`[Name](./slug.md)`, `[Name](./sub/x.md)`)
+ * is the same page-dir-relative intent — the FS walker's join() eats it — so
+ * the `./` arm admits `/` in the tail. Captures: name, ./-tail, bare tail.
  * The `.md` suffix is REQUIRED (mirrors the FS extractor's mdPattern) so
  * bare parenthetical prose (`[sic](reference)`) never produces a ref.
  * Resolution against the linking page's directory happens in
  * extractPageLinks (this module has no page context here).
  */
-const SAME_DIR_MD_RE = /\[([^\]]+)\]\(([^)/:#\s]+?)\.md\)/g;
+const SAME_DIR_MD_RE = /\[([^\]]+)\]\((?:\.\/([^):#\s]+?)|([^)/:#\s]+?))\.md\)/g;
 
 /**
  * A code-reference found in markdown prose. Created by extractCodeRefs and
@@ -382,16 +387,16 @@ export function extractEntityRefs(content: string): EntityRef[] {
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
 
-  // 1b. #3190: same-directory markdown links — `[Name](slug.md)` (no `/`,
-  //     no scheme). Pass 1 requires a `dir/` segment, so sibling links in
-  //     flat directories were silently dropped on the DB path while the FS
-  //     walker (extractMarkdownLinks → resolveSlug) linked them. Tagged
-  //     `sameDir: true`; extractPageLinks resolves against the page's dir.
-  //     Disjoint from pass 1 (its targets always contain `/`).
+  // 1b. #3190/#4873: same-directory markdown links — `[Name](slug.md)` and
+  //     `[Name](./slug.md)` (no scheme). Pass 1 requires a `dir/` segment, so
+  //     sibling and `./`-relative links were silently dropped on the DB path
+  //     while the FS walker (extractMarkdownLinks → resolveSlug) linked them.
+  //     Tagged `sameDir: true`; extractPageLinks resolves against the page's
+  //     dir. Disjoint from pass 1 (its targets start with `../` or a dir).
   const sameDirPattern = new RegExp(SAME_DIR_MD_RE.source, SAME_DIR_MD_RE.flags);
   while ((match = sameDirPattern.exec(stripped)) !== null) {
     const name = match[1];
-    let target = match[2];
+    let target = match[2] ?? match[3];
     if (target.includes('%')) {
       try { target = decodeURIComponent(target); } catch { /* keep raw */ }
     }

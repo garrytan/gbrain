@@ -332,6 +332,27 @@ describe('runMaintenanceSweep — watermark progress + link reconciliation (#419
     expect(after.map(e => e.link_source).sort()).toEqual(['manual', 'mentions']);
   });
 
+  test('#4873: a ./-relative markdown edge from the FS extractor survives reconcile', async () => {
+    // The FS path (sync / `extract links`) resolves `[Beta](./beta.md)` via
+    // join(fileDir, target) and writes the edge with link_source NULL. The
+    // sweep's desired set must contain it or #4196 prunes a live edge on the
+    // first updated_at bump that doesn't re-run the FS extractor.
+    await seedPageAt('wiki/notes/beta', 'Beta page.', minsAgo(2));
+    await seedPageAt('wiki/notes/alpha', 'See [Beta](./beta.md).', minsAgo(1));
+    await engine.executeRaw(
+      `INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source)
+       SELECT f.id, t.id, 'mentions', 'markdown link: [Beta]', NULL
+         FROM pages f, pages t
+        WHERE f.slug = 'wiki/notes/alpha' AND t.slug = 'wiki/notes/beta'`,
+    );
+    const report = await runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+    });
+    expect(report.linksRemoved).toBe(0);
+    const edges = await engine.getLinks('wiki/notes/alpha', { sourceId: 'default' });
+    expect(edges.map(e => e.to_slug)).toContain('wiki/notes/beta');
+  });
+
   test('reconciliation never touches pages outside the sweep batch', async () => {
     // A page last updated outside the recentDays window keeps its edges even
     // though the sweep runs over the same source.
