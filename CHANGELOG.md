@@ -71,6 +71,13 @@ regression test proven red before the fix.
   spelling keep their slug; new facts about the same person resolve to the
   folded slug, so a brain with such names can grow a second page until the
   old one is renamed (tracked in TODOS.md). (#4855, contributed by @LongPV)
+- **`gbrain import --source <id>` now requires a registered source.** A typo
+  fails with the same one-line error `sync --source` gives instead of one
+  foreign-key failure per file; a bare `--source` with no value is refused.
+- **`gbrain bootstrap harness --source <id>` is validated**, and an implicit
+  source resolves through the same ladder `gbrain serve` uses (environment,
+  dotfile, working directory, brain default), so hooks stop binding to a
+  source the serve never resolved.
 - **Smaller contract changes.** `gbrain import --json` gains additive
   `failures`, `unchanged` and `malformed_skipped` keys (#4803, contributed by
   @afshaker); `code_blast` and `code_flow` gain additive `status` and
@@ -367,6 +374,24 @@ harness` is treated as the federated floor, matching dream and doctor; and
 three reference doc entries brought back to current state. The slug-extension
 change proposed in #4807 was tried, found to need a data migration with
 collision rules the maintainer should decide, and returned to the queue.
+
+A second pass with independent reviewers (including an outside model) then
+closed the interactions between fixes: an honest empty atoms array is accepted
+at any offset of the model's reply while a non-atom-shaped array is a failure
+rather than a permanent tombstone; an explicitly configured extraction budget
+stays enforced even when the embedding route is unpriced; `extract timeline
+--from-meetings` never dates a meeting from its import timestamp, skips
+private meetings, and honors the cross-source gate on attendee edges as well as
+mentions; a remote `run_doctor` on a source-scoped token no longer reveals
+other sources' ids or backlog; concept synthesis on a thinking model uses the
+same output headroom as every other call; `forget` strikes the page body under
+the page lock and stamps a hash that makes the next sync re-chunk; every
+Facts-fence writer places the first fence above the timeline sentinel;
+`gbrain import --source` validates the source like `sync` does and refuses a
+missing value; `sync trigger --json` prints JSON; `GBRAIN_SOURCE=__all__` makes
+`dream` span the brain; `graph-query` refuses `--source` with
+`--include-foreign` instead of silently dropping the scope; and the bootstrap
+harness binds hooks to the source the serve actually resolves.
 
 With thanks to every contributor whose pull request this wave adopts:
 @afshaker, @amirelion, @arisgysel-design, @armandovargash, @awilhite,

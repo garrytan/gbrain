@@ -204,6 +204,47 @@
   **How:** same discipline — red-proven regression test per fix, themed
   trains in isolated worktrees, composed-collector `verify` + full suite,
   composite hostile review before ship.
+- [ ] **P2 — Wave-review follow-ups (0.48.5.0): eleven INVESTIGATE items the
+  composite and ship reviews confirmed but deliberately left for a design call.**
+  (1) `src/core/context/resolve-ipc.ts` — a serve that defers to a live
+  provider never re-probes; when the provider exits cleanly nothing takes over
+  the socket until a restart (re-probe on EOF or retry the bind on an interval).
+  (2) `src/core/ai/recipes/minimax.ts` — M2/M3 are tool-capable now; confirm with
+  a live probe whether they reason by default and, if so, declare
+  `thinking_by_default` so #4847's headroom applies. (3) `gbrain graph-query`
+  default scope walks only the resolved source while `search`/`think` walk the
+  resolved source plus its federated set; decide one contract. (4)
+  `src/core/cycle/synthesize.ts` — the synth-v2 completion skip treats a
+  transcript as done when its children are `completed`, which happens before
+  the parent verifies quotes and writes markdown; an interrupted parent leaves
+  the transcript permanently skipped. (5) `src/core/entities/resolve.ts` — the
+  #4855 fold changes the minted slug for names with stroke letters; brains that
+  already hold `uc-example`-style pages need an alias/remap pass before facts
+  stop forking. (6) `src/core/creds/redirect.ts` — a scheme-less loopback paste
+  (`127.0.0.1:41999/?code=…`) is rejected because `URLSearchParams` never sees
+  `code=`. (7) `src/core/legacy-token-scope.ts` — legacy scalar-string grants
+  carry no `allowedSources`, so `assertExplicitSourceLive` cannot enforce them
+  (mirror the OAuth synthesis). (8) `src/commands/sync.ts` — the
+  `carriedByOtherRename` guard compares raw manifest paths while the
+  #4597 index is mode-normalized; under source-root mode the spare never fires.
+  (9) `sync --source-id` is accepted by the flag registry and ignored. (10) the
+  `(updated_at, slug)` keyset cursor cannot distinguish same-slug rows across
+  sources (order is now total; the cursor is not). (11) `bootstrap harness`
+  resolves the implicit source from its own cwd while the serve resolves from
+  its cwd at boot; the shared ladder narrows but does not close the gap.
+- [ ] **P3 — Simplification advisories from the wave review (structure, not
+  defects).** One `mirrorFenceBodyToDb` helper for the three pasted fence-mirror
+  recipes (fence-write.ts, forget.ts x2); static import of
+  `transcripts/discover.ts` in extract-atoms.ts instead of the runtime
+  `import()` + nullable pointer; fold `src/mcp/source-preflight.ts` into
+  `assertSourceExists`; trim the doc-heavy `extract-atoms-cost-gate.ts`; one
+  chunk-set tally for `findSynthV2Completion`/`findLegacyCompletion`; share the
+  sentence-alignment tail between the Latin and CJK trailing-context branches;
+  `new URL().hostname` for the consent-host check; drop the identity `pathKey`
+  default and the `compileExcludePatterns` wrapper; `basenameSlugForms` shared
+  by the FS and DB resolvers; `PAGE_LOCK_TIMEOUT_MS` shared by the four writers;
+  `parseEmbeddingSignature` beside `currentEmbeddingSignature`; the
+  `drift-watch.ts` walk-up should reuse `repo-root.ts`.
 - [ ] **P2 — Enforce pack vocabulary at the put_page choke point, not
   per-surface.** **What:** #4655's write-time vocabulary enforcement
   (`src/core/schema-pack/write-vocabulary.ts`) is wired at three surfaces
