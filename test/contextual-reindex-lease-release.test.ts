@@ -67,4 +67,18 @@ describe('contextual_reindex_per_chunk synopsis lease release', () => {
     expect(releases.length).toBe(1);
     expect(Number(releases[0]!.params![0])).toBe(26016);
   });
+
+  test('a null lease (never acquired) issues no DELETE (#4880 regression: release is skipped, not misfired)', async () => {
+    const calls: Call[] = [];
+    const handler = makeContextualReindexHandler({
+      engine: fakeEngine(calls) as never,
+      reembedPage: async (args) => {
+        await args.releaseSynopsisLease!(null as never);
+        await args.releaseSynopsisLease!(undefined as never);
+        return SUCCESS;
+      },
+    });
+    await handler(JOB);
+    expect(calls.filter(c => c.sql === RELEASE_SQL)).toEqual([]);
+  });
 });

@@ -209,4 +209,29 @@ describe('cycle extract phase stale drain (#4062)', () => {
       stderr.mockRestore();
     }
   });
+
+  test('the cycle-shaped extract keeps TIMELINE batch-loss diagnostics on stderr too (#4890 sibling branch)', async () => {
+    // Same two-channel contract as the links flush: under jsonMode a dropped
+    // timeline batch must land on stderr as a batch_error event, never on stdout.
+    writeFileSync(join(brainDir, 'carol.md'), '# Carol\n\n## Timeline\n- **2026-01-02** | Signed the term sheet\n');
+    const addTimeline = spyOn(engine, 'addTimelineEntriesBatch').mockRejectedValueOnce(new Error('pool exhausted'));
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const stdout = spyOn(process.stdout, 'write').mockReturnValue(true);
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    const stderr = spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await runExtractCore(engine, { mode: 'all', dir: brainDir, slugs: ['carol'], jsonMode: true, sourceId: 'wiki' });
+      expect(addTimeline).toHaveBeenCalledTimes(1);
+      expect(log).not.toHaveBeenCalled();
+      expect(stdout).not.toHaveBeenCalled();
+      const diagnostics = [...err.mock.calls, ...stderr.mock.calls].map(c => String(c[0]));
+      expect(diagnostics.some(d => d.includes('"event":"batch_error"') && d.includes('pool exhausted'))).toBe(true);
+    } finally {
+      addTimeline.mockRestore();
+      log.mockRestore();
+      stdout.mockRestore();
+      err.mockRestore();
+      stderr.mockRestore();
+    }
+  });
 });

@@ -16,7 +16,7 @@ afterEach(() => {
  * A committed git repo carrying the gbrain durability post-commit hook and
  * one page whose only lint issue is fixable (ingested_at without created).
  */
-function hardenedRepoWithNote(): { root: string; page: string } {
+function hardenedRepoWithNote(opts: { hook?: boolean } = {}): { root: string; page: string } {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lint-durability-'));
   roots.push(root);
   const page = join(root, 'note.md');
@@ -29,6 +29,7 @@ function hardenedRepoWithNote(): { root: string; page: string } {
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
   execFileSync('git', ['add', '--', 'note.md'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'initial'], { cwd: root });
+  if (opts.hook === false) return { root, page };
 
   const hook = join(root, '.git', 'hooks', 'post-commit');
   mkdirSync(join(root, '.git', 'hooks'), { recursive: true });
@@ -64,6 +65,16 @@ describe('cycle lint durability', () => {
     expect(result.total_fixed).toBe(1);
     expect(git(root, 'status', '--porcelain')).toBe('');
     expect(git(root, 'log', '-1', '--format=%s')).toBe('gbrain: write-through note');
+  });
+
+  test('a plain git repo without the durability hook repairs but does NOT commit (#4815 regression)', async () => {
+    const { root } = hardenedRepoWithNote({ hook: false });
+
+    const result = await runPhaseLint(root, false, null);
+
+    expect(result.details?.fixed).toBe(1);
+    expect(git(root, 'status', '--porcelain')).toBe('M note.md'); // trimmed ' M note.md' — repair on disk, uncommitted
+    expect(git(root, 'log', '-1', '--format=%s')).toBe('initial');
   });
 
   test('dry-run repairs nothing and commits nothing', async () => {
