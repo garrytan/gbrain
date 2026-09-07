@@ -273,16 +273,22 @@ export async function runImport(
   // callers (performFullSync, future Step 6 paths) can route to a named
   // source.
   //
-  // v0.37.7.0 #1167+#1222: the CLI surface now also accepts a
-  // `--source-id <id>` flag (named to avoid colliding with `--source`
-  // which other commands use for different axes). Pre-fix, users
-  // passing `gbrain import --source dept-x ...` silently fell back to
-  // default because the parser ignored the flag. Now an explicit
-  // `--source-id <id>` opt-in routes the import to that source.
-  // Programmatic callers continue passing `opts.sourceId` directly;
-  // CLI callers' flag wins over opts when both are set.
+  // #1167: the CLI flag shipped as `--source-id <id>`. #4862: `--source <id>`
+  // is an alias — it is what every sibling command and the resolver's own
+  // nudge tell users to pass, import has no competing --source axis, and the
+  // flag registry already accepted it, so pre-alias it was silently IGNORED
+  // (pages landed in default). Both spellings with different values abort.
+  // Programmatic callers continue passing `opts.sourceId` directly; CLI
+  // flags win over opts when both are set.
   const sourceIdIdx = args.indexOf('--source-id');
-  const flagSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
+  const sourceIdx = args.indexOf('--source');
+  const viaSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
+  const viaSource = sourceIdx !== -1 ? args[sourceIdx + 1] : null;
+  if (viaSourceId && viaSource && viaSourceId !== viaSource) {
+    console.error('Pass either --source or --source-id, not both.');
+    throw new ImportAbortError('conflicting source flags');
+  }
+  const flagSourceId = viaSourceId ?? viaSource;
   let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
 
   // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
@@ -360,10 +366,11 @@ export async function runImport(
   const flagValues = new Set<number>();
   if (workersIdx !== -1) flagValues.add(workersIdx + 1);
   if (sourceIdIdx !== -1) flagValues.add(sourceIdIdx + 1);
+  if (sourceIdx !== -1) flagValues.add(sourceIdx + 1);
   const dirArg = args.find((a, i) => !a.startsWith('--') && !flagValues.has(i));
 
   if (!dirArg) {
-    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
+    console.error('Usage: gbrain import <dir> [--no-embed] [--workers N] [--fresh] [--source <id> | --source-id <id>] [--include-gitignored] [--allow-noncanonical-root] [--json]');
     throw new ImportAbortError('no import directory given');
   }
   // #1728: capture the import target ONCE as an absolute real path. Every
