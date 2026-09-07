@@ -809,21 +809,26 @@ export async function computeAtomProvenanceDriftCheck(
             AND a.frontmatter->>'source_hash' IS NOT NULL
             -- in-flight marker written before the extraction commits
             AND a.frontmatter->>'source_hash' NOT LIKE 'pending:%'
+       -- Lookup sets are built ONCE and joined (#4937). A correlated EXISTS in
+       -- the SELECT list is not rewritten to a semi-join — Postgres re-runs it
+       -- per atom over substring(content_hash), which no index serves, so the
+       -- check went O(atoms x same-source pages) and blew health-check budgets.
+       -- DISTINCT is load-bearing: duplicate live content_hash values are a
+       -- real state and would otherwise fan one atom out into several rows.
+       ), live_hashes AS MATERIALIZED (
+         SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
+           FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+       ), live_slugs AS MATERIALIZED (
+         SELECT DISTINCT source_id, slug FROM pages WHERE deleted_at IS NULL
        ), drift AS (
          SELECT atom.*,
                 -- a slug-unbound atom is never drift: its hash is over a file,
                 -- not a page, so the page probe is meaningless (#4806)
-                (atom.ss IS NOT NULL AND NOT EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND substring(p.content_hash from 1 for 16) = atom.sh
-                )) AS drifted,
-                EXISTS (
-                  SELECT 1 FROM pages p
-                   WHERE p.source_id = atom.source_id AND p.deleted_at IS NULL
-                     AND p.slug = atom.ss
-                ) AS src_alive
+                (atom.ss IS NOT NULL AND h.sh IS NULL) AS drifted,
+                (s.slug IS NOT NULL) AS src_alive
            FROM atom
+           LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+           LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
        )
        SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
               count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,

@@ -23,6 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { doctorFileSource } from './helpers/doctor-source.ts';
 
 let engine: PGLiteEngine;
 
@@ -234,6 +235,37 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(d2.source_gone).toBe(0);
     expect(d2.slug_unbound).toBe(30);
   }, 120_000);
+
+  it('resolves provenance via materialized same-source lookup sets, not per-atom correlated EXISTS (#4937)', () => {
+    // Postgres only rewrites EXISTS into a semi/anti-join when it sits in
+    // WHERE; in the SELECT list it stays a correlated SubPlan re-run per atom
+    // over an unindexed substring(content_hash) expression — O(atoms x pages),
+    // which blew a 60s health-monitor budget on a 27k-page / 7k-atom brain.
+    const src = doctorFileSource('doctor/checks/extraction-sync.ts');
+    const start = src.indexOf('), drift AS (');
+    expect(start).toBeGreaterThan(0);
+    const end = src.indexOf('SELECT count(*)', start);
+    expect(end).toBeGreaterThan(start);
+    const slice = src.slice(start, end);
+    expect(slice).not.toMatch(/\bEXISTS\s*\(\s*SELECT 1 FROM pages/);
+    expect(slice).toMatch(/LEFT JOIN live_hashes/);
+    expect(slice).toMatch(/LEFT JOIN live_slugs/);
+  });
+
+  it('does not fan out an atom whose source hash is carried by two live pages (#4937)', async () => {
+    // Duplicate live content_hash within one source is a real state (see the
+    // content_hash_duplicates check). A lookup-set join must be DISTINCT or
+    // one atom becomes two rows and every count inflates.
+    const page = { type: 'article', title: 'dup', compiled_truth: 'identical body' };
+    await engine.putPage('dup/a', page);
+    await engine.putPage('dup/b', page);
+    const [ha, hb] = [await hashOf('dup/a'), await hashOf('dup/b')];
+    expect(ha).toBe(hb);
+    await seedAtom('atoms/2026-01-01/dup-000000', 'dup/a', ha);
+    const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d.total_atoms).toBe(1);
+    expect(d.drifted).toBe(0);
+  });
 
   it('warns once both the ratio and the count are exceeded', async () => {
     // 30 drifted out of 30 → over MIN_DRIFTED (25) and over WARN_RATIO (0.1).
