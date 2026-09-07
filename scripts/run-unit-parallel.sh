@@ -260,14 +260,14 @@ cleanup_children() {
   # Snapshot descendants BEFORE the subshell is TERMed: once it dies its
   # gtimeout/bun children reparent to launchd and pgrep -P can't find them.
   # The subshells are not process-group leaders here, so signal by PID.
-  for pid in "${SHARD_PIDS[@]}"; do
+  for pid in ${SHARD_PIDS[@]+"${SHARD_PIDS[@]}"}; do
     descendants="$descendants $(collect_descendants "$pid")"
     kill -TERM "$pid" 2>/dev/null || true
   done
   for pid in $descendants; do kill -TERM "$pid" 2>/dev/null || true; done
   [ "${#SHARD_PIDS[@]}" -gt 0 ] && sleep 1
   for pid in $descendants; do kill -KILL "$pid" 2>/dev/null || true; done
-  for pid in "${SHARD_PIDS[@]}"; do
+  for pid in ${SHARD_PIDS[@]+"${SHARD_PIDS[@]}"}; do
     kill -KILL "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done

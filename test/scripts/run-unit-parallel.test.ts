@@ -178,6 +178,8 @@ describe('run-unit-parallel.sh timeout escalation contract', () => {
 describe('run-unit-parallel.sh operator-interrupt cleanup', () => {
   it('kills an interrupt-resistant shard when its terminal group receives SIGINT', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-parallel-interrupt-'));
+    let child: ReturnType<typeof spawn> | undefined;
+    let bunPid = 0;
     try {
       mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
       mkdirSync(join(root, 'test'), { recursive: true });
@@ -198,7 +200,7 @@ while true; do sleep 1; done
 `);
       chmodSync(fakeBun, 0o755);
 
-      const child = spawn('bash', [join(root, 'scripts', 'run-unit-parallel.sh'), '--shards', '1'], {
+      child = spawn('bash', [join(root, 'scripts', 'run-unit-parallel.sh'), '--shards', '1'], {
         cwd: root,
         env: {
           ...process.env,
@@ -215,13 +217,16 @@ while true; do sleep 1; done
         await Bun.sleep(25);
       }
       expect(existsSync(join(root, 'bun.pid'))).toBe(true);
-      const bunPid = Number(readFileSync(join(root, 'bun.pid'), 'utf8').trim());
+      bunPid = Number(readFileSync(join(root, 'bun.pid'), 'utf8').trim());
 
+      const proc = child;
       const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
-        child.once('exit', (code, signal) => resolveExit({ code, signal }));
-        process.kill(-child.pid!, 'SIGINT');
+        proc.once('exit', (code, signal) => resolveExit({ code, signal }));
+        process.kill(-proc.pid!, 'SIGINT');
       });
-      expect(exit.code === 130 || exit.signal === 'SIGINT').toBe(true);
+      // handle_interrupt runs cleanup_children then `exit 130` — a raw SIGINT
+      // death would mean the trap never ran (cleanup skipped).
+      expect(exit.code).toBe(130);
 
       const goneDeadline = Date.now() + 2_000;
       let liveState = '';
@@ -235,6 +240,10 @@ while true; do sleep 1; done
       // state means the cancelled suite is still doing or retaining work.
       expect(!liveState || liveState.startsWith('Z')).toBe(true);
     } finally {
+      // Reap the detached tree BEFORE the fixture dir goes: a failed assertion
+      // above must not leave the fake-bun loop (its own process group) alive.
+      if (child?.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }
+      if (bunPid) { try { process.kill(bunPid, 'SIGKILL'); } catch { /* already gone */ } }
       rmSync(root, { recursive: true, force: true });
     }
   }, 15_000);
