@@ -693,8 +693,8 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
     expect(extract.details?.atoms_extracted).toBe(2);
 
     // Frontmatter really carries the label (a jsonb array, not a string).
-    const stamped = await engine.executeRaw<{ concepts: unknown }>(
-      `SELECT frontmatter->'concepts' AS concepts FROM pages WHERE type = 'atom'`,
+    const stamped = await engine.executeRaw<{ slug: string; concepts: unknown }>(
+      `SELECT slug, frontmatter->'concepts' AS concepts FROM pages WHERE type = 'atom'`,
     );
     expect(stamped.length).toBe(2);
     for (const row of stamped) {
@@ -711,6 +711,15 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
       `SELECT slug FROM pages WHERE slug = 'concepts/captive-portal' AND type = 'concept'`,
     );
     expect(concept.length).toBe(1);
+
+    // #4589 on the REAL path: the provenance edges are keyed on the atom slugs
+    // the DB query returned (not `_atoms` seam input), so each extracted atom
+    // must point back at the concept — 2 atoms, 2 'synthesizes' backlinks.
+    const back = (await engine.getBacklinks('concepts/captive-portal', { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(back.length).toBe(2);
+    expect(back.every((l) => l.link_type === 'synthesizes')).toBe(true);
+    expect(back.map((l) => l.from_slug).sort()).toEqual(stamped.map((r) => r.slug).sort());
   });
 });
 
