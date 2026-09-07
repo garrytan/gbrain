@@ -108,3 +108,57 @@ describe('relative markdown-link resolution (nested / subtree-scoped content)', 
     expect(LINK_EXTRACTOR_VERSION_TS > '2026-08-01T00:00:00Z').toBe(true);
   });
 });
+
+// A parent-dir SIBLING link (`../y.md`, `./../y.md`) has no directory segment,
+// so pass 1 never claimed it and pass 1b's relative arm only took `./`. The FS
+// walker's join() resolved it, the DB path produced no candidate, and the
+// serve-resident sweep's reconcile pruned the FS-created edge — the #4873
+// class. Every "wiki/y" case below FAILS on the pre-fix regex.
+describe('dot-relative sibling links without a directory segment (#4873 class)', () => {
+  test('`../y.md` resolves one level up from the linking page dir', async () => {
+    const { candidates } = await extractPageLinks(
+      'wiki/sources/foo', 'See [Y](../y.md).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['wiki/y']);
+    expect(candidates[0].linkSource).toBe('markdown');
+  });
+
+  test('`./../y.md` folds the `./` and climbs once', async () => {
+    const { candidates } = await extractPageLinks(
+      'wiki/sources/foo', 'See [Y](./../y.md).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['wiki/y']);
+  });
+
+  test('`../../y.md` climbs twice', async () => {
+    const { candidates } = await extractPageLinks(
+      'wiki/a/b/foo', 'See [Y](../../y.md).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['wiki/y']);
+  });
+
+  test('a `../` run that climbs above the root is dangling — no candidate', async () => {
+    const { candidates } = await extractPageLinks(
+      'wiki/foo', 'See [Y](../../y.md).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates).toEqual([]);
+  });
+
+  test('extractEntityRefs tags the sibling form sameDir with its `..` depth', () => {
+    const refs = extractEntityRefs('See [Y](./../y.md) and [Z](../../z.md).');
+    expect(refs.map(r => ({ slug: r.slug, sameDir: r.sameDir, upLevels: r.upLevels }))).toEqual([
+      { slug: 'y', sameDir: true, upLevels: 1 },
+      { slug: 'z', sameDir: true, upLevels: 2 },
+    ]);
+  });
+
+  test('`../dir/x.md` stays a pass-1 ref — the widened sameDir arm does not double-emit', async () => {
+    const refs = extractEntityRefs('See [X](../concepts/x.md).');
+    expect(refs).toHaveLength(1);
+    expect(refs[0].sameDir).toBeUndefined();
+    const { candidates } = await extractPageLinks(
+      'wiki/sources/foo', 'See [X](../concepts/x.md).', {}, 'concept', nullResolver, { skipFrontmatter: true },
+    );
+    expect(candidates.map(c => c.targetSlug)).toEqual(['wiki/concepts/x']);
+  });
+});

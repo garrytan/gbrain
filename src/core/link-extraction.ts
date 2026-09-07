@@ -49,8 +49,9 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
  * OR updated_at > links_extracted_at`. It is an ISO-8601 string (NOT a number) —
  * the column is TIMESTAMPTZ and the predicate binds it as `::timestamptz`.
  */
-// 2026-09-06: #4873 — pass 1b accepts a leading `./`, so pages whose `./`
-// links were pruned by the sweep reconcile re-extract on `extract --stale`.
+// 2026-09-06: #4873 — pass 1b accepts a leading `./` (and, same wave, the
+// `../` / `./../` sibling forms + the folded bare-wikilink grammar), so pages
+// whose links were pruned by the sweep reconcile re-extract on `extract --stale`.
 // 2026-08-21: re-bumped for #2367 — normalizeBasename semantics changed
 // (non-Latin scripts kept, accents folded like the slug grammar), so
 // pre-#2367 extractions must re-run to pick up the newly-resolvable links.
@@ -242,13 +243,18 @@ const MARKDOWN_LABEL_WIKILINK_RE = /\[[^\]\n]*\[\[[^\]\n]+\]\][^\]\n]*\]\([^)\n]
  * NO directory segment and NO scheme/anchor (`/`, `:`, `#` all excluded).
  * #4873: an explicit `./` prefix (`[Name](./slug.md)`, `[Name](./sub/x.md)`)
  * is the same page-dir-relative intent — the FS walker's join() eats it — so
- * the `./` arm admits `/` in the tail. Captures: name, ./-tail, bare tail.
- * The `.md` suffix is REQUIRED (mirrors the FS extractor's mdPattern) so
- * bare parenthetical prose (`[sic](reference)`) never produces a ref.
- * Resolution against the linking page's directory happens in
- * extractPageLinks (this module has no page context here).
+ * the relative arm admits `/` in the tail. The arm takes ANY leading run of
+ * `./` / `../` segments (`[Name](../slug.md)`, `[Name](./../slug.md)`): pass 1
+ * only claims `../` targets that carry a directory segment, so a parent-dir
+ * sibling link had no DB candidate at all while the FS walker's join() linked
+ * it — the sweep reconcile then pruned the edge (same class as #4873).
+ * Captures: name, dot-prefix run, relative tail, bare tail. The `.md` suffix
+ * is REQUIRED (mirrors the FS extractor's mdPattern) so bare parenthetical
+ * prose (`[sic](reference)`) never produces a ref. Resolution against the
+ * linking page's directory happens in extractPageLinks (this module has no
+ * page context here).
  */
-const SAME_DIR_MD_RE = /\[([^\]]+)\]\((?:\.\/([^):#\s]+?)|([^)/:#\s]+?))\.md\)/g;
+const SAME_DIR_MD_RE = /\[([^\]]+)\]\((?:((?:\.{1,2}\/)+)([^):#\s]+?)|([^)/:#\s]+?))\.md\)/g;
 
 /**
  * A code-reference found in markdown prose. Created by extractCodeRefs and
@@ -387,21 +393,28 @@ export function extractEntityRefs(content: string): EntityRef[] {
     markdownRanges.push([match.index, match.index + match[0].length]);
   }
 
-  // 1b. #3190/#4873: same-directory markdown links — `[Name](slug.md)` and
-  //     `[Name](./slug.md)` (no scheme). Pass 1 requires a `dir/` segment, so
-  //     sibling and `./`-relative links were silently dropped on the DB path
-  //     while the FS walker (extractMarkdownLinks → resolveSlug) linked them.
-  //     Tagged `sameDir: true`; extractPageLinks resolves against the page's
-  //     dir. Disjoint from pass 1 (its targets start with `../` or a dir).
+  // 1b. #3190/#4873: same-directory markdown links — `[Name](slug.md)`,
+  //     `[Name](./slug.md)`, `[Name](../slug.md)` (no scheme). Pass 1 requires
+  //     a `dir/` segment, so sibling and dot-relative links were silently
+  //     dropped on the DB path while the FS walker (extractMarkdownLinks →
+  //     resolveSlug) linked them. Tagged `sameDir: true`; the `..` depth of
+  //     the prefix rides on `upLevels` and extractPageLinks resolves against
+  //     the page's dir. A `../dir/x.md` span pass 1 already claimed is skipped
+  //     so the two passes never double-emit.
   const sameDirPattern = new RegExp(SAME_DIR_MD_RE.source, SAME_DIR_MD_RE.flags);
   while ((match = sameDirPattern.exec(stripped)) !== null) {
+    const at = match.index;
+    if (markdownRanges.some(([s, e]) => at >= s && at < e)) continue;
     const name = match[1];
-    let target = match[2] ?? match[3];
+    let target = match[3] ?? match[4];
     if (target.includes('%')) {
       try { target = decodeURIComponent(target); } catch { /* keep raw */ }
     }
-    refs.push({ name, slug: target, dir: '', sameDir: true });
-    markdownRanges.push([match.index, match.index + match[0].length]);
+    const ref: EntityRef = { name, slug: target, dir: '', sameDir: true };
+    const ups = match[2] ? match[2].split('/').filter(seg => seg === '..').length : 0;
+    if (ups) ref.upLevels = ups;
+    refs.push(ref);
+    markdownRanges.push([at, at + match[0].length]);
   }
 
   // 2a. v0.17.0 qualified wikilinks: [[source-id:path]] or [[source-id:path|Display]]
@@ -620,8 +633,18 @@ export async function extractPageLinks(
     // `[Alice](Alice%20Chen.md)` reaches `people/alice-chen`. Downstream
     // existence checks drop targets that aren't pages.
     if (ref.sameDir) {
-      const dirSegs = slug.includes('/') ? slug.split('/').slice(0, -1) : [];
-      const target = slugifyPath([...dirSegs, ref.slug].join('/'));
+      const segs = slug.includes('/') ? slug.split('/').slice(0, -1) : [];
+      // `../` / `./../` prefixes (upLevels) and any mid-path `.`/`..` fold
+      // the way the FS walker's join() does; a run that would climb above
+      // the root is a dangling link there too, so it yields no candidate.
+      let climbed = false;
+      for (const seg of ('../'.repeat(ref.upLevels ?? 0) + ref.slug).split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg !== '..') { segs.push(seg); continue; }
+        if (segs.length === 0) { climbed = true; break; }
+        segs.pop();
+      }
+      const target = climbed ? '' : slugifyPath(segs.join('/'));
       if (target && target !== slug) {
         const idx = content.indexOf(ref.name);
         const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;
@@ -671,16 +694,21 @@ export async function extractPageLinks(
       // Downstream existence checks (resolveCandidateSources / put_page's
       // allSlugs filter / addLinksBatch's INNER JOINs) drop the candidate
       // when no root page exists, exactly as for slash-shaped refs above.
-      let bareDirect = '';
+      // #4855 twin: both slug grammars — sync's slugifyPath keeps stroke
+      // letters (`đuc-example`), normalizeBasename folds them (`duc-example`)
+      // — so `[[Đức Example]]` reaches whichever root page exists with the
+      // flag off. Exact slugs only; downstream existence checks drop the miss.
+      const bareDirect = new Set<string>();
       if (slashIdx === -1) {
-        bareDirect = slugifyPath(ref.slug);
-        // Self-loop guard: `[[own-basename]]` on the root page itself.
-        if (bareDirect && bareDirect !== slug) {
+        for (const form of new Set([slugifyPath(ref.slug), normalizeBasename(ref.slug)])) {
+          // Self-loop guard: `[[own-basename]]` on the root page itself.
+          if (!form || form === slug) continue;
+          bareDirect.add(form);
           const litIdx = content.indexOf(ref.slug);
           const litContext = litIdx >= 0 ? excerpt(content, litIdx, 240) : ref.name;
           candidates.push({
-            targetSlug: bareDirect,
-            linkType: typeFor(litContext, bareDirect),
+            targetSlug: form,
+            linkType: typeFor(litContext, form),
             context: litContext,
             linkSource: 'markdown',
           });
@@ -713,7 +741,7 @@ export async function extractPageLinks(
         // candidate above already covers it (same rule the dir-qualified
         // branch applies to its raw literal). Keeping it would double-emit.
         matches = (await resolver.resolveBasenameMatches(ref.slug))
-          .filter(m => m !== bareDirect);
+          .filter(m => !bareDirect.has(m));
       }
       if (matches.length === 0) continue;
       const idx = content.indexOf(ref.slug);
@@ -1724,8 +1752,10 @@ export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<bool
  * and surfaced in the extract summary, never silent (issue #2589: the drop
  * was previously indistinguishable from an unresolved link).
  *
- * SCOPE: the DB extract paths (`extract links --source db`, `extract --stale`)
- * plus the mention scan (`findMentionedEntities` callers lift their guard under it).
+ * SCOPE: the DB extract paths (`extract links --source db`, `extract --stale`),
+ * the mention scan (`findMentionedEntities` callers lift their guard under it),
+ * and the serve-resident maintenance sweep (`sweep.ts`, #3757 — it threads the
+ * same flag so its reconcile keeps the edges the CLI lanes created).
  * The FS-walk paths (dir-driven, incl. the autopilot cycle's extract phase)
  * build their slug set from the walked files of ONE source, so cross-source
  * targets aren't resolvable there; FS-walk parity is a filed follow-up.

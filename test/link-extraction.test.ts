@@ -2050,6 +2050,39 @@ describe('#4062 — bare [[name]] emits a root-exact direct candidate flag-off',
   });
 });
 
+// #4062 lane, #4855 grammar: the flag-off root-exact candidate tried ONLY
+// slugifyPath, which keeps stroke letters (`đuc-example`) while a brain that
+// synced the folded name lives at `duc-example`. Try both grammars — exact
+// slugs, existence-checked downstream — so `[[Đức Example]]` reaches either.
+describe('#4062 — bare [[name]] direct candidate tries both slug grammars', () => {
+  const resolver: SlugResolver = { async resolve() { return null; } };
+
+  test('flag-off: a stroke-letter wikilink emits the folded AND unfolded root slugs', async () => {
+    const r = await extractPageLinks(
+      'notes/some-page', 'met [[Đức Example]] today', {}, 'concept' as any,
+      resolver, { globalBasename: false, skipFrontmatter: true },
+    );
+    expect(r.candidates.map(c => c.targetSlug).sort()).toEqual(['duc-example', 'đuc-example']);
+    expect(new Set(r.candidates.map(c => c.linkSource))).toEqual(new Set(['markdown']));
+  });
+
+  test('flag-off: an ASCII wikilink still emits exactly one candidate (grammars agree)', async () => {
+    const r = await extractPageLinks(
+      'notes/some-page', 'see [[Example Rail]]', {}, 'concept' as any,
+      resolver, { globalBasename: false, skipFrontmatter: true },
+    );
+    expect(r.candidates.map(c => c.targetSlug)).toEqual(['example-rail']);
+  });
+
+  test('flag-off: self-loop guard covers the folded form too', async () => {
+    const r = await extractPageLinks(
+      'duc-example', 'this is [[Đức Example]] itself', {}, 'concept' as any,
+      resolver, { globalBasename: false, skipFrontmatter: true },
+    );
+    expect(r.candidates.map(c => c.targetSlug)).toEqual(['đuc-example']);
+  });
+});
+
 // ─── #4855: the dir-hint candidate step tries BOTH slug grammars ──────────
 //
 // normalizeBasename folds stroke letters to ASCII (latin-fold), but the
