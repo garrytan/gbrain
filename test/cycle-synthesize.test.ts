@@ -155,6 +155,31 @@ describe('discoverTranscripts', () => {
     }
   });
 
+  test('exclusions across BOTH the corpus and meeting-transcript dirs roll up into ONE stderr line', () => {
+    // The tally is per RUN, not per directory: one line, one total, one
+    // pattern count — an operator reading the log must not have to add up
+    // a line per source dir.
+    makeTranscript('2026-04-25-alpha.txt', 'discussing medical advice ' + 'x'.repeat(3000));
+    const meetDir = mkdtempSync(join(tmpdir(), 'gbrain-meet-'));
+    try {
+      writeFileSync(join(meetDir, '2026-04-25-beta.txt'), 'medical notes from the call ' + 'x'.repeat(3000));
+      writeFileSync(join(meetDir, '2026-04-25-clean.txt'), 'nothing sensitive here ' + 'x'.repeat(3000));
+      const { value: out, writes } = captureStderr(() => discoverTranscripts({
+        corpusDir: tmpDir,
+        meetingTranscriptsDir: meetDir,
+        minChars: 1000,
+        excludePatterns: ['medical'],
+      }));
+      expect(out.map(t => t.basename)).toEqual(['2026-04-25-clean']);
+      const lines = writes.filter(w => w.includes('exclude_patterns'));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('excluded 2 transcript(s)');
+      expect(lines[0]).toContain('medical: 2');
+    } finally {
+      rmSync(meetDir, { recursive: true, force: true });
+    }
+  });
+
   test('no exclusion, no exclude_patterns line on stderr', () => {
     makeTranscript('2026-04-25-clean.txt', 'nothing sensitive here ' + 'x'.repeat(3000));
     const { value: out, writes } = captureStderr(() => discoverTranscripts({
