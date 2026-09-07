@@ -15,7 +15,11 @@ function mk(legacyRepo: string | null, sources: SourceRow[], calls: string[] = [
     getStats: async () => ({ page_count: 100, link_count: 50, timeline_entry_count: 20 }),
     getHealth: async () => ({ missing_embeddings: 0, dead_links: 0, embed_coverage: 1, brain_score: 80 }),
     getConfig: async (key: string) => (key === 'sync.repo_path' ? legacyRepo : null),
-    listAllSources: async () => { calls.push('listAllSources'); return sources; },
+    // Mirrors the real engines: `localPathOnly` drops rows whose local_path is NULL.
+    listAllSources: async (opts?: { localPathOnly?: boolean }) => {
+      calls.push('listAllSources');
+      return opts?.localPathOnly === true ? sources.filter((s) => s.local_path !== null) : sources;
+    },
   } as unknown as BrainEngine;
 }
 
@@ -30,6 +34,13 @@ describe('#4767: Configure Sync keys on sources.local_path, not only the legacy 
 
   test('no legacy key and no source with a local_path still recommends Configure Sync', async () => {
     const rec = await noSync(mk(null, []));
+    expect(rec).toBeDefined();
+    expect(rec!.title).toBe('Configure Sync');
+  });
+
+  test('a lone source with NULL local_path (pure-DB, never synced) still recommends Configure Sync', async () => {
+    const dbOnly: SourceRow = { id: 'notes', name: 'notes', local_path: null, last_sync_at: null, config: {} };
+    const rec = await noSync(mk(null, [dbOnly]));
     expect(rec).toBeDefined();
     expect(rec!.title).toBe('Configure Sync');
   });
