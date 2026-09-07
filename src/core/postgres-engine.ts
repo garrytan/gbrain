@@ -4439,7 +4439,7 @@ export class PostgresEngine implements BrainEngine {
   async listFactsSince(
     source_id: string,
     since: Date,
-    opts?: FactListOpts & { entitySlug?: string },
+    opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
   ): Promise<FactRow[]> {
     return factsImpl.listFactsSince(this.factsDeps, source_id, since, opts);
   }
