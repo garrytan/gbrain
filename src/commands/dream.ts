@@ -729,7 +729,9 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       }
       throw e;
     }
-    if (opts.dir === null && !envScoped && implicitDefaultSourceId && implicitDefaultSourceId !== 'default') {
+    // Gated on an EMPTY env, not on !envScoped: an explicit GBRAIN_SOURCE=__all__
+    // asks for the whole brain and must not be narrowed to the implicit default.
+    if (opts.dir === null && envSource === '' && implicitDefaultSourceId && implicitDefaultSourceId !== 'default') {
       resolvedSourceId = implicitDefaultSourceId;
       fullImplicitSourceCycle = true;
     }

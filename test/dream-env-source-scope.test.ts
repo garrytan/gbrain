@@ -126,17 +126,23 @@ describe('gbrain dream honors GBRAIN_SOURCE like --source (#4778)', () => {
     });
   }, 60_000);
 
-  test('GBRAIN_SOURCE=__all__ falls through to today\'s routing (unscoped already spans every source)', async () => {
+  test('GBRAIN_SOURCE=__all__ spans the brain: never narrowed to the implicit default source (wave review)', async () => {
+    // Two populated-shape sources, sources.default = source-a: a bare run
+    // narrows to source-a (#4700). An EXPLICIT __all__ asks for the whole
+    // brain — the sentinel is excluded from the resolver (a '__all__' scope has
+    // no local_path), but it must also skip the implicit-default narrowing.
     await seedSource('source-a', dirA);
+    await seedSource('source-b', dirB);
+    await engine.setConfig('sources.default', 'source-a');
+    await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: '' }, async () => {
+      const bare = await runDream(engine, ['--phase', 'lint', '--json']);
+      expect(bare?.brain_dir).toBe(dirA); // the #4700 implicit-default lane
+    });
     await withEnv({ GBRAIN_HOME: gbrainHome, GBRAIN_SOURCE: '__all__' }, async () => {
       const report = await runDream(engine, ['--phase', 'lint', '--json']);
       expect(report).toBeTruthy();
-      // Routing the sentinel into the resolver would yield resolvedSourceId
-      // '__all__' → no local_path → brain_dir null → lint skipped as
-      // no_brain_dir. Sole-non-default routing must keep winning instead.
-      expect(report?.brain_dir).toBe(dirA);
+      expect(report?.brain_dir).not.toBe(dirA);
       expect(report?.phases.map((p) => p.phase)).toEqual(['lint']);
-      expect((report?.phases[0].details as { reason?: string } | undefined)?.reason).not.toBe('no_brain_dir');
     });
   }, 60_000);
 
