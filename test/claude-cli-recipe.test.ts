@@ -449,6 +449,74 @@ describe('claude-cli LanguageModel — tool use', () => {
     });
   });
 
+  test('a literal <use_tools> tag inside a JSON string argument does not re-anchor the block', async () => {
+    // A page body that documents the tool protocol carries the OPEN tag inside
+    // the `content` string. Anchoring on "the last open tag before the close"
+    // picked that inner tag, sliced truncated JSON, and discarded the write.
+    await withStubEnv(async () => {
+      const content = 'Protocol: wrap calls in <use_tools> and close them.';
+      stageResponse(
+        baseEnvelope(
+          [
+            'Writing the protocol page.',
+            '<use_tools>',
+            JSON.stringify([{ name: 'put_page', input: { slug: 'docs/protocol', content } }]),
+            '</use_tools>',
+            'Done.',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('write the protocol page')],
+        tools: [{ type: 'function', name: 'put_page', description: '', inputSchema: { type: 'object', properties: {} } }],
+      } as LanguageModelV2CallOptions);
+
+      const calls = result.content.filter(c => c.type === 'tool-call');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        type: 'tool-call',
+        toolName: 'put_page',
+        input: JSON.stringify({ slug: 'docs/protocol', content }),
+      });
+      expect(result.content[0]).toMatchObject({ type: 'text', text: 'Writing the protocol page.' });
+      expect(result.finishReason).toBe('tool-calls');
+    });
+  });
+
+  test('a literal </use_tools> tag inside a JSON string argument does not terminate the block early', async () => {
+    // Mirror: the CLOSE tag inside the argument. Anchoring on the first close
+    // tag sliced the JSON mid-string; the parser must skip to the real close.
+    await withStubEnv(async () => {
+      const content = 'Protocol: end every block with </use_tools> on its own line.';
+      stageResponse(
+        baseEnvelope(
+          [
+            '<use_tools>',
+            JSON.stringify([{ name: 'put_page', input: { slug: 'docs/protocol', content } }]),
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('write the protocol page')],
+        tools: [{ type: 'function', name: 'put_page', description: '', inputSchema: { type: 'object', properties: {} } }],
+      } as LanguageModelV2CallOptions);
+
+      const calls = result.content.filter(c => c.type === 'tool-call');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        type: 'tool-call',
+        toolName: 'put_page',
+        input: JSON.stringify({ slug: 'docs/protocol', content }),
+      });
+      expect(result.finishReason).toBe('tool-calls');
+    });
+  });
+
   test('a malformed <use_tools> block is discarded as prose AND reported on stderr', async () => {
     // A lost tool call must not be silent: the turn ends as if the model
     // never called anything, so the only trace is this diagnostic.

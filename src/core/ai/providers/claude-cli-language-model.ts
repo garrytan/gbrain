@@ -502,51 +502,56 @@ function extractToolCalls(raw: string): {
 } {
   const openTag = '<use_tools>';
   const closeTag = '</use_tools>';
-  // Anchor on the first CLOSING tag that has an opening tag before it, then
-  // take the LAST opening tag before it. Anchoring on `indexOf(openTag)`
-  // landed on the FIRST occurrence, so a model that *mentions* the tag in
-  // prose before using it — e.g. "Let me use the correct `<use_tools>`
-  // format:" — shifted the slice origin onto the backticked mention. `inner`
-  // then began "` format:\n\n<use_tools>…", JSON.parse threw, and the catch
-  // below discarded a complete, valid tool call as prose. Scanning back from
-  // the close tag (not `lastIndexOf` over the whole string, which trailing
-  // prose could re-break) picks the real block in both the plain and the
-  // mentioned-then-used shapes. A prose mention of `</use_tools>` BEFORE the
-  // block has no opening tag ahead of it, so it is an orphan: skip it and try
-  // the next close tag rather than dropping the call.
-  let closeIdx = raw.indexOf(closeTag);
+  // No single anchoring rule survives every shape the model emits: a prose
+  // mention of `<use_tools>` BEFORE the block ("Let me use the correct
+  // `<use_tools>` format:") breaks anchoring on the first open tag; a prose
+  // mention of `</use_tools>` before the block breaks anchoring on the first
+  // close tag; and a LITERAL tag inside a JSON string argument (a page body
+  // being written that documents the protocol) breaks "last open tag before
+  // the close" — the inner tag wins, the slice is truncated JSON, and a
+  // valid call is discarded as prose. So: enumerate the (open, close) pairs
+  // outermost-first (earliest open, then each later close) and accept the
+  // first slice that parses as a JSON array. Tags inside argument strings
+  // sit inside an accepted slice or produce a rejected one; they never anchor.
+  // ponytail: O(opens × closes) JSON.parse attempts — tags are a handful per
+  // response; a linear scanner is the upgrade if a payload ever has hundreds.
+  const opens: number[] = [];
+  for (let i = raw.indexOf(openTag); i !== -1; i = raw.indexOf(openTag, i + 1)) opens.push(i);
+  const closes: number[] = [];
+  for (let i = raw.indexOf(closeTag); i !== -1; i = raw.indexOf(closeTag, i + 1)) closes.push(i);
+
+  let parsed: unknown[] | null = null;
   let openIdx = -1;
-  while (closeIdx !== -1) {
-    openIdx = raw.lastIndexOf(openTag, closeIdx);
-    if (openIdx !== -1) break;
-    closeIdx = raw.indexOf(closeTag, closeIdx + closeTag.length);
+  let closeIdx = -1;
+  let firstError: string | null = null;
+  outer: for (const o of opens) {
+    for (const c of closes) {
+      if (c < o + openTag.length) continue;
+      let inner = raw.slice(o + openTag.length, c).trim();
+      if (inner.startsWith('```')) {
+        inner = inner.replace(/^```(?:json|JSON)?\s*\n?/, '').replace(/\n?```$/, '').trim();
+      }
+      try {
+        const v: unknown = JSON.parse(inner);
+        if (Array.isArray(v)) { parsed = v; openIdx = o; closeIdx = c; break outer; }
+      } catch (e) {
+        firstError ??= e instanceof Error ? e.message : String(e);
+      }
+    }
   }
-  if (closeIdx === -1) {
-    // Unterminated block, none at all, or only orphan close tags — recover
-    // gracefully.
+  if (parsed === null) {
+    // A malformed block is a LOST tool call — the caller sees prose and the
+    // turn ends as if the model never called anything. Say so on stderr.
+    // (No pair at all — unterminated, absent, or only orphan close tags — and
+    // a non-array payload both recover silently as before.)
+    if (firstError !== null) {
+      process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${firstError}\n`);
+    }
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
 
   const beforeText = raw.slice(0, openIdx).trim();
   const afterText = raw.slice(closeIdx + closeTag.length).trim();
-  let inner = raw.slice(openIdx + openTag.length, closeIdx).trim();
-
-  if (inner.startsWith('```')) {
-    inner = inner.replace(/^```(?:json|JSON)?\s*\n?/, '').replace(/\n?```$/, '').trim();
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(inner);
-  } catch (e) {
-    // A malformed block is a LOST tool call — the caller sees prose and the
-    // turn ends as if the model never called anything. Say so on stderr.
-    process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${e instanceof Error ? e.message : String(e)}\n`);
-    return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
-  }
-  if (!Array.isArray(parsed)) {
-    return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
-  }
 
   const toolCalls: ParsedToolCall[] = [];
   for (const entry of parsed) {
