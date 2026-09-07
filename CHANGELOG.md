@@ -27,10 +27,13 @@ regression test proven red before the fix.
   contributed by @Jey2311; fixes #4899, #4900)
 - **Slugs no longer carry a file extension.** Saving a page whose slug ends
   in `.md` or `.mdx` now stores it under the extension-free slug and writes a
-  single `<slug>.md` file, so the page can be found and deleted later. If
-  the old behavior left `<name>.md.md` files in your repo, delete them: both
-  names now resolve to the same slug and would fight on every sync. (#4807,
-  contributed by @noelboss)
+  single `<slug>.md` file; reading, deleting and restoring accept either
+  spelling and resolve to that same key. **Migration v147** renames pages
+  whose stored slug still ends in `.md` to the extension-free slug, and
+  soft-deletes a `.md` row whose stripped twin already exists (recoverable
+  for 72 hours). If the old behavior left `<name>.md.md` files in your repo,
+  delete them: both names now resolve to the same slug and would fight on
+  every sync. (#4807, contributed by @noelboss)
 - **Migration v146** adds a small table that remembers which transcripts
   returned nothing from atom extraction. The first run after upgrading
   tombstones every transcript that yields zero atoms (editing the file makes
@@ -350,6 +353,22 @@ regression test proven red before the fix.
   (#4659), and the open-loops reopen test no longer depends on the database
   clock advancing between statements (#4928).
 
+### Review hardening
+
+A hostile review over the composed set (eight lenses, two independent
+refuters per finding) confirmed thirteen defects that were only visible in
+composition, all fixed before ship: `gbrain sync --source <id> --json` kept
+stdout pure on the full-sync path too, not only for incremental runs;
+`gbrain graph-query --source <id>` on a thin-client install now errors
+instead of silently walking the wrong scope; a pasted Google consent-page
+URL with no scheme is rejected by host again instead of being taken as an
+authorization code; `gbrain remember` and `forget` keep the page's content
+hash so the next sync re-chunks the new or struck fact text instead of
+skipping the page; an implicit `default` source in `gbrain bootstrap
+harness` is treated as the federated floor, matching dream and doctor; the
+slug read/delete parity and migration described above; and three reference
+doc entries brought back to current state.
+
 With thanks to every contributor whose pull request this wave adopts:
 @afshaker, @amirelion, @arisgysel-design, @armandovargash, @awilhite,
 @bhattman-dev, @G0-0000, @gagecane, @hpamike, @hyunje-ethan-jang,
@@ -361,7 +380,7 @@ issues drove the direct fixes.
 
 ## To take advantage of 0.48.5.0
 
-`gbrain upgrade` runs migration v146 for you. If it did not, or if
+`gbrain upgrade` runs migrations v146 and v147 for you. If it did not, or if
 `gbrain doctor` warns about a partial migration:
 
 1. **Run the orchestrator manually:**
