@@ -24,7 +24,7 @@
   },
   "mcpServers": {
     "gbrain": {
-      "command": "./bin/gbrain",
+      "command": "./.agents/gbrain-launcher",
       "args": [
         "serve"
       ]
