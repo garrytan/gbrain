@@ -203,7 +203,9 @@ export async function checkEvalDrift(engine: BrainEngine): Promise<Check> {
       return {
         name: 'eval_drift',
         status: 'ok',
-        message: `Could not probe retrieval drift (git unavailable or ${repoRoot} is not a git work tree).`,
+        // No path here: this check is remote-reachable (run_doctor) and the
+        // server's absolute source root is not the caller's business.
+        message: 'Could not probe retrieval drift (git unavailable or the gbrain source root is not a git work tree).',
       };
     }
     if (drifted.length === 0) {
