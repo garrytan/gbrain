@@ -26,6 +26,7 @@
 import { createHash } from 'crypto';
 import { CR_MODES, type CRMode } from '../types.ts';
 import { getFtsLanguage } from '../fts-language.ts';
+import { loadConfigSnapshot, type BulkConfigReader } from '../config-snapshot.ts';
 import { getRecipe } from '../ai/recipes/index.ts';
 // #3657 seam: the runtime/mode-bundle reranker default has ONE code home
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
@@ -1703,20 +1704,25 @@ export const SEARCH_MODE_KEY = 'search.mode';
 
 /**
  * Load the live mode config (mode + per-key overrides) from the brain engine.
- * Runs ONE round-trip per knob currently — the BrainEngine.getConfig interface
- * is single-key. A future v0.34 batch loader can collapse this. Volume is
- * small (~8 keys); call site is once per search.
+ * This reads SEARCH_MODE_KEY plus every SEARCH_MODE_CONFIG_KEYS entry, and it
+ * runs on every search (twice on the cached path, which resolves the mode
+ * before and inside hybridSearch). One key per round trip is free on PGLite
+ * and is most of the pre-retrieval wall clock on a hosted Postgres (dozens of
+ * pooler-slot grabs per query), so read the whole config table once and
+ * answer every key from that snapshot. See config-snapshot.ts.
  *
  * Errors are swallowed and fall through to mode-bundle defaults. The cache
- * config table predates v0.32.3 and may not exist on very old brains, so
- * silent fallback is the right shape.
+ * config table predates v0.32.3 and may not exist on very old brains, and an
+ * engine from outside this repo may lack the bulk read; in both cases every
+ * key falls back to a per-key getConfig(), same as before.
  */
 export async function loadSearchModeConfig(
-  engine: { getConfig(key: string): Promise<string | null> },
+  engine: BulkConfigReader,
 ): Promise<ResolveSearchModeInput> {
+  const snapshot = await loadConfigSnapshot(engine);
   const safeGet = async (k: string): Promise<string | undefined> => {
     try {
-      const v = await engine.getConfig(k);
+      const v = snapshot ? snapshot[k] : await engine.getConfig(k);
       // getConfig's contract is string | null, but guard against engines that
       // return non-string junk (e.g. arrays/booleans). A non-string value is
       // treated as "not set" so it falls through to the mode-bundle default,
