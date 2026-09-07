@@ -534,21 +534,30 @@ export function upsertFactRow(
 
 /**
  * Char offset of the line start of the first timeline sentinel in `body`,
- * or -1 when none is present. Mirrors the UNAMBIGUOUS sentinel forms of
- * `markdown.ts:findTimelineSplitIndex` (`<!-- timeline -->` /
- * `<!--timeline-->` — what serializeMarkdown emits — plus the decorated
- * `--- timeline ---`). The legacy bare `---` + `## Timeline` fallback is
- * deliberately NOT matched: upsertFactRow receives raw on-disk text that may
- * still carry YAML frontmatter, whose `---` delimiters would false-positive
- * that rule (findTimelineSplitIndex documents the same caveat — it expects
- * body lines). Local rather than imported because this module must stay free
- * of markdown.ts's transitive dependency graph (see the FactKind comment at
- * the top of the file).
+ * or -1 when none is present. Mirrors every sentinel form
+ * `markdown.ts:findTimelineSplitIndex` honours (#4756): `<!-- timeline -->` /
+ * `<!--timeline-->` (what serializeMarkdown emits), the decorated
+ * `--- timeline ---`, and the legacy bare `---` whose next non-empty line is
+ * `## Timeline` / `## History` — the shape the recommended page templates
+ * emit. upsertFactRow receives RAW on-disk text, so a leading YAML
+ * frontmatter block is skipped first (same skip as
+ * timeline-write-through.ts) and its `---` delimiters can't false-positive
+ * the bare-`---` rule. Local rather than imported because this module must
+ * stay free of markdown.ts's transitive dependency graph (see the FactKind
+ * comment at the top of the file).
  */
 function timelineSentinelOffset(body: string): number {
+  const lines = body.split('\n');
+  let start = 0;
+  if (lines[0]?.trim() === '---') {
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '---') { start = i + 1; break; }
+    }
+  }
   let offset = 0;
-  for (const line of body.split('\n')) {
-    const trimmed = line.trim();
+  for (let i = 0; i < start; i++) offset += lines[i].length + 1;
+  for (let i = start; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
     if (
       trimmed === '<!-- timeline -->' ||
       trimmed === '<!--timeline-->' ||
@@ -556,7 +565,15 @@ function timelineSentinelOffset(body: string): number {
     ) {
       return offset;
     }
-    offset += line.length + 1;
+    if (trimmed === '---' && lines.slice(start, i).join('\n').trim().length > 0) {
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j].trim();
+        if (next.length === 0) continue;
+        if (/^##\s+(timeline|history)\s*$/i.test(next)) return offset;
+        break;
+      }
+    }
+    offset += lines[i].length + 1;
   }
   return -1;
 }

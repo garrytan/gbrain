@@ -635,12 +635,37 @@ Prose here.
       expect(fenceAt).toBeLessThan(out.indexOf('<!-- timeline -->'));
     });
 
-    test('the legacy bare --- + ## Timeline form is deliberately NOT a sentinel (it would false-positive on frontmatter)', () => {
+    // splitBody rule 3 — a bare `---` whose next non-empty line is
+    // `## Timeline` / `## History` — is the shape the recommended page
+    // templates emit. Left unmatched here, the fence was EOF-appended below
+    // that `---` and filed into page.timeline on the next import.
+    test('the legacy bare --- + ## Timeline form IS a sentinel: the fence lands above it', () => {
       const body = `# Entity\n\nProse.\n\n---\n\n## Timeline\n- 2020: Founded\n`;
       const { body: out } = upsertFactRow(body, newRow);
-      // Not recognized → EOF append (after the timeline text), same as "no sentinel".
-      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeGreaterThan(out.indexOf('## Timeline'));
-      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeGreaterThan(out.indexOf('- 2020: Founded'));
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeGreaterThan(out.indexOf('Prose.'));
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeLessThan(out.indexOf('\n---\n'));
+      const split = splitBody(out);
+      expect(split.compiled_truth).toContain(FACTS_FENCE_BEGIN);
+      expect(split.timeline).not.toContain(FACTS_FENCE_BEGIN);
+      expect(split.timeline).toContain('2020: Founded');
+    });
+
+    test('frontmatter + bare --- + ## Timeline: the frontmatter delimiters are skipped, the body --- is the sentinel', () => {
+      const frontmatter = '---\ntype: person\ntitle: Entity\n---\n';
+      const body = `${frontmatter}\n# Entity\n\nProse.\n\n---\n\n## Timeline\n- 2020: Founded\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.startsWith(frontmatter)).toBe(true);
+      const fenceAt = out.indexOf(FACTS_FENCE_BEGIN);
+      expect(fenceAt).toBeGreaterThan(out.indexOf('Prose.'));
+      expect(fenceAt).toBeLessThan(out.indexOf('\n---\n\n## Timeline'));
+      expect(out.split('---\n')).toHaveLength(4); // two frontmatter delimiters + the sentinel, no extra
+    });
+
+    test('a bare --- horizontal rule with no ## Timeline after it is NOT a sentinel', () => {
+      const body = `# Entity\n\nProse.\n\n---\n\nMore prose.\n`;
+      const { body: out } = upsertFactRow(body, newRow);
+      expect(out.indexOf(FACTS_FENCE_BEGIN)).toBeGreaterThan(out.indexOf('More prose.'));
+      expect(out.split('---\n')).toHaveLength(2);
     });
 
     test('CRLF body: the sentinel line is recognized and the fence lands above it, tail preserved', () => {
