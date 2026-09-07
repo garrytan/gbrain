@@ -81,7 +81,11 @@ describe('renderResolutionCommand', () => {
   test('dream_synthesize targets the curated entity side', () => {
     const pair = mkCrossSlugPair('openclaw/chat/x', 'companies/acme');
     const cmd = renderResolutionCommand(pair, 'dream_synthesize');
-    expect(cmd).toBe(`gbrain dream --phase synthesize --slug 'companies/acme'`);
+    // `gbrain dream` parses no --slug flag; the real command is rendered and
+    // the curated slug rides in a trailing shell comment (registry-gated by
+    // test/remediation-command-resolution.test.ts).
+    expect(cmd).toBe(`gbrain dream --phase synthesize  # re-synthesize; contradiction on 'companies/acme'`);
+    expect(cmd).not.toContain('--slug');
   });
 
   test('gbrain#4169 — legacy takes_mark_debate rows render a truthful manual-review hint (subcommand does not exist)', () => {
@@ -148,7 +152,7 @@ describe('proposeResolution (classify + render combined)', () => {
     const pair = mkCrossSlugPair('openclaw/chat/foo', 'companies/acme');
     const p = proposeResolution(pair, null);
     expect(p.resolution_kind).toBe('dream_synthesize');
-    expect(p.resolution_command).toBe(`gbrain dream --phase synthesize --slug 'companies/acme'`);
+    expect(p.resolution_command).toBe(`gbrain dream --phase synthesize  # re-synthesize; contradiction on 'companies/acme'`);
   });
 });
 

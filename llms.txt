@@ -44,7 +44,7 @@ Repo: https://github.com/garrytan/gbrain
 ## Migrations
 
 - [docs/UPGRADING_DOWNSTREAM_AGENTS.md](https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md): Patches for downstream agent skill forks. One section per release.
-- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.46.3.0 — the ZeroEntropy-sunset embedding + reranker switch playbook).
+- [skills/migrations/](https://raw.githubusercontent.com/garrytan/gbrain/master/skills/migrations/): Per-version agent-executable migration instructions (latest: v0.48.3.0 — index rebuilds and temporary search/report/tool availability).
 - [CHANGELOG.md](https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md): Release-summary voice + itemized changes + self-repair block per version.
 
 ## Contributing

@@ -236,7 +236,7 @@ export const SECTIONS: DocSection[] = [
       {
         title: "skills/migrations/",
         description:
-          "Per-version agent-executable migration instructions (latest: v0.46.3.0 — the ZeroEntropy-sunset embedding + reranker switch playbook).",
+          "Per-version agent-executable migration instructions (latest: v0.48.3.0 — index rebuilds and temporary search/report/tool availability).",
         path: "skills/migrations/",
       },
       {

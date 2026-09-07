@@ -1,9 +1,18 @@
 // v0.39 T16 — aggregator unit test.
 // Pins the pass-criterion codex finding #9 demanded: filing accuracy
 // delta is the gate, NOT manifest correctness.
+//
+// E4 (v0.48.4.0) added the runner contract: until the fixture-brain harness
+// lands, running the eval must read as an honest not-implemented verdict
+// (#4198 shape), never as a pass or a data-bearing inconclusive.
 
-import { describe, test, expect } from 'bun:test';
-import { aggregateVerdict, parseArgs } from '../src/commands/eval-schema-authoring.ts';
+import { describe, test, expect, spyOn } from 'bun:test';
+import {
+  aggregateVerdict,
+  parseArgs,
+  runEvalSchemaAuthoring,
+  runEvalSchemaAuthoringCli,
+} from '../src/commands/eval-schema-authoring.ts';
 
 describe('v0.39 T16 — eval-schema-authoring aggregator', () => {
   test('pass when baseline already high + no suggestions needed', () => {
@@ -43,5 +52,43 @@ describe('v0.39 T16 — eval-schema-authoring aggregator', () => {
   test('parseArgs accepts --source-id alias', () => {
     const a = parseArgs(['--source-id', 'alt']);
     expect(a.source).toBe('alt');
+  });
+});
+
+describe('E4 — eval-schema-authoring runner is an honest not-implemented scaffold (#4198 shape)', () => {
+  test('runEvalSchemaAuthoring never reads as a pass for work it did not run', async () => {
+    const r = await runEvalSchemaAuthoring([]);
+    expect(r.schema_version).toBe(1);
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('not_implemented');
+    expect(r.details.fixture).toBeNull();
+    expect(r.details.planned).toBeDefined();
+  });
+
+  test('records --fixture / --source in details without evaluating', async () => {
+    const r = await runEvalSchemaAuthoring(['--fixture', '/tmp/brain', '--source', 'dept-x']);
+    expect(r.ok).toBe(false);
+    expect(r.status).toBe('not_implemented');
+    expect(r.details.fixture).toBe('/tmp/brain');
+    expect(r.details.source).toBe('dept-x');
+  });
+
+  test('CLI entry exits 1 for the scaffold (json + human) and 0 only for --help', async () => {
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await runEvalSchemaAuthoringCli(['--json'])).toBe(1);
+      const payload = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+      expect(payload.ok).toBe(false);
+      expect(payload.status).toBe('not_implemented');
+
+      expect(await runEvalSchemaAuthoringCli([])).toBe(1);
+      expect(err.mock.calls.some((c) => String(c[0]).includes('NOT_IMPLEMENTED'))).toBe(true);
+
+      expect(await runEvalSchemaAuthoringCli(['--help'])).toBe(0);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+    }
   });
 });

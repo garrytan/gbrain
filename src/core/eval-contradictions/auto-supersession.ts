@@ -146,7 +146,12 @@ export function renderResolutionCommand(
       const curatedSide = isCuratedEntitySlug(pair.a.slug)
         ? pair.a
         : (isCuratedEntitySlug(pair.b.slug) ? pair.b : pair.a);
-      return `gbrain dream --phase synthesize --slug ${shellQuote(curatedSide.slug)}`;
+      // `gbrain dream` has no per-slug flag (the synthesize phase scopes by
+      // transcript/queue, not by page). The flag registry gate
+      // (test/remediation-command-resolution.test.ts) rejects `--slug` here,
+      // so render the real command and carry the slug as a shell comment —
+      // paste-ready and truthful, same shape as the takes_mark_debate hint.
+      return `gbrain dream --phase synthesize  # re-synthesize; contradiction on ${shellQuote(curatedSide.slug)}`;
     }
     case 'takes_mark_debate': {
       // gbrain#4169: this subcommand does not exist (tracked with #4102) —

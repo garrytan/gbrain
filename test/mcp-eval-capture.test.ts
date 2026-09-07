@@ -20,7 +20,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/operations.ts';
 import type { GBrainConfig } from '../src/core/config.ts';
-import type { PageInput } from '../src/core/types.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { serializeMarkdown } from '../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
 const savedKey = process.env.OPENAI_API_KEY;
@@ -30,39 +31,19 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  const page: PageInput = {
-    type: 'person',
-    title: 'Alice Example',
-    compiled_truth: 'Alice Example for op-layer capture tests.',
-  };
-  await engine.putPage('people/alice-example', page);
   await engine.executeRaw(
     `INSERT INTO sources (id, name) VALUES ('testsrc', 'Test Source') ON CONFLICT DO NOTHING`,
   );
-  await engine.putPage('notes/source-override-default', {
-    type: 'note',
-    title: 'Default Source Override',
-    compiled_truth: 'sourceoverrideunique belongs to the default source.',
-  });
-  await engine.upsertChunks('notes/source-override-default', [
-    {
-      chunk_index: 0,
-      chunk_text: 'sourceoverrideunique belongs to the default source.',
-      chunk_source: 'compiled_truth',
-    },
-  ]);
-  await engine.putPage('notes/source-override-testsrc', {
-    type: 'note',
-    title: 'Test Source Override',
-    compiled_truth: 'sourceoverrideunique belongs to the explicit source.',
-  }, { sourceId: 'testsrc' });
-  await engine.upsertChunks('notes/source-override-testsrc', [
-    {
-      chunk_index: 0,
-      chunk_text: 'sourceoverrideunique belongs to the explicit source.',
-      chunk_source: 'compiled_truth',
-    },
-  ], { sourceId: 'testsrc' });
+  for (const [slug, sourceId, type, title, body] of [
+    ['people/alice-example', 'default', 'person', 'Alice Example', 'Alice Example for op-layer capture tests.'],
+    ['notes/source-override-default', 'default', 'note', 'Default Source Override', 'sourceoverrideunique belongs to the default source.'],
+    ['notes/source-override-testsrc', 'testsrc', 'note', 'Test Source Override', 'sourceoverrideunique belongs to the explicit source.'],
+  ] as const) {
+    const result = await importFromContent(engine, slug,
+      serializeMarkdown({}, body, '', { type, title, tags: [] }),
+      { sourceId, noEmbed: true, forceRechunk: true });
+    expect(result.status).toBe('imported');
+  }
 });
 
 afterAll(async () => {

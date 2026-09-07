@@ -32,6 +32,7 @@ import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
 export interface ThinkLLMClient {
@@ -80,6 +81,8 @@ export interface RunThinkOpts {
   until?: string;
   /** When set, MCP-bound calls forward this to the gather phase (server-side filter). */
   takesHoldersAllowList?: string[];
+  /** Resolved operation-layer page visibility policy. */
+  excludePrivate?: boolean;
   /** Inject an LLM client (for tests). Defaults to a fresh Anthropic SDK client. */
   client?: ThinkLLMClient;
   /** Inject a question-embedding function. When omitted, vector takes search is skipped. */
@@ -531,7 +534,9 @@ export async function runThink(
     anchor: opts.anchor,
     questionEmbedding,
     ...(window ? { window } : {}),
-    takesHoldersAllowList: opts.takesHoldersAllowList,
+    takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? ['world'],
+    excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
+    remote: opts.remote,
     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
   });

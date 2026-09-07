@@ -45,7 +45,7 @@ function baseKnobs(): ResolvedSearchKnobs {
 }
 
 describe('KNOBS_HASH_VERSION + version invariants', () => {
-  test('version is 28 (…; 23→24 negative-offset cache-skip gap #4358 residual; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256/#3695)', () => {
+  test('version is 29 (…; 24→25 keywordOrFallback knob kof= #3617; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256/#3695; 28→29 evb= expansion variant budget fold)', () => {
     // v0.35.0.0: 1→2 to fold reranker fields. v0.35.6.0: 2→3 to fold
     // floor_ratio. v0.36 wave: piggybacks on v=3 with 7 cross-modal knobs
     // (D2) PLUS column + provider context (D8/CDX-2 cross-column isolation).
@@ -92,7 +92,15 @@ describe('KNOBS_HASH_VERSION + version invariants', () => {
     // 27→28: compiledTruthBoost suppresses the 2x boost for synthetic
     // chunkless title rows (#4256, fixes #3695's fusion path) — reorders
     // fused rows for identical knobs; version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(28);
+    // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
+    // variant fusion reorders rows for identical knobs; null hashes as legacy.
+    // v=29 ALSO carries rrp= (relational rerank pin, ranker wave R1) — same
+    // epoch, no extra bump: neither part had shipped in a release yet.
+    // v=29 ALSO carries kacf= (keyword-arm confidence floor, ranker wave
+    // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
+    // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
+    // Cat 13) — same unshipped epoch; a partial literal hashes as always.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('hash is 16 hex chars regardless of reranker config', () => {
@@ -282,5 +290,39 @@ describe('v0.48.2 reranker default flip re-keys the cache (rrm= is folded uncond
       const withLegacy = knobsHash({ ...base, reranker_model: LEGACY_DEFAULT_RERANKER_MODEL });
       expect(withDefault).not.toBe(withLegacy);
     }
+  });
+});
+
+describe('ranker wave (R1): relational_rerank_pin participates in the hash (rrp=)', () => {
+  test('pin 3 (bundle) vs 0 (off) vs 1 → three distinct hashes; a partial-knobs literal hashes as the bundle default', () => {
+    const three = knobsHash({ ...baseKnobs(), relational_rerank_pin: 3 });
+    const off = knobsHash({ ...baseKnobs(), relational_rerank_pin: 0 });
+    const one = knobsHash({ ...baseKnobs(), relational_rerank_pin: 1 });
+    expect(new Set([three, off, one]).size).toBe(3);
+    const { relational_rerank_pin: _drop, ...partial } = baseKnobs();
+    expect(knobsHash(partial as ResolvedSearchKnobs)).toBe(three);
+  });
+});
+
+describe('ranker wave (Phase E2): keyword_arm_confidence_floor participates in the hash (kacf=)', () => {
+  test('off (bundle null) vs 0.6 vs 0.5 → three distinct hashes; a partial-knobs literal hashes as off', () => {
+    const off = knobsHash({ ...baseKnobs(), keyword_arm_confidence_floor: null });
+    const six = knobsHash({ ...baseKnobs(), keyword_arm_confidence_floor: 0.6 });
+    const five = knobsHash({ ...baseKnobs(), keyword_arm_confidence_floor: 0.5 });
+    expect(new Set([off, six, five]).size).toBe(3);
+    expect(knobsHash(baseKnobs())).toBe(off);
+    const { keyword_arm_confidence_floor: _drop, ...partial } = baseKnobs();
+    expect(knobsHash(partial as ResolvedSearchKnobs)).toBe(off);
+  });
+});
+
+describe('ranker wave (Phase E3): metadata_boost_gate participates in the hash (mbg=)', () => {
+  test('always vs lexical (bundle) → distinct hashes; a partial-knobs literal hashes as always', () => {
+    const always = knobsHash({ ...baseKnobs(), metadata_boost_gate: 'always' });
+    const lexical = knobsHash({ ...baseKnobs(), metadata_boost_gate: 'lexical' });
+    expect(always).not.toBe(lexical);
+    expect(knobsHash(baseKnobs())).toBe(lexical); // bundle default since the Phase E3 flip
+    const { metadata_boost_gate: _drop, ...partial } = baseKnobs();
+    expect(knobsHash(partial as ResolvedSearchKnobs)).toBe(always); // absent field = pre-wave identity
   });
 });

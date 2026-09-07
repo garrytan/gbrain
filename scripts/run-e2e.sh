@@ -118,6 +118,8 @@ for _e2e_var in $(env | grep -oE '^(CONDUCTOR_|MCP_|OPENCLAW_|HERMES_|GROK_|OPEN
     GBRAIN_PGLITE_SNAPSHOT) ;;  # snapshot fast-path fixture (exported by ci-local.sh / runners) — keep
     GBRAIN_TEST_ALLOW_DATABASE_URL) ;;  # #3485 preload opt-in (set above) — keep
     GBRAIN_TEST_KEEP_PROVIDER_KEYS) ;;  # provider-keys preload opt-in (set above) — keep
+    GBRAIN_TEST_DB) ;;  # explicit schema-reset opt-in for service hosts; schema-drift still requires a test-shaped DB name
+    GBRAIN_PGBOUNCER_URL|GBRAIN_PGBOUNCER_DIRECT_URL|GBRAIN_CI_REQUIRE_PGBOUNCER) ;; # explicit pooler test target and execution requirement
     GBRAIN_E2E_FILE_TIMEOUT) ;;  # per-file cap override — read AFTER this scrub, so it must survive it
     GBRAIN_E2E_ALLOW_DB) ;;  # #3485 name-floor opt-in — the guard's own error
                              # message tells operators to set it; stripping it
@@ -270,6 +272,15 @@ for f in "${files[@]}"; do
     TIMEOUT_CMD=""
   fi
   if output=$($TIMEOUT_CMD bun test --timeout=60000 ${COVERAGE_ARGS[@]+"${COVERAGE_ARGS[@]}"} "$f" 2>&1); then
+    if [ "$f" = "test/e2e/pgbouncer-teardown.test.ts" ] && \
+       [ "${GBRAIN_CI_REQUIRE_PGBOUNCER:-0}" = "1" ] && \
+       ! printf '%s\n' "$output" | grep -qE '^[[:space:]]*[1-9][0-9]* pass$'; then
+      fail_files=$((fail_files + 1))
+      fail_list+=("$name")
+      echo "$output"
+      echo "FAILED: required PgBouncer tests did not execute"
+      continue
+    fi
     pass_files=$((pass_files + 1))
     # Extract pass/fail counts from bun's summary (e.g., "123 pass")
     p=$(echo "$output" | grep -oE '[0-9]+ pass' | tail -1 | grep -oE '[0-9]+' || echo 0)

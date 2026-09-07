@@ -63,6 +63,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       keywordOrFallback: true,
       tokenBudget: 4000,
       expansion: false,
+      // ranker wave — null = legacy weighting (byte-identical to pre-knob fusion).
+      expansion_variant_budget: null,
       searchLimit: 10,
       reranker_enabled: false,
       reranker_model: 'voyage:rerank-2.5',
@@ -84,6 +86,12 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       // v0.43 — relational recall OFF for conservative.
       relationalRetrieval: false,
       relational_retrieval_depth: 2,
+      // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
+      relational_rerank_pin: 3,
+      // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
+      keyword_arm_confidence_floor: null,
+      // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
+      metadata_boost_gate: 'lexical',
     });
   });
 
@@ -98,6 +106,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       keywordOrFallback: true,
       tokenBudget: 12000,
       expansion: false,
+      expansion_variant_budget: null,
       searchLimit: 25,
       reranker_enabled: true,
       reranker_model: 'voyage:rerank-2.5',
@@ -112,14 +121,20 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
       contextual_retrieval: 'title',
-      // v0.42.3.0 — autocut ON.
-      autocut: true,
+      // autocut OFF since the ranker wave (rule R2 receipt).
+      autocut: false,
       autocut_jump: 0.2,
       autocut_min_top: 0.35,
       autocut_min_keep: 1,
       // v0.43 — relational recall ON for balanced.
       relationalRetrieval: true,
       relational_retrieval_depth: 2,
+      // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
+      relational_rerank_pin: 3,
+      // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
+      keyword_arm_confidence_floor: null,
+      // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
+      metadata_boost_gate: 'lexical',
     });
   });
 
@@ -132,6 +147,7 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       keywordOrFallback: true,
       tokenBudget: undefined,
       expansion: true,
+      expansion_variant_budget: null,
       searchLimit: 50,
       reranker_enabled: true,
       reranker_model: 'voyage:rerank-2.5',
@@ -146,14 +162,20 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       graph_signals: true,
       ...CR_DISABLED_DEFAULT,
       contextual_retrieval: 'per_chunk_synopsis',
-      // v0.42.3.0 — autocut ON.
-      autocut: true,
+      // autocut OFF since the ranker wave (rule R2 receipt).
+      autocut: false,
       autocut_jump: 0.2,
       autocut_min_top: 0.35,
       autocut_min_keep: 1,
       // v0.43 — relational recall ON for tokenmax.
       relationalRetrieval: true,
       relational_retrieval_depth: 2,
+      // ranker wave (R1) — relational rerank pin, 3 in every bundle (0 = off).
+      relational_rerank_pin: 3,
+      // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
+      keyword_arm_confidence_floor: null,
+      // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
+      metadata_boost_gate: 'lexical',
     });
   });
 
@@ -456,7 +478,15 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // 27→28: compiledTruthBoost suppresses the 2x boost for synthetic
     // chunkless title rows (#4256, fixes #3695's fusion path) — reorders
     // fused rows for identical knobs; version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(28);
+    // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
+    // variant fusion reorders rows for identical knobs; null hashes as legacy.
+    // v=29 ALSO carries rrp= (relational rerank pin, ranker wave R1) — same
+    // epoch, no extra bump: neither part had shipped in a release yet.
+    // v=29 ALSO carries kacf= (keyword-arm confidence floor, ranker wave
+    // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
+    // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
+    // Cat 13) — same unshipped epoch; a partial literal hashes as always.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('#3515: detail set vs unset produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -486,7 +516,15 @@ describe('knobsHash determinism + cross-mode separation (CDX-4)', () => {
     // adaptive-on calls now cache instead of skipping.
     // 27→28: compiledTruthBoost synthetic-row suppression (#4256/#3695) —
     // version-only invalidation.
-    expect(KNOBS_HASH_VERSION).toBe(28);
+    // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
+    // variant fusion reorders rows for identical knobs; null hashes as legacy.
+    // v=29 ALSO carries rrp= (relational rerank pin, ranker wave R1) — same
+    // epoch, no extra bump: neither part had shipped in a release yet.
+    // v=29 ALSO carries kacf= (keyword-arm confidence floor, ranker wave
+    // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
+    // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
+    // Cat 13) — same unshipped epoch; a partial literal hashes as always.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
   test('#4352 follow-up: excludePrivate true vs false produces DIFFERENT hashes (cache contamination prevention)', () => {
@@ -702,14 +740,22 @@ describe('v0.40.4 — graph_signals knob', () => {
 });
 
 describe('v0.42.3.0 — autocut knobs', () => {
-  test('KNOBS_HASH_VERSION is 28 (…; 24→25 keywordOrFallback knob kof=; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256)', () => {
-    expect(KNOBS_HASH_VERSION).toBe(28);
+  test('KNOBS_HASH_VERSION is 29 (…; 25→26 salience/recency + intent_patterns fold #4415; 26→27 adaptive-return gate + intent fold E5b/F11; 27→28 compiledTruthBoost synthetic-row suppression #4256; 28→29 evb= expansion variant budget fold)', () => {
+    // 28→29: evb= expansion variant budget fold (ranker wave) — budget-weighted
+    // variant fusion reorders rows for identical knobs; null hashes as legacy.
+    // v=29 ALSO carries rrp= (relational rerank pin, ranker wave R1) — same
+    // epoch, no extra bump: neither part had shipped in a release yet.
+    // v=29 ALSO carries kacf= (keyword-arm confidence floor, ranker wave
+    // Phase E2 / Cat 13) — same unshipped epoch; null hashes as off.
+    // v=29 ALSO carries mbg= (metadata boost gate, ranker wave Phase E3 /
+    // Cat 13) — same unshipped epoch; a partial literal hashes as always.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 
-  test('bundle defaults: conservative off, balanced/tokenmax on @0.20', () => {
+  test('bundle defaults: autocut off in every bundle (ranker wave rule R2), jump 0.20 kept for operators who re-enable it', () => {
     expect(MODE_BUNDLES.conservative.autocut).toBe(false);
-    expect(MODE_BUNDLES.balanced.autocut).toBe(true);
-    expect(MODE_BUNDLES.tokenmax.autocut).toBe(true);
+    expect(MODE_BUNDLES.balanced.autocut).toBe(false);
+    expect(MODE_BUNDLES.tokenmax.autocut).toBe(false);
     for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
       expect(MODE_BUNDLES[m].autocut_jump).toBe(0.2);
     }
@@ -747,9 +793,10 @@ describe('v0.42.3.0 — autocut knobs', () => {
   });
 
   test('knobsHash includes ac= / acj= — autocut-on vs off differ', () => {
-    const on = knobsHash(resolveSearchMode({ mode: 'balanced' })); // autocut true
-    const off = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut: false } }));
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced' })); // autocut false (bundle default)
+    const on = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut: true } }));
     expect(on).not.toBe(off);
+    expect(knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { autocut: false } }))).toBe(off);
   });
 
   test('knobsHash differs on jump sensitivity', () => {
@@ -938,5 +985,104 @@ describe('adaptive-return knobs hash fold (v=27, 2026-08 fix wave E5b)', () => {
 
   test('differing resolved intent class diverges (outside-voice F11: an entity-capped row cannot serve a concept lookup via semantic similarity)', () => {
     expect(ar({ intent: 'entity' })).not.toBe(ar({ intent: 'concept' }));
+  });
+});
+
+describe('ranker wave — expansion_variant_budget knob (null = legacy weighting)', () => {
+  test('every bundle lands at null (behavior-preserving; weighting flips only on receipt)', () => {
+    for (const m of SEARCH_MODES) {
+      expect(MODE_BUNDLES[m].expansion_variant_budget).toBeNull();
+    }
+  });
+
+  test('loadOverridesFromConfig parses a number in (0, 4] and the legacy literal', () => {
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': '0.5' }).expansion_variant_budget).toBe(0.5);
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': '4' }).expansion_variant_budget).toBe(4);
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': 'legacy' }).expansion_variant_budget).toBeNull();
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': 'null' }).expansion_variant_budget).toBeNull();
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': 'LEGACY' }).expansion_variant_budget).toBeNull();
+  });
+
+  test('out-of-range / non-numeric values are ignored (fall through to the bundle)', () => {
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': '0' }).expansion_variant_budget).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': '5' }).expansion_variant_budget).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': '-1' }).expansion_variant_budget).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.expansion_variant_budget': 'x' }).expansion_variant_budget).toBeUndefined();
+    expect(loadOverridesFromConfig({})).not.toHaveProperty('expansion_variant_budget');
+    // Unset key → bundle value (null) resolves through the pick chain.
+    expect(resolveSearchMode({ mode: 'tokenmax', overrides: loadOverridesFromConfig({ 'search.expansion_variant_budget': '5' }) }).expansion_variant_budget).toBeNull();
+  });
+
+  test('resolution chain: per-call > config override > bundle (null override is honored, not skipped)', () => {
+    expect(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: 0.5 } }).expansion_variant_budget).toBe(0.5);
+    expect(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: 0.5 }, perCall: { expansion_variant_budget: 2 } }).expansion_variant_budget).toBe(2);
+    // An explicit `legacy` (null) override must win over a hypothetical non-null bundle — pick() keys on !== undefined.
+    expect(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: null }, perCall: {} }).expansion_variant_budget).toBeNull();
+    expect(attributeKnob('expansion_variant_budget', { mode: 'tokenmax', overrides: { expansion_variant_budget: null } }, resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: null } })).source).toBe('override');
+  });
+
+  test('SEARCH_MODE_CONFIG_KEYS carries the key (modes --reset clears it)', () => {
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.expansion_variant_budget');
+  });
+
+  test('knobsHash folds the budget: legacy vs 0.5 vs 1.0 all differ; legacy is stable', () => {
+    const legacy = knobsHash(resolveSearchMode({ mode: 'tokenmax' }));
+    const legacyExplicit = knobsHash(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: null } }));
+    const half = knobsHash(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: 0.5 } }));
+    const one = knobsHash(resolveSearchMode({ mode: 'tokenmax', overrides: { expansion_variant_budget: 1.0 } }));
+    expect(legacy).toBe(legacyExplicit);
+    expect(half).not.toBe(legacy);
+    expect(one).not.toBe(legacy);
+    expect(one).not.toBe(half);
+  });
+});
+
+describe('ranker wave (R1) — relational_rerank_pin knob (relational rows bypass reranker demotion)', () => {
+  test('every bundle pins 3 (the R1 receipt fix rides the default path — conservative has no reranker, so it is a no-op there)', () => {
+    for (const m of SEARCH_MODES) {
+      expect(MODE_BUNDLES[m].relational_rerank_pin).toBe(3);
+    }
+  });
+
+  test('loadOverridesFromConfig parses a non-negative integer <= 10 and the off literal', () => {
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': '0' }).relational_rerank_pin).toBe(0);
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': '5' }).relational_rerank_pin).toBe(5);
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': '10' }).relational_rerank_pin).toBe(10);
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': 'off' }).relational_rerank_pin).toBe(0);
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': 'OFF' }).relational_rerank_pin).toBe(0);
+    expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': 'false' }).relational_rerank_pin).toBe(0);
+  });
+
+  test('out-of-range / non-integer / garbage values are ignored (fall through to the bundle)', () => {
+    for (const bad of ['11', '-1', '2.5', 'x', '', 'true']) {
+      expect(loadOverridesFromConfig({ 'search.relational_rerank_pin': bad })).not.toHaveProperty('relational_rerank_pin');
+    }
+    expect(loadOverridesFromConfig({})).not.toHaveProperty('relational_rerank_pin');
+    expect(resolveSearchMode({ mode: 'balanced', overrides: loadOverridesFromConfig({ 'search.relational_rerank_pin': '11' }) }).relational_rerank_pin).toBe(3);
+  });
+
+  test('resolution chain: per-call > config override > bundle (an explicit 0 override is honored, not skipped)', () => {
+    expect(resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 0 } }).relational_rerank_pin).toBe(0);
+    expect(resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 0 }, perCall: { relational_rerank_pin: 5 } }).relational_rerank_pin).toBe(5);
+    expect(resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 1 }, perCall: {} }).relational_rerank_pin).toBe(1);
+    expect(attributeKnob('relational_rerank_pin', { mode: 'balanced', overrides: { relational_rerank_pin: 0 } }, resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 0 } })).source).toBe('override');
+    expect(attributeKnob('relational_rerank_pin', { mode: 'balanced' }, resolveSearchMode({ mode: 'balanced' })).source).toBe('mode');
+  });
+
+  test('SEARCH_MODE_CONFIG_KEYS carries the key (modes --reset clears it)', () => {
+    expect(SEARCH_MODE_CONFIG_KEYS).toContain('search.relational_rerank_pin');
+  });
+
+  test('knobsHash folds the pin (rrp=): 3 vs 0 vs 1 all differ; explicit 3 equals the bundle default', () => {
+    const dflt = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const three = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 3 } }));
+    const off = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { relational_rerank_pin: 0 } }));
+    const one = knobsHash(resolveSearchMode({ mode: 'balanced', perCall: { relational_rerank_pin: 1 } }));
+    expect(three).toBe(dflt);
+    expect(off).not.toBe(dflt);
+    expect(one).not.toBe(dflt);
+    expect(one).not.toBe(off);
+    // The pin rides KNOBS_HASH_VERSION 29 together with evb= — no separate bump.
+    expect(KNOBS_HASH_VERSION).toBe(29);
   });
 });

@@ -31,6 +31,14 @@ import { getRecipe } from '../ai/recipes/index.ts';
 // (ai/defaults.ts — a leaf module, no SDK loads). The three bundles below
 // resolve through DEFAULT_RERANKER_MODEL (voyage:rerank-2.5 since v0.48.2).
 import { DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
+import { normalizeExpansionVariantBudget } from './fusion-lists.ts';
+import { DEFAULT_RELATIONAL_RERANK_PIN, normalizeRelationalRerankPin } from './relational-rerank-pin.ts';
+import { normalizeKeywordArmConfidenceFloor } from './arm-confidence.ts';
+import {
+  DEFAULT_METADATA_BOOST_GATE,
+  normalizeMetadataBoostGate,
+  type MetadataBoostGate,
+} from './metadata-boost-gate.ts';
 
 /**
  * Look up the `reranker.default_timeout_ms` declared by the resolved
@@ -101,6 +109,27 @@ export interface ModeBundle {
    */
   expansion: boolean;
   /**
+   * Total RRF weight budget shared by every LLM-expansion variant list (and
+   * any clause-decomposition list) at fusion time; the original query's list
+   * always keeps weight 1. `null` = legacy: every list fuses at weight 1,
+   * byte-identical to the pre-knob path. A number `b` in (0, 4] is split
+   * equally across the VOTING variant lists: `weight_i = b / n_voting_arms`
+   * where n_voting_arms counts the NON-EMPTY variant/clause lists (an empty
+   * list casts no vote and does not dilute the budget — same formula as the
+   * fusion-lists.ts header), so total expansion influence no longer scales
+   * with the nondeterministic variant count. Range/parse contract lives in
+   * ONE place: `normalizeExpansionVariantBudget` (fusion-lists.ts), used by
+   * the config parser AND both per-call seams in hybrid.ts.
+   * Arithmetic: two variants agreeing on a distractor at rank 0 tie
+   * the original's rank-0 vote exactly at `b = 1.0`; legacy with two variants
+   * is ≈ `b = 2.0`; `b = 0.5` subordinates them. Receipt (LongMemEval strict
+   * recall_all@5, v0.48.2.0 harness): plain hybrid 93.19% vs hybrid + LLM
+   * expansion 54.89% (paired +3 / −183) — variant lists fusing at full weight
+   * outvote the original on small-k recall. No-op when `expansion` is off.
+   * Override: per-call → `search.expansion_variant_budget` config → bundle.
+   */
+  expansion_variant_budget: number | null;
+  /**
    * Default `limit` for the operation layer (`src/core/operations.ts:1087`).
    * Mode bundle becomes the default ONLY when the caller omits the field —
    * same chain semantics as model-tier resolution. See `[CDX-1+2+3]` in the
@@ -113,9 +142,9 @@ export interface ModeBundle {
    */
   searchLimit: number;
   /**
-   * v0.35.0.0+ — cross-encoder reranker. Off for conservative/balanced,
-   * on for tokenmax. ZeroEntropy zerank-2 by default; can be overridden
-   * via `search.reranker.model`. Slots between dedup and token-budget
+   * v0.35.0.0+ — cross-encoder reranker. Off for conservative, on for
+   * balanced/tokenmax. Model: `DEFAULT_RERANKER_MODEL` (voyage:rerank-2.5),
+   * overridable via `search.reranker.model`. Slots between dedup and token-budget
    * enforcement in hybrid.ts; fail-open on any RerankError (audit-logged).
    * Cost anchor: ~$0.0003/query at tokenmax topNIn=30 × ~400 tokens/chunk
    * (rounding error vs Opus, meaningful vs Haiku).
@@ -277,9 +306,8 @@ export interface ModeBundle {
   contextual_retrieval_disabled: boolean;
 
   /**
-   * v0.42.3.0 — autocut (score-discontinuity result-sizing). Default OFF for
-   * conservative (no reranker → no trustworthy cliff signal; would no-op
-   * anyway), ON for balanced + tokenmax. When on AND a reranker scored ≥2
+   * autocut (score-discontinuity result-sizing). OFF in every bundle: conservative has no reranker (no cliff
+   * signal); balanced/tokenmax turned it off on the ranker wave's rule R2 receipt (balanced note). When on AND a reranker scored ≥2
    * items, hybridSearch cuts the ranked set at the largest cross-encoder
    * rerank-score gap (instead of returning the full top-K). No-op without a
    * reranker. Override path: per-call SearchOpts.autocut → `search.autocut`
@@ -326,6 +354,67 @@ export interface ModeBundle {
   relationalRetrieval: boolean;
   /** v0.43 — max hops for relational traversal. Default 2, hard-capped at 3. */
   relational_retrieval_depth: number;
+  /**
+   * Ranker wave (R1 receipt) — relational-arm rows bypass reranker DEMOTION.
+   * After the cross-encoder reorders the pool, up to this many relational-arm
+   * rows are re-pinned above the reranked text rows in their fused (RRF)
+   * order (a permutation; one row per page; a row the reranker itself ranked
+   * higher keeps that position). The cross-encoder scores chunk TEXT, and an
+   * edge-derived answer's text need not mention the query's entity, so it
+   * demotes exactly the rows the arm exists to surface: NamedThingBench
+   * relational fixture, balanced default, hit@1 21/39 → 3/39 and hit@3
+   * 27/39 → 5/39 with the reranker on (scripts/r1-namedthing-rerank-ab.ts).
+   * `0` disables (pre-pin ranking); range [0, 10] via the ONE contract
+   * `normalizeRelationalRerankPin` (relational-rerank-pin.ts). No-op for
+   * non-relational queries, when the reranker did not reorder (off / fail-open),
+   * and for image modality. Override: per-call SearchOpts.relationalRerankPin →
+   * `search.relational_rerank_pin` config → bundle. Pinned rows survive
+   * autocut (`relational_pinned` stamp) and are excluded from its cliff math.
+   */
+  relational_rerank_pin: number;
+  /**
+   * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
+   * LEXICAL arms (arm-confidence.ts). When the keyword arm's scale-free
+   * confidence `margin_ratio = top / (top + second)` over its returned rows
+   * (1 for a single row, 0 when empty) is BELOW this floor, the keyword AND
+   * title lists fuse at weight 0.5 (k×2 in the old k-only form) — but only
+   * when a text vector arm voted and the query is not relational; never on
+   * the keyword-only fallback paths. `null` = off (byte-identical fusion).
+   * Receipt (Cat 13 conceptual recall, Voyage space voyage-4@1024, reranker
+   * off, autocut off): hybrid nDCG@5 53.0 on the held-out concepts vs bare
+   * vector 60.5 (P@1 48.1 vs 65.2); grep-only 52.2 — the keyword arm's noise
+   * on paraphrase probes drags the fused result below the vector arm.
+   * Every bundle lands at `null`; the Phase E2 receipt decides the flip, with
+   * the floor calibrated as the median `margin_ratio` (read from
+   * `HybridSearchMeta.keyword_arm_confidence` with the knob off) over
+   * tuning-split probes whose keyword top hit is NOT gold. Range `(0, 1]`
+   * via the ONE contract `normalizeKeywordArmConfidenceFloor`. Override:
+   * per-call SearchOpts.keywordArmConfidenceFloor →
+   * `search.keyword_arm_confidence_floor` config (`off` = null) → bundle.
+   */
+  keyword_arm_confidence_floor: number | null;
+  /**
+   * Ranker wave (Phase E3, Cat 13) — post-fusion METADATA boost gate
+   * (metadata-boost-gate.ts). `always` = today's pipeline: backlink, salience,
+   * recency (+ chronicle), graph-signal and alias-resolved boosts run on every
+   * query. `lexical` = those stages run ONLY when a lexical arm voted in fusion
+   * (a strict keyword row, a title-arm row or a relational row reached
+   * composeFusionLists after the relaxed-row demotion); when the vector arm was
+   * the only voter they are skipped and the vector order stands. Untouched
+   * either way: supersede downrank, exact-match boost, title-phrase boost,
+   * compiled-truth boost, cosine re-score, dedup, reranker, autocut.
+   * Receipt (Cat 13 E1 localization, tuning split): gbrain's own vector arm
+   * nDCG@5 60.3 vs live hybrid 50.6; 73/105 gap probes had BOTH lexical arms
+   * empty while hub pages carried backlink / graph-adjacency / recency boosts
+   * of 1.035–1.124x that the gold concept page never carried (0/96); the gate
+   * fixes 73/105 with 0 collateral (tuning 57.3). Every bundle is `lexical`:
+   * the pre-registered Phase E3 held-out receipt passed (gbrain 57.8 nDCG@5 vs
+   * 53.0 before; NamedThingBench, BrainBench and the LongMemEval dev slice
+   * byte-identical). `always` restores the pre-wave pipeline.
+   * Parse contract in ONE place: `normalizeMetadataBoostGate`. Override: per-call
+   * HybridSearchOpts.metadataBoostGate → `search.metadata_boost_gate` config → bundle. knobsHash part `mbg=`.
+   */
+  metadata_boost_gate: MetadataBoostGate;
 }
 
 /**
@@ -344,6 +433,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     keywordOrFallback: true,
     tokenBudget: 4000,
     expansion: false,
+    expansion_variant_budget: null,
     searchLimit: 10,
     // v0.35.0.0+: reranker off — conservative is cost-sensitive; reranker
     // spend doesn't fit the tier's value prop.
@@ -380,9 +470,15 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // matches graph_signals posture). Power users opt in per-call.
     relationalRetrieval: false,
     relational_retrieval_depth: 2,
+    // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
+    relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
+    // Ranker wave (Phase E2) — keyword-arm confidence floor OFF (null) until the Cat 13 receipt.
+    keyword_arm_confidence_floor: null,
+    // Phase E3 — metadata boost gate `lexical` (flipped on the Cat 13 held-out receipt); `always` restores the pre-wave pipeline.
+    metadata_boost_gate: 'lexical',
   }),
   balanced: Object.freeze({
     cache_enabled: true,
@@ -392,6 +488,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     keywordOrFallback: true,
     tokenBudget: 12000,
     expansion: false,
+    expansion_variant_budget: null,
     searchLimit: 25,
     // v0.36.0.0 (D6): reranker flipped ON for `balanced` mode bundle. The
     // real-corpus benchmark shows zerank-2 reshuffles 60% of top-1 results
@@ -437,15 +534,22 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // per the cost-tier philosophy.
     contextual_retrieval: 'title' as CRMode,
     contextual_retrieval_disabled: false,
-    // v0.42.3.0 — autocut ON (reranker fires; cliff signal is trustworthy).
-    autocut: true,
+    // autocut OFF (ranker wave, rule R2): the post-rerank cliff dropped the second gold session on
+    // multi-part questions (LME recall_all@5 449→379/470; no floor in {0.10..0.80} passed). `search.autocut true` re-enables.
+    autocut: false,
     // v0.43 — relational recall ON (contingent on the no-regression gate;
     // ships default-false everywhere if the gate flags any regression).
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
+    // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
+    relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
+    // Ranker wave (Phase E2) — keyword-arm confidence floor OFF (null) until the Cat 13 receipt.
+    keyword_arm_confidence_floor: null,
+    // Phase E3 — metadata boost gate `lexical` (flipped on the Cat 13 held-out receipt); `always` restores the pre-wave pipeline.
+    metadata_boost_gate: 'lexical',
   }),
   tokenmax: Object.freeze({
     cache_enabled: true,
@@ -455,6 +559,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     keywordOrFallback: true,
     tokenBudget: undefined,
     expansion: true,
+    expansion_variant_budget: null,
     searchLimit: 50,
     // tokenmax is the high-cost-tolerant tier that already pays for LLM
     // expansion + 50-result payloads. Reranker is the natural capstone:
@@ -493,14 +598,20 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // 10K-page brain; documented in the post-upgrade cost prompt.
     contextual_retrieval: 'per_chunk_synopsis' as CRMode,
     contextual_retrieval_disabled: false,
-    // v0.42.3.0 — autocut ON.
-    autocut: true,
+    // autocut OFF (ranker wave, rule R2 — see the balanced bundle's note).
+    autocut: false,
     // v0.43 — relational recall ON for tokenmax (max-recall tier).
     relationalRetrieval: true,
     relational_retrieval_depth: 2,
+    // Ranker wave (R1) — relational rows re-pinned above reranked text rows (0 = off).
+    relational_rerank_pin: DEFAULT_RELATIONAL_RERANK_PIN,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
+    // Ranker wave (Phase E2) — keyword-arm confidence floor OFF (null) until the Cat 13 receipt.
+    keyword_arm_confidence_floor: null,
+    // Phase E3 — metadata boost gate `lexical` (flipped on the Cat 13 held-out receipt); `always` restores the pre-wave pipeline.
+    metadata_boost_gate: 'lexical',
   }),
 });
 
@@ -523,6 +634,7 @@ export interface SearchKeyOverrides {
   keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
+  expansion_variant_budget?: number | null;
   searchLimit?: number;
   // v0.35.0.0+ reranker overrides
   reranker_enabled?: boolean;
@@ -557,6 +669,11 @@ export interface SearchKeyOverrides {
   // v0.43 — relational recall overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
+  relational_rerank_pin?: number;
+  // Ranker wave (Phase E2) — keyword-arm confidence floor override (null = off; (0, 1]).
+  keyword_arm_confidence_floor?: number | null;
+  // Ranker wave (Phase E3) — metadata boost gate override (`always` | `lexical`).
+  metadata_boost_gate?: MetadataBoostGate;
   autocut_jump?: number;
   autocut_min_top?: number;
   autocut_min_keep?: number;
@@ -577,6 +694,7 @@ export interface SearchPerCallOpts {
   keywordOrFallback?: boolean;
   tokenBudget?: number;
   expansion?: boolean;
+  expansion_variant_budget?: number | null;
   searchLimit?: number;
   // v0.35.0.0+ reranker per-call overrides (same shape as SearchKeyOverrides).
   reranker_enabled?: boolean;
@@ -614,6 +732,12 @@ export interface SearchPerCallOpts {
   // v0.43 — relational recall per-call overrides.
   relationalRetrieval?: boolean;
   relational_retrieval_depth?: number;
+  // Ranker wave — relational rerank pin per-call override (0 = off; [0, 10]).
+  relational_rerank_pin?: number;
+  // Ranker wave (Phase E2) — keyword-arm confidence floor per-call override (null = off; (0, 1]).
+  keyword_arm_confidence_floor?: number | null;
+  // Ranker wave (Phase E3) — metadata boost gate per-call override (`always` | `lexical`).
+  metadata_boost_gate?: MetadataBoostGate;
 }
 
 /**
@@ -682,6 +806,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     keywordOrFallback: pick('keywordOrFallback'),
     tokenBudget: pick('tokenBudget'),
     expansion: pick('expansion'),
+    expansion_variant_budget: pick('expansion_variant_budget'),
     searchLimit: pick('searchLimit'),
     reranker_enabled: pick('reranker_enabled'),
     reranker_model: resolvedRerankerModel,
@@ -713,6 +838,9 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     // v0.43 — relational recall resolved via the same pick chain.
     relationalRetrieval: pick('relationalRetrieval'),
     relational_retrieval_depth: pick('relational_retrieval_depth'),
+    relational_rerank_pin: pick('relational_rerank_pin'),
+    keyword_arm_confidence_floor: pick('keyword_arm_confidence_floor'),
+    metadata_boost_gate: pick('metadata_boost_gate'),
     resolved_mode,
     mode_valid: valid,
   };
@@ -964,7 +1092,32 @@ export function attributeKnob<K extends keyof ModeBundle>(
 // part; version-only invalidation (same class as the 13→14 detail=medium
 // boost-scope bump and the 21→22 stamp/injection epoch). One-time global
 // cold-miss spike on upgrade; refills within cache.ttl_seconds (3600s).
-export const KNOBS_HASH_VERSION = 28;
+//
+// bump 28→29 (ranker wave): `evb=` — the expansion_variant_budget knob joins
+// the key (append-only, last part). A budget-weighted write (variant lists
+// subordinated in RRF) must not serve a legacy lookup or a different budget;
+// `null` hashes as `evb=legacy` so the all-null bundles re-key exactly once.
+//
+// v=29 ALSO carries `rrp=` (ranker wave, same release — one bump per wave):
+// the relational_rerank_pin knob. Pinning relational-arm rows above the
+// reranked text rows reorders the cached page for identical other knobs, so
+// a pin-3 write must never serve a pin-0 lookup (and vice versa). Appended as
+// the last part with NO separate version bump: v=29 has not shipped in a
+// release yet, so `evb=` and `rrp=` ride the same 28→29 one-time cold miss.
+//
+// v=29 ALSO carries `kacf=` (ranker wave Phase E2, same release): the
+// keyword_arm_confidence_floor knob. Down-weighting the keyword + title lists
+// on a weak keyword arm reorders the fused page for identical other knobs, so
+// a floor-0.6 write must never serve a floor-off lookup (and vice versa).
+// `null` hashes as `kacf=off`; appended after `rrp=`, same unshipped epoch.
+//
+// v=29 ALSO carries `mbg=` (ranker wave Phase E3, same release): the
+// metadata_boost_gate knob. Under `lexical`, vector-only-voter queries skip
+// the post-fusion metadata boosts and the fused page is re-ordered for
+// identical other knobs, so a `lexical` write must never serve an `always`
+// lookup (and vice versa). A partial-knobs literal hashes as `mbg=always`;
+// appended after `kacf=`, same unshipped epoch — no extra bump.
+export const KNOBS_HASH_VERSION = 29;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -1223,6 +1376,26 @@ export function knobsHash(
     `arom=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.otherMax : 'none'}`,
     `armk=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.minKeep : 'none'}`,
     `ari=${ctx?.adaptiveReturn?.enabled ? ctx.adaptiveReturn.intent : 'none'}`,
+    // v=29 addition (ranker wave, append-only): expansion variant budget.
+    // Weighted-RRF fusion of variant lists changes the fused order for
+    // identical knobs, so a budget write must never serve a legacy lookup.
+    // `== null` (not `=== null`) keeps a partial-knobs literal hashing as legacy.
+    `evb=${knobs.expansion_variant_budget == null ? 'legacy' : knobs.expansion_variant_budget.toFixed(3)}`,
+    // v=29 addition (ranker wave, append-only): relational rerank pin. The
+    // pin permutes the post-rerank pool (relational rows to the top), so a
+    // pin-3 write must never serve a pin-0 lookup. A partial-knobs literal
+    // without the field hashes as the bundle default.
+    `rrp=${knobs.relational_rerank_pin ?? DEFAULT_RELATIONAL_RERANK_PIN}`,
+    // v=29 addition (ranker wave Phase E2, append-only): keyword-arm
+    // confidence floor. A weak-arm down-weight reorders the fused page, so a
+    // floor write must never serve a floor-off lookup. `== null` keeps a
+    // partial-knobs literal (and the all-null bundles) hashing as `off`.
+    `kacf=${knobs.keyword_arm_confidence_floor == null ? 'off' : knobs.keyword_arm_confidence_floor.toFixed(3)}`,
+    // v=29 addition (ranker wave Phase E3, append-only): metadata boost gate.
+    // `lexical` skips the metadata boosts on vector-only-voter queries and
+    // re-orders the fused page, so a `lexical` write must never serve an
+    // `always` lookup. A partial-knobs literal hashes as `always` — the deliberate pre-wave hash identity, NOT the bundle default (`lexical`).
+    `mbg=${knobs.metadata_boost_gate ?? DEFAULT_METADATA_BOOST_GATE}`,
   ];
   const h = createHash('sha256');
   h.update(parts.join('|'));
@@ -1273,6 +1446,16 @@ export function loadOverridesFromConfig(
   const ex = get('search.expansion');
   if (ex !== undefined) {
     out.expansion = ex === '1' || ex.toLowerCase() === 'true';
+  }
+  // `search.expansion_variant_budget`: the literal `legacy`/`null` pins the
+  // pre-knob weighting (null); a number in (0, 4] is the shared variant
+  // budget. Out-of-range/non-numeric falls through to the bundle (mirrors
+  // autocut_jump). ONE range contract with the per-call seams in hybrid.ts:
+  // normalizeExpansionVariantBudget (fusion-lists.ts).
+  const evb = get('search.expansion_variant_budget');
+  if (evb !== undefined) {
+    const n = normalizeExpansionVariantBudget(evb);
+    if (n !== undefined) out.expansion_variant_budget = n;
   }
   const sl = get('search.searchLimit');
   if (sl !== undefined) {
@@ -1427,6 +1610,34 @@ export function loadOverridesFromConfig(
     const n = parseInt(reld, 10);
     if (Number.isFinite(n) && n >= 1 && n <= 3) out.relational_retrieval_depth = n;
   }
+  // Ranker wave — relational rerank pin: `off`/`0` disables, a non-negative
+  // integer <= 10 is the pinned-row cap; anything else falls through to the
+  // bundle. ONE range contract with the per-call seams in hybrid.ts:
+  // normalizeRelationalRerankPin (relational-rerank-pin.ts).
+  const rrp = get('search.relational_rerank_pin');
+  if (rrp !== undefined) {
+    const n = normalizeRelationalRerankPin(rrp);
+    if (n !== undefined) out.relational_rerank_pin = n;
+  }
+  // Ranker wave (Phase E2) — keyword-arm confidence floor: the literal
+  // `off`/`null` pins the knob off (null); a number in (0, 1] is the floor;
+  // anything else falls through to the bundle. ONE range contract with the
+  // per-call seams in hybrid.ts: normalizeKeywordArmConfidenceFloor
+  // (arm-confidence.ts).
+  const kacf = get('search.keyword_arm_confidence_floor');
+  if (kacf !== undefined) {
+    const n = normalizeKeywordArmConfidenceFloor(kacf);
+    if (n !== undefined) out.keyword_arm_confidence_floor = n;
+  }
+  // Ranker wave (Phase E3) — metadata boost gate: the literals `always` /
+  // `lexical` (any case); anything else falls through to the bundle. ONE
+  // parse contract with the per-call seams in hybrid.ts:
+  // normalizeMetadataBoostGate (metadata-boost-gate.ts).
+  const mbg = get('search.metadata_boost_gate');
+  if (mbg !== undefined) {
+    const g = normalizeMetadataBoostGate(mbg);
+    if (g !== undefined) out.metadata_boost_gate = g;
+  }
 
   return out;
 }
@@ -1440,6 +1651,7 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   'search.keywordOrFallback',
   'search.tokenBudget',
   'search.expansion',
+  'search.expansion_variant_budget',
   'search.searchLimit',
   // v0.35.0.0+ reranker keys
   'search.reranker.enabled',
@@ -1471,6 +1683,12 @@ export const SEARCH_MODE_CONFIG_KEYS: ReadonlyArray<string> = Object.freeze([
   // v0.43 relational recall
   'search.relational_retrieval',
   'search.relational_retrieval_depth',
+  // Ranker wave (R1) relational rerank pin
+  'search.relational_rerank_pin',
+  // Ranker wave (Phase E2) keyword-arm confidence floor
+  'search.keyword_arm_confidence_floor',
+  // Ranker wave (Phase E3) metadata boost gate
+  'search.metadata_boost_gate',
   'search.autocut_jump',
   'search.autocut_min_top',
   'search.autocut_min_keep',

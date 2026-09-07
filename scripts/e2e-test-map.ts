@@ -36,14 +36,23 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/bootstrap-hook-under-serve.serial.test.ts",
     "test/e2e/bootstrap-real-codex.serial.test.ts",
   ],
+  // Concrete content and derived-information read policy parity.
+  "src/core/remote-body.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/core/entity-identity.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
+  "src/core/ops/**": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts", "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
+  "src/commands/whoknows.ts": ["test/e2e/read-enrichment-privacy.test.ts"],
+  "src/commands/orphans.ts": ["test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts"],
   // Source-aware ranking, hybrid search, intent classification.
   "src/core/search/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/search-quality.test.ts",
     "test/e2e/search-exclude.test.ts",
     "test/e2e/search-swamp.test.ts",
   ],
   // Tree-sitter chunkers feed code-indexing E2E.
-  "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts"],
+  "src/core/chunkers/**": ["test/e2e/code-indexing.test.ts", "test/e2e/legacy-chunk-privacy.test.ts", "test/e2e/chunk-canonical-text-privacy.test.ts"],
   // OpenClaw context-engine plugin: engine + entry feed the plugin-shape E2E
   // (mocked SDK) AND the real-loader Tier 2 E2E that spawns openclaw and
   // actually installs the plugin into an isolated --profile.
@@ -131,6 +140,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   "src/core/ops/jobs.ts": ["test/e2e/jobs-agent-scope-postgres.test.ts"],
   // postgres.js bind paths + JSONB shapes + parity vs PGLite.
   "src/core/postgres-engine.ts": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
@@ -145,6 +157,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   ],
   // PGLite bootstrap path + parity guard.
   "src/core/pglite-engine.ts": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",
@@ -153,6 +168,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
   // Engine method modules peeled from the façades carry the same blast
   // radius as the façades themselves.
   "src/core/postgres-engine/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/postgres-jsonb.test.ts",
     "test/e2e/jsonb-roundtrip.test.ts",
@@ -163,6 +181,9 @@ export const E2E_TEST_MAP: Record<string, string[]> = {
     "test/e2e/source-boundary-mutation-postgres.test.ts",
   ],
   "src/core/pglite-engine/**": [
+    "test/e2e/chunk-canonical-text-privacy.test.ts",
+    "test/e2e/engine-content-privacy.test.ts", "test/e2e/remote-privacy-journeys.test.ts",
+    "test/e2e/read-enrichment-privacy.test.ts", "test/e2e/legacy-chunk-privacy.test.ts",
     "test/e2e/postgres-bootstrap.test.ts",
     "test/e2e/engine-parity.test.ts",
     "test/e2e/schema-drift.test.ts",

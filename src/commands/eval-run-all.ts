@@ -25,6 +25,7 @@ import { writeFileSync, mkdirSync, appendFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import type { BrainEngine } from '../core/engine.ts';
 import { SEARCH_MODES, type SearchMode } from '../core/search/mode.ts';
+import { redactSecrets } from '../eval/longmemeval/run-config.ts';
 
 export interface RunAllOpts {
   help: boolean;
@@ -179,10 +180,38 @@ function evalResultsPath(repoRoot: string, outputDirOverride?: string): string {
   return join(repoRoot, '.gbrain-evals', 'eval-results.jsonl');
 }
 
+/** Apply `redactSecrets` to every string leaf (keys untouched); JSON stays valid. */
+function redactDeep<T>(value: T): T {
+  if (typeof value === 'string') return redactSecrets(value) as unknown as T;
+  if (Array.isArray(value)) return value.map(redactDeep) as unknown as T;
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactDeep(v);
+    return out as T;
+  }
+  return value;
+}
+
+/**
+ * Secret-scrub a ledger record before it is written: `error` text and every
+ * string leaf of `params` pass through `redactSecrets` (provider keys, bearer
+ * tokens, DB connection strings). Lives HERE, on the one write path every
+ * suite shares, so a caller that forgets to redact cannot leak a connection
+ * string into the committed ledger. String leaves are redacted individually
+ * (not the serialized line) so the written JSON is always valid.
+ */
+export function redactRunRecord(record: EvalRunRecord): EvalRunRecord {
+  return {
+    ...record,
+    params: redactDeep(record.params ?? {}),
+    ...(typeof record.error === 'string' ? { error: redactSecrets(record.error) } : {}),
+  };
+}
+
 export function persistRunRecord(repoRoot: string, record: EvalRunRecord, outputDirOverride?: string): void {
   const path = evalResultsPath(repoRoot, outputDirOverride);
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, JSON.stringify(record) + '\n', 'utf-8');
+  appendFileSync(path, JSON.stringify(redactRunRecord(record)) + '\n', 'utf-8');
 }
 
 /**

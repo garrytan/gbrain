@@ -212,6 +212,9 @@ project resolves through `src/core/search/mode.ts`.
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
 | `relationalRetrieval`         | false          | **true**   | **true**       |
+| `relational_rerank_pin`       | 3              | 3          | 3              |
+| `metadata_boost_gate`         | lexical        | lexical    | lexical        |
+| `autocut` (rerank-cliff cut)  | off            | off        | off            |
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
@@ -232,15 +235,16 @@ Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
 expensive one.
 
 tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
-the matrix (\$15/mo @ 10K). Cache hits cut all numbers ~50%. **The matrix
+the matrix (\$15/mo @ 10K). Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
 has three verbatim homes: this section, the `gbrain init` picker copy
 (`src/commands/init-mode-picker.ts`), and `INSTALL_FOR_AGENTS.md` Step
 3.5** — update all three when refreshing.
 
 **Per-query math vs real-world spend.** The matrix above is what an
 isolated benchmark would measure. Real agent loops with disciplined
-Anthropic prompt caching see 50-80% discount on top (cache hits skip
-downstream entirely). The realistic-scale anchor in
+Anthropic prompt caching see 50-80% discount on top through lower
+cached-input charges. This is separate from GBrain's disabled semantic result
+cache. The realistic-scale anchor in
 `docs/eval/SEARCH_MODE_METHODOLOGY.md` walks the natural pairings at
 single-power-user volume (~860 turns/mo): tokenmax+Opus ~\$700/mo,
 balanced+Sonnet ~\$430/mo, conservative+Haiku ~\$170/mo. Setups WITHOUT
@@ -258,23 +262,14 @@ per `[CDX-5+6]` in `~/.claude/plans/lets-take-a-look-validated-parrot.md` — so
 `gbrain eval replay` and `gbrain eval longmemeval` test the same mode-affected
 behavior as the production `query` op.
 
-**Cache-key contamination hotfix `[CDX-4]`:** migration v56 added a
-`knobs_hash` column to `query_cache`. The lookup filter is now
-`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $` so a
-tokenmax write (expansion=on, limit=50) can't be served to a conservative
-read.
+**Effective cache availability:** semantic result lookup and writes are temporarily disabled in the shared wrapper, regardless of mode, config, or `use_cache`. Stored rows and maintenance commands remain. `cache.status`, cache statistics and the mode dashboard report disabled. The following cache-key notes describe retained storage machinery, not active response reuse.
 
-**v0.36.3.0 knobs_hash v=2 → v=3.** The hash now folds the active
-embedding column name + provider into the cache key, so a query routed
-through `embedding_voyage` (1024d Voyage) can't be served a cache row
-written against `embedding` (1536d OpenAI). Existing v=2 rows become
-unreachable on first re-query (one-time miss spike on upgrade);
-`mode.ts:KNOBS_HASH_VERSION` is the single source of truth.
-
-**v0.42.34.0 knobs_hash v=9 → v=10.** Folds the `relationalRetrieval` knob +
-depth into the cache key so a relational-on result set can't be served to a
-relational-off lookup (same contamination class as graph_signals). One-time
-miss spike on upgrade.
+**Cache key.** The `query_cache` lookup filters on `knobs_hash`
+(`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $`) so a
+tokenmax write can't be served to a conservative read. `mode.ts:KNOBS_HASH_VERSION`
+is the single source of truth; every result-affecting knob folds into `knobsHash`
+(a version bump is a one-time cache-miss spike on upgrade); the version-by-version
+rationale lives in the comment chain at `test/search/knobs-hash-reranker.test.ts`.
 
 **Relational retrieval (v0.42.34.0).** `relationalRetrieval` (on for
 balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
@@ -282,7 +277,10 @@ in X", "what connects A and B") resolves its seed entity and walks the typed-edg
 graph (`src/core/search/relational-recall.ts` + `relational-intent.ts`,
 `engine.relationalFanout`), injecting edge-derived answers into RRF. Within-source,
 deterministic, mentions-excluded by default, pure no-op for non-relational queries.
-The `query` op's `relational` flag forces it on/off per call.
+The `query` op's `relational` flag forces it on/off per call. After the
+reranker, up to `relational_rerank_pin` (3 in every bundle) arm rows are re-pinned
+above the reranked text rows (`relational-rerank-pin.ts`);
+`gbrain config set search.relational_rerank_pin off` restores the pre-pin order.
 
 **Three CLI surfaces:**
 

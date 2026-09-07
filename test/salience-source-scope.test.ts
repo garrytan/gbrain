@@ -128,10 +128,8 @@ describe('find_anomalies source scoping', () => {
 
 describe('find_contradictions source scoping', () => {
   beforeEach(async () => {
-    // Page-level privacy fixture: an IN-SCOPE (alpha) endpoint that is
-    // `visibility: private`. The scope check alone would keep a finding
-    // touching it (the page exists in alpha); the #4352 world-visibility
-    // keep-list must drop it for remote callers.
+    // Private in-scope content remains in the stored report. Only the
+    // trusted, unscoped local control may inspect this historical payload.
     await engine.putPage('alpha/private-note', {
       type: 'note', title: 'Alpha Private', compiled_truth: 'alpha private content',
       frontmatter: { visibility: 'private' },
@@ -170,70 +168,52 @@ describe('find_contradictions source scoping', () => {
     expect(touchesPrivate(res)).toBe(true);
   });
 
-  test('remote scalar scope alpha: only the alpha-alpha finding survives', async () => {
-    const res = await find_contradictions.handler(ctxOf({ sourceId: 'alpha' }), {}) as { contradictions: Array<{ a: { slug: string }; b: { slug: string } }> };
-    expect(res.contradictions.length).toBe(1);
-    expect(res.contradictions[0].a.slug).toBe('alpha/one');
-    expect(res.contradictions[0].b.slug).toBe('alpha/two');
-    assertNoBeta(res);
-  });
-
-  test('federated grant [alpha]: identical isolation', async () => {
-    const ctx = ctxOf({ auth: { allowedSources: ['alpha'] } as any });
-    const res = await find_contradictions.handler(ctx, {}) as { contradictions: Array<{ a: { slug: string }; b: { slug: string } }> };
-    expect(res.contradictions.length).toBe(1);
-    assertNoBeta(res);
-    expect(touchesPrivate(res)).toBe(false);
-  });
-
-  test('limit under-fill: fences run BEFORE the limit cutoff — droppable findings ahead of a visible one cannot starve it', async () => {
-    // A later run whose report orders a private-endpoint finding and a
-    // cross-boundary finding BEFORE the only visible finding. With limit=1,
-    // filtering AFTER the cutoff would keep the private finding (it IS in
-    // scope), hit the limit, then drop it in the visibility pass — returning
-    // 0 while total_in_run claims completeness. The fences must instead
-    // verify before counting, so the visible finding still surfaces.
-    const finding = (aSlug: string, bSlug: string) => ({
-      kind: 'direct', severity: 'high', axis: 'fact', confidence: 0.9,
-      a: { slug: aSlug, chunk_id: null, take_id: null },
-      b: { slug: bSlug, chunk_id: null, take_id: null },
-      resolution_kind: 'manual', resolution_command: '',
+  // Stored text has no trustworthy snapshot provenance. Current endpoint
+  // visibility cannot authorize old private content, so restricted readers
+  // must receive an explicit unavailable result BEFORE loading any report.
+  for (const [label, overrides] of [
+    ['remote scalar', { sourceId: 'alpha' }],
+    ['remote federated', { auth: { allowedSources: ['alpha'] } }],
+    ['remote unscoped', {}],
+    ['unset trust', { remote: undefined }],
+    ['local scalar', { remote: false, sourceId: 'alpha' }],
+    ['local federated', { remote: false, auth: { allowedSources: ['alpha'] } }],
+    ['remote empty grant with scalar floor', { sourceId: 'alpha', auth: { allowedSources: [] } }],
+    ['local empty grant with scalar floor', { remote: false, sourceId: 'alpha', auth: { allowedSources: [] } }],
+  ] as const) {
+    test(`${label}: reports unavailable before any database load`, async () => {
+      const original = engine.loadContradictionsTrend;
+      let loads = 0;
+      engine.loadContradictionsTrend = async () => {
+        loads++;
+        throw new Error('Restricted callers must not load stored reports');
+      };
+      try {
+        const res = await find_contradictions.handler(ctxOf(overrides as Partial<OperationContext>), { limit: 1, severity: 'high', slug: 'alpha/one' });
+        expect(res).toEqual({
+          contradictions: [],
+          note: 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.',
+        });
+        expect(loads).toBe(0);
+      } finally {
+        engine.loadContradictionsTrend = original;
+      }
     });
-    await engine.writeContradictionsRun({
-      run_id: 'fixture-run-underfill', judge_model: 'test', prompt_version: 'v1',
-      queries_evaluated: 3, queries_with_contradiction: 3, total_contradictions_flagged: 3,
-      wilson_ci_lower: 0, wilson_ci_upper: 1, judge_errors_total: 0,
-      cost_usd_total: 0, duration_ms: 1,
-      source_tier_breakdown: {},
-      report_json: {
-        per_query: [{
-          contradictions: [
-            finding('alpha/one', 'alpha/private-note'), // in scope, private — dropped by visibility
-            finding('alpha/one', 'beta/secret-one'),    // cross-boundary — dropped by scope
-            finding('alpha/one', 'alpha/two'),          // the visible finding, ordered LAST
-          ],
-        }],
-      },
-    });
-    const res = await find_contradictions.handler(ctxOf({ sourceId: 'alpha' }), { limit: 1 }) as {
+  }
+
+  test('trusted unscoped local retains filters, limits and full-run totals', async () => {
+    const res = await find_contradictions.handler(localUnscoped(), { limit: 1, slug: 'alpha/one', severity: 'high' }) as {
       contradictions: Array<{ a: { slug: string }; b: { slug: string } }>; total_in_run: number;
     };
-    expect(res.contradictions.length).toBe(1);
+    expect(res.contradictions).toHaveLength(1);
     expect(res.contradictions[0].a.slug).toBe('alpha/one');
-    expect(res.contradictions[0].b.slug).toBe('alpha/two');
-    expect(touchesPrivate(res)).toBe(false);
+    expect(res.total_in_run).toBe(4);
   });
 
-  test('#4352: a visibility:private endpoint hides the finding from remote scoped callers; trusted local keeps it', async () => {
-    // Remote scalar caller scoped to alpha: the private-endpoint finding is
-    // IN scope (both pages exist in alpha) — the world-visibility keep-list
-    // is what drops it.
-    const remote = await find_contradictions.handler(ctxOf({ sourceId: 'alpha' }), {}) as { contradictions: Array<{ a: { slug: string }; b: { slug: string } }> };
-    expect(touchesPrivate(remote)).toBe(false);
-    // Trusted local caller, even SCOPED to alpha, still sees it (privacy
-    // enforcement is a remote-only posture; resolveExcludePrivatePages
-    // returns false for ctx.remote === false).
-    const localScoped = await find_contradictions.handler(ctxOf({ remote: false, sourceId: 'alpha' }), {}) as { contradictions: Array<{ a: { slug: string }; b: { slug: string } }> };
-    expect(touchesPrivate(localScoped)).toBe(true);
+  test('an empty grant without a scalar remains a legitimate unscoped local context', async () => {
+    const res = await find_contradictions.handler(ctxOf({ remote: false, auth: { allowedSources: [] } as any }), {}) as {
+      contradictions: unknown[];
+    };
+    expect(res.contradictions).toHaveLength(4);
   });
 });

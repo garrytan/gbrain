@@ -14,6 +14,7 @@
  */
 
 import { chunkText as recursiveChunk, type TextChunk } from './recursive.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
 
 export interface SemanticChunkOptions {
   chunkSize?: number;
@@ -25,6 +26,7 @@ export async function chunkTextSemantic(
   text: string,
   opts: SemanticChunkOptions,
 ): Promise<TextChunk[]> {
+  text = sanitizeRemoteBody(text);
   const chunkSize = opts.chunkSize || 300;
   const chunkOverlap = opts.chunkOverlap || 50;
   const embedFn = opts.embedFn;
