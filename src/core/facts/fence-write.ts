@@ -40,7 +40,9 @@ import { dirname, isAbsolute, relative } from 'node:path';
 
 import type { BrainEngine, NewFact, FactVisibility, FactKind } from '../engine.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
-import { inferTypeFromPack } from '../markdown.ts';
+import { inferTypeFromPack, parseMarkdown } from '../markdown.ts';
+import { sanitizeText } from '../batch-rows.ts';
+import { contentHash } from '../utils.ts';
 import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
@@ -463,6 +465,32 @@ export async function writeFactsToFence(
       // 5. Rename .tmp → file. POSIX atomic; the canonical file is
       //    either the old content or the new content, never partial.
       renameSync(tmpPath, filePath);
+
+      // #4872: mirror the rewritten file into pages.compiled_truth. get_page
+      // and the extract_facts reconcile read the DB body, not the file — left
+      // stale, a plain get→put round-trip flattens the new row off disk and
+      // the next reconcile deletes it from the facts table. Same recipe as
+      // forget.ts (#4696): parse + sanitize + hash the FILE bytes exactly as
+      // import-file.ts does so the next sync sees the page as unchanged.
+      // Best-effort: the file is already committed; a stub page with no DB
+      // row is a 0-row UPDATE and sync creates it.
+      // ponytail: like the importer, a type-less file over a curated DB type
+      // hashes differently and re-imports once on the next sync (re-chunk only).
+      try {
+        const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
+        const title = sanitizeText(reparsed.title);
+        const compiledTruth = sanitizeText(reparsed.compiled_truth);
+        const timeline = sanitizeText(reparsed.timeline);
+        reparsed.tags.sort();
+        await engine.refreshPageBody(target.slug, target.sourceId, compiledTruth, timeline, contentHash({
+          title,
+          type: reparsed.type,
+          compiled_truth: compiledTruth,
+          timeline,
+          frontmatter: reparsed.frontmatter,
+          tags: reparsed.tags,
+        }));
+      } catch { /* degrades to the pre-#4872 window (stale until the next sync) */ }
 
       // 6. Stamp the DB. extractFactsFromFenceText handles the
       //    validFrom/validUntil date derivation + the strikethrough
