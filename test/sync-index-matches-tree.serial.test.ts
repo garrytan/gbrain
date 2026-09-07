@@ -14,6 +14,11 @@
  *                      full-sync delete-reconcile cannot see code pages and
  *                      deleted files are served forever.
  *
+ * The `strategy precedence` block pins the other half of that resolution: an
+ * explicit `strategy` option beats the persisted `config.strategy`, and a
+ * persisted value outside markdown|code|auto is IGNORED (classifySync in
+ * core/sync.ts then falls back to 'markdown'), never honored.
+ *
  * HONEST LIMIT: drift() derives both sides from gbrain's own enumerator and
  * slug function, so it pins the sync WIRING, not the enumerator itself. The
  * literal slug list in S1 is the only assertion here that does not derive
@@ -53,6 +58,7 @@ process.env.GBRAIN_HOME = home;
 let engine: PGLiteEngine | null = null;
 let repo = '';
 let setupPromise: Promise<void> | null = null;
+const extraRepos: string[] = [];
 
 const commit = (m: string) =>
   execSync(`git add -A && git commit -qm ${JSON.stringify(m)}`, { cwd: repo, stdio: 'pipe' });
@@ -100,10 +106,40 @@ async function drift(): Promise<{ missing: string[]; ghosts: string[] }> {
   };
 }
 
+/** Throwaway repo with one markdown + one code file, committed. */
+function mkMixedRepo(): string {
+  const r = mkdtempSync(join(tmpdir(), 'gb-tw-mixed-'));
+  extraRepos.push(r);
+  execSync('git init -q && git config user.email t@t && git config user.name T', { cwd: r, stdio: 'pipe' });
+  mkdirSync(join(r, 'docs'));
+  mkdirSync(join(r, 'lib'));
+  writeFileSync(join(r, 'docs/x.md'), '---\ntype: note\ntitle: X\n---\n\nbody x\n');
+  writeFileSync(join(r, 'lib/x.ts'), 'export const x = 1;\n');
+  execSync('git add -A && git commit -qm init', { cwd: r, stdio: 'pipe' });
+  return r;
+}
+
+/** Persist `config.strategy` on a fresh source row, the way ensureSetup does for SID. */
+async function addSource(sid: string, strategy: string, localPath: string): Promise<void> {
+  await engine!.executeRaw(
+    `INSERT INTO sources (id, name, local_path, config) VALUES ($1, $1, $2, jsonb_build_object('strategy', $3::text))`,
+    [sid, localPath, strategy],
+  );
+}
+
+async function slugsFor(sid: string): Promise<string[]> {
+  const rows = await engine!.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL`,
+    [sid],
+  );
+  return rows.map((r) => r.slug).sort();
+}
+
 afterAll(async () => {
   if (engine) await engine.disconnect();
   rmSync(home, { recursive: true, force: true });
   if (repo) rmSync(repo, { recursive: true, force: true });
+  for (const r of extraRepos) rmSync(r, { recursive: true, force: true });
 });
 
 describe('index matches tree at every lifecycle stage', () => {
@@ -149,5 +185,32 @@ describe('index matches tree at every lifecycle stage', () => {
     commit('rm a.dart');
     await performSync(engine!, { repoPath: repo, ...OPTS, full: true });
     expect(await drift()).toEqual({ missing: [], ghosts: [] });
+  }, 120_000);
+});
+
+describe('strategy precedence', () => {
+  test('explicit strategy option wins over persisted config.strategy', async () => {
+    await ensureSetup();
+    const { performSync } = await import('../src/commands/sync.ts');
+    const r = mkMixedRepo();
+    await addSource('prec-explicit', 'auto', r);
+    const res = await performSync(engine!, {
+      repoPath: r, ...OPTS, sourceId: 'prec-explicit', strategy: 'markdown',
+    });
+    expect(res.status).toBe('first_sync');
+    // Persisted 'auto' would have imported lib-x-ts too; only the markdown page lands.
+    expect(await slugsFor('prec-explicit')).toEqual(['docs/x']);
+  }, 120_000);
+
+  test('bogus persisted config.strategy is ignored, not honored', async () => {
+    await ensureSetup();
+    const { performSync } = await import('../src/commands/sync.ts');
+    const r = mkMixedRepo();
+    await addSource('prec-bogus', 'bogus-strategy', r);
+    // No strategy option: the out-of-set persisted value is skipped, classifySync
+    // falls back to 'markdown', and the sync completes with the code file left out.
+    const res = await performSync(engine!, { repoPath: r, ...OPTS, sourceId: 'prec-bogus' });
+    expect(res.status).toBe('first_sync');
+    expect(await slugsFor('prec-bogus')).toEqual(['docs/x']);
   }, 120_000);
 });
