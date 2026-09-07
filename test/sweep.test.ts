@@ -27,6 +27,7 @@ import { _resetStdoutRedirectForTests } from '../src/core/console-prefix.ts';
 import type { CapabilityReport } from '../src/core/capability.ts';
 import { __setChatTransportForTests, type ChatResult } from '../src/core/ai/gateway.ts';
 import { runServe, type ServeOptions } from '../src/commands/serve.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const KEYLESS: CapabilityReport = {
   embeddings: { available: false },
@@ -209,6 +210,57 @@ describe('runMaintenanceSweep — link/timeline extraction [CX-P0.3]', () => {
       await engine.setConfig('auto_link', 'true');
       await engine.setConfig('auto_timeline', 'true');
     }
+  });
+
+  // #3757: the sweep shares resolveCandidateSources with `extract links
+  // --source db` but never received the #2589 `link_resolution.cross_source`
+  // opt-in, so a page linking a target that exists only in another source
+  // was dropped silently — and the reconcile then deleted the very edge the
+  // CLI extract had created.
+  describe('cross-source opt-in (#3757)', () => {
+    const CROSS = { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: '1' };
+    const sweep = () => runMaintenanceSweep(engine, {
+      sourceId: 'default', capabilities: KEYLESS, budgetMs: 30_000,
+    });
+    const toSources = () => engine.executeRaw<{ source_id: string }>(
+      `SELECT pt.source_id FROM links l
+         JOIN pages pf ON pf.id = l.from_page_id
+         JOIN pages pt ON pt.id = l.to_page_id
+        WHERE pf.slug = 'notes/n1'`,
+    );
+    beforeEach(async () => {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name) VALUES ('vault-a', 'vault-a') ON CONFLICT (id) DO NOTHING`,
+      );
+      await engine.executeRaw(
+        `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+         VALUES ('people/alice-example', 'vault-a', 'person', 'Alice', 'A person page.', '')`,
+      );
+      await seedPage('notes/n1', 'note', 'Talked to [[people/alice-example]] today.');
+    });
+
+    test('flag ON: the edge into the other source is created', async () => {
+      const r = await withEnv(CROSS, sweep);
+      expect(r.linksExtracted).toBe(1);
+      expect(await toSources()).toEqual([{ source_id: 'vault-a' }]);
+    });
+
+    test('flag ON: an edge the CLI extract created survives the sweep reconcile', async () => {
+      await engine.addLinksBatch([{
+        from_slug: 'notes/n1', to_slug: 'people/alice-example', link_type: 'mentions',
+        context: 'ctx', link_source: 'markdown',
+        from_source_id: 'default', to_source_id: 'vault-a', origin_source_id: 'default',
+      }]);
+      const r = await withEnv(CROSS, sweep);
+      expect(r.linksRemoved).toBe(0);
+      expect(await toSources()).toEqual([{ source_id: 'vault-a' }]);
+    });
+
+    test('flag OFF: the drop is counted in the skip ledger, not silent', async () => {
+      const r = await withEnv({ GBRAIN_LINK_RESOLUTION_CROSS_SOURCE: undefined }, sweep);
+      expect(await toSources()).toEqual([]);
+      expect(r.skipped).toContainEqual({ reason: 'cross_source_link', count: 1 });
+    });
   });
 });
 
