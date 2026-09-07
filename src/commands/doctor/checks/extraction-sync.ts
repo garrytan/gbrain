@@ -760,7 +760,10 @@ export async function computeExtractAtomsBacklogCheck(
  * Diagnostic only. It reports and hints; it never deletes. `source_gone` and
  * `source_changed` are split because they warrant different handling and the
  * second is by far the larger group — a naive GC keyed on drift alone would
- * delete mostly-recoverable knowledge.
+ * delete mostly-recoverable knowledge. A third bucket, `slug_unbound`, holds
+ * drifted atoms with no `source_slug` at all (transcript-origin atoms bind by
+ * `source_path`, pre-binding-era atoms by neither); their page liveness cannot
+ * be resolved by slug, so they are reported separately rather than as gone.
  */
 export async function computeAtomProvenanceDriftCheck(
   engine: BrainEngine,
@@ -774,6 +777,7 @@ export async function computeAtomProvenanceDriftCheck(
     const rows = await engine.executeRaw<{
       total: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
+      slug_unbound: string | number;
       oldest_ext: string | null;
     }>(
       // extracted_at stays TEXT end to end (review fix): an unguarded
@@ -786,7 +790,7 @@ export async function computeAtomProvenanceDriftCheck(
       `WITH atom AS (
          SELECT a.source_id,
                 a.frontmatter->>'source_hash' AS sh,
-                a.frontmatter->>'source_slug' AS ss,
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
                 CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                      THEN a.frontmatter->>'extracted_at' END AS ext
            FROM pages a
@@ -812,7 +816,12 @@ export async function computeAtomProvenanceDriftCheck(
        SELECT count(*) AS total,
               count(*) FILTER (WHERE drifted) AS drifted,
               count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
-              count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
+              -- "gone" needs a slug binding that failed to resolve. An atom with no
+              -- source_slug (transcript-origin atoms carry source_path only —
+              -- extract-atoms.ts; hash-domain follow-up in #4806) can never match
+              -- p.slug, so it gets its own bucket instead of reading as an orphan.
+              count(*) FILTER (WHERE drifted AND NOT src_alive AND ss IS NOT NULL) AS source_gone,
+              count(*) FILTER (WHERE drifted AND ss IS NULL) AS slug_unbound,
               -- lexicographic min of ISO-shaped strings ≈ chronological min
               -- (oldest); informational only, never verdict-bearing
               min(ext) FILTER (WHERE drifted) AS oldest_ext
@@ -827,6 +836,7 @@ export async function computeAtomProvenanceDriftCheck(
     const drifted = num(r.drifted);
     const sourceChanged = num(r.source_changed);
     const sourceGone = num(r.source_gone);
+    const slugUnbound = num(r.slug_unbound);
     const oldestExtMs = r.oldest_ext ? new Date(String(r.oldest_ext)).getTime() : NaN;
     const oldestDays = Number.isFinite(oldestExtMs)
       ? Math.round(((Date.now() - oldestExtMs) / 86_400_000) * 10) / 10
@@ -837,6 +847,7 @@ export async function computeAtomProvenanceDriftCheck(
       drifted,
       source_changed: sourceChanged,
       source_gone: sourceGone,
+      slug_unbound: slugUnbound,
       drift_pct: total > 0 ? Math.round(ratio * 1000) / 10 : 0,
       oldest_drifted_days: oldestDays ?? undefined,
     };
@@ -855,6 +866,9 @@ export async function computeAtomProvenanceDriftCheck(
         message:
           `${drifted}/${total} atom(s) (${details.drift_pct}%) reference a source_hash no live page carries ` +
           `— ${sourceChanged} whose source page still exists (edited), ${sourceGone} whose source page is gone` +
+          (slugUnbound > 0
+            ? `, ${slugUnbound} slug-unbound (no source_slug: source_path-only transcript-origin, or pre-binding-era — liveness not resolvable against \`pages\` by slug)`
+            : '') +
           (oldestDays != null ? `; oldest ${oldestDays}d` : '') +
           `. These still surface in search with a source_quote that no current page contains. Fix: ${fix}`,
         details,
