@@ -27,6 +27,28 @@ import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
 import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeStubClient } from './helpers/longmemeval-stub.ts';
 
+/** Run with process.exit + stderr captured (the harness exits non-zero on gates). */
+async function runCapturing(args: string[], runOpts: Parameters<typeof runEvalLongMemEval>[1]): Promise<{ code: number | null; stderr: string }> {
+  let code: number | null = null;
+  let stderr = '';
+  const originalExit = process.exit;
+  const originalWrite = process.stderr.write;
+  // @ts-ignore runtime override for the test
+  process.exit = ((c: number) => { code = c; throw new Error('__exit__'); }) as any;
+  // @ts-ignore runtime override for the test
+  process.stderr.write = ((chunk: any) => { stderr += String(chunk); return true; }) as any;
+  try {
+    await runEvalLongMemEval(args, runOpts);
+  } catch (e) {
+    if (!String(e).includes('__exit__')) throw e;
+  } finally {
+    // @ts-ignore runtime restore
+    process.exit = originalExit;
+    process.stderr.write = originalWrite;
+  }
+  return { code, stderr };
+}
+
 const FIXTURE_PATH = join(import.meta.dir, 'fixtures', 'longmemeval-mini.jsonl');
 
 // One shared brain across the whole file, threaded into every
@@ -215,10 +237,14 @@ describe('per-question failure handling', () => {
         answer: 'a',
         // missing haystack_sessions on purpose
       };
+      // Distinct id for the trailing question: the harness dedupes repeated
+      // question_ids (WARN + keep-first, plan D12), so a literal repeat of
+      // `valid` would be dropped instead of proving the run continued.
+      const valid2: LongMemEvalQuestion = { ...valid, question_id: 'lme-ok-2' };
       const { writeFileSync } = await import('fs');
       writeFileSync(
         fixturePath,
-        JSON.stringify(valid) + '\n' + JSON.stringify(broken) + '\n' + JSON.stringify(valid) + '\n',
+        JSON.stringify(valid) + '\n' + JSON.stringify(broken) + '\n' + JSON.stringify(valid2) + '\n',
         'utf8',
       );
       await runEvalLongMemEval(
@@ -234,7 +260,7 @@ describe('per-question failure handling', () => {
       expect(lines[1].hypothesis).toBe('');
       expect(typeof lines[1].error).toBe('string');
       expect(lines[1].error.length).toBeGreaterThan(0);
-      expect(lines[2].question_id).toBe('lme-ok-1');
+      expect(lines[2].question_id).toBe('lme-ok-2');
       expect(typeof lines[2].hypothesis).toBe('string');
     } finally {
       rmSync(tmp, { recursive: true, force: true });
@@ -364,10 +390,16 @@ describe('runEvalLongMemEval --by-type (v0.40.1.0 Track D / T1+T2)', () => {
       const withLines = readFileSync(withFlag, 'utf8').split('\n').filter(l => l.length > 0);
       const lastWith = JSON.parse(withLines[withLines.length - 1]);
       expect(lastWith.kind).toBe('by_type_summary');
-      expect(lastWith.schema_version).toBe(1);
+      // Schema v2 (ranker wave): strict + lenient recall per type, run_config receipt.
+      expect(lastWith.schema_version).toBe(2);
+      expect(lastWith.metric).toBe('recall_all@k');
       expect(typeof lastWith.recall_by_type).toBe('object');
-      expect(typeof lastWith.aggregate.hit).toBe('number');
+      expect(typeof lastWith.aggregate.all_hit).toBe('number');
+      expect(typeof lastWith.aggregate.any_hit).toBe('number');
       expect(typeof lastWith.aggregate.total).toBe('number');
+      expect(typeof lastWith.run_config).toBe('object');
+      expect(typeof lastWith.run_config.retrieval_config_hash).toBe('string');
+      expect(typeof lastWith._meta.metric_glossary[`recall_all@${lastWith.k}`]).toBe('string');
       // Per-question rows must NOT have kind:by_type_summary.
       for (let i = 0; i < withLines.length - 1; i++) {
         const row = JSON.parse(withLines[i]);
@@ -440,10 +472,13 @@ describe('codex CDX-3 — resume + --by-type-floor enforcement on no-op resume',
     const tmp = mkdtempSync(join(tmpdir(), 'lme-resume-'));
     const outPath = join(tmp, 'all-done.jsonl');
     try {
-      // Pre-seed the output file with all-failed rows (recall_hit: false).
-      // This represents a prior run that completed every question but with
-      // very poor recall — the floor gate should fire even though no
-      // questions are processed THIS run.
+      // Pre-seed the output file with all-failed rows: retrieved_session_ids
+      // is EMPTY, so the resume re-scoring (recall is recomputed from the
+      // row's retrieved ids + the dataset gold, never trusted from the row)
+      // yields recall_all_hit=false / recall_any_hit=false for every row.
+      // The stale `recall_hit: false` is ignored. This represents a prior run
+      // that completed every question with zero recall — the floor gate
+      // should fire even though no questions are processed THIS run.
       const fixture = readFileSync(FIXTURE_PATH, 'utf8')
         .split('\n').filter(l => l.length > 0).map(l => JSON.parse(l)).slice(0, 5);
       const { writeFileSync } = await import('fs');
@@ -454,7 +489,8 @@ describe('codex CDX-3 — resume + --by-type-floor enforcement on no-op resume',
           question: q.question,
           question_type: q.question_type,
           hypothesis: 'done',
-          recall_hit: false, // every prior question missed
+          retrieved_session_ids: [], // every prior question missed (recomputed on resume)
+          recall_hit: false, // deprecated alias; ignored by the v2 seed
         })).join('\n') + '\n',
         'utf8',
       );
@@ -494,8 +530,88 @@ describe('codex CDX-3 — resume + --by-type-floor enforcement on no-op resume',
       });
       expect(summaries.length).toBe(1);
       const summary = JSON.parse(summaries[0]);
-      // All rows had recall_hit: false → aggregate.rate is 0 → below 0.5 floor.
-      expect(summary.aggregate.rate).toBeLessThan(0.5);
+      // Every row re-scored false → aggregate.all_rate is 0 → below 0.5 floor.
+      expect(summary.schema_version).toBe(2);
+      expect(summary.aggregate.total).toBe(5);
+      expect(summary.aggregate.all_rate).toBeLessThan(0.5);
+      expect(summary.aggregate.any_rate).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 14. every question errored → exit 1 (never a "completed" run with no scored row)
+// ---------------------------------------------------------------------------
+
+describe('a run where EVERY question errored exits 1', () => {
+  test('two broken questions → two error rows, FAIL line, exit 1; --record status failed; one broken of two → exit 0', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-all-errored-'));
+    try {
+      const { writeFileSync } = await import('fs');
+      const broken = (id: string) => ({ question_id: id, question_type: 'single-session-user', question: 'will fail', answer: 'a' /* no haystack_sessions */ });
+      const valid: LongMemEvalQuestion = {
+        question_id: 'lme-ok-1', question_type: 'single-session-user', question: 'apple keyword', answer: 'a',
+        haystack_dates: ['2025-01-01'], answer_session_ids: ['ok-sess'],
+        haystack_sessions: [{ session_id: 'ok-sess', turns: [{ role: 'user', content: 'apple in a session' }] }],
+      };
+      const allBroken = join(tmp, 'all-broken.jsonl');
+      writeFileSync(allBroken, [broken('b-1'), broken('b-2')].map(q => JSON.stringify(q)).join('\n') + '\n', 'utf8');
+      const out = join(tmp, 'all-broken-out.jsonl');
+      const recordDir = join(tmp, 'ledger');
+      const r = await runCapturing([allBroken, '--keyword-only', '--retrieval-only', '--by-type', '--by-type-floor', '0.5', '--record', '--output', out], { engine: sharedEngine, recordDir });
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('FAIL every question errored (2/2)');
+      const rows = readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      expect(rows.filter(x => x.kind !== 'by_type_summary').map(x => x.question_id)).toEqual(['b-1', 'b-2']);
+      for (const row of rows.filter(x => x.kind !== 'by_type_summary')) expect(typeof row.error).toBe('string');
+      // Empty buckets made every rate null, so the floor alone would have passed.
+      expect(r.stderr).not.toContain('FAIL --by-type-floor');
+      const ledger = readFileSync(join(recordDir, 'eval-results.jsonl'), 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      expect(ledger[0].status).toBe('failed');
+      expect(ledger[0].params.errors).toBe(2);
+
+      // A partially-errored run is still a completed run (the per-question rows carry the errors).
+      const mixed = join(tmp, 'mixed.jsonl');
+      writeFileSync(mixed, [JSON.stringify(broken('b-1')), JSON.stringify(valid)].join('\n') + '\n', 'utf8');
+      const out2 = join(tmp, 'mixed-out.jsonl');
+      const r2 = await runCapturing([mixed, '--keyword-only', '--retrieval-only', '--output', out2], { engine: sharedEngine });
+      expect(r2.code).toBeNull();
+      expect(r2.stderr).not.toContain('every question errored');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// 15. duplicate question_id in the dataset (plan D12): WARN + first wins
+// ---------------------------------------------------------------------------
+
+describe('duplicate question_id in the dataset (plan D12)', () => {
+  test('WARN on stderr, the FIRST occurrence wins, one row per id, dataset_questions counts the raw lines', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'lme-dup-'));
+    try {
+      const { writeFileSync } = await import('fs');
+      const q = (id: string, question: string): LongMemEvalQuestion => ({
+        question_id: id, question_type: 'single-session-user', question, answer: 'a',
+        haystack_dates: ['2025-01-01'], answer_session_ids: ['ok-sess'],
+        haystack_sessions: [{ session_id: 'ok-sess', turns: [{ role: 'user', content: `${question} in a session` }] }],
+      });
+      const fixture = join(tmp, 'dup.jsonl');
+      writeFileSync(fixture, [q('dup-1', 'apple first'), q('dup-2', 'pear'), q('dup-1', 'apple SECOND')].map(x => JSON.stringify(x)).join('\n') + '\n', 'utf8');
+      const out = join(tmp, 'dup-out.jsonl');
+      const r = await runCapturing([fixture, '--keyword-only', '--retrieval-only', '--by-type', '--output', out], { engine: sharedEngine });
+      expect(r.code).toBeNull();
+      expect(r.stderr).toContain('WARN duplicate question_id dup-1 — keeping the first');
+      const all = readFileSync(out, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+      const rows = all.filter(x => x.kind !== 'by_type_summary');
+      expect(rows.map(x => x.question_id)).toEqual(['dup-1', 'dup-2']);
+      expect(rows[0].question).toBe('apple first');
+      const summary = all.find(x => x.kind === 'by_type_summary');
+      expect(summary.run_config.dataset_questions).toBe(3);
+      expect(summary.aggregate.total).toBe(2);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

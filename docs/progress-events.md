@@ -1,8 +1,7 @@
 # Progress events
 
 Canonical reference for the JSONL progress stream that `gbrain` writes to
-`stderr` when a bulk command runs with `--progress-json`. Stable from
-v0.15.2. Additive changes only; no renames or removals without a major
+`stderr` when a bulk command runs with `--progress-json`. Additive changes only; no renames or removals without a major
 version bump.
 
 Most humans won't read this page. Agents parsing progress will.
@@ -133,10 +132,10 @@ Phases use `snake_case.dot.path` naming. A fresh reporter starts at the
 root; `child()` composition appends to the parent's current phase, so a
 sync that calls import emits `sync.import.<file>`, not `import.<file>`.
 
-Stable phase names shipped in v0.15.2:
+Stable phase names:
 
 - `doctor.db_checks` (umbrella for all DB-side doctor checks)
-- `doctor.pglite_probe` (the #2674 scratch-store probe; only when PGLite init
+- `doctor.pglite_probe` (the scratch-store probe; only when PGLite init
   failed with an unexplained/damage-class disk state or `--probe-pglite` was
   passed — a cold start can take 5–20s, so the heartbeat is the only sign of
   life)

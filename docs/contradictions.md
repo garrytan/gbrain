@@ -64,9 +64,9 @@ change)" decision is vibes. The probe produces evidence.
                            │
         ┌──────────────────┼──────────────────────┬───────────────┐
         ▼                  ▼                      ▼               ▼
-   doctor (M1)         MCP (M3)             synthesize (M2)   trend (M5)
+   doctor (M1)       local read (M3)        synthesize (M2)   trend (M5)
    surfaces           find_contradictions    informational     persistent
-   findings           op for agents          block in prompt   tracking
+   findings           unscoped callers       block in prompt   tracking
 ```
 
 ## Severity rubric
@@ -79,8 +79,8 @@ The judge assigns severity per finding:
 | `medium` | factual values that may be stale | revenue figure, headcount, valuation |
 | `high` | identity / structural claims | founder/CEO/CFO role, company status |
 
-Doctor sorts findings by severity DESC. The MCP op accepts a severity filter
-so agents can fetch just the high-priority items.
+Doctor sorts findings by severity DESC. Trusted local callers without a source
+filter can use the operation's severity filter to fetch high-priority items.
 
 ## How to interpret the headline number
 
@@ -102,7 +102,7 @@ Decision criteria for the bigger swing (chunk-level `revises` field):
 |---|---|---|
 | < 5% | Source-boost + recency-decay + curated pages handle the load | Stop here; this is the right scope |
 | 5–15% | Real but bounded | Operator decides whether the cost justifies the swing |
-| > 15% | Real and substantial | Plan the bigger swing in v0.34+ |
+| > 15% | Real and substantial | Plan the bigger swing |
 
 ## When to act on findings
 
@@ -130,7 +130,7 @@ inspect findings without re-running the probe.
 ## Cost model
 
 Default judge is `claude-haiku-4-5` at ~$1/Mtok in, $5/Mtok out. With
-the v0.32.6 truncation at 1500 chars per pair, ~500 input + 80 output
+the default truncation at 1500 chars per pair (`--max-pair-chars`), ~500 input + 80 output
 tokens per judge call. Budget cap defaults to $5 in TTY / $1 non-TTY.
 
 - ~$0.0006 per judge call
@@ -144,8 +144,11 @@ pay near-zero on re-runs (until you bump PROMPT_VERSION).
 
 - Probe never mutates the brain. Runs only read pages/takes/chunks.
   Writes go only to `eval_contradictions_runs` and `eval_contradictions_cache`.
-- MCP `find_contradictions` is read-scope. NOT in the subagent allowlist —
-  user-initiated only, not autonomous-action surface.
+- `find_contradictions` is read-scope and is not in the subagent allowlist.
+  Stored reports are temporarily available only to trusted local callers
+  without a source filter. Remote or source-scoped callers receive
+  `{ contradictions: [], note }` with an availability note; their requests
+  do not load the stored report.
 - Build-fixture script is local-only. The redactor + `isCleanForCommit`
   gate makes accidental private-data commits hard, but the operator MUST
   inspect every redaction before commit.

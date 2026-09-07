@@ -44,6 +44,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { LEGACY_DEFAULT_RERANKER_MODEL as ZE_RERANKER } from '../src/core/ai/defaults.ts';
 import {
   configureGateway,
   resetGateway,
@@ -384,22 +385,37 @@ describe('locks + schema honesty', () => {
 });
 
 describe('reranker companion (D8)', () => {
-  test('bundle-default ZE reranker is exposed; auto switches to the target provider reranker', async () => {
-    // No explicit search.reranker.model row — the exposure must resolve
-    // THROUGH the mode-bundle default (zeroentropyai:zerank-2), the common
-    // ZE case the old explicit-key-only warning missed.
+  test('explicitly configured ZE reranker is exposed; auto switches to the target provider reranker', async () => {
+    // v0.48.2: the mode-bundle default is live voyage, so exposure now comes
+    // from an EXPLICIT `search.reranker.model` zeroentropyai:* row — the
+    // exposure must still resolve THROUGH the mode plane (config override).
+    await engine.setConfig('search.reranker.model', ZE_RERANKER);
+    try {
+      const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', undefined);
+      expect(plan.exposed).not.toBeNull();
+      expect(plan.exposed!.model).toBe(ZE_RERANKER);
+      expect(plan.exposed!.sunset_date).toBeTruthy();
+      expect(plan.action).toEqual({ kind: 'switch', to: 'voyage:rerank-2.5' });
+    } finally {
+      await engine.unsetConfig('search.reranker.model');
+    }
+  });
+
+  test('bundle default (no reranker row) is live voyage → nothing exposed', async () => {
     const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'voyage:voyage-4', undefined);
-    expect(plan.exposed).not.toBeNull();
-    expect(plan.exposed!.model).toBe('zeroentropyai:zerank-2');
-    expect(plan.exposed!.sunset_date).toBeTruthy();
-    expect(plan.action).toEqual({ kind: 'switch', to: 'voyage:rerank-2.5' });
+    expect(plan.exposed).toBeNull();
   });
 
   test('auto with a reranker-less target suggests, never silently enables a third provider', async () => {
-    const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'openai:text-embedding-3-small', undefined);
-    expect(plan.exposed).not.toBeNull();
-    expect(plan.action.kind).toBe('none');
-    expect((plan.action as { suggestion: string | null }).suggestion).toBe('voyage:rerank-2.5');
+    await engine.setConfig('search.reranker.model', ZE_RERANKER);
+    try {
+      const plan = await resolveRerankerPlan(engine, 'zeroentropyai:zembed-1', 'openai:text-embedding-3-small', undefined);
+      expect(plan.exposed).not.toBeNull();
+      expect(plan.action.kind).toBe('none');
+      expect((plan.action as { suggestion: string | null }).suggestion).toBe('voyage:rerank-2.5');
+    } finally {
+      await engine.unsetConfig('search.reranker.model');
+    }
   });
 
   test('off disables, keep leaves alone, invalid explicit values refuse with paste-ready messages', async () => {

@@ -22,12 +22,10 @@ code in the host's repo.
 
 ## Why code, not data
 
-An earlier design draft shipped `~/.claude/gbrain-handlers.json` where
-each entry was a shell command the worker would exec on job claim.
-Codex flagged this as a durable RCE surface: an agent-writable data
-file that spawns arbitrary shell. We dropped the data-file approach;
-handlers are code that the host imports explicitly and ships through
-code review.
+A handlers data file (each entry a shell command the worker execs on job
+claim) is a durable RCE surface: an agent-writable file that spawns
+arbitrary shell. Handlers are therefore code that the host imports
+explicitly and ships through code review.
 
 ## The plugin contract
 
@@ -108,7 +106,7 @@ fires while the previous invocation is still running.
 
 ## Gbrain's migration flow
 
-The v0.11.0 migration orchestrator (run by `gbrain apply-migrations`)
+The migration orchestrator (run by `gbrain apply-migrations`)
 detects cron entries whose handler name is NOT in GBrain's builtin set
 and emits a structured TODO to `~/.gbrain/migrations/pending-host-work.jsonl`.
 Each TODO has shape:
@@ -132,7 +130,7 @@ The host agent walks these entries using `skills/migrations/v0.11.0.md`:
    registration in the host's worker bootstrap following the pattern
    above.
 3. Deploy the updated worker.
-4. Re-run `gbrain apply-migrations --yes`. The orchestrator now
+4. Re-run `gbrain apply-migrations --yes`. The orchestrator
    recognizes the newly-registerable handler (worker writes the
    registered names to a discovery file on startup) and rewrites the
    cron entry to use `gbrain jobs submit`. The JSONL row is marked

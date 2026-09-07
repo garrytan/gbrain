@@ -9,16 +9,21 @@
  * Cosine re-score: blend 0.7*rrf + 0.3*cosine for query-specific ranking
  */
 
+import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { BrainEngine } from '../engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type {
   SearchResult,
+  PageReadPolicy,
   SearchOpts,
   HybridSearchMeta,
   DegradedStage,
   DegradedStageEntry,
   DegradedReason,
 } from '../types.ts';
+import { affectsRecall } from '../types.ts';
+import { hasReadPolicy, pageReadFilter } from './read-policy-sql.ts';
+import { requiresSafeChunks } from './safe-chunks.ts';
 import { embed, embedQuery } from '../embedding.ts';
 import { registerBackgroundWorkDrainer } from '../background-work.ts';
 import { isDbAccessFailure } from '../pg-access-classify.ts';
@@ -38,7 +43,7 @@ import {
 } from './relational-recall.ts';
 import { loadConfigWithEngine } from '../config.ts';
 import { dedupResults } from './dedup.ts';
-import { applyReranker, type RerankPassThroughReason } from './rerank.ts';
+import { applyReranker, type RerankPassThroughReason, type RerankSkipReason } from './rerank.ts';
 import {
   classifyQuery,
   classifyQueryWithBrainPatterns,
@@ -47,9 +52,21 @@ import {
   type QuerySuggestions,
 } from './query-intent.ts';
 import { isTitlePhraseMatch } from './title-match.ts';
+import {
+  pushVectorList,
+  composeFusionLists,
+  textArmsNonEmpty,
+  normalizeExpansionVariantBudget,
+  type VectorArm,
+  type FusionListEntry,
+} from './fusion-lists.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { stampEvidence, markKeywordHits } from './evidence.ts';
 import { applyExactLookupTier } from './exact-lookup.ts';
+import { pinRelationalRows, normalizeRelationalRerankPin, type RelationalRerankPinDecision } from './relational-rerank-pin.ts';
+import { normalizeKeywordArmConfidenceFloor, type KeywordArmConfidenceDecision } from './arm-confidence.ts';
+import { decideMetadataBoosts, lexicalArmsVoted, normalizeMetadataBoostGate, type MetadataBoostGate } from './metadata-boost-gate.ts';
+import { parseRelationalQuery } from './relational-intent.ts';
 import { expandAnchors, hydrateChunks } from './two-pass.ts';
 import { enforceTokenBudget, searchSalvageEnabled, type TokenBudgetMeta } from './token-budget.ts';
 import { warnOncePerProcess } from '../utils.ts';
@@ -62,6 +79,7 @@ import {
 import {
   SemanticQueryCache,
   loadCacheConfig,
+  semanticResultCacheAvailable,
 } from './query-cache.ts';
 
 export const RRF_K = 60;
@@ -130,14 +148,14 @@ const pendingCacheWrites = new Set<Promise<unknown>>();
  * candidate pool. Fail-open: the warning is best-effort and never breaks search.
  * Mirrors the stampEvidence post-fusion precedent (T4).
  */
-export async function stampContentFlags(engine: BrainEngine, results: SearchResult[]): Promise<void> {
+export async function stampContentFlags(engine: BrainEngine, results: SearchResult[], policy?: PageReadPolicy): Promise<void> {
   if (results.length === 0) return;
   try {
     const ids = [...new Set(
       results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
     )];
     if (ids.length === 0) return;
-    const flags = await engine.getContentFlagsByPageIds(ids);
+    const flags = await engine.getContentFlagsByPageIds(ids, policy);
     if (flags.size === 0) return;
     for (const r of results) {
       const f = flags.get(r.page_id);
@@ -167,6 +185,7 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
 export async function stampUnverifiedExtractions(
   engine: BrainEngine,
   results: SearchResult[],
+  policy?: PageReadPolicy,
 ): Promise<void> {
   if (results.length === 0) return;
   try {
@@ -174,7 +193,7 @@ export async function stampUnverifiedExtractions(
       results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
     )];
     if (ids.length === 0) return;
-    const marks = await engine.getUnverifiedExtractionPageIds(ids);
+    const marks = await engine.getUnverifiedExtractionPageIds(ids, policy);
     if (marks.size === 0) return;
     for (const r of results) {
       const m = marks.get(r.page_id);
@@ -484,7 +503,7 @@ export function applyChronicleTypeBoost(
  *
  * Mutates `results` in place; caller re-sorts.
  */
-export interface PostFusionOpts {
+export interface PostFusionOpts extends PageReadPolicy {
   applyBacklinks: boolean;
   salience: 'off' | 'on' | 'strong';
   recency: 'off' | 'on' | 'strong';
@@ -542,6 +561,16 @@ export interface PostFusionOpts {
    * metadata stages so a title hit can't bury a strong semantic match.
    */
   titleBoost?: number;
+  /**
+   * Ranker wave (Phase E3, Cat 13) — `search.metadata_boost_gate = lexical`
+   * resolved to "the vector arm was the only voter" (metadata-boost-gate.ts).
+   * True skips the metadata-axis stages — backlink, salience, recency (+ the
+   * chronicle type boost inside it), graph signals (incl. its telemetry
+   * sinks), alias-resolved — so hub pages cannot re-order a pure vector
+   * ranking. The title-phrase boost (lexical signal) and the supersede
+   * downrank (correctness) still run. Undefined / false → every stage as before.
+   */
+  skipMetadataBoosts?: boolean;
 }
 
 export async function runPostFusionStages(
@@ -550,6 +579,7 @@ export async function runPostFusionStages(
   opts: PostFusionOpts,
 ): Promise<void> {
   if (results.length === 0) return;
+  const policy = hasReadPolicy(opts) ? opts : undefined;
 
   // v0.40.4 attribution stamp (D12=A) — capture base_score ONCE at entry,
   // BEFORE any boost mutates r.score. Without this, --explain can't
@@ -567,12 +597,14 @@ export async function runPostFusionStages(
   // per-stage recompute (which would couple stage order to gating decisions);
   // see plan `swift-sniffing-nygaard.md` D6 / codex outside-voice T2.
   const floorThreshold = computeFloorThreshold(results, opts.floorRatio);
+  // Phase E3 — metadata-axis stages gated as ONE block (see PostFusionOpts).
+  const metadata = opts.skipMetadataBoosts !== true;
 
   // Backlink stage (existing behavior, preserved).
-  if (opts.applyBacklinks) {
+  if (metadata && opts.applyBacklinks) {
     try {
       const pageIds = Array.from(new Set(results.map(r => r.page_id)));
-      const counts = await engine.getBacklinkCounts(pageIds);
+      const counts = await engine.getBacklinkCounts(pageIds, policy);
       applyBacklinkBoost(results, counts, floorThreshold);
     } catch {
       // Non-fatal; preserves the existing pre-v0.29.1 contract.
@@ -587,9 +619,9 @@ export async function runPostFusionStages(
   );
 
   // Salience stage (mattering, no time).
-  if (opts.salience !== 'off') {
+  if (metadata && opts.salience !== 'off') {
     try {
-      const scores = await engine.getSalienceScores(refs);
+      const scores = await engine.getSalienceScores(refs, policy);
       applySalienceBoost(results, scores, opts.salience, floorThreshold);
     } catch {
       // Non-fatal.
@@ -597,9 +629,9 @@ export async function runPostFusionStages(
   }
 
   // Recency stage (per-prefix decay, no mattering).
-  if (opts.recency !== 'off') {
+  if (metadata && opts.recency !== 'off') {
     try {
-      const dates = await engine.getEffectiveDates(refs);
+      const dates = await engine.getEffectiveDates(refs, policy);
       // Resolve the effective decay map (defaults + gbrain.yml `recency:` +
       // GBRAIN_RECENCY_DECAY env) instead of the baked-in defaults. The
       // get_recent_salience SQL path already goes through resolveRecencyDecayMap()
@@ -644,10 +676,11 @@ export async function runPostFusionStages(
   // shares the same floor-threshold so a weak hub gets the same
   // protection v0.35.6.0 added for other metadata boosts. Fail-open at
   // this level matches the per-stage non-fatal contract.
-  if (opts.graphSignalsEnabled) {
+  if (metadata && opts.graphSignalsEnabled) {
     try {
       const { applyGraphSignals } = await import('./graph-signals.ts');
       await applyGraphSignals(results, engine, {
+        ...policy,
         enabled: true,
         floorThreshold,
         onMeta: opts.onGraphMeta,
@@ -665,10 +698,12 @@ export async function runPostFusionStages(
   // intent: "user explicitly disambiguated this as canonical." Defense-
   // in-depth: pre-v105 brains don't have slug_aliases table; the lookup
   // throws isUndefinedTableError and the stage no-ops.
-  try {
-    await applyAliasResolvedBoost(results, engine);
-  } catch {
-    // Non-fatal; preserves the per-stage contract.
+  if (metadata) {
+    try {
+      await applyAliasResolvedBoost(results, engine, policy);
+    } catch {
+      // Non-fatal; preserves the per-stage contract.
+    }
   }
 
   // supersession stage — runs LAST so the penalty applies to the fully-boosted
@@ -679,7 +714,7 @@ export async function runPostFusionStages(
   // facts. Fail-open per the per-stage contract: a brain with no `supersedes`
   // edges (or a pre-links schema) finds 0 rows / throws and no-ops.
   try {
-    await applySupersedeDownrank(results, engine);
+    await applySupersedeDownrank(results, engine, policy);
   } catch {
     // Non-fatal; preserves the per-stage contract.
   }
@@ -751,6 +786,7 @@ export const SUPERSEDE_PENALTY = 0.5;
 export async function applySupersedeDownrank(
   results: SearchResult[],
   engine: import('../engine.ts').BrainEngine,
+  policy?: PageReadPolicy,
 ): Promise<void> {
   if (results.length === 0) return;
   const pageIds = Array.from(
@@ -758,6 +794,10 @@ export async function applySupersedeDownrank(
   );
   if (pageIds.length === 0) return;
   if (!(await hasAnySupersedeEdges(engine))) return;
+  const params: unknown[] = [pageIds];
+  const fromFilter = pageReadFilter('pf', policy, params, !!policy);
+  const toFilter = pageReadFilter('pt', policy, params, !!policy);
+  const originFilter = policy ? `(l.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages origin WHERE origin.id = l.origin_page_id AND ${pageReadFilter('origin', policy, params, true)}))` : 'TRUE';
   let rows: Array<{ to_page_id: number; by_slug: string }> = [];
   try {
     rows = await engine.executeRaw<{ to_page_id: number; by_slug: string }>(
@@ -768,8 +808,9 @@ export async function applySupersedeDownrank(
         WHERE l.link_type = 'supersedes'
           AND pf.deleted_at IS NULL
           AND pf.source_id = pt.source_id
-          AND l.to_page_id = ANY($1::bigint[])`,
-      [pageIds],
+          AND l.to_page_id = ANY($1::bigint[])
+          AND ${fromFilter} AND ${toFilter} AND ${originFilter}`,
+      params,
     );
   } catch {
     // Pre-links schema or SQL miss; no-op.
@@ -808,6 +849,7 @@ const ALIAS_RESOLVED_BOOST = 1.05;
 async function applyAliasResolvedBoost(
   results: SearchResult[],
   engine: import('../engine.ts').BrainEngine,
+  policy?: PageReadPolicy,
 ): Promise<void> {
   if (results.length === 0) return;
   // Build the (source_id, slug) composite list for the lookup.
@@ -824,15 +866,17 @@ async function applyAliasResolvedBoost(
   // Two-array unnest for source-scoped composite lookup.
   const sourceIds = refs.map(r => r.source_id);
   const slugs = refs.map(r => r.slug);
+  const params: unknown[] = [sourceIds, slugs];
+  const filter = pageReadFilter('p', policy, params, !!policy);
   let rows: Array<{ source_id: string; canonical_slug: string }> = [];
   try {
     rows = await engine.executeRaw<{ source_id: string; canonical_slug: string }>(
-      `SELECT DISTINCT source_id, canonical_slug
-       FROM slug_aliases
-       WHERE (source_id, canonical_slug) IN (
+      `SELECT DISTINCT a.source_id, a.canonical_slug
+       FROM slug_aliases a JOIN pages p ON p.source_id = a.source_id AND p.slug = a.canonical_slug
+       WHERE (a.source_id, a.canonical_slug) IN (
          SELECT * FROM unnest($1::text[], $2::text[])
-       )`,
-      [sourceIds, slugs],
+       ) AND ${filter}`,
+      params,
     );
   } catch {
     // Pre-v104 brain or other SQL miss; no-op.
@@ -878,7 +922,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
+  opts: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; requireSafeChunks?: boolean },
 ): Promise<SearchResult[]> {
   if (!query) return results;
   const qNorm = normalizeAlias(query);
@@ -886,7 +930,7 @@ export async function applyAliasHop(
 
   let aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
   try {
-    aliasMap = await engine.resolveAliases([qNorm], { sourceId: opts.sourceId, sourceIds: opts.sourceIds });
+    aliasMap = await engine.resolveAliases([qNorm], opts);
   } catch {
     return results; // pre-v110 table-missing OR transient error -> fail-open
   }
@@ -913,7 +957,7 @@ export async function applyAliasHop(
     // Absent canonical: fetch (in its OWN source) + inject at top-of-organic + epsilon.
     let page;
     try {
-      page = await engine.getPage(ref.slug, { sourceId: ref.source_id });
+      page = await engine.getPage(ref.slug, { sourceId: ref.source_id, excludePrivate: opts.excludePrivate });
     } catch {
       continue;
     }
@@ -936,7 +980,7 @@ export async function applyAliasHop(
       title: page.title,
       type: page.type,
       source_id: page.source_id ?? ref.source_id,
-      chunk_text: (page.compiled_truth ?? '').slice(0, 200),
+      chunk_text: sanitizeRemoteBody(page.compiled_truth ?? '').slice(0, 200),
       chunk_index: 0,
       chunk_id: 0,
       score: injectScore,
@@ -962,6 +1006,35 @@ export interface HybridSearchOpts extends SearchOpts {
    */
   mode?: string;
   expandFn?: (query: string) => Promise<string[]>;
+  /**
+   * Per-call override for `search.expansion_variant_budget` — the total RRF
+   * weight shared by all expansion variant/clause lists (fusion-lists.ts).
+   * `undefined` → config/bundle; `null` forces legacy weighting (weight 1).
+   * Valid range is (0, 4]; anything else (0, negative, > 4, NaN) is treated
+   * as unset via `normalizeExpansionVariantBudget` (fusion-lists.ts — the one
+   * range contract shared with the config-key parser). Threaded through
+   * resolveSearchMode in BOTH the inner search and the cache resolver (knobs
+   * hash reflects it); eval budget sweeps drive it here.
+   */
+  expansionVariantBudget?: number | null;
+  /**
+   * Per-call override for `search.keyword_arm_confidence_floor` — below this
+   * scale-free keyword-arm confidence the keyword + title lists fuse at half
+   * weight (arm-confidence.ts). `undefined` → config/bundle; `null` forces
+   * off. Range (0, 1]; anything else is unset via the ONE contract
+   * `normalizeKeywordArmConfidenceFloor`. Threaded through resolveSearchMode
+   * in BOTH the inner search and the cache resolver (knobs hash `kacf=`).
+   */
+  keywordArmConfidenceFloor?: number | null;
+  /**
+   * Per-call override for `search.metadata_boost_gate` (metadata-boost-gate.ts):
+   * `lexical` skips the post-fusion metadata boosts when the vector arm was the
+   * only voter; `always` = today's pipeline. `undefined` → config/bundle;
+   * anything else is unset via the ONE contract `normalizeMetadataBoostGate`.
+   * Threaded through resolveSearchMode in BOTH the inner search and the cache
+   * resolver (knobs hash `mbg=`); eval A/B runs drive it here.
+   */
+  metadataBoostGate?: MetadataBoostGate;
   /** Override default RRF K constant (default: 60). Lower values boost top-ranked results more. */
   rrfK?: number;
   /** Override dedup pipeline parameters. */
@@ -979,6 +1052,18 @@ export interface HybridSearchOpts extends SearchOpts {
    * row; everyone else leaves it undefined and pays no cost.
    */
   onMeta?: (meta: HybridSearchMeta) => void;
+  /**
+   * Eval capture (ranker wave, plan D24) — fires immediately before
+   * `applyAutocut` with `pool` = the pre-autocut `returnPool`, byte-identical
+   * to applyAutocut's input: post-rerank AND post alias-hop / exact-lookup /
+   * adaptive-return, INCLUDING unscored injected rows (alias / exact-lookup
+   * hits carry no `rerank_score`), BEFORE the autocut / limit slice. Fires
+   * even when autocut itself is off (the replay's "off" cell reads the same
+   * capture). `preRerank` is the deduped pre-rerank RRF order, for rank
+   * attribution. Best-effort: a throwing callback never breaks the search.
+   * Never set on production paths.
+   */
+  onRerankPool?: (pool: readonly SearchResult[], preRerank: readonly SearchResult[]) => void;
   /**
    * v0.42.20.0 (Fix 3, #1775) INTERNAL — shared query-embed deadline threaded
    * from `hybridSearchCached` into the inner `hybridSearch` so the cache-lookup
@@ -1201,6 +1286,19 @@ export async function hybridSearch(
       // would be a no-op (both branches resolve to the same mode default).
       relationalRetrieval: opts?.relationalRetrieval,
       relational_retrieval_depth: opts?.relationalRetrievalDepth,
+      // ranker wave — expansion variant budget per-call thread-through (eval
+      // budget sweeps); `null` pins legacy weighting, undefined → config/bundle.
+      // Normalized through the ONE range contract (fusion-lists.ts): 0 /
+      // negative / >4 / NaN per-call values become undefined (fall through)
+      // instead of reaching fusion — and the cache key — unvalidated.
+      expansion_variant_budget: normalizeExpansionVariantBudget(opts?.expansionVariantBudget),
+      // Ranker wave (R1) — relational rerank pin per-call thread-through (eval
+      // A/B); normalized through the ONE range contract (relational-rerank-pin.ts).
+      relational_rerank_pin: normalizeRelationalRerankPin(opts?.relationalRerankPin),
+      // Ranker wave (Phase E2) — keyword-arm confidence floor per-call thread-through.
+      keyword_arm_confidence_floor: normalizeKeywordArmConfidenceFloor(opts?.keywordArmConfidenceFloor),
+      // Ranker wave (Phase E3) — metadata boost gate per-call thread-through (eval A/B).
+      metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
     },
   });
 
@@ -1274,6 +1372,7 @@ export async function hybridSearch(
     // let an untrusted caller read `visibility: private` pages through the
     // hybrid hot path.
     excludePrivate: opts?.excludePrivate,
+    requireSafeChunks: opts?.requireSafeChunks,
     // v0.36 (D11): pass the pre-validated descriptor into the engine so
     // it never has to read config. Engines normalize string-or-descriptor
     // via normalizeEngineColumn; the descriptor path is the strict one.
@@ -1420,6 +1519,11 @@ export async function hybridSearch(
   const recencyMode: 'off' | 'on' | 'strong' =
     resolveEffectiveRecency(opts, suggestions, intentWeightingOn);
   const postFusionOpts: PostFusionOpts = {
+    sourceId: opts?.sourceId,
+    sourceIds: opts?.sourceIds,
+    excludePrivate: opts?.excludePrivate,
+    requireSafeChunks: opts?.requireSafeChunks,
+    takesHoldersAllowList: opts?.takesHoldersAllowList,
     applyBacklinks: true,
     salience: salienceMode,
     recency: recencyMode,
@@ -1456,6 +1560,8 @@ export async function hybridSearch(
       // straight from pages — thread the caller's private-page gate or a
       // remote relational query bypasses the keyword/vector visibility clause.
       excludePrivate: opts?.excludePrivate,
+      requireSafeChunks: opts?.requireSafeChunks,
+      takesHoldersAllowList: opts?.takesHoldersAllowList,
       onMeta: opts?.onRelationalMeta,
     });
   }
@@ -1500,7 +1606,7 @@ export async function hybridSearch(
     // chunk-grain keyword FTS alone fails (D1).
     // issue #160: stamp unverified stubs BEFORE fusion so the compiled-truth
     // boost skips them (flag survives fusion's result spread).
-    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList]);
+    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList], opts);
     let noEmbedResults = keywordResults;
     if (relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
@@ -1519,12 +1625,16 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       excludePrivate: opts?.excludePrivate,
+      requireSafeChunks: opts?.requireSafeChunks,
     });
     // #1663 — structural exact-lookup tier (slug / exact-title identity).
     const noEmbedHopped = await applyExactLookupTier(engine, noEmbedPreExact, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       titleCandidates: titleResults,
+      excludePrivate: opts?.excludePrivate,
+      requireSafeChunks: opts?.requireSafeChunks,
+      takesHoldersAllowList: opts?.takesHoldersAllowList,
       // #4480: gate tier injections on the caller's shape filters.
       type: opts?.type,
       types: opts?.types,
@@ -1547,7 +1657,7 @@ export async function hybridSearch(
     const noEmbedSliced = noEmbedPool.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
     const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
-    await stampContentFlags(engine, noEmbedBudgeted);
+    await stampContentFlags(engine, noEmbedBudgeted, opts);
     lastResultsCount = noEmbedBudgeted.length;
     lastRank1Score = noEmbedBudgeted[0] ? (noEmbedBudgeted[0].base_score ?? noEmbedBudgeted[0].score) : undefined;
     // WP2/T3 — no silent bypass: the keyword-only-config branch names why
@@ -1649,8 +1759,14 @@ export async function hybridSearch(
   const expansionAllowed = resolvedMode.expansion && effectiveModality !== 'image';
   if (expansionAllowed && opts?.expandFn) {
     try {
-      queries = await opts.expandFn(query);
-      if (queries.length === 0) queries = [query];
+      const expanded = await opts.expandFn(query);
+      // INVARIANT: queries[0] IS the caller's query. Both fan-outs below tag
+      // index 0 as the `original` arm (weight 1, cosine re-score vector), so
+      // an expandFn that omits or reorders the original would silently hand
+      // the anchor role to a variant. Enforce it here (and dedupe repeats so
+      // a duplicated variant can't double-vote) rather than trusting every
+      // expandFn (LLM expandQuery, eval replay, harness overrides).
+      queries = [query, ...Array.from(new Set(expanded.filter((q) => q !== query)))];
       // "Applied" = produced variants beyond the original, not just called.
       expansionApplied = queries.length > 1;
     } catch (err) {
@@ -1666,7 +1782,10 @@ export async function hybridSearch(
   //   - 'text' (default): existing text-embedding path, unchanged
   //   - 'image': embedQueryMultimodal + searchVector(embedding_image), skip keyword
   //   - 'both': text + image vector searches in parallel; merged via weighted RRF
-  let vectorLists: SearchResult[][] = [];
+  //
+  // Every vector list is a ROLE-tagged arm (fusion-lists.ts): the k/weight
+  // mapping and the text-only demotion gate read the role, never a position.
+  const vectorArms: VectorArm[] = [];
   let queryEmbedding: Float32Array | null = null;
   let imageVectorList: SearchResult[] | null = null;
   let crossModalFellOpen = false;
@@ -1701,7 +1820,7 @@ export async function hybridSearch(
           `Set search.unified_multimodal_only=true to bypass this fallback when reindex completes.`,
         );
       } else {
-        vectorLists = [unifiedList];
+        pushVectorList(vectorArms, unifiedList, 'original');
         queryEmbedding = unifiedEmbedding;
         unifiedDone = true;
       }
@@ -1751,11 +1870,13 @@ export async function hybridSearch(
   }
 
   if (unifiedDone) {
-    // Unified routing already populated vectorLists + queryEmbedding;
+    // Unified routing already populated vectorArms + queryEmbedding;
     // skip the dual-column branching.
   } else if (effectiveModality === 'image' && imageVectorList !== null) {
-    // Image-only path: results come entirely from the image column.
-    vectorLists = [imageVectorList];
+    // Image-only path: results come entirely from the image column. Sole
+    // arm → composeFusionLists fuses it at vectorK (no text arm to weigh
+    // against), exactly as the single-list mapping always did.
+    pushVectorList(vectorArms, imageVectorList, 'image');
     queryEmbedding = null; // no text embedding to cosine-re-score against
   } else {
     // 'text' or 'both' (or 'image' that fell open to text). Run the text
@@ -1795,10 +1916,11 @@ export async function hybridSearch(
             r.modality = r.modality ?? 'text';
           }
         }
-        vectorLists = textLists;
+        // queries[0] is always the caller's query (expandQuery keeps it first).
+        textLists.forEach((list, i) => pushVectorList(vectorArms, list, i === 0 ? 'original' : 'variant'));
         // 'both' mode: also include the image-side list as another input to RRF.
         if (effectiveModality === 'both' && imageVectorList !== null) {
-          vectorLists = [...vectorLists, imageVectorList];
+          pushVectorList(vectorArms, imageVectorList, 'image');
         }
       } catch (err) {
         // Embedding failure is non-fatal, fall back to keyword-only —
@@ -1850,11 +1972,20 @@ export async function hybridSearch(
         }
         const vSettled = await Promise.allSettled(okEmbeds.map(emb => engine.searchVector(emb, searchOpts)));
         const okLists: SearchResult[][] = [];
+        const okRoles: Array<'original' | 'variant'> = [];
         let vFirstErr: unknown;
         let vFailed = 0;
-        for (const s of vSettled) {
-          if (s.status === 'fulfilled') okLists.push(s.value);
-          else {
+        for (let i = 0; i < vSettled.length; i++) {
+          const s = vSettled[i];
+          if (s.status === 'fulfilled') {
+            okLists.push(s.value);
+            // okEmbeds[0] is the ORIGINAL query only when its embed survived;
+            // the original role additionally requires its searchVector to
+            // have succeeded. Otherwise every survivor is a variant (they
+            // share the expansion budget — pre-registered original-missing
+            // behavior, fusion-lists.ts).
+            okRoles.push(i === 0 && originalOk ? 'original' : 'variant');
+          } else {
             if (vFailed === 0) vFirstErr = s.reason;
             vFailed += 1;
           }
@@ -1872,18 +2003,18 @@ export async function hybridSearch(
             r.modality = r.modality ?? 'text';
           }
         }
-        vectorLists = okLists;
+        okLists.forEach((list, i) => pushVectorList(vectorArms, list, okRoles[i]));
         // 'both' mode: also include the image-side list as another input to
         // RRF — only when a text arm survived, matching the pre-wave shape
         // (a total text failure falls back to keyword-only either way).
-        if (vectorLists.length > 0 && effectiveModality === 'both' && imageVectorList !== null) {
-          vectorLists = [...vectorLists, imageVectorList];
+        if (okLists.length > 0 && effectiveModality === 'both' && imageVectorList !== null) {
+          pushVectorList(vectorArms, imageVectorList, 'image');
         }
       }
     }
   }
 
-  if (vectorLists.length === 0) {
+  if (vectorArms.length === 0) {
     // Embed/vector failed silently; record that vector did not run.
     // v0.29.1 codex pass-2 #4: this is the third return path. Apply
     // post-fusion stages here too — without it, salience='on' silently
@@ -1893,7 +2024,7 @@ export async function hybridSearch(
     // here too (same rationale as the no-embedding-provider path — D1).
     // issue #160: stamp unverified stubs BEFORE fusion (see the
     // no-embedding-provider path for rationale).
-    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList]);
+    await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList], opts);
     let fallbackResults = keywordResults;
     if (relationalList.length > 0 || titleResults.length > 0) {
       const fk = opts?.rrfK ?? RRF_K;
@@ -1910,12 +2041,16 @@ export async function hybridSearch(
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       excludePrivate: opts?.excludePrivate,
+      requireSafeChunks: opts?.requireSafeChunks,
     });
     // #1663 — structural exact-lookup tier (slug / exact-title identity).
     const kwHopped = await applyExactLookupTier(engine, kwPreExact, query, {
       sourceId: opts?.sourceId,
       sourceIds: opts?.sourceIds,
       titleCandidates: titleResults,
+      excludePrivate: opts?.excludePrivate,
+      requireSafeChunks: opts?.requireSafeChunks,
+      takesHoldersAllowList: opts?.takesHoldersAllowList,
       // #4480: gate tier injections on the caller's shape filters.
       type: opts?.type,
       types: opts?.types,
@@ -1925,10 +2060,10 @@ export async function hybridSearch(
     const kwSliced = kwHopped.slice(offset, offset + limit);
     // v0.32.3 search-lite: budget enforcement on the keyword-fallback path too.
     const { results: kwBudgeted, meta: kwBudgetMeta } = enforceTokenBudget(kwSliced, resolvedMode.tokenBudget);
-    await stampContentFlags(engine, kwBudgeted);
+    await stampContentFlags(engine, kwBudgeted, opts);
     lastResultsCount = kwBudgeted.length;
     lastRank1Score = kwBudgeted[0] ? (kwBudgeted[0].base_score ?? kwBudgeted[0].score) : undefined;
-    // WP2/T3 — the embed/vector failure that emptied vectorLists already
+    // WP2/T3 — the embed/vector failure that emptied vectorArms already
     // pushed its stage above; add the keyword-arm outcome (skipped-by-
     // modality is not a keyword miss, hence the image gate).
     if (keywordResults.length === 0 && earlyModality !== 'image') {
@@ -1962,14 +2097,13 @@ export async function hybridSearch(
   const keywordK = effectiveRrfK(baseRrfK, intentWeights.keywordWeight);
   const vectorK = effectiveRrfK(baseRrfK, intentWeights.vectorWeight);
 
-  // v0.36 cross-modal (D6): in 'both' mode, vectorLists carries
-  // [textList, imageList]. Apply per-modality RRF weights so the merge
-  // reflects the configured text/image balance. In 'text' and 'image'
-  // modes only one branch is present, so per-modality K reduces to
-  // the standard vectorK (no behavior change vs pre-v0.36).
+  // v0.36 cross-modal (D6): in 'both' mode, vectorArms carries text arms
+  // plus an `image` arm. composeFusionLists applies per-modality RRF k
+  // (textRrfK / imageRrfK) only when BOTH an image arm and a text arm are
+  // present; in 'text' and 'image' modes — and in 'both' mode whose image
+  // branch fell open — every arm fuses at the standard vectorK.
   const textRrfK = effectiveRrfK(baseRrfK, resolvedMode.cross_modal_both_text_weight);
   const imageRrfK = effectiveRrfK(baseRrfK, resolvedMode.cross_modal_both_image_weight);
-  const isBothMode = effectiveModality === 'both' && vectorLists.length >= 2;
 
   // 2026-09 fix wave (#3617 follow-up): OR-relaxed lexical rows only vote in
   // RRF when EVERY vector list came back empty — the fallback's designed
@@ -1983,15 +2117,15 @@ export async function hybridSearch(
   // fused ranks 14-17 under relaxed-arm votes, and recovering exactly on
   // kof-off). Strict-match keyword/title rows are unaffected.
   //
-  // The gate judges TEXT vector lists only (red-team, 2026-09): in 'both'
-  // mode the appended image branch must not veto the lexical rescue — a
+  // The gate judges TEXT vector arms only (red-team, 2026-09): in 'both'
+  // mode the `image` arm must not veto the lexical rescue — a
   // text-intent query whose text embeds returned zero rows (mid-backfill,
   // image-heavy corpus) would otherwise lose its only text-side recall arm
   // to image votes. ANY nonempty text list counts as healthy, including a
   // surviving expansion-variant list: variant hits are real semantic
   // evidence, which still beats noise-shaped OR matches (adjudicated vs the
   // stricter original-list-only reading).
-  const vectorArmNonEmpty = textVectorArmNonEmpty(vectorLists, isBothMode);
+  const vectorArmNonEmpty = textVectorArmNonEmpty(vectorArms);
   const keywordFusionList = vectorArmNonEmpty
     ? keywordResults.filter((r) => !r.keyword_relaxed)
     : keywordResults;
@@ -2014,41 +2148,37 @@ export async function hybridSearch(
     pushDegraded(degraded, 'keyword_relaxed_carried');
   }
 
-  const allLists: Array<{ list: SearchResult[]; k: number }> = isBothMode
-    ? [
-      // Last list in vectorLists is the image branch (we appended it above).
-      // All preceding lists (1 or more text-query embeddings if expansion ran)
-      // get textRrfK. Image branch gets imageRrfK.
-      ...vectorLists.slice(0, -1).map(list => ({ list, k: textRrfK })),
-      { list: vectorLists[vectorLists.length - 1], k: imageRrfK },
-      { list: keywordFusionList, k: keywordK },
-    ]
-    : [
-      ...vectorLists.map(list => ({ list, k: vectorK })),
-      { list: keywordFusionList, k: keywordK },
-    ];
-
-  // D1 fix (fix/title-retrieval-arm) — title candidate arm as a third
-  // weighted list. Fuses at the keyword arm's intent-effective k (same
-  // lexical-evidence class, no new tunable). Mirrors the keyword list's
-  // inclusion rules: fetch was gated on earlyModality, so no extra modality
-  // check here. Empty for non-matching queries → pure no-op.
-  if (titleFusionList.length > 0) {
-    allLists.push({ list: titleFusionList, k: keywordK });
-  }
-
-  // v0.43 — relational recall arm (fourth RRF arm), built above so it also
-  // contributes on the keyword-only fallback path. Neutral weight (baseRrfK):
-  // competes evenly with keyword/vector, not dominating. Empty for
-  // non-relational queries → pure no-op. Rides every downstream stage (cosine
-  // re-score, post-fusion boosts, dedup, reranker, autocut, token budget).
-  if (relationalList.length > 0 && effectiveModality !== 'image') {
-    allLists.push({ list: relationalList, k: baseRrfK });
-  }
+  // ONE composition point (fusion-lists.ts): role-tagged vector arms → k +
+  // weight, then keyword (keywordK), title (keywordK, only if non-empty — the
+  // D1 title arm is the same lexical-evidence class, no new tunable; its
+  // fetch was gated on earlyModality), then the v0.43 relational arm (neutral
+  // baseRrfK, text/both only; built above so it also serves the keyword-only
+  // fallback path). Expansion variant/clause arms share the resolved
+  // `expansion_variant_budget` (per-call → config → bundle) as total RRF
+  // weight (`weight / (k + rank)`); null = legacy weight 1 on every list.
+  // Phase E2 (Cat 13): the keyword + title lists fuse at half weight when
+  // the keyword arm is weak (arm-confidence.ts) — non-relational queries
+  // with a voting text vector arm only; the decision is stamped on meta
+  // (`keyword_arm_confidence`) even with the floor off, for calibration.
+  let keywordArmConfidence: KeywordArmConfidenceDecision | undefined;
+  const allLists: FusionListEntry[] = composeFusionLists({
+    arms: vectorArms,
+    keywordFusionList,
+    titleFusionList,
+    relationalList,
+    includeRelational: effectiveModality !== 'image',
+    relationalQuery: parseRelationalQuery(query) !== null,
+    onKeywordArmConfidence: (d) => { keywordArmConfidence = d; },
+    ks: { vectorK, textRrfK, imageRrfK, keywordK, baseRrfK },
+    knobs: {
+      expansionVariantBudget: resolvedMode.expansion_variant_budget,
+      keywordArmConfidenceFloor: resolvedMode.keyword_arm_confidence_floor,
+    },
+  });
 
   // issue #160: stamp unverified auto-extracted stubs across ALL candidate
   // arms BEFORE fusion so the compiled-truth authority boost skips them.
-  await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list));
+  await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list), opts);
 
   let fused = rrfFusionWeighted(allLists, shouldBoostCompiledTruth(detail));
 
@@ -2060,12 +2190,24 @@ export async function hybridSearch(
     fused = await cosineReScore(engine, fused, queryEmbedding, resolvedCol.name);
   }
 
+  // Phase E3 (Cat 13): metadata boost gate — decided from the SAME lexical
+  // lists composeFusionLists just fused (post relaxed-row demotion); image
+  // modality never skips (no lexical arm ran); stamped on meta even under `always`.
+  const metadataBoostGate = decideMetadataBoosts({
+    gate: resolvedMode.metadata_boost_gate, modality: effectiveModality,
+    lexicalVoted: lexicalArmsVoted({
+      keywordFusionList, titleFusionList, relationalList, includeRelational: effectiveModality !== 'image',
+    }),
+  });
+
   // v0.29.1: post-fusion stages (backlink + salience + recency) run via
   // runPostFusionStages so all three early-return paths share the same
   // boost surface. Salience and recency are independent axes — either,
   // both, or neither fires depending on resolved modes.
   if (fused.length > 0) {
-    await runPostFusionStages(engine, fused, postFusionOpts);
+    await runPostFusionStages(engine, fused, {
+      ...postFusionOpts, skipMetadataBoosts: !metadataBoostGate.boosts_applied,
+    });
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
     if (intentWeights.exactMatchBoost !== 1.0) {
@@ -2084,7 +2226,9 @@ export async function hybridSearch(
   // structural neighbors from the same file/class are the whole point
   // of two-pass; clipping them at 2/page defeats A2 (codex F5).
   const walkDepth = Math.min(opts?.walkDepth ?? 0, 2);
-  const needsExpansion = walkDepth > 0 || Boolean(opts?.nearSymbol);
+  // The optional code walk's raw graph hydration has no row-level read policy.
+  // Keep it suspended for untrusted retrieval until that boundary is supported.
+  const needsExpansion = !requiresSafeChunks(opts) && (walkDepth > 0 || Boolean(opts?.nearSymbol));
   let dedupOpts = opts?.dedupOpts;
 
   if (needsExpansion) {
@@ -2156,13 +2300,16 @@ export async function hybridSearch(
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
-  // #4648: a success-shaped pass-through (provider answered 200 with an
-  // empty/malformed result set) stamps the degraded[] channel so callers can
-  // tell "reranker off for this call" from "reranker died silently" —
-  // results come back in raw RRF order with no rerank_score either way.
+  // v0.48.2: a SKIPPED reranker (no provider key / provider past its sunset)
+  // is stamped `reranker_skipped` (ranking-only — never shortens the cache TTL
+  // or turns an empty result into a degraded miss), and a success-shaped
+  // pass-through (#4648: provider answered 200 with an empty/malformed result
+  // set) is stamped `rerank_passthrough`, so --explain, telemetry and eval rows
+  // can tell "reranked" from "fell through in RRF order" — never stderr.
   const reranked = rerankerOpts.enabled
     ? await applyReranker(query, deduped, {
         ...(rerankerOpts as any),
+        onSkip: (reason: RerankSkipReason) => pushDegraded(degraded, 'reranker_skipped', reason),
         onPassThrough: (reason: RerankPassThroughReason) => {
           pushDegraded(degraded, 'rerank_passthrough', reason);
           // Chain a per-call callback if the caller supplied one.
@@ -2171,13 +2318,25 @@ export async function hybridSearch(
       })
     : deduped;
 
+  // Ranker wave (R1 receipt) — relational-arm rows bypass reranker DEMOTION:
+  // re-pinned above the reranked text rows in fused order, bounded by
+  // `relational_rerank_pin` (0 = off). Only when the reranker actually
+  // reordered (applyReranker returns its input on every fail-open path; fused
+  // order already carries the arm) and never for image modality (the arm is
+  // not fused there). Contract + tie policy: relational-rerank-pin.ts.
+  let relationalRerankPin: RelationalRerankPinDecision | undefined;
+  const rerankPinned = reranked !== deduped && effectiveModality !== 'image'
+    ? pinRelationalRows(reranked, relationalList, { max: resolvedMode.relational_rerank_pin, fusedOrder: deduped, onPin: (d) => { relationalRerankPin = d; } })
+    : reranked;
+
   // T3 — free-text alias hop. Runs AFTER rerank so a query that is a page's
   // declared chosen name reliably surfaces that page regardless of how the
   // reranker scored body chunks. Fail-open on pre-v110 brains.
-  const preExact = await applyAliasHop(engine, reranked, query, {
+  const preExact = await applyAliasHop(engine, rerankPinned, query, {
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
     excludePrivate: opts?.excludePrivate,
+    requireSafeChunks: opts?.requireSafeChunks,
   });
 
   // #1663 — structural exact-lookup tier: a query that IS a page identity
@@ -2190,6 +2349,9 @@ export async function hybridSearch(
     sourceId: opts?.sourceId,
     sourceIds: opts?.sourceIds,
     titleCandidates: titleResults,
+    excludePrivate: opts?.excludePrivate,
+    requireSafeChunks: opts?.requireSafeChunks,
+    takesHoldersAllowList: opts?.takesHoldersAllowList,
     // #4480: gate tier injections on the caller's shape filters.
     type: opts?.type,
     types: opts?.types,
@@ -2238,11 +2400,23 @@ export async function hybridSearch(
   // `search.autocut_min_keep` > bundle); minKeep stays the never-empty
   // failsafe (default 1 — raising it floors the cut for operators whose
   // reranker score curves decay without a dramatic cliff).
+  // Eval capture hook (plan D24): fires HERE, immediately before applyAutocut,
+  // with the exact `returnPool` autocut is about to cut — post alias-hop /
+  // exact-lookup / adaptive-return, including their unscored injected rows.
+  // Firing right after the reranker (the original placement) captured a pool
+  // that was NOT autocut's input, so the replay could not reproduce the live
+  // decisions byte-for-byte.
+  if (opts?.onRerankPool) {
+    try { opts.onRerankPool(returnPool, deduped); } catch { /* eval hook must never break search */ }
+  }
+
   let autocutDecision: AutocutDecision | undefined;
   if (resolvedMode.autocut && offset === 0) {
     const r = applyAutocut(
       returnPool,
-      (x) => x.rerank_score,
+      // Pinned relational rows are excluded from the cliff math (low scores by
+      // construction) and preserved below — text-row autocut is unchanged.
+      (x) => (x.relational_pinned ? undefined : x.rerank_score),
       // v0.46.15 (#1863): minTopScore is the weak-top floor — below it the
       // cliff signal is untrustworthy and autocut no-ops. #3621: minKeep is
       // now the configured floor instead of the hardcoded 1.
@@ -2257,7 +2431,7 @@ export async function hybridSearch(
       // be dropped whenever autocut cuts on the scored set (Codex P1).
       // #1663: same guarantee for structural exact-lookup tier hits (slug /
       // exact-title identity matches also arrive post-rerank, unscored).
-      (x) => x.alias_hit === true || x.exact_lookup !== undefined,
+      (x) => x.alias_hit === true || x.exact_lookup !== undefined || x.relational_pinned === true,
     );
     returnPool = r.kept;
     autocutDecision = r.decision;
@@ -2285,7 +2459,7 @@ export async function hybridSearch(
   // hybridSearch enforces it too so eval-replay + eval-longmemeval see
   // the same budget behavior as the production query op.
   const { results: budgeted, meta: budgetMeta } = enforceTokenBudget(sliced, resolvedMode.tokenBudget);
-  await stampContentFlags(engine, budgeted);
+  await stampContentFlags(engine, budgeted, opts);
   lastResultsCount = budgeted.length;
   lastRank1Score = budgeted[0] ? (budgeted[0].base_score ?? budgeted[0].score) : undefined;
   stampBudgetStage(degraded, budgetMeta);
@@ -2306,6 +2480,9 @@ export async function hybridSearch(
     ...(adaptiveDecision ? { adaptive_return: adaptiveDecision } : {}),
     ...(autocutDecision ? { autocut: autocutDecision } : {}),
     ...(relationalSlotDecision ? { relational_evidence_slot: relationalSlotDecision } : {}),
+    ...(relationalRerankPin ? { relational_rerank_pin: relationalRerankPin } : {}),
+    ...(keywordArmConfidence ? { keyword_arm_confidence: keywordArmConfidence } : {}),
+    metadata_boost_gate: metadataBoostGate,
   });
   return budgeted;
 }
@@ -2419,6 +2596,17 @@ export async function hybridSearchCached(
       // would be a no-op (both branches resolve to the same mode default).
       relationalRetrieval: opts?.relationalRetrieval,
       relational_retrieval_depth: opts?.relationalRetrievalDepth,
+      // ranker wave — threaded here too so knobsHash's `evb=` part reflects
+      // the per-call budget (a 0.5 write must never serve a legacy read).
+      // Same normalizer as the inner search so both resolutions agree
+      // (an invalid per-call value must hash as legacy, never as `evb=NaN`).
+      expansion_variant_budget: normalizeExpansionVariantBudget(opts?.expansionVariantBudget),
+      // Ranker wave — threaded here too so knobsHash's `rrp=` part reflects the per-call pin.
+      relational_rerank_pin: normalizeRelationalRerankPin(opts?.relationalRerankPin),
+      // Ranker wave (Phase E2) — threaded here too so knobsHash's `kacf=` part reflects the per-call floor.
+      keyword_arm_confidence_floor: normalizeKeywordArmConfidenceFloor(opts?.keywordArmConfidenceFloor),
+      // Ranker wave (Phase E3) — threaded here too so knobsHash's `mbg=` part reflects the per-call gate.
+      metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
     },
   });
   // v0.36 (D8 / CDX-2 + codex /ship #4): resolve column for the cache
@@ -2489,12 +2677,7 @@ export async function hybridSearchCached(
     // (and thus results), so it must change the key immediately instead of
     // serving old-classification rows for the rest of the cache TTL.
     intentPatterns: intentStateForCache.fingerprint,
-    // #4352 follow-up — fold the private-visibility posture into the key
-    // (xp=, v=23) for BOTH the lookup and the write below (they share this
-    // one hash), instead of the original wholesale skipCache bypass. A
-    // remote-default (excludePrivate=true) caller now caches normally, on
-    // rows that can never be served to (or written by) a trusted
-    // private-included call.
+    // Retained storage-key shape; semantic response reuse is disabled below.
     excludePrivate: opts?.excludePrivate === true,
     // v=27 (E5b) — the resolved gate + this query's intent class, classified
     // by the SAME pattern-aware banks bare hybridSearch resolves (above).
@@ -2561,13 +2744,10 @@ export async function hybridSearchCached(
   // array's start and returns nothing — so `> 0` let those requests
   // read/write the cache anyway.
   const pagedRequest = (opts?.offset ?? 0) !== 0;
-  // #4352 follow-up — excludePrivate no longer skips the cache: the posture
-  // is folded into knobsHash (xp=), so a private-included (trusted)
-  // write can never serve a private-excluding lookup and vice versa. The
-  // original wholesale skip disabled the semantic cache for every remote MCP
-  // caller (excludePrivate=true is their default) — exactly the
-  // highest-volume beneficiaries of the ~50% cache savings.
+  // Hard availability gate: no persisted result is read or written until
+  // every response dependency can be authorized at reuse time.
   const skipCache =
+    !semanticResultCacheAvailable() ||
     !cache.isEnabled() ||
     (opts?.walkDepth ?? 0) > 0 ||
     Boolean(opts?.nearSymbol) ||
@@ -2798,7 +2978,13 @@ export async function hybridSearchCached(
     results.length > 0 &&
     (innerMeta?.vector_enabled ?? false)
   ) {
-    const isDegraded = (finalMeta.degraded?.length ?? 0) > 0;
+    // v0.48.2: `reranker_skipped` is a CONFIG state (no provider key / dead
+    // provider), not a transient provider limp — the result set is complete,
+    // just unreranked, and will stay that way until the operator acts. It
+    // keeps the full TTL (a keyless balanced brain must not churn its cache
+    // every 60s); the stamp still rides the stored meta so a hit is honest.
+    // Stale unreranked rows after a key appears expire within one TTL.
+    const isDegraded = (finalMeta.degraded ?? []).some(affectsRecall);
     trackCacheWrite(
       cache
         .store(query, queryEmbedding, results, finalMeta, {
@@ -2823,18 +3009,16 @@ export const DEGRADED_CACHE_TTL_SECONDS = 60;
 
 /**
  * 2026-09 fix wave — pure gate for the OR-relaxed lexical demotion: is the
- * TEXT vector arm healthy? In 'both' cross-modal mode the LAST list in
- * vectorLists is the appended image branch (see the allLists assembly), and
- * it must not count: image evidence can't substitute for the text-side
- * lexical rescue the relaxed rows exist to provide. Exported for direct
- * unit-testing (simulating the both-mode mixed state needs no engine).
+ * TEXT vector arm healthy? ROLE-based (fusion-lists.ts): only arms whose
+ * role is not `image` count, so in 'both' cross-modal mode the image arm
+ * can't veto the lexical rescue — image evidence can't substitute for the
+ * text-side rescue the relaxed rows exist to provide — and a fell-open
+ * image branch with several text lists can't mis-tag a text list as the
+ * image (the old positional "last list is the image" rule). Exported for
+ * direct unit-testing (simulating the both-mode mixed state needs no engine).
  */
-export function textVectorArmNonEmpty(
-  vectorLists: SearchResult[][],
-  isBothMode: boolean,
-): boolean {
-  const textLists = isBothMode ? vectorLists.slice(0, -1) : vectorLists;
-  return textLists.some((l) => l.length > 0);
+export function textVectorArmNonEmpty(arms: readonly VectorArm[]): boolean {
+  return textArmsNonEmpty(arms);
 }
 
 /**
@@ -2914,19 +3098,26 @@ export function filterResultsByCallerScope(
  * effective k value, which lets intent weighting bias keyword vs vector
  * lists without re-weighting individual scores. Wraps rrfFusion internally
  * by computing weighted contributions in a single pass.
+ *
+ * Each entry may also carry `weight` (default 1): the literature weighted-RRF
+ * form `weight / (k + rank)` — a list-level vote multiplier that holds at
+ * every rank (a k-penalty would fade at deep ranks). `weight` omitted or 1
+ * is byte-identical to the unweighted formula. fusion-lists.ts sets it on
+ * expansion variant/clause lists from `search.expansion_variant_budget`.
  */
 export function rrfFusionWeighted(
-  lists: Array<{ list: SearchResult[]; k: number }>,
+  lists: FusionListEntry[],
   applyBoost = true,
 ): SearchResult[] {
   const scores = new Map<string, { result: SearchResult; score: number; keywordHit: boolean }>();
 
-  for (const { list, k } of lists) {
+  for (const { list, k, weight } of lists) {
+    const w = weight ?? 1;
     for (let rank = 0; rank < list.length; rank++) {
       const r = list[rank];
       const key = rrfKey(r);
       const existing = scores.get(key);
-      const rrfScore = 1 / (k + rank);
+      const rrfScore = w / (k + rank);
 
       if (existing) {
         existing.score += rrfScore;

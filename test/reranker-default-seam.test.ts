@@ -1,14 +1,15 @@
 /**
- * #3657 reranker-sunset prep — single-constant seam for the legacy default.
+ * #3657 reranker default seam — ONE code home for the runtime/bundle default.
  *
- * The sunsetting `zeroentropyai:zerank-2` default must live in exactly ONE
- * code home (`LEGACY_DEFAULT_RERANKER_MODEL` in src/core/ai/defaults.ts) so
- * the September default swap is a one-line change. Everything else resolves
- * through that constant:
+ * v0.48.2 flipped the default from the sunsetting `zeroentropyai:zerank-2`
+ * to `voyage:rerank-2.5` (`DEFAULT_RERANKER_MODEL` in src/core/ai/defaults.ts).
+ * Everything resolves through that constant:
  *   - the three mode bundles (src/core/search/mode.ts)
- *   - the gateway runtime fallback (src/core/ai/gateway.ts DEFAULT_RERANKER_MODEL)
+ *   - the gateway runtime fallback (src/core/ai/gateway.ts imports it; no local alias)
+ * `LEGACY_DEFAULT_RERANKER_MODEL` stays as the retired historical value that
+ * the RERANKER_SUNSETS row, the short-circuit tests and the migration copy name.
  *
- * The literal is allowed to remain in exactly two other NON-DEFAULT code
+ * The zerank literal is allowed to remain in exactly two other NON-DEFAULT code
  * positions, each with a documented reason:
  *   - src/core/embedding-pricing.ts — a pricing-table KEY, not a default
  *   - src/core/retrieval-upgrade-planner.ts — the HISTORICAL v0.36 ZE cutover
@@ -23,6 +24,7 @@ import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { MODE_BUNDLES } from '../src/core/search/mode.ts';
 import {
+  DEFAULT_RERANKER_MODEL,
   LEGACY_DEFAULT_RERANKER_MODEL,
   NEW_INSTALL_DEFAULT_RERANKER_MODEL,
   RERANKER_SUNSETS,
@@ -30,29 +32,42 @@ import {
   rerankerSunset,
 } from '../src/core/ai/defaults.ts';
 
-describe('LEGACY_DEFAULT_RERANKER_MODEL seam (#3657)', () => {
+describe('DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)', () => {
   test('all three mode bundles resolve their reranker_model through the one constant', () => {
-    expect(MODE_BUNDLES.conservative.reranker_model).toBe(LEGACY_DEFAULT_RERANKER_MODEL);
-    expect(MODE_BUNDLES.balanced.reranker_model).toBe(LEGACY_DEFAULT_RERANKER_MODEL);
-    expect(MODE_BUNDLES.tokenmax.reranker_model).toBe(LEGACY_DEFAULT_RERANKER_MODEL);
+    expect(MODE_BUNDLES.conservative.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
+    expect(MODE_BUNDLES.balanced.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
+    expect(MODE_BUNDLES.tokenmax.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
   });
 
-  test('the constant still carries the pre-swap legacy value (this PR prepares, does NOT choose)', () => {
+  test('the default IS the recommended new-install reranker (voyage) and is NOT on the sunset list', () => {
+    expect(DEFAULT_RERANKER_MODEL).toBe(NEW_INSTALL_DEFAULT_RERANKER_MODEL);
+    expect(DEFAULT_RERANKER_MODEL).toBe('voyage:rerank-2.5');
+    for (const mode of ['conservative', 'balanced', 'tokenmax'] as const) {
+      expect(rerankerSunset(MODE_BUNDLES[mode].reranker_model)).toBeNull();
+    }
+  });
+
+  test('the retired legacy value is still named (history + sunset row), but nothing defaults to it', () => {
     expect(LEGACY_DEFAULT_RERANKER_MODEL).toBe('zeroentropyai:zerank-2');
+    for (const mode of ['conservative', 'balanced', 'tokenmax'] as const) {
+      expect(MODE_BUNDLES[mode].reranker_model).not.toBe(LEGACY_DEFAULT_RERANKER_MODEL);
+    }
   });
 
-  test('gateway DEFAULT_RERANKER_MODEL is assigned from the constant, not a literal', () => {
+  test('gateway imports DEFAULT_RERANKER_MODEL from defaults.ts — no local alias, no literal', () => {
     const src = readFileSync(
       join(import.meta.dir, '../src/core/ai/gateway.ts'),
       'utf8',
     );
-    expect(src).toContain('DEFAULT_RERANKER_MODEL = LEGACY_DEFAULT_RERANKER_MODEL');
+    expect(src).not.toContain('const DEFAULT_RERANKER_MODEL =');
+    expect(src).not.toContain('LEGACY_DEFAULT_RERANKER_MODEL');
+    expect(src).toMatch(/import \{[^}]*\bDEFAULT_RERANKER_MODEL\b[^}]*\} from '\.\/defaults\.ts'/s);
   });
 
-  test('the literal has exactly three code homes in src/ (constant, pricing key, historical ZE target)', () => {
+  test('the zerank literal has exactly three code homes in src/ (constant, pricing key, historical ZE target)', () => {
     const LITERAL = 'zeroentropyai:zerank-2';
     const ALLOWED = new Set([
-      'src/core/ai/defaults.ts', // LEGACY_DEFAULT_RERANKER_MODEL — the seam
+      'src/core/ai/defaults.ts', // LEGACY_DEFAULT_RERANKER_MODEL — the retired value
       'src/core/embedding-pricing.ts', // pricing-table key, not a default
       'src/core/retrieval-upgrade-planner.ts', // historical ZE cutover target (deleted v0.47)
     ]);
@@ -97,6 +112,14 @@ describe('RERANKER_SUNSETS (#3657/#4382)', () => {
   test('every ZeroEntropy reranker matches by provider prefix (zerank-1, zerank-1-small too)', () => {
     expect(rerankerSunset('zeroentropyai:zerank-1')?.date).toBe(ZEROENTROPY_SUNSET_DATE);
     expect(rerankerSunset('zeroentropyai:zerank-1-small')?.date).toBe(ZEROENTROPY_SUNSET_DATE);
+  });
+
+  test('matching is case-insensitive and accepts the slash form (parseModelId parity)', () => {
+    expect(rerankerSunset('ZeroEntropyAI:zerank-2')?.date).toBe(ZEROENTROPY_SUNSET_DATE);
+    expect(rerankerSunset('zeroentropyai/zerank-2')?.date).toBe(ZEROENTROPY_SUNSET_DATE);
+    expect(rerankerSunset(' zeroentropyai:zerank-1 ')?.date).toBe(ZEROENTROPY_SUNSET_DATE);
+    // A provider whose id merely STARTS with the prefix text is not matched.
+    expect(rerankerSunset('zeroentropyai-selfhost:zerank-2')).toBeNull();
   });
 
   test('live rerankers do not match', () => {

@@ -898,7 +898,6 @@
  "test/scripts/check-test-isolation.test.ts": 279,
  "test/scripts/check-worker-lock-renewal-shape.test.ts": 30,
  "test/scripts/check-worker-pool-atomicity.test.ts": 117,
- "test/scripts/ci-cache-hash.test.ts": 1649,
  "test/scripts/evals-collection.test.ts": 996,
  "test/scripts/mine-shard-weights.test.ts": 10,
  "test/scripts/run-serial-pool.test.ts": 3082,

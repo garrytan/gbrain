@@ -86,7 +86,7 @@ the repo. The architectural rule still holds — these aren't
 | `mcp_request_log` | Audit trail. Volatile by design. |
 | `minion_jobs` / `minion_inbox` / `minion_attachments` | Job queue. Restarts re-enqueue or drop. |
 | `eval_candidates` / `eval_capture_failures` | Contributor-mode dev loop; opt-in capture. |
-| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rows carry a 30-day `expires_at` TTL (migration v143): reads treat expired rows as misses and the synthesize phase sweeps them, so nothing lives forever. Rebuildable via `gbrain dream retriage --force`. |
+| `dream_verdicts` | Scored triage cache (salience score, quotes, entities, judging model + prompt version). Rows carry a 30-day `expires_at` TTL: reads treat expired rows as misses and the synthesize phase sweeps them, so nothing lives forever. Rebuildable via `gbrain dream retriage --force`. |
 | `gbrain_cycle_locks` / migration ledger | Infrastructure. |
 | `op_checkpoint_paths` | Sync-resume checkpoint. Append-only progress banking; a completed sync makes it irrelevant. |
 | `config` (some keys) | Site-local routing config (e.g. `sync.repo_path`). |
@@ -103,8 +103,8 @@ Private knowledge in a fence still lives in the markdown file. If the
 user commits the page to git, the private data lands in git too. This
 is the existing operational model — we don't infer git policy.
 
-For untrusted readers (remote MCP, subagent), the v0.32.2 release ships
-a 3-layer strip:
+For untrusted readers (remote MCP, subagent), gbrain applies a 3-layer
+strip:
 
 1. **Layer A (chunker):** `src/core/chunkers/recursive.ts` calls
    `stripFactsFence({keepVisibility: ['world']})` + `stripTakesFence`
@@ -191,6 +191,6 @@ reconciler / migration layer without the explicit allow-list comment.
 ## Related
 
 - `skills/migrations/v0.32.2.md` — the agent-facing migration guide
-- `CHANGELOG.md` v0.32.2 entry — the release manifesto
+- `CHANGELOG.md` — release history
 - `scripts/check-system-of-record.sh` — the CI gate that enforces
   the rule

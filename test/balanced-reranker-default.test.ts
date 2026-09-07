@@ -13,14 +13,16 @@ import { MODE_BUNDLES } from '../src/core/search/mode.ts';
 import { applyReranker, type RerankerOpts } from '../src/core/search/rerank.ts';
 import type { SearchResult } from '../src/core/types.ts';
 import { RerankError } from '../src/core/ai/gateway.ts';
+import { DEFAULT_RERANKER_MODEL } from '../src/core/ai/defaults.ts';
 
 describe('Mode bundle defaults (D6)', () => {
   test('balanced.reranker_enabled is true (the v0.36.0.0 flip)', () => {
     expect(MODE_BUNDLES.balanced.reranker_enabled).toBe(true);
   });
 
-  test('balanced reranker model is zeroentropyai:zerank-2', () => {
-    expect(MODE_BUNDLES.balanced.reranker_model).toBe('zeroentropyai:zerank-2');
+  test('balanced reranker model is the voyage default (v0.48.2 flip)', () => {
+    expect(MODE_BUNDLES.balanced.reranker_model).toBe(DEFAULT_RERANKER_MODEL);
+    expect(MODE_BUNDLES.balanced.reranker_model).toBe('voyage:rerank-2.5');
   });
 
   test('conservative reranker stays off (cheap tier)', () => {

@@ -968,11 +968,13 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
     // after the first orphan probe returned "no active row". The second
     // probe must see it and keep the sentinel open — a single-probe sweep
     // cleared it while the duplicate existed.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    // Preserve the dynamic receiver: import transaction clones inherit this
+    // interceptor and must query their own transaction, including after restore.
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 1) {
@@ -980,7 +982,7 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
               type: 'person', title: 'Dana (revenant)',
               compiled_truth: 'materialized between probe and clear',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-revenant'`,
             );
@@ -1298,11 +1300,11 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
     // the second probe returned, i.e. after the double-probe verdict is
     // final and the clear is committed. The post-clear verify probe must
     // detect the row and RESTORE the sentinel.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 2) {
@@ -1310,7 +1312,7 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
               type: 'person', title: 'Dana (late writer)',
               compiled_truth: 'materialized after the second probe',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-late-writer'`,
             );
@@ -1370,11 +1372,11 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
-        const res = await origExecuteRaw(sql, params);
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
+        const res = await origExecuteRaw.call(this, sql, params);
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 2) {
@@ -1383,7 +1385,7 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
               type: 'person', title: 'Dana (gate writer)',
               compiled_truth: 'materialized between the gate verdict and the clear',
             }, { sourceId: 'default' });
-            await origExecuteRaw(
+            await origExecuteRaw.call(this,
               `UPDATE pages SET source_path = 'people/dana-old.md'
                WHERE source_id = 'default' AND slug = 'people/dana-old-gate-writer'`,
             );
@@ -1425,15 +1427,15 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     // Both orphan probes succeed (empty) → clear commits; the post-clear
     // VERIFY probe (third matching SELECT) throws. Fail-closed means every
     // cleared sentinel comes back.
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     let probeCalls = 0;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
         if (sql.includes('source_path = ANY')) {
           probeCalls++;
           if (probeCalls === 3) throw new Error('injected verify-probe outage');
         }
-        return origExecuteRaw(sql, params);
+        return origExecuteRaw.call(this, sql, params);
       }) as typeof engine.executeRaw;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
@@ -1515,13 +1517,13 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw.bind(engine);
+    const origExecuteRaw = engine.executeRaw;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async (sql: string, params?: unknown[]) => {
+      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
         if (sql.includes('UPDATE sources SET last_commit')) {
           throw new Error('injected advance outage');
         }
-        return origExecuteRaw(sql, params);
+        return origExecuteRaw.call(this, sql, params);
       }) as typeof engine.executeRaw;
     let threw = false;
     try {

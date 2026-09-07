@@ -20,9 +20,9 @@ Every scoreboard row carries a `seam` column:
 
 | Harness | Seam | What the row actually measures |
 |---|---|---|
-| `openclaw` | **production** | The shipped OpenClaw context-engine pipeline, byte-for-byte (`extractCandidates` → `resolveEntitiesToPointers`, 3-pointer budget, prior-context suppression, markdown pointer block), **plus the volunteer arm (2026-08 fix wave)**: a 4-turn window (`DEFAULT_WINDOW_TURNS` parity) drives the SAME `volunteerStage` primitive production runs (0.7 confidence gate, ≤3 pages, deduped against the turn's pointers) and the SAME `renderReflexAddition` wire shape — the VOLUNTEER-STAGE logic cannot drift between bench and production because both consume one primitive. **Bench-pinned deviations (disclosed, 2026-09 red-team):** (a) the harness replays USER turns only — assistant turns fold into `priorContext` — so the adapter's 4-turn window is the last 4 *user* turns while production's `getWindowTurns` windows the last 4 *mixed-role* turns; assistant-introduced entities (a designed volunteer input) are therefore exercised as suppression input, not window input, and per-window user-content depth runs ~2x production; (b) the parity claim is scoped to Arm 2 — bench Arm 1 uses per-turn `extractCandidates` + `'prior-context'` suppression where production's windowed lane uses window extraction + `'slug-only'`. Both deviations applied EQUALLY to the pre-wave baseline and the post-wave rebank, so the banked delta is internally valid; assistant-role window fidelity is filed (TODOS) as a next-wave harness change requiring its own rebank. Orchestration differences (config gate, heartbeat, 1500ms timeout wrapper) remain deliberately ungraded, as before. |
-| `claude-code` | **production** (v0.46.15) | The shipped Claude Code integration end-to-end: fixture turns become `UserPromptSubmit` stdin JSON; `gbrain hook user-prompt` executes for real (stdin parse → synthesized-transcript window parse → cross-turn dedupe via `hook_additional_context` attachments → IPC `turn_context` over a real unix socket with the real shared secret → `additionalContext`). The row now measures the shipped pointer budget, the volunteer layer, and the transcript dedupe — not a memoryless contract sim. Bench-pinned deviations (disclosed): generous `userPromptDeadlineMs` (10s vs 800ms — CI-load flake control; deadline behavior is hook-suite territory), the push-failure banner suppressed, heartbeat telemetry writes disabled, and the hook's config pointed at the run-scoped bench brain (operator-environment isolation; parallel-test safe). |
-| `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. v0.46.15: fixture conversations round-trip through the REAL rollout format + the shipped parser (`src/core/transcripts/codex.ts`) for turn selection — parser drift now tanks the row visibly. Fragment DELIVERY remains a harness-shaped assumption (no shipped codex injection path yet); the full production flip is a filed follow-up. |
+| `openclaw` | **production** | The shipped OpenClaw context-engine pipeline, byte-for-byte (`extractCandidates` → `resolveEntitiesToPointers`, 3-pointer budget, prior-context suppression, markdown pointer block), **plus the volunteer arm**: a 4-turn window (`DEFAULT_WINDOW_TURNS` parity) drives the SAME `volunteerStage` primitive production runs (0.7 confidence gate, ≤3 pages, deduped against the turn's pointers) and the SAME `renderReflexAddition` wire shape — the VOLUNTEER-STAGE logic cannot drift between bench and production because both consume one primitive. **Bench-pinned deviations (disclosed):** (a) the harness replays USER turns only — assistant turns fold into `priorContext` — so the adapter's 4-turn window is the last 4 *user* turns while production's `getWindowTurns` windows the last 4 *mixed-role* turns; assistant-introduced entities (a designed volunteer input) are therefore exercised as suppression input, not window input, and per-window user-content depth runs ~2x production; (b) the parity claim is scoped to Arm 2 — bench Arm 1 uses per-turn `extractCandidates` + `'prior-context'` suppression where production's windowed lane uses window extraction + `'slug-only'`. Both deviations apply equally to every banked baseline, so deltas between baselines are internally valid; assistant-role window fidelity is a filed harness change (TODOS) that requires its own rebank. Orchestration differences (config gate, heartbeat, 1500ms timeout wrapper) are deliberately ungraded. |
+| `claude-code` | **production** | The shipped Claude Code integration end-to-end: fixture turns become `UserPromptSubmit` stdin JSON; `gbrain hook user-prompt` executes for real (stdin parse → synthesized-transcript window parse → cross-turn dedupe via `hook_additional_context` attachments → IPC `turn_context` over a real unix socket with the real shared secret → `additionalContext`). The row measures the shipped pointer budget, the volunteer layer, and the transcript dedupe. Bench-pinned deviations (disclosed): generous `userPromptDeadlineMs` (10s vs 800ms — CI-load flake control; deadline behavior is hook-suite territory), the push-failure banner suppressed, heartbeat telemetry writes disabled, and the hook's config pointed at the run-scoped bench brain (operator-environment isolation; parallel-test safe). |
+| `codex` | **contract** | The fragments model: a static entity-index preamble (computed once, slugs not counted as injections) + at most ONE per-turn fragment. Fixture conversations round-trip through the REAL rollout format + the shipped parser (`src/core/transcripts/codex.ts`) for turn selection, so parser drift tanks the row visibly. Fragment DELIVERY is a harness-shaped assumption (there is no shipped codex injection path); the full production flip is a filed follow-up. |
 
 **Contract rows do NOT measure third-party harness behavior.** They measure
 gbrain's primitives under each harness's injection-shape constraints. The rows
@@ -62,19 +62,18 @@ grading is faked in v1.
 
 ### Difficulty is stratified on purpose
 
-Several know-to-ask variants exercise what were documented v1 reflex limits
+Several know-to-ask variants exercise the hard edges of reflex resolution
 (lowercase mentions, surname-only references —
-`src/core/context/entity-salience.ts`). Gold records what SHOULD happen; the
-committed baseline records what the current system does. At v1 that gap read
-`know_to_ask_failure_rate` ≈ 0.15 — "the measured roadmap, not a bug in the
-bench." The v0.46.15 identity wave closed it (weak-alias + surname lexical
-arms): the rate is 0.00 on all three harnesses, with `false_fire_rate` and
-`push_precision` unmoved — the roadmap framing worked exactly as designed.
+`src/core/context/entity-salience.ts`, covered by the weak-alias + surname
+lexical arms). Gold records what SHOULD happen; the committed baseline records
+what the current system does, so any gap between them is the measured roadmap,
+not a bug in the bench. The committed baseline reads `know_to_ask_failure_rate`
+= 0.00 on all three harnesses.
 
-## Pre-registered expectations (v1, recorded before the first published run)
+## Pre-registered expectations
 
-1. The production seam (openclaw) leads `push_recall` strictly: 3-pointer > 2-pointer > 1-fragment budgets. *(Observed at landing: 0.81 / 0.65 / 0.45. v0.46.15 identity wave + seam flip: 0.90 / 1.00 / 0.54 — the claude-code row now measures the shipped hook path, whose turn_context assembly (pointers + volunteered pages + real dedupe) outruns the raw pointer budget; the ordering hypothesis applied to the CONTRACT rows and is superseded for flipped rows. 2026-08 fix wave: the openclaw lane gained the same volunteer arm — 1.00 / 1.00 / 0.55 — so both production rows now exceed their raw pointer budgets by design; the budget gradient survives only on the codex contract row, whose 1-fragment structural ceiling is 57/96 = 0.5938.)*
-2. The no-suppression contract (claude-code) is the only seam with `false_fire_rate` > 0. *(Observed: 0.02–0.03. v0.46.15: 0 — the production seam's real transcript dedupe removes the re-injection cost the contract row deliberately exposed.)*
+1. The production seam (openclaw) leads `push_recall` strictly: 3-pointer > 2-pointer > 1-fragment budgets. *(Observed in the committed baseline: 1.00 / 1.00 / 0.55. The ordering hypothesis holds for CONTRACT rows only: both production rows (openclaw, claude-code) carry a volunteer arm and real dedupe in their turn_context assembly, so they exceed their raw pointer budgets by design; the budget gradient survives only on the codex contract row, whose 1-fragment structural ceiling is 57/96 = 0.5938.)*
+2. A no-suppression contract seam is the only seam with `false_fire_rate` > 0. *(Observed: 0 on every harness. The claude-code row is a production seam whose real transcript dedupe suppresses re-injection, so no contract row without suppression remains in the matrix.)*
 3. `write_back_fidelity` = 1.0 and `provenance_accuracy` = 1.0 in deterministic mode — the production pipeline must not lose or mis-attribute gold facts it was handed. Anything below 1.0 is a pipeline bug, not benchmark noise.
 4. `source_isolation_violations` = 0 everywhere.
 5. `push_precision` = 1.0 at v1 (exact-match resolution arms cannot inject an irrelevant page on this corpus); expected to dip below 1.0 when fuzzy/semantic resolution lands — that dip is the precision/recall trade made visible.
@@ -85,7 +84,7 @@ every suite run: `know_to_ask_failure_rate` ≤ 0.05, `false_fire_rate` ≤ 0.03
 `push_precision` ≥ 0.95, `push_recall` ≥ 0.88 / 0.72 / 0.52
 (openclaw / claude-code / codex), `source_isolation_violations` = 0 in every
 cell. A baseline update that violates a floor fails the suite — a threshold
-violation can no longer be banked by blessing a new baseline.
+violation cannot be banked by blessing a new baseline.
 
 ## Determinism & statistical posture
 
@@ -149,16 +148,15 @@ fixture bug to fix, not a tolerance to average over.
   `gbrain eval brainbench --fixtures DIR --gold DIR --json --out FILE`;
   schemas in `evals/brainbench/schema/`. The sibling gbrain-evals repo wires
   this as `eval/runner/brainbench-memory.ts` with a published scorecard.
-- **Memory-verbs conformance kit (Cathedral 1):** conformance scenarios
-  convert to BrainBench fixtures via the published fixture schema
-  (`schema_version` 1) once that wave lands — the conversion path is the
-  schema itself; no bespoke importer is required.
-- **Naming note:** "BrainBench" historically also names the in-house
-  retrieval corpus in the sibling gbrain-evals repo (the 145-query relational
-  suite, Cat taxonomy) and `test/cathedral-ii-brainbench.test.ts` (v0.20.0
-  code-graph recall pins). This suite — the cross-harness memory conformance
-  bench — is the generalization the name now primarily refers to; the older
-  references stand unchanged.
+- **Memory-verbs conformance kit:** conformance scenarios convert to
+  BrainBench fixtures via the published fixture schema (`schema_version` 1);
+  the conversion path is the schema itself, so no bespoke importer is
+  required.
+- **Naming note:** "BrainBench" also names the in-house retrieval corpus in
+  the sibling gbrain-evals repo (the 145-query relational suite, Cat
+  taxonomy) and `test/cathedral-ii-brainbench.test.ts` (code-graph recall
+  pins). This suite — the cross-harness memory conformance bench — is the
+  generalization the name primarily refers to; the other references stand.
 
 ## Extends docs/eval-bench.md
 

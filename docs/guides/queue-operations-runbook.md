@@ -1,8 +1,7 @@
 # Queue operations runbook
 
 "My queue looks wedged — what do I run?" The commands below are in the order
-you probably want them. Born from a production incident where the queue held
-for 90+ minutes before the operator noticed.
+you probably want them.
 
 ## First signal: jobs aren't running
 
@@ -36,7 +35,7 @@ This self-heals — you usually won't have to do anything:
   restart-loop breaker caps wedge restarts at 3 per 30-minute window, then
   switches to a one-shot `wedge_restart_loop` alert in the audit log.
 
-The signal is loud now — check either:
+The signal is loud; check either:
 
 ```bash
 gbrain jobs stats --queue default          # prints a WEDGED QUEUE line
@@ -59,8 +58,7 @@ gbrain jobs retry <id>
 
 A different failure from a wedge: the worker is draining fine, but one job
 type's intake structurally exceeds its completions, so the waiting pile
-grows forever. Since v0.46.11.0 the queue has admission control and the
-signal is loud:
+grows forever. The queue has admission control and the signal is loud:
 
 ```bash
 gbrain jobs stats            # Drained/Waiting columns + a DIVERGENT QUEUE
@@ -128,17 +126,16 @@ gbrain jobs smoke --wedge-rescue
 - **stalled-forever** — A worker claimed a job, started executing, and has
   held the row for over an hour. The wall-clock sweep evicts jobs past
   2× `timeout_ms`. Long-lane handlers (subagent, autopilot-cycle,
-  embed-backfill, …) always have a budget now: it stamps at submit, is
-  COALESCEd from `HANDLER_DEFAULT_TIMEOUT_MS` at claim for legacy NULL rows,
-  and migration v128 backfilled rows that predate both. `gbrain jobs get <id>`
+  embed-backfill, …) always have a budget: it is stamped at submit and
+  COALESCEd from `HANDLER_DEFAULT_TIMEOUT_MS` at claim for rows with a NULL
+  budget. `gbrain jobs get <id>`
   prints the effective budget and which kill path applies. If a short-lane
   job is still active with no budget, the null-default sweep
   (2 × lock-duration × max_stalled) evicts it within minutes. Cancel it if
   you can't wait.
-- **duplicate cycles** — Historic brains could accumulate byte-identical
-  waiting `autopilot-cycle` rows when a job stalled in `active`. v128
-  cancelled that backlog (newest ticker-keyed row per source survives), and
-  the `maxPending` dispatch guard prevents new accumulation. Suppressed
+- **duplicate cycles** — Byte-identical waiting `autopilot-cycle` rows for
+  one source (the shape a job stalled in `active` would otherwise leave
+  behind). The `maxPending` dispatch guard prevents accumulation. Suppressed
   dispatches are visible in `jobs stats` (Backpressure line) and the
   backpressure audit JSONL.
 - **waiting-depth** — Submitters are piling up jobs faster than workers
@@ -158,7 +155,7 @@ gbrain jobs smoke --wedge-rescue
 
 ## Lock-renewal: reading an eviction, and the knobs
 
-Since v0.46 lock renewal is **verify-before-evict**: a thrown or timed-out
+Lock renewal is **verify-before-evict**: a thrown or timed-out
 renewal is never treated as loss. At the deadline the worker runs one fenced
 re-check against the database — the only CERTAIN loss signal is that fenced
 miss. Every renewal fault also writes a JSONL audit event
@@ -170,7 +167,7 @@ How to read a `gave_up` / eviction line:
 | Field | Reading |
 |---|---|
 | `cause` | `call-timeout` = our own timer fired (starved loop, slow pool, or slow DB); `refused` = the driver threw (SQLSTATE in `error_code`); `fenced-lost` = certain reclaim, not an infrastructure fault. |
-| `lateness_ms` | How late the renewal tick fired vs its own cadence. Tens of seconds = the WORKER was starved (the #4145 shape); ~0 with `refused` = the database was actually unreachable. |
+| `lateness_ms` | How late the renewal tick fired vs its own cadence. Tens of seconds = the WORKER was starved; ~0 with `refused` = the database was actually unreachable. |
 | `load1` / `cores` | Raw loadavg at event time, with core count for normalization. |
 | `overlap_skips` | Ticks skipped because a prior renewal call was still in flight. |
 | `deadline_deferred` | The soft deadline passed but the fenced verify was unreachable — the job was KEPT and retried (the fence is the backstop). |
@@ -190,9 +187,9 @@ defaults derive from the per-job lease):
 |---|---|---|
 | `GBRAIN_LOCK_RENEWAL_CALL_TIMEOUT_MS` | `min(lease/3, 15s)` | Per-call budget for each renewal attempt (raced + best-effort cancelled). |
 | `GBRAIN_LOCK_RENEWAL_SAFETY_MARGIN_MS` | `min(lease/6, 30s)` | Headroom before lease expiry; the fenced verify fires when the NEXT tick would land past `lease - margin`. |
-| `GBRAIN_LOCK_RENEWAL_HARD_EVICT_MS` | `2 × lease` | Hard local backstop when even the verify is unreachable (total outage). Floored to the soft deadline. Setting it TO the soft deadline approximates the legacy abort-at-deadline behavior. |
+| `GBRAIN_LOCK_RENEWAL_HARD_EVICT_MS` | `2 × lease` | Hard local backstop when even the verify is unreachable (total outage). Floored to the soft deadline. Setting it TO the soft deadline removes the verify grace and aborts at the deadline. |
 | `GBRAIN_LOCK_RENEWAL_MAX_FAILURES` | 3 | Audit-event labeling only — never gates eviction. |
-| `GBRAIN_MINION_STALL_RECLAIM_GRACE_MS` | 15000 | Stall-sweep reclaim grace: a lease that lapsed within this window is not reclaimed (starved-owner head start). `0` restores the legacy `lock_until < now()` predicate. Capped at 600000 (10 min, warn-once + clamp) — an oversized value would otherwise disable stalled-job recovery fleet-wide. |
+| `GBRAIN_MINION_STALL_RECLAIM_GRACE_MS` | 15000 | Stall-sweep reclaim grace: a lease that lapsed within this window is not reclaimed (starved-owner head start). `0` disables the grace (bare `lock_until < now()` predicate). Capped at 600000 (10 min, warn-once + clamp) — an oversized value would otherwise disable stalled-job recovery fleet-wide. |
 
 Cross-knob invariants are enforced with warn-once clamps (margin < lease/2,
 call timeout ≤ renewal cadence, hard evict ≥ soft deadline) — a
@@ -228,9 +225,9 @@ When the worker's health probe fails repeatedly, the terminal
 `[health] DB probe failed N consecutive times (verdict: ...)` line — and the
 `unhealthy` payload the supervisor sees — carries a verdict that names the
 failing LAYER (the intermediate `(N/3)` lines log only the failure detail).
-Read it before touching anything — the historical failure mode here was
-hours spent evaluating a database instance upgrade while the server sat at
-10% of max_connections.
+Read it before touching anything: a `pool_starved` verdict on a server
+sitting at a fraction of `max_connections` is a client-side problem, and
+resizing the database instance does nothing for it.
 
 | Verdict | What it means | What to do |
 |---|---|---|

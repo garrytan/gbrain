@@ -2,17 +2,17 @@
 
 > **DEPRECATED — hosted API shutdown: 2026-09-04.** ZeroEntropy announced
 > (2026-07-24) that its hosted endpoints — `/models/embed` and
-> `/models/rerank` — shut down on that date, and gbrain has deprecated the
-> recipe: `gbrain init` auto-pick and the interactive picker exclude it
+> `/models/rerank` — shut down on that date, and the recipe is deprecated
+> in gbrain: `gbrain init` auto-pick and the interactive picker exclude it
 > (explicit `--embedding-model zeroentropyai:*` still works, with a loud
 > warning), every ZE embed/rerank call prints a once-per-process
 > deprecation warning, `gbrain providers` annotates it DEPRECATED
 > (`gbrain providers env zeroentropyai` prints this off-ramp instead of a
 > signup link), and
-> `gbrain ze-switch` is a pure refusal/redirect shim (every invocation
-> refuses or redirects; `--undo` prints the exact migrate command that
-> returns a switched brain to its prior provider — it no longer acts).
-> The September release removes the recipe entirely. A brain still embedding through the hosted API loses semantic
+> `gbrain ze-switch` refuses or redirects on every invocation (`--undo`
+> prints the exact migrate command that returns a switched brain to its
+> prior provider).
+> The recipe is scheduled for removal in a September 2026 release. A brain still embedding through the hosted API loses semantic
 > retrieval entirely on the shutdown date: query embedding uses the same
 > endpoint, so **existing vectors become unqueryable**, not just new
 > content. Two fixes, either works:
@@ -40,14 +40,14 @@
 >    generic OpenAI-compatible llama-server or Ollama endpoint will NOT
 >    work without a compat proxy in front. Switching the provider id
 >    instead changes `pages.embedding_signature` and triggers a full
->    re-embed. This path survives only until the September removal release
->    deletes the recipe.
+>    re-embed. This path lasts only until the recipe is deleted (scheduled
+>    for a September 2026 release).
 >
 > The hosted setup below remains accurate until the shutdown date.
 
-[ZeroEntropy](https://zeroentropy.dev) shipped two specialized small
-models for retrieval pipelines (factual specs kept for existing users and
-self-hosters — this is not a recommendation):
+[ZeroEntropy](https://zeroentropy.dev) offers two specialized small
+models for retrieval pipelines (factual specs for existing users and
+self-hosters; this is not a recommendation):
 
 - **`zembed-1`** — multilingual embedding distilled from zerank-2.
   Flexible Matryoshka dims (2560/1280/640/320/160/80/40), 32K context,
@@ -55,15 +55,14 @@ self-hosters — this is not a recommendation):
 - **`zerank-2`** — multilingual cross-encoder reranker. Plus `zerank-1`
   and `zerank-1-small` (open-source weights).
 
-Both landed in gbrain v0.35.0.0 behind the openai-compatible recipe path,
-alongside OpenAI and Voyage.
+Both are wired through gbrain's openai-compatible recipe path, alongside
+OpenAI and Voyage.
 
 ## Setup (existing brains and self-hosters only — do not onboard)
 
 New installs use Voyage (`gbrain init` handles it); do not create a new
 ZeroEntropy account for a provider that shuts down on 2026-09-04. A brain
-that already has a key exports it as before for the remaining hosted
-window:
+that already has a key exports it for the remaining hosted window:
 
 ```bash
 export ZEROENTROPY_API_KEY=<your-existing-key>
@@ -71,9 +70,9 @@ export ZEROENTROPY_API_KEY=<your-existing-key>
 
 ## Leaving ZeroEntropy (the off-ramp)
 
-The switch-ONTO instructions that used to live here are gone — following
-them would strand a brain on a dead API. The maintained off-ramp is the
-agent playbook at `skills/migrations/v0.46.3.0.md`; the one command
+This page carries no switch-onto instructions: following them would
+strand a brain on a dead API. The maintained off-ramp is the agent
+playbook at `skills/migrations/v0.46.3.0.md`; the one command
 (embeddings + reranker in the same consented run):
 
 ```bash
@@ -81,7 +80,7 @@ gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --dry-run   # cost pre
 gbrain migrate embeddings --to voyage:voyage-4 --dim 1024 --yes
 ```
 
-Plane note (still true, and the reason NOT to hand-edit config for this):
+Plane note (the reason NOT to hand-edit config for this):
 `embedding_model` / `embedding_dimensions` resolve from the **file plane**
 (`~/.gbrain/config.json`) and the **env plane** (`GBRAIN_EMBEDDING_MODEL` /
 `GBRAIN_EMBEDDING_DIMENSIONS`) — never the DB plane — because they size the
@@ -111,29 +110,31 @@ the last completion's smoke-check outcome. Step 5 of the playbook
 
 ## Reranker switch — zerank-2
 
-The reranker is the bigger story: gbrain had no cross-encoder reranker
-stage before v0.35.0.0. It slots between RRF dedup and token-budget
-enforcement in hybrid search.
+gbrain's cross-encoder reranker stage slots between RRF dedup and
+token-budget enforcement in hybrid search.
 
 ### Default-on with `balanced` and `tokenmax` modes
 
 The `balanced` and `tokenmax` mode bundles default
-`search.reranker.enabled = true`. Brains that never set
-`search.reranker.model` still fall back to `zerank-2` (the legacy bundle
-default until the September cutover — new installs write explicit reranker
-config instead: `voyage:rerank-2.5` when a Voyage key is present, otherwise
-`search.reranker.enabled false`). With
-`ZEROENTROPY_API_KEY` set, the ZE reranker fires automatically. Without
-the key, every rerank call fails-open (audit-logged) and search returns
-RRF order — same UX as before, just with an observable failure surfaced
-via `gbrain doctor`.
+`search.reranker.enabled = true`. The bundle default MODEL is
+`voyage:rerank-2.5`; a ZeroEntropy reranker runs only when
+`search.reranker.model` is explicitly set to `zeroentropyai:zerank-*` (with
+`ZEROENTROPY_API_KEY`), and on/after 2026-09-04 the gateway skips that dead
+hosted call before any HTTP (one audit row per process, one stderr line
+naming the switch command). Without the provider key for whichever reranker
+is resolved, every rerank call fails open (one `no_key` audit row per process,
+no stderr) and search returns RRF order, with the skip visible in
+`gbrain search --explain`, `gbrain search modes` and `gbrain doctor`.
 
 ### Enabling reranking today
 
-Set the surviving reranker FIRST, then enable — enabling on a brain that
-never set `search.reranker.model` falls back to the dying `zerank-2`:
-`gbrain config set search.reranker.model voyage:rerank-2.5`, then
-`gbrain config set search.reranker.enabled true`.
+`gbrain config set search.reranker.enabled true` is enough on a brain that
+never set `search.reranker.model`: the bundle default resolves
+to `voyage:rerank-2.5` (needs `VOYAGE_API_KEY`; without it search fails open
+in RRF order and `gbrain search modes` says so). Set `search.reranker.model`
+first only when you want a different reranker — an explicit
+`zeroentropyai:zerank-*` value works with `ZEROENTROPY_API_KEY` until
+2026-09-04, then the gateway short-circuits it.
 
 ### Verify
 
@@ -152,7 +153,7 @@ Two probes run for reranker:
 | Config key | Default | Notes |
 |---|---|---|
 | `search.reranker.enabled` | `true` for balanced/tokenmax, `false` for conservative | One-flip opt-in/out |
-| `search.reranker.model` | `zeroentropyai:zerank-2` (legacy fallback; new installs write `voyage:rerank-2.5`) | The recommended replacement is `voyage:rerank-2.5` |
+| `search.reranker.model` | `voyage:rerank-2.5` (bundle default) | Set `zeroentropyai:zerank-2` explicitly only for a self-hosted wire-compatible endpoint; the hosted API ends 2026-09-04 |
 | `search.reranker.top_n_in` | per mode: `30` conservative / `25` balanced / `50` tokenmax (tracks each bundle's `searchLimit`) | Candidates sent to reranker (caps API spend) |
 | `search.reranker.top_n_out` | `null` (no truncate) | Truncate reranked output to this many; `null` preserves full length |
 | `search.reranker.timeout_ms` | `5000` | HTTP timeout; long stalls degrade UX worse than RRF fallback |
@@ -185,22 +186,20 @@ ignore the field — no behavior change.
 
 ## Cache key versioning
 
-v0.35.0.0 bumped `KNOBS_HASH_VERSION` 1 → 2 to fold reranker config into
-the `query_cache.knobs_hash` column. During a rolling deploy:
-
-- Expect a temporary cache hit-rate dip (~1 hour at default
-  `cache.ttl_seconds = 3600s`)
-- Hot queries may briefly double their cache row count (one row per
-  version)
-
-Both clear naturally; no operator action required.
+The retained `KNOBS_HASH_VERSION` machinery (`src/core/search/mode.ts`)
+includes reranker config in `query_cache.knobs_hash`, separating rows written
+under different settings. Semantic result-cache reads and writes are currently
+disabled, so repeated queries perform fresh retrieval and do not repopulate
+those rows. Changing the hash version, TTL or cache setting cannot restore
+result caching while it is disabled.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `embedding_config` probe says invalid dim | Defaulting to 1536 (OpenAI default) | Set `embedding_dimensions` to one of 2560/1280/640/320/160/80/40 |
-| `reranker_config` probe says model not in allowlist | Typo in `search.reranker.model` | Use one of `zerank-2` / `zerank-1` / `zerank-1-small` |
-| `reranker_health` doctor warns about auth | `ZEROENTROPY_API_KEY` not set or invalid | Re-export the env var; `gbrain models doctor` to verify |
-| `reranker_health` doctor warns about transient failures | Upstream flake or rate limit | Reranker fails open to RRF; check ZE status page if persistent |
-| Cache hit rate dipped after upgrade | Expected during rolling deploy | Clears within `cache.ttl_seconds` (default 3600s) |
+| `reranker_config` probe says model not in allowlist | Typo in `search.reranker.model` | For a ZeroEntropy reranker use `zeroentropyai:zerank-2` / `zerank-1` / `zerank-1-small`; or `gbrain config unset search.reranker.model` to fall back to the bundle default `voyage:rerank-2.5` |
+| `reranker_health` says enabled but NOT running (`<KEY> not set`) | The resolved reranker's provider key is absent — search fails open in RRF order, one `no_key` audit row per process, nothing on stderr | `export VOYAGE_API_KEY=…` for the default (or `ZEROENTROPY_API_KEY` for an explicit ZE model), or `gbrain config set search.reranker.enabled false` |
+| `reranker_health` doctor warns about auth failures | Key present but rejected (HTTP 401/403) | Re-export a valid key; `gbrain models doctor` to verify |
+| `reranker_health` doctor warns about transient failures | Upstream flake or rate limit | Reranker fails open to RRF; check the provider's status page if persistent |
+| Cache reports disabled after upgrade | Semantic result caching is temporarily disabled | Budget for fresh retrieval; waiting for the TTL or changing cache settings does not restore it |

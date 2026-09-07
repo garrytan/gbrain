@@ -8,6 +8,11 @@
  * reranker is on the sunset list (RERANKER_SUNSETS), search_mode DOES warn
  * (with the sunset date), and the `gbrain search modes --reset` advice is
  * withheld whenever a reset would re-arm a sunsetting reranker.
+ *
+ * v0.48.2: the mode-bundle default is the LIVE voyage reranker, so the
+ * bundle-only cases are back to the original [CDX-20] `ok` and a reset can
+ * never re-arm a dying provider — only an EXPLICIT zeroentropyai:* override
+ * still warns.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -35,25 +40,24 @@ beforeEach(async () => {
 });
 
 describe('checkSearchMode [CDX-20]', () => {
-  test('unset mode → warn (balanced fallback arms the sunsetting reranker) with pick-a-mode hint', async () => {
+  test('unset mode → ok with pick-a-mode hint (balanced fallback reranks with the live voyage default)', async () => {
     const c = await checkSearchMode(engine);
     expect(c.name).toBe('search_mode');
-    // Balanced fallback resolves reranker_enabled=true on the sunsetting
-    // legacy default → sunset warn (amends the original [CDX-20] never-warn).
-    expect(c.status).toBe('warn');
+    // [CDX-20] original never-warn contract holds again: the balanced
+    // fallback's reranker is live (v0.48.2), so no sunset claim.
+    expect(c.status).toBe('ok');
     expect(c.message).toMatch(/unset/i);
     expect(c.message).toContain('gbrain search modes');
-    expect(c.message).toContain(ZEROENTROPY_SUNSET_DATE);
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
   });
 
-  test('mode set, no overrides → "canonical" message survives (with sunset warn for balanced)', async () => {
+  test('mode set, no overrides → "canonical" message, ok (balanced reranks with the live default)', async () => {
     await engine.setConfig('search.mode', 'balanced');
     const c = await checkSearchMode(engine);
-    // balanced bundle reranks with the sunsetting legacy default → warn.
-    expect(c.status).toBe('warn');
+    expect(c.status).toBe('ok');
     expect(c.message).toContain('balanced');
     expect(c.message).toContain('canonical');
-    expect(c.message).toContain(ZEROENTROPY_SUNSET_DATE);
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
   });
 
   test('mode set + overrides → ok with reset hint + override list (sunset-clean mode)', async () => {
@@ -78,38 +82,37 @@ describe('checkSearchMode [CDX-20]', () => {
   test('tokenmax mode is recognized; no override roster in message', async () => {
     await engine.setConfig('search.mode', 'tokenmax');
     const c = await checkSearchMode(engine);
-    // tokenmax bundle reranks with the sunsetting legacy default → warn.
-    expect(c.status).toBe('warn');
+    // tokenmax bundle reranks with the live voyage default → ok.
+    expect(c.status).toBe('ok');
     expect(c.message).toContain('tokenmax');
     expect(c.message).toContain('canonical');
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
   });
 });
 
 describe('checkSearchMode sunset-awareness (#3657/#4382)', () => {
-  test('overrides holding the reranker OFF the sunsetting bundle default → reset advice withheld, named load-bearing', async () => {
-    // The exact #4382 repro: tokenmax + explicit voyage reranker overrides.
+  test('explicit voyage overrides equal to the live bundle default → plain --reset advice, no sunset claims (v0.48.2)', async () => {
+    // The old #4382 repro: tokenmax + explicit voyage reranker overrides. A
+    // reset now restores the SAME live model, so consolidation is safe again.
     await engine.setConfig('search.mode', 'tokenmax');
     await engine.setConfig('search.reranker.enabled', 'true');
-    await engine.setConfig('search.reranker.model', 'voyage:rerank-2.5');
+    await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
     const c = await checkSearchMode(engine);
-    // State is healthy — it's the RECOMMENDATION that was the hazard (#4382).
     expect(c.status).toBe('ok');
-    expect(c.message).not.toContain('--reset');
-    expect(c.message).toContain('load-bearing');
-    // Names what a reset would restore + when it dies.
-    expect(c.message).toContain(LEGACY_DEFAULT_RERANKER_MODEL);
-    expect(c.message).toContain(ZEROENTROPY_SUNSET_DATE);
+    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).not.toContain('load-bearing');
+    expect(c.message).not.toContain(LEGACY_DEFAULT_RERANKER_MODEL);
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
     // Override roster stays visible.
     expect(c.message).toContain('search.reranker.model');
   });
 
-  test('active reranker on the sunset list (bundle default, no overrides) → warn with sunset date + replacement', async () => {
+  test('bundle default, no overrides (balanced) → ok, no sunset date, no reset advice needed', async () => {
     await engine.setConfig('search.mode', 'balanced');
     const c = await checkSearchMode(engine);
-    expect(c.status).toBe('warn');
-    expect(c.message).toContain(LEGACY_DEFAULT_RERANKER_MODEL);
-    expect(c.message).toContain(ZEROENTROPY_SUNSET_DATE);
-    expect(c.message).toContain(NEW_INSTALL_DEFAULT_RERANKER_MODEL);
+    expect(c.status).toBe('ok');
+    expect(c.message).not.toContain(LEGACY_DEFAULT_RERANKER_MODEL);
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
     expect(c.message).not.toContain('--reset');
   });
 
@@ -123,13 +126,24 @@ describe('checkSearchMode sunset-awareness (#3657/#4382)', () => {
     expect(c.message).not.toContain('--reset');
   });
 
-  test('reranker disabled by override → reset advice withheld (reset would re-arm the sunsetting default)', async () => {
+  test('reranker disabled by override → plain --reset advice (a reset re-arms the LIVE default, not a dying one)', async () => {
     await engine.setConfig('search.mode', 'balanced');
     await engine.setConfig('search.reranker.enabled', 'false');
     const c = await checkSearchMode(engine);
     expect(c.status).toBe('ok');
+    expect(c.message).toContain('gbrain search modes --reset');
+    expect(c.message).not.toContain(ZEROENTROPY_SUNSET_DATE);
+  });
+
+  test('an explicit search.reranker.model equal to the bundle default is called redundant with a precise unset, never --reset', async () => {
+    // Every v0.46.3–v0.47.10 Voyage install carries this row from init.
+    await engine.setConfig('search.mode', 'balanced');
+    await engine.setConfig('search.reranker.model', NEW_INSTALL_DEFAULT_RERANKER_MODEL);
+    const c = await checkSearchMode(engine);
+    expect(c.status).toBe('ok');
+    expect(c.message).toContain('redundant');
+    expect(c.message).toContain('gbrain config unset search.reranker.model');
     expect(c.message).not.toContain('--reset');
-    expect(c.message).toContain(ZEROENTROPY_SUNSET_DATE);
   });
 
   test('sunset-clean mode + overrides keeps the --reset recommendation (conservative bundle reranks nothing)', async () => {

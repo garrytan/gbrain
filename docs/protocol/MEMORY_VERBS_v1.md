@@ -1,7 +1,7 @@
 # MEMORY_VERBS v1 — the memory wire protocol
 
 GBrain's frozen memory-verb interface over MCP: `recall`, `remember`,
-`entity`, `synthesize`, `forget`, plus (v0.45.7, additive) `context_pack` and
+`entity`, `synthesize`, `forget`, plus the additive `context_pack` and
 `delta` — seven verbs, all at `protocol_version: 1`. The contract every harness can rely on the
 way every Postgres client relies on the wire protocol — and the contract any
 OTHER memory server can implement and certify against
@@ -39,9 +39,9 @@ the same registry.
 - Enum values are part of the contract. Where an enum's DERIVATION is
   implementation-defined (noted per field), implementations may improve the
   derivation without a version bump; the values and their meanings stay fixed.
-- **Adding a VERB is additive, not a version bump.** v0.45.7 grew the frozen set
-  from 5 to 7 (`context_pack`, `delta`) at `protocol_version: 1`. New verbs are
-  new optional surface a v1 client discovers via tool-listing; the existing five
+- **Adding a VERB is additive, not a version bump.** `context_pack` and `delta`
+  sit alongside the original five at `protocol_version: 1`. New verbs are
+  new optional surface a v1 client discovers via tool-listing; the existing verbs
   keep stamping `1`. Bumping `protocol_version` would rewrite the frozen five's
   wire output and break every client that pins `== 1` — so we don't.
 
@@ -123,13 +123,13 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
 - No embedding provider configured? The search arm degrades to keyword-only
   and the response notes `search_degraded` — never an error.
 
-Response — an additive SUPERSET of the pre-v1 facts envelope on EVERY call
-(all legacy fields unchanged; JSON consumers ignore additions):
+Response — an additive SUPERSET of the plain facts envelope on EVERY call
+(the base fact fields are unchanged; JSON consumers ignore additions):
 
 | field | type | semantics |
 |---|---|---|
 | `protocol_version` | int | always present (every verb, every call) |
-| `facts[]` | array | legacy fact fields unchanged, PLUS per fact: `fact_id` (opaque STRING — the value `forget` accepts; the legacy numeric `id` stays for pre-v1 consumers) and `provenance` (the stored source attribution) |
+| `facts[]` | array | the base fact fields, PLUS per fact: `fact_id` (opaque STRING — the value `forget` accepts; the numeric `id` remains alongside it for compatibility) and `provenance` (the stored source attribution) |
 | `total` | int | count of facts returned |
 | `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug) |
 | `search_degraded` | string? | present when keyword-only fallback fired |
@@ -195,7 +195,7 @@ backlink_count, active_fact_count }`.
 - `open_threads` (best-effort in v1): active commitment-kind facts + timeline
   entries from the last 90 days, capped at 3.
 
-#### entity open_threads loop backing (v0.47, additive)
+#### entity open_threads loop backing (additive)
 
 On brains running the open-loop engine, `open_threads` entries may
 additionally be DERIVED from `open_loops` rows (they rank ahead of raw
@@ -213,8 +213,8 @@ pending-decision loops — the ADDITIVE-FOREVER optional fields disambiguate:
 - `status` — loop status (always `open` on cards).
 - `loop_id` — the open_loops row id (`loops_close` takes it).
 
-All five are absent on threads not backed by a loop row and on pre-v0.47
-servers; a server that omits them still certifies. Same propagation to the
+All five are absent on threads not backed by a loop row and on servers that
+do not implement them; a server that omits them still certifies. Same propagation to the
 per-entity cards and top-level `open_threads` of `context_pack`.
 - `edges`: top ~10 typed edges, mentions excluded, out-edges first.
 - The p99 < 100ms promise is op-layer latency (transport excluded), CI-gated
@@ -236,10 +236,10 @@ output_tokens, usd_estimate}, protocol_version }`.
 - No LLM configured ⇒ the protocol error `unavailable` with a fix — never a
   fake answer.
 
-#### synthesize compose status (v0.45.x, additive)
+#### synthesize compose status (additive)
 
-Every response additionally carries four ADDITIVE-FOREVER fields (absent on
-pre-v0.45.x servers; a server that omits them still certifies):
+Every response additionally carries four ADDITIVE-FOREVER fields (optional;
+a server that omits them still certifies):
 
 - `synthesis_status` — how `answer` was produced: `ok` (LLM synthesis) or
   `extractive_fallback` (the LLM compose step failed but retrieval succeeded —
@@ -279,7 +279,7 @@ Response: `{ id, expired, reason, protocol_version }`.
 
 ### context_pack(entities, budget_tokens?, since?, session_id?, include_private?) — read, zero LLM
 
-v0.45.7 (issue #1). One deterministic, budget-packed bundle for a set of standing
+One deterministic, budget-packed bundle for a set of standing
 entities — entity cards + open threads + hot facts. Built for **session
 boundaries**: call it at session start to warm cold context, and immediately
 after compaction to rehydrate what the summary dropped. Composes existing arms
@@ -300,7 +300,7 @@ pre-rendered, envelope-wrapped injectable block.
 
 ### delta(since?, entities?, budget_tokens?, session_id?, include_private?) — read, zero LLM
 
-v0.45.7 (issue #1). "What changed since T" for heartbeats — pages updated after
+"What changed since T" for heartbeats — pages updated after
 the cursor (oldest first) + facts recorded after the cursor + open-thread
 events after the cursor. Lets a periodic wake maintain warm state in
 O(changes) instead of re-deriving. Provide `since` (ISO 8601) OR a

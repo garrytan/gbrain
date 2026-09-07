@@ -117,7 +117,7 @@ A typical 20-task benchmark with defaults costs ~$0.90 per run:
 For a 100-task benchmark: ~$5.00 (right at the default cap). Preflight
 refuses to start when the estimate exceeds `--max-cost-usd`.
 
-## Safety guards (the cathedral)
+## Safety guards
 
 | Guard | Decision | What it prevents |
 |---|---|---|
@@ -132,7 +132,7 @@ refuses to start when the estimate exceeds `--max-cost-usd`.
 | Cost preflight | D3 | Surprise mid-run budget exhaustion |
 | Dirty-tree refusal | dry-fix pattern | Overwriting your uncommitted changes |
 
-## Hardening notes (#4119)
+## Hardening notes
 
 Operational truths that keep a run honest. Read these before trusting a
 score delta.

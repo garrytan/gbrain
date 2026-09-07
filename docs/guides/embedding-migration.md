@@ -34,7 +34,7 @@ the explicit escape hatch.
 
 ## Recommended targets
 
-- **`voyage:voyage-4 --dim 1024`** (the new-install default). One
+- **`voyage:voyage-4 --dim 1024`** (the default for new installs). One
   `VOYAGE_API_KEY` covers embedding, the `rerank-2.5` reranker, and the
   multimodal model; the voyage-4 family shares one embedding space, so you
   can later point the query model at `voyage-4-large` or `voyage-4-lite`
@@ -82,7 +82,7 @@ such as ZeroEntropy (2026-09-04):
 - **`gbrain upgrade`** — a one-shot banner (gated by
   `ze_sunset_notice_shown`) with the same two fixes, plus a stage-2 banner
   per brain.
-- **The v0.46.3 version migration** (runs via `gbrain upgrade` /
+- **The `v0_46_3` version migration** (runs via `gbrain upgrade` /
   `gbrain apply-migrations`) — detect-and-notify only: it checks the host
   brain's exposure (embedding, reranker, custom columns), prints the ACTION
   REQUIRED block, and files an agent action item pointing at
@@ -98,7 +98,7 @@ ingestion — not just new content.
 
 1. **Plan.** Counts every chunk not already in the target embedding space —
    including chunks on pages with **no recorded embedding signature**
-   (pages embedded before the v108 provenance stamp). Prices the re-embed
+   (pages whose chunks were embedded without a provenance stamp). Prices the re-embed
    from the pricing table; unknown providers print "estimate unavailable"
    instead of a fabricated number.
 2. **Consent gate.** Prints the plan; requires an interactive `y` or `--yes`.
@@ -114,8 +114,8 @@ ingestion — not just new content.
    single call. A bad key fails here, with nothing changed.
 4. **Env-override gate.** When `GBRAIN_EMBEDDING_MODEL` /
    `GBRAIN_EMBEDDING_DIMENSIONS` are set and DISAGREE with the target, the
-   live run refuses (config-says-new / runtime-embeds-old is the #1421 damage
-   class); `--ignore-env-override` for deliberate experiments. When they
+   live run refuses (config-says-new / runtime-embeds-old silently splits a brain
+   across two embedding spaces); `--ignore-env-override` for deliberate experiments. When they
    AGREE with the target the run proceeds with a loud notice (env-first
    deployments are legitimate; keep the env in sync everywhere gbrain runs).
    Nothing load-bearing trusts the env either way: the "nothing to migrate"
@@ -123,8 +123,8 @@ ingestion — not just new content.
    census, the un-merged file plane), so a pre-set env var cannot fake a
    completed migration.
 5. **Apply.** When the target width differs from the actual column width,
-   runs the atomic schema transition owned by `embedding-migration.ts`
-   (the survivor module), in one transaction. It rebuilds **all three dim-pinned text-embedding-space
+   runs the atomic schema transition owned by `embedding-migration.ts`,
+   in one transaction. It rebuilds **all three dim-pinned text-embedding-space
    columns** — `content_chunks.embedding`, `query_cache.embedding`, and
    `facts.embedding` — at the new width, preserving each column's type
    (`vector` vs `halfvec`) and recreating its HNSW index. Missing any of the
@@ -191,9 +191,9 @@ While the re-embed runs, semantic search returns degraded (lexical-arm-only)
 results for not-yet-re-embedded content. Pick a quiet window for large
 brains, or use `--pace` to keep the DB responsive.
 
-## Pages without an embedding signature (#3391)
+## Pages without an embedding signature
 
-Pages embedded before provenance stamping have `embedding_signature IS NULL`
+Pages whose chunks were embedded without a provenance stamp have `embedding_signature IS NULL`
 and are grandfathered by the routine stale sweep (so an upgrade never
 surprise-re-embeds a whole corpus). After a provider swap that grandfather
 clause would silently leave those pages in the OLD embedding space — mixed
@@ -252,6 +252,6 @@ compat fetch, so a generic OpenAI-compatible `llama-server` or Ollama
 endpoint will NOT work without a compat proxy in front. Switching the
 provider id instead (e.g. `llama-server:zembed-1`) changes
 `pages.embedding_signature`, and the next stale-embed pass re-embeds
-everything — a full re-embed, not a zero-cost move. This path survives only
-until the September removal release deletes the `zeroentropyai` recipe. The
+everything — a full re-embed, not a zero-cost move. This path lasts only
+until the `zeroentropyai` recipe is deleted (scheduled for a September 2026 release). The
 migration command is for when you'd rather move to a hosted provider.

@@ -76,16 +76,13 @@ RUN gbrain init --pglite --no-embedding   # keyless install — done; no runtime
 
 Since every embedding cost gate is structurally moot with no key, none of `docs/operations/spend-controls.md` applies until you add one.
 
-## What changed from older releases
+## Repairing a provider/column mismatch
 
 ```dockerfile
-# On older gbrain releases this persisted a silent provider default that
-# mismatched the runtime key (a legacy-width column with a different-width
-# provider at runtime).
 RUN gbrain init --pglite   # no keys in the build env
 ```
 
-It now continues keyless — the same end state as Pattern 3 — and recovery is Pattern 2's runtime `gbrain init --force`. If an older image shipped the mismatched shape, `gbrain doctor` will surface the mismatch on first run after upgrade and print a paste-ready repair command — `gbrain init --force --pglite --embedding-model <model> --embedding-dimensions <dims>` for brains with no embeddings yet, `gbrain migrate embeddings --to <model> --dim <dims>` for non-empty brains.
+With no key in the build env this continues keyless — the same end state as Pattern 3 — and recovery is Pattern 2's runtime `gbrain init --force`. If an image carries a persisted embedding provider whose column width does not match the runtime key, `gbrain doctor` surfaces the mismatch on first run and prints a paste-ready repair command — `gbrain init --force --pglite --embedding-model <model> --embedding-dimensions <dims>` for brains with no embeddings yet, `gbrain migrate embeddings --to <model> --dim <dims>` for non-empty brains.
 
 ## Verifying a headless install
 

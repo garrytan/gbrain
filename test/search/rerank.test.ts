@@ -174,11 +174,14 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
     expect(out).toEqual(results);
   });
 
-  test('missing gateway reranker API key fail-opens and audits auth', async () => {
-    const { configureGateway } = await import('../../src/core/ai/gateway.ts');
+  test('missing gateway reranker API key fail-opens and audits ONE no_key row (v0.48.2)', async () => {
+    const { configureGateway, _resetSunsetWarningsForTest } = await import('../../src/core/ai/gateway.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-search-'));
     try {
       await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+        // The no_key row is once-per-process-per-model — clear the memo so
+        // this test observes the write regardless of file order.
+        _resetSunsetWarningsForTest();
         configureGateway({
           reranker_model: 'zeroentropyai:zerank-2',
           env: {},
@@ -195,7 +198,7 @@ describe('applyReranker — fail-open on every RerankError reason', () => {
         expect(out).toEqual(results);
         const failures = readRecentRerankFailures(1);
         expect(failures).toHaveLength(1);
-        expect(failures[0]!.reason).toBe('auth');
+        expect(failures[0]!.reason).toBe('no_key');
         expect(failures[0]!.error_summary).toContain('ZEROENTROPY_API_KEY');
       });
     } finally {

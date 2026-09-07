@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { affectsRecall } from './core/types.ts';
 import { installSigchldHandler } from './core/zombie-reap.ts';
 installSigchldHandler();
 import { installSignalHandlers as installCleanupSignalHandlers } from './core/process-cleanup.ts';
@@ -1672,8 +1673,10 @@ function describeEmptyRetrieval(): string {
   if (typeof m.retrieved_count === 'number' && m.retrieved_count > 0) {
     parts.push(`retrieved ${m.retrieved_count} before trimming`);
   }
+  // Ranking-only stages (a skipped reranker) never cause a miss — keep the
+  // "clean miss" verdict honest.
   const stages = Array.isArray(m.degraded)
-    ? [...new Set((m.degraded as Array<{ stage?: string }>).map(d => d?.stage).filter(Boolean))]
+    ? [...new Set((m.degraded as Array<{ stage?: string }>).filter(affectsRecall).map(d => d?.stage).filter(Boolean))]
     : [];
   parts.push(stages.length > 0
     ? `degraded: ${stages.join(', ')}`
@@ -1757,7 +1760,9 @@ export function formatResult(
         // Lazy import keeps formatResult's startup hot path narrow for
         // the common non-explain case.
         const { formatResultsExplain } = require('./core/search/explain-formatter.ts');
-        return formatResultsExplain(results);
+        // v0.48.2: thread the captured retrieval meta so the header lines
+        // (autocut decision, `degraded: reranker_skipped (no_key)`) render.
+        return formatResultsExplain(results, lastRetrievalMeta ?? undefined);
       }
       return results.map(r =>
         `[${r.score?.toFixed(4) || '?'}] ${r.slug} -- ${r.chunk_text?.slice(0, 100) || ''}${r.stale ? ' (stale)' : ''}`,

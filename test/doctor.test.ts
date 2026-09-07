@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +9,10 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+
+// Health fixtures configure fake provider keys. Clear the gateway snapshot as
+// well as each fixture's process env so later tests cannot send real requests.
+afterEach(() => resetGateway());
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {
@@ -162,10 +167,18 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-doctor-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.48.2: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // the check warns "not running" before reading the audit rows.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        // readiness reads the live gateway plane — give it the key the CLI
+        // would have folded so the audit ladder below is what gets exercised.
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         for (let i = 0; i < 3; i++) {
           logRerankFailure({
-            model: 'zeroentropyai:zerank-2',
+            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
             reason: 'unknown',
             query_hash: `unknown${i}`,
             doc_count: 30,
@@ -192,9 +205,17 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-budget-doctor-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.48.2: the default reranker is keyed on VOYAGE_API_KEY; without it
+      // the check warns "not running" before reading the audit rows.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        // readiness reads the live gateway plane — give it the key the CLI
+        // would have folded so the audit ladder below is what gets exercised.
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         logRerankFailure({
-          model: 'acmecorp:unpriced-reranker-v9',
+          model: 'voyage:rerank-2.5', // rows are filtered to the resolved model
           reason: 'budget',
           query_hash: 'budget01',
           doc_count: 30,
@@ -219,11 +240,19 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-passthrough-doctor-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.48.2: the check filters audit rows to the RESOLVED reranker (the
+      // Voyage default, keyed on VOYAGE_API_KEY) and reads readiness from the
+      // live gateway plane — configure both so the pass-through ladder is
+      // what gets exercised.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         const reasons = ['empty_result_set', 'malformed_shape', 'empty_result_set'] as const;
         reasons.forEach((reason, i) => {
           logRerankFailure({
-            model: 'acmecorp:reranker-v1',
+            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
             reason,
             query_hash: `passthru${i}`,
             doc_count: 12,
@@ -248,10 +277,18 @@ describe('doctor command', () => {
     const { checkRerankerHealth } = await import('../src/commands/doctor.ts');
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-rerank-passthrough-doctor-2-'));
     try {
-      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir }, async () => {
+      // v0.48.2: the check filters audit rows to the RESOLVED reranker (the
+      // Voyage default, keyed on VOYAGE_API_KEY) and reads readiness from the
+      // live gateway plane — configure both so the pass-through ladder is
+      // what gets exercised.
+      await withEnv({ GBRAIN_AUDIT_DIR: tmpDir, VOYAGE_API_KEY: 'pa-test-voyage' }, async () => {
+        (await import('../src/core/ai/gateway.ts')).configureGateway({
+          embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: 1536,
+          env: { OPENAI_API_KEY: 'sk-test', VOYAGE_API_KEY: 'pa-test-voyage' },
+        });
         for (const [i, reason] of (['empty_result_set', 'malformed_shape'] as const).entries()) {
           logRerankFailure({
-            model: 'acmecorp:reranker-v1',
+            model: 'voyage:rerank-2.5', // the resolved default — rows for other models are filtered out
             reason,
             query_hash: `passthru-low${i}`,
             doc_count: 12,

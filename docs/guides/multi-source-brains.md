@@ -179,7 +179,7 @@ Two details that are easy to miss:
   `gbrain sync --include-gitignored` — it forces a full filesystem walk so
   periodic syncs see ignored/untracked syncable content the git-object walk
   skips (`gbrain import <dir> --include-gitignored` is the one-shot import
-  equivalent). Doctor's `multi_source_drift` advice names this case (#4490):
+  equivalent). Doctor's `multi_source_drift` advice names this case:
   a slug stuck at `default` whose file is untracked won't be recreated by a
   plain re-sync, so reach for the flag (or commit the file) before any
   delete step.

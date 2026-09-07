@@ -141,8 +141,8 @@ search for [any topic in your brain]
 You should see results from your GBrain knowledge base.
 
 > **`list_skills` returns nothing?** Skill discovery is gated by `mcp.publish_skills`
-> on the host. New brains from `gbrain init` default it ON; brains upgraded from an
-> older release stay OFF until you opt in. Enable it on the host with
+> on the host. `gbrain init` sets it ON for new brains; a brain whose config never
+> set the key stays OFF until you opt in. Enable it on the host with
 > `gbrain config set mcp.publish_skills true`. Skill discovery and the core tools
 > named here (search, query, get_page, put_page, think, find_experts) are
 > full-surface — on `--surface verbs` the agent sees only the seven memory verbs,
@@ -152,7 +152,7 @@ You should see results from your GBrain knowledge base.
 > `remember` on the verbs surface.
 > Why brains differ on the default: [tutorial A1](../tutorials/connect-coding-agent.md#a1-on-the-host-serve-over-http).
 
-## Ambient recall at session boundaries (v0.45.7)
+## Ambient recall at session boundaries
 
 Two frozen verbs close the "no question fired" gap for long-lived sessions:
 `context_pack` (session-start warm-up + post-compaction rehydration) and

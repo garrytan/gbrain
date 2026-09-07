@@ -8,7 +8,7 @@ Without this: the agent triages email mechanically ("you have 12 unread"), preps
 
 ## Implementation
 
-**Now native:** the email half of this pattern no longer needs hand-rolled
+**Native pieces:** the email half of this pattern needs no hand-rolled
 collection or thread tracking. The google connector ingests Gmail/Calendar/
 Contacts (`docs/guides/google-connect.md`) and the open-loop engine
 (`docs/guides/open-loops.md`) maintains real loop rows behind `gbrain waiting`

@@ -37,6 +37,11 @@ describe('formatResult empty-result rendering (T15)', () => {
     expect(formatResult('search', [], {})).toContain('clean miss — no retrieval degradation');
   });
 
+  test('a ranking-only stage (reranker_skipped) is not a retrieval degradation on the empty-result line', () => {
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [{ stage: 'reranker_skipped', reason: 'no_key' }] });
+    expect(formatResult('search', [], {})).toContain('clean miss — no retrieval degradation');
+  });
+
   test('non-retrieval keys are ignored by the capture', () => {
     captureRetrievalMeta('warnings', [{ code: 'unknown_param', param: 'lmit' }]);
     expect(formatResult('search', [], {})).toBe('No results.\n');

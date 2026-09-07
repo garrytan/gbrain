@@ -21,12 +21,12 @@ automatically.
 this mismatch and refuse to silently proceed. This doc is the recipe
 they point at.
 
-## Same-dimension model swaps (v0.41.31.0 — automatic)
+## Same-dimension model swaps (automatic)
 
 If you switch to a different model at the **same** dimension count
 (e.g. one 1536-dim provider to another, or a re-tuned model that keeps
 its width), the column type doesn't change, so no `ALTER`/wipe recipe
-is needed. As of v0.41.31.0, gbrain stamps an embedding-provenance
+is needed. gbrain stamps an embedding-provenance
 signature (`<provider:model>:<dims>`) onto each page when its chunks are
 embedded. After you point the config at the new model, the stored
 signatures differ from the current one, and `gbrain embed --stale`
@@ -40,10 +40,12 @@ gbrain embed --stale --dry-run # preview the count without re-embedding
 
 Under federated_v2, the same drift is picked up by the per-source
 `embed-backfill` jobs that `gbrain sync --all` enqueues (capped
-`$X/source/24h`). **Grandfather:** pages embedded before v0.41.31.0
-carry a NULL signature and are NEVER flagged stale, so upgrading to
-v0.41.31.0 does NOT trigger a whole-corpus re-embed. Signatures only
-get stamped going forward.
+`$X/source/24h`). **Grandfather:** pages whose chunks were embedded
+without a provenance stamp carry a NULL signature and are NEVER flagged
+stale by the routine sweep, so a stamp-less corpus is not re-embedded
+wholesale by surprise. `gbrain embed --stale --include-null-signature`
+re-embeds them deliberately, and `gbrain migrate embeddings` always
+includes them.
 
 A **dimension** change still requires the wipe-and-reinit (PGLite) or
 column-alter (Postgres) recipe below — the on-disk `vector(N)` width
@@ -69,7 +71,7 @@ embedded WASM, not a native extension, and the WASM build rejects the
 column-type alter with `could not access file "$libdir/vector"`. The
 SQL recipe below works against Postgres only.
 
-The path that works on PGLite is **wipe-and-reinit**. v0.37 ships a
+The path that works on PGLite is **wipe-and-reinit**. There is a
 single-command wrapper:
 
 ```bash
@@ -91,7 +93,7 @@ Equivalent by hand:
 mv ~/.gbrain/brain.pglite ~/.gbrain/brain.pglite.bak
 
 # 2. Re-init with the new model + dimensions. `gbrain init` writes
-#    the schema sized to the new dim, and (as of v0.37) preserves
+#    the schema sized to the new dim, and preserves
 #    every other field in ~/.gbrain/config.json (chat model,
 #    expansion model, API keys).
 gbrain init --pglite \
@@ -164,14 +166,12 @@ gbrain embed --stale
 
 ## A note on `gbrain config set`
 
-Pre-v0.37 docs recommended `gbrain config set embedding_model X` to
-switch models. **This is a no-op for the embed pipeline.** `config set`
-writes the DB plane; the embed gateway reads the file plane
-(`~/.gbrain/config.json`). The pre-v0.37 recipe shipped the lie because
-the contract wasn't surfaced.
-
-As of v0.37, `gbrain config set embedding_model` and `gbrain config set
-embedding_dimensions` REFUSE and print the wipe-and-reinit recipe.
+`gbrain config set embedding_model X` cannot switch models: `config set`
+writes the DB plane, and the embed gateway reads the file plane
+(`~/.gbrain/config.json`), so such a write would be a no-op for the embed
+pipeline. For that reason `gbrain config set embedding_model` and
+`gbrain config set embedding_dimensions` REFUSE and print the
+wipe-and-reinit recipe.
 
 To change schema-sizing fields, use `gbrain init` (PGLite) or the SQL
 recipe (Postgres). Both update the file plane AND the schema together.
@@ -188,7 +188,7 @@ After the recipe lands, `gbrain doctor --fast` should report green and
 If it doesn't, file an issue with the doctor output and the steps you
 ran.
 
-## v0.37+ followups
+## Followups
 
 - Auto-fallback to alternative embedding providers when the primary
   fails quota/auth. Tracked; requires explicit `--try-fallback`

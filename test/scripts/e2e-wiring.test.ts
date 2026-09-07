@@ -5,9 +5,8 @@
  *   1. The selected-e2e job exists, consumes scripts/select-e2e.ts in its
  *      default file-selection mode, and NOTHING masks the selector's exit
  *      code (exit 2 = git failure must fail the job — fail-loud).
- *   2. Both aggregation consumers (e2e-cache-write, e2e-status) carry the
- *      job in `needs` — a red selected lane can neither seal the content-
- *      hash cache marker nor report E2E green.
+ *   2. The e2e-status aggregate carries the job in `needs` and requires
+ *      success — a red selected lane cannot report E2E green.
  *   3. The job passes NO live provider keys, so it is fork-runnable by
  *      construction (service Postgres only) and can never spend tokens.
  *   4. The job's checkout fetches real history (select-e2e diffs
@@ -24,8 +23,10 @@
  *      never grow past the seeded literal.
  */
 import { describe, test, expect } from 'bun:test';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { E2E_TEST_MAP } from '../../scripts/e2e-test-map.ts';
 
 const repoRoot = join(import.meta.dir, '..', '..');
@@ -58,10 +59,8 @@ describe('selected-e2e job wiring', () => {
     expect(job).not.toContain('continue-on-error');
   });
 
-  test('cache-write and status both gate on the job', () => {
-    const cacheWrite = jobBlock('e2e-cache-write');
+  test('status gates on the job', () => {
     const status = jobBlock('e2e-status');
-    expect(cacheWrite).toContain('selected-e2e');
     expect(status).toContain('selected-e2e');
     expect(status).toContain('needs.selected-e2e.result');
     // The aggregate loop must actually check the result, not just need it.
@@ -76,6 +75,38 @@ describe('selected-e2e job wiring', () => {
 
   test('checkout fetches real history for the master diff', () => {
     expect(job).toContain('fetch-depth: 0');
+  });
+
+  test('selector emits separate lines so workflow exclusions retain other selected files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-selector-wiring-'));
+    try {
+      const git = (args: string[]) => {
+        const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(0);
+      };
+      git(['init', '-q']);
+      git(['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'fixture', '--allow-empty']);
+      git(['update-ref', 'refs/remotes/origin/master', 'HEAD']);
+      mkdirSync(join(dir, 'test/e2e'), { recursive: true });
+      const files = ['test/e2e/mechanical.test.ts', 'test/e2e/route-a.test.ts', 'test/e2e/route-b.test.ts'];
+      for (const file of files) writeFileSync(join(dir, file), '// fixture\n');
+      const selected = spawnSync(process.execPath, ['--no-env-file', join(repoRoot, 'scripts/select-e2e.ts')], { cwd: dir, encoding: 'utf8' });
+      expect(selected.status, selected.stderr).toBe(0);
+      expect(selected.stdout).toBe(files.join('\n') + '\n');
+      writeFileSync(join(dir, 'selected.txt'), selected.stdout);
+      // Execute the workflow's actual exclusion loop, with only its temporary
+      // paths relocated so concurrent tests never share /tmp/run.txt.
+      const start = job.indexOf("EXCLUDE='");
+      const end = job.indexOf('done < /tmp/selected.txt', start) + 'done < /tmp/selected.txt'.length;
+      const filter = job.slice(start, end)
+        .replaceAll('/tmp/selected.txt', `'${join(dir, 'selected.txt')}'`)
+        .replaceAll('/tmp/run.txt', `'${join(dir, 'run.txt')}'`);
+      const filtered = spawnSync('bash', ['-e', '-c', filter], { encoding: 'utf8' });
+      expect(filtered.status, filtered.stderr).toBe(0);
+      expect(readFileSync(join(dir, 'run.txt'), 'utf8')).toBe(files.slice(1).join('\n') + '\n');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('every EXCLUDE entry is named by another job here or is a live-key spender', () => {

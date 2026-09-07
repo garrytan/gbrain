@@ -123,11 +123,13 @@ afterAll(() => {
 });
 
 describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
-  test('ABSENT per-call model resolves to the legacy default and short-circuits after the date — no transport call', async () => {
+  test('ABSENT per-call model resolves to the EXPLICITLY configured ZE model and short-circuits after the date — no transport call', async () => {
     await withFreshAuditDir(async () => {
-      // No reranker_model in config → effective model is the legacy
-      // DEFAULT_RERANKER_MODEL (zerank family) — the X7 main case.
-      configureGateway(gwConfig());
+      // v0.48.2: the bundle/runtime default is live voyage, so the sunset
+      // case is now a brain with an EXPLICIT `search.reranker.model`
+      // zeroentropyai:* config (gwConfig pins it). Absent per-call model →
+      // effective model is that configured ZE model — the X7 main case.
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       const transport = installCountingTransport();
       __setSunsetClockForTests(() => AFTER_SUNSET);
 
@@ -174,7 +176,7 @@ describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
 
   test('date matrix: BEFORE the sunset the call goes through; ON and AFTER it short-circuits', async () => {
     await withFreshAuditDir(async () => {
-      configureGateway(gwConfig());
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       const transport = installCountingTransport();
 
       __setSunsetClockForTests(() => BEFORE_SUNSET);
@@ -198,7 +200,7 @@ describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
 
   test('a LIVE model after the date is untouched (registry is prefix-scoped)', async () => {
     await withFreshAuditDir(async () => {
-      configureGateway(gwConfig());
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       const transport = installCountingTransport();
       __setSunsetClockForTests(() => AFTER_SUNSET);
 
@@ -210,7 +212,7 @@ describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
 
   test('F3 audit trail: ONE sunset_short_circuit row per process per model + one stderr line, across repeated calls', async () => {
     await withFreshAuditDir(async () => {
-      configureGateway(gwConfig());
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       installCountingTransport();
       __setSunsetClockForTests(() => AFTER_SUNSET);
 
@@ -235,10 +237,31 @@ describe('gateway.rerank post-sunset short-circuit (#3657)', () => {
   });
 });
 
+describe('v0.48.2 live default: no ZE config at all', () => {
+  test('ABSENT model → live voyage default → transport IS called after the date; no sunset row, no stderr', async () => {
+    await withFreshAuditDir(async () => {
+      // Base gwConfig() carries a VOYAGE_API_KEY and NO reranker_model → the
+      // effective model is DEFAULT_RERANKER_MODEL (voyage:rerank-2.5), which
+      // is not on the sunset list; the date is irrelevant to it.
+      configureGateway({ ...gwConfig(), reranker_model: undefined });
+      const transport = installCountingTransport();
+      __setSunsetClockForTests(() => AFTER_SUNSET);
+
+      const stderrText = await captureStderr(async () => {
+        const out = await rerank({ query: 'q', documents: ['d'] });
+        expect(out).toEqual([{ index: 0, relevanceScore: 0.9 }]);
+      });
+      expect(transport.count()).toBe(1);
+      expect(readRecentRerankFailures(7)).toHaveLength(0);
+      expect(stderrText).not.toContain('provider sunset');
+    });
+  });
+});
+
 describe('applyReranker fail-open on post-sunset short-circuit (#3657)', () => {
   test('results pass through unchanged and unre-ranked; no per-query audit rows pile up', async () => {
     await withFreshAuditDir(async () => {
-      configureGateway(gwConfig());
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       const transport = installCountingTransport();
       __setSunsetClockForTests(() => AFTER_SUNSET);
 
@@ -246,9 +269,13 @@ describe('applyReranker fail-open on post-sunset short-circuit (#3657)', () => {
       const snapshot = results.map((r) => r.slug);
 
       // Two searches — the gateway writes its one process-level row; the
-      // applyReranker layer must not add per-query rows for this reason.
-      const out1 = await applyReranker('query one', results, { enabled: true, topNIn: 30, topNOut: null });
-      const out2 = await applyReranker('query two', results, { enabled: true, topNIn: 30, topNOut: null });
+      // applyReranker layer must not add per-query rows for this reason, and
+      // reports the skip through onSkip (v0.48.2) for the degraded stamp.
+      const skips: string[] = [];
+      const opts = { enabled: true, topNIn: 30, topNOut: null, onSkip: (r: string) => skips.push(r) };
+      const out1 = await applyReranker('query one', results, opts);
+      const out2 = await applyReranker('query two', results, opts);
+      expect(skips).toEqual(['sunset_short_circuit', 'sunset_short_circuit']);
 
       expect(out1.map((r) => r.slug)).toEqual(snapshot);
       expect(out2.map((r) => r.slug)).toEqual(snapshot);
@@ -263,7 +290,7 @@ describe('applyReranker fail-open on post-sunset short-circuit (#3657)', () => {
 
   test('before the date applyReranker still reranks through the transport', async () => {
     await withFreshAuditDir(async () => {
-      configureGateway(gwConfig());
+      configureGateway(gwConfig({ reranker_model: LEGACY_DEFAULT_RERANKER_MODEL }));
       const transport = installCountingTransport();
       __setSunsetClockForTests(() => BEFORE_SUNSET);
 

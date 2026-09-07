@@ -78,6 +78,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // v0.48.2: the balanced bundle now reranks with a keyed default; without the
+  // key the search stamps `reranker_skipped` (by design). This suite is about
+  // EMBED degradation, so hold the reranker off to keep `degraded` clean.
+  await engine.setConfig('search.reranker.enabled', 'false');
 
   const fixtures: Array<[string, string, string]> = [
     ['alice-foo', 'Alice Foo', 'person'],

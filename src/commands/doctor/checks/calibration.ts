@@ -571,8 +571,11 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *      failures in window → 'ok: reranker disabled'. Avoids interpreting
  *      "no events" as "broken" when reranker is simply not in use.
  *   2) Walk last 7 days of `~/.gbrain/audit/rerank-failures-*.jsonl`.
- *   3) Auth failures: ANY single one warns (config-time problem doctor's
- *      own probe should have caught — surface it).
+ *   3) Auth failures (key present but rejected): ANY single one warns.
+ *      v0.48.2: enablement + model resolve through the mode plane; a
+ *      reranker that is enabled but NOT ready (key absent / provider past
+ *      sunset / unknown model) warns with the paste-ready fix BEFORE any
+ *      audit read, and `no_key` / `sunset_short_circuit` skip rows warn.
  *   4) Transient (network/timeout/rate_limit): warn at >=5 in window.
  *      Below that they're noise; reranker fails open anyway.
  *   5) Payload-too-large failures: warn at >=1 (indicates a workload
@@ -582,20 +585,91 @@ export async function checkVoiceGateHealth(engine: BrainEngine): Promise<Check> 
  *
  * Engine-agnostic (file-based + one config-key read).
  */
-export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
+export async function checkRerankerHealth(engine: BrainEngine, now: Date = new Date()): Promise<Check> {
   try {
     const { readRecentRerankFailures } = await import('../../../core/rerank-audit.ts');
-    const cfg = await engine.getConfig('search.reranker.enabled');
-    const rerankerEnabled = cfg === 'true' || cfg === '1';
+    const { loadSearchModeConfig, resolveSearchMode } = await import('../../../core/search/mode.ts');
+    const { describeRerankerFix } = await import('../../../core/ai/reranker-readiness.ts');
+    const { rerankerReadinessForEngine } = await import('../../../core/ai/reranker-readiness-engine.ts');
+    // v0.48.2: resolve enablement + model through the SAME plane search
+    // reranks with (per-key config → mode bundle), not the raw
+    // `search.reranker.enabled` row — balanced/tokenmax enable the reranker
+    // with no row at all, and the default model is keyed on VOYAGE_API_KEY.
+    const knobs = resolveSearchMode(await loadSearchModeConfig(engine));
+    const rerankerEnabled = knobs.reranker_enabled;
+    const model = knobs.reranker_model;
+    // Same config plane the CLI hands the gateway (env > file > DB-plane
+    // provider keys + provider_base_urls) — shared with `gbrain search modes`
+    // through rerankerReadinessForEngine so the two surfaces cannot drift.
+    const { readiness } = await rerankerReadinessForEngine(engine, model, { now });
+    const ready = readiness.ready;
 
-    const failures = readRecentRerankFailures(7);
+    // A brain with NO embedding provider never reaches the reranker (search
+    // takes the keyword-only path), so a missing reranker key is not a fault
+    // there. Only judged when the gateway is configured; unknown → no suppress.
+    let embeddingUp = true;
+    try {
+      const gw = await import('../../../core/ai/gateway.ts');
+      gw.requireConfig();
+      embeddingUp = gw.isAvailable('embedding');
+    } catch { embeddingUp = true; }
+    if (rerankerEnabled && !ready && !embeddingUp) {
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message: `Reranker ${model} is enabled but this brain has no embedding provider, so search runs keyword-only and the reranker never fires — nothing to fix until embeddings are configured.`,
+      };
+    }
+
+    if (rerankerEnabled && !ready) {
+      // Config-time problem: every search falls through unreranked in
+      // silence (one audit row per process, no stderr). Name the fix.
+      return {
+        name: 'reranker_health',
+        status: 'warn',
+        message: `Reranker ${model} is enabled but not running — ${describeRerankerFix(readiness)}`,
+      };
+    }
+
+    if (!rerankerEnabled) {
+      // Disabled: historical rows (often for a retired default) must not warn.
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message: `Reranker disabled — no failures expected` +
+          (readiness.ready && knobs.resolved_mode !== 'conservative'
+            ? ` (${model} is ready: gbrain config set search.reranker.enabled true)`
+            : ''),
+      };
+    }
+    // Only the RESOLVED model's rows count: audit rows for a retired default
+    // (e.g. the pre-v0.48.2 ZeroEntropy model) must not make a healthy Voyage
+    // reranker warn — or send the operator to verify the wrong key.
+    const allRows = readRecentRerankFailures(7).filter((f) => f.model === model);
+    // Skip rows (no_key / sunset_short_circuit) describe processes that ran
+    // unreranked BEFORE the current state; readiness above already proves the
+    // current state, so once ready they are informational, never a warn (a
+    // warn here would outlive the fix by the 7-day audit window).
+    const skipRows = allRows.filter((f) => f.reason === 'no_key' || f.reason === 'sunset_short_circuit');
+    const failures = allRows.filter((f) => f.reason !== 'no_key' && f.reason !== 'sunset_short_circuit');
+    const readyNote = `Reranker ${model} ready${readiness.requiredKey ? ` (${readiness.requiredKey} present)` : ''}`;
+    if (rerankerEnabled && skipRows.length > 0 && failures.length === 0) {
+      const reasons = Array.from(new Set(skipRows.map((f) => f.reason))).join(', ');
+      return {
+        name: 'reranker_health',
+        status: 'ok',
+        message:
+          `${readyNote} — ${skipRows.length} skip row(s) in last 7 days (${reasons}): searches in those processes ran unreranked ` +
+          `(a long-lived worker started before the key was added keeps skipping until it reloads its env; cached result sets ` +
+          `written while skipped stay unreranked for up to cache.ttl_seconds).`,
+      };
+    }
+
     if (failures.length === 0) {
       return {
         name: 'reranker_health',
         status: 'ok',
-        message: rerankerEnabled
-          ? 'No rerank failures in last 7 days'
-          : 'Reranker disabled — no failures expected',
+        message: `${readyNote} — No rerank failures in last 7 days`,
       };
     }
 
@@ -604,7 +678,7 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${authFails.length} reranker auth failure(s) in last 7 days. Fix: verify the reranker provider's API key (e.g. VOYAGE_API_KEY) and run \`gbrain models doctor\`.`,
+        message: `${authFails.length} reranker auth failure(s) in last 7 days (key present but rejected). Fix: verify the reranker provider's API key (e.g. ${readiness.requiredKey ?? 'VOYAGE_API_KEY'}) and run \`gbrain models doctor\`.`,
       };
     }
 
@@ -633,7 +707,7 @@ export async function checkRerankerHealth(engine: BrainEngine): Promise<Check> {
       return {
         name: 'reranker_health',
         status: 'warn',
-        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check ZE status if persistent.`,
+        message: `${transientFails.length} transient reranker failure(s) in last 7 days. Search fails open to RRF order; check the provider's status page if persistent.`,
       };
     }
 

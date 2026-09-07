@@ -1,10 +1,6 @@
-# Minions fix — repairing a half-migrated install
+# Minions fix: repairing a half-migrated install
 
-> **Historical repair guide** for the v0.11.0 → v0.11.1 migration. If you're
-> on any recent release, the canonical fix below (`gbrain apply-migrations
-> --yes`) is all you need; the stopgap sections exist for archaeology.
-
-**tl;dr:** on v0.11.1+ everything should self-heal. If Minions is partially
+**tl;dr:** Minions self-heals on upgrade. If an install is only partially
 set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs
 still on `agentTurn`), run:
 
@@ -12,25 +8,16 @@ still on `agentTurn`), run:
 gbrain apply-migrations --yes
 ```
 
-It's idempotent. On v0.11.1 installs that already migrated it's a cheap
-no-op.
+It's idempotent. On an install that already migrated it's a cheap no-op.
 
 ## Context
 
-v0.11.0 shipped the Minions schema, queue, worker, and migration skill —
-but the migration skill itself never fired on upgrade. `runPostUpgrade`
-printed the feature pitch and stopped. v0.11.0 was never released
-publicly; v0.11.1 is the first public Minions ship and fixes the
-mega-bug (migration fires automatically on `gbrain upgrade` and via
-the `postinstall` hook).
-
-If you're on a pre-v0.11.1 branch build (e.g. running the
-`minions-jobs` branch before v0.11.1 tagged), Minions may be installed
-but not wired: schema is v7, but no `~/.gbrain/preferences.json`,
-autopilot still runs inline, cron jobs still call `agentTurn`.
-
-This guide covers both paths: the canonical v0.11.1+ fix, and the
-stopgap for pre-v0.11.1 binaries that don't have `apply-migrations`.
+The Minions schema, queue, worker, and migration skill ship together, and
+the migration fires automatically on `gbrain upgrade` and via the
+`postinstall` hook. An install is half-migrated when the schema is present
+but the migration never completed: no `~/.gbrain/preferences.json`,
+autopilot still runs inline, cron jobs still call `agentTurn`. This guide
+covers detecting that state and finishing the migration.
 
 ## Detecting the half-migrated state
 
@@ -56,7 +43,7 @@ gbrain skillpack-check --quiet && echo healthy || echo needs_action
 gbrain skillpack-check | jq -r '.actions[]'    # prints the exact commands to run
 ```
 
-## The fix (v0.11.1 or later)
+## The fix
 
 ```bash
 gbrain apply-migrations --yes
@@ -77,39 +64,12 @@ G. Record        append completed.jsonl status:"complete"
 ```
 
 If Phase E emits TODOs for host-specific handlers (e.g. your OpenClaw's
-~29 non-gbrain crons), the migration finishes with `status: "partial"`.
+own non-gbrain crons), the migration finishes with `status: "partial"`.
 Your host agent walks the TODOs using `skills/migrations/v0.11.0.md` +
 `docs/guides/plugin-handlers.md`, ships handler registrations in the
 host repo, then re-runs `gbrain apply-migrations --yes`. Newly
 registerable cron entries get rewritten and the JSONL rows mark
 `status: "complete"`.
-
-## The stopgap (pre-v0.11.1 binary, no apply-migrations yet)
-
-If you're stuck on a branch build that doesn't have `apply-migrations`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
-```
-
-This bash script does what apply-migrations does from a shell environment:
-
-1. `gbrain init --migrate-only` — schema v7.
-2. `gbrain jobs smoke` — verify Minions health.
-3. Prompt for `minion_mode` (defaults `pain_triggered` on non-TTY).
-4. Write `~/.gbrain/preferences.json` atomically.
-5. Append `~/.gbrain/migrations/completed.jsonl` with `status: "partial"`
-   and `apply_migrations_pending: true`. That partial record is the
-   signal to v0.11.1's `apply-migrations` to pick up remaining phases
-   after the user upgrades.
-6. Detect host agent repos and PRINT rewrite instructions (never
-   auto-edits from a curl-piped script).
-7. Print the next step: `Run: gbrain autopilot --install`.
-
-Once v0.11.1 is installed, re-run `gbrain apply-migrations --yes` to
-finish the remaining phases (host rewrites + autopilot install). The
-stopgap's `status: "partial"` record is designed to resume cleanly
-(it doesn't poison the permanent migration path).
 
 ## Verify the fix landed
 
@@ -121,7 +81,7 @@ cat ~/.gbrain/preferences.json
 cat ~/.gbrain/migrations/completed.jsonl
 
 # 3. Autopilot is supervising a Minions worker child
-# (v0.46+: the exit code is the verdict — 0 fresh, 1 needs attention,
+# (the exit code is the verdict — 0 fresh, 1 needs attention,
 #  2 self-disabled — so a nonzero exit here IS the finding, not a
 #  broken verify step. Under `set -e`, append `|| true` to keep going.)
 gbrain autopilot --status

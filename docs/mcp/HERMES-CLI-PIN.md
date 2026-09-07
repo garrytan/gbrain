@@ -13,38 +13,29 @@ file, the workflow pins, and the affected assertions together.
   differ by post-release main commits, same declared version. If a CI door run ever
   diverges from these notes, re-observe against the tag checkout.)
 - Installer sha256: `2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c`
-  (refreshed 2026-08-31: upstream drifted past the 2026-08-28 pin `4b5839eb…`
-  by exactly 4 commits touching `scripts/install.sh` (the served file;
-  matched byte-for-byte against the upstream repo at `a071fc80d`). Full
-  62-line diff reviewed: (1) Node support gate tightens 24.x → 24.11+
-  (version arithmetic only); (2) new `run_locked_uv_sync` helper — re-enables
-  PROJECT `[tool.uv]` config discovery for the Tier-0 locked sync in a
-  subshell while redirecting user/system uv config to an empty XDG dir, so
-  `uv sync --locked` is hash-verified again instead of falling through to
-  the non-hash-verified PyPI tiers (security-positive; the project config it
-  discovers comes from OUR tag+commit-pinned checkout); (3) default SOUL.md
-  prompt text rewrite (cosmetic, no exec). Outbound hosts and curl/wget
-  surfaces byte-identical to the prior pin; all five door flags
-  (`--skip-setup`/`--non-interactive`/`--skip-browser`/`--skip-computer-use`/
-  `--branch`/`--commit`) intact; unknown flags still hard-fail; payload pins
-  (tag+commit) unchanged.)
-  Prior record (2026-08-28 pin `4b5839eb…`, reviewed in full at 3,639 lines —
-  reviewed in full, all 3,639 lines: the `--skip-setup`/`--non-interactive`/
-  `--branch`/`--commit`/`--force-commit` flags the door depends on are intact
+  (observed 2026-08-31; the served `scripts/install.sh` matched byte-for-byte
+  against the upstream repo at `a071fc80d`). Full-script review notes for
+  this pin: the door flags (`--skip-setup`/`--non-interactive`/`--skip-browser`/
+  `--skip-computer-use`/`--branch`/`--commit`/`--force-commit`) are intact
   and unknown flags hard-fail (`exit 1`, so a dropped flag can never silently
-  skip the pin); outbound hosts remain the expected toolchain (github,
+  skip the pin); outbound hosts are the expected toolchain (github,
   nousresearch, astral/uv, nodejs.org, pypi, npmmirror; plus a HEAD-only
   duckduckgo connectivity probe); no eval/base64 obfuscation; sudo limited to
   distro package installs (the one setuid chrome-sandbox sudo is
-  desktop-build-only, never in the door path); payload pins (tag+commit)
-  unchanged. KNOWN SURFACE, now REMOVED from the door: the computer-use
+  desktop-build-only, never in the door path); the Node support gate is
+  24.11+; the `run_locked_uv_sync` helper runs the Tier-0 `uv sync --locked`
+  with PROJECT `[tool.uv]` config discovery enabled in a subshell while
+  user/system uv config is redirected to an empty XDG dir, so the sync is
+  hash-verified instead of falling through to the non-hash-verified PyPI
+  tiers (the project config it discovers comes from OUR tag+commit-pinned
+  checkout). KNOWN SURFACE, kept out of the door: the computer-use
   sub-installer pipes trycua/cua's installer from raw.githubusercontent.com
-  at unpinned `main` to bash — the door now passes `--skip-browser
-  --skip-computer-use`, so no unpinned code runs in CI. Behavioral notes:
-  non-root layout still `~/.hermes/hermes-agent` (root installs now use
-  FHS `/usr/local/lib/hermes-agent` — the door's runners are non-root);
-  npm-dep failures now abort the install, absorbed by the door's 3-attempt
-  retry; managed Node is now v26.)
+  at unpinned `main` to bash; the door passes `--skip-browser
+  --skip-computer-use`, so no unpinned code runs in CI. Layout: non-root
+  installs land at `~/.hermes/hermes-agent` (root installs use FHS
+  `/usr/local/lib/hermes-agent`; the door's runners are non-root); npm-dep
+  failures abort the install, absorbed by the door's 3-attempt retry;
+  managed Node is v26.
   (download https://hermes-agent.nousresearch.com/install.sh to a file first; verify; then run)
 - Installer flags used: `--skip-setup --non-interactive`; binary lands at `~/.local/bin/hermes`
 - Python 3.11.15 via uv
@@ -74,11 +65,11 @@ populate `<tmp>/{SOUL.md,cron,logs,...}`, and do NOT touch `~/.hermes`. Belt-and
 ## `hermes mcp add` — THE big observed facts
 - Shape: `hermes mcp add <name> [--env K=V K2=V2 ...] [--connect-timeout N] --command CMD --args ...`
   **`--args` MUST be the last option** — anything after it (incl. a misplaced `--env`) is
-  swallowed into the server argv. (First rehearsal failed exactly this way.)
+  swallowed into the server argv.
   **The env flag takes MULTIPLE KEY=VALUE values after ONE flag; REPEATING it REPLACES the
   first occurrence** (argparse nargs semantics) — a repeated-flag invocation silently drops
   the earlier vars, the handshake fails, and the piped Y then hits the save-anyway prompt →
-  the entry is saved with `enabled: false`. (First real door run failed exactly this way.)
+  the entry is saved with `enabled: false`.
 - Add performs a REAL MCP handshake + tool discovery at add time. Against
   `--command bun --args run <abs>/src/cli.ts serve` with `--env GBRAIN_HOME=<tmp>`:
   connected, discovered **110 gbrain tools**.
@@ -111,7 +102,7 @@ mcp_servers:
 - `hermes mcp test gbrain` → exit 0 + prints the tool list. THE targeted probe for Test 1b.
 - `hermes doctor` exists (global health; not a per-server assertion).
 
-## Cron (for the post-pin F7 TODO — real test is buildable)
+## Cron
 `hermes cron create [--name NAME] [--deliver ...] [--repeat N] [--skill S] [--script PATH]
 [--no-agent] [--workdir DIR] [--model M] [--provider P] <schedule> [prompt]` — fully
 non-interactive. `hermes cron tick` = run due jobs once and exit. `hermes cron list` exists.
@@ -125,7 +116,7 @@ non-interactive. `hermes cron tick` = run due jobs once and exit. `hermes cron l
   `git -C ~/.hermes/hermes-agent rev-parse HEAD` and loud-fails on any mismatch, so an
   installer that silently ignores unknown flags (or a moved checkout layout) can never
   run unpinned upstream code on a runner that later holds secrets.
-- `HERMES_INSTALL_SHA256: "c0380bc1f78d3d662a77663ce20cc17e14cbc4bec35e61ab7a33bac5f3afed2d"`
+- `HERMES_INSTALL_SHA256: "2076946edc23b3aed4a82ccb2e6b38ab593575626206dbdd192384e375b6d57c"`
 - Door test asserts `hermes --version` output contains `v$HERMES_VERSION` when the env var is set.
 - `hermes --version` output shape: `Hermes Agent v0.20.0 (2026.8.3)` + install dir + python lines.
 - Missing-secret posture is SPLIT by trigger: on `pull_request` the paid leg is
@@ -143,7 +134,7 @@ suite therefore seeds exactly ONE key (anthropic) and scrubs all provider env va
 hermes children (`hermesChildEnv` in test/helpers/agent-harness.ts) — the seeded
 `$HERMES_HOME/.env` is the single auth source.
 
-## mcp add save-anyway (correction to an earlier note)
+## mcp add save-anyway
 A piped `Y` saves the entry EVEN when the handshake failed — the save-anyway prompt
 writes it with `enabled: false`. The success discriminators are `enabled: true` in the
 saved YAML plus `hermes mcp test <name>` exit 0 — never the add's exit code, and not the

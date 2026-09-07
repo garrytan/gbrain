@@ -110,8 +110,7 @@ command runs, or Postgres will reject the trigger recreation with
   configurations can tokenize CJK text, so the FTS arm would return nothing
   for CJK queries. Both engines detect CJK queries and route them to a
   term-by-term `ILIKE` fallback with term-frequency ranking instead
-  (PGLite since v0.32.7; Postgres since #3986 — shared SQL in
-  `src/core/search/cjk-keyword-sql.ts`). The fallback is correct but not
+  (shared SQL in `src/core/search/cjk-keyword-sql.ts`). The fallback is correct but not
   index-accelerated: it scans `content_chunks.chunk_text`, so latency grows
   with corpus size. Note the routing is query-driven: any query containing
   CJK characters takes the fallback today, even on a Postgres instance with

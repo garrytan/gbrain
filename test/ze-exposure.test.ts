@@ -19,8 +19,9 @@ import type { GBrainConfig } from '../src/core/config.ts';
 import { detectZeExposure, renderZeActionRequired } from '../src/core/ze-exposure.ts';
 
 /** Stub engine: healthy brain with no rows. getConfig(null) → search-mode
- *  resolution falls through to the balanced bundle (reranker enabled on the
- *  legacy ZE default — deliberate: that IS the implicit-bundle exposure). */
+ *  resolution falls through to the balanced bundle, whose reranker is the
+ *  LIVE voyage default since v0.48.2 — NOT an exposure. Use
+ *  zeRerankerEngine() for the explicit-ZE reranker case. */
 function stubEngine(overrides?: Partial<Pick<BrainEngine, 'getConfig' | 'executeRaw'>>): BrainEngine {
   return {
     getConfig: overrides?.getConfig ?? (async () => null),
@@ -33,6 +34,14 @@ function voyageRerankerEngine(): BrainEngine {
   return stubEngine({
     getConfig: async (key: string) =>
       key === 'search.reranker.model' ? 'voyage:rerank-2.5' : null,
+  });
+}
+
+/** A brain whose reranker is EXPLICITLY pinned to the sunsetting ZE model. */
+function zeRerankerEngine(): BrainEngine {
+  return stubEngine({
+    getConfig: async (key: string) =>
+      key === 'search.reranker.model' ? 'zeroentropyai:zerank-2' : null,
   });
 }
 
@@ -100,11 +109,16 @@ describe('detectZeExposure — embedding axis (resolution, not evidence)', () =>
 });
 
 describe('detectZeExposure — reranker + custom-column axes', () => {
-  test('implicit bundle reranker (nothing configured) counts as exposure', async () => {
-    // The bundle default stays legacy zerank-2 until September — a brain that
-    // reranks with it today loses reranking on the sunset date.
+  test('implicit bundle reranker (nothing configured) is the live voyage default → NOT an exposure (v0.48.2)', async () => {
     const cfg = { embedding_model: 'voyage:voyage-4' } as GBrainConfig;
     const e = await detectZeExposure(stubEngine(), cfg, CLEAN_ENV);
+    expect(e.zeReranker).toBe(false);
+    expect(e.status).toBe('clear');
+  });
+
+  test('explicit ZE reranker row (search.reranker.model) counts as exposure', async () => {
+    const cfg = { embedding_model: 'voyage:voyage-4' } as GBrainConfig;
+    const e = await detectZeExposure(zeRerankerEngine(), cfg, CLEAN_ENV);
     expect(e.zeReranker).toBe(true);
     expect(e.status).toBe('exposed');
   });
@@ -209,7 +223,9 @@ describe('detectZeExposure — blast radius (capped, informational)', () => {
 
 describe('renderZeActionRequired — notice copy', () => {
   test('names the axis, the date, and the paste-ready commands', async () => {
-    const e = await detectZeExposure(stubEngine(), null, CLEAN_ENV);
+    // Configless embedding (bare ZE default) + an explicit ZE reranker row:
+    // both axes exposed so every command line renders.
+    const e = await detectZeExposure(zeRerankerEngine(), null, CLEAN_ENV);
     const text = renderZeActionRequired(e);
     expect(text).toContain('2026-09-04');
     expect(text).toContain('migrate embeddings --to voyage:voyage-4 --dim 1024');

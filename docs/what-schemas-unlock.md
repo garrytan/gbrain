@@ -6,7 +6,7 @@ Schemas are how gbrain stops being a pile of notes and becomes something with st
 
 The default schema (`gbrain-base`) ships with 22 page types covering the universal shapes — people, companies, meetings, notes, daily, calendar events. That's enough to start. But your brain is yours, and your brain's shape is not the default shape. A research brain needs `researcher` and `paper` as first-class types. A founder brain needs `lead`, `investor`, `portco`, `deal-stage`. A lawyer brain needs `case`, `motion`, `deposition`, `precedent`. Same engine, totally different shape.
 
-v0.40.7.0 made it possible for AGENTS to author that shape for you. Not just "the user manually edits YAML in `~/.gbrain/schema-packs/mine/pack.yaml`" but "your agent sees the corpus, proposes a type, asks for approval, applies it atomically with a full audit trail, then backfills 4000 existing pages with one chunked SQL command." That's the new thing.
+AGENTS can author that shape for you. Not just "the user manually edits YAML in `~/.gbrain/schema-packs/mine/pack.yaml`" but "your agent sees the corpus, proposes a type, asks for approval, applies it atomically with a full audit trail, then backfills 4000 existing pages with one chunked SQL command."
 
 This doc is the WHY. The [tutorial](schema-author-tutorial.md) is the HOW.
 
@@ -103,9 +103,7 @@ When you query, the schema pack governs how each source's content is routed. An 
 
 The schema is the team's tribal knowledge made explicit. Two engineers on different teams searching the same brain get DIFFERENT routing because their personal packs declare different expert types.
 
-### 6. The "agent co-curates your ontology" pattern (the new thing)
-
-This is what v0.40.7.0 actually enabled, and what the closed PR #1321 was reaching for.
+### 6. The "agent co-curates your ontology" pattern
 
 Your OpenClaw (or any agent connected to your brain over HTTPS MCP with admin scope) watches your ingestion stream. After a week of you dumping notes under `companies/yc-w24/`, the agent runs `gbrain schema detect` periodically, sees that prefix accumulating, and proposes:
 
@@ -149,27 +147,25 @@ Three things gbrain does that generic note systems can't:
 
 **3. The schema is queryable AND mutable AND auditable.** You can ask the brain what its schema looks like (`gbrain schema graph`), evolve it through atomic CLI verbs + MCP ops (`gbrain schema --help` for the full surface) with full lock + audit semantics, and recover from any mistake (every primitive has an inverse, plus `gbrain schema downgrade` restores the previous active pack). This isn't "vibes-based knowledge management." It's a production system with structural integrity guarantees.
 
-## What changed in v0.40.7.0 specifically
+## What makes agent authoring safe
 
-v0.39.1.0 shipped the schema-pack engine. You could ALREADY fork the bundled pack and edit `pack.yaml` by hand. What you couldn't do was let an agent author it safely — there were no atomic file locks, no audit log, no MCP exposure, no pack-aware wiring in the query path. The cathedral was built but unreachable from the outside.
-
-v0.40.7.0 closed those gaps:
+Forking the bundled pack and editing `pack.yaml` by hand is the manual path. Letting an agent author the pack safely takes more machinery: atomic file locks, an audit log, MCP exposure, and pack-aware wiring in the query path. gbrain ships all of it:
 
 - **`withMutation` skeleton** wraps every primitive in 8 ordered safety steps (bundled-guard → lock → read → mutate → validate → atomic write → audit → invalidate). The pack file on disk is never partial. Two concurrent agents can't race.
 - **Per-pack `O_CREAT|O_EXCL` atomic lock** (deliberately NOT the TOCTOU-prone `existsSync+writeFileSync` pattern). TTL refresh every 10s while a mutation runs; `--force` means "steal stale lock" not "skip locking."
 - **Privacy-redacted audit log** at `~/.gbrain/audit/schema-mutations-YYYY-Www.jsonl`. Type names sha8-hashed, prefixes truncated to first segment only. A leaked screenshot of the audit can't reveal sensitive taxonomy like `personal/oncology/` or `legal/depositions/`.
-- **9 new MCP ops** including the batched `schema_apply_mutations` (admin scope, NOT localOnly — your OpenClaw and any remote agent author packs over normal HTTPS MCP, with `client_id` captured as `actor: mcp:<clientId8>`).
-- **T1.5 wiring** finally completes for `whoknows` and `find_experts`: a custom `researcher` type marked `--expert` now actually surfaces in query results. Pre-v0.40.7 it silently never matched because the query path read hardcoded `['person', 'company']`.
+- **Schema MCP ops** including the batched `schema_apply_mutations` (admin scope, NOT localOnly — your OpenClaw and any remote agent author packs over normal HTTPS MCP, with `client_id` captured as `actor: mcp:<clientId8>`).
+- **Pack-aware expert routing** in `whoknows` and `find_experts`: a custom `researcher` type marked `--expert` surfaces in query results because the query path reads the active pack's `expert_routing: true` types rather than a hardcoded `['person', 'company']` list.
 - **Cross-process invalidation** via stat-mtime TTL gate inside `loadActivePack`. Operator runs `gbrain schema add-type` from a terminal; the autopilot daemon picks up the new type within 1 second without a restart.
 
-The cumulative effect: an agent can safely co-curate your ontology with a complete forensic trail. That's the new thing.
+The cumulative effect: an agent can safely co-curate your ontology with a complete forensic trail.
 
 ## Where to start
 
 - **Want to see it work in 5 minutes?** Run the [tutorial](schema-author-tutorial.md). Forks the bundled pack, adds a researcher type, proves the wiring end-to-end.
 - **Want the agent recipe?** Read [`skills/schema-author/SKILL.md`](../skills/schema-author/SKILL.md). 7-phase workflow agents follow when they detect a schema-evolution opportunity.
 - **Want the rules of thumb?** Read [`skills/conventions/schema-evolution.md`](../skills/conventions/schema-evolution.md). Decision tree for when to add a type vs alias vs prefix. <20 pages don't pack-codify. 100+ pages need first-class types.
-- **Want the architecture?** The "Schema Cathedral v3" section in `docs/architecture/KEY_FILES.md` has the module-by-module breakdown.
+- **Want the architecture?** The "Schema packs: mutation surface" section in `docs/architecture/KEY_FILES.md` has the module-by-module breakdown.
 - **Want to set up an agent that co-curates your brain?** Run `gbrain auth register-client my-agent --scopes admin` to mint an OAuth client your remote agent can use to call `schema_apply_mutations` over MCP. The agent then runs detect → suggest → apply on its own cadence and asks you to approve substantive changes.
 
 The killer feature isn't "schemas." Personal knowledge systems have had schemas forever. The killer feature is that your AGENT can shape them safely on your behalf, with structural integrity guarantees that match what you'd expect from a database, not a notes app.

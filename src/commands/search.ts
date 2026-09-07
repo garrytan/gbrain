@@ -45,6 +45,7 @@ import {
 } from '../core/search/telemetry.ts';
 import {
   buildModesReport,
+  formatKnobValue,
   KNOB_DESCRIPTIONS,
   type SearchModesReport,
 } from '../core/search/modes-report.ts';
@@ -60,8 +61,22 @@ function formatModesText(report: SearchModesReport): string {
   lines.push('');
   lines.push('Resolved knobs:');
   for (const [knob, attr] of Object.entries(report.resolved)) {
-    const value = String(attr.value ?? '(undefined)');
+    // null is a legitimate value for some knobs (expansion_variant_budget =
+    // legacy weighting, reranker_top_n_out = no truncate) — never '(undefined)'.
+    const value = formatKnobValue(knob, attr.value);
     lines.push(`  ${knob.padEnd(28)} = ${value.padEnd(12)} [${attr.source_detail}]`);
+  }
+  // v0.48.2 — one runtime line answering "is my reranker actually running?"
+  const rr = report.reranker_readiness;
+  if (rr) {
+    lines.push('');
+    if (!rr.enabled) {
+      lines.push(`Reranker: off (resolved) — ${rr.model}${rr.required_key ? ` would need ${rr.required_key}` : ''}`);
+    } else if (rr.ready) {
+      lines.push(`Reranker: ${rr.model} (enabled) — ${rr.required_key ? `${rr.required_key} present` : 'no key required'}`);
+    } else {
+      lines.push(`Reranker: ${rr.model} (enabled but NOT running) — ${rr.fix ?? 'see gbrain doctor'}`);
+    }
   }
   lines.push('');
   lines.push('Mode bundles (frozen — set via `gbrain config set search.mode <mode>`):');
@@ -71,6 +86,7 @@ function formatModesText(report: SearchModesReport): string {
     lines.push(`  ${mode.padEnd(13)}${active}`);
     lines.push(`    cache=${b.cache_enabled} intentWeighting=${b.intentWeighting} keywordOrFallback=${b.keywordOrFallback}`);
     lines.push(`    tokenBudget=${b.tokenBudget ?? 'none'} searchLimit=${b.searchLimit} expansion=${b.expansion}`);
+    lines.push(`    reranker=${b.reranker_enabled ? b.reranker_model : 'off'} topNIn=${b.reranker_top_n_in} autocut=${b.autocut}`);
   }
   lines.push('');
   lines.push('Knob descriptions:');

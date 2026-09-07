@@ -108,8 +108,8 @@ without mail content reaching the logs.
 
 **Every eligible thread is queued** (newest first — ordering only, nothing is
 dropped for being older). The MinionQueue is the backlog and the worker's
-concurrency is the rate limit; the old tight per-sweep cap silently lost
-threads (a thread only re-candidates when it changes). Jobs are keyed by page
+concurrency is the rate limit (a thread only re-candidates when it changes,
+so a tight per-sweep cap would silently lose threads). Jobs are keyed by page
 revision (`loops:<source>:<slug>:<newestMs>`), so a re-sweep of an unchanged
 thread is a no-op and that key is the only dedupe in play. A generous safety
 ceiling (500/sweep) remains purely as a spend backstop for pathological
@@ -187,7 +187,7 @@ carry additive optional fields (`direction`, `due`, `counterparty`,
 `status`, `loop_id`) — visible through `entity`, `context_pack`, and
 `delta` on any harness.
 
-## Close semantics (v1, honest)
+## Close semantics
 
 - Thread loops close deterministically when a reply lands.
 - Commitment loops close manually (`gbrain loops done`) or by staleness

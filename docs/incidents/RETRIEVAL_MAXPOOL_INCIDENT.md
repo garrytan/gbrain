@@ -4,7 +4,7 @@
 closed PR #1616 — the diagnosis there was directionally right about the disease
 but wrong on several mechanics; this is the corrected record + what shipped.
 **Original author:** Garry Tan's OpenClaw. **Severity at the time:** High.
-**Related:** [`RETRIEVAL.md`](./RETRIEVAL.md), [`../eval/METRIC_GLOSSARY.md`](../eval/METRIC_GLOSSARY.md).
+**Related:** [`RETRIEVAL.md`](../architecture/RETRIEVAL.md), [`../eval/METRIC_GLOSSARY.md`](../eval/METRIC_GLOSSARY.md).
 
 ---
 

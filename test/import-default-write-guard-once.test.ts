@@ -36,10 +36,12 @@ beforeAll(async () => {
   await engine.initSchema();
   // Count the guard's aggregate (the only query in the codebase that projects
   // `non_default_sources`) without changing its behavior.
-  const realExecuteRaw = engine.executeRaw.bind(engine);
-  (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+  // Import transaction clones inherit this wrapper, so keep their receiver
+  // instead of sending transaction queries through the base engine.
+  const realExecuteRaw = engine.executeRaw;
+  (engine as unknown as { executeRaw: typeof realExecuteRaw }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
     if (sql.includes('non_default_sources')) aggregateRuns++;
-    return realExecuteRaw(sql, params);
+    return realExecuteRaw.call(this, sql, params);
   }) as typeof realExecuteRaw;
   home = mkdtempSync(join(tmpdir(), 'gbrain-import-guard-once-home-'));
   // Second engine for the per-engine memo test; created here so the isolation
@@ -47,10 +49,10 @@ beforeAll(async () => {
   other = new PGLiteEngine();
   await other.connect({});
   await other.initSchema();
-  const realOtherExecuteRaw = other.executeRaw.bind(other);
-  (other as unknown as { executeRaw: typeof realOtherExecuteRaw }).executeRaw = (async (sql: string, params?: unknown[]) => {
+  const realOtherExecuteRaw = other.executeRaw;
+  (other as unknown as { executeRaw: typeof realOtherExecuteRaw }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
     if (sql.includes('non_default_sources')) otherRuns++;
-    return realOtherExecuteRaw(sql, params);
+    return realOtherExecuteRaw.call(this, sql, params);
   }) as typeof realOtherExecuteRaw;
 });
 
@@ -192,9 +194,9 @@ describe('assessDefaultWriteGuardOnce does not memoize a failed assessment', () 
     writeFileSync(join(dir, 'r.md'), '---\ntype: note\ntitle: r\n---\n# r\n\nbody r\n');
     const wrapped = engine.executeRaw;
     let guardCalls = 0;
-    (engine as unknown as { executeRaw: typeof wrapped }).executeRaw = (async (sql: string, params?: unknown[]) => {
+    (engine as unknown as { executeRaw: typeof wrapped }).executeRaw = (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
       if (sql.includes('non_default_sources') && ++guardCalls === 1) throw new Error('connection reset by peer');
-      return wrapped(sql, params);
+      return wrapped.call(this, sql, params);
     }) as typeof wrapped;
     const stderrLines: string[] = [];
     try {

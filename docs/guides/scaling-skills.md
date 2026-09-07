@@ -129,7 +129,7 @@ your own resolvers across machines is covered in
 
 ## The compact list format
 
-GBrain's resolver parser originally required markdown tables:
+GBrain's resolver parser reads two dialects. Markdown tables:
 
 ```markdown
 | Trigger | Skill |
@@ -137,25 +137,19 @@ GBrain's resolver parser originally required markdown tables:
 | "gift idea" | `skills/gift-advisor/SKILL.md` |
 ```
 
-That's fine when you have 20 entries. It gets unwieldy at 200, and at 300
-it's unreadable. OpenClaw deployments quietly evolved a compact list
-format that scales better:
+Tables are fine at 20 entries, unwieldy at 200, unreadable at 300. The
+compact list format scales better:
 
 ```markdown
 - **gift-advisor**: gift idea | what should I bring | birthday gift
 - **flight-tracker**: track my flight | flight status | when does my flight land
 ```
 
-When `gbrain doctor` only spoke the table dialect, a 306-skill
-compact-format resolver reported every skill as unreachable: **238 FAIL
-errors on every doctor run**. The parser was silently treating the compact
-dialect as zero skills.
-
-Today the parser supports both. The same `parseResolverEntries`
-function reads table rows and list rows in the same file, with the
-multi-resolver merge (skillpack `skills/RESOLVER.md` + workspace
-`../AGENTS.md`) folding everything into one unified view. Run `gbrain doctor`
-and the 238 FAILs collapse to 0.
+The same `parseResolverEntries` function reads table rows and list rows
+in the same file, with the multi-resolver merge (skillpack
+`skills/RESOLVER.md` + workspace `../AGENTS.md`) folding everything into
+one unified view, so a compact-format resolver is fully visible to
+`gbrain doctor`.
 
 ### The list-format contract
 
@@ -261,13 +255,12 @@ it checks the resolver, reads the matching SKILL.md, and executes.
 The doctor sweep tells you which skills don't have a routing path. Add a
 resolver entry for each one, re-run, repeat until the count is zero.
 
-## A lesson from the first version
+## Fix the tool, not the data
 
-I initially converted my resolver from a clean list format to a table
-format because the validator only spoke tables. That was wrong. When a
-tool fails against valid data, the right move is to fix the tool, not
-reshape the data. The list format was correct, compact, readable, easy
-to maintain. The parser needed to support both shapes — and now it does.
+When a tool fails against valid data, the right move is to fix the tool,
+not reshape the data. A clean list-format resolver is correct, compact,
+readable, and easy to maintain; a validator that only understands one
+shape is the bug, and the parser accepts both shapes for that reason.
 
 The same principle applies everywhere in agent systems. Your SKILL.md is
 the source of truth. Your AGENTS.md is the source of truth. Your resolver

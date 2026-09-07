@@ -48,27 +48,37 @@ export const NEW_INSTALL_DEFAULT_EMBEDDING_MODEL = 'voyage:voyage-4';
 export const NEW_INSTALL_DEFAULT_EMBEDDING_DIMENSIONS = 1024;
 
 /**
- * Recommended reranker replacement (v0.46.3). The runtime reranker defaults
- * (gateway DEFAULT_RERANKER_MODEL + the mode-bundle reranker_model values)
- * stay on zerank-2 until the September removal so existing ZE-keyed brains
- * keep their working reranker until the API actually dies; init writes this
- * as an explicit `search.reranker.model` config for voyage-keyed installs
- * (any picked embedding provider; keyed non-voyage installs get explicit
- * `search.reranker.enabled false` instead), and the migration playbook sets
- * it for migrating users.
+ * Recommended reranker (v0.46.3) — Voyage rerank-2.5 rides the same
+ * VOYAGE_API_KEY as the new-install embedding default. The migration playbook
+ * names it for migrating users, and since v0.48.2 it is ALSO the runtime /
+ * mode-bundle default below, so init no longer writes it as an explicit
+ * `search.reranker.model` row (an explicit row equal to the bundle value
+ * would only earn a doctor `search_mode` reset nag).
  */
 export const NEW_INSTALL_DEFAULT_RERANKER_MODEL = 'voyage:rerank-2.5';
 
 /**
- * LEGACY runtime/bundle reranker default — the sunsetting ZeroEntropy
- * zerank-2. The ONE code home for the value (#3657 seam): the three mode
- * bundles (`src/core/search/mode.ts` MODE_BUNDLES.*.reranker_model) and the
- * gateway's runtime fallback (`src/core/ai/gateway.ts` DEFAULT_RERANKER_MODEL)
- * all resolve through this constant, so the September default swap is a
- * one-line edit HERE (plus retiring the matching RERANKER_SUNSETS row).
- * Pinned by test/reranker-default-seam.test.ts, which also fails if the
- * literal grows a new code home. Do NOT point new code at this; new-install
- * surfaces read NEW_INSTALL_DEFAULT_RERANKER_MODEL above.
+ * RUNTIME / MODE-BUNDLE reranker default — the ONE code home (#3657 seam) for
+ * what the three mode bundles (`src/core/search/mode.ts`
+ * MODE_BUNDLES.*.reranker_model) and the gateway's runtime fallback
+ * (`src/core/ai/gateway.ts`) resolve to when no explicit
+ * `search.reranker.model` is configured. v0.48.2 flipped it from the
+ * sunsetting ZeroEntropy zerank-2 to Voyage rerank-2.5 ahead of the
+ * 2026-09-04 hosted shutdown. Keyless brains fail open per search
+ * (`RerankError('no_key')`, one audit row per process, no stderr) — see
+ * `reranker-readiness.ts` for the shared "is it actually running" predicate.
+ * Pinned by test/reranker-default-seam.test.ts.
+ */
+export const DEFAULT_RERANKER_MODEL = NEW_INSTALL_DEFAULT_RERANKER_MODEL;
+
+/**
+ * HISTORICAL legacy value — the sunsetting ZeroEntropy zerank-2 that was the
+ * bundle/runtime default from v0.36 through v0.47.9. Nothing resolves to it
+ * by default anymore; it stays a named constant so the RERANKER_SUNSETS row,
+ * the sunset short-circuit tests, the ze-exposure copy and the migration
+ * playbook can name it. The RERANKER_SUNSETS row STAYS as long as the recipe
+ * exists: an explicit `zeroentropyai:*` config would otherwise re-introduce
+ * the 5s-per-query dead-call hang past the date. Do NOT point new code here.
  */
 export const LEGACY_DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
@@ -121,13 +131,37 @@ export function sunsetDateHasPassed(dateStr: string, now: Date = new Date()): bo
   return now.getTime() >= Date.parse(`${dateStr}T00:00:00Z`);
 }
 
-/** Sunset entry matching a reranker model string, or null when it is live. */
+/**
+ * Sunset entry matching a reranker model string, or null when it is live.
+ * Matches on the PROVIDER id the way `parseModelId` resolves it — lowercase,
+ * `provider:model` or `provider/model` — so `ZeroEntropyAI:zerank-2` and
+ * `zeroentropyai/zerank-2` cannot slip past the gateway short-circuit or the
+ * readiness predicate while still resolving to the ZE recipe.
+ */
 export function rerankerSunset(model: string | null | undefined): RerankerSunset | null {
-  if (!model) return null;
+  const provider = providerIdOf(model);
+  if (!provider) return null;
   for (const s of RERANKER_SUNSETS) {
-    if (model.startsWith(s.prefix)) return s;
+    if (`${provider}:` === s.prefix) return s;
   }
   return null;
+}
+
+/**
+ * Provider id of a `provider:model` / `provider/model` string, lowercased and
+ * trimmed — the same normalization `parseModelId` applies, kept dependency-free
+ * so leaf callers (upgrade banner, doctor checks, init) can share it.
+ */
+export function providerIdOf(model: string | null | undefined): string {
+  if (!model) return '';
+  const lower = model.trim().toLowerCase();
+  const sep = lower.search(/[:/]/);
+  return sep === -1 ? lower : lower.slice(0, sep);
+}
+
+/** True when the model string names the ZeroEntropy provider in any casing/separator form. */
+export function isZeroEntropyModel(model: string | null | undefined): boolean {
+  return providerIdOf(model) === 'zeroentropyai';
 }
 
 /**

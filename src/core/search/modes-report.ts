@@ -6,6 +6,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { semanticResultCacheAvailable } from './query-cache.ts';
 import {
   MODE_BUNDLES,
   SEARCH_MODE_CONFIG_KEYS,
@@ -15,6 +16,8 @@ import {
   type SearchMode,
   type ModeBundle,
 } from './mode.ts';
+import { describeRerankerFix } from '../ai/reranker-readiness.ts';
+import { rerankerReadinessForEngine } from '../ai/reranker-readiness-engine.ts';
 
 export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   cache_enabled: 'Semantic query cache on/off',
@@ -24,6 +27,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   keywordOrFallback: 'Keyword-arm AND→OR zero-recall fallback',
   tokenBudget: 'Per-call token-budget cap (undefined = no cap)',
   expansion: 'LLM multi-query expansion (Haiku call per search)',
+  expansion_variant_budget: 'Total RRF weight shared by expansion variant lists (null = legacy weight 1 each; (0, 4])',
   searchLimit: 'Default `limit` for the operation layer',
   reranker_enabled: 'Cross-encoder reranker on/off',
   reranker_model: 'Provider:model for the reranker',
@@ -55,7 +59,32 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   // v0.43 relational recall
   relationalRetrieval: 'Typed-edge relational recall arm (relational queries walk the graph; no-op otherwise)',
   relational_retrieval_depth: 'Max hops for relational traversal (1..3, 2 default)',
+  relational_rerank_pin: 'Relational-arm rows re-pinned above reranked text rows in fused order (0 = off; 0..10, 3 default)',
+  // Ranker wave (Phase E2) arm-confidence fusion
+  keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
+  // Ranker wave (Phase E3) metadata boost gate
+  metadata_boost_gate: 'Post-fusion metadata boosts (backlink/salience/recency/graph/alias): always, or lexical = only when a keyword/title/relational row fused',
 };
+
+/**
+ * Knobs whose legitimate `null` has a meaning of its own. The text renderer
+ * used to print `String(value ?? '(undefined)')`, so `expansion_variant_budget`
+ * at its bundle default (null = legacy weighting) rendered as `(undefined)` —
+ * indistinguishable from an unset knob. Null now renders distinctly; plain
+ * `(undefined)` stays reserved for knobs that are genuinely unset.
+ */
+export const KNOB_NULL_LABELS: Partial<Record<keyof ModeBundle, string>> = {
+  expansion_variant_budget: 'legacy (null)',
+  reranker_top_n_out: 'no truncate (null)',
+  keyword_arm_confidence_floor: 'off (null)',
+};
+
+/** Render one resolved knob value for the human `gbrain search modes` table. */
+export function formatKnobValue(knob: string, value: unknown): string {
+  if (value === undefined) return '(undefined)';
+  if (value === null) return KNOB_NULL_LABELS[knob as keyof ModeBundle] ?? '(null)';
+  return String(value);
+}
 
 /**
  * #4604: honest scope note carried on every report. The dashboard resolves
@@ -76,11 +105,47 @@ export interface SearchModesReport {
   resolved: Record<keyof ModeBundle, { value: unknown; source: string; source_detail: string; description: string }>;
   bundles: Record<SearchMode, ModeBundle>;
   config_keys: ReadonlyArray<string>;
+  /**
+   * v0.48.2 — is the RESOLVED reranker actually going to run? Same predicate
+   * doctor's `reranker_health` and init use (`reranker-readiness.ts`), fed the
+   * file-plane + process env. Absent only when readiness itself threw.
+   */
+  reranker_readiness?: RerankerReadinessReport;
   /** #4604: what this report does NOT include (per-call plane). */
   per_call_note: string;
   _meta?: {
     metric_glossary?: Record<string, string>;
   };
+}
+
+export interface RerankerReadinessReport {
+  model: string;
+  enabled: boolean;
+  ready: boolean;
+  /** Env var the reranker needs; ABSENT on the remote (MCP) surface — see redactReadinessForRemote. */
+  required_key?: string | null;
+  /** ABSENT on the remote surface (host key inventory is not for untrusted callers). */
+  key_present?: boolean;
+  sunset_passed: boolean;
+  /** A provider_base_urls override routes the provider to a self-hosted endpoint (sunset does not apply). Always false on the remote surface. */
+  self_hosted: boolean;
+  /** Paste-ready fix when not ready; null when ready; ABSENT on the remote surface (it names the key). */
+  fix?: string | null;
+}
+
+/**
+ * Remote (untrusted MCP) callers get the readiness verdict without the host's
+ * provider-key inventory: which env vars exist on the machine is
+ * fingerprinting data, and the paste-ready fix names them. `ready` stays —
+ * it is observable anyway (reranked results carry `rerank_score`).
+ */
+export function redactReadinessForRemote(report: SearchModesReport): SearchModesReport {
+  const rr = report.reranker_readiness;
+  if (!rr) return report;
+  // self_hosted is deployment topology (a private base-URL override exists) —
+  // not needed for the verdict, so it stays local too.
+  const { model, enabled, ready, sunset_passed } = rr;
+  return { ...report, reranker_readiness: { model, enabled, ready, sunset_passed, self_hosted: false } };
 }
 
 export async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
@@ -106,11 +171,52 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     };
   }
 
+  if (!semanticResultCacheAvailable()) {
+    attributions.cache_enabled = {
+      ...attributions.cache_enabled,
+      value: false,
+      source: 'availability',
+      source_detail: 'Semantic result caching is temporarily disabled; configured settings are retained.',
+    };
+  }
+
+  let reranker_readiness: SearchModesReport['reranker_readiness'];
+  try {
+    // Same plane the CLI hands the gateway (env > file > DB-plane provider
+    // keys + provider_base_urls) — shared with doctor's reranker_health via
+    // rerankerReadinessForEngine so the two surfaces cannot drift.
+    const { readiness: r } = await rerankerReadinessForEngine(engine, resolved.reranker_model);
+    reranker_readiness = {
+      model: r.model,
+      enabled: resolved.reranker_enabled,
+      ready: r.ready,
+      required_key: r.requiredKey,
+      key_present: r.keyPresent,
+      sunset_passed: r.sunsetPassed,
+      self_hosted: r.selfHosted,
+      fix: describeRerankerFix(r),
+    };
+  } catch (e) {
+    // Never vanish silently — the user asking "is my reranker running" gets a
+    // verdict line either way.
+    reranker_readiness = {
+      model: resolved.reranker_model,
+      enabled: resolved.reranker_enabled,
+      ready: false,
+      required_key: null,
+      key_present: false,
+      sunset_passed: false,
+      self_hosted: false,
+      fix: `readiness check failed: ${e instanceof Error ? e.message : String(e)} — run gbrain doctor`,
+    };
+  }
+
   return {
     schema_version: 2,
     active_mode: resolved.resolved_mode,
     active_mode_valid: resolved.mode_valid,
     resolved: attributions,
+    ...(reranker_readiness ? { reranker_readiness } : {}),
     bundles: {
       conservative: { ...MODE_BUNDLES.conservative },
       balanced: { ...MODE_BUNDLES.balanced },

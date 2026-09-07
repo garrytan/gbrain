@@ -2,8 +2,7 @@
 
 The shared foundation that all skills, recipes, and integrations build on.
 This page is a router — the detailed, current-state references live in the
-docs below (this file once carried its own copies of the pipeline and schema;
-those rotted, so each concept now has exactly one home).
+docs below, so each concept has exactly one home.
 
 ## Where things live
 

@@ -10,7 +10,13 @@
  * Fail-open posture: every error class (auth, network, timeout, rate-limit,
  * payload-too-large, unknown) logs to the rerank-audit JSONL and returns
  * the original RRF order unchanged. Search reliability beats reranker
- * quality; a flaky upstream must never break search.
+ * quality; a flaky upstream must never break search. Two classes are SKIPS
+ * rather than failures — `no_key` (provider key absent) and
+ * `sunset_short_circuit` (provider dead past its announced date): the
+ * gateway already wrote the one per-process audit row, so this layer returns
+ * at once without a per-query row and reports the skip through
+ * `opts.onSkip` so hybrid.ts can stamp a `reranker_skipped` degraded entry
+ * (visible in `--explain`, telemetry and the eval rows; never stderr).
  *
  * Caller (hybridSearch) decides whether the reranker fires via
  * `opts.reranker?.enabled`. Mode-bundle resolution defaults this to `true`
@@ -51,7 +57,17 @@ export interface RerankerOpts {
    * Production must NEVER set this.
    */
   rerankerFn?: (input: RerankInput) => Promise<RerankResult[]>;
+  /**
+   * v0.48.2 — fired when the reranker is SKIPPED without reordering
+   * (`no_key` / `sunset_short_circuit`). hybrid.ts stamps the degraded
+   * entry; nothing is written to stderr. Never fired for genuine failures
+   * (those keep the per-query audit row instead).
+   */
+  onSkip?: (reason: RerankSkipReason) => void;
 }
+
+/** The two skip classes (no HTTP call, no per-query audit row). */
+export type RerankSkipReason = 'no_key' | 'sunset_short_circuit';
 
 /** SHA-256 prefix (8 chars) of the query text for privacy-preserving audit. */
 function hashQuery(query: string): string {
@@ -109,11 +125,15 @@ export async function applyReranker(
     });
   } catch (err) {
     const reason = classifyRerankFailure(err);
-    // #3657 post-sunset short-circuit: the gateway already wrote the ONE
-    // per-process-per-model audit row (and the once-per-process stderr line)
-    // when it skipped the HTTP call — a per-query row here would flood the
-    // audit file on every search until the user migrates. Fail open at once.
-    if (reason === 'sunset_short_circuit') return results;
+    // #3657 post-sunset short-circuit + v0.48.2 no_key: the gateway already
+    // wrote the ONE per-process-per-model audit row (and, for the sunset case
+    // only, the once-per-process stderr line) when it skipped the HTTP call —
+    // a per-query row here would flood the audit file on every search until
+    // the user migrates / adds the key. Fail open at once, tell the caller.
+    if (reason === 'sunset_short_circuit' || reason === 'no_key') {
+      try { opts.onSkip?.(reason); } catch { /* caller hook must never break search */ }
+      return results;
+    }
     const errorSummary = err instanceof Error ? err.message : String(err);
     try {
       logRerankFailure({

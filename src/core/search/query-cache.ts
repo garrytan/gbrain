@@ -30,6 +30,10 @@
  */
 
 import { createHash } from 'node:crypto';
+
+/** Stored semantic responses are unavailable until all response dependencies can be revalidated. */
+export function semanticResultCacheAvailable(): boolean { return false; }
+
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';

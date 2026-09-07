@@ -485,6 +485,37 @@ ${longText}
 });
 
 describe('importFile — CJK wave (v0.32.7)', () => {
+  const isVersionStamp = (sql: string) => /^\s*UPDATE\s+pages\s+SET\s+chunker_version\s*=/i.test(sql);
+
+  function mockCompletedIndexEngine(): BrainEngine {
+    let deletionCompleted = false;
+    let replacementCompleted = false;
+    return mockEngine({
+      deleteChunks: async () => {
+        await Promise.resolve();
+        deletionCompleted = true;
+      },
+      upsertChunks: async () => {
+        expect(deletionCompleted).toBe(true);
+        await Promise.resolve();
+        replacementCompleted = true;
+      },
+      executeRaw: async (sql: string) => {
+        if (isVersionStamp(sql)) expect(replacementCompleted).toBe(true);
+        return [];
+      },
+    });
+  }
+
+  function expectCompletedIndexVersion(engine: BrainEngine, slug: string): void {
+    const calls = (engine as any)._calls;
+    const putCall = calls.find((c: any) => c.method === 'putPage');
+    expect(putCall.args[1].chunker_version).toBeUndefined();
+    const stamps = calls.filter((c: any) => c.method === 'executeRaw' && isVersionStamp(c.args[0]));
+    expect(stamps).toHaveLength(1);
+    expect(stamps[0].args[1]).toEqual([MARKDOWN_CHUNKER_VERSION, 'default', slug]);
+  }
+
   test('REGRESSION: pure-CJK filename with NO frontmatter slug imports cleanly as CJK slug', async () => {
     // After #115, slugifyPath('小米.md') = '小米' (CJK preserved). The
     // anti-spoof rule is content with no frontmatter slug present.
@@ -496,12 +527,12 @@ title: Xiaomi
 
 Body text.
 `);
-    const engine = mockEngine();
+    const engine = mockCompletedIndexEngine();
     const result = await importFile(engine, filePath, '小米.md', { noEmbed: true });
     expect(result.status).toBe('imported');
     expect(result.slug).toBe('小米');
     const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
-    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expectCompletedIndexVersion(engine, '小米');
     expect(putCall.args[1].source_path).toBe('小米.md');
   });
 
@@ -562,7 +593,7 @@ Hijack.
     expect((engine as any)._calls.length).toBe(0);
   });
 
-  test('chunker_version + source_path populated on every import', async () => {
+  test('completed index receives chunker_version and preserves source_path', async () => {
     const filePath = join(TMP, 'cjk-source-path.md');
     writeFileSync(filePath, `---
 type: concept
@@ -571,11 +602,12 @@ title: Has source path
 
 Content.
 `);
-    const engine = mockEngine();
-    await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    const engine = mockCompletedIndexEngine();
+    const result = await importFile(engine, filePath, 'concepts/cjk-source-path.md', { noEmbed: true });
+    expect(result.status).toBe('imported');
     const putCall = (engine as any)._calls.find((c: any) => c.method === 'putPage');
     expect(putCall).toBeTruthy();
-    expect(putCall.args[1].chunker_version).toBe(MARKDOWN_CHUNKER_VERSION);
+    expectCompletedIndexVersion(engine, 'concepts/cjk-source-path');
     expect(putCall.args[1].source_path).toBe('concepts/cjk-source-path.md');
   });
 });

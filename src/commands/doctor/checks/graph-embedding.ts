@@ -4,6 +4,7 @@
  * under its original name (tests and external callers import them from
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
+import { isZeroEntropyModel, NEW_INSTALL_DEFAULT_RERANKER_MODEL } from '../../../core/ai/defaults.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 
@@ -238,7 +239,7 @@ export async function checkZeEmbeddingHealth(engine: BrainEngine): Promise<Check
     const { loadConfigFileOnly } = await import('../../../core/config.ts');
     let model = '';
     try { model = getEmbeddingModel(); } catch { /* gateway unconfigured */ }
-    if (!model.startsWith('zeroentropyai:')) {
+    if (!isZeroEntropyModel(model)) {
       return {
         name: 'ze_embedding_health',
         status: 'ok',
@@ -355,8 +356,8 @@ export async function checkProviderSunset(engine: BrainEngine, now: number = Dat
     } catch {
       // Mode resolution failed — make no reranker-exposure claim.
     }
-    const onSunsetEmbedding = model.startsWith('zeroentropyai:');
-    const onSunsetReranker = !!reranker?.startsWith('zeroentropyai:');
+    const onSunsetEmbedding = isZeroEntropyModel(model);
+    const onSunsetReranker = isZeroEntropyModel(reranker);
     // Custom embedding columns can route queries through a ZE-backed model
     // even when the primary embedding + reranker are clear — without this arm
     // the check reports ok while those columns die on the date.
@@ -420,7 +421,7 @@ export async function checkProviderSunset(engine: BrainEngine, now: number = Dat
     if (onSunsetReranker) {
       parts.push(
         `The reranker (${reranker}) is on the same provider; after the shutdown search falls back to unreranked ordering. ` +
-        `Fix: gbrain config set search.reranker.model voyage:rerank-2.5 (needs VOYAGE_API_KEY), or disable: gbrain config set search.reranker.enabled false.`,
+        `Fix: gbrain config set search.reranker.model ${NEW_INSTALL_DEFAULT_RERANKER_MODEL} (needs VOYAGE_API_KEY), or disable: gbrain config set search.reranker.enabled false.`,
       );
     }
     if (onSunsetColumns) {

@@ -308,11 +308,10 @@ use a dedicated queue name like `nightly-enrich` above.
 
 ### From `minion-watchdog.sh`
 
-Earlier versions of this guide shipped a 68-line bash watchdog
-(`minion-watchdog.sh`). It's been replaced by `gbrain jobs supervisor`
-which handles everything the script did, plus atomic PID locking,
-structured audit events, queue-scoped health checks, and graceful
-drain on SIGTERM.
+If a cron-driven bash watchdog (`minion-watchdog.sh`) is still keeping
+your worker alive, replace it with `gbrain jobs supervisor`, which covers
+the same job plus atomic PID locking, structured audit events,
+queue-scoped health checks, and graceful drain on SIGTERM.
 
 **Migration:**
 
@@ -325,7 +324,7 @@ crontab -e   # delete the "*/5 * * * * /usr/local/bin/minion-watchdog.sh" line
 
 # 2. Start the supervisor (systemd users: reinstall the unit from
 #    docs/guides/minions-deployment-snippets/systemd.service, which
-#    now calls `gbrain jobs supervisor`).
+#    calls `gbrain jobs supervisor`).
 gbrain jobs supervisor start --detach --json
 # Or: sudo systemctl restart gbrain-worker
 
@@ -357,7 +356,7 @@ Regardless of which deployment path you're upgrading from:
 ### Supabase connection drops
 
 If Supabase drops the worker's Postgres connection (maintenance,
-connection limits, network blip), this now self-heals under the
+connection limits, network blip), this self-heals under the
 supervisor: the worker's DB-liveness probe self-exits (`db_dead`) on a
 dead pool and the supervisor respawns it with a fresh pool, and the
 supervisor also restarts a worker that stops making progress while
@@ -365,7 +364,7 @@ claimable work waits. The escalation commands and thresholds live in the
 [queue operations runbook](queue-operations-runbook.md) — that's the
 canonical home for wedge recovery.
 
-What can still bite is now narrow. Lock renewal is verify-before-evict:
+What can still bite is narrow. Lock renewal is verify-before-evict:
 a thrown or timed-out renewal is never treated as loss — at the deadline
 the worker asks the database the authoritative question (one fenced
 re-check), so a starved-but-healthy job recovers its lease and keeps
@@ -379,11 +378,6 @@ The remaining exposure: a genuinely dead worker's long-lease job waits
 up to lease + grace + one sweep interval before requeue, and the stall
 detector still dead-letters after `max_stalled` genuine misses (schema
 column default 5).
-
-Mixed-version fleets degrade gracefully: an old worker ignores the
-`lock_duration_ms` column and runs the legacy 30 s behavior; new workers
-honor old rows via the claim-time default. No drain or ordered restart
-is required.
 
 **Tune per-job.** `gbrain jobs submit` accepts `--max-stalled N`,
 `--backoff-type fixed|exponential`, `--backoff-delay <ms>`,

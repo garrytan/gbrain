@@ -165,9 +165,9 @@ you'd apply to any journal: write what you'd be comfortable persisting.
 | Memorable relay (declined or never disclosed) | everything — the integration is additive and off by default | replayable cross-session procedures via the third-party Memorable service (`docs/memorable-agents.md`) |
 | Ambient memory writeback (left off — the default) | everything — the feature is additive; agents still save when explicitly asked (`remember`) | unprompted capture of directly-stated user facts (instructions section, harness blocks, Stop-hook backstop — `docs/guides/ambient-writeback.md`). On Codex specifically, enabling it still has NO per-turn hook: real-time saves ride the instruction blocks; the SessionEnd→sweep lane is the delayed backstop |
 | Second simultaneous session | first session unaffected | second session's brain tools fail politely (one live serve per brain — v1 contract) |
-| Postgres brain (incl. harness mode) | MCP tools every session + pull protocol; per-turn hooks whenever a `gbrain serve` for this brain is running (the engine-uniform IPC listener keys its socket off the connection URL) | per-turn hook injection between serves (hooks heartbeat `no_pglite_path`/`no_serve` until one is up — the pre-wired hooks light up when a serve runs; MCP-every-session plus the pull protocol carry the load meanwhile). Preferring Postgres — e.g. via `gbrain init --prefer-postgres` — no longer forfeits the hook lane; it just needs a live serve, same as PGLite |
+| Postgres brain (incl. harness mode) | MCP tools every session + pull protocol; per-turn hooks whenever a `gbrain serve` for this brain is running (the engine-uniform IPC listener keys its socket off the connection URL) | per-turn hook injection between serves (hooks heartbeat `no_pglite_path`/`no_serve` until one is up — the pre-wired hooks light up when a serve runs; MCP-every-session plus the pull protocol carry the load meanwhile). Preferring Postgres — e.g. via `gbrain init --prefer-postgres` — keeps the hook lane; it just needs a live serve, same as PGLite |
 
-## Local harness mode (`gbrain bootstrap harness`, #4043)
+## Local harness mode (`gbrain bootstrap harness`)
 
 The workspace install above is built for a human's laptop. A box run by an
 agent framework (your OpenClaw, or anything that shells out to `claude -p` /
@@ -211,8 +211,8 @@ mode wires them in one command, with no `agent.json` and no interview:
   comment-preserving editor the workspace lane uses — the `{env:…}`
   interpolation the `connect` path prefers would resolve empty under a
   framework-spawned opencode for the same no-shell-profile reason.
-  Note: downgrading gbrain below the release that introduced opencode support
-  after wiring it leaves the opencode entry in place for manual removal —
+  Note: downgrading to a gbrain binary without opencode support after wiring
+  it leaves the opencode entry in place for manual removal —
   edit the opencode config by hand, or re-upgrade and run
   `gbrain bootstrap harness --remove`.
 - Honesty on Postgres brains: per-turn injection is degraded (the matrix row
@@ -253,8 +253,8 @@ revoked by `--remove` or rotation (it is not the harness's to revoke) —
 retire it yourself with `gbrain auth revoke` when you're done with it.
 
 Binary-downgrade note: token scoping is data-only (no migration), so a gbrain
-binary OLDER than the release that shipped it verifies every scoped token as
-FULL-ACCESS — the old verify path never reads the scopes column. If you
+binary without token scoping verifies every scoped token as FULL-ACCESS (its
+verify path never reads the scopes column). If you
 downgrade after a harness install, revoke the scoped tokens first
 (`gbrain auth revoke` with the id flag) and re-mint once you upgrade again.
 

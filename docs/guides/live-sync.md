@@ -21,7 +21,7 @@ GBrain is tuned for the Supabase **Transaction pooler** (port 6543): it
 auto-disables prepared statements there and routes `engine.transaction()`
 (migrations, DDL, sync imports) to a derived **direct** connection
 (`db.<ref>.supabase.co:5432`). That direct host is IPv6-only, so on an
-IPv4-only host it is unreachable. When that happens gbrain now falls back to
+IPv4-only host it is unreachable. When that happens gbrain falls back to
 the pooler automatically (one stderr warning, then single-pool mode for the
 rest of the process) — but the pooler's ~2-min statement timeout can truncate
 very long migrations or bulk imports.
@@ -44,7 +44,7 @@ gbrain sync --repo /path/to/brain && gbrain embed --stale
 - `gbrain sync --repo <path>` -- one-shot incremental sync. Detects changes via
   `git diff`, imports only what changed. **Commit-driven:** it imports
   *committed* changes; uncommitted edits and untracked files are counted and
-  reported as drift, not silently ignored (see Tricky Spot 6). For small
+  reported as drift, not silently ignored (see Tricky Spot 7). For small
   changesets (<= 100 files), embeddings are generated inline during import —
   unless the inline cost gate intervenes: when the estimated embedding spend
   crosses the configured floor in a non-interactive session (cron, `--json`),
@@ -168,9 +168,9 @@ vars — incident-time escape hatches, not everyday knobs.
    `gbrain sync --skip-failed` to acknowledge a known-bad set yourself.
 
 5. **Staleness can't read "fresh" forever.** A source whose content stopped
-   moving (or whose local clone vanished) used to report fresh indefinitely
-   off the stored content timestamp. Content-relative staleness now ramps
-   toward stale once wall-clock time since the last sync passes a ceiling
+   moving (or whose local clone vanished) would otherwise report fresh
+   indefinitely off the stored content timestamp. Content-relative staleness
+   ramps toward stale once wall-clock time since the last sync passes a ceiling
    (default 72h; `GBRAIN_STALENESS_CEILING_HOURS` to tune — it tracks
    `GBRAIN_SYNC_FRESHNESS_FAIL_HOURS` unless set). The ramp is gradual, so
    the warn tier still fires before the fail tier. `gbrain status` source
@@ -187,7 +187,7 @@ vars — incident-time escape hatches, not everyday knobs.
    `kind: "import"` so downstream tools can validate the contract before
    deciding whether to resume.
 
-6. **Sync imports commits, not your working tree.** Files written into the
+7. **Sync imports commits, not your working tree.** Files written into the
    brain repo but never committed are invisible to incremental sync. Sync
    won't stay silent about them: it prints a NOTE with the drift counts
    (`N uncommitted file(s) not synced`), the sync result object carries an

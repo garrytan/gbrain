@@ -283,6 +283,18 @@ describe('BudgetTracker.reserve', () => {
     expect((caught as BudgetExhausted).reason).toBe('no_pricing');
   });
 
+  test('v0.48.2: rerank kind for the voyage:rerank-2.5 default prices from the embedding table (no TX2 throw under --max-cost)', () => {
+    const t = new BudgetTracker({ maxCostUsd: 0.001, label: 'test', auditPath });
+    expect(() =>
+      t.reserve({ modelId: 'voyage:rerank-2.5', estimatedInputTokens: 3000, maxOutputTokens: 0, kind: 'rerank' }),
+    ).not.toThrow();
+    expect(() =>
+      t.record({ modelId: 'voyage:rerank-2.5', inputTokens: 3000, outputTokens: 0, kind: 'rerank' }),
+    ).not.toThrow();
+    // $0.05/1M * 3000 = $0.00015, under the cap — the default reranker is priced.
+    expect(t.totalSpent).toBeGreaterThan(0);
+  });
+
   test('#3223: rerank kind for zeroentropyai:zerank-2 prices from the embedding table (no TX2 throw under --max-cost)', () => {
     // Pre-fix: `search_mode: tokenmax` defaults the zerank-2 reranker ON
     // (docs/ai-providers/zeroentropy.md), but lookupPricing's rerank branch

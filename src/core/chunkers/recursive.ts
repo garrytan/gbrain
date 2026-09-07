@@ -23,6 +23,8 @@
 import { countCJKAwareWords, CJK_SENTENCE_DELIMITERS, CJK_CLAUSE_DELIMITERS } from '../cjk.ts';
 import { estimateEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
+import { sanitizeRemoteBody } from '../remote-body.ts';
+import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
  * Markdown chunker version. Folded into the per-page chunker_version column
@@ -30,6 +32,9 @@ import { safeSplitIndex } from '../text-safe.ts';
  * rebuild them on the new shape. Bump on any change that affects chunk
  * boundaries (delimiters, word counting, maxChars cap) OR the per-chunk
  * embedding shape (wrapper prefix added at embed time).
+ *
+ * v4: strict full-body Facts/Takes sanitation covers repeated, nested and
+ * unterminated protected fences before splitting or embedding.
  *
  * v3 (v0.40.3.0): chunks embed with optional contextual retrieval wrapper
  * per Anthropic's published methodology. Wrapper is built JUST IN TIME at
@@ -39,7 +44,7 @@ import { safeSplitIndex } from '../text-safe.ts';
  * post-upgrade reembed sweep. See
  * `src/core/contextual-retrieval-service.ts`.
  */
-export const MARKDOWN_CHUNKER_VERSION = 3;
+export const MARKDOWN_CHUNKER_VERSION = SAFE_FENCE_CHUNKER_VERSION;
 
 const DELIMITERS: string[][] = [
   ['\n\n'],                          // L0: paragraphs
@@ -71,10 +76,9 @@ export interface TextChunk {
   index: number;
 }
 
-// v0.28: import takes-fence stripper as a pre-processing pass. Takes content
+// The strict full-body sanitizer removes all Takes and non-world Facts. Takes content
 // lives in the takes table only; duplicating it inside content_chunks would
 // bypass the per-token MCP allow-list (Codex P0 #3 privacy fix).
-import { stripTakesFence } from '../takes-fence.ts';
 
 // v0.32.2 (Codex R2-#1 P0): same posture for facts — private fact rows must
 // not reach content_chunks.chunk_text, embeddings, or search. Pass
@@ -83,7 +87,6 @@ import { stripTakesFence } from '../takes-fence.ts';
 // at the row level. The fence shell stays in the chunked body so callers
 // that re-import the chunk content can still parse it; only the private
 // rows go.
-import { stripFactsFence } from '../facts-fence.ts';
 
 export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   const chunkSize = opts?.chunkSize || 300;
@@ -106,7 +109,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
   // search retains its public-knowledge surface; private rows are filtered
   // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
-  const stripped = stripFactsFence(stripTakesFence(text), { keepVisibility: ['world'] });
+  const stripped = sanitizeRemoteBody(text);
   if (!stripped || stripped.trim().length === 0) return [];
 
   const wordCount = countWords(stripped);

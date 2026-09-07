@@ -303,7 +303,7 @@ export function renderZeActionRequired(exposure: ZeExposure): string {
   }
   if (exposure.zeReranker) {
     lines.push(
-      `Reranking currently resolves to ZE zerank-2 and dies the same day. Fix:`,
+      `Reranking is explicitly configured to a ZE zerank model and dies the same day. Fix:`,
     );
     lines.push(
       `  gbrain config set search.reranker.model ${NEW_INSTALL_DEFAULT_RERANKER_MODEL}` +

@@ -56,11 +56,11 @@ doesn't carry the `GBRAIN:RLS_EXEMPT` exemption (see below) and enables RLS
 on each. After the upgrade, `gbrain doctor`'s `rls` check should be a no-op
 on every brain.
 
-### Read this before upgrading a pre-auto-RLS brain
+### Keeping a table RLS-off through the backfill
 
 If you have public tables that are intentionally RLS-off and you want them
 to stay that way, you MUST add the `GBRAIN:RLS_EXEMPT` comment **before**
-the upgrade that applies migration v35. The backfill flips RLS on for any
+migration v35 (the RLS backfill) runs on that brain. The backfill flips RLS on for any
 public table that doesn't carry the exact comment contract documented below.
 There is no `--dry-run` flag on the migration.
 

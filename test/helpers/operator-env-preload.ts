@@ -43,6 +43,8 @@ const KEEP_EXACT = new Set([
   'GBRAIN_DATABASE_URL', // e2e DB target; database-url-guard-preload (registered first) already vetoed un-opted runs
   'GBRAIN_MODEL_DISCOVERY', // operator override provider-keys-preload deliberately respects
   'GBRAIN_PGLITE_SNAPSHOT', // schema-snapshot fast path exported by every unit runner (scripts/lib/test-env.sh)
+  'GBRAIN_PGBOUNCER_URL', // explicit pooled test target supplied by ci-local
+  'GBRAIN_PGBOUNCER_DIRECT_URL', // admin connection used to create the isolated pooler test DB
   'GBRAIN_COMPILED_BIN', // heavy-lane compile-once binary (agent-harness.ts ensureCompiledGbrain)
   'GBRAIN_AUDIT_DIR', // audit-dir-preload honors a wrapper pre-set (inspect audit output after a run)
   'GBRAIN_SYNC_FAILURES_DIR', // same wrapper pre-set contract in sync-failures-preload

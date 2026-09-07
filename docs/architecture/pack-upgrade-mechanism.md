@@ -1,7 +1,7 @@
-# Pack-Upgrade Mechanism (v0.41.22)
+# Pack-Upgrade Mechanism
 
 > How `gbrain-base@1.x → gbrain-base-v2@1.0.0` (and any future pack
-> succession) wires through the onboard cathedral.
+> succession) wires through the onboard pipeline.
 
 ## The contract
 
@@ -45,8 +45,7 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │         → returns ResolvedPack[] sorted by successor version  │
 │    4. If successors.length > 0, emit OnboardCheckResult        │
 │       with RemediationStep targeting `unify-types` handler    │
-│       + protected: true (D17 → manual_only via render          │
-│       allowlist)                                               │
+│       + protected: true (manual_only via render allowlist)     │
 └──────────────────────────┬─────────────────────────────────────┘
                            ↓
 ┌────────────────────────────────────────────────────────────────┐
@@ -69,17 +68,17 @@ that tuple lights up the `pack_upgrade_available` onboard check.
 │  3. Acquire gbrain-unify db-lock (60min TTL)                   │
 │  4. Apply phases (4):                                          │
 │     a. Explicit retype rules (chunked UPDATE 1000/batch)       │
-│        - frontmatter.legacy_type ALWAYS preserved (D8)         │
+│        - frontmatter.legacy_type ALWAYS preserved              │
 │        - frontmatter.subtype stamped when subtype set          │
 │     b. Catch-all retype: synthesize per-unknown-type rule       │
 │        excluding declared types + explicit targets + page_to_  │
-│        link/alias sources (D12 + critical bug fix)             │
+│        link/alias sources                                      │
 │     c. Page-to-link: parse body+frontmatter, insert link row,  │
-│        soft-delete source page (per-page atomicity per F7)     │
+│        soft-delete source page (per-page atomicity)            │
 │     d. Page-to-alias: insert slug_aliases row, soft-delete     │
-│        source page (NO rewriteLinks per D15)                   │
+│        source page (NO rewriteLinks)                           │
 │  5. Final sync: path-prefix typing for residual UNTYPED rows   │
-│  6. ACTIVE-PACK FLIP (D13):                                    │
+│  6. ACTIVE-PACK FLIP:                                          │
 │     - engine.setConfig('schema_pack', target_pack)             │
 │     - saveConfig({...existing, schema_pack: target_pack})      │
 │  7. Verify: re-run stats; warn if ≤ declared + 5 violated      │
@@ -146,7 +145,7 @@ The shipped onboard contract has 3 apply_policy values:
 true` + `job: 'unify-types'`. `toOnboardRecommendation` in
 `src/core/onboard/render.ts` maps this to `manual_only` via the
 `MANUAL_ONLY_PROTECTED_JOBS` allowlist (which also contains
-`extract-takes-from-pages` per v0.41.18 A12+A24).
+`extract-takes-from-pages`).
 
 Rationale: pack upgrades change the brain's taxonomy. Taxonomy is a
 user judgment call — not autopilot's call. Even with `--auto-with-
@@ -213,7 +212,7 @@ targeting your pack.
 TTL). The handler acquires it before any apply phase + releases in
 `finally`. Two simultaneous `gbrain jobs submit unify-types`
 invocations: second one fails fast at lock acquisition with a clear
-error. Same pattern as `gbrain-sync` (v0.22.13 PR #490).
+error. Same pattern as the `gbrain-sync` lock.
 
 ## Audit trail
 

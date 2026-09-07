@@ -96,7 +96,7 @@ const STOPWORD_SEEDS: ReadonlySet<string> = new Set([
   'things', 'us', 'me', 'him', 'her', 'you', 'who', 'what', 'which',
 ]);
 
-interface CompiledPattern {
+export interface CompiledPattern {
   re: RegExp;
   kind: RelationalKind;
   linkTypes: string[] | null;
@@ -221,13 +221,31 @@ export function validateVocab(vocab: RelationVocab): void {
   }
 }
 
+// The default (vocab-less) pattern set, compiled ONCE per process. hybrid.ts
+// parses every search's query at least twice (relational-recall.ts for the
+// arm, composeFusionLists' `relationalQuery` flag), so rebuilding ~10 RegExp
+// objects per call was pure waste. Sharing is safe: every pattern uses the
+// `i` flag only (no `g`/`y`), so `exec` carries no lastIndex state between
+// calls. A vocab with extra verbs builds a fresh set (uncached) — packs are
+// rare and the set depends on their contents.
+let defaultPatternsMemo: ReadonlyArray<CompiledPattern> | null = null;
+
+/** The memoized default pattern set (exported so a test can pin identity across calls). */
+export function defaultRelationalPatterns(): ReadonlyArray<CompiledPattern> {
+  return (defaultPatternsMemo ??= buildPatterns());
+}
+
+function patternsFor(vocab?: RelationVocab): ReadonlyArray<CompiledPattern> {
+  return vocab?.extraVerbs?.length ? buildPatterns(vocab) : defaultRelationalPatterns();
+}
+
 /**
  * Parse a query into a RelationalQuery, or null if it isn't relational.
  * First matching pattern wins (patterns are ordered specific → general).
  */
 export function parseRelationalQuery(query: string, vocab?: RelationVocab): RelationalQuery | null {
   if (!query || query.length > 512) return null; // bound work; real queries are short
-  const patterns = buildPatterns(vocab);
+  const patterns = patternsFor(vocab);
 
   for (const p of patterns) {
     const m = p.re.exec(query);

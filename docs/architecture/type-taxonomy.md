@@ -23,8 +23,7 @@ downstream feature degrades:
 - **Orphan inflation** — 5,521 concept-redirect pages inflated orphan
   counts without adding knowledge value.
 
-Issue #1479 catalogues the 9 clusters with exact counts. This doc is
-the response: a coherent 14-type taxonomy with subtypes/format/origin
+This doc is the response: a coherent 14-type taxonomy with subtypes/format/origin
 pushed to frontmatter, alias-table rows for redirects, real link-table
 rows for edge-shaped pages.
 

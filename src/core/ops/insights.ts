@@ -11,17 +11,12 @@
 
 import type { Operation } from './contract.ts';
 import { OperationError } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
+import { sourceScopeOpts, readPolicyOpts } from './context.ts';
 import {
   FIND_EXPERTS_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
   FIND_TRAJECTORY_DESCRIPTION,
 } from '../operations-descriptions.ts';
-import {
-  dropPrivateOnlyRows,
-  findWorldVisibleSlugs,
-  resolveExcludePrivatePages,
-} from '../search/private-visibility.ts';
 
 // --- v0.43 (#2095): push-based context — the brain volunteers pages ---
 
@@ -157,7 +152,7 @@ const find_experts: Operation = {
     const { loadActivePackBestEffort, expertTypesFromPack } = await import('../schema-pack/index.ts');
     const pack = await loadActivePackBestEffort(ctx);
     const types = pack ? expertTypesFromPack(pack.manifest) : [];
-    const scope = sourceScopeOpts(ctx);
+    const scope = await readPolicyOpts(ctx);
     const experts = await findExperts(ctx.engine, {
       topic,
       limit: typeof p.limit === 'number' ? p.limit : undefined,
@@ -165,10 +160,7 @@ const find_experts: Operation = {
       types: types as never,
       ...scope,
     });
-    // A `visibility: private` page's slug/title/scores must not reach remote
-    // readers through the expertise rankings (same read-leak class as the
-    // delta page arm / find_orphans / get_recent_salience).
-    return dropPrivateOnlyRows(ctx.engine, ctx.remote, experts, e => e.slug, scope);
+    return experts;
   },
   // hidden: 'whoknows' is in CLI_ONLY (src/cli.ts) — runWhoknows owns the CLI
   // surface (ranked table + per-factor explain + thin-client routing) and was
@@ -202,6 +194,11 @@ const find_contradictions: Operation = {
     },
   },
   handler: async (ctx, p) => {
+    const scope = sourceScopeOpts(ctx);
+    if (ctx.remote !== false || scope.sourceId !== undefined || scope.sourceIds !== undefined) {
+      return { contradictions: [], note: 'Stored contradiction reports are temporarily available only to trusted local callers without a source filter.' };
+    }
+
     const limit = typeof p.limit === 'number' && p.limit > 0 ? Math.min(p.limit, 100) : 20;
     const slugFilter = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
     const sevFilter = (p.severity === 'low' || p.severity === 'medium' || p.severity === 'high')
@@ -226,11 +223,8 @@ const find_contradictions: Operation = {
       }>;
     }> | undefined) ?? [];
     const allFindings = perQuery.flatMap((q) => q.contradictions);
-    // Cheap in-memory filters (severity/slug) run FIRST, so the scoped
-    // existence probes below only pay for findings that could actually be
-    // returned. Pre-fix, every finding in the report paid a sequential
-    // scoped getPage probe BEFORE the filters/slice — the deprecated
-    // getPage-per-row N+1 class.
+    // This branch is trusted and unscoped. Apply the requested display
+    // filters before the limit; source-scoped reports are unavailable above.
     const matching = allFindings.filter((f) => {
       if (sevFilter && f.severity !== sevFilter) return false;
       if (slugFilter) {
@@ -240,74 +234,13 @@ const find_contradictions: Operation = {
       }
       return true;
     });
-    // Source isolation (fail-closed): the probe report is brain-wide, so a
-    // scoped caller sees a finding only when BOTH endpoints resolve inside
-    // their source scope. Existence is checked with a SCOPED getPage
-    // (per-call slug cache), early-exiting once `limit` findings are kept.
-    // An unscoped trusted local caller ({} scope) keeps the brain-wide view.
-    // KNOWN CAVEAT (slug collision): the scope check is slug-EXISTENCE within
-    // scope — findings carry no source attribution, so a finding about
-    // source B's page stays visible to a source-A caller whenever source A
-    // holds a page with the SAME slug. Recording source_id on the probe side
-    // is the follow-up that closes this.
-    const scope = sourceScopeOpts(ctx);
-    const scoped = scope.sourceId !== undefined || scope.sourceIds !== undefined;
-    // #4352 posture, same keep-list idiom as get_recent_salience
-    // (ops/salience.ts): a `visibility: private` endpoint must not leak to a
-    // remote caller through the contradictions surface. Fail-closed: a
-    // finding survives only when BOTH endpoint slugs have a world-visible
-    // page row inside the caller's scope. Trusted local + the operator
-    // opt-outs resolve to "expose" inside resolveExcludePrivatePages.
-    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-    let kept: typeof allFindings;
-    if (!scoped && !excludePrivate) {
-      kept = matching.slice(0, limit);
-    } else {
-      // Both fences run BEFORE a finding counts toward `limit` — filtering
-      // after the cutoff would silently under-fill the response (findings
-      // past the break point were never examined) while total_in_run claims
-      // completeness. Batched so the world-visibility keep-list probe stays
-      // one query per batch rather than per finding.
-      const cache = new Map<string, boolean>();
-      const inScope = async (slug: string): Promise<boolean> => {
-        const hit = cache.get(slug);
-        if (hit !== undefined) return hit;
-        const ok = (await ctx.engine.getPage(slug, scope)) !== null;
-        cache.set(slug, ok);
-        return ok;
-      };
-      kept = [];
-      const BATCH = 25;
-      for (let i = 0; i < matching.length && kept.length < limit; i += BATCH) {
-        const batch = matching.slice(i, i + BATCH);
-        const scopeOk: typeof allFindings = [];
-        for (const f of batch) {
-          if (kept.length + scopeOk.length >= limit + BATCH) break;
-          if (!scoped || ((await inScope(f.a.slug)) && (await inScope(f.b.slug)))) scopeOk.push(f);
-        }
-        let visibleOk = scopeOk;
-        if (excludePrivate && scopeOk.length > 0) {
-          const endpointSlugs = [...new Set(scopeOk.flatMap((f) => [f.a.slug, f.b.slug]))];
-          const worldVisible = await findWorldVisibleSlugs(ctx.engine, endpointSlugs, scope);
-          visibleOk = scopeOk.filter((f) => worldVisible.has(f.a.slug) && worldVisible.has(f.b.slug));
-        }
-        for (const f of visibleOk) {
-          if (kept.length >= limit) break;
-          kept.push(f);
-        }
-      }
-    }
+    const kept = matching.slice(0, limit);
     return {
       run_id: latest.run_id,
       ran_at: latest.ran_at,
       contradictions: kept,
-      // Trusted local unscoped callers keep the exact pre-fix semantics
-      // (every finding in the run). Scoped/remote callers get the count of
-      // findings actually verified visible to them — the full scoped count
-      // would require paying the per-slug probe for every finding (the N+1
-      // this handler no longer does), and a larger-than-returned count is a
-      // hidden-finding oracle for privacy-filtered callers.
-      total_in_run: scoped || ctx.remote !== false ? kept.length : allFindings.length,
+      // Trusted unscoped callers retain the complete local run count.
+      total_in_run: allFindings.length,
     };
   },
   cliHints: { name: 'find-contradictions' },

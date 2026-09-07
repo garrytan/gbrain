@@ -121,6 +121,17 @@ export function formatAutocutSummary(decision: AutocutDecision | undefined): str
 }
 
 /**
+ * v0.48.2 — one-line degraded summary for `--explain` (null when the run was
+ * clean). Reads the closed `degraded[]` vocabulary, e.g.
+ * `degraded: reranker_skipped (no_key)` — the only place a silently skipped
+ * reranker is visible from the CLI.
+ */
+export function formatDegradedSummary(degraded: HybridSearchMeta['degraded'] | undefined): string | null {
+  if (!degraded || degraded.length === 0) return null;
+  return `degraded: ${degraded.map((d) => (d.reason ? `${d.stage} (${d.reason})` : d.stage)).join(', ')}`;
+}
+
+/**
  * Format a full result list. Caller passes the SearchResult[] directly;
  * the formatter handles enumeration. Returns a single string (multi-line
  * with trailing newline so callers can `process.stdout.write(out)`).
@@ -131,9 +142,11 @@ export function formatResultsExplain(
 ): string {
   if (results.length === 0) return 'No results.\n';
   const body = results.map((r, i) => formatResultExplain(r, i + 1)).join('\n\n') + '\n';
-  // v0.42.3.0 — prepend the autocut summary when meta carries a decision.
-  const autocutLine = formatAutocutSummary(meta?.autocut);
-  return autocutLine ? `${autocutLine}\n\n${body}` : body;
+  // v0.42.3.0 — prepend the autocut summary when meta carries a decision;
+  // v0.48.2 — and the degraded summary when any stage was skipped.
+  const head = [formatAutocutSummary(meta?.autocut), formatDegradedSummary(meta?.degraded)]
+    .filter((l): l is string => l !== null);
+  return head.length > 0 ? `${head.join('\n')}\n\n${body}` : body;
 }
 
 /**

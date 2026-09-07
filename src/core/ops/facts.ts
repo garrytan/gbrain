@@ -1,3 +1,4 @@
+import { readHolders } from './context.ts';
 /**
  * Hot-memory (facts) operation cluster — pure move from operations.ts
  * (v0.46.x tranche 3): extract_facts, the extended `recall` verb, the
@@ -381,18 +382,20 @@ const recall: Operation = {
       const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
       const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
       if (!isAvailable('embedding')) {
-        const raw = await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, ...searchScope });
+        const raw = await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, ...searchScope });
         searchResults = dedupResults(raw);
         // #3783 — direct FTS path: every row is a keyword hit by construction.
         markKeywordHits(searchResults);
         stampEvidenceSafe(searchResults);
-        await stampContentFlags(ctx.engine, searchResults);
+        await stampContentFlags(ctx.engine, searchResults, { ...searchScope, excludePrivate });
         searchDegraded = 'keyword_only_no_embedding_provider';
       } else {
         searchResults = await hybridSearchCached(ctx.engine, queryText, {
           limit,
           expansion: false,
           excludePrivate,
+          requireSafeChunks: ctx.remote !== false,
+          takesHoldersAllowList: readHolders(ctx),
           ...searchScope,
         });
       }

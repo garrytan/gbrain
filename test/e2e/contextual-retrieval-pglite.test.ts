@@ -138,7 +138,7 @@ but should NOT mutate what we store as canonical chunk_text.`;
       [slug],
     );
     expect(rows[0].cv).toBe(MARKDOWN_CHUNKER_VERSION);
-    expect(rows[0].cv).toBe(3); // v0.40.3.0 bump
+    expect(rows[0].cv).toBe(4); // v0.48.3.0 safe index requires strict full-body sanitation.
   });
 });
 

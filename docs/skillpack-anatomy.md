@@ -9,7 +9,7 @@ starting point.
 
 ```
 my-skillpack/
-├── skillpack.json                # manifest (cathedral fields declared)
+├── skillpack.json                # manifest (all fields declared)
 ├── skills/
 │   └── <skill-slug>/
 │       ├── SKILL.md              # frontmatter + body, agent-readable
@@ -124,4 +124,4 @@ happens to live inside a brain repo.
 
 - `examples/skillpack-reference/` — the live 10/10 reference pack
 - `docs/designs/SKILLPACK_REGISTRY_V1_SPEC.md` — strategic spec + decisions
-- `docs/guides/skillpacks-as-scaffolding.md` — v0.36 scaffold/reference model
+- `docs/guides/skillpacks-as-scaffolding.md` — the scaffold/reference model

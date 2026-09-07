@@ -47,14 +47,14 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     expect(resolved).toBe('llama-server-reranker:qwen3-reranker-4b');
   });
 
-  test('returns the mode-bundle default when no override is set (balanced enables zerank-2)', async () => {
+  test('returns the mode-bundle default when no override is set (balanced enables voyage:rerank-2.5)', async () => {
     // balanced mode bundle has reranker_enabled: true + reranker_model:
-    // 'zeroentropyai:zerank-2' baked in. Pre-fix this case returned
-    // undefined; post-fix doctor sees what search actually uses.
+    // 'voyage:rerank-2.5' baked in (v0.48.2 flip). Pre-fix this case
+    // returned undefined; post-fix doctor sees what search actually uses.
     configureGateway({ env: {} });
     const engine = makeEngineStub({});
     const resolved = await resolveLiveRerankerModel(engine);
-    expect(resolved).toBe('zeroentropyai:zerank-2');
+    expect(resolved).toBe('voyage:rerank-2.5');
   });
 
   test('returns undefined when reranker is explicitly disabled via config', async () => {
@@ -93,7 +93,7 @@ describe('resolveLiveRerankerModel — divergence fix', () => {
     const resolved = await resolveLiveRerankerModel(engine);
     // balanced mode bundle is the safety fallback when search.mode is unset
     // (and here, every config read failed) — and balanced enables
-    // zeroentropyai:zerank-2 by default.
-    expect(resolved).toBe('zeroentropyai:zerank-2');
+    // voyage:rerank-2.5 by default (v0.48.2).
+    expect(resolved).toBe('voyage:rerank-2.5');
   });
 });

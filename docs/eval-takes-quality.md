@@ -1,6 +1,6 @@
 # `gbrain eval takes-quality` — reproducible cross-modal quality eval
 
-v0.32+ ships a CI-able quality gate for the takes layer. Three frontier models
+`gbrain eval takes-quality` is a CI-able quality gate for the takes layer. Three frontier models
 score a sample of takes against a 5-dimension rubric, the runner aggregates to
 PASS / FAIL / INCONCLUSIVE, and the receipt persists to `eval_takes_quality_runs`
 so a follow-up `trend` or `regress` can compare against history.
@@ -29,7 +29,7 @@ receipt file from disk and re-renders it. The other modes need the brain.
 | `--limit N` | 100 | Random sample of N takes from the brain. |
 | `--cycles N` | 3 (TTY) / 1 (non-TTY) | Up to N panel calls before giving up; early-stop on PASS or INCONCLUSIVE. |
 | `--budget-usd N` | unset | Abort before next call's projected cost would exceed cap. Models without a `pricing.ts` entry fail loud rather than silently blowing the budget. |
-| `--source db|fs` | `db` | `fs` is reserved for v0.33+. |
+| `--source db|fs` | `db` | `fs` is reserved; the runner refuses it and asks for `--source db`. |
 | `--slug-prefix P` | unset | Filter takes to pages whose slug starts with P. |
 | `--models a,b,c` | `openai:gpt-5.2,anthropic:claude-opus-4-7,google:gemini-2.5-flash` | Comma-separated panel. |
 | `--json` | off | Emit the full receipt to stdout. |

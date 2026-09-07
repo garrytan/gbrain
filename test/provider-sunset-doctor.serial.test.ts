@@ -133,31 +133,45 @@ describe('provider_sunset — doctor flags brains pinned to a sunsetting provide
 
   test('reranker exposure resolves through the mode plane search actually reranks with', async () => {
     const { checkProviderSunset } = await import('../src/commands/doctor.ts');
-    // NO gateway/config reranker configured at all — the default (balanced)
-    // mode bundle still reranks with zeroentropyai:zerank-2. A gateway-plane
-    // read here returns undefined and false-oks the exact post-embedding-
-    // migration brains this check exists to protect.
+    // NO gateway reranker configured — the reranker is set ONLY as a DB-plane
+    // `search.reranker.model` row (v0.48.2: the mode-bundle default itself
+    // is live voyage). A gateway-plane read here returns undefined and
+    // false-oks the exact post-embedding-migration brains this check exists
+    // to protect; the mode plane sees the row.
+    configureGateway({
+      embedding_model: 'openai:text-embedding-3-small',
+      embedding_dimensions: 1536,
+      env: { OPENAI_API_KEY: 'sk-test-fake', ZEROENTROPY_API_KEY: 'ze-test-fake' },
+    });
+    await engine.setConfig('search.reranker.model', 'zeroentropyai:zerank-2');
+    try {
+      const check = await checkProviderSunset(engine);
+      expect(FLAGGED).toContain(check.status);
+      expect(check.message).toContain('zerank-2');
+      expect(check.message).toContain('search.reranker');
+      // Embeddings are safe — no migration command in this message.
+      expect(check.message).not.toContain('migrate embeddings --to');
+
+      // The documented fix — the search.reranker.enabled=false config
+      // override — clears the exposure (mode plane honors config overrides).
+      await engine.setConfig('search.reranker.enabled', 'false');
+      const cleared = await checkProviderSunset(engine);
+      expect(cleared.status).toBe('ok');
+    } finally {
+      await engine.unsetConfig('search.reranker.enabled');
+      await engine.unsetConfig('search.reranker.model');
+    }
+  });
+
+  test('no reranker row at all → the live voyage bundle default is not an exposure', async () => {
+    const { checkProviderSunset } = await import('../src/commands/doctor.ts');
     configureGateway({
       embedding_model: 'openai:text-embedding-3-small',
       embedding_dimensions: 1536,
       env: { OPENAI_API_KEY: 'sk-test-fake', ZEROENTROPY_API_KEY: 'ze-test-fake' },
     });
     const check = await checkProviderSunset(engine);
-    expect(FLAGGED).toContain(check.status);
-    expect(check.message).toContain('zerank-2');
-    expect(check.message).toContain('search.reranker');
-    // Embeddings are safe — no migration command in this message.
-    expect(check.message).not.toContain('migrate embeddings --to');
-
-    // The documented fix — the search.reranker.enabled=false config
-    // override — clears the exposure (mode plane honors config overrides).
-    await engine.setConfig('search.reranker.enabled', 'false');
-    try {
-      const cleared = await checkProviderSunset(engine);
-      expect(cleared.status).toBe('ok');
-    } finally {
-      await engine.unsetConfig('search.reranker.enabled');
-    }
+    expect(check.status).toBe('ok');
   });
 });
 
