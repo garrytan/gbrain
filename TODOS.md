@@ -7,6 +7,8 @@
 ## Community fix wave follow-ups (filed 2026-09-07, sync-import train)
 - [ ] **P3 — `gbrain import` human summary labels returned per-file failures as "unchanged".**
   **What:** the non-`--json` summary line in `src/commands/import.ts` prints `${skipped - errors} unchanged`, but `skipped` also counts the failures `importFile` RETURNS (invalid frontmatter, oversize, symlink, slug mismatch) while `errors` counts only the thrown ones, so a returned failure reads as an unchanged no-op. The `--json` payload was fixed in #4803 (`unchanged` / `malformed_skipped` / `failures`); the human line was deliberately left alone in that wave. **How:** reuse the same `skipped - failures.length - malformedFileSkips` arithmetic and print the returned-failure count as its own term. **Effort:** S. **Priority:** P3.
+## Community fix wave follow-ups (filed 2026-09-07, minions-autopilot train)
+- [ ] **P3 — pglite-lock `readProcessArgs` has the same win32 gap as #4563, failing the other way.** **What:** `src/core/pglite-lock.ts` `readProcessArgs` probes `ps` then `/proc` with no Windows branch; on win32 it returns null, which that caller treats as "unknowable => alive", so a recycled-pid PGLite lock is never reaped and `acquire` waits out its timeout instead of stealing. Distinct symptom from the autopilot classifier (which now has the CIM branch in `src/core/autopilot-lock.ts` `readProcessCommand`). **How:** route `readProcessArgs` through the shared `readProcessCommand(pid)` (already handles /proc, ps, and win32 CIM) and delete the duplicate probe. **Effort:** S. **Priority:** P3.
 
 ## Community fix wave follow-ups (filed 2026-09-07, atoms/extraction/facts train)
 
