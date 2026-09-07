@@ -559,6 +559,21 @@ describe('outside-voice hardening (X-batch)', () => {
     expect((readHarnessReceiptState(f2.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('wiki');
   });
 
+  test("#4897 implicit 'default' is the federated floor, not a scalar grant (wave review)", async () => {
+    // `sources.default = default` is a valid config value: the resolver echoes
+    // it back, but it means "the seeded default" — the same thing the absent
+    // case means. Binding the token to a scalar ['default'] grant would hide
+    // every federated source from the hook lane (allowedSources set → no span).
+    const f = makeFake({ implicitSource: 'default' });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    expect(f.mintCalls[0].sourceGrant).toBeUndefined();
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).toContain('GBRAIN_SOURCE=default');
+    expect((readHarnessReceiptState(f.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('default');
+    expect(f.out.join('\n')).not.toContain('binding hooks + token');
+  });
+
   test('[X3] --no-capture RE-RUN unwires the capture events it previously wired', async () => {
     const f = makeFake();
     expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);

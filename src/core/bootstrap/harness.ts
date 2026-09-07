@@ -896,8 +896,11 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // resolve-IPC listener is bound to (sources.default / the sole populated
   // non-default source), or every turn_context is `source_mismatch`. The
   // same value floors the token: the federated-default mint cannot read a
-  // sole non-federated source (page_count 0), the scalar grant can.
-  const implicitSource = flags.source ? null : await d.resolveImplicitSource();
+  // sole non-federated source (page_count 0), the scalar grant can. A
+  // configured `sources.default = default` echoes back as 'default' — that is
+  // the federated floor, not a scalar grant (same guard as dream.ts).
+  const implicit = flags.source ? null : await d.resolveImplicitSource();
+  const implicitSource = implicit === 'default' ? null : implicit;
   const hookSource = flags.source ?? implicitSource ?? 'default';
   if (implicitSource) {
     d.log(`binding hooks + token to source '${implicitSource}' (the serve's implicit default; pass --source to override).`);
