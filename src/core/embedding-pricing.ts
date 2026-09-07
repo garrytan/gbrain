@@ -74,6 +74,15 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-28)
   'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
   'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
+  // Google (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-08-30).
+  // #4344 class: gemini-embedding-001 is in the hosted recipe list
+  // (src/core/ai/recipes/google.ts) but had no row, so cost estimates read
+  // "unavailable" for every brain on it — including the OpenRouter-routed ones,
+  // since `openrouter:google/gemini-embedding-001` resolves here through the
+  // #2504 nested-vendor retry. gemini-embedding-2 is deliberately absent: it is
+  // in the same recipe list, but its published rate is unverified and a guessed
+  // row is worse than `unknown` (the voyage-4-nano rationale above).
+  'google:gemini-embedding-001':   { pricePerMTok: 0.15 },
 };
 
 export type PriceLookupResult =

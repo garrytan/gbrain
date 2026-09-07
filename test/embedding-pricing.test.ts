@@ -48,6 +48,16 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     expect(r.kind).toBe('known');
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.05);
   });
+
+  test('Google gemini-embedding-001 at $0.15/MTok', () => {
+    const r = lookupEmbeddingPrice('google:gemini-embedding-001');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.15);
+  });
+
+  test('gemini-embedding-2 is deliberately unpriced (rate unverified)', () => {
+    expect(lookupEmbeddingPrice('google:gemini-embedding-2').kind).toBe('unknown');
+  });
 });
 
 describe('lookupEmbeddingPrice — fall-through behavior', () => {
@@ -114,6 +124,7 @@ describe('lookupEmbeddingPrice — nested gateway ids (#2504)', () => {
     ['openrouter:openai/text-embedding-3-large', 0.13, 'openai:text-embedding-3-large'],
     ['openrouter:voyage/voyage-4', 0.06, 'voyage:voyage-4'],
     ['openrouter:mistral/mistral-embed', 0.10, 'mistral:mistral-embed'],
+    ['openrouter:google/gemini-embedding-001', 0.15, 'google:gemini-embedding-001'],
   ])('%s falls back to the nested vendor row', (model, expected, key) => {
     const r = lookupEmbeddingPrice(model as string);
     expect(r.kind).toBe('known');
