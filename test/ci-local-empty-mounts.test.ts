@@ -27,3 +27,10 @@ for (const populated of [false, true]) {
     expect(result.stdout).toBe(expected.map(value => `<${value}>\n`).join(''));
   });
 }
+
+// bash >= 4.4 (Linux CI) tolerates "${EXTRA_MOUNTS[@]}" on an empty array under nounset, so the
+// argv repro above only bites on macOS bash 3.2. Pin the safe expansion textually so Linux catches it too.
+test('ci-local runner keeps the bash-3.2-safe empty-array expansion', () => {
+  expect(line).toBeDefined();
+  expect(line).toContain('${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"}');
+});
