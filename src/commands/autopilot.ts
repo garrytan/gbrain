@@ -46,6 +46,7 @@ import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
 import { loadAllSources, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
+import { isSyncDisabledConfig } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -1086,6 +1087,15 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
             const now = Date.now();
             for (const src of sources) {
               if (!src.local_path) continue;
+              // #4399: a source the user explicitly excluded from automatic
+              // sync (config.syncEnabled=false) must never be picked up by
+              // this freshness dispatcher — it previously wasn't checked at
+              // all, so a source disabled to protect it from a known
+              // duplicate-page bug got auto-resynced anyway, reproducing the
+              // bug it was disabled to avoid. Scoped to THIS automatic
+              // dispatch loop only; an explicit `gbrain sync --source <id>`
+              // naming this source is unaffected.
+              if (isSyncDisabledConfig(src.config)) continue;
               // A local_path this machine cannot use — relative (#3696: cwd is
               // launchd's, not the registering shell's) or absent on disk and
               // not a managed clone sync can re-create — would sync a phantom
