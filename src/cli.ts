@@ -1731,6 +1731,9 @@ export function formatResult(
     }
     case 'get_page': {
       const r = result as any;
+      // `--json` leads (same as get_versions) so an ambiguous_slug envelope
+      // stays machine-readable too.
+      if (params.json === true) return JSON.stringify(r, null, 2) + '\n';
       if (r.error === 'ambiguous_slug') {
         return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
       }
