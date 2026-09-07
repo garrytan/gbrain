@@ -28,6 +28,8 @@ import type { SearchResult } from '../types.ts';
 import { rerank as gatewayRerank, RerankError, type RerankInput, type RerankResult } from '../ai/gateway.ts';
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
+import { estimateTokens } from '../chunkers/token-estimate.ts';
+import { truncateUtf8 } from '../text-safe.ts';
 import { warnOncePerProcess } from '../utils.ts';
 
 /** #4648: the two audited success-shaped pass-through causes. */
@@ -85,6 +87,38 @@ function classifyRerankFailure(err: unknown): RerankFailureReason {
   return 'unknown';
 }
 
+// Per-document ceiling for the reranker call. A chunk at the chunker ceiling
+// (DEFAULT_MAX_CHUNK_TOKENS=2000, sized to llama-server's 2048 ubatch) plus the
+// query plus the server-side reranker template cannot fit that same ubatch, so
+// a pooled self-hosted reranker (llama-server, TEI) 500s and applyReranker
+// fails open to raw RRF. 1400 = 2048 minus query/template headroom minus a
+// Qwen-family tokenizer margin (cl100k estimate; Qwen runs ~35% worse on
+// hex-heavy text). The cap applies to every provider, hosted included: prose
+// chunks (~300 words) are untouched; code/CJK chunks at the chunker ceiling
+// lose up to ~1/3 of their tail before scoring — the same trade
+// DEFAULT_MAX_CHUNK_TOKENS already makes on the embed side.
+const RERANK_MAX_DOC_TOKENS = 1400;
+const RERANK_MAX_DOC_CHARS = 6000;
+
+/**
+ * Trim a reranker document to ~RERANK_MAX_DOC_TOKENS (char cap first, then
+ * shrink by measured ratio). Every cut goes through `truncateUtf8` so a shrink
+ * never orphans a UTF-16 surrogate — serde/nlohmann-based servers reject a lone
+ * surrogate in the JSON body, which would trade the 500 for a 400.
+ */
+export function capRerankDoc(text: string): string {
+  // ASCII is <=1 token/char and Qwen-family ~1 token/char on CJK, so a doc
+  // under the token ceiling in chars cannot overflow it: skip the tokenizer.
+  if (text.length <= RERANK_MAX_DOC_TOKENS) return text;
+  let doc = truncateUtf8(text, RERANK_MAX_DOC_CHARS);
+  for (let i = 0; i < 4; i++) {
+    const tokens = estimateTokens(doc);
+    if (tokens <= RERANK_MAX_DOC_TOKENS) break;
+    doc = truncateUtf8(doc, Math.floor(doc.length * (RERANK_MAX_DOC_TOKENS / tokens) * 0.95));
+  }
+  return doc;
+}
+
 /**
  * Reorder the top `topNIn` results by reranker relevance score. The
  * un-reranked tail (any rows past topNIn) preserves its original RRF
@@ -112,7 +146,11 @@ export async function applyReranker(
   // Document text — chunk_text is the matched span. Fall back to title if
   // empty (shouldn't happen in practice; defensive). Empty docs would
   // confuse the reranker, but we still send them — the upstream model decides.
-  const documents = head.map(r => r.chunk_text || r.title || '');
+  // Cap each document so a self-hosted reranker (llama-server, TEI) with a
+  // small physical batch never 500s on an oversized code/hex-heavy chunk.
+  // Token-aware, not just char-capped, because hex-dense pages tokenize at
+  // ~1 char/token. See capRerankDoc for what this costs hosted providers.
+  const documents = head.map(r => capRerankDoc(r.chunk_text || r.title || ''));
 
   let reranked: RerankResult[];
   try {
