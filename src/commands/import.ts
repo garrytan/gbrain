@@ -284,17 +284,41 @@ export async function runImport(
   // flag registry already accepted it, so pre-alias it was silently IGNORED
   // (pages landed in default). Both spellings with different values abort.
   // Programmatic callers continue passing `opts.sourceId` directly; CLI
-  // flags win over opts when both are set.
+  // flags win over opts when both are set. Both `--flag value` and
+  // `--flag=value` are accepted; a missing value (or a value that is itself
+  // a flag) is refused the way sync-delegate refuses it, never read as
+  // "no scope".
   const sourceIdIdx = args.indexOf('--source-id');
   const sourceIdx = args.indexOf('--source');
-  const viaSourceId = sourceIdIdx !== -1 ? args[sourceIdIdx + 1] : null;
-  const viaSource = sourceIdx !== -1 ? args[sourceIdx + 1] : null;
+  const readSourceFlag = (flag: string, idx: number): string | null => {
+    const eq = args.find((a) => a.startsWith(`${flag}=`));
+    const v = eq !== undefined ? eq.slice(flag.length + 1) : idx !== -1 ? args[idx + 1] : null;
+    if (v === null) return null;
+    if (v === undefined || v === '' || v.startsWith('--')) {
+      console.error(`${flag} (missing value)`);
+      throw new ImportAbortError(`${flag} (missing value)`);
+    }
+    return v;
+  };
+  const viaSourceId = readSourceFlag('--source-id', sourceIdIdx);
+  const viaSource = readSourceFlag('--source', sourceIdx);
   if (viaSourceId && viaSource && viaSourceId !== viaSource) {
     console.error('Pass either --source or --source-id, not both.');
     throw new ImportAbortError('conflicting source flags');
   }
   const flagSourceId = viaSourceId ?? viaSource;
-  let sourceId: string | undefined = flagSourceId ?? opts.sourceId;
+  let sourceId: string | undefined = opts.sourceId;
+  if (flagSourceId) {
+    // Validate + assert existence through the shared resolver (tier 1), so an
+    // invalid or unregistered id fails once with the same SourceTargetError
+    // sync gives — not once per file on the pages.source_id foreign key.
+    const { resolveSourceWithTier, ALL_SOURCES } = await import('../core/source-resolver.ts');
+    if (flagSourceId === ALL_SOURCES) {
+      console.error(`import writes to one source; \`${ALL_SOURCES}\` is not a write target.`);
+      throw new ImportAbortError('__all__ is not an import target');
+    }
+    sourceId = (await resolveSourceWithTier(engine, flagSourceId)).source_id;
+  }
 
   // v0.41.13 (#1434): when no explicit source / env / opts.sourceId is set,
   // fall through to the resolver so the new sole_non_default tier (5.5) can
