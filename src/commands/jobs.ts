@@ -2925,7 +2925,8 @@ export async function registerBuiltinHandlers(
   // the per-source lock) the job completes `{ deferred: true }` and retries
   // next tick instead of failing — cooperative interleave (CODEX accepted).
   registerBuiltinJob(worker, engine, 'extract-atoms-drain', async (job) => {
-    const { runExtractAtomsDrainForSource } = await import('../core/cycle/extract-atoms-drain.ts');
+    const { formatDrainProviderFailure, runExtractAtomsDrainForSource } =
+      await import('../core/cycle/extract-atoms-drain.ts');
     const { LockUnavailableError } = await import('../core/db-lock.ts');
     const sourceId = typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     const windowSeconds =
@@ -2949,10 +2950,7 @@ export async function registerBuiltinHandlers(
       // handler failure. Partial success (>=1 item extracted) keeps
       // completing normally, unchanged.
       if (result.status === 'provider_failure') {
-        throw new Error(
-          `extract-atoms-drain: all provider calls failed this batch ` +
-          `(batches=${result.batches}, remaining=${result.remaining ?? '?'}) — retrying`,
-        );
+        throw new Error(formatDrainProviderFailure(result));
       }
       return result;
     } catch (e) {

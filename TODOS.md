@@ -758,7 +758,11 @@ deferred M-effort issues above are NOT repeated here.
   defaults to Anthropic (unservable) and degrades to the honest keyless path
   instead of using the key it has; and every static entry rots the way the
   openai gpt-5.2 pin did. **Context:** the mechanism is done — one table
-  entry per provider; the work is choosing tier grammar per provider and
+  entry per provider; `resolveTierDefault` already falls back to a SERVABLE
+  file-plane pin (`expansion_model` / `chat_model`) below the key walk, so a
+  single-provider install that pinned its model at init is covered (#3813);
+  the table work remains for installs with a key but NO pin. The rest of the
+  work is choosing tier grammar per provider and
   asserting recipe capability fit (tool support for subagent). Start:
   `PROVIDER_TIER_DEFAULTS` + `test/model-config.serial.test.ts` matrix +
   the openai-latest ranking pattern. **Effort:** S-M per provider.
