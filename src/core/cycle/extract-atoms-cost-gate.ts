@@ -23,6 +23,14 @@ export interface ExtractAtomsCostGate {
   enforceCap: boolean;
   unpricedModel?: string;
   unpricedKind?: 'chat' | 'embed';
+  /**
+   * Set when an EXPLICIT operator budget kept the cap on over an unpriced
+   * embed route: that route bills at $0 under this tracker (one stderr
+   * warning at the call site). `pricingOverrides` is then the caller's map
+   * plus the $0 row — hand it to the tracker in place of the original.
+   */
+  zeroPricedEmbedModel?: string;
+  pricingOverrides?: PricingOverrides;
 }
 
 /**
@@ -31,16 +39,32 @@ export interface ExtractAtomsCostGate {
  * the atom import path calls (pass `null` when embedding is unavailable, in
  * which case the import runs with `noEmbed` and nothing embeds). Operator
  * `pricing.overrides` are consulted first, matching BudgetTracker.reserve().
+ *
+ * `explicitBudget` = the operator SET `cycle.extract_atoms.budget_usd`. Only
+ * a *default* cap may be dropped for an unpriced embed route; a ceiling the
+ * operator asked for stays enforced and the embed route is priced at $0
+ * instead (Codex P1). An unpriced CHAT model still drops the cap either way —
+ * it is the billable call the cap exists for, and $0 would enforce a fiction.
  */
 export function resolveExtractAtomsCostGate(
   extractModel: string,
   embedModel: string | null,
   overrides?: PricingOverrides,
+  opts: { explicitBudget?: boolean } = {},
 ): ExtractAtomsCostGate {
   if (!isModelPriceable(extractModel, 'chat', overrides)) {
     return { enforceCap: false, unpricedModel: extractModel, unpricedKind: 'chat' };
   }
   if (embedModel !== null && !isModelPriceable(embedModel, 'embed', overrides)) {
+    if (opts.explicitBudget) {
+      // Same key normalization as parsePricingOverrides / overrideFor.
+      const key = embedModel.trim().toLowerCase();
+      return {
+        enforceCap: true,
+        zeroPricedEmbedModel: embedModel,
+        pricingOverrides: { ...overrides, [key]: { input: 0, output: 0 } },
+      };
+    }
     return { enforceCap: false, unpricedModel: embedModel, unpricedKind: 'embed' };
   }
   return { enforceCap: true };

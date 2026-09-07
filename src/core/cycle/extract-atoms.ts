@@ -826,6 +826,7 @@ export async function runPhaseExtractAtoms(
   // matching the pre-refactor fail-soft behavior exactly.
   let extractModel = resolveTierDefault('utility');
   let budgetCap = DEFAULT_BUDGET_USD;
+  let explicitBudget = false; // operator SET cycle.extract_atoms.budget_usd
   // #4529/#4540: the per-item input/output caps were hardcoded (slice(0, 50_000) +
   // maxTokens: 4096). Operators on small-context or thinking models need to
   // shrink/grow both without a code change; defaults are unchanged.
@@ -837,7 +838,7 @@ export async function runPhaseExtractAtoms(
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
     if (configuredBudget) {
       const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) budgetCap = n;
+      if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
     }
     // #4529: legacy input-cap key (its own floor of 500 chars, as landed).
     // Read FIRST so the newer #4540 max_input_chars key below wins when
@@ -890,11 +891,16 @@ export async function runPhaseExtractAtoms(
   // $0 spent, on every run. The operator escape hatch the error message
   // advertises (`pricing.overrides`, #4312) was also never loaded here, unlike
   // enrich / ingest-facts / extract-conversation-facts.
+  //
+  // Only a DEFAULT cap may be dropped that way. When the operator set
+  // `cycle.extract_atoms.budget_usd` they asked for a ceiling; the gate keeps
+  // it and bills the unpriced embed route at $0 (warned once, below).
   const pricingOverrides = await loadPricingOverrides(engine);
   const costGate = resolveExtractAtomsCostGate(
     extractModel,
     resolveEmbedModelForCostGate(),
     pricingOverrides,
+    { explicitBudget },
   );
   if (!costGate.enforceCap) {
     console.error(
@@ -903,11 +909,18 @@ export async function runPhaseExtractAtoms(
         `Declare an operator rate to restore the cap: ` +
         `gbrain config set pricing.overrides '{"${costGate.unpricedModel}": <usd-per-1M-tokens>}' (0 for local inference).`,
     );
+  } else if (costGate.zeroPricedEmbedModel) {
+    console.error(
+      `[extract_atoms] embed model "${costGate.zeroPricedEmbedModel}" is not in the pricing maps; ` +
+        `cycle.extract_atoms.budget_usd is set, so the $${budgetCap.toFixed(2)} cap stays enforced and embeds bill at $0 under it. ` +
+        `Declare its real rate to meter them: ` +
+        `gbrain config set pricing.overrides '{"${costGate.zeroPricedEmbedModel}": <usd-per-1M-tokens>}'.`,
+    );
   }
   const budgetTracker = new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
     label: 'cycle.extract_atoms',
-    pricingOverrides,
+    pricingOverrides: costGate.pricingOverrides ?? pricingOverrides,
   });
 
   // v0.41.19.0 (T3): throttled yield helper. Fires `opts.yieldDuringPhase`
