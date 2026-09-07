@@ -14,7 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -115,6 +115,60 @@ describe('export --restore-only resolution chain (D5)', () => {
     await tryRunExport(['--dir', outDir, '--restore-only', '--repo', tmp]);
     expect(exitCode).toBeNull(); // no exit
     expect(stdout.some((line) => line.includes('Restoring 0'))).toBe(true);
+  });
+
+  test('restores frontmatter-declared db_only pages outside configured prefixes', async () => {
+    await engine.executeRaw(`UPDATE sources SET local_path = $1 WHERE id = 'default'`, [tmp]);
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, local_path) VALUES ('other', 'Other', $1) ON CONFLICT DO NOTHING`,
+      [join(tmp, 'other-repo')],
+    );
+    writeFileSync(
+      join(tmp, 'gbrain.yml'),
+      `storage:
+  db_tracked: []
+  db_only:
+    - media/x/
+`,
+    );
+
+    await engine.putPage(
+      'notes/frontmatter-only',
+      {
+        type: 'note',
+        title: 'Frontmatter only',
+        compiled_truth: 'db-only body',
+        frontmatter: { storage_tier: 'db_only' },
+      },
+      { sourceId: 'default' },
+    );
+    await engine.putPage(
+      'notes/plain',
+      {
+        type: 'note',
+        title: 'Plain',
+        compiled_truth: 'plain body',
+      },
+      { sourceId: 'default' },
+    );
+    await engine.putPage(
+      'notes/other-frontmatter-only',
+      {
+        type: 'note',
+        title: 'Other source',
+        compiled_truth: 'other body',
+        frontmatter: { storage_tier: 'db_only' },
+      },
+      { sourceId: 'other' },
+    );
+
+    await tryRunExport(['--dir', outDir, '--restore-only', '--repo', tmp]);
+
+    const restoredPath = join(outDir, 'notes/frontmatter-only.md');
+    expect(existsSync(restoredPath)).toBe(true);
+    expect(readFileSync(restoredPath, 'utf-8')).toContain('storage_tier: db_only');
+    expect(existsSync(join(outDir, 'notes/plain.md'))).toBe(false);
+    expect(existsSync(join(outDir, 'notes/other-frontmatter-only.md'))).toBe(false);
   });
 
   test('falls back to sources default local_path when --repo absent', async () => {
