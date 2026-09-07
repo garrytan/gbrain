@@ -144,7 +144,14 @@ export const minimax: Recipe = {
         'MiniMax-M2.1-highspeed',
         'MiniMax-M2',
       ],
-      supports_tools: false,
+      // MiniMax M2+/M3 chat returns OpenAI-compatible tool_calls: a live
+      // tools -> role:tool continuation round-trip was verified (#4782). The
+      // original `false` came from #1977's untested suggested snippet (plain
+      // chat probe only), not from any provider test. Same call as the
+      // Moonshot/Mistral recipes: ordinary tool calls are fine, but the
+      // subagent loop stays refused until a live abort/retry replay pin lands
+      // (see the OpenRouter-family precedent in TODOS).
+      supports_tools: true,
       supports_subagent_loop: false,
     },
   },

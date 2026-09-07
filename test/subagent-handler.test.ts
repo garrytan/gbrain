@@ -715,8 +715,10 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // The queue submit gate only sees explicit data.model. A job that omits
     // data.model resolves `models.subagent` inside the handler — pre-fix that
     // path bypassed the capability check entirely and a tool-incapable model
-    // (declared supports_tools: false) ran the loop anyway.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    // (declared supports_tools: false) ran the loop anyway. Fixture is the
+    // nvidia recipe: it still declares supports_tools: false (minimax flipped
+    // to true in #4782, so it no longer exercises the no_tools path).
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     try {
       const client = new FakeMessagesClient([
         { content: [{ type: 'text', text: 'should never run' }] as any, stop_reason: 'end_turn' },
@@ -740,7 +742,7 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // non-Anthropic models regardless). The gateway path's terminal
     // early-return runs before any provider client is constructed, so no
     // API key is needed.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     await engine.setConfig('agent.use_gateway_loop', 'true');
     try {
       const client = new FakeMessagesClient([]);
@@ -776,7 +778,7 @@ describe('handler-entry capability gate on the config-resolved model', () => {
     // A gateway transcript persists pending dispatch as `tool-call` blocks.
     // A replay that still needs the loop to resume on the provider must NOT
     // slip past the capability gate via the terminal exception.
-    await engine.setConfig('models.subagent', 'minimax:MiniMax-M2');
+    await engine.setConfig('models.subagent', 'nvidia:nvidia/nemotron-3-super-120b-a12b');
     await engine.setConfig('agent.use_gateway_loop', 'true');
     try {
       const client = new FakeMessagesClient([]);
