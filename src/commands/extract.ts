@@ -1320,7 +1320,14 @@ async function extractForSlugs(
       linksCreated += await engine.addLinksBatch(snapshot, { auditSite: 'extract.links_inc' }); // gbrain-allow-direct-insert: gbrain extract command — canonical link reconciliation from markdown body
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!jsonMode) console.error(`  link batch error (${snapshot.length} rows lost): ${msg}`);
+      // Same two-channel contract as the fs-walk siblings: the cycle runs this
+      // path with jsonMode (stdout belongs to the dream --json report), and a
+      // flush that drops rows must still surface on stderr.
+      if (jsonMode) {
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
+      } else {
+        console.error(`  link batch error (${snapshot.length} rows lost): ${msg}`);
+      }
     }
   }
 
@@ -1332,7 +1339,11 @@ async function extractForSlugs(
       timelineCreated += await engine.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_inc' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (!jsonMode) console.error(`  timeline batch error (${snapshot.length} rows lost): ${msg}`);
+      if (jsonMode) {
+        process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
+      } else {
+        console.error(`  timeline batch error (${snapshot.length} rows lost): ${msg}`);
+      }
     }
   }
 
@@ -2014,6 +2025,8 @@ export async function extractStaleFromDB(
   opts: {
     dryRun: boolean;
     jsonMode: boolean;
+    /** Embedded callers (the cycle) own the report: emit nothing on stdout. */
+    quiet?: boolean;
     includeFrontmatter: boolean;
     sourceIdFilter?: string;
     catchUp: boolean;
@@ -2028,21 +2041,22 @@ export async function extractStaleFromDB(
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number }> {
   const { dryRun, jsonMode, includeFrontmatter, sourceIdFilter, catchUp } = opts;
+  const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
   const timeBudgetMs = opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS;
   const versionTs = LINK_EXTRACTOR_VERSION_TS;
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
   const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
   if (dryRun) {
-    if (jsonMode) {
+    if (jsonMode && !opts.quiet) {
       process.stdout.write(JSON.stringify({ action: 'extract_stale_dry_run', stale_pages: totalStale }) + '\n');
     } else {
-      console.log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
+      log(`(dry run) ${totalStale} page(s) need link/timeline extraction. Run without --dry-run to extract.`);
     }
     return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale };
   }
   if (totalStale === 0) {
-    if (!jsonMode) console.log('No stale pages — extraction is up to date.');
+    if (!jsonMode) log('No stale pages — extraction is up to date.');
     return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: 0 };
   }
 
@@ -2190,17 +2204,17 @@ export async function extractStaleFromDB(
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
 
   if (!jsonMode) {
-    console.log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
+    log(`Extract --stale: ${linksCreated} link(s) + ${timelineCreated} timeline entr(ies) from ${pagesProcessed} page(s).`);
     if (skippedMissingTarget > 0) {
-      console.log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
+      log(`Skipped ${skippedMissingTarget} candidate(s) whose target page doesn't exist (references to non-pages are never persisted).`);
     }
     if (skippedCrossSource > 0) {
-      console.log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`gbrain config set link_resolution.cross_source true\`, then run \`gbrain extract links --source db\` — a --stale re-run will NOT revisit these pages (their extraction watermark is already stamped) — see docs/architecture/brains-and-sources.md (#2589).`);
+      log(`Skipped ${skippedCrossSource} cross-source candidate(s) — target exists only in another source. Enable with \`gbrain config set link_resolution.cross_source true\`, then run \`gbrain extract links --source db\` — a --stale re-run will NOT revisit these pages (their extraction watermark is already stamped) — see docs/architecture/brains-and-sources.md (#2589).`);
     }
     if (budgetHit && staleRemaining > 0) {
-      console.log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
+      log(`Time budget reached — ${staleRemaining} page(s) still stale. Re-run 'gbrain extract --stale' (or pass --catch-up) to continue.`);
     }
-  } else {
+  } else if (!opts.quiet) {
     process.stdout.write(JSON.stringify({
       action: 'extract_stale_done', links_created: linksCreated, timeline_created: timelineCreated,
       pages_processed: pagesProcessed, stale_remaining: staleRemaining, budget_hit: budgetHit,
