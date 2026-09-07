@@ -15,7 +15,6 @@ test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileS
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	runPhaseOrphans ratio threshold — no more absolute count > 20	3	readFileSync
 test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	14	readFileSync
-test/autopilot-install.test.ts	#4728 wrapper falls back when the baked CLI path is gone	5	readFileSync
 test/autopilot-install.test.ts	autopilot install — reload-safety (#2608)	1	readFileSync
 test/autopilot-install.test.ts	autopilot showStatus — wrapper-path detection	1	readFileSync
 test/autopilot-install.test.ts	autopilot wiring: chat-unavailable boot warning (#2608)	1	readFileSync
@@ -58,7 +57,7 @@ test/ci-local-empty-mounts.test.ts	(file-level)	1	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
-test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	13	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	15	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	readFileSync
