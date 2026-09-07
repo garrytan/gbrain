@@ -83,7 +83,10 @@ export type BootstrapErrorCode =
   | 'HOME_GUARD'
   /** The resolved --workspace (or its cwd default) is the user's home
    * directory — refuse before any home-directory-scale git operation runs. */
-  | 'HOME_WORKSPACE';
+  | 'HOME_WORKSPACE'
+  /** The harness could not resolve (or verify) the source its hooks + token
+   * must bind to — pass --source <id> explicitly. */
+  | 'SOURCE_UNRESOLVED';
 
 /**
  * The bootstrap family's error type. `exitCode` carries dispatcher semantics:

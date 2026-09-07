@@ -55,6 +55,8 @@ import {
   stripAmbientWritebackBlockAt,
 } from './instructions-block.ts';
 import { createEngine } from '../engine-factory.ts';
+import { isValidSourceId } from '../source-id.ts';
+import { ALL_SOURCES, isResolverUserError, localFederatedSourceIds, resolveSourceWithTier } from '../source-resolver.ts';
 import { probeBrainIdentity, type ConnectProbeResult } from '../connect-probe.ts';
 import {
   buildClaudeMcpAddArgv,
@@ -201,7 +203,15 @@ export function parseHarnessArgs(rest: string[]): HarnessFlags {
     out.port = n;
   }
   const source = value('--source');
-  if (source !== undefined) out.source = source;
+  if (source !== undefined) {
+    // Every other flag is validated here; a typo'd id would otherwise mint a
+    // token and wire hooks to a phantom scope (reads return nothing).
+    if (!isValidSourceId(source)) {
+      out.error = `invalid --source '${source}' (a source id matches [a-z0-9-]{1,32}; '${ALL_SOURCES}' is not a hook scope)`;
+      return out;
+    }
+    out.source = source;
+  }
   out.tokenName = value('--token-name') ?? out.tokenName;
   const token = value('--token');
   if (token !== undefined) out.token = token;
@@ -284,11 +294,14 @@ export interface HarnessDeps {
     sourceGrant?: string[];
   }) => Promise<MintedLegacyToken>;
   revokeById?: (id: string) => Promise<boolean>;
-  /** The brain's implicit default source (sources.default, else the sole
-   * populated non-default source) — the source the serve binds its
-   * resolve-IPC listener to when nothing narrower matches (#4897). null =
-   * no implicit default (the federated 'default' floor). Tests inject a fake. */
-  resolveImplicitSource?: () => Promise<string | null>;
+  /** Resolve the source the hooks + token bind to, through the SAME resolver
+   * the serve's resolve-IPC binding uses (resolveSourceWithTier: env →
+   * dotfile → local_path → sources.default → sole non-default → seed
+   * default), plus that source's local federated read set, so the hook lane
+   * reads what search/think read (#4897). `explicit` = --source (validated +
+   * asserted to exist). Throws on an unknown id or an unopenable engine — the
+   * caller decides fail-open vs fail-closed. Tests inject a fake. */
+  resolveHookSource?: (explicit: string | null) => Promise<HookSourceBinding>;
   /** Live-PGLite-serve pre-probe for the revoke lane [C9]. */
   pgliteLiveServe?: () => boolean;
   detectClaude?: () => boolean;
@@ -327,7 +340,7 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
     loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
     mint: deps.mint ?? defaultMint,
     revokeById: deps.revokeById ?? defaultRevokeById,
-    resolveImplicitSource: deps.resolveImplicitSource ?? defaultResolveImplicitSource,
+    resolveHookSource: deps.resolveHookSource ?? defaultResolveHookSource,
     pgliteLiveServe: deps.pgliteLiveServe ?? defaultPgliteLiveServe,
     // #4325: config-dir fallback mirrors detectCodex/detectOpencode below —
     // CI runners and alias-only shells don't expose a `claude` binary on the
@@ -417,27 +430,32 @@ async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?:
   }
 }
 
-/** Production implicit-source lookup: the same tiers (sources.default, then
- * the sole populated non-default source) the serve's IPC binding falls
- * through to, so the hooks claim a source the serve will accept. Fail-open
- * to null: on a PGLite brain under a live serve the engine cannot open (the
- * mint already reports LIVE_SERVE), and a lookup failure must never block
- * the wiring — `--source` remains the explicit override. */
-async function defaultResolveImplicitSource(): Promise<string | null> {
+/** The source the hooks + token bind to, and the read grant the token carries. */
+export interface HookSourceBinding {
+  source_id: string;
+  /** The federated read set for an ambient tier (what search/think read);
+   * `[source_id]` for an explicit --source or a non-federated source. */
+  grant: string[];
+}
+
+/** Production hook-source lookup: the SAME resolver the serve's resolve-IPC
+ * binding runs (`resolveSourceWithTier(engine, null)`), so the hooks claim
+ * exactly the source the serve resolves; an explicit --source goes through
+ * tier 1 (shape + existence). NOT fail-open: on a PGLite brain under a live
+ * serve the engine cannot open, and applyHarness decides what that means
+ * (refuse without --source; bind an explicit --source unverified). */
+async function defaultResolveHookSource(explicit: string | null): Promise<HookSourceBinding> {
+  const cfg = loadConfig();
+  if (!cfg) throw new Error('no brain configured (run `gbrain init` first)');
+  const engineConfig = toEngineConfig(cfg);
+  const engine = await createEngine(engineConfig);
+  await engine.connect(engineConfig);
   try {
-    const cfg = loadConfig();
-    if (!cfg) return null;
-    const engineConfig = toEngineConfig(cfg);
-    const engine = await createEngine(engineConfig);
-    await engine.connect(engineConfig);
-    try {
-      const { resolveImplicitDefaultSourceId } = await import('../source-resolver.ts');
-      return await resolveImplicitDefaultSourceId(engine);
-    } finally {
-      await engine.disconnect();
-    }
-  } catch {
-    return null;
+    const resolved = await resolveSourceWithTier(engine, explicit);
+    const grant = (await localFederatedSourceIds(engine, resolved.source_id, resolved.tier)) ?? [resolved.source_id];
+    return { source_id: resolved.source_id, grant };
+  } finally {
+    await engine.disconnect();
   }
 }
 
@@ -893,17 +911,44 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // crash (or a newer-format receipt refusal) can never leave a live token
   // no receipt records.
   // #4897: without --source the hooks must claim the source the serve's
-  // resolve-IPC listener is bound to (sources.default / the sole populated
-  // non-default source), or every turn_context is `source_mismatch`. The
-  // same value floors the token: the federated-default mint cannot read a
-  // sole non-federated source (page_count 0), the scalar grant can. A
-  // configured `sources.default = default` echoes back as 'default' — that is
-  // the federated floor, not a scalar grant (same guard as dream.ts).
-  const implicit = flags.source ? null : await d.resolveImplicitSource();
-  const implicitSource = implicit === 'default' ? null : implicit;
+  // resolve-IPC listener is bound to — resolved through the SAME chain the
+  // serve runs (env → dotfile → local_path → sources.default → sole
+  // non-default → seed default), or every turn_context is `source_mismatch`.
+  // The token floors on that source's federated read set (what search/think
+  // read): the federated-default mint cannot read a sole non-federated
+  // source (page_count 0). A resolution that lands on the seeded 'default'
+  // (or a `__all__` env) is the federated floor, not a scalar grant (same
+  // guard as dream.ts).
+  let bound: HookSourceBinding;
+  try {
+    bound = await d.resolveHookSource(flags.source ?? null);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isResolverUserError(e)) {
+      // A typo'd --source / stale GBRAIN_SOURCE or dotfile: minting a token
+      // to a phantom scope would "succeed" and then read nothing.
+      throw new BootstrapError('SOURCE_UNRESOLVED', msg);
+    }
+    if (flags.source) {
+      // The engine could not open (a live PGLite serve + --token is the
+      // documented path here); the explicit id is the operator's word.
+      d.logError(`WARNING: could not verify --source '${flags.source}' against the brain (${msg}); binding to it unverified.`);
+      bound = { source_id: flags.source, grant: [flags.source] };
+    } else {
+      // Silently binding 'default' here is the #4897 bug reopened: the serve
+      // may resolve a different source and every hook turn would mismatch.
+      throw new BootstrapError(
+        'SOURCE_UNRESOLVED',
+        `could not resolve the source the serve binds its hooks to (${msg}) — pass --source <id> ` +
+          '(`gbrain sources list` shows the registered ids) and re-run.',
+      );
+    }
+  }
+  const implicitSource =
+    flags.source || bound.source_id === 'default' || bound.source_id === ALL_SOURCES ? null : bound.source_id;
   const hookSource = flags.source ?? implicitSource ?? 'default';
   if (implicitSource) {
-    d.log(`binding hooks + token to source '${implicitSource}' (the serve's implicit default; pass --source to override).`);
+    d.log(`binding hooks + token to source '${implicitSource}' (the serve's resolved default; pass --source to override).`);
   }
   const guard = guardHarnessReceiptOverwrite(d.gbrainHome);
   if (guard.brokenBackupPath) {
@@ -1026,9 +1071,11 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         name: flags.tokenName,
         scopes: ['read', 'write'],
         // [X2] --source is the write floor — a scalar grant, the stdio
-        // env-tier mirror. Without it (and no implicit default, #4897) the
+        // env-tier mirror. An implicit non-default source carries its
+        // federated read set (#4897 — the same set search/think read, not a
+        // scalar that would hide every federated sibling). Neither → the
         // default mint federates.
-        ...(flags.source || implicitSource ? { sourceGrant: [hookSource] } : {}),
+        ...(flags.source || implicitSource ? { sourceGrant: bound.grant } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
