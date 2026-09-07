@@ -59,20 +59,53 @@ describe('anchor scan — bracketed preamble no longer hijacks the parse', () =>
     expect(atomsOf(raw)).toHaveLength(1);
   });
 
-  test('HAZARD: skips a parseable-but-WRONG array rather than reporting zero atoms', () => {
-    // The dangerous case. `["a","b"]` parses cleanly, so a scan that accepted
-    // the first *parseable* candidate would return atoms: [] — a zero-yield
-    // that TOMBSTONES the page and silently discards the real payload below.
+  test('preamble recovery: a parseable-but-WRONG array ahead of the real one is skipped', () => {
+    // `["a","b"]` parses cleanly but yields no atom, so the scan moves on and
+    // recovers the real payload below. NOTE: this passes with OR without the
+    // shape gate (the first-bracket offset fails to parse either way), so it
+    // pins recovery, not the gate — the gate is pinned directly further down.
     const raw = 'Candidate labels were ["a","b"] before I settled on:\n' + ATOM_ARRAY;
     const atoms = atomsOf(raw);
     expect(atoms).toHaveLength(1);
     expect(atoms[0]!.title).toBe(ATOM.title);
   });
 
-  test('HAZARD: skips an array of atom-shaped-but-empty objects', () => {
+  test('preamble recovery: an array of atom-shaped-but-empty objects ahead of the real one is skipped', () => {
     // Objects, but every one fails the shape gate (no title/atom_type/body).
     const raw = 'Draft skeleton: [{"note":"tbd"},{"note":"tbd"}] — final answer:\n' + ATOM_ARRAY;
     expect(atomsOf(raw)).toHaveLength(1);
+  });
+});
+
+describe('anchor scan — the shape gate is what accepts a candidate (atoms.length > 0)', () => {
+  // THE HAZARD, pinned directly. In each case a later offset holds an array
+  // that PARSES but yields zero atoms, and no offset holds a real one. A scan
+  // that accepted mere parseability would return `ok: true, atoms: []` — the
+  // zero-yield that tombstones a page — instead of the FIRST offset's failure.
+  test('a parseable array of strings after bracketed prose is NOT accepted', () => {
+    const outcome = parseAtomsOutcome('see [Source: X] then candidate labels ["a","b"]');
+    expect(outcome).toEqual({ ok: false, reason: 'unparseable JSON array' });
+  });
+
+  test('a parseable array of shape-failing objects after bracketed prose is NOT accepted', () => {
+    const outcome = parseAtomsOutcome('see [Source: X] then [{"note":"tbd"}]');
+    expect(outcome).toEqual({ ok: false, reason: 'unparseable JSON array' });
+  });
+});
+
+describe('anchor scan — MAX_ARRAY_ANCHOR_CANDIDATES bounds the scan at 64 offsets', () => {
+  // Each `[tN]` token is one failing `[` offset; the atoms array itself holds
+  // exactly one `[`, so 63 tokens put it at the 64th (last tried) offset and
+  // 64 tokens push it past the cap.
+  const preamble = (n: number) => Array.from({ length: n }, (_, i) => `[t${i}]`).join(' ');
+
+  test('63 bracketed preamble tokens: the array at the 64th offset is still recovered', () => {
+    expect(atomsOf(preamble(63) + ' ' + ATOM_ARRAY)).toHaveLength(1);
+  });
+
+  test("64 bracketed preamble tokens: cap reached, the FIRST offset's failure is returned", () => {
+    const outcome = parseAtomsOutcome(preamble(64) + ' ' + ATOM_ARRAY);
+    expect(outcome).toEqual({ ok: false, reason: 'unparseable JSON array' });
   });
 });
 
