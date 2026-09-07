@@ -85,6 +85,14 @@ describe('both serve transports bind through the shared helper (#4474)', () => {
     expect(src).toContain('ipcBinding?.close()');
   });
 
+  it('an exiting serve never blind-unlinks the socket pathname (#4896)', async () => {
+    // A transient serve that lost the bind to a live provider must not
+    // delete that provider's socket on the way out; Bun's server.close()
+    // already unlinks the pathname the listener itself bound.
+    const src = await readSrc('src/mcp/resolve-ipc-binding.ts').text();
+    expect(src).not.toContain('cleanupStaleSocket(resolveSocket)');
+  });
+
   it('bootstrap verify prefers a live serve socket over self-creating one', async () => {
     // verify.ts:hooks smoke used to ALWAYS start its own IPC server, which
     // manufactured the condition under test and masked serve postures that

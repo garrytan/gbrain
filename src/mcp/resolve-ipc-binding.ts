@@ -24,7 +24,6 @@ import { loadConfig } from '../core/config.ts';
 import {
   resolveSocketPathForConfig,
   startResolveIpcServer,
-  cleanupStaleSocket,
   ensureIpcSecretForConfig,
   type IpcHandlers,
 } from '../core/context/resolve-ipc.ts';
@@ -234,8 +233,9 @@ export async function bindResolveIpcForServe(
       close: () => {
         if (closed) return;
         closed = true;
+        // server.close() unlinks the pathname THIS listener bound; never
+        // blind-unlink the path — it may belong to a newer live serve (#4896).
         try { server.close(); } catch { /* noop */ }
-        cleanupStaleSocket(resolveSocket);
       },
     };
   } catch {

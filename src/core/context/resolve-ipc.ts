@@ -351,9 +351,9 @@ export interface IpcPathConfig {
  * no serve) behind it (v0.45.7 gate, preserved).
  *
  * Multi-serve note: on Postgres several serves for the SAME database_url
- * share this path; the newest bind wins (same last-serve-wins posture as
- * the PGLite socket after a stale-socket cleanup). Bound-source rejection
- * [CX2-10] still applies per request.
+ * share this path; the first LIVE provider wins — a later serve probes the
+ * socket, finds a live owner, and defers (null binding) instead of unlinking
+ * it (#4896). Bound-source rejection [CX2-10] still applies per request.
  */
 export function resolveSocketPathForConfig(cfg: IpcPathConfig | null | undefined): string | null {
   if (!cfg) return null;
@@ -724,9 +724,11 @@ function roundTrip(
 // ── Server ────────────────────────────────────────────────────────────────
 
 /**
- * Server: start an IPC listener on `socketPath`. Cleans up a stale socket
- * left by a dead owner first, hardens the parent dir to 0700, and chmods the
- * socket 0600 BEFORE announcing readiness [S3#6]. Returns the net.Server
+ * Server: start an IPC listener on `socketPath`. Probes the path for a live
+ * owner first — if another serve answers, returns null and leaves its socket
+ * untouched (that serve is the IPC provider, #4896); otherwise cleans up the
+ * stale entry a dead owner left, hardens the parent dir to 0700, and chmods
+ * the socket 0600 BEFORE announcing readiness [S3#6]. Returns the net.Server
  * (caller closes on shutdown). Errors are swallowed (best-effort feature) —
  * returns null if the socket can't be bound.
  *
@@ -765,6 +767,13 @@ export async function startResolveIpcServer(
     chmodSync(dir, 0o700);
   } catch { /* best effort */ }
 
+  // A live provider already owns the path: defer, never unlink it out from
+  // under it (#4896 — a transient serve used to displace the long-lived one
+  // and take the pathname with it on exit).
+  // ponytail: two serves probing within the same few microseconds both see
+  // no owner and the second unlink still displaces the first; a dev/ino
+  // identity re-check around the unlink is the upgrade path if it ever bites.
+  if (await socketHasLiveListener(socketPath)) return null;
   // Remove a stale socket file if present (a previous serve that didn't clean up).
   cleanupStaleSocket(socketPath);
 
@@ -861,7 +870,12 @@ export async function startResolveIpcServer(
       });
       conn.on('error', () => { try { conn.destroy(); } catch { /* noop */ } });
     });
-    server.on('error', () => resolve(null));
+    server.on('error', (e: NodeJS.ErrnoException) => {
+      if (process.env.GBRAIN_DEBUG === '1') {
+        process.stderr.write(`[resolve-ipc] listen failed (${e.code ?? 'unknown'}) at ${socketPath}\n`);
+      }
+      resolve(null);
+    });
     server.listen(socketPath, () => {
       // Mode set BEFORE readiness is announced (the resolve() below) [S3#6].
       try { chmodSync(socketPath, 0o600); } catch { /* best effort */ }
@@ -987,7 +1001,8 @@ async function handleSyncKind<Req extends { protocol: number; secret: string }, 
  * fs call that observes the entry, so a gated cleanup never fired there and
  * every serve after an unclean exit ran with no IPC listener. ENOENT (nothing
  * there) and EISDIR/EPERM (a directory we must not touch) are swallowed.
- * First-bind-wins is not enforced here — see startResolveIpcServer.
+ * Liveness is NOT checked here — startResolveIpcServer probes for a live
+ * owner before calling this.
  */
 export function cleanupStaleSocket(socketPath: string): void {
   try {
@@ -995,4 +1010,32 @@ export function cleanupStaleSocket(socketPath: string): void {
   } catch {
     /* nothing stale, or not ours to remove */
   }
+}
+
+/**
+ * True when something accepts a connection at `socketPath` (a live serve).
+ * ENOENT / ECONNREFUSED (absent or dead owner) and a hung owner (timeout)
+ * both read as "no live listener" so the caller may clean up and bind. The
+ * server side tolerates the data-less probe: one-request-per-connection
+ * means a connection that closes before its first line is just destroyed.
+ */
+function socketHasLiveListener(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const probe = new net.Socket();
+    const finish = (live: boolean) => {
+      if (settled) return;
+      settled = true;
+      try { probe.destroy(); } catch { /* noop */ }
+      resolve(live);
+    };
+    // Listeners BEFORE connect(): under `bun test` Bun can emit the ENOENT
+    // for an absent path synchronously inside connect(), which would be an
+    // unhandled 'error' if attached afterwards.
+    probe.once('connect', () => finish(true));
+    probe.once('error', () => finish(false));
+    probe.once('timeout', () => finish(false));
+    probe.setTimeout(250);
+    try { probe.connect(socketPath); } catch { finish(false); }
+  });
 }

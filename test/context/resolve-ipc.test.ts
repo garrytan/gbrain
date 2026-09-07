@@ -113,7 +113,7 @@ describe('resolve IPC', () => {
     const sock = resolveSocketPath(dir);
     const s1 = await startResolveIpcServer(sock, async () => null);
     servers.push(s1!);
-    s1!.close();
+    await new Promise<void>((r) => s1!.close(() => r()));
     // bind again at the same path — startResolveIpcServer must unlink the stale file
     const s2 = await startResolveIpcServer(sock, async () => null);
     expect(s2).not.toBeNull();
@@ -125,6 +125,28 @@ describe('resolve IPC', () => {
     if (process.platform !== 'win32') {
       expect(existsSync(sock)).toBe(true);
     }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // #4896: a transient serve (claude mcp list, bootstrap smoke, a session's
+  // stdio serve) for the same brain used to unlink the LIVE provider's
+  // socket and bind over it; on exit the pathname vanished and every hook
+  // reported ipc_unavailable until the long-lived serve restarted. A live
+  // owner must make the second start defer (null) and stay reachable.
+  test('live listener at the path: a second startResolveIpcServer defers and leaves the live socket reachable', async () => {
+    const dir = tmpDir();
+    const sock = resolveSocketPath(dir);
+    const block: PointerBlock = { pointers: [], text: 'BLOCK' };
+    const s1 = await startResolveIpcServer(sock, async () => block);
+    servers.push(s1!);
+    const s2 = await startResolveIpcServer(sock, async () => null);
+    if (s2) servers.push(s2);
+    expect(s2).toBeNull();
+    if (process.platform !== 'win32') {
+      expect(existsSync(sock)).toBe(true);
+    }
+    const got = await resolveViaIpc(sock, { candidates: [{ display: 'Alice', query: 'Alice' }] });
+    expect((got as PointerBlock).text).toBe('BLOCK');
     rmSync(dir, { recursive: true, force: true });
   });
 
