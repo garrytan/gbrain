@@ -42,7 +42,6 @@ import type { BrainEngine, NewFact, FactVisibility, FactKind } from '../engine.t
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { inferTypeFromPack, parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
-import { contentHash } from '../utils.ts';
 import { loadActivePackBestEffort } from '../schema-pack/best-effort.ts';
 import { withPageLock } from '../page-lock.ts';
 import { gbrainPath } from '../config.ts';
@@ -470,26 +469,19 @@ export async function writeFactsToFence(
       // and the extract_facts reconcile read the DB body, not the file — left
       // stale, a plain get→put round-trip flattens the new row off disk and
       // the next reconcile deletes it from the facts table. Same recipe as
-      // forget.ts (#4696): parse + sanitize + hash the FILE bytes exactly as
-      // import-file.ts does so the next sync sees the page as unchanged.
-      // Best-effort: the file is already committed; a stub page with no DB
-      // row is a 0-row UPDATE and sync creates it.
-      // ponytail: like the importer, a type-less file over a curated DB type
-      // hashes differently and re-imports once on the next sync (re-chunk only).
+      // forget.ts (#4696): parse + sanitize the FILE bytes as import-file.ts
+      // does. Body-only: content_chunks are untouched, so the row KEEPS its
+      // old content_hash and the next sync re-imports + re-chunks. Stamping
+      // the importer's hash here made sync skip the page and left search
+      // blind to the new row forever. Best-effort: the file is already
+      // committed; a stub page with no DB row is created by sync.
       try {
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
-        const title = sanitizeText(reparsed.title);
-        const compiledTruth = sanitizeText(reparsed.compiled_truth);
-        const timeline = sanitizeText(reparsed.timeline);
-        reparsed.tags.sort();
-        await engine.refreshPageBody(target.slug, target.sourceId, compiledTruth, timeline, contentHash({
-          title,
-          type: reparsed.type,
-          compiled_truth: compiledTruth,
-          timeline,
-          frontmatter: reparsed.frontmatter,
-          tags: reparsed.tags,
-        }));
+        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
+        if (existing) {
+          await engine.refreshPageBody(target.slug, target.sourceId,
+            sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline), existing.content_hash ?? '');
+        }
       } catch { /* degrades to the pre-#4872 window (stale until the next sync) */ }
 
       // 6. Stamp the DB. extractFactsFromFenceText handles the

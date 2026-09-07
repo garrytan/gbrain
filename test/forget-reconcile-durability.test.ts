@@ -25,8 +25,8 @@ let brainDir: string;
 
 const SLUG = 'people/alice-example';
 // Two frontmatter keys + tags on purpose: pages.frontmatter is JSONB (key
-// order normalized), so a hash computed from the DB row can never equal the
-// importer's file-shaped hash. The stamp must come from the file bytes.
+// order normalized), so any hash the strike computed could never match the
+// importer's — the mirror must leave the row's content_hash alone.
 const FILE = `---
 title: Alice Example
 type: person
@@ -104,13 +104,18 @@ describe('forget survives the extract_facts reconcile (#4696)', () => {
     await expectForgetHeld(id);
   });
 
-  test('fence path: content_hash matches the importer, so the next sync skips re-chunking', async () => {
+  test('fence path: the next sync re-imports and re-chunks the struck row', async () => {
     const id = await seed();
     await forgetFactInFence(engine, id, { reason: 'test' });
     const struck = readFileSync(join(brainDir, `${SLUG}.md`), 'utf-8');
     expect(struck).toContain('~~Founded acme-example~~');
+    // The DB-body strike leaves content_chunks untouched, so it must not
+    // claim the importer's hash: sync has to re-chunk or the struck claim
+    // keeps surfacing verbatim in chunk search (wave review).
     const imp = await importFromContent(engine, SLUG, struck, { noEmbed: true, sourceId: 'default' });
-    expect(imp.status).toBe('skipped');
+    expect(imp.status).toBe('imported');
+    const chunks = await engine.getChunks(SLUG, { sourceId: 'default', requireSafeChunks: true });
+    expect(chunks.map((c) => c.chunk_text).join('\n')).toContain('~~Founded acme-example~~');
   });
 
   test('legacy path (file gone): the DB body is struck, so the reconcile is a no-op', async () => {

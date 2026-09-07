@@ -46,7 +46,6 @@ import { resolvePageWriteTarget } from '../write-through.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { sanitizeText } from '../batch-rows.ts';
-import { contentHash } from '../utils.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -182,15 +181,8 @@ export async function forgetFactInFence(
     if (!page) return;
     const struck = strikeFenceRow(page.compiled_truth ?? '', row.row_num, reason, today);
     if (struck === null) return;
-    const tags = await engine.getTags(slug, { sourceId: row.source_id });
-    await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '', contentHash({
-      title: page.title,
-      type: page.type,
-      compiled_truth: struck,
-      timeline: page.timeline,
-      frontmatter: page.frontmatter,
-      tags,
-    }));
+    // Body-only write: keep the row's content_hash so the next sync re-chunks.
+    await engine.refreshPageBody(slug, row.source_id, struck, page.timeline ?? '', page.content_hash ?? '');
   };
 
   // Legacy path — DB-only forget. Doesn't survive `gbrain rebuild` (the
@@ -268,24 +260,19 @@ export async function forgetFactInFence(
     // #4696: mirror the rewritten file into the DB body, or the reconcile
     // (which reads pages.compiled_truth) resurrects the claim before the
     // next sync absorbs the file — and sync is commit-anchored, so that
-    // window lasts until the user commits. Parse + sanitize + hash the FILE
-    // bytes exactly as import-file.ts does, not the getPage row:
-    // pages.frontmatter is JSONB with normalized key order, so a row-shaped
-    // hash never matches and every forgotten page would re-chunk on its
-    // next sync. Best-effort — file + facts row are already correct.
+    // window lasts until the user commits. Parse + sanitize the FILE bytes
+    // as import-file.ts does. Body-only: content_chunks still carry the
+    // live claim, so the row KEEPS its old content_hash and the next sync
+    // re-imports + re-chunks. Stamping the importer's hash here made sync
+    // skip the page and the struck claim kept surfacing in chunk search.
+    // Best-effort — file + facts row are already correct.
     try {
       const reparsed = parseMarkdown(tmpBody, `${slug}.md`);
-      const title = sanitizeText(reparsed.title);
-      const compiledTruth = sanitizeText(reparsed.compiled_truth);
-      const timeline = sanitizeText(reparsed.timeline);
-      await engine.refreshPageBody(slug, row.source_id, compiledTruth, timeline, contentHash({
-        title,
-        type: reparsed.type,
-        compiled_truth: compiledTruth,
-        timeline,
-        frontmatter: reparsed.frontmatter,
-        tags: reparsed.tags,
-      }));
+      const page = await engine.getPage(slug, { sourceId: row.source_id });
+      if (page) {
+        await engine.refreshPageBody(slug, row.source_id,
+          sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline), page.content_hash ?? '');
+      }
     } catch { /* degrades to the pre-#4696 window (stale until the next sync) */ }
 
     return { ok: true, path: 'fence', reason };

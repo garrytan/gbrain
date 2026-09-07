@@ -182,7 +182,7 @@ describe('writeFactsToFence — happy path', () => {
     expect(body).toContain('Founded Widgets Inc.');
   });
 
-  test('#4872 mirrors the rewritten file into pages.compiled_truth with importer hash parity', async () => {
+  test('#4872 mirrors the rewritten file into pages.compiled_truth; the next sync re-chunks the new row', async () => {
     const filePath = join(brainDir, 'people/bob.md');
     mkdirSync(join(brainDir, 'people'), { recursive: true });
     const file = '---\ntype: person\ntitle: Bob\nslug: people/bob\n---\n\n# Bob\n\nMet at YC W22.\n';
@@ -201,9 +201,13 @@ describe('writeFactsToFence — happy path', () => {
     const page = await engine.getPage('people/bob', { sourceId: 'default' });
     expect(page!.compiled_truth).toContain('Founded Widgets Inc.');
     expect(page!.compiled_truth).toContain('Met at YC W22.');
-    // Hash parity with the importer: the next sync sees the page as unchanged.
+    // The mirror is body-only (content_chunks untouched), so it must NOT
+    // claim the importer's hash: the next sync has to see the file as changed
+    // and re-chunk, or search never indexes the remembered row (wave review).
     const imp = await importFromContent(engine, 'people/bob', readFileSync(filePath, 'utf-8'), { noEmbed: true, sourceId: 'default' });
-    expect(imp.status).toBe('skipped');
+    expect(imp.status).toBe('imported');
+    const chunks = await engine.getChunks('people/bob', { sourceId: 'default', requireSafeChunks: true });
+    expect(chunks.map((c) => c.chunk_text).join('\n')).toContain('Founded Widgets Inc.');
   });
 
   test('multi-fact batch appends consecutive row_nums', async () => {
