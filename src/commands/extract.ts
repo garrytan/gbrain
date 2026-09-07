@@ -2216,10 +2216,13 @@ export async function extractStaleFromDB(
  * mention link_source is filtered OUT of backlink-count per D12 so
  * search ranking semantics are preserved.
  *
- * Source isolation: mentions cross-source pages are deliberately
- * suppressed by `findMentionedEntities`'s cross-source guard. Page in
- * source A mentions entity in source B → no link created. v1
- * conservative posture; relaxable in a future wave.
+ * Source isolation: mentions of cross-source pages are suppressed by
+ * `findMentionedEntities`'s cross-source guard (page in source A mentions
+ * entity in source B → no link) UNLESS the operator opted in via
+ * `link_resolution.cross_source` — the same switch wikilink resolution
+ * honours, so the two link sources can't disagree about source isolation.
+ * The switch is folded into the checkpoint fingerprint so flipping it
+ * mid-pause rescans instead of resuming with the old posture.
  */
 async function extractMentionsFromDb(
   engine: BrainEngine,
@@ -2251,10 +2254,11 @@ async function extractMentionsFromDb(
   // fingerprint so adding new entity pages mid-pause invalidates the
   // checkpoint cleanly. Without it, resumed pages would skip new
   // entities silently (codex flag).
+  const allowCrossSource = await isCrossSourceLinksEnabled(engine);
   const gazetteerHash = createHash('sha256')
     .update([...gazetteer.keys()].sort().join('|'))
     .digest('hex')
-    .slice(0, 8);
+    .slice(0, 8) + (allowCrossSource ? ':xs' : '');
 
   // #4304: --since prunes at the ref level BEFORE the checkpoint diff and
   // the per-page getPage loop. Refs outside the window never enter the
@@ -2370,6 +2374,7 @@ async function extractMentionsFromDb(
       ? findMentionedEntities(body, gazetteer, {
           fromSlug: slug,
           fromSourceId: source_id,
+          allowCrossSource,
         })
       : [];
 

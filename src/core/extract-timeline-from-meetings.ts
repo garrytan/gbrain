@@ -12,6 +12,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
+import { isCrossSourceLinksEnabled } from './link-extraction.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -116,6 +117,7 @@ export async function extractTimelineFromMeetings(
   // 3. For each meeting, derive entity mentions (gazetteer-based) + merge
   // with attendee edges. Each (meeting, entity) produces ONE timeline row.
   const gazetteer = opts.gazetteer ?? await buildGazetteer(engine);
+  const allowCrossSource = await isCrossSourceLinksEnabled(engine);
 
   const batch: TimelineBatchInput[] = [];
   let entriesCreated = 0;
@@ -170,14 +172,15 @@ export async function extractTimelineFromMeetings(
     }
 
     // Body mentions (gazetteer-based). Skip self-mention (meeting page
-    // referencing itself by title). The cross-source guard in
-    // findMentionedEntities already drops mentions targeting a different
-    // source than the gazetteer entry was built from.
+    // referencing itself by title). Mentions of entities in ANOTHER source
+    // are dropped by findMentionedEntities unless the operator opted in via
+    // `link_resolution.cross_source` (same switch as wikilink resolution).
     const body = meeting.compiled_truth + '\n\n' + meeting.timeline;
     if (body.trim()) {
       const mentions = findMentionedEntities(body, gazetteer, {
         fromSlug: meeting.slug,
         fromSourceId: meeting.source_id,
+        allowCrossSource,
       });
       for (const m of mentions) {
         targets.set(`${m.source_id}::${m.slug}`, {

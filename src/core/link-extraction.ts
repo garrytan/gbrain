@@ -1702,8 +1702,8 @@ export async function isGlobalBasenameEnabled(engine: BrainEngine): Promise<bool
  * and surfaced in the extract summary, never silent (issue #2589: the drop
  * was previously indistinguishable from an unresolved link).
  *
- * SCOPE: the DB extract paths only (`extract links --source db`,
- * `extract --stale`) — they resolve against the full multi-source slug map.
+ * SCOPE: the DB extract paths (`extract links --source db`, `extract --stale`)
+ * plus the mention scan (`findMentionedEntities` callers lift their guard under it).
  * The FS-walk paths (dir-driven, incl. the autopilot cycle's extract phase)
  * build their slug set from the walked files of ONE source, so cross-source
  * targets aren't resolvable there; FS-walk parity is a filed follow-up.
