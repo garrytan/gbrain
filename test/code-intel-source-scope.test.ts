@@ -145,4 +145,22 @@ describe('code reads require trusted local context while remote authorization is
     expect(JSON.stringify(defs.defs)).toContain('beta');
     expect(JSON.stringify(refs.refs)).toContain('beta');
   });
+
+  test('trusted local code_blast and code_flow carry the readiness envelope on a miss', async () => {
+    // A bare {result:'not_found'} conflates "graph not built" with "zero
+    // callers". The graph IS built for srcalpha (symbol-bearing chunks exist),
+    // so a miss on a symbol that lives only in srcbeta must read as a trusted
+    // miss: status 'ready', ready true — the same contract the four siblings
+    // (code_callers/callees/def/refs) already carry.
+    await seedTwoSourceCodeGraph();
+    const ctx = localAlpha();
+    const blast = await operationsByName.code_blast.handler(ctx, { symbol: 'betaSecretFn' }) as { result: string; status?: string; ready?: boolean };
+    const flow = await operationsByName.code_flow.handler(ctx, { entry_point: 'betaSecretFn' }) as { result: string; status?: string; ready?: boolean };
+    expect(blast.result).toBe('not_found');
+    expect(blast.status).toBe('ready');
+    expect(blast.ready).toBe(true);
+    expect(flow.result).toBe('not_found');
+    expect(flow.status).toBe('ready');
+    expect(flow.ready).toBe(true);
+  });
 });
