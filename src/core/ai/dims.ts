@@ -336,8 +336,9 @@ export function dimsProviderOptions(
         return { openaiCompatible: { dimensions: dims } };
       }
       // OpenAI-compatible routers such as OpenRouter serve Gemini embeddings
-      // with a native 3072 default, so narrower brains (e.g. 1024) otherwise
-      // hard-fail on the first embed; the file header noted this missing branch.
+      // with the same native 3072 default the header notes for
+      // gemini-embedding-001, so narrower brains (e.g. 1024) otherwise
+      // hard-fail on the first embed without explicit dimensions passthrough.
       if (bareModelId.startsWith('gemini-embedding') || bareModelId === 'text-embedding-004') {
         return { openaiCompatible: { dimensions: dims } };
       }
