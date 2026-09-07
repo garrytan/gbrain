@@ -25,7 +25,7 @@ import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { OAuthTokenRevocationRequestSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { BrainEngine } from '../core/engine.ts';
@@ -1275,7 +1275,15 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // parameter, so MCP clients couldn't begin the OAuth flow from a fresh
   // 401 — they would silently fail to connect with a generic "couldn't
   // reach the MCP server" error.
-  const resourceMetadataUrl = `${issuerUrl.toString().replace(/\/$/, '')}/.well-known/oauth-protected-resource`;
+  // RFC 9728 / MCP auth spec: the protected-resource metadata describes the
+  // resource the client connects to (/mcp), not the authorization-server root.
+  // Without resourceServerUrl the SDK falls back to issuerUrl, advertising
+  // `resource: "https://host/"` and 404ing the path-based PRM URL
+  // (/.well-known/oauth-protected-resource/mcp) that clients derive from the
+  // connector URL (#4893). The 401 challenge's resource_metadata URL is
+  // derived from the same value so the two can never drift apart.
+  const mcpResourceUrl = new URL('/mcp', issuerUrl);
+  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
 
   // F9: cookie `secure` flag honors both the request's TLS state (req.secure
   // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
@@ -1300,6 +1308,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     // ['read','write','admin'] list left those new scopes invisible.
     scopesSupported: [...ALLOWED_SCOPES_LIST],
     resourceName: 'GBrain MCP Server',
+    // Advertise /mcp as the protected resource (see mcpResourceUrl above).
+    resourceServerUrl: mcpResourceUrl,
   };
 
   // F12: DCR disable lives on the provider's constructor option above. The
@@ -1332,6 +1342,16 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return origJson(body);
       };
     }
+    next();
+  });
+
+  // Back-compat alias: with resourceServerUrl set the SDK mounts the PRM only
+  // at the path-based URL, so clients that still probe the bare root (what
+  // gbrain advertised before) would 404 mid-flight. Rewrite the root onto the
+  // SDK's own handler — one document, same cors()/allowedMethods, no copy.
+  const legacyPrmPath = '/.well-known/oauth-protected-resource';
+  app.all(legacyPrmPath, (req: Request, _res: Response, next: NextFunction) => {
+    req.url = new URL(resourceMetadataUrl).pathname;
     next();
   });
 
