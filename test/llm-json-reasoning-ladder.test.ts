@@ -71,6 +71,17 @@ describe('parseLlmJson — reasoning ladder', () => {
     expect(parseLlmJson<{ answer: string }>(raw)).toEqual({ answer: 'final' });
   });
 
+  test('recovers when an unclosed <thinking> tail was truncated (budget exhausted mid-reasoning)', () => {
+    // Twin of the unclosed <think> case above: the answer was emitted, then the
+    // model started a <thinking> block and ran out of tokens before closing it.
+    // The tail must contain a `}` — the raw greedy `{…}` scan then spans from
+    // the answer into the truncated draft and fails, so this only recovers if
+    // the open-ended arm strips <thinking> as well as <think>. (A tail with no
+    // `}` at all parses on the raw arm and never exercises the strip.)
+    const raw = '{"answer":"final"}<thinking>ran out {"a":{"b":1}';
+    expect(parseLlmJson<{ answer: string }>(raw)).toEqual({ answer: 'final' });
+  });
+
   test('is a ladder for <thinking> as well: valid JSON containing the literal tag is untouched', () => {
     // Twin of the <think> ladder-ordering guard above. Without it, widening the
     // tag would silently narrow that protection to half the vocabulary.
