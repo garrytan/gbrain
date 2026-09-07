@@ -98,6 +98,40 @@ describe('parsePastedRedirect', () => {
     );
   });
 
+  it('a consent-page URL carrying a stray code= param is still rejected by host, not sniffed as legit', () => {
+    // Guards the fix itself from over-correcting to "has a code param" —
+    // the decision must stay host-based.
+    expectCodeSync(
+      () =>
+        parsePastedRedirect(
+          'https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&code=4%2Ffake&state=st',
+        ),
+      'pasted_wrong_url',
+    );
+  });
+
+  it('a real loopback redirect carrying RFC 9207 iss=accounts.google.com parses normally (#regression)', () => {
+    // Google's OAuth 2.0 authorization response now appends
+    // `iss=https://accounts.google.com` (OpenID Connect issuer
+    // identification) to EVERY redirect, including legitimate loopback ones.
+    // A substring test over the whole raw paste used to reject these.
+    const parsed = parsePastedRedirect(
+      'http://127.0.0.1:41999/?state=st&iss=https%3A%2F%2Faccounts.google.com&code=4%2Fabc&scope=email',
+      'st',
+    );
+    expect(parsed.code).toBe('4/abc');
+    expect(parsed.state).toBe('st');
+  });
+
+  it('a querystring-only paste carrying iss=accounts.google.com also parses normally', () => {
+    const parsed = parsePastedRedirect(
+      'code=4%2Fabc&state=st&iss=https%3A%2F%2Faccounts.google.com',
+      'st',
+    );
+    expect(parsed.code).toBe('4/abc');
+    expect(parsed.state).toBe('st');
+  });
+
   it('state mismatch → state_mismatch', () => {
     expectCodeSync(
       () => parsePastedRedirect('http://127.0.0.1:41999/?code=4%2Fabc&state=stale', 'st'),
