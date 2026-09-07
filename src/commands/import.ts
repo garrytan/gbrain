@@ -284,10 +284,10 @@ export async function runImport(
   // flag registry already accepted it, so pre-alias it was silently IGNORED
   // (pages landed in default). Both spellings with different values abort.
   // Programmatic callers continue passing `opts.sourceId` directly; CLI
-  // flags win over opts when both are set. Both `--flag value` and
-  // `--flag=value` are accepted; a missing value (or a value that is itself
-  // a flag) is refused the way sync-delegate refuses it, never read as
-  // "no scope".
+  // flags win over opts when both are set. Both the `--source value` and
+  // `--source=value` spellings are accepted (same for --source-id); a missing
+  // value (or a value that is itself a flag) is refused the way sync-delegate
+  // refuses it, never read as "no scope".
   const sourceIdIdx = args.indexOf('--source-id');
   const sourceIdx = args.indexOf('--source');
   const readSourceFlag = (flag: string, idx: number): string | null => {
