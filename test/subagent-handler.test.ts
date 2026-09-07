@@ -938,6 +938,9 @@ describe('resolveMaxOutputTokens model-aware default', () => {
     expect(resolveMaxOutputTokens(undefined, null, 'openrouter:anthropic/claude-sonnet-5')).toBe(32000);
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-fable-5')).toBe(32000);
   });
+  test('recipe-declared thinking models (DeepSeek v4) get 32000 too (#4172)', () => {
+    expect(resolveMaxOutputTokens(undefined, null, 'deepseek:deepseek-v4-flash')).toBe(32000);
+  });
   test('non-thinking models keep 8192', () => {
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-sonnet-4-6')).toBe(8192);
     expect(resolveMaxOutputTokens(undefined, null, 'anthropic:claude-3-5-sonnet-20241022')).toBe(8192);
