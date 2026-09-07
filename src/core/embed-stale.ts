@@ -138,6 +138,22 @@ export interface EmbedStaleResult {
   aborted: boolean;
 }
 
+/** Per-drain stamp context: the signature plus the registry-active column
+ *  it is judged against. Resolved ONCE per drain by `resolveProvenanceStamp`
+ *  — resolving inside the stamp helper cost a config round-trip per stamped
+ *  page per batch, from both keyset drains. */
+export interface ProvenanceStamp { signature: string; column: string }
+
+/** Undefined when no signature is known (gateway unconfigured): nothing to stamp. */
+export async function resolveProvenanceStamp(
+  engine: BrainEngine,
+  signature: string | undefined,
+): Promise<ProvenanceStamp | undefined> {
+  if (!signature) return undefined;
+  const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+  return { signature, column };
+}
+
 /**
  * Stamp `pages.embedding_signature` once EVERY chunk on the page carries an
  * active-column vector written by the signature's model against the CURRENT
@@ -154,14 +170,12 @@ export async function stampIfPageProvenanceComplete(
   engine: BrainEngine,
   slug: string,
   sourceId: string,
-  signature: string,
+  { signature, column }: ProvenanceStamp,
 ): Promise<boolean> {
   // Signature is `<provider:model>:<dims>`; the model part is what
   // upsertChunks records in content_chunks.model.
   const model = signature.slice(0, signature.lastIndexOf(':'));
-  const colId = quoteIdentifier(
-    (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name,
-  );
+  const colId = quoteIdentifier(column);
   const rows = await engine.executeRaw<{ complete: boolean }>(
     `SELECT count(*) > 0
             AND bool_and(COALESCE(
@@ -343,6 +357,7 @@ export async function embedStaleForSource(
     aborted: false,
   };
   const signature = opts.embeddingSignature;
+  const stamp = await resolveProvenanceStamp(engine, signature); // column resolved once per drain, not per page
 
   // v0.41.31: invalidate embeddings stamped under a prior model signature so
   // the NULL cursor below re-embeds them. GRANDFATHER: NULL signature
@@ -474,9 +489,9 @@ export async function embedStaleForSource(
         // drain has no page alignment, so a page straddling a batch boundary
         // is never wholly in one batch — the batch that lands its last chunk
         // stamps it. Preserved chunks of other provenance keep it unstamped.
-        if (signature) {
+        if (stamp) {
           await observed(pacer, () =>
-            stampIfPageProvenanceComplete(engine, slug, keySourceId, signature),
+            stampIfPageProvenanceComplete(engine, slug, keySourceId, stamp),
           );
         }
         // #3507: a FULLY re-embedded per_chunk_synopsis page landed at the

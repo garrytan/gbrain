@@ -638,3 +638,38 @@ describe('signature stamp for a page split across a cursor batch (#4825)', () =>
     expect(sigs.map((r) => r.s)).toEqual([signature, signature]);
   });
 });
+
+// ────────────────────────────────────────────────────────────────
+// wave review — the provenance stamp resolved the registry-active column on
+// EVERY page it stamped (a config round-trip per page per batch, from both
+// keyset drains). The drain now resolves it once (`resolveProvenanceStamp`)
+// and hands the stamp helper a ProvenanceStamp.
+// ────────────────────────────────────────────────────────────────
+describe('provenance stamp resolves the active embedding column once per drain', () => {
+  test('the config lookups the signature ADDS do not grow with the page count', async () => {
+    const orig = engine.executeRaw.bind(engine);
+    const calls: string[] = [];
+    engine.executeRaw = (async (sql: string, ...rest: any[]) => {
+      calls.push(sql);
+      return orig(sql, ...(rest as []));
+    }) as any;
+    try {
+      // getChunks & co. resolve the column per call whether or not a
+      // signature is set, so measure what the signature adds at a FIXED
+      // page count: pre-fix that was one lookup per stamped page.
+      const configLookups = async (pages: number, signature?: string): Promise<number> => {
+        await resetPgliteState(engine);
+        for (let i = 0; i < pages; i++) await seedPageWithStaleChunks(`p${i}`, 1);
+        calls.length = 0;
+        await embedStaleForSource(engine, 'default', { embedFn: fakeEmbedFn, embeddingSignature: signature });
+        return calls.filter((sql) => sql.includes("'search_embedding_column'")).length;
+      };
+      const sig = 'new:model:1536';
+      const oneSigCost = (await configLookups(1, sig)) - (await configLookups(1));
+      const fourSigCost = (await configLookups(4, sig)) - (await configLookups(4));
+      expect(fourSigCost).toBe(oneSigCost);
+    } finally {
+      engine.executeRaw = orig;
+    }
+  });
+});
