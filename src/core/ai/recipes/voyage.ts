@@ -72,14 +72,20 @@ export const voyage: Recipe = {
     // {object: "list", data: [{index, relevance_score}]} — live-wire verified
     // 2026-08-15; the gateway's parser accepts both data[] and results[].
     reranker: {
-      models: ['rerank-2.5', 'rerank-2.5-lite'],
+      // #4938: rerank-3 / rerank-3-lite are Voyage's preview generation on the
+      // same /rerank wire (path + top_param unchanged). default_model stays
+      // rerank-2.5 so an upgrade never moves an install; opt in with
+      // `gbrain config set search.reranker.model voyage:rerank-3`.
+      models: ['rerank-2.5', 'rerank-2.5-lite', 'rerank-3', 'rerank-3-lite'],
       default_model: 'rerank-2.5',
       path: '/rerank',
       top_param: 'top_k',
-      // https://docs.voyageai.com/docs/pricing (verified 2026-08-15):
-      // rerank-2.5 $0.05/M, rerank-2.5-lite $0.02/M.
+      // https://docs.voyageai.com/docs/pricing (2.5 pair verified 2026-08-15,
+      // rerank-3 pair 2026-09-06): rerank-2.5 / rerank-3 $0.05/M,
+      // rerank-2.5-lite / rerank-3-lite $0.02/M. Per-model billing math goes
+      // through src/core/embedding-pricing.ts; this scalar is a display hint.
       cost_per_1m_tokens_usd: 0.05,
-      price_last_verified: '2026-08-15',
+      price_last_verified: '2026-09-06',
       // Voyage enforces token-based caps (32K per query+document pair,
       // ≤1000 documents/request) rather than a byte cap; 5MB is a
       // conservative byte-level proxy matching the ZE-era pre-flight so

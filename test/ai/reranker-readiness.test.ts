@@ -64,6 +64,20 @@ describe('rerankerReadiness — default voyage model', () => {
     expect(r.modelListed).toBe(true);
     expect(r.ready).toBe(true);
   });
+
+  // #4938: readiness is the third consumer of the recipe allowlist (after
+  // gateway.rerank() and `gbrain models doctor`). Pre-fix it reported
+  // modelListed:false / ready:false for the rerank-3 pair, so `gbrain search
+  // modes` told an operator their configured reranker would not run.
+  test('the rerank-3 pair is listed and ready on the same key (#4938)', () => {
+    for (const model of ['voyage:rerank-3', 'voyage:rerank-3-lite']) {
+      const r = rerankerReadiness(model, { VOYAGE_API_KEY: 'pa-test' }, { now: BEFORE });
+      expect(r.modelListed).toBe(true);
+      expect(r.ready).toBe(true);
+      // rerank-3 is not a sunset provider — no shutdown clock attached.
+      expect(r.sunset).toBeNull();
+    }
+  });
 });
 
 describe('rerankerReadiness — explicit ZeroEntropy model + sunset clock', () => {

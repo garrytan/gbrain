@@ -44,10 +44,15 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   'voyage:voyage-finance-2':       { pricePerMTok: 0.12 },
   'voyage:voyage-law-2':           { pricePerMTok: 0.12 },
   'voyage:voyage-multimodal-3':    { pricePerMTok: 0.12 },
-  // Voyage rerankers (same pricing page, verified 2026-08-21). Same
-  // budget-tracker rerank-kind fallback rationale as the zerank-2 row below.
+  // Voyage rerankers (same pricing page; 2.5 pair verified 2026-08-21, the
+  // rerank-3 preview pair 2026-09-06). Same budget-tracker rerank-kind
+  // fallback rationale as the zerank-2 row below. Rows carry the list rate:
+  // Voyage's free-token grants are per-account and not modeled here, so
+  // over-reporting inside a grant beats under-reporting past it.
   'voyage:rerank-2.5':             { pricePerMTok: 0.05 },
   'voyage:rerank-2.5-lite':        { pricePerMTok: 0.02 },
+  'voyage:rerank-3':               { pricePerMTok: 0.05 },
+  'voyage:rerank-3-lite':          { pricePerMTok: 0.02 },
   // voyage-4-nano is deliberately absent: it's the open-weight variant (see
   // src/core/ai/recipes/voyage.ts) and Voyage's pricing page lists no hosted
   // rate for it. A 0 entry would under-estimate anyone paying for it via the
