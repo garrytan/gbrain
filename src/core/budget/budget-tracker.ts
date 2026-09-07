@@ -35,6 +35,7 @@ import { ANTHROPIC_PRICING, type ModelPricing } from '../anthropic-pricing.ts';
 import { canonicalLookup } from '../model-pricing.ts';
 import { EMBEDDING_PRICING, lookupEmbeddingPrice } from '../embedding-pricing.ts';
 import { splitProviderModelId } from '../model-id.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
 import { isoWeekFilename, resolveAuditDir } from '../audit-week-file.ts';
 
 export type BudgetKind = 'chat' | 'embed' | 'rerank';
@@ -263,7 +264,9 @@ const FREE_LOCAL_CHAT_PROVIDERS: ReadonlySet<string> = new Set([
  *   - Chat: try the bare model id in ANTHROPIC_PRICING first (legacy keys
  *     are bare claude-* ids), then the canonical paid-cloud chat table
  *     for provider-prefixed OpenAI/Google/DeepSeek/Together ids, then the
- *     explicit zero-cost local provider set.
+ *     explicit zero-cost local provider set. Recipe aliases are normalized
+ *     first (`claude-cli:haiku` → `claude-cli:claude-haiku-4-5-20251001`),
+ *     so an alias prices exactly like the id it resolves to.
  *   - Embed: lookupEmbeddingPrice handles the provider:model form; on a miss,
  *     local-inference providers (FREE_LOCAL_EMBED_PROVIDERS) price at $0 so
  *     `--max-cost` callers don't hard-fail.
@@ -295,7 +298,22 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // brainstorm/lsd.
   const bare = ANTHROPIC_PRICING[modelId];
   if (bare) return bare;
-  const { provider: providerId, model: modelTail } = splitProviderModelId(modelId);
+  // Recipe aliases (`claude-cli:haiku`, `anthropic:sonnet`) are not pricing
+  // keys, and the gateway reserves with the string the user configured —
+  // BEFORE alias resolution — so `claude-cli:haiku` under a cap used to TX2
+  // hard-fail with no_pricing while the dated id it maps to priced fine.
+  // Normalize once here; the chain below then prices the canonical id, and
+  // alias vs dated id agree at reserve(), record() and isModelPriceable().
+  // Bare ids and unknown providers throw out of resolveRecipe: the existing
+  // chain decides those exactly as before.
+  let key = modelId;
+  try {
+    const { parsed } = resolveRecipe(modelId);
+    key = `${parsed.providerId}:${parsed.modelId}`;
+  } catch {
+    /* bare id or unknown provider — fall through on the raw id */
+  }
+  const { provider: providerId, model: modelTail } = splitProviderModelId(key);
   if (modelTail) {
     const tailHit = ANTHROPIC_PRICING[modelTail];
     if (tailHit) return tailHit;
@@ -305,7 +323,7 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // pricing table (issue #3223) — same provider:model key shape, same
   // $/1M-token unit — instead of hand-copying a third pricing surface.
   if (kind === 'rerank') {
-    const hit = lookupEmbeddingPrice(modelId);
+    const hit = lookupEmbeddingPrice(key);
     if (hit.kind === 'known') return { input: hit.pricePerMTok, output: 0 };
   }
   // v0.40.6.1: zero-price local-inference rerank providers so the budget
@@ -319,7 +337,7 @@ function lookupPricing(modelId: string, kind: BudgetKind): ModelPricing | null {
   // models with a known price (openai:*, google:*, deepseek:*) resolve under
   // --max-cost instead of TX2 no_pricing hard-failing at $0. ANTHROPIC_PRICING
   // above is only the bare-keyed Claude view.
-  const canon = canonicalLookup(modelId);
+  const canon = canonicalLookup(key);
   if (canon) return canon;
   // Local-inference chat providers cost electricity, not tokens. Checked AFTER
   // the canonical table so an explicitly-priced local entry, should one ever be
