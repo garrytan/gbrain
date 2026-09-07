@@ -502,26 +502,28 @@ function extractToolCalls(raw: string): {
 } {
   const openTag = '<use_tools>';
   const closeTag = '</use_tools>';
-  // Anchor on the CLOSING tag first, then take the LAST opening tag before
-  // it. Anchoring on `indexOf(openTag)` landed on the FIRST occurrence, so a
-  // model that *mentions* the tag in prose before using it — e.g. "Let me use
-  // the correct `<use_tools>` format:" — shifted the slice origin onto the
-  // backticked mention. `inner` then began "` format:\n\n<use_tools>…",
-  // JSON.parse threw, and the catch below discarded a complete, valid tool
-  // call as prose. Scanning back from the close tag (not `lastIndexOf` over
-  // the whole string, which trailing prose could re-break) picks the real
-  // block in both the plain and the mentioned-then-used shapes. Residual
-  // ceiling: a prose mention of `</use_tools>` BEFORE the block (with no
-  // `<use_tools>` mention ahead of it) now anchors on that mention and drops
-  // the call; the observed production shape is the open-tag mention, so this
-  // is accepted rather than scanning every close tag.
-  const closeIdx = raw.indexOf(closeTag);
-  if (closeIdx === -1) {
-    // Unterminated block (or none at all) — recover gracefully.
-    return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
+  // Anchor on the first CLOSING tag that has an opening tag before it, then
+  // take the LAST opening tag before it. Anchoring on `indexOf(openTag)`
+  // landed on the FIRST occurrence, so a model that *mentions* the tag in
+  // prose before using it — e.g. "Let me use the correct `<use_tools>`
+  // format:" — shifted the slice origin onto the backticked mention. `inner`
+  // then began "` format:\n\n<use_tools>…", JSON.parse threw, and the catch
+  // below discarded a complete, valid tool call as prose. Scanning back from
+  // the close tag (not `lastIndexOf` over the whole string, which trailing
+  // prose could re-break) picks the real block in both the plain and the
+  // mentioned-then-used shapes. A prose mention of `</use_tools>` BEFORE the
+  // block has no opening tag ahead of it, so it is an orphan: skip it and try
+  // the next close tag rather than dropping the call.
+  let closeIdx = raw.indexOf(closeTag);
+  let openIdx = -1;
+  while (closeIdx !== -1) {
+    openIdx = raw.lastIndexOf(openTag, closeIdx);
+    if (openIdx !== -1) break;
+    closeIdx = raw.indexOf(closeTag, closeIdx + closeTag.length);
   }
-  const openIdx = raw.lastIndexOf(openTag, closeIdx);
-  if (openIdx === -1) {
+  if (closeIdx === -1) {
+    // Unterminated block, none at all, or only orphan close tags — recover
+    // gracefully.
     return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
   }
 

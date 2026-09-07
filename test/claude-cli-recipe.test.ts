@@ -16,7 +16,7 @@
  * withEnv's save/restore in try/finally is sufficient; no leakage to
  * sibling test files in the same bun-test process.
  */
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { writeFileSync, chmodSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -417,6 +417,73 @@ describe('claude-cli LanguageModel — tool use', () => {
       expect(calls[0]).toMatchObject({ type: 'tool-call', toolName: 'search' });
       expect(result.finishReason).toBe('tool-calls');
     });
+  });
+
+  test('a prose mention of the CLOSE tag before the real block does not drop the call', async () => {
+    // Mirror of the open-tag mention above. The first `</use_tools>` in the
+    // text is a backticked mention with no opening tag ahead of it; anchoring
+    // on it (the old `openIdx === -1` arm) discarded the valid block below.
+    await withStubEnv(async () => {
+      stageResponse(
+        baseEnvelope(
+          [
+            'Earlier I closed with `</use_tools>` before the JSON. Corrected call:',
+            '',
+            '<use_tools>',
+            '[{"name": "search", "input": {"query": "line one\\nline two"}}]',
+            '</use_tools>',
+          ].join('\n'),
+        ),
+      );
+      const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+      const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+      const result = await model.doGenerate({
+        prompt: [userMessage('close-tag mention then use')],
+        tools: [{ type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } }],
+      } as LanguageModelV2CallOptions);
+
+      const calls = result.content.filter(c => c.type === 'tool-call');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ type: 'tool-call', toolName: 'search', input: '{"query":"line one\\nline two"}' });
+      expect(result.finishReason).toBe('tool-calls');
+    });
+  });
+
+  test('a malformed <use_tools> block is discarded as prose AND reported on stderr', async () => {
+    // A lost tool call must not be silent: the turn ends as if the model
+    // never called anything, so the only trace is this diagnostic.
+    const writes: string[] = [];
+    const stderr = spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      await withStubEnv(async () => {
+        stageResponse(
+          baseEnvelope(
+            [
+              '<use_tools>',
+              '[{"name": "search", "input": {"query": }]',
+              '</use_tools>',
+            ].join('\n'),
+          ),
+        );
+        const { ClaudeCliLanguageModel } = await import('../src/core/ai/providers/claude-cli-language-model.ts');
+        const model = new ClaudeCliLanguageModel('claude-sonnet-4-6');
+        const result = await model.doGenerate({
+          prompt: [userMessage('malformed')],
+          tools: [{ type: 'function', name: 'search', description: '', inputSchema: { type: 'object', properties: {} } }],
+        } as LanguageModelV2CallOptions);
+
+        expect(result.content.filter(c => c.type === 'tool-call')).toHaveLength(0);
+        expect(result.finishReason).toBe('stop');
+        const diag = writes.filter(w => w.startsWith('[claude-cli] <use_tools> block failed to parse'));
+        expect(diag).toHaveLength(1);
+        expect(diag[0]).toContain('tool call discarded');
+      });
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   test('tolerates fenced JSON inside <use_tools>', async () => {
