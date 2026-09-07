@@ -75,6 +75,7 @@ import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
+import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -699,6 +700,27 @@ export async function runPhaseExtractAtoms(
     if (i < transcriptItems.length) work.push(transcriptItems[i]);
   }
 
+  // #3961 follow-up: transcript-origin atoms get provenance edges too. The
+  // original implementation skipped them ("transcripts are files, not pages,
+  // so there is no from-endpoint to link") — but an imported transcript IS a
+  // page: the conversation page it was rendered into. Resolving it here (one
+  // frontmatter-only query, only when transcript work exists) gives those
+  // atoms the same source-page → atom edge that page-origin atoms get, so the
+  // graph can navigate from a conversation to what was learned from it.
+  let transcriptPageIndex: TranscriptPageIndex | null = null;
+  let resolveTranscriptPages: ((filePath: string, index: TranscriptPageIndex) => string[]) | null = null;
+  if (transcriptItems.length > 0) {
+    try {
+      const { indexTranscriptPages, resolveTranscriptPageSlugs } = await import('../transcripts/discover.ts');
+      transcriptPageIndex = await indexTranscriptPages(engine, sourceId);
+      resolveTranscriptPages = resolveTranscriptPageSlugs;
+    } catch {
+      // Index unavailable — atoms still import, they just carry no edge.
+      transcriptPageIndex = null;
+      resolveTranscriptPages = null;
+    }
+  }
+
   // Phase-level no-op: nothing to extract today.
   if (work.length === 0 && transcripts.length === 0 && pages.length === 0) {
     return {
@@ -1057,6 +1079,19 @@ export async function runPhaseExtractAtoms(
               from_source_id: sourceId,
               to_source_id: sourceId,
             });
+          } else if (transcriptPageIndex && resolveTranscriptPages) {
+            // A split session renders one page per part, all sharing a
+            // session id; without per-part offsets the honest attribution is
+            // the whole session, so every part gets the edge.
+            for (const fromSlug of resolveTranscriptPages(item.filePath, transcriptPageIndex)) {
+              provenanceLinks.push({
+                from_slug: fromSlug,
+                to_slug: slug,
+                link_source: 'atom-provenance',
+                from_source_id: sourceId,
+                to_source_id: sourceId,
+              });
+            }
           }
           totalAtomsExtracted++;
         }
