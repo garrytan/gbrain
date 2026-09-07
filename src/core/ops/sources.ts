@@ -157,7 +157,11 @@ const sources_list: Operation = {
   description:
     'List registered sources with page counts and remote_url. v0.28 surfaces ' +
     'the new remote_url field so a remote MCP caller can confirm a source is ' +
-    'managed by clone+pull rather than user-supplied path.',
+    'managed by clone+pull rather than user-supplied path. Results are ' +
+    "confined to the caller's resolved source scope (federated read grant > " +
+    'bound source; #4433) and carry no marker when rows were withheld, so a ' +
+    'listing may be incomplete. Only the trusted local CLI (`gbrain sources ' +
+    'list`) sees the full registry.',
   params: {
     include_archived: { type: 'boolean', description: 'Include soft-deleted sources.' },
   },
@@ -227,7 +231,9 @@ const sources_status: Operation = {
     'Per-source diagnostic. Returns clone_state ("healthy" | "missing" | ' +
     '"not-a-dir" | "no-git" | "url-drift" | "corrupted" | "not-applicable") ' +
     'so a remote MCP caller can diagnose whether the on-disk clone is ' +
-    'syncable without SSH access to the brain host.',
+    "syncable without SSH access to the brain host. Confined to the caller's " +
+    'resolved source scope (#4433); an out-of-scope id answers not_found, ' +
+    'indistinguishable from a nonexistent source.',
   params: {
     id: { type: 'string', required: true, description: "Source id to diagnose, as listed by sources_list (e.g. 'wiki'). A source id, not a page slug." },
   },
