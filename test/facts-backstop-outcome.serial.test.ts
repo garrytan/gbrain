@@ -164,7 +164,8 @@ describe('keyless vs keyed chat_unavailable', () => {
     // Global default would be Anthropic (unservable), but the DB-plane
     // extraction override IS servable with the OpenAI key — the engine-aware
     // gate must admit the work. Short-lived mode routes to the durable minion
-    // (no LLM call executes in-test) so we can also pin the retry policy.
+    // (no LLM call executes in-test) so we can also pin the retry policy and
+    // the handler-default timeout stamped on the submitted row.
     process.env.OPENAI_API_KEY = 'sk-test';
     await engine.setConfig('facts.extraction_model', 'openai:gpt-4o-mini');
     configureGateway({ env: { OPENAI_API_KEY: 'sk-test' } });
@@ -176,13 +177,14 @@ describe('keyless vs keyed chat_unavailable', () => {
     expect(r.mode).toBe('queue');
     expect((r as { enqueued: boolean }).enqueued).toBe(true);
     expect((r as { skipped?: string }).skipped).toBeUndefined();
-    const jobs = await engine.executeRaw<{ max_attempts: number; backoff_delay: number }>(
-      `SELECT max_attempts, backoff_delay FROM minion_jobs WHERE name = 'facts-absorb'`,
+    const jobs = await engine.executeRaw<{ max_attempts: number; backoff_delay: number; timeout_ms: number | string }>(
+      `SELECT max_attempts, backoff_delay, timeout_ms FROM minion_jobs WHERE name = 'facts-absorb'`,
     );
     expect(jobs).toHaveLength(1);
     // Slow-retry policy (R2-5): config drift is fixed on human timescales.
     expect(Number(jobs[0].max_attempts)).toBe(5);
     expect(Number(jobs[0].backoff_delay)).toBe(60_000);
+    expect(Number(jobs[0].timeout_ms)).toBe(10 * 60 * 1000);
   });
 });
 
