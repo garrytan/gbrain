@@ -16,8 +16,9 @@ import type { PageType, EffectiveDateSource } from './types.ts';
 import { ensureWellFormed } from './text-safe.ts';
 import { stripCodeBlocks } from './markdown-code.ts';
 import { parseInlineCitationTimelineEntries } from './timeline-citations.ts';
-import { slugifyPath } from './sync.ts';
+import { slugifyPath, slugifySegment } from './sync.ts';
 import { SLUG_WORD_CHARS } from './cjk.ts';
+import { foldNonDecomposingLatin } from './latin-fold.ts';
 // #3190: pack-aware link typing. link-inference imports only manifest-v1
 // (zod) + redos-guard (node:vm) — no cycle back into this module.
 import type { SchemaPackManifest } from './schema-pack/manifest-v1.ts';
@@ -1079,14 +1080,24 @@ export interface SlugResolver {
  * build/query through these two functions so they cannot drift.
  *
  * Keying: raw tail + lowercase tail + slugified tail (the final `/`-segment,
- * or the whole slug when it has no `/`). #2367: slugified keys mirror
+ * or the whole slug when it has no `/`). #2367: slugified keys follow
  * slugifySegment (NFD → strip accents → NFC → lowercase → SLUG_WORD_CHARS
- * filter); the old ASCII-only strip emptied CJK basenames.
+ * filter) and then fold stroke letters through latin-fold (#4855), so for
+ * names with đ/ø/ł/ß… the key is NOT byte-identical to the page slug sync
+ * mints; the dir-hint candidate step (makeResolver step 2, the FS resolver)
+ * tries both forms. The old ASCII-only strip emptied CJK basenames.
  */
 const BASENAME_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}\\s\\-]`, 'gu');
 export function normalizeBasename(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC')
-    .toLowerCase().replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
+  // The accent strip cannot fold stroke letters \u2014 Unicode gives them no
+  // decomposition \u2014 so the shared table runs after it, on both the index and
+  // the query side. Without it a display name keeps the unfolded letter while
+  // the ASCII page slug does not, and the lookup misses in silence:
+  // `[[\u0110\u1ee9c Example]]` keyed `\u0111uc-example` and never found `people/duc-example`.
+  const folded = foldNonDecomposingLatin(
+    s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').normalize('NFC').toLowerCase(),
+  );
+  return folded.replace(BASENAME_KEEP_RE, '').trim().replace(/\s+/g, '-');
 }
 
 /** Stable order: shorter slug first (likely closer to brain root), then lexical. */
@@ -1213,15 +1224,21 @@ export function makeResolver(
         }
       }
 
-      // Step 2: dir-hint + slugify → exact getPage
-      const slugified = normalizeBasename(trimmed); // #2367: shared normalizer
+      // Step 2: dir-hint + slugify → exact getPage. Two grammars (#4855):
+      // normalizeBasename (#2367) folds stroke letters to ASCII via latin-fold,
+      // while slugifySegment — the page-slug grammar sync mints — keeps them
+      // (#3417), so a page synced from `Đức Example.md` lives at the unfolded
+      // slug. Exact lookups only, so trying both can never false-positive.
+      const forms = new Set([normalizeBasename(trimmed), slugifySegment(trimmed)]);
       for (const hint of hints) {
         if (!hint) continue;
-        const candidate = `${hint}/${slugified}`;
-        const page = await engine.getPage(candidate, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only wikilink resolution; unscoped-when-no-source is the documented single-source behavior
-        if (page) {
-          cache.set(cacheKey, candidate);
-          return candidate;
+        for (const form of forms) {
+          const candidate = `${hint}/${form}`;
+          const page = await engine.getPage(candidate, opts.sourceId ? { sourceId: opts.sourceId } : undefined); // gbrain-allow-unscoped-getpage: read-only wikilink resolution; unscoped-when-no-source is the documented single-source behavior
+          if (page) {
+            cache.set(cacheKey, candidate);
+            return candidate;
+          }
         }
       }
 

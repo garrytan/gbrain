@@ -88,6 +88,18 @@ describe('extractLinksFromFile', () => {
     expect(companyLinks[0].to_slug).toBe('companies/acme-example');
   });
 
+  it('frontmatter attendees: a stroke-letter name resolves to the unfolded page slug sync mints (#4855)', async () => {
+    // The FS resolver has no fuzzy fallback, so it must try the sync slug
+    // grammar (which keeps đ) as well as the folded basename form.
+    const content = '---\nattendees: [Đức Example]\ntype: meeting\n---\nNotes.';
+    const allSlugs = new Set(['meetings/sync', 'people/đuc-example']);
+    const links = await extractLinksFromFile(content, 'meetings/sync.md', allSlugs, { includeFrontmatter: true });
+    const attended = links.filter(l => l.link_type === 'attended');
+    expect(attended).toHaveLength(1);
+    expect(attended[0].from_slug).toBe('people/đuc-example');
+    expect(attended[0].to_slug).toBe('meetings/sync');
+  });
+
   it('extracts frontmatter investors array (v0.13: incoming direction)', async () => {
     // v0.13: deal page with investors:[yc, threshold] emits INCOMING edges:
     // companies/yc → deals/seed invested_in and same for threshold.

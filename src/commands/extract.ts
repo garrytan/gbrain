@@ -59,7 +59,7 @@ export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core
 import { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { pathToSlug, slugifyPath, pruneDir, isSyncable } from '../core/sync.ts';
+import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
 // v0.41.18.0: withRetry + isRetryableConnError + WithRetryOpts moved to
 // src/core/retry.ts as the canonical primitive. Engine methods
 // (addLinksBatch/addTimelineEntriesBatch/upsertChunks) now self-retry via
@@ -642,10 +642,15 @@ export async function extractLinksFromFile(
           return trimmed;
         }
         const hints = Array.isArray(dirHint) ? dirHint : (dirHint ? [dirHint] : []);
+        // Both slug grammars, as in makeResolver step 2 (#4855): the folded
+        // basename form and the unfolded page-slug form sync mints.
+        const forms = new Set([normalizeBasename(trimmed), slugifySegment(trimmed)]);
         for (const hint of hints) {
           if (!hint) continue;
-          const candidate = `${hint}/${normalizeBasename(trimmed)}`;
-          if (allSlugs.has(candidate)) return candidate;
+          for (const form of forms) {
+            const candidate = `${hint}/${form}`;
+            if (allSlugs.has(candidate)) return candidate;
+          }
         }
         return null;
       },
