@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { extractTimelineFromMeetings } from '../src/core/extract-timeline-from-meetings.ts';
-import type { Gazetteer } from '../src/core/by-mention.ts';
+import { buildGazetteer, type Gazetteer } from '../src/core/by-mention.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -170,5 +170,84 @@ describe('#4542 zero-meetings warning at the CLI surface', () => {
     });
     const stderrLines = await runExtractCapturingStderr(['timeline', '--from-meetings', '--source', 'db']);
     expect(stderrLines.join('\n')).not.toContain('omit --from-meetings');
+  });
+});
+
+// ─── put_page-written meetings: NULL effective_date column ──
+//
+// Pages written via `put_page` (agent/MCP or bulk custom import, not the
+// file-sync pipeline) never get `effective_date` computed — the column stays
+// NULL even when frontmatter carries a parseable `date:`. The extractor used
+// to `continue` on those rows BEFORE counting them, so a whole agent-written
+// meeting corpus reported "0 meetings matched" with and without --source-id.
+// The date must come from the same recipe `gbrain backfill effective_date`
+// uses (computeEffectiveDate over frontmatter/filename), NOT from updated_at:
+// timeline_entries dedups on (page_id, date, summary, source), so an
+// import-timestamp row would survive as a duplicate next to the correctly
+// dated one written after a later backfill + re-run.
+describe('meetings with NULL effective_date (put_page-style insert)', () => {
+  const SRC = 'bulk-import';
+  async function seedSource(): Promise<void> {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config) VALUES ('${SRC}', '${SRC}', '{}'::jsonb) ON CONFLICT DO NOTHING`,
+    );
+  }
+
+  it('is still scanned, with and without --source-id', async () => {
+    await seedSource();
+    await engine.putPage('meetings/bulk-1', {
+      type: 'meeting',
+      title: 'Bulk Meeting',
+      compiled_truth: 'Some notes.',
+      timeline: '',
+      frontmatter: { date: '2026-08-01', attendees: ['Alice Example'] },
+      // No effective_date — mimics a raw put_page call.
+    }, { sourceId: SRC });
+
+    const emptyGazetteer: Gazetteer = new Map();
+    const withFilter = await extractTimelineFromMeetings(engine, {
+      gazetteer: emptyGazetteer,
+      sourceIdFilter: SRC,
+    });
+    expect(withFilter.meetings_scanned).toBe(1);
+
+    const withoutFilter = await extractTimelineFromMeetings(engine, { gazetteer: emptyGazetteer });
+    expect(withoutFilter.meetings_scanned).toBe(1);
+  });
+
+  it('writes the timeline entry with the frontmatter date, not the import timestamp', async () => {
+    await seedSource();
+    // Entity in the SAME source as the meeting: body mentions never cross
+    // sources unless link_resolution.cross_source is on.
+    await engine.putPage('people/alice-example', {
+      type: 'person',
+      title: 'Alice Example',
+      compiled_truth: 'Alice Example profile',
+      timeline: '',
+      frontmatter: {},
+    }, { sourceId: SRC });
+    await engine.putPage('meetings/bulk-2', {
+      type: 'meeting',
+      title: 'Bulk Meeting 2',
+      compiled_truth: 'Alice Example joined.',
+      timeline: '',
+      frontmatter: { date: '2026-08-01' },
+    }, { sourceId: SRC });
+
+    const page = await engine.getPage('meetings/bulk-2', { sourceId: SRC });
+    expect(page!.effective_date).toBeNull(); // column genuinely NULL
+
+    const gazetteer = await buildGazetteer(engine);
+    const result = await extractTimelineFromMeetings(engine, { gazetteer, sourceIdFilter: SRC });
+    expect(result.meetings_scanned).toBe(1);
+    expect(result.entries_created).toBe(1);
+
+    const timeline = await engine.getTimeline('people/alice-example', { sourceId: SRC });
+    expect(timeline).toHaveLength(1);
+    // Read the calendar day as text: the runtime `date` off PGLite is a JS Date.
+    const rows = await engine.executeRaw<{ date: string }>(
+      `SELECT date::text AS date FROM timeline_entries WHERE id = $1`, [timeline[0]!.id],
+    );
+    expect(rows[0]!.date).toBe('2026-08-01');
   });
 });

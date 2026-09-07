@@ -2,6 +2,9 @@
 
 ## Community fix wave follow-ups (filed 2026-09-07, atoms/extraction/facts train)
 
+- [ ] **P3 — stamp `effective_date` at the `put_page` write seam.**
+  **What:** `put_page` -> `writePageThrough` -> `engine.putPage` stores `effective_date ?? null` and never runs `computeEffectiveDate`, so every agent/MCP-written page carries a NULL column until `gbrain backfill effective_date` runs. `extract timeline --from-meetings` now derives the date itself (#4943); the sibling gate at `src/core/onboard/checks.ts` (`effective_date IS NOT NULL` on meetings, the `onboard.extract_timeline_from_meetings` remediation) still under-counts those pages, and recency/salience ranking COALESCEs to `updated_at` for them. **How:** compute in `writePageThrough` (or `putPage`) when the caller supplies none, using the backfill-registry recipe; it changes recency ranking for internally-written pages, so it goes behind the eval gate, and both consumers above drop their local workarounds once it lands. **Effort:** S. **Priority:** P3.
+
 - [ ] **P3 — extract_atoms parser: bracketed prose AFTER the array, and the sibling first-`[` anchors.**
   **What:** `parseAtomsOutcomeInner` (`src/core/cycle/extract-atoms.ts`) now scans successive `[` offsets so bracketed preamble (`[Source: …]`, `[[wikilink]]`, `[user]`) no longer hijacks the anchor (#4913). The symmetric case still fails: bracketed prose AFTER the array (e.g. `[atoms]\nSee [Source: X].`) because the trim-back runs to the LAST `]`. The sibling first-`[` anchors in `propose-takes.ts`, `extract-events.ts`, and `calibration-profile.ts` are independent copies and remain unfixed. **How:** a shared "find the first parseable array that yields >= 1 shaped element" helper (scan forward on `[`, trim back over candidate `]`s) that all four callers route through. **Effort:** S. **Priority:** P3.
 

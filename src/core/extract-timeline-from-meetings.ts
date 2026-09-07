@@ -13,6 +13,8 @@ import type { BrainEngine } from './engine.ts';
 import type { TimelineBatchInput } from './engine.ts';
 import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
 import { isCrossSourceLinksEnabled } from './link-extraction.ts';
+import { computeEffectiveDate } from './effective-date.ts';
+import { parseFrontmatter } from './backfill-effective-date.ts';
 
 export interface ExtractTimelineFromMeetingsOpts {
   dryRun?: boolean;
@@ -45,6 +47,9 @@ interface MeetingRow {
   source_id: string;
   title: string;
   effective_date: string | null;
+  frontmatter: unknown;
+  import_filename: string | null;
+  created_at: string | Date;
   updated_at: string | Date;
   compiled_truth: string;
   timeline: string;
@@ -76,8 +81,8 @@ export async function extractTimelineFromMeetings(
   const sourceFilter = opts.sourceIdFilter ? `AND source_id = $1` : '';
   const meetingParams = opts.sourceIdFilter ? [opts.sourceIdFilter] : [];
   const meetings = await engine.executeRaw<MeetingRow>(
-    `SELECT slug, source_id, title, effective_date, updated_at,
-            compiled_truth, COALESCE(timeline, '') AS timeline
+    `SELECT slug, source_id, title, effective_date, frontmatter, import_filename,
+            created_at, updated_at, compiled_truth, COALESCE(timeline, '') AS timeline
        FROM pages
       WHERE ${MEETING_PAGE_PREDICATE}
         AND deleted_at IS NULL
@@ -123,6 +128,7 @@ export async function extractTimelineFromMeetings(
   let entriesCreated = 0;
   const entitiesTouched = new Set<string>();
   let meetingsScanned = 0;
+  let dateFallbacks = 0;
   let batchErrors = 0;
   let firstBatchError: string | undefined;
 
@@ -152,7 +158,22 @@ export async function extractTimelineFromMeetings(
       const updatedMs = new Date(meeting.updated_at).getTime();
       if (Number.isFinite(updatedMs) && updatedMs <= sinceMs) continue;
     }
-    if (!meeting.effective_date) continue; // can't write a timeline entry without a date
+    // put_page-written pages never get effective_date computed (column stays
+    // NULL); derive it exactly as `gbrain backfill effective_date` would so a
+    // later backfill + re-run dedups against this row instead of doubling it.
+    let date = meeting.effective_date;
+    if (!date) {
+      const computed = computeEffectiveDate({
+        slug: meeting.slug,
+        frontmatter: parseFrontmatter(meeting.frontmatter),
+        filename: meeting.import_filename ? meeting.import_filename.replace(/\.[a-z0-9]+$/i, '') : null,
+        createdAt: new Date(meeting.created_at),
+        updatedAt: new Date(meeting.updated_at),
+      }).date;
+      if (!computed) continue; // can't write a timeline entry without a date
+      date = computed.toISOString().slice(0, 10);
+      dateFallbacks++;
+    }
 
     meetingsScanned++;
     opts.onProgress?.(meetingsScanned, meetings.length, entriesCreated);
@@ -195,7 +216,7 @@ export async function extractTimelineFromMeetings(
       batch.push({
         slug: t.slug,
         source_id: t.source_id,
-        date: meeting.effective_date,
+        date,
         source: sourceKey,
         summary,
       });
@@ -205,6 +226,12 @@ export async function extractTimelineFromMeetings(
   }
 
   await flush();
+  if (dateFallbacks > 0) {
+    console.error(
+      `[extract timeline] ${dateFallbacks} meeting(s) have no effective_date; dated from frontmatter/filename. ` +
+      `Run \`gbrain backfill effective_date\` to persist it.`,
+    );
+  }
   return {
     meetings_scanned: meetingsScanned,
     entries_created: entriesCreated,
