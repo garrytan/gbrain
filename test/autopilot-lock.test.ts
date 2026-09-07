@@ -217,6 +217,10 @@ describe('looksLikeGbrainAutopilotCommand', () => {
     expect(looksLikeGbrainAutopilotCommand('bun src/cli.ts autopilot --repo repo')).toBe(true);
   });
 
+  test('matches a Windows command line with the executable quoted under a path with spaces', () => {
+    expect(looksLikeGbrainAutopilotCommand('"C:\\Program Files\\gbrain\\gbrain.exe" autopilot --repo "C:\\my brain"')).toBe(true);
+  });
+
   test('rejects unrelated live processes', () => {
     expect(looksLikeGbrainAutopilotCommand('/sbin/launchd')).toBe(false);
     expect(looksLikeGbrainAutopilotCommand('/usr/bin/python worker.py')).toBe(false);

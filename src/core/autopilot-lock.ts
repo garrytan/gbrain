@@ -80,7 +80,8 @@ export function readProcessCommand(pid: number, deps: ProcessCommandProbeDeps = 
 export function looksLikeGbrainAutopilotCommand(command: string): boolean {
   const normalized = command.replace(/\\/g, '/').trim();
   if (!/(^|\s)autopilot(\s|$)/i.test(normalized)) return false;
-  if (/(^|[\/\s])gbrain(?:\.exe)?(\s|$)/i.test(normalized)) return true;
+  // Win32_Process.CommandLine quotes executables under paths with spaces: `"C:/Program Files/gbrain/gbrain.exe" autopilot`.
+  if (/(^|[\/\s])"?gbrain(?:\.exe)?"?(\s|$)/i.test(normalized)) return true;
   return /(^|\s)(?:\S+\/)?(?:\.{1,2}\/)?(?:src\/)?cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized)
     || /(^|\s)\S*\/src\/cli\.(?:ts|js|mjs)(\s|$)/i.test(normalized);
 }
