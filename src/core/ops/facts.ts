@@ -638,6 +638,20 @@ const delta: Operation = {
     // canonical microsecond shape `listPages` projects (`next_cursor.since`
     // passed back) is kept verbatim: rounding it through a JS Date would
     // re-select every same-millisecond row on the resumed wake.
+    // The verbatim passthrough must round-trip: a calendar-invalid but
+    // Date.parse-able value (2026-02-31T…) would otherwise reach the
+    // ::timestamptz cast raw and surface as an engine error, not invalid_params.
+    if (
+      rawSince !== null &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(rawSince) &&
+      new Date(rawSince).toISOString().slice(0, 19) !== rawSince.slice(0, 19)
+    ) {
+      throw verbError(
+        'invalid_params',
+        `delta: since is not a valid ISO 8601 calendar timestamp: "${rawSince.slice(0, 60)}"`,
+        'Pass a real calendar datetime, e.g. since: "2026-08-11T00:00:00Z".',
+      );
+    }
     const explicitSince =
       rawSince === null
         ? null
