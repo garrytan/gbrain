@@ -15,6 +15,7 @@ test/autopilot-auto-drain-wiring.test.ts	autopilot auto-drain wiring	8	readFileS
 test/autopilot-cycle-failure-classification.test.ts	autopilot cycle-failure classification — only 'failed' trips the circuit breaker	2	readFileSync
 test/autopilot-cycle-failure-classification.test.ts	runPhaseOrphans ratio threshold — no more absolute count > 20	3	readFileSync
 test/autopilot-fanout-wiring.test.ts	autopilot.ts ↔ dispatchPerSource wiring	13	readFileSync
+test/autopilot-install.test.ts	#4728 wrapper falls back when the baked CLI path is gone	5	readFileSync
 test/autopilot-install.test.ts	autopilot install — reload-safety (#2608)	1	readFileSync
 test/autopilot-install.test.ts	autopilot showStatus — wrapper-path detection	1	readFileSync
 test/autopilot-install.test.ts	autopilot wiring: chat-unavailable boot warning (#2608)	1	readFileSync
