@@ -20,7 +20,7 @@
 //      For T3/T4: deterministic stub narrative.
 //   6. Write concept-typed pages with the synthesis mode made explicit.
 
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { resolveModel } from '../model-config.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -104,6 +104,8 @@ export interface SynthesizeConceptsOpts {
 
 interface AtomGroup {
   conceptSlug: string;
+  /** #4589: member atom slugs — the provenance edges are written from these. */
+  atomSlugs: string[];
   atomTitles: string[];
   atomBodies: string[];
   tier: 'T1' | 'T2' | 'T3' | 'T4';
@@ -168,10 +170,11 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by concept slug
-  const groups = new Map<string, { titles: string[]; bodies: string[] }>();
+  const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[] }>();
   for (const atom of atoms) {
     for (const conceptSlug of atom.concept_refs) {
-      const existing = groups.get(conceptSlug) ?? { titles: [], bodies: [] };
+      const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [] };
+      existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
       existing.bodies.push(atom.body);
       groups.set(conceptSlug, existing);
@@ -187,6 +190,7 @@ export async function runPhaseSynthesizeConcepts(
       count >= TIER_T1_MIN ? 'T1' : count >= TIER_T2_MIN ? 'T2' : 'T3';
     atomGroups.push({
       conceptSlug,
+      atomSlugs: data.slugs,
       atomTitles: data.titles,
       atomBodies: data.bodies,
       tier,
@@ -356,11 +360,32 @@ export async function runPhaseSynthesizeConcepts(
         '',
         { type: 'concept', title: title.replace(/-/g, ' '), tags: [] },
       );
-      await importFromContent(engine, `concepts/${title}`, md, {
+      const conceptSlug = `concepts/${title}`;
+      await importFromContent(engine, conceptSlug, md, {
         noEmbed: !isAvailable('embedding'),
         // #4416: target the cycle's resolved source, not the 'default' literal.
         sourceId: opts.sourceId,
       });
+      // #4589: bank concept<->member-atom provenance edges. The prompt forbids
+      // enumerating atoms in the body and no frontmatter field maps to a link
+      // verb, so without this every concept page lands with zero edges (graph
+      // orphan). Dedicated link_source keeps reconcile passes from pruning
+      // them; both endpoints sit in the cycle's source (an atom living in
+      // another source drops out of the batch JOIN — no cross-source edge).
+      // ON CONFLICT DO NOTHING makes re-runs idempotent, so a failure here is
+      // best-effort: recorded as a warn, the page write stands. Mirrors #3961.
+      const src = opts.sourceId ?? 'default';
+      const provenanceLinks: LinkBatchInput[] = [...new Set(group.atomSlugs)].flatMap((atomSlug) => [
+        { from_slug: conceptSlug, to_slug: atomSlug, link_type: 'synthesized_from', link_source: 'concept-provenance', context: 'member atom', from_source_id: src, to_source_id: src },
+        { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
+      ]);
+      try {
+        await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        failures.push({ concept: group.conceptSlug, error: `provenance links failed: ${msg}` });
+        console.error(`[synthesize_concepts] provenance links failed for ${conceptSlug} (non-fatal): ${msg}`);
+      }
     }
     conceptsWritten++;
     // v0.41.19.0 (T4): one tick per concept group with running count.

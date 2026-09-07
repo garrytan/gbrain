@@ -703,3 +703,117 @@ describe('#2123: extractor stamps concepts → synthesize_concepts consumes via 
     expect(concept.length).toBe(1);
   });
 });
+
+// #4589 — synthesize_concepts held every member atom's slug in memory at write
+// time and dropped it: the concept page was written through importFromContent
+// (which links code refs only), the prompt forbids enumerating atoms in the
+// body, and no frontmatter field maps to a link verb — so every concept page
+// landed with 0 inbound + 0 outbound edges and dragged doctor's
+// graph_signals_coverage / orphans down. The phase now banks
+// concept -> atom ('synthesized_from') and atom -> concept ('synthesizes')
+// edges under a dedicated link_source ('concept-provenance', so reconcile
+// passes never prune them), scoped to the cycle's source. Mirrors #3961.
+describe('#4589: synthesize_concepts persists concept<->atom provenance edges', () => {
+  const CONCEPT = 'dive-entry-mechanics';
+  const CONCEPT_SLUG = `concepts/${CONCEPT}`;
+  const memberSlugs = [0, 1, 2].map((i) => `atoms/2026-01-01/member-${i}`);
+  const memberAtoms = memberSlugs.map((slug, i) => ({
+    slug,
+    title: `Member ${i}`,
+    body: `Body of member ${i}.`,
+    concept_refs: [CONCEPT],
+  }));
+
+  async function seedMembers(sourceId?: string): Promise<void> {
+    for (const a of memberAtoms) {
+      await engine.putPage(
+        a.slug,
+        { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' },
+        sourceId ? { sourceId } : undefined,
+      );
+    }
+  }
+
+  async function provenanceCount(): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM links WHERE link_source = 'concept-provenance'`,
+    );
+    return rows[0].n;
+  }
+
+  test('writes synthesized_from (concept->atom) and synthesizes (atom->concept) edges', async () => {
+    await seedMembers();
+    // 3 atoms = T3 → deterministic path, no LLM call.
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(result.status).toBe('ok');
+
+    const out = (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(out.map((l) => l.to_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(out.every((l) => l.link_type === 'synthesized_from')).toBe(true);
+
+    const back = (await engine.getBacklinks(CONCEPT_SLUG, { sourceId: 'default' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(back.map((l) => l.from_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(back.every((l) => l.link_type === 'synthesizes')).toBe(true);
+  });
+
+  test('re-running the phase is idempotent (ON CONFLICT DO NOTHING keeps 3+3 rows)', async () => {
+    await seedMembers();
+    await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(await provenanceCount()).toBe(6);
+    const second = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+    expect(second.status).toBe('ok');
+    expect(await provenanceCount()).toBe(6);
+  });
+
+  test('dry-run writes zero provenance edges', async () => {
+    await seedMembers();
+    const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms, dryRun: true });
+    expect(result.details?.concepts_written).toBe(1);
+    expect(await provenanceCount()).toBe(0);
+  });
+
+  test('edges land in the cycle source only; an atom in another source drops out (no cross-source edge)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('repo-a', 'Repo A') ON CONFLICT (id) DO NOTHING`,
+    );
+    await seedMembers('repo-a');
+    // A same-concept atom that lives in 'default' — the INNER JOIN on
+    // (slug, source_id) must silently drop it rather than link across sources.
+    const stray = { slug: 'atoms/2026-01-01/stray', title: 'Stray', body: 'b', concept_refs: [CONCEPT] };
+    await engine.putPage(stray.slug, { type: 'atom', title: stray.title, compiled_truth: stray.body, timeline: '' });
+
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: [...memberAtoms, stray],
+      sourceId: 'repo-a',
+    });
+    expect(result.status).toBe('ok');
+
+    const inRepo = (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'repo-a' }))
+      .filter((l) => l.link_source === 'concept-provenance');
+    expect(inRepo.map((l) => l.to_slug).sort()).toEqual([...memberSlugs].sort());
+    expect(inRepo.every((l) => l.to_source_id === 'repo-a' && l.from_source_id === 'repo-a')).toBe(true);
+    expect(
+      (await engine.getLinks(CONCEPT_SLUG, { sourceId: 'default' }))
+        .filter((l) => l.link_source === 'concept-provenance'),
+    ).toHaveLength(0);
+    expect((await engine.getLinks(stray.slug, { sourceId: 'default' })).length).toBe(0);
+    expect(await provenanceCount()).toBe(6);
+  });
+
+  test('a failed edge write is reported as warn, not swallowed; the concept page still lands', async () => {
+    await seedMembers();
+    const orig = engine.addLinksBatch.bind(engine);
+    engine.addLinksBatch = async () => { throw new Error('links table unavailable'); };
+    try {
+      const result = await runPhaseSynthesizeConcepts(engine, { _atoms: memberAtoms });
+      expect(result.status).toBe('warn');
+      const failures = result.details?.failures as Array<{ concept: string; error: string }>;
+      expect(failures.some((f) => f.concept === CONCEPT && /links table unavailable/.test(f.error))).toBe(true);
+      expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'default' })).not.toBeNull();
+    } finally {
+      engine.addLinksBatch = orig;
+    }
+  });
+});
