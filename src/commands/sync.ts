@@ -593,7 +593,8 @@ See also:
     },
   );
 
-  console.log(`job_id=${job.id}`);
+  // --json: stdout is JSON lines (the same contract runSync keeps).
+  console.log(args.includes('--json') ? JSON.stringify({ job_id: job.id }) : `job_id=${job.id}`);
 }
 
 // The lock layer minus performSync (SyncLockBusyError, formatLockBusyMessage,

@@ -65,7 +65,7 @@ async function run(args: string[]): Promise<{ stdout: string[]; stderr: string[]
   process.exit = ((code?: number) => { throw new Error(`__exit__${code}`); }) as typeof process.exit;
   try {
     await withEnv(
-      { GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined },
+      { GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined, GBRAIN_ALLOW_DEFAULT_WRITE: undefined },
       () => runSync(engine, args),
     );
   } finally {
@@ -127,4 +127,45 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     const { stdout } = await run(['--dry-run', '--no-pull', '--no-embed']);
     expect(stdout.join('')).toContain('Sync dry run:');
   }, 60_000);
+
+  // Wave review: the remaining human lines on the --json path.
+  test('--retry-failed --json with no pending failures: the "nothing to retry" line is stderr, stdout parses', async () => {
+    rmSync(join(home, 'sync-failures.jsonl'), { force: true });
+    const { stdout, stderr } = await run(['--retry-failed', '--dry-run', '--no-pull', '--no-embed', '--json']);
+    for (const l of lines(stdout)) expect(() => JSON.parse(l)).not.toThrow();
+    expect(stderr.join('')).toContain('No unacknowledged sync failures to retry.');
+  }, 60_000);
+
+  test('--retry-failed --json with a pending failure: the "Retrying N" line is stderr, stdout parses', async () => {
+    seedFailure();
+    const { stdout, stderr } = await run(['--retry-failed', '--dry-run', '--no-pull', '--no-embed', '--json']);
+    for (const l of lines(stdout)) expect(() => JSON.parse(l)).not.toThrow();
+    expect(stderr.join('')).toContain('Retrying 1 previously-failed file(s)');
+  }, 60_000);
+
+  test('--skip-failed --json: the "Acknowledged N" line is stderr, stdout parses', async () => {
+    seedFailure();
+    const { stdout, stderr } = await run(['--skip-failed', '--dry-run', '--no-pull', '--no-embed', '--json']);
+    for (const l of lines(stdout)) expect(() => JSON.parse(l)).not.toThrow();
+    expect(stderr.join('')).toContain('Acknowledged 1 pre-existing failure(s).');
+  }, 60_000);
+
+  test('sync trigger --source <id> --json prints one JSON line with job_id on stdout', async () => {
+    const { stdout } = await run(['trigger', '--source', 'default', '--json']);
+    const out = lines(stdout);
+    expect(out).toHaveLength(1);
+    expect(typeof JSON.parse(out[0]).job_id).toBe('number');
+  }, 60_000);
 });
+
+/** One open ledger row for the default source (the shape sync-failure-ledger writes). */
+function seedFailure(): void {
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(home, 'sync-failures.jsonl'),
+    JSON.stringify({
+      source_id: 'default', path: 'topics/broken.md', error: 'boom', code: 'UNKNOWN', commit: 'abc',
+      first_seen: now, ts: now, attempts: 1, state: 'open', acknowledged: false, acknowledged_at: null,
+    }) + '\n',
+  );
+}
