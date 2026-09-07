@@ -150,6 +150,20 @@ gbrain config set search.reranker.timeout_ms 60000
 Per-call overrides in `SearchOpts.reranker_timeout_ms` still win for
 any single call.
 
+## Document size
+
+Every document handed to the reranker is capped before the call: about 1,400
+estimated tokens (a 6,000-character cut first, then a shrink by measured
+token ratio), always on a UTF-8-safe boundary so a lone surrogate never turns
+a 500 into a 400. Prose chunks (~300 words) pass through untouched; code or
+CJK chunks at the chunker ceiling lose part of their tail before scoring, the
+same trade the embed side already makes. The cap exists because a
+chunker-ceiling chunk plus the query plus the server-side reranker template
+does not fit llama-server's default 2048 ubatch, and a pooled self-hosted
+reranker answered that overflow with a 500 that `applyReranker` fails open
+on, silently serving raw RRF order. It applies to every provider, hosted
+included, and has no config knob.
+
 ## Budget caps + local rerank
 
 The recipe declares `cost_per_1m_tokens_usd: 0` and registers under

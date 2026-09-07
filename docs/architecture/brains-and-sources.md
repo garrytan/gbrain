@@ -209,6 +209,15 @@ ARRAY of readable sources that takes precedence over the scalar
 operations layer). Local CLI callers never set it; the scalar chain above
 is the whole story for them.
 
+One guard on tier 2 for the MCP stdio lane: a harness-launched `gbrain serve`
+checks a well-formed `GBRAIN_SOURCE` against the `sources` table at startup
+and exits with the offending value and the fix when it names no active
+(non-archived) source, instead of serving a scope that holds zero pages while
+every health check stays green. Unset, `__all__`, and malformed values keep
+their normal handling, and a transient database error never blocks startup.
+The CLI env tier fails the same way (`assertSourceExists` in
+`src/core/source-resolver.ts`).
+
 ---
 
 ## For agents reading this

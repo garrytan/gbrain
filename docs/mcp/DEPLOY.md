@@ -211,7 +211,14 @@ ngrok http 3131 --url your-brain.ngrok.app
 
 Your OAuth issuer URL becomes `https://your-brain.ngrok.app`. The MCP SDK's
 router exposes the spec-compliant discovery endpoint at
-`/.well-known/oauth-authorization-server`.
+`/.well-known/oauth-authorization-server`. The protected resource is the
+`/mcp` endpoint itself: its RFC 9728 metadata is served at
+`/.well-known/oauth-protected-resource/mcp` (the bare
+`/.well-known/oauth-protected-resource` root stays as an alias for older
+clients), and every 401 carries `WWW-Authenticate: Bearer
+resource_metadata="<that URL>"`, so an MCP client pointed at
+`https://your-brain.ngrok.app/mcp` finds the token endpoint from a fresh
+connection without any pasted URLs.
 
 ### 4. Scopes and localOnly
 
