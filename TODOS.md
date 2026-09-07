@@ -515,7 +515,13 @@ deferred M-effort issues above are NOT repeated here.
   `stripReasoningBlocks`, but ~13 hand-rolled brace-scan sites remain
   (judges, grade-takes, drift, voice-gate, calibration-profile, chronicle,
   facts/classify, loops-extract, skillopt x3, eval json-repair, think/index);
-  propose-takes.ts carries its own duplicate regex to converge.
+  propose-takes.ts carries its own duplicate regex to converge. Caveat for
+  the propose-takes.ts pair: they are PRE-FILTERS (strip before any parse, no
+  `i` flag, no unclosed-tag arm), so routing them through
+  `stripReasoningBlocks` (which since #4912 also strips `<thinking>`) is a
+  semantic change — it would eat an unclosed `<think` tail before the raw parse
+  and add case-insensitivity. Needs its own ladder-shaped rework with a
+  red-first test, not a mechanical swap.
 - [ ] **P2 — verify gpt-5.6-terra / gpt-5.6-sol canonical prices.** **What:**
   while live-verifying luna (#4560), OpenAI's official pricing page listed
   terra at $2.00/$12.00 and sol at $4.00/$20.00 vs CANONICAL_PRICING's
