@@ -55,8 +55,10 @@ describe('lookupEmbeddingPrice — first-class providers', () => {
     if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.15);
   });
 
-  test('gemini-embedding-2 is deliberately unpriced (rate unverified)', () => {
-    expect(lookupEmbeddingPrice('google:gemini-embedding-2').kind).toBe('unknown');
+  test('Google gemini-embedding-2 at $0.20/MTok (text rate, not shared with -001)', () => {
+    const r = lookupEmbeddingPrice('google:gemini-embedding-2');
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') expect(r.pricePerMTok).toBe(0.20);
   });
 });
 

@@ -74,15 +74,18 @@ export const EMBEDDING_PRICING: Record<string, EmbeddingPricing> = {
   // Perplexity (https://docs.perplexity.ai/getting-started/pricing, verified 2026-07-28)
   'perplexity:pplx-embed-v1-0.6b': { pricePerMTok: 0.004 },
   'perplexity:pplx-embed-v1-4b':   { pricePerMTok: 0.03 },
-  // Google (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-08-30).
-  // #4344 class: gemini-embedding-001 is in the hosted recipe list
-  // (src/core/ai/recipes/google.ts) but had no row, so cost estimates read
-  // "unavailable" for every brain on it — including the OpenRouter-routed ones,
-  // since `openrouter:google/gemini-embedding-001` resolves here through the
-  // #2504 nested-vendor retry. gemini-embedding-2 is deliberately absent: it is
-  // in the same recipe list, but its published rate is unverified and a guessed
-  // row is worse than `unknown` (the voyage-4-nano rationale above).
+  // Google (https://ai.google.dev/gemini-api/docs/pricing, verified 2026-09-07).
+  // #4344 class: both models are in the hosted recipe list
+  // (src/core/ai/recipes/google.ts) but had no rows, so cost estimates read
+  // "unavailable" for every brain on them — including the OpenRouter-routed
+  // ones, since `openrouter:google/gemini-embedding-001` resolves here through
+  // the #2504 nested-vendor retry. The two rates differ, so one shared row
+  // would misprice whichever model it didn't come from.
   'google:gemini-embedding-001':   { pricePerMTok: 0.15 },
+  // gemini-embedding-2 is multimodal and priced per input kind ($0.45/1M image,
+  // $6.50 audio, $12.00 video). Same convention as voyage-multimodal-3 above:
+  // the TEXT rate is the row, pixel/audio token pricing is out of scope here.
+  'google:gemini-embedding-2':     { pricePerMTok: 0.20 },
 };
 
 export type PriceLookupResult =
