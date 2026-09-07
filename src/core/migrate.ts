@@ -6495,7 +6495,8 @@ export const MIGRATIONS: Migration[] = [
         updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (source_id, file_path, content_hash)
       );
-      CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_live_idx
+      DROP INDEX IF EXISTS extract_atoms_transcript_state_live_idx;
+      CREATE INDEX IF NOT EXISTS extract_atoms_transcript_state_tombstoned_idx
         ON extract_atoms_transcript_state (source_id, content_hash)
         WHERE tombstoned;
     `,
