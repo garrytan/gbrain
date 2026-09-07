@@ -2656,8 +2656,12 @@ and the scope record at `~/.gstack/projects/garrytan-gbrain/ceo-plans/2026-06-12
   `src/core/verbs/entity-card.ts` open-threads assembly + a new schema table
   (additive — the card field already exists, so this is a quality upgrade, not
   a contract change).
-- [ ] **P2 — `recall` filter composition vs the spec (found by the v0.43.0.0
-  cross-model doc review).** The handler dispatch is first-match
+- [x] **P2 — `recall` filter composition vs the spec (found by the v0.43.0.0
+  cross-model doc review).** **Completed: v0.48.5.0 (2026-09-07)** — #4882: the
+  `recall` handler composes `since` with `entity`/`session_id` before the SQL
+  LIMIT and rejects unparseable values (`src/core/ops/facts.ts`), the composition
+  is spelled out in `docs/protocol/MEMORY_VERBS_v1.md`, and the server-side `limit`
+  cap landed earlier (`clampRecallLimit`, v0.46.13.0). Original text: The handler dispatch is first-match
   (`supersessions` > `entity` > `session_id` > `since`), so `since` is
   silently ignored when `entity`/`session_id` is supplied, and `limit` has no
   server-side cap. Either compose the filters (additive — the spec's "filters
