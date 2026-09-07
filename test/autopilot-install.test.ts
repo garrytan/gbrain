@@ -488,3 +488,112 @@ describe('autopilot install — reload-safety (#2608)', () => {
     expect(src).toMatch(/keeps its old environment until the container/);
   });
 });
+
+// #4728: writeWrapperScript bakes the CLI path once at --install. On the
+// ephemeral-container target the container layer is wiped on every deploy, so
+// a CLI that lived there vanishes while the wrapper (on the volume) survives —
+// and bash's bare "No such file or directory" (exit 127) named no remedy. These
+// run the FULL generated wrapper under real bash; the #2608 harness above
+// deliberately truncates before the exec line, so the exec path was untested.
+describe('#4728 wrapper falls back when the baked CLI path is gone', () => {
+  let fakeBin: ReturnType<typeof makeFakeGbrainOnPath>;
+  let customHome: string;
+  let fakeRuntimeDir: string;
+  let originalGbrainHome: string | undefined;
+  let originalExecPath: string;
+  let repoDir: string;
+  let wrapperPath: string;
+  const NO_GBRAIN_PATH = '/usr/bin:/bin';
+
+  beforeEach(() => {
+    fakeBin = makeFakeGbrainOnPath();
+    // The baked shim reports that IT ran, so the present case proves the
+    // baked path stays primary rather than merely "something exited 0".
+    writeFileSync(join(fakeBin.binDir, 'gbrain'), '#!/bin/sh\necho "BAKED_RAN $@"\nexit 0\n', { mode: 0o755 });
+    customHome = mkdtempSync(join(tmpdir(), 'gbrain-4728-home-'));
+    originalGbrainHome = process.env.GBRAIN_HOME;
+    process.env.GBRAIN_HOME = customHome;
+    // The wrapper prepends dirname(process.execPath) onto PATH at install
+    // time. On a dev box the real bun dir often also holds a real `gbrain`
+    // shim, which the fallback would find (and launch!). Point the runtime
+    // dir at an empty tmp dir so PATH resolution is fully test-controlled.
+    originalExecPath = process.execPath;
+    fakeRuntimeDir = mkdtempSync(join(tmpdir(), 'gbrain-4728-runtime-'));
+    process.execPath = join(fakeRuntimeDir, 'bun');
+    repoDir = join(tmp, 'repo-4728');
+    mkdirSync(repoDir, { recursive: true });
+    wrapperPath = writeWrapperScript(repoDir, 'ephemeral-container');
+  });
+
+  afterEach(() => {
+    process.execPath = originalExecPath;
+    if (originalGbrainHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = originalGbrainHome;
+    rmSync(customHome, { recursive: true, force: true });
+    rmSync(fakeRuntimeDir, { recursive: true, force: true });
+    fakeBin.restore();
+  });
+
+  const runWrapper = (path: string) =>
+    spawnSync('bash', [wrapperPath], {
+      env: { HOME: tmp, PATH: path },
+      encoding: 'utf8',
+      timeout: 15_000,
+    });
+
+  test('baked path present: byte-for-byte old behavior, no fallback chatter', () => {
+    const r = runWrapper(NO_GBRAIN_PATH);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`BAKED_RAN autopilot --repo ${repoDir}`);
+    expect(r.stdout).not.toContain('baked CLI path');
+    expect(r.stderr).toBe('');
+  });
+
+  test('baked path gone, gbrain on PATH: logs the substitution to stdout and execs the PATH one', () => {
+    rmSync(join(fakeBin.binDir, 'gbrain')); // the container-layer wipe
+    const fallbackDir = mkdtempSync(join(tmpdir(), 'gbrain-4728-fallback-'));
+    try {
+      writeFileSync(join(fallbackDir, 'gbrain'), '#!/bin/sh\necho "FALLBACK_RAN $@"\nexit 0\n', { mode: 0o755 });
+      const r = runWrapper(`${fallbackDir}:${NO_GBRAIN_PATH}`);
+      expect(r.status).toBe(0);
+      // stdout, not stderr: stdout is the autopilot.log sink on all four
+      // targets (same choice as chatBootWarning); autopilot.err is never
+      // surfaced by install output or --status.
+      expect(r.stdout).toContain('baked CLI path is gone');
+      expect(r.stdout).toContain(join(fallbackDir, 'gbrain'));
+      expect(r.stdout).toContain(`FALLBACK_RAN autopilot --repo ${repoDir}`);
+    } finally {
+      rmSync(fallbackDir, { recursive: true, force: true });
+    }
+  });
+
+  test('baked path gone, nothing on PATH: exit 1 with the --install remediation instead of a bare exec failure (bash 3.2: 126, bash 4+: 127)', () => {
+    rmSync(join(fakeBin.binDir, 'gbrain'));
+    const r = runWrapper(NO_GBRAIN_PATH);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain('gbrain autopilot --install');
+    expect(r.stderr).not.toContain('No such file or directory');
+  });
+
+  test('a shell function named gbrain (from a sourced rc file) does not satisfy the fallback', () => {
+    rmSync(join(fakeBin.binDir, 'gbrain'));
+    // The wrapper sources ~/.bashrc under HOME=tmp before the guard runs.
+    writeFileSync(join(tmp, '.bashrc'), 'gbrain() { echo "FUNCTION_RAN $@"; }\n');
+    const r = runWrapper(NO_GBRAIN_PATH);
+    expect(r.status).toBe(1);
+    expect(r.stdout).not.toContain('FUNCTION_RAN');
+    expect(r.stdout).toContain('gbrain autopilot --install');
+  });
+
+  test('the final line is still the bare single-quoted exec the truncation harness anchors on', () => {
+    const src = readFileSync(wrapperPath, 'utf8');
+    const lines = src.trimEnd().split('\n');
+    const last = lines[lines.length - 1];
+    expect(last).toMatch(/^exec '.*' autopilot --repo '.*'$/);
+    // indexOf("exec '") (used at :235/:279 above and by the launchd-lifecycle
+    // ordering pins) must still land on that FINAL line, not on the fallback.
+    expect(src.slice(src.indexOf("exec '")).trimEnd()).toBe(last);
+    // The guard sits after the repo-cwd pin (#3696 ordering) and before the exec.
+    expect(src.indexOf(`\ncd '`)).toBeLessThan(src.indexOf('exec '));
+  });
+});

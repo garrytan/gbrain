@@ -161,6 +161,17 @@
 
 ## Community fix wave follow-ups (filed 2026-09-01, v0.48.1.0 wave)
 
+- [ ] **P3 — Share the #4728 baked-CLI-path guard with the brain-repo durability cron wrapper.**
+  **What:** `src/core/brain-repo-durability.ts` `renderCronWrapper` bakes a
+  CLI path at install time the same way the autopilot wrapper did before
+  #4728 (private resolver at `resolveGbrainCliPath` in that file; it degrades
+  to bare `gbrain`, so PATH resolution partially happens today, but a vanished
+  absolute path still fails as a bare bash exec error with no remediation).
+  A follow-up can lift the `[ ! -x <baked> ] -> type -P gbrain -> re-run
+  --install` bash snippet out of `writeWrapperScript` into one shared helper
+  and render it from both wrappers. **Why:** same ephemeral-container wipe
+  class; one guard, two callers. **Context:** #4728 deliberately did not widen
+  into `core/`. **Effort:** S. **Priority:** P3.
 - [ ] **P1 — Fix-wave 2: the 27 deferred M-effort verified issues.**
   **What:** the v0.48.1.0 community fix wave triaged every open issue; 22
   were fixed in-wave and 27 verified M-effort issues were deferred to a

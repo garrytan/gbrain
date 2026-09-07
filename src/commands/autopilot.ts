@@ -1885,6 +1885,26 @@ ${generateSelfDisableGuard(repoPath, target)}# #3696: daemon cwd = the repo, so 
 # this line still starts the daemon, and the dispatch loops skip relative
 # paths loudly.
 cd '${safeRepoPath}' 2>/dev/null || true
+# #4728: the CLI path below was resolved ONCE at --install. On the
+# ephemeral-container target the container layer is wiped on every deploy, so
+# a CLI that lived there vanishes while this wrapper (on the volume) survives,
+# and bash's bare "No such file or directory" named no remedy. The baked path
+# stays primary; only once it is gone do we fall back to PATH — the same
+# resolution the daemon already applies at run time when it spawns its worker
+# child (resolveGbrainCliPath -> which gbrain), so this adds no lookup
+# semantics the install did not already rely on. \`type -P\` only returns an
+# executable file on PATH, ignoring any \`gbrain\` shell function or alias the
+# rc files sourced above may have defined. Logs go to stdout: that is the
+# autopilot.log sink on all four targets (same choice as the boot warning).
+if [ ! -x '${safeGbrainPath}' ]; then
+  _resolved=$(type -P gbrain 2>/dev/null)
+  if [ -n "$_resolved" ]; then
+    echo "$(date -u +%FT%TZ) [autopilot] baked CLI path is gone:" '${safeGbrainPath}' "- using $_resolved"
+    exec "$_resolved" autopilot --repo '${safeRepoPath}'
+  fi
+  echo "$(date -u +%FT%TZ) [autopilot] gbrain CLI not found at" '${safeGbrainPath}' "nor on PATH; re-run: gbrain autopilot --install"
+  exit 1
+fi
 exec '${safeGbrainPath}' autopilot --repo '${safeRepoPath}'
 `;
   writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
