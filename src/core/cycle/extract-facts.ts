@@ -53,6 +53,10 @@
  * backlog through the sanctioned removal path instead of raw SQL.
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { resolveGbrainHome } from '../gbrain-home.ts';
+
 import type { BrainEngine } from '../engine.ts';
 import { resolveSupersededByRow, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -280,6 +284,21 @@ export async function runExtractFacts(
     phantomsLockBusy: false,
     phantomsMorePending: false,
   };
+
+  // Operator containment for the facts.fence reconciliation path. The marker
+  // is checked on every invocation so queued cycles, sweep, and direct callers
+  // all fail closed without pausing unrelated cycle phases or services.
+  const operatorPauseMarker = join(
+    resolveGbrainHome(),
+    'operator-pauses',
+    'facts-fence.pause',
+  );
+  if (existsSync(operatorPauseMarker)) {
+    result.warnings.push(
+      `operator_pause: extract_facts skipped while ${operatorPauseMarker} exists`,
+    );
+    return result;
+  }
 
   // ── Empty-fence guard (Codex R2-#7; #2484; #2646) ──────────────
   // Pre-check: if any genuinely-backfillable legacy fact rows exist,
