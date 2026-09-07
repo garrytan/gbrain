@@ -738,10 +738,23 @@ interface TrackedSlugIndex {
    */
   slugs: Set<string>;
   complete: boolean;
+  /**
+   * Slugs proven ONLY by the anchor tree (no current tracked file derives
+   * to them) -> the anchor paths that proved them, in the caller's path
+   * mode (`pathKey`). Lets the reconcile tell "another file owned this slug
+   * at the anchor" from "the pre-rename state of the very file this rename
+   * just re-imported" (#4597).
+   */
+  anchorOnlyPaths: Map<string, Set<string>>;
 }
 
-function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): TrackedSlugIndex {
+function trackedSlugIndex(
+  gitContextRoot: string,
+  anchorCommit?: string,
+  pathKey: (rel: string) => string = (rel) => rel,
+): TrackedSlugIndex {
   const slugs = new Set<string>();
+  const anchorOnlyPaths = new Map<string, Set<string>>();
   let complete = true;
   const addSlug = (slug: string): void => { slugs.add(slug); };
   // --cached --others --exclude-standard mirrors gitListSyncableFiles (see
@@ -792,6 +805,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
   // tree is safe; reads stay bounded by the same size gates and only fire
   // for fallback-regime paths.
   if (anchorCommit && anchorCommit !== 'HEAD') {
+    const currentSlugs = new Set(slugs);
     try {
       const epochs = attributeEpochCommits(gitContextRoot, anchorCommit);
       const historicalFilter = epochs === null || anyFilterAtAttributeEpochs(gitContextRoot, epochs);
@@ -800,7 +814,13 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
         if (!rel) continue;
         if (resolveSlugForPath(rel) !== '' || isCodeFilePath(rel)) continue;
         const res = anchorBlobSlugs(gitContextRoot, anchorCommit, rel, historicalFilter);
-        for (const s of res.slugs) addSlug(s);
+        for (const s of res.slugs) {
+          addSlug(s);
+          if (currentSlugs.has(s)) continue;
+          let at = anchorOnlyPaths.get(s);
+          if (!at) anchorOnlyPaths.set(s, (at = new Set()));
+          at.add(pathKey(rel));
+        }
         if (!res.proofIntact) {
           complete = false;
           serr(
@@ -819,7 +839,7 @@ function trackedSlugIndex(gitContextRoot: string, anchorCommit?: string): Tracke
       );
     }
   }
-  return { slugs, complete };
+  return { slugs, complete, anchorOnlyPaths };
 }
 
 /**
@@ -2681,11 +2701,24 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     // unreadable fallback-regime file — see trackedSlugIndex), an index miss
     // proves nothing, so the row is spared as 'unknown' rather than deleted.
     let treeSlugIndex: TrackedSlugIndex | undefined;
-    const slugLiveness = (s: string): 'live' | 'stale' | 'unknown' => {
+    const slugLiveness = (s: string, from: string): 'live' | 'stale' | 'unknown' => {
       // lastCommit = the commit the brain reflects; its blob is one of the
-      // consulted content states (see fallbackSlugsForFile).
-      treeSlugIndex ??= trackedSlugIndex(gitContextRoot, lastCommit);
-      if (treeSlugIndex.slugs.has(s)) return 'live';
+      // consulted content states (see fallbackSlugsForFile). Anchor paths
+      // are keyed through modePath so they compare against `from` under
+      // #4342 source-root mode too.
+      treeSlugIndex ??= trackedSlugIndex(gitContextRoot, lastCommit, modePath);
+      if (treeSlugIndex.slugs.has(s)) {
+        // #4597: when the ONLY liveness proof is the anchor blob at THIS
+        // rename's own from-path, that proof is the pre-rename state of the
+        // file just re-imported at `to` (the reconcile only runs once the
+        // destination materialized) — the exact duplicate it exists to
+        // remove. Sparing it checkpointed the rename as converged, so the
+        // duplicate never re-entered an incremental diff. Any current-tree
+        // hit, or anchor proof from a DIFFERENT path (the #3583 data-loss
+        // shapes), still spares the row.
+        const onlyAt = treeSlugIndex.anchorOnlyPaths.get(s);
+        if (!onlyAt || ![...onlyAt].every(p => p === from)) return 'live';
+      }
       return treeSlugIndex.complete ? 'stale' : 'unknown';
     };
 
@@ -2961,7 +2994,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
                 );
                 continue;
               }
-              const verdict = slugLiveness(s);
+              const verdict = slugLiveness(s, from);
               if (verdict === 'live') {
                 serr(
                   `  [sync] rename reconcile: skipping live row ${s} — a tracked ` +
