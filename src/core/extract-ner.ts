@@ -17,7 +17,11 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { LinkBatchInput } from './engine.ts';
-import { buildGazetteer, findMentionedEntities, type Gazetteer } from './by-mention.ts';
+import {
+  buildGazetteer,
+  findMentionedEntities,
+  resolveMentionResolutionConfig,
+} from './by-mention.ts';
 import { inferLinkTypeFromPack } from './schema-pack/link-inference.ts';
 import { loadActivePackForLocalEngine, packSupportsNerInference } from './schema-pack/best-effort.ts';
 
@@ -30,11 +34,6 @@ export interface ExtractNerOpts {
   typeFilter?: string;
   /** Only scan pages with updated_at after this ISO date. */
   since?: string;
-  /**
-   * Pre-built gazetteer (T7+: combined `--by-mention --ner` walk shares
-   * one gazetteer across both passes). When omitted, this fn builds its own.
-   */
-  gazetteer?: Gazetteer;
   /** Optional progress hook called per processed page. */
   onProgress?: (done: number, total: number, created: number) => void;
 }
@@ -119,7 +118,10 @@ export async function extractNerLinks(
     return { pages: 0, created: 0, pack_unavailable: true };
   }
 
-  const gazetteer = opts.gazetteer ?? await buildGazetteer(engine);
+  const mentionResolution = await resolveMentionResolutionConfig(engine);
+  const gazetteer = await buildGazetteer(engine, {
+    extraIgnore: mentionResolution.mentionIgnore,
+  });
   if (gazetteer.size === 0) {
     return { pages: 0, created: 0, pack_unavailable: false };
   }
@@ -170,6 +172,7 @@ export async function extractNerLinks(
     const mentions = findMentionedEntities(body, gazetteer, {
       fromSlug: slug,
       fromSourceId: source_id,
+      crossSourceFederated: mentionResolution.crossSourceFederated,
     });
     if (mentions.length === 0) continue;
 

@@ -1514,6 +1514,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'link_resolution',
   'link_resolution.global_basename',
   'link_resolution.cross_source',
+  'link_resolution.cross_source_mentions',
+  'link_resolution.mention_ignore',
   // Spend controls (v0.42.42.0, issue #2139). Previously `--force`-only — the
   // operator had to discover these by reading source. Registered so `config
   // set` accepts them directly. See docs/operations/spend-controls.md.

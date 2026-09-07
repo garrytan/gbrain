@@ -33,12 +33,15 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   buildGazetteer,
   findMentionedEntities,
+  hashMentionResolution,
+  resolveMentionResolutionConfig,
   tokenizeForScan,
   tokenizeTitle,
   LINKABLE_ENTITY_TYPES,
   type Gazetteer,
   type GazetteerEntry,
 } from '../src/core/by-mention.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 
@@ -242,6 +245,144 @@ describe('findMentionedEntities — pure cases', () => {
       fromSlug: 'writing/post-1', fromSourceId: 'team-a', // different source
     });
     expect(mentions).toEqual([]);
+  });
+
+  test('17b. cross-source opt-in — both sources federated → link created', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'team-b', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('We met Acme today.', g, {
+      fromSlug: 'writing/post-1',
+      fromSourceId: 'team-a',
+      crossSourceFederated: new Set(['team-a', 'team-b']),
+    });
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]!.slug).toBe('companies/acme');
+    expect(mentions[0]!.source_id).toBe('team-b');
+  });
+
+  test('17c. cross-source opt-in — isolated target stays walled off', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'isolated-target', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('We met Acme today.', g, {
+      fromSlug: 'writing/post-1',
+      fromSourceId: 'team-a',
+      crossSourceFederated: new Set(['team-a', 'team-b']),
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('17d. cross-source opt-in — isolated scanning source stays walled off', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'team-b', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('We met Acme today.', g, {
+      fromSlug: 'notes/private',
+      fromSourceId: 'isolated-source',
+      crossSourceFederated: new Set(['team-a', 'team-b']),
+    });
+    expect(mentions).toEqual([]);
+  });
+
+  test('17e. cross-source opt-in preserves same-source mentions', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'team-a', title: 'Acme' },
+    ]);
+    const mentions = findMentionedEntities('We met Acme today.', g, {
+      fromSlug: 'writing/post-1',
+      fromSourceId: 'team-a',
+      crossSourceFederated: new Set(['team-a']),
+    });
+    expect(mentions).toHaveLength(1);
+  });
+
+  test('17f. source-qualified identity links duplicate slugs in federated sources', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'entities/shared', source_id: 'team-b', title: 'Beta Entity' },
+      { slug: 'entities/shared', source_id: 'team-c', title: 'Gamma Entity' },
+    ]);
+    const mentions = findMentionedEntities('Beta Entity met Gamma Entity.', g, {
+      fromSlug: 'entities/shared',
+      fromSourceId: 'team-a',
+      crossSourceFederated: new Set(['team-a', 'team-b', 'team-c']),
+    });
+
+    expect(mentions.map(({ source_id, slug }) => [source_id, slug])).toEqual([
+      ['team-b', 'entities/shared'],
+      ['team-c', 'entities/shared'],
+    ]);
+  });
+
+  test('17g. same-source identity wins over a federated namesake regardless of bucket order', () => {
+    for (const entries of [
+      [
+        { slug: 'companies/acme-foreign', source_id: 'team-b', title: 'Acme' },
+        { slug: 'companies/acme-local', source_id: 'team-a', title: 'Acme' },
+      ],
+      [
+        { slug: 'companies/acme-local', source_id: 'team-a', title: 'Acme' },
+        { slug: 'companies/acme-foreign', source_id: 'team-b', title: 'Acme' },
+      ],
+    ]) {
+      const mentions = findMentionedEntities('We met Acme today.', gazetteerFromEntries(entries), {
+        fromSlug: 'writing/post-1',
+        fromSourceId: 'team-a',
+        crossSourceFederated: new Set(['team-a', 'team-b']),
+      });
+      expect(mentions.map(({ source_id, slug }) => [source_id, slug])).toEqual([
+        ['team-a', 'companies/acme-local'],
+      ]);
+    }
+  });
+
+  test('17h. ambiguous local or federated namesakes do not depend on bucket order', () => {
+    for (const entries of [
+      [
+        { slug: 'companies/acme-local-a', source_id: 'team-a', title: 'Acme' },
+        { slug: 'companies/acme-local-b', source_id: 'team-a', title: 'Acme' },
+      ],
+      [
+        { slug: 'companies/acme-b', source_id: 'team-b', title: 'Acme' },
+        { slug: 'companies/acme-c', source_id: 'team-c', title: 'Acme' },
+      ],
+    ]) {
+      const mentions = findMentionedEntities('We met Acme today.', gazetteerFromEntries(entries), {
+        fromSlug: 'writing/post-1',
+        fromSourceId: 'team-a',
+        crossSourceFederated: new Set(['team-a', 'team-b', 'team-c']),
+      });
+      expect(mentions).toEqual([]);
+    }
+  });
+
+  test('17i. a local self-mention does not spill to a federated namesake', () => {
+    const mentions = findMentionedEntities('Acme announced results.', gazetteerFromEntries([
+      { slug: 'companies/acme-foreign', source_id: 'team-b', title: 'Acme' },
+      { slug: 'companies/acme-local', source_id: 'team-a', title: 'Acme' },
+    ]), {
+      fromSlug: 'companies/acme-local',
+      fromSourceId: 'team-a',
+      crossSourceFederated: new Set(['team-a', 'team-b']),
+    });
+
+    expect(mentions).toEqual([]);
+  });
+
+  test('17j. resolution hash includes same-bucket targets and federation membership', () => {
+    const base = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'team-a', title: 'Acme' },
+    ]);
+    const aliasChanged = gazetteerFromEntries([
+      { slug: 'companies/acme', source_id: 'team-a', title: 'Acme' },
+      { slug: 'companies/acme', source_id: 'team-a', title: 'Acme Labs' },
+    ]);
+
+    const original = hashMentionResolution(base, new Set(['team-a', 'team-b']));
+    expect(hashMentionResolution(aliasChanged, new Set(['team-a', 'team-b'])))
+      .not.toBe(original);
+    expect(hashMentionResolution(base, new Set(['team-a', 'team-c'])))
+      .not.toBe(original);
   });
 
   test('20. code-block + token interaction — body text outside block linked, inside skipped', () => {
@@ -599,6 +740,50 @@ describe('tokenizer boundaries — marks and non-ASCII numerics', () => {
 // buildGazetteer — engine-backed tests
 // ============================================================
 
+describe('resolveMentionResolutionConfig — engine integration', () => {
+  test('defaults off and admits only active, explicitly federated sources', async () => {
+    const sourceIds = [
+      'mention-fed-active',
+      'mention-fed-archived',
+      'mention-isolated',
+      'mention-unset',
+    ];
+    await engine.unsetConfig('link_resolution.cross_source_mentions');
+    await engine.setConfig('link_resolution.mention_ignore', ' John, , Johnny ');
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, archived) VALUES
+         ('mention-fed-active', 'mention-fed-active', '{"federated":true}'::jsonb, false),
+         ('mention-fed-archived', 'mention-fed-archived', '{"federated":true}'::jsonb, true),
+         ('mention-isolated', 'mention-isolated', '{"federated":false}'::jsonb, false),
+         ('mention-unset', 'mention-unset', '{}'::jsonb, false)
+       ON CONFLICT (id) DO UPDATE
+         SET config = EXCLUDED.config, archived = EXCLUDED.archived`,
+    );
+
+    try {
+      await withEnv(
+        { GBRAIN_LINK_RESOLUTION_CROSS_SOURCE_MENTIONS: undefined },
+        async () => {
+          const defaultOff = await resolveMentionResolutionConfig(engine);
+          expect(defaultOff.mentionIgnore).toEqual(['John', 'Johnny']);
+          expect(defaultOff.crossSourceFederated).toBeUndefined();
+
+          await engine.setConfig('link_resolution.cross_source_mentions', 'true');
+          const enabled = await resolveMentionResolutionConfig(engine);
+          expect([...enabled.crossSourceFederated!].sort()).toEqual([
+            'default',
+            'mention-fed-active',
+          ]);
+        },
+      );
+    } finally {
+      await engine.unsetConfig('link_resolution.cross_source_mentions');
+      await engine.unsetConfig('link_resolution.mention_ignore');
+      await engine.executeRaw('DELETE FROM sources WHERE id = ANY($1::text[])', [sourceIds]);
+    }
+  });
+});
+
 describe('buildGazetteer — engine integration', () => {
   test('7. min-length filter — title "AI" (length 2) not in gazetteer', async () => {
     await engine.putPage('companies/ai', {
@@ -753,17 +938,22 @@ describe('buildGazetteer — engine integration', () => {
     expect(g.has('box')).toBe(false);
   });
 
-  test('extraIgnore — user-supplied additional ignore tokens', async () => {
+  test('extraIgnore — user entries are authoritative for titles and aliases', async () => {
     await engine.putPage('people/john', {
       type: 'person', title: 'John', compiled_truth: 'b', timeline: '', frontmatter: {},
     });
-    // No companies/john exists, so adding John to extraIgnore should suppress.
+    await engine.putPage('people/jane-example', {
+      type: 'person', title: 'Jane Example', compiled_truth: 'b', timeline: '', frontmatter: {},
+    });
+    await engine.setPageAliases('people/jane-example', 'default', ['johnny']);
+
     const g1 = await buildGazetteer(engine);
-    expect(g1.has('john')).toBe(true); // baseline: in gazetteer
-    const g2 = await buildGazetteer(engine, { extraIgnore: ['John'] });
-    // But title "John" IS the entity title — existingTitles.has('John') is true.
-    // Per CK12 rule, gazetteer presence wins → John IS still in.
-    expect(g2.has('john')).toBe(true);
+    expect(g1.has('john')).toBe(true);
+    expect(g1.has('johnny')).toBe(true);
+
+    const g2 = await buildGazetteer(engine, { extraIgnore: ['John', 'Johnny'] });
+    expect(g2.has('john')).toBe(false);
+    expect(g2.has('johnny')).toBe(false);
   });
 
   test('LINKABLE_ENTITY_TYPES exposes the hardcoded contract', () => {
