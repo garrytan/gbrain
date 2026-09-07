@@ -776,8 +776,13 @@ export async function startResolveIpcServer(
   // no owner and the second unlink still displaces the first; a dev/ino
   // identity re-check around the unlink is the upgrade path if it ever bites.
   if ((await probeSocketOwner(socketPath)) !== 'dead') return null;
-  // Remove the dead owner's socket file so bind() can succeed.
-  cleanupStaleSocket(socketPath);
+  // Remove the dead owner's socket file so bind() can succeed. NOT gated on
+  // existsSync/statSync (#4333): on win32 Bun binds a plain path as a real
+  // AF_UNIX socket, which leaves a reparse-point file that Bun's existsSync()/
+  // statSync() cannot see while bind() still fails WSAEADDRINUSE against it —
+  // unlink is the only fs call that observes the entry. ENOENT and EISDIR/
+  // EPERM (a directory we must not touch) are swallowed.
+  try { unlinkSync(socketPath); } catch { /* nothing stale, or not ours to remove */ }
 
   return new Promise((resolve) => {
     const server = net.createServer((conn) => {
@@ -995,31 +1000,22 @@ async function handleSyncKind<Req extends { protocol: number; secret: string }, 
 }
 
 /**
- * Remove whatever entry sits at the socket path (a socket left by a dead
- * owner, a leftover file, a dangling symlink). NOT gated on existsSync/
- * statSync (#4333): on win32 Bun binds a plain path as a real AF_UNIX socket,
- * which leaves a reparse-point file that Bun's existsSync()/statSync() cannot
- * see while bind() still fails WSAEADDRINUSE against it — unlink is the only
- * fs call that observes the entry, so a gated cleanup never fired there and
- * every serve after an unclean exit ran with no IPC listener. ENOENT (nothing
- * there) and EISDIR/EPERM (a directory we must not touch) are swallowed.
- * Liveness is NOT checked here — startResolveIpcServer probes for a live
- * owner before calling this.
+ * Is something listening at `socketPath`? The same owner probe the pre-bind
+ * check uses: a leftover socket FILE (dead owner) is not a live provider, so
+ * callers must use this rather than existsSync() to decide "a serve is
+ * here". 'unknown' (probe timed out) counts as live — the conservative
+ * reading, identical to the bind path's "never displace on a timeout".
  */
-export function cleanupStaleSocket(socketPath: string): void {
-  try {
-    unlinkSync(socketPath);
-  } catch {
-    /* nothing stale, or not ours to remove */
-  }
+export async function socketHasLiveListener(socketPath: string): Promise<boolean> {
+  return (await probeSocketOwner(socketPath)) !== 'dead';
 }
 
 /**
  * Who owns `socketPath`? 'live' — something accepted the connect (a serve).
  * 'dead' — the connect was hard-refused (ENOENT / ECONNREFUSED / ENOTSOCK:
  * nothing listens; the entry is a dead owner's leftover the caller may
- * remove). 'unknown' — the 250ms budget lapsed with the connect neither
- * accepted nor refused (a live serve too busy to accept). The caller must
+ * remove). 'unknown' — the CLIENT_TIMEOUT_MS budget lapsed with the connect
+ * neither accepted nor refused (a live serve too busy to accept). The caller must
  * never clean up on 'unknown': a timeout read as "dead" let a transient
  * serve displace a long-lived one, the very #4896 symptom. The server side
  * tolerates the data-less probe: one-request-per-connection means a
@@ -1042,7 +1038,7 @@ function probeSocketOwner(socketPath: string): Promise<SocketOwner> {
     probe.once('connect', () => finish('live'));
     probe.once('error', () => finish('dead'));
     probe.once('timeout', () => finish('unknown'));
-    probe.setTimeout(250);
+    probe.setTimeout(CLIENT_TIMEOUT_MS);
     try { probe.connect(socketPath); } catch { finish('dead'); }
   });
 }

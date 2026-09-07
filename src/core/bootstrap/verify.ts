@@ -54,6 +54,7 @@ import { auditWritebackContract } from './contract.ts';
 import {
   ensureIpcSecret,
   resolveSocketPath,
+  socketHasLiveListener,
   startResolveIpcServer,
 } from '../context/resolve-ipc.ts';
 import { assembleTurnContext } from '../context/turn-context.ts';
@@ -905,10 +906,12 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   // in-process IPC server, so it manufactured the exact condition it was
   // testing — a serve posture that never binds IPC (the old `serve --http`)
   // still passed verify while every production hook degraded to no_serve.
-  // A present socket now means "a live serve is the provider; exercise IT";
-  // only when NO socket exists do we self-provide (plumbing-only smoke) and
-  // say so honestly in the result.
-  const liveSocket = existsSync(socketPath);
+  // A LIVE socket now means "a live serve is the provider; exercise IT";
+  // only when nothing listens do we self-provide (plumbing-only smoke) and
+  // say so honestly in the result. Probed, not existsSync'd: a socket file a
+  // dead serve left behind must not read as a live provider (the smoke would
+  // "exercise" a listener that isn't there and fail as no_serve).
+  const liveSocket = await socketHasLiveListener(socketPath);
   try {
     if (!liveSocket) {
       const secret = ensureIpcSecret(dataDir);
