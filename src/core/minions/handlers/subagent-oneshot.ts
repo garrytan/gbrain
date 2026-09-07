@@ -99,7 +99,7 @@ export const ONESHOT_SYSTEM = `You are a knowledge-synthesis engine. You have NO
 If nothing in the transcript meets the bar (Task D), respond with:
 {"pages": [], "skipped": true, "skip_reason": "<one line>"}
 
-Hard rules: at most ${MAX_PAGES_PER_RESPONSE} pages; slugs are lowercase, hyphen-separated, slash-delimited, no underscores, no file extensions; never invent wikilink targets that are not in LINK CANDIDATES or this response.`;
+Hard rules: at most ${MAX_PAGES_PER_RESPONSE} pages; slugs are lowercase, hyphen-separated, slash-delimited, no underscores, no file extensions; never invent wikilink targets that are not in LINK CANDIDATES or this response. Every field, especially body, must be a valid JSON string: escape quotes, backslashes, and line breaks; never place unescaped quotes or literal newlines inside a string.`;
 
 export interface OneshotPage {
   slug: string;
@@ -401,7 +401,13 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   }
 
   const parsed = parseOneshotResponse(chatResult.text ?? '');
-  if (!parsed) return fb('unparseable');
+  if (!parsed) {
+    // Some providers normalize an output-cap stop to end/other. Usage at the
+    // requested ceiling is the provider-neutral truncation signal (same
+    // heuristic as subagent.ts replayTerminalStopReason), but only for
+    // invalid JSON — a complete valid response at the cap still succeeds.
+    return fb(chatResult.usage.output_tokens >= args.maxOutputTokens ? 'length' : 'unparseable');
+  }
   if (parsed.pages.length === 0) {
     if (!parsed.skipped) return fb('empty_no_skip');
     // Task-D skip: a legitimate zero-write completion.
