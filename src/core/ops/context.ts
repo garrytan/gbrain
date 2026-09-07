@@ -655,8 +655,15 @@ export async function assertExplicitSourceLive(
   sourceIdParam: string | undefined,
 ): Promise<void> {
   if (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) return;
-  const live = await ctx.engine.listAllSources();
-  if (live.some(s => s.id === sourceIdParam)) return;
+  // Point lookup, not listAllSources (wave review): this runs on every
+  // search/query/get_page/list_pages call that names a source, and the full
+  // enumeration hauled every row's config JSONB across the wire each time.
+  // Same liveness predicate as listAllSources' default filter.
+  const live = await ctx.engine.executeRaw<{ ok: number }>(
+    `SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
+    [sourceIdParam],
+  );
+  if (live.length > 0) return;
   throw new OperationError(
     'unknown_source',
     `source '${sourceIdParam}' does not exist (removed or archived)`,
