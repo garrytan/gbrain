@@ -9,12 +9,16 @@
  *  - `pending:` in-flight markers are excluded (they are written before the
  *    extraction commits and would otherwise all read as drift);
  *  - warn needs BOTH the ratio and the absolute count, so a brain with a
- *    handful of atoms doesn't flap.
+ *    handful of atoms doesn't flap;
+ *  - slug-unbound atoms (no `source_slug`: transcript-minted source_path-only,
+ *    or pre-binding-era) are their own informational count — never drift,
+ *    never source_gone, never in the WARN ratio (#4799 + #4806).
  *
  * Real in-memory PGLite (canonical block, R3+R4).
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
@@ -196,6 +200,41 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('relation "pages" does not exist');
   });
 
+  it('does not count transcript-minted (file-bound) atoms as drift (#4806)', async () => {
+    // The transcript lane stamps `source_path` + source_hash = sha256(raw file)[:16]
+    // and NO source_slug. That hash is a different function over different
+    // input than pages.content_hash, so it can never resolve to a page — such
+    // atoms are file-bound and must be reported as their own count, not drift.
+    await seedSource('src-a', 'original body');
+    await seedAtom('atoms/2026-01-01/a-000000', 'src-a', await hashOf('src-a'));
+    for (let i = 0; i < 30; i++) {
+      await engine.putPage(`atoms/2026-01-01/t-${String(i).padStart(6, '0')}`, {
+        type: 'atom', title: `t${i}`, compiled_truth: 'claim body',
+        frontmatter: {
+          type: 'atom',
+          source_path: `/abs/transcripts/2026-01-01-session-${i}.md`,
+          source_hash: createHash('sha256').update(`raw transcript ${i}`).digest('hex').slice(0, 16),
+          extracted_at: new Date().toISOString(),
+        },
+      });
+    }
+    const c = await computeAtomProvenanceDriftCheck(engine);
+    const d = c.details as Record<string, number>;
+    expect(c.status).toBe('ok');
+    expect(d.drifted).toBe(0);
+    expect(d.slug_unbound).toBe(30);
+    expect(d.total_atoms).toBe(1);
+    expect(c.message).toContain('30 slug-unbound');
+
+    // Page-bound drift is still detected alongside the file-bound population.
+    await seedSource('src-a', 'rewritten body');
+    const d2 = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
+    expect(d2.drifted).toBe(1);
+    expect(d2.source_changed).toBe(1);
+    expect(d2.source_gone).toBe(0);
+    expect(d2.slug_unbound).toBe(30);
+  }, 120_000);
+
   it('warns once both the ratio and the count are exceeded', async () => {
     // 30 drifted out of 30 → over MIN_DRIFTED (25) and over WARN_RATIO (0.1).
     await seedSource('src-f', 'original body');
@@ -207,14 +246,16 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).toContain('30/30');
     expect(c.message).toContain('source page is gone');
   });
-  it('does not count a slug-unbound atom (source_path only, no source_slug) as source_gone', async () => {
+  it('does not count a slug-unbound atom (source_path only, no source_slug) as source_gone — or as drift at all (#4806)', async () => {
     // Transcript-origin atoms carry `source_path` but no `source_slug`
     // (isCompatibleAtomBinding in extract-atoms.ts) -- this is the CURRENT,
     // ongoing binding kind for every transcript-kind atom, not a shrinking
     // legacy cohort. They can never match p.slug, so the slug-only liveness
     // probe reported every one of them as an orphan even while the source
     // page was alive — measured on a real brain as 702 "gone" atoms whose
-    // source pages all still existed.
+    // source pages all still existed. #4806 then took them out of the drift
+    // population entirely: their hash is over a file, not a page, so a page
+    // probe can never resolve it and must not move the ratio.
     await seedSource('src-l', 'original body');
     await engine.putPage('atoms/2026-01-01/l-000000', {
       type: 'atom', title: 'l', compiled_truth: 'claim body',
@@ -225,15 +266,16 @@ describe('computeAtomProvenanceDriftCheck', () => {
         extracted_at: new Date().toISOString(),
       },
     });
-    await seedSource('src-l', 'rewritten body'); // hash moves → drifted
+    await seedSource('src-l', 'rewritten body'); // hash moves — but not page-bound, so not drift
     const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
-    expect(d.drifted).toBe(1);
+    expect(d.drifted).toBe(0);
+    expect(d.total_atoms).toBe(0);
     expect(d.source_gone).toBe(0);
     expect(d.source_changed).toBe(0);
     expect(d.slug_unbound).toBe(1);
   });
 
-  it('treats an empty-string source_slug like a missing one', async () => {
+  it('treats an empty-string source_slug like a missing one — slug-unbound, not page-bound (#4806)', async () => {
     await seedSource('src-k', 'original body');
     await engine.putPage('atoms/2026-01-01/k-000000', {
       type: 'atom', title: 'k', compiled_truth: 'claim body',
@@ -245,6 +287,8 @@ describe('computeAtomProvenanceDriftCheck', () => {
     const d = (await computeAtomProvenanceDriftCheck(engine)).details as Record<string, number>;
     expect(d.source_gone).toBe(0);
     expect(d.slug_unbound).toBe(1);
+    expect(d.total_atoms).toBe(0);
+    expect(d.drifted).toBe(0);
   });
 
   it('omits the slug-unbound bucket from the warn message when every drifted atom is slug-bound', async () => {
@@ -258,8 +302,13 @@ describe('computeAtomProvenanceDriftCheck', () => {
     expect(c.message).not.toContain('slug-unbound');
   }, 60_000);
 
-  it('names the slug-unbound bucket in the warn message only when it is non-empty', async () => {
+  it('names the slug-unbound bucket in the warn message without letting it drive the WARN or the denominator (#4806)', async () => {
     await seedSource('src-p', 'original body');
+    // 30 page-bound drifted atoms trip the WARN on their own (30/30)...
+    for (let i = 0; i < 30; i++) {
+      await seedAtom(`atoms/2026-01-01/pd-${String(i).padStart(6, '0')}`, 'src-p', 'deadbeefdeadbeef');
+    }
+    // ...and 30 slug-unbound atoms ride along as an informational count only.
     for (let i = 0; i < 30; i++) {
       await engine.putPage(`atoms/2026-01-01/p-${String(i).padStart(6, '0')}`, {
         type: 'atom', title: `p${i}`, compiled_truth: 'claim body',
@@ -270,7 +319,12 @@ describe('computeAtomProvenanceDriftCheck', () => {
       });
     }
     const c = await computeAtomProvenanceDriftCheck(engine);
+    const d = c.details as Record<string, number>;
     expect(c.status).toBe('warn');
+    expect(d.total_atoms).toBe(30); // not 60
+    expect(d.drifted).toBe(30);
+    expect(d.slug_unbound).toBe(30);
+    expect(c.message).toContain('30/30');
     expect(c.message).toContain('0 whose source page is gone');
     expect(c.message).toContain('30 slug-unbound');
   }, 60_000);
