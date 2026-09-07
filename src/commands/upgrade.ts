@@ -110,7 +110,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: '',
+          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
           error: result.reason,
           hint: 'Integrity check failed; existing binary retained. Retry or download manually.',
         });
@@ -121,7 +121,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
         recordUpgradeError({
           phase: 'binary-self-update',
           fromVersion: oldVersion,
-          toVersion: '',
+          toVersion: opts.targetVersion ?? result.targetVersion ?? 'unknown',
           error: `${result.reason}${result.error ? `: ${result.error}` : ''}`,
           hint: 'Download from https://github.com/garrytan/gbrain/releases',
         });
