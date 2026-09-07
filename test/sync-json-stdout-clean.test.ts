@@ -92,6 +92,20 @@ describe('#4888: sync --json keeps stdout pure JSON', () => {
     expect(stderr.join('')).toContain('Full-sync dry run');
   }, 60_000);
 
+  test('first sync (real import): runImport human summary lands on stderr, every stdout line parses', async () => {
+    // performFullSync delegates to runImport, whose "Found N markdown files" /
+    // "Import complete" lines are its own sinks — the --json wrap must cover
+    // them too, or the very first `sync --json | jq` an agent scripts breaks.
+    const { stdout, stderr } = await run(['--no-pull', '--no-embed', '--json']);
+    const out = lines(stdout);
+    for (const l of out) expect(() => JSON.parse(l)).not.toThrow();
+    const env = parsedAll(out).find((o) => o.schema_version === 1);
+    expect(env?.sync_status).toBe('first_sync');
+    const err = stderr.join('');
+    expect(err).toContain('Found 1 markdown files');
+    expect(err).toContain('Import complete');
+  }, 60_000);
+
   test('incremental dry run: the "Sync dry run" / "Modified:" prose lands on stderr, not stdout', async () => {
     // A real run sets last_commit; then one committed change to preview.
     await run(['--no-pull', '--no-embed']);

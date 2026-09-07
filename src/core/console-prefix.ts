@@ -40,6 +40,7 @@
  *   - src/commands/sync.ts (performSync + in-file callees)
  *   - src/commands/embed.ts (runEmbedCore + helpers)
  *   - src/core/progress.ts (heartbeat / progress writer)
+ *   - src/commands/import.ts (runImport's human-only info() + summary lines)
  *
  * Anything outside those modules that writes directly to stdout/stderr will
  * NOT get the prefix. If you find a delegate-module line that escapes the

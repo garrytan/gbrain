@@ -28,6 +28,7 @@ import {
   resumeFilter,
 } from '../core/import-checkpoint.ts';
 import { realpathOrResolve } from '../core/path-confine.ts';
+import { slog } from '../core/console-prefix.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -213,9 +214,13 @@ export async function runImport(
   // always writes to stderr. Stdout stays clean for data output (--json
   // payloads)"). Pre-fix, `import --json` prefixed the payload with
   // "Found N markdown files", so JSON.parse of stdout failed outright.
+  // The human branch goes through slog() so an in-process caller running in
+  // its own --json mode (`sync --json` → performFullSync → runImport, wrapped
+  // in withHumanLogsToStderr) keeps its stdout clean too; outside any wrap
+  // slog IS console.log.
   const info = (msg: string): void => {
     if (jsonOutput) console.error(msg);
-    else console.log(msg);
+    else slog(msg);
   };
 
   // T7 (D9): refuse cleanly when init persisted the deferred-setup sentinel,
@@ -771,10 +776,10 @@ export async function runImport(
       failures,
     }));
   } else {
-    console.log(`\nImport complete (${totalTime}s):`);
-    console.log(`  ${imported} pages imported`);
-    console.log(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
-    console.log(`  ${chunksCreated} chunks created`);
+    slog(`\nImport complete (${totalTime}s):`);
+    slog(`  ${imported} pages imported`);
+    slog(`  ${skipped} pages skipped (${skipped - errors} unchanged, ${errors} errors)`);
+    slog(`  ${chunksCreated} chunks created`);
   }
 
   // v0.39 T7 — end-of-run schema mismatch warn. Fires ONCE per import,
