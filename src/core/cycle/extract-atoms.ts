@@ -75,6 +75,7 @@ import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
+import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 
@@ -573,6 +574,13 @@ export async function tombstonedTranscriptsForHashes(
     );
     return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
   } catch (err) {
+    if (isUndefinedTableError(err)) {
+      // Un-migrated brain: the table lands with v146. Once per process, not a
+      // full error line on every cycle until the operator migrates.
+      warnOncePerProcess('extract_atoms.transcript_state_missing',
+        `[extract_atoms] extract_atoms_transcript_state is missing (run gbrain migrate); transcript failure counts and tombstones are off until then.`);
+      return new Set();
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${msg}`);
     return new Set();
@@ -1029,7 +1037,13 @@ export async function runPhaseExtractAtoms(
         );
         const cnt = rows[0]?.cnt;
         return cnt == null ? null : Number(cnt);
-      } catch {
+      } catch (err) {
+        // A strike that never lands means this transcript never tombstones and
+        // re-spends budget forever (#4916's class) — say so. A missing table
+        // was already warned once by the tombstone check above.
+        if (!isUndefinedTableError(err)) {
+          console.error(`[extract_atoms] transcript failure-count write failed for ${item.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
         return null;
       }
     }
