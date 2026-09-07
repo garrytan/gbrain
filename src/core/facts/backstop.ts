@@ -475,6 +475,9 @@ async function runPipeline(
       turnText: parsedPage.compiled_truth,
       isDreamGenerated: false,  // eligibility check already rejected dream pages
       ref: parsedPage.slug,
+      // #4819: page provenance for DB-only rows. The turn-path entry
+      // (runFactsPipeline) has no page, so it leaves this unset.
+      pageSlug: parsedPage.slug,
     },
     ctx,
     abortSignal,
@@ -509,7 +512,7 @@ async function runPipeline(
  * fallback regardless of local_path.
  */
 async function runPipelineWithBody(
-  input: { turnText: string; isDreamGenerated: boolean; ref?: string },
+  input: { turnText: string; isDreamGenerated: boolean; ref?: string; pageSlug?: string },
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
@@ -532,7 +535,7 @@ async function runPipelineWithBody(
 
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
-  input: { turnText: string; isDreamGenerated: boolean; ref?: string },
+  input: { turnText: string; isDreamGenerated: boolean; ref?: string; pageSlug?: string },
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason }> {
@@ -723,9 +726,11 @@ async function runPipelineBodyInner(
       source_session: f.source_session ?? null,
       confidence: f.confidence,
       embedding: f.embedding ?? null,
-      // #4206: caller event-time fallback + provenance context.
+      // #4206: caller event-time fallback + provenance context. #4819: a
+      // DB-only row has no fence to name the page it came from, so the page
+      // path's slug fills context when the caller passed no sourceSlug.
       valid_from: f.valid_from ?? ctx.validFrom,
-      context: ctx.sourceSlug ?? null,
+      context: ctx.sourceSlug ?? input.pageSlug ?? null,
     };
     const result = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
     fact_ids.push(result.id);
@@ -810,7 +815,7 @@ async function runPipelineBodyInner(
           embedding: f.embedding ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: f.valid_from ?? ctx.validFrom,
-          context: ctx.sourceSlug ?? null,
+          context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
         const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
         fact_ids.push(legacyResult.id);
@@ -842,7 +847,7 @@ async function runPipelineBodyInner(
           embedding: f.embedding ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: f.valid_from ?? ctx.validFrom,
-          context: ctx.sourceSlug ?? null,
+          context: ctx.sourceSlug ?? input.pageSlug ?? null,
         };
         const legacyResult = await ctx.engine.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
         fact_ids.push(legacyResult.id);
