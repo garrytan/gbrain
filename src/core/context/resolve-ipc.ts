@@ -52,7 +52,6 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   existsSync,
   unlinkSync,
-  statSync,
   chmodSync,
   mkdirSync,
   readFileSync,
@@ -677,8 +676,8 @@ function roundTrip(
 ): Promise<unknown | typeof IPC_UNAVAILABLE> {
   // POSIX fast-path only: a Unix domain socket is a real filesystem entry, so
   // existsSync() lets the common "no server running" case skip a syscall.
-  // On win32, net.createServer()/createConnection() silently translate a
-  // plain path into \\.\pipe\<name> — no file is ever created on disk, so
+  // On win32, Bun binds a plain path as a real AF_UNIX socket (afunix.sys
+  // reparse-point file) that Bun's existsSync()/statSync() cannot see, so
   // existsSync() is always false here even while a live server is listening
   // and a real connection would succeed. Gating on it on Windows made every
   // IPC call fail closed unconditionally (verified: a listen()+connect()
@@ -979,16 +978,21 @@ async function handleSyncKind<Req extends { protocol: number; secret: string }, 
   }
 }
 
-/** Remove a socket file whose owning process is gone (or any leftover file). */
+/**
+ * Remove whatever entry sits at the socket path (a socket left by a dead
+ * owner, a leftover file, a dangling symlink). NOT gated on existsSync/
+ * statSync (#4333): on win32 Bun binds a plain path as a real AF_UNIX socket,
+ * which leaves a reparse-point file that Bun's existsSync()/statSync() cannot
+ * see while bind() still fails WSAEADDRINUSE against it — unlink is the only
+ * fs call that observes the entry, so a gated cleanup never fired there and
+ * every serve after an unclean exit ran with no IPC listener. ENOENT (nothing
+ * there) and EISDIR/EPERM (a directory we must not touch) are swallowed.
+ * First-bind-wins is not enforced here — see startResolveIpcServer.
+ */
 export function cleanupStaleSocket(socketPath: string): void {
   try {
-    if (existsSync(socketPath)) {
-      // A unix socket shows up as a socket file; unlink unconditionally — if a
-      // live server holds it, listen() below would fail and we return null.
-      const st = statSync(socketPath);
-      if (st.isSocket() || st.isFIFO() || st.isFile()) unlinkSync(socketPath);
-    }
+    unlinkSync(socketPath);
   } catch {
-    /* best effort */
+    /* nothing stale, or not ours to remove */
   }
 }

@@ -2,7 +2,7 @@
  * Retrieval Reflex resolve IPC round-trip tests (#1981, T3/T5).
  */
 import { describe, test, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -50,11 +50,11 @@ describe('resolve IPC', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  // Windows regression (community #1294-cluster follow-up). On win32,
-  // net.createServer()/createConnection() silently translate a plain path
-  // into \\.\pipe\<name> — no file is ever created on disk, so a client-side
-  // existsSync(socketPath) pre-check is always false there even while a live
-  // server is listening and a real connection would succeed. Verified
+  // Windows regression (community #1294-cluster follow-up). On win32, Bun
+  // binds a plain path as a real AF_UNIX socket whose reparse-point file
+  // Bun's existsSync() cannot see, so a client-side existsSync(socketPath)
+  // pre-check is always false there even while a live server is listening
+  // and a real connection would succeed. Verified
   // manually against Bun 1.3.14 / Windows 11 (listen()+connect() round trip
   // on the same plain path succeeds while existsSync() on that path stays
   // false throughout) — CI here is Ubuntu-only so that positive path can't
@@ -120,11 +120,34 @@ describe('resolve IPC', () => {
     servers.push(s2!);
     // win32: the rebind itself is the real assertion — s2 must be non-null,
     // i.e. listen() didn't fail with an "address in use" equivalent against
-    // the stale pipe. existsSync() can't observe a named pipe on Windows
-    // (see the round-trip fix above), so the file-presence check is POSIX-only.
+    // the stale socket. existsSync() can't observe the AF_UNIX socket file on
+    // Windows (see the round-trip fix above), so the presence check is POSIX-only.
     if (process.platform !== 'win32') {
       expect(existsSync(sock)).toBe(true);
     }
     rmSync(dir, { recursive: true, force: true });
   });
+
+  // #4333: on win32 Bun binds a plain path as a real AF_UNIX socket, which
+  // leaves a reparse-point file that Bun's existsSync()/statSync() cannot
+  // see, yet bind() still fails EADDRINUSE against it after any unclean
+  // exit. A dangling symlink is the POSIX proxy for "entry the existence
+  // gate can't see": existsSync is false, statSync throws ENOENT, and bind()
+  // either fails EADDRINUSE (Linux) or follows the link (macOS). Cleanup
+  // must unlink without consulting the gate. (symlinkSync needs elevation
+  // on Windows, hence the skip.)
+  test.skipIf(process.platform === 'win32')(
+    'stale entry existsSync cannot see (dangling symlink = win32 AF_UNIX proxy) is cleared before bind',
+    async () => {
+      const dir = tmpDir();
+      const sock = resolveSocketPath(dir);
+      symlinkSync(join(dir, 'gone'), sock);
+      expect(existsSync(sock)).toBe(false);
+      const s = await startResolveIpcServer(sock, async () => null);
+      expect(s).not.toBeNull();
+      servers.push(s!);
+      expect(lstatSync(sock).isSocket()).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    },
+  );
 });
