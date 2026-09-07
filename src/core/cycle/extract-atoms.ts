@@ -532,6 +532,50 @@ export async function atomsExistingForHashes(
 }
 
 /**
+ * Composite key for the transcript-state Set. A transcript is identified by
+ * BOTH path and content hash (the table's PK carries both), so neither alone
+ * is a safe Set member: two files can share content, and one file changes hash
+ * when edited. NUL is the separator because it cannot occur in a POSIX path.
+ */
+export function transcriptStateKey(filePath: string, contentHash16: string): string {
+  return `${filePath}\u0000${contentHash16}`;
+}
+
+/**
+ * Batch-read the v146 transcript tombstones for this source, mirroring
+ * `atomsExistingForHashes` — ONE query for the whole corpus rather than N
+ * per-file probes, same fail-soft posture (on error return empty, i.e. treat
+ * everything as live and re-attempt, which is the pre-v146 behaviour).
+ *
+ * Only TOMBSTONED rows are returned. A row carrying an in-progress failure
+ * streak (fail_count 1 or 2) is deliberately still live: those items must keep
+ * being retried until the streak reaches MAX_DETERMINISTIC_FAILURES, exactly as
+ * a page with `atoms_fail_count` below the bound stays in the page backlog.
+ */
+export async function tombstonedTranscriptsForHashes(
+  engine: BrainEngine,
+  sourceId: string,
+  contentHash16s: string[],
+): Promise<Set<string>> {
+  if (contentHash16s.length === 0) return new Set();
+  try {
+    const rows = await engine.executeRaw<{ file_path: string; content_hash: string }>(
+      `SELECT file_path, content_hash
+         FROM extract_atoms_transcript_state
+        WHERE source_id = $1
+          AND tombstoned
+          AND content_hash = ANY($2::text[])`,
+      [sourceId, contentHash16s],
+    );
+    return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${msg}`);
+    return new Set();
+  }
+}
+
+/**
  * The exact two-step model resolution `runPhaseExtractAtoms` uses:
  * `models.dream.extract_atoms` DB config wins if set (same plain-`||`
  * truthiness as always — a whitespace-only value IS "configured"), else the
@@ -644,8 +688,23 @@ export async function runPhaseExtractAtoms(
   // short-circuit shows a sign of life (closes Issue 2 silent-phase pain).
   opts.progress?.heartbeat(`checking existing atoms for ${allHashes16.length} transcripts`);
   const existingHashes = await atomsExistingForHashes(engine, sourceId, allHashes16);
+  // v146 READ SIDE. The counter written above is inert without this: transcript
+  // eligibility was gated ONLY by "does an atom row exist for this hash", so a
+  // tombstone nothing consults would leave the item in the pool forever. Pages
+  // need no equivalent edit — their tombstone (`atoms_scan_hash`) is already
+  // read by discoverExtractablePages' SQL, which this change does not touch.
+  const tombstonedTranscriptKeys = await tombstonedTranscriptsForHashes(
+    engine,
+    sourceId,
+    allHashes16,
+  );
   for (const t of transcripts) {
-    if (existingHashes.has(t.contentHash.slice(0, 16))) {
+    const hash16 = t.contentHash.slice(0, 16);
+    if (existingHashes.has(hash16)) {
+      duplicatesSkipped++;
+      continue;
+    }
+    if (tombstonedTranscriptKeys.has(transcriptStateKey(t.filePath, hash16))) {
       duplicatesSkipped++;
       continue;
     }
@@ -873,6 +932,11 @@ export async function runPhaseExtractAtoms(
   // ── gbrain#4148 helpers ────────────────────────────────────────────
   let malformedOutputs = 0;
   const tombstonedForFailures: string[] = [];
+  // v146: transcript tombstones ride a SEPARATE array. `tombstoned_for_failures`
+  // is a list of page SLUGS; transcripts are filesystem paths, and mixing the two
+  // into one array would be a silent type confusion for any future consumer that
+  // resolves those strings as slugs. Both are report-only today.
+  const tombstonedTranscripts: string[] = [];
   // #3044 adoption: shared halt policy — auth/billing halt on the first hit,
   // a rate_limit streak halts after 3 consecutive failures, a successful
   // chat call resets the streak.
@@ -897,12 +961,62 @@ export async function runPhaseExtractAtoms(
   }
 
   /**
+   * Stamp the transcript-side tombstone (v146). The file-backed mirror of
+   * `stampAtomsScanHash`: transcripts have no frontmatter, and their discovery
+   * is gated ONLY by `atomsExistingForHashes`, so a transcript that yields no
+   * atom row has nothing to mark it done and is re-attempted every cycle.
+   * Row is (source_id, file_path, content_hash)-keyed, so an edited transcript
+   * is a different row and re-eligibilizes automatically.
+   */
+  async function stampTranscriptTombstone(filePath: string, contentHash: string): Promise<void> {
+    try {
+      await engine.executeRaw(
+        `INSERT INTO extract_atoms_transcript_state
+           (source_id, file_path, content_hash, fail_count, tombstoned, updated_at)
+         VALUES ($1, $2, $3, 0, TRUE, now())
+         ON CONFLICT (source_id, file_path, content_hash)
+         DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
+        [sourceId, filePath, contentHash.slice(0, 16)],
+      );
+    } catch { /* fail-soft: transcript stays rediscoverable */ }
+  }
+
+  /**
    * Durable per-item failure count, keyed to the CURRENT content hash so a
    * content edit resets the streak. Returns the new consecutive count, or
-   * null for transcripts / on write failure (never blocks the phase).
+   * null on write failure (never blocks the phase).
+   *
+   * v146: transcripts are covered too. Pages keep their frontmatter counter;
+   * transcripts are files with no frontmatter, so theirs lives in
+   * `extract_atoms_transcript_state`. Both reset on a content change for the
+   * same reason — the page counter is hash-keyed, the transcript row IS
+   * hash-keyed — and both feed the same MAX_DETERMINISTIC_FAILURES bound.
    */
-  async function recordPageFailureCount(item: { kind: string; slug?: string; contentHash: string }): Promise<number | null> {
-    if (item.kind !== 'page' || !item.slug || opts.dryRun) return null;
+  async function recordItemFailureCount(
+    item: { kind: string; slug?: string; filePath?: string; contentHash: string },
+  ): Promise<number | null> {
+    if (opts.dryRun) return null;
+    const hash16 = item.contentHash.slice(0, 16);
+    if (item.kind === 'transcript') {
+      if (!item.filePath) return null;
+      try {
+        const rows = await engine.executeRaw<{ cnt: number | string }>(
+          `INSERT INTO extract_atoms_transcript_state
+             (source_id, file_path, content_hash, fail_count, updated_at)
+           VALUES ($1, $2, $3, 1, now())
+           ON CONFLICT (source_id, file_path, content_hash)
+           DO UPDATE SET fail_count = extract_atoms_transcript_state.fail_count + 1,
+                         updated_at = now()
+           RETURNING fail_count AS cnt`,
+          [sourceId, item.filePath, hash16],
+        );
+        const cnt = rows[0]?.cnt;
+        return cnt == null ? null : Number(cnt);
+      } catch {
+        return null;
+      }
+    }
+    if (item.kind !== 'page' || !item.slug) return null;
     try {
       const rows = await engine.executeRaw<{ cnt: number | string }>(
         `UPDATE pages
@@ -914,7 +1028,7 @@ export async function runPhaseExtractAtoms(
                         ELSE 1 END)
           WHERE source_id = $2 AND slug = $3 AND deleted_at IS NULL
           RETURNING (frontmatter->>'atoms_fail_count')::int AS cnt`,
-        [item.contentHash.slice(0, 16), sourceId, item.slug],
+        [hash16, sourceId, item.slug],
       );
       const cnt = rows[0]?.cnt;
       return cnt == null ? null : Number(cnt);
@@ -968,7 +1082,7 @@ export async function runPhaseExtractAtoms(
       if (!parseOutcome.ok) {
         malformedOutputs++;
         hardFailureCount++;
-        const failCount = await recordPageFailureCount(item);
+        const failCount = await recordItemFailureCount(item);
         failures.push({
           source: originLabel,
           error: `malformed model output: ${parseOutcome.reason}` +
@@ -979,9 +1093,15 @@ export async function runPhaseExtractAtoms(
         // content hash, tombstone so the backlog floor clears; a content
         // edit re-eligibilizes (stamp is hash-keyed). Transient provider
         // errors never reach here — they throw and take the catch path.
-        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun && item.kind === 'page') {
-          await stampAtomsScanHash(item);
-          tombstonedForFailures.push(item.slug);
+        // v146: transcripts get the identical bound, via their own store.
+        if (failCount != null && failCount >= MAX_DETERMINISTIC_FAILURES && !opts.dryRun) {
+          if (item.kind === 'page') {
+            await stampAtomsScanHash(item);
+            tombstonedForFailures.push(item.slug);
+          } else {
+            await stampTranscriptTombstone(item.filePath, item.contentHash);
+            tombstonedTranscripts.push(item.filePath);
+          }
         }
         continue;
       }
@@ -997,8 +1117,17 @@ export async function runPhaseExtractAtoms(
         // Only stamped after a SUCCESSFUL chat call — LLM failures take the
         // catch path below and stay retryable, and malformed output is
         // counted above (gbrain#4148), never stamped as success.
-        if (!opts.dryRun && item.kind === 'page') {
-          await stampAtomsScanHash(item);
+        //
+        // v146: transcripts now stamp too, IMMEDIATELY, exactly as pages do —
+        // a zero-yield is a settled answer about this content, not a failure,
+        // so it needs no streak. Pre-fix transcripts were the one item kind
+        // with no zero-yield marker at all, so an honestly-empty transcript
+        // re-entered the pool and re-spent budget on every cycle forever. The
+        // row is (source_id, file_path, content_hash)-keyed, so editing the
+        // file re-eligibilizes it — which is what makes the permanence safe.
+        if (!opts.dryRun) {
+          if (item.kind === 'page') await stampAtomsScanHash(item);
+          else await stampTranscriptTombstone(item.filePath, item.contentHash);
         }
         if (item.kind === 'transcript') transcriptsProcessed++;
         else pagesProcessed++;
@@ -1164,7 +1293,7 @@ export async function runPhaseExtractAtoms(
       // suppress a page's atoms.
       const message = err instanceof Error ? err.message : String(err);
       // #3044: a whole-run LLM outage halts the phase. No
-      // recordPageFailureCount here — a global outage says nothing about the
+      // recordItemFailureCount here — a global outage says nothing about the
       // content, so it must not pre-charge the per-page tombstone counter.
       const decision = llmHalt.observe(err);
       if (decision !== 'continue') {
@@ -1179,7 +1308,7 @@ export async function runPhaseExtractAtoms(
       const transient =
         llmHalt.lastClass() === 'rate_limit' || TRANSIENT_EXTRACT_ERROR_RE.test(message);
       if (!transient) {
-        await recordPageFailureCount(item);
+        await recordItemFailureCount(item);
         hardFailureCount++;
       }
       failures.push({
@@ -1263,6 +1392,7 @@ export async function runPhaseExtractAtoms(
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
       malformed_outputs: malformedOutputs,
       tombstoned_for_failures: tombstonedForFailures,
+      tombstoned_transcripts: tombstonedTranscripts,
       estimated_spend_usd: estimatedSpendUsd,
       budget_usd: budgetCap,
       model: extractModel,
