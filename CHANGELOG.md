@@ -4,7 +4,7 @@ All notable changes to GBrain will be documented in this file.
 
 ## [0.48.5.0] - 2026-09-07
 
-**The community fix wave: 58 contributor pull requests adopted or reworked
+**The community fix wave: 57 contributor pull requests adopted or reworked
 with credit, 42 verified open issues fixed directly, and a hostile review
 pass over the whole set.** Your nightly extraction stops re-spending money on
 transcripts that never yield anything, code repositories registered as code
@@ -25,15 +25,6 @@ regression test proven red before the fix.
   Code pages imported before this release pick up their file path on the
   next change, `sync --force`, or `gbrain reindex-code --force`. (#4903,
   contributed by @Jey2311; fixes #4899, #4900)
-- **Slugs no longer carry a file extension.** Saving a page whose slug ends
-  in `.md` or `.mdx` now stores it under the extension-free slug and writes a
-  single `<slug>.md` file; reading, deleting and restoring accept either
-  spelling and resolve to that same key. **Migration v147** renames pages
-  whose stored slug still ends in `.md` to the extension-free slug, and
-  soft-deletes a `.md` row whose stripped twin already exists (recoverable
-  for 72 hours). If the old behavior left `<name>.md.md` files in your repo,
-  delete them: both names now resolve to the same slug and would fight on
-  every sync. (#4807, contributed by @noelboss)
 - **Migration v146** adds a small table that remembers which transcripts
   returned nothing from atom extraction. The first run after upgrading
   tombstones every transcript that yields zero atoms (editing the file makes
@@ -73,6 +64,13 @@ regression test proven red before the fix.
   chunker version is bumped (a whole-brain re-embed, tracked in TODOS.md);
   English and Latin pages are byte-identical. (#4871, contributed by
   @G0-0000)
+- **Entity slugs for names with Latin stroke letters changed grammar.**
+  Names containing d-stroke, l-stroke, o-slash, eth, thorn, sharp s, ae or
+  oe now fold to their ASCII form when an entity slug is minted (`duc-example`
+  where the old code produced `uc-example`). Entity pages minted under the old
+  spelling keep their slug; new facts about the same person resolve to the
+  folded slug, so a brain with such names can grow a second page until the
+  old one is renamed (tracked in TODOS.md). (#4855, contributed by @LongPV)
 - **Smaller contract changes.** `gbrain import --json` gains additive
   `failures`, `unchanged` and `malformed_skipped` keys (#4803, contributed by
   @afshaker); `code_blast` and `code_flow` gain additive `status` and
@@ -365,9 +363,10 @@ URL with no scheme is rejected by host again instead of being taken as an
 authorization code; `gbrain remember` and `forget` keep the page's content
 hash so the next sync re-chunks the new or struck fact text instead of
 skipping the page; an implicit `default` source in `gbrain bootstrap
-harness` is treated as the federated floor, matching dream and doctor; the
-slug read/delete parity and migration described above; and three reference
-doc entries brought back to current state.
+harness` is treated as the federated floor, matching dream and doctor; and
+three reference doc entries brought back to current state. The slug-extension
+change proposed in #4807 was tried, found to need a data migration with
+collision rules the maintainer should decide, and returned to the queue.
 
 With thanks to every contributor whose pull request this wave adopts:
 @afshaker, @amirelion, @arisgysel-design, @armandovargash, @awilhite,
@@ -380,7 +379,7 @@ issues drove the direct fixes.
 
 ## To take advantage of 0.48.5.0
 
-`gbrain upgrade` runs migrations v146 and v147 for you. If it did not, or if
+`gbrain upgrade` runs migration v146 for you. If it did not, or if
 `gbrain doctor` warns about a partial migration:
 
 1. **Run the orchestrator manually:**
@@ -402,10 +401,7 @@ issues drove the direct fixes.
    pages under a `code` source are soft-deleted on their next sync and stay
    recoverable for 72 hours (`gbrain sources archived`, `gbrain sources
    restore`).
-4. **Stale `.md.md` files:** if an earlier version left `<name>.md.md` files
-   in your brain repo, delete them; `foo.md` and `foo.md.md` now resolve to
-   the same slug.
-5. **CJK brains:** new pages chunk with overlap automatically. To re-chunk
+4. **CJK brains:** new pages chunk with overlap automatically. To re-chunk
    existing Chinese, Japanese or Korean pages, wait for the chunker version
    bump in a later release or re-import the pages you care about.
 
