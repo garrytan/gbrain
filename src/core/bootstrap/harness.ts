@@ -284,6 +284,11 @@ export interface HarnessDeps {
     sourceGrant?: string[];
   }) => Promise<MintedLegacyToken>;
   revokeById?: (id: string) => Promise<boolean>;
+  /** The brain's implicit default source (sources.default, else the sole
+   * populated non-default source) — the source the serve binds its
+   * resolve-IPC listener to when nothing narrower matches (#4897). null =
+   * no implicit default (the federated 'default' floor). Tests inject a fake. */
+  resolveImplicitSource?: () => Promise<string | null>;
   /** Live-PGLite-serve pre-probe for the revoke lane [C9]. */
   pgliteLiveServe?: () => boolean;
   detectClaude?: () => boolean;
@@ -322,6 +327,7 @@ function resolveDeps(deps: HarnessDeps): Required<Omit<HarnessDeps, 'gbrainBin'>
     loadFileConfig: deps.loadFileConfig ?? loadConfigFileOnly,
     mint: deps.mint ?? defaultMint,
     revokeById: deps.revokeById ?? defaultRevokeById,
+    resolveImplicitSource: deps.resolveImplicitSource ?? defaultResolveImplicitSource,
     pgliteLiveServe: deps.pgliteLiveServe ?? defaultPgliteLiveServe,
     // #4325: config-dir fallback mirrors detectCodex/detectOpencode below —
     // CI runners and alias-only shells don't expose a `claude` binary on the
@@ -408,6 +414,30 @@ async function defaultMint(opts: { name: string; scopes: string[]; sourceGrant?:
     });
   } finally {
     await engine.disconnect();
+  }
+}
+
+/** Production implicit-source lookup: the same tiers (sources.default, then
+ * the sole populated non-default source) the serve's IPC binding falls
+ * through to, so the hooks claim a source the serve will accept. Fail-open
+ * to null: on a PGLite brain under a live serve the engine cannot open (the
+ * mint already reports LIVE_SERVE), and a lookup failure must never block
+ * the wiring — `--source` remains the explicit override. */
+async function defaultResolveImplicitSource(): Promise<string | null> {
+  try {
+    const cfg = loadConfig();
+    if (!cfg) return null;
+    const engineConfig = toEngineConfig(cfg);
+    const engine = await createEngine(engineConfig);
+    await engine.connect(engineConfig);
+    try {
+      const { resolveImplicitDefaultSourceId } = await import('../source-resolver.ts');
+      return await resolveImplicitDefaultSourceId(engine);
+    } finally {
+      await engine.disconnect();
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -862,6 +892,16 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // 4. Plan targets + WRITE-AHEAD receipt [F1/X6] — BEFORE the mint, so a
   // crash (or a newer-format receipt refusal) can never leave a live token
   // no receipt records.
+  // #4897: without --source the hooks must claim the source the serve's
+  // resolve-IPC listener is bound to (sources.default / the sole populated
+  // non-default source), or every turn_context is `source_mismatch`. The
+  // same value floors the token: the federated-default mint cannot read a
+  // sole non-federated source (page_count 0), the scalar grant can.
+  const implicitSource = flags.source ? null : await d.resolveImplicitSource();
+  const hookSource = flags.source ?? implicitSource ?? 'default';
+  if (implicitSource) {
+    d.log(`binding hooks + token to source '${implicitSource}' (the serve's implicit default; pass --source to override).`);
+  }
   const guard = guardHarnessReceiptOverwrite(d.gbrainHome);
   if (guard.brokenBackupPath) {
     d.logError(`WARNING: the harness receipt was unreadable; backed it up to ${guard.brokenBackupPath}.`);
@@ -956,7 +996,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     url,
     ...(health.engine ? { engine: health.engine } : {}),
     ...(health.version ? { serve_version: health.version } : {}),
-    source_id: flags.source ?? 'default',
+    source_id: hookSource,
     token: {
       name: flags.tokenName,
       minted: flags.token === undefined,
@@ -983,8 +1023,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
         name: flags.tokenName,
         scopes: ['read', 'write'],
         // [X2] --source is the write floor — a scalar grant, the stdio
-        // env-tier mirror. Without it the default mint federates.
-        ...(flags.source ? { sourceGrant: [flags.source] } : {}),
+        // env-tier mirror. Without it (and no implicit default, #4897) the
+        // default mint federates.
+        ...(flags.source || implicitSource ? { sourceGrant: [hookSource] } : {}),
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1148,7 +1189,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       } else {
         const settingsPath = t.scope === 'user' ? d.userSettingsPath : t.path!;
         const env: ClaudeHookEnv = {
-          GBRAIN_SOURCE: flags.source ?? 'default',
+          GBRAIN_SOURCE: hookSource,
           GBRAIN_HOOK_LANE: 'harness',
         };
         const bin = flags.gbrainBin ?? d.gbrainBin;

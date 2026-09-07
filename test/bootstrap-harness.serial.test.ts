@@ -82,6 +82,8 @@ function makeFake(opts: {
   probeOk?: boolean;
   mintQueue?: Array<{ token: string; id: string }>;
   pgliteLive?: boolean;
+  /** What the brain's implicit-default resolver returns (null = federation default). */
+  implicitSource?: string;
 } = {}): Fake {
   const dir = mkdtempSync(join(tmpdir(), 'gb-harness-'));
   const home = join(dir, '.gbrain');
@@ -142,6 +144,7 @@ function makeFake(opts: {
       return true;
     },
     pgliteLiveServe: () => opts.pgliteLive ?? false,
+    resolveImplicitSource: async () => opts.implicitSource ?? null,
     detectClaude: () => true,
     detectCodex: () => true,
     detectOpencode: () => true,
@@ -527,6 +530,33 @@ describe('outside-voice hardening (X-batch)', () => {
     const f2 = makeFake();
     expect(await applyHarness(flags(['--harness', 'codex']), f2.deps)).toBe(0);
     expect(f2.mintCalls[0].sourceGrant).toBeUndefined();
+  });
+
+  test('#4897 no --source: hooks, receipt and token bind to the serve\'s implicit default source', async () => {
+    // A brain whose only populated source is 'workspace' (default = 0 pages):
+    // the serve binds its resolve-IPC listener to 'workspace' via the same
+    // resolver, so a hook claiming 'default' is source_mismatch on every turn.
+    const f = makeFake({ implicitSource: 'workspace' });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).toContain('GBRAIN_SOURCE=workspace');
+    expect(cmd).not.toContain('GBRAIN_SOURCE=default');
+    const state = readHarnessReceiptState(f.home) as { receipt: { source_id: string } };
+    expect(state.receipt.source_id).toBe('workspace');
+    // The token gets the same scalar grant `--source workspace` produces —
+    // the federated-default mint cannot read a non-federated sole source.
+    expect(f.mintCalls[0].sourceGrant).toEqual(['workspace']);
+    expect(f.out.join('\n')).toContain("source 'workspace'");
+
+    // Explicit --source still wins over the implicit default.
+    const f2 = makeFake({ implicitSource: 'workspace' });
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--source', 'wiki']), f2.deps)).toBe(0);
+    const hooks2 = readJson(f2.userSettings).hooks as Record<string, unknown[]>;
+    const cmd2 = ((hooks2.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd2).toContain('GBRAIN_SOURCE=wiki');
+    expect(f2.mintCalls[0].sourceGrant).toEqual(['wiki']);
+    expect((readHarnessReceiptState(f2.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('wiki');
   });
 
   test('[X3] --no-capture RE-RUN unwires the capture events it previously wired', async () => {

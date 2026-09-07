@@ -144,6 +144,9 @@ Subcommands (run \`gbrain bootstrap status\` first — it is the resume entrypoi
                                   pre-approval, lifecycle hooks (user scope, or per --project
                                   dir), codex config block, opencode config entry. No
                                   agent.json needed. Idempotent; --remove tears it down.
+                                  --source ID: the source the hooks + token bind to
+                                  (default: sources.default, else the sole populated
+                                  non-default source, else default).
                                   (--local is an accepted no-op alias.)
   cloud-setup-script              Print the paste-ready cloud environment setup
                                   script (installs the gbrain binary into the
