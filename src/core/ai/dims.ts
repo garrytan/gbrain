@@ -335,6 +335,12 @@ export function dimsProviderOptions(
         }
         return { openaiCompatible: { dimensions: dims } };
       }
+      // OpenAI-compatible routers such as OpenRouter serve Gemini embeddings
+      // with a native 3072 default, so narrower brains (e.g. 1024) otherwise
+      // hard-fail on the first embed; the file header noted this missing branch.
+      if (bareModelId.startsWith('gemini-embedding') || bareModelId === 'text-embedding-004') {
+        return { openaiCompatible: { dimensions: dims } };
+      }
       // DashScope text-embedding-v3 (Matryoshka 64-1024) and Zhipu
       // embedding-3 (Matryoshka 256-2048) both accept `dimensions` on the
       // OpenAI-compat path. Without this, user-selected non-default dims are
