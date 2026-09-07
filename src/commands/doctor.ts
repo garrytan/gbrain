@@ -748,7 +748,7 @@ export async function buildChecks(
       }
     }
 
-    const report = checkResolvable(skillsDir);
+    const report = checkResolvable(skillsDir, { skillsDirSource: detected.source === 'explicit' ? null : detected.source });
     if (report.errors.length === 0 && report.warnings.length === 0) {
       checks.push({
         name: 'resolver_health',
