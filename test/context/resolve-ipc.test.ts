@@ -3,6 +3,7 @@
  */
 import { describe, test, expect, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, existsSync, symlinkSync, lstatSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -147,6 +148,29 @@ describe('resolve IPC', () => {
     }
     const got = await resolveViaIpc(sock, { candidates: [{ display: 'Alice', query: 'Alice' }] });
     expect((got as PointerBlock).text).toBe('BLOCK');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // wave review (#4896 follow-up): liveness is judged by the connect outcome
+  // alone. An owner that accepts but never answers (busy event loop, a
+  // one-request handler mid-await) is still the provider — the second start
+  // must defer and leave the pathname alone, never remove it and bind over it.
+  test('a listener that accepts but never answers is not displaced: second start defers, socket stays reachable', async () => {
+    const dir = tmpDir();
+    const sock = resolveSocketPath(dir);
+    const silent = net.createServer(() => { /* accept; never respond */ });
+    await new Promise<void>((r) => silent.listen(sock, r));
+    servers.push(silent);
+    const s2 = await startResolveIpcServer(sock, async () => null);
+    if (s2) servers.push(s2);
+    expect(s2).toBeNull();
+    expect(existsSync(sock)).toBe(true);
+    // Still the silent owner's socket: a fresh connect is accepted, not refused.
+    await new Promise<void>((res, rej) => {
+      const c = net.connect(sock);
+      c.once('connect', () => { c.destroy(); res(); });
+      c.once('error', rej);
+    });
     rmSync(dir, { recursive: true, force: true });
   });
 

@@ -93,6 +93,17 @@ describe('both serve transports bind through the shared helper (#4474)', () => {
     expect(src).not.toContain('cleanupStaleSocket(resolveSocket)');
   });
 
+  it('the pre-bind owner probe reads a connect timeout as unknown, never as a dead owner (#4896 follow-up)', async () => {
+    // A 250ms connect timeout used to count as "no live listener" and let the
+    // caller clean the socket away — a long-lived serve with a busy event
+    // loop was displaced, the very symptom #4896 fixed. Only a hard connect
+    // error (ENOENT / ECONNREFUSED) may authorize cleanup.
+    const src = await readSrc('src/core/context/resolve-ipc.ts').text();
+    expect(src).toContain("probe.once('timeout', () => finish('unknown'))");
+    expect(src).toContain("probe.once('error', () => finish('dead'))");
+    expect(src).not.toContain("probe.once('timeout', () => finish(false))");
+  });
+
   it('bootstrap verify prefers a live serve socket over self-creating one', async () => {
     // verify.ts:hooks smoke used to ALWAYS start its own IPC server, which
     // manufactured the condition under test and masked serve postures that

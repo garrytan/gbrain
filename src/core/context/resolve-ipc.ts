@@ -724,10 +724,11 @@ function roundTrip(
 // ── Server ────────────────────────────────────────────────────────────────
 
 /**
- * Server: start an IPC listener on `socketPath`. Probes the path for a live
- * owner first — if another serve answers, returns null and leaves its socket
- * untouched (that serve is the IPC provider, #4896); otherwise cleans up the
- * stale entry a dead owner left, hardens the parent dir to 0700, and chmods
+ * Server: start an IPC listener on `socketPath`. Probes the path for an owner
+ * first — unless the connect is hard-refused (nothing listens), returns null
+ * and leaves the socket untouched: a serve that accepts, or one too busy to
+ * accept within the probe budget, is the IPC provider (#4896). Only a dead
+ * owner's leftover entry is cleaned up; then hardens the parent dir to 0700, and chmods
  * the socket 0600 BEFORE announcing readiness [S3#6]. Returns the net.Server
  * (caller closes on shutdown). Errors are swallowed (best-effort feature) —
  * returns null if the socket can't be bound.
@@ -767,14 +768,15 @@ export async function startResolveIpcServer(
     chmodSync(dir, 0o700);
   } catch { /* best effort */ }
 
-  // A live provider already owns the path: defer, never unlink it out from
-  // under it (#4896 — a transient serve used to displace the long-lived one
-  // and take the pathname with it on exit).
+  // Only a provably dead owner is displaced (#4896 — a transient serve used
+  // to unlink the long-lived one's socket and take the pathname with it on
+  // exit). 'live' AND 'unknown' (probe timed out: a serve whose event loop
+  // is busy) both defer — this serve runs without IPC rather than risk it.
   // ponytail: two serves probing within the same few microseconds both see
   // no owner and the second unlink still displaces the first; a dev/ino
   // identity re-check around the unlink is the upgrade path if it ever bites.
-  if (await socketHasLiveListener(socketPath)) return null;
-  // Remove a stale socket file if present (a previous serve that didn't clean up).
+  if ((await probeSocketOwner(socketPath)) !== 'dead') return null;
+  // Remove the dead owner's socket file so bind() can succeed.
   cleanupStaleSocket(socketPath);
 
   return new Promise((resolve) => {
@@ -1013,29 +1015,34 @@ export function cleanupStaleSocket(socketPath: string): void {
 }
 
 /**
- * True when something accepts a connection at `socketPath` (a live serve).
- * ENOENT / ECONNREFUSED (absent or dead owner) and a hung owner (timeout)
- * both read as "no live listener" so the caller may clean up and bind. The
- * server side tolerates the data-less probe: one-request-per-connection
- * means a connection that closes before its first line is just destroyed.
+ * Who owns `socketPath`? 'live' — something accepted the connect (a serve).
+ * 'dead' — the connect was hard-refused (ENOENT / ECONNREFUSED / ENOTSOCK:
+ * nothing listens; the entry is a dead owner's leftover the caller may
+ * remove). 'unknown' — the 250ms budget lapsed with the connect neither
+ * accepted nor refused (a live serve too busy to accept). The caller must
+ * never clean up on 'unknown': a timeout read as "dead" let a transient
+ * serve displace a long-lived one, the very #4896 symptom. The server side
+ * tolerates the data-less probe: one-request-per-connection means a
+ * connection that closes before its first line is just destroyed.
  */
-function socketHasLiveListener(socketPath: string): Promise<boolean> {
+type SocketOwner = 'live' | 'dead' | 'unknown';
+function probeSocketOwner(socketPath: string): Promise<SocketOwner> {
   return new Promise((resolve) => {
     let settled = false;
     const probe = new net.Socket();
-    const finish = (live: boolean) => {
+    const finish = (owner: SocketOwner) => {
       if (settled) return;
       settled = true;
       try { probe.destroy(); } catch { /* noop */ }
-      resolve(live);
+      resolve(owner);
     };
     // Listeners BEFORE connect(): under `bun test` Bun can emit the ENOENT
     // for an absent path synchronously inside connect(), which would be an
     // unhandled 'error' if attached afterwards.
-    probe.once('connect', () => finish(true));
-    probe.once('error', () => finish(false));
-    probe.once('timeout', () => finish(false));
+    probe.once('connect', () => finish('live'));
+    probe.once('error', () => finish('dead'));
+    probe.once('timeout', () => finish('unknown'));
     probe.setTimeout(250);
-    try { probe.connect(socketPath); } catch { finish(false); }
+    try { probe.connect(socketPath); } catch { finish('dead'); }
   });
 }
