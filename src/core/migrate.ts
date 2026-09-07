@@ -10,6 +10,7 @@ import {
 } from './retry-matcher.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
 import { repairPagesUpsertArbiter } from './pages-upsert-arbiter.ts';
+import { normalizeSlugKey } from './utils.ts';
 
 /**
  * When true, per-migration explanatory notices (e.g. the v123/v124 "here is
@@ -6499,6 +6500,62 @@ export const MIGRATIONS: Migration[] = [
         ON extract_atoms_transcript_state (source_id, content_hash)
         WHERE tombstoned;
     `,
+  },
+  {
+    version: 147,
+    name: 'strip_markdown_extension_slugs',
+    // #4807 follow-up. validateSlug strips a trailing `.md`/`.mdx` on every
+    // write and the ops layer normalizes the caller's slug the same way on
+    // read/delete/restore, so a row whose STORED slug still ends in `.md`
+    // (a pre-#4807 put_page with a filename-shaped slug) is unreachable by
+    // any key and forks: the next put_page('x.md') creates a sibling 'x' while
+    // the old 'x.md' row lingers as a stale near-duplicate. Rename each such
+    // row (soft-deleted ones too, so restore keeps working) to the stripped
+    // slug in its own source. When the stripped slug is already taken there,
+    // the extension-bearing row is the mis-keyed twin of a page that has its
+    // canonical row: soft-delete it (purge reclaims it after the recovery
+    // window) instead of leaving a duplicate no key can address. Handler-only,
+    // per-row try/catch as in v2 (`slugify_existing_pages`); a re-run finds
+    // only already-retired twins and touches nothing.
+    idempotent: true,
+    sql: '',
+    handler: async (engine) => {
+      const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string }>(
+        `SELECT id, source_id, slug FROM pages WHERE slug ~* '\\.mdx?$' ORDER BY source_id, slug`,
+      );
+      let renamed = 0;
+      let retired = 0;
+      for (const r of rows) {
+        const target = normalizeSlugKey(r.slug);
+        if (!target || target.endsWith('/')) {
+          console.error(`  Warning: skipping "${r.slug}" (source ${r.source_id}) — stripping the extension leaves no slug`);
+          continue;
+        }
+        try {
+          const taken = await engine.executeRaw<{ id: number | string }>(
+            `SELECT id FROM pages WHERE source_id = $1 AND slug = $2`,
+            [r.source_id, target],
+          );
+          if (taken.length > 0) {
+            const flipped = await engine.executeRaw<{ id: number | string }>(
+              `UPDATE pages SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id`,
+              [r.id],
+            );
+            retired += flipped.length;
+          } else {
+            await engine.updateSlug(r.slug, target, { sourceId: r.source_id });
+            renamed++;
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`  Warning: could not normalize "${r.slug}" → "${target}": ${msg}`);
+        }
+      }
+      // stderr only — stdout stays clean for `--json` consumers (see v2).
+      if (renamed > 0 || retired > 0) {
+        process.stderr.write(`  Normalized ${renamed} extension-suffixed slugs, retired ${retired} duplicate twins\n`);
+      }
+    },
   },
 ];
 
