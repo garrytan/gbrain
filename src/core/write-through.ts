@@ -87,6 +87,8 @@ export interface WriteThroughResult {
    *     writing would silently clobber the OTHER slug's file (#2831) — refused.
    */
   skipped?: 'disabled_by_config' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision';
+  /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
+  warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
   error?: string;
 }
@@ -96,6 +98,16 @@ export interface WritePageThroughOpts {
   /** Merged over the page's own frontmatter at render time (e.g. provenance). */
   frontmatterOverrides?: Record<string, unknown>;
   logger?: WriteThroughLogger;
+}
+
+export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string): T {
+  if (result.written || result.skipped !== 'no_repo_configured') return result;
+  return {
+    ...result,
+    warning:
+      `put_page wrote only to the database for source '${sourceId}': no repo/local_path is configured, so no durable markdown file was created. ` +
+      'Bind this MCP server/token to a git-backed source or configure source local_path/sync.repo_path before relying on the write.',
+  } as T;
 }
 
 /**

@@ -12,7 +12,7 @@ import { clampSearchLimit } from '../engine.ts';
 import type { Page, PageType } from '../types.ts';
 import { importFromContent } from '../import-file.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { writePageThrough, deletePageThrough, resolvePageWriteTarget, type WriteThroughResult } from '../write-through.ts';
+import { writePageThrough, deletePageThrough, resolvePageWriteTarget, withNoRepoWriteThroughWarning, type WriteThroughResult } from '../write-through.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, isGlobalBasenameEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from '../link-extraction.ts';
 // #3190: pack-aware link typing on the put_page auto-link path.
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
@@ -328,7 +328,7 @@ const fetch_page: Operation = {
 
 const put_page: Operation = {
   name: 'put_page',
-  description: 'Write or replace a page (markdown with frontmatter). REPLACES the entire page; this is not a partial edit. Before modifying an existing page, read its canonical content with `get_page include_content:true`, then submit the complete page. Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. Remote (MCP) callers: body wikilinks are NOT reconciled into the graph — auto_link/auto_timeline are skipped for untrusted writers (response reports auto_links: {skipped: "remote"}); use local capture/put_page for link extraction. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
+  description: 'Write or replace a page (markdown with frontmatter). REPLACES the entire page; this is not a partial edit. Before modifying an existing page, read its canonical content with `get_page include_content:true`, then submit the complete page. Chunks, embeds, reconciles tags, and (when auto_link/auto_timeline are enabled) extracts + reconciles graph links and timeline entries. Remote (MCP) callers: body wikilinks are NOT reconciled into the graph — auto_link/auto_timeline are skipped for untrusted writers (response reports auto_links: {skipped: "remote"}); use local capture/put_page for link extraction. Remote callers also receive write_through.warning when the resolved write source has no repo configured, because the DB row has no durable markdown file. For large content on Windows (pipe-buffer limit ~45KB) or any file-as-input workflow, use `gbrain capture --file PATH --slug SLUG` — capture reads the file as a Buffer with a binary-NUL guard and adds provenance write-through (v0.39.3.0).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     content: { type: 'string', required: true, description: 'Complete markdown content with YAML frontmatter. REPLACES the entire page; this is not a partial edit. Read the canonical page first with `get_page include_content:true` before modifying it.' },
@@ -824,7 +824,7 @@ const put_page: Operation = {
       ...(writerLint ? { writer_lint: writerLint } : {}),
       ...(factsQueued ? { facts_backstop: factsQueued } : {}),
       ...(chronicleQueued ? { chronicle_backstop: chronicleQueued } : {}),
-      ...(writeThrough ? { write_through: writeThrough } : {}),
+      ...(writeThrough ? { write_through: ctx.remote !== false ? withNoRepoWriteThroughWarning(writeThrough, ctx.sourceId ?? 'default') : writeThrough } : {}),
     };
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },

@@ -4,7 +4,7 @@
  * Verifies that put_page writes the markdown file to disk alongside the
  * DB row when sync.repo_path is configured. Trust gating: subagent
  * sandbox writes stay DB-only; dry-run stays DB-only; missing-repo
- * stays DB-only.
+ * stays DB-only, with a loud warning for remote callers.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -180,8 +180,22 @@ describe('put_page write-through — config edge cases', () => {
     const result = (await putPage.handler(ctx, {
       slug: 'inbox/no-repo',
       content: '---\ntitle: N\n---\n\nbody',
-    })) as { write_through?: { skipped?: string } };
+    })) as { write_through?: { skipped?: string; warning?: string } };
     expect(result.write_through?.skipped).toBe('no_repo_configured');
+    expect(result.write_through?.warning).toBeUndefined();
+  });
+
+  test('remote repo not configured → warns that the write is DB-only', async () => {
+    await engine.executeRaw("DELETE FROM config WHERE key = 'sync.repo_path'");
+    const ctx = makeCtx({ remote: true });
+    const result = (await putPage.handler(ctx, {
+      slug: 'inbox/no-repo-remote',
+      content: '---\ntitle: Remote\n---\n\nbody',
+    })) as { write_through?: { skipped?: string; warning?: string } };
+    expect(result.write_through?.skipped).toBe('no_repo_configured');
+    expect(result.write_through?.warning).toContain('wrote only to the database');
+    expect(result.write_through?.warning).toContain("source 'default'");
+    expect(result.write_through?.warning).toContain('no durable markdown file');
   });
 
   test('repo path points at a missing directory → put_page rejects, no orphan row', async () => {
