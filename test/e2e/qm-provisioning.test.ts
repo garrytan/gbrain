@@ -21,6 +21,8 @@ import { describe, test as testRaw, expect, beforeAll, afterAll } from 'bun:test
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { keylessBrainEnv } from '../helpers/provider-env.ts';
+import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
 
 function test(name: string, fn: () => void | Promise<unknown>): void {
   testRaw(name, fn, 120000);
@@ -32,16 +34,12 @@ const SCRIPT = join(__dirname, '..', '..', 'docs', 'integrations', 'qm-harness-s
 interface RunResult { exitCode: number; stdout: string; stderr: string; }
 
 async function spawn(cmd: string[], env: Record<string, string | undefined>, cwd?: string): Promise<RunResult> {
-  const fullEnv: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined) fullEnv[k] = v;
-  }
-  delete fullEnv.GBRAIN_REMOTE_CLIENT_SECRET;
-  delete fullEnv.DATABASE_URL;
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) delete fullEnv[k];
-    else fullEnv[k] = v;
-  }
+  const fullEnv = keylessBrainEnv(process.env, env.GBRAIN_HOME!, {
+    GBRAIN_REMOTE_CLIENT_SECRET: undefined,
+    DATABASE_URL: undefined,
+    GBRAIN_DATABASE_URL: undefined,
+    ...env,
+  });
   const proc = Bun.spawn({ cmd, env: fullEnv, cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -52,7 +50,7 @@ async function spawn(cmd: string[], env: Record<string, string | undefined>, cwd
 }
 
 const gbrain = (args: string[], home: string, extraEnv: Record<string, string | undefined> = {}) =>
-  spawn(['bun', 'run', CLI, ...args], { GBRAIN_HOME: home, ...extraEnv });
+  spawn(['bun', '--no-env-file', 'run', CLI, ...args], { GBRAIN_HOME: home, ...extraEnv });
 
 describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
   let hostHome: string;
@@ -70,7 +68,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
 
   async function provision(): Promise<RunResult> {
     return spawn(
-      ['bash', SCRIPT, rosterPath(), '--gbrain', `bun run ${CLI}`, '--budget-usd-per-day', '5'],
+      ['bash', SCRIPT, rosterPath(), '--gbrain', `bun --no-env-file run ${CLI}`, '--budget-usd-per-day', '5'],
       { GBRAIN_HOME: hostHome },
       workDir,
     );
@@ -84,7 +82,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
 
     // 1. Host brain on PGLite, embedding deferred (FTS is enough here).
     const init = await gbrain(['init', '--pglite', '--no-embedding'], hostHome);
-    if (init.exitCode !== 0) throw new Error(`host init failed: ${init.stderr || init.stdout}`);
+    if (init.exitCode !== 0) throw new Error(cliDiagnostic(`host init failed`, init));
 
     // 2. Roster v1: alice in eng, bob in product.
     writeFileSync(rosterPath(), [
@@ -95,7 +93,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
       '',
     ].join('\n'));
     const p1 = await provision();
-    if (p1.exitCode !== 0) throw new Error(`provision v1 failed: ${p1.stderr || p1.stdout}`);
+    if (p1.exitCode !== 0) throw new Error(cliDiagnostic(`provision v1 failed`, p1));
 
     for (const line of readFileSync(secretsPath(), 'utf8').trim().split('\n')) {
       const [slug, clientId, secret] = line.split('\t');
@@ -105,7 +103,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
     // 3. Idempotency: re-run with the same roster mints no new secrets.
     const before = readFileSync(secretsPath(), 'utf8');
     const p2 = await provision();
-    if (p2.exitCode !== 0) throw new Error(`provision re-run failed: ${p2.stderr || p2.stdout}`);
+    if (p2.exitCode !== 0) throw new Error(cliDiagnostic(`provision re-run failed`, p2));
     rerunCredsGrew = readFileSync(secretsPath(), 'utf8') !== before;
 
     // 4. Roster churn: alice joins product → rescope in place.
@@ -117,7 +115,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
       '',
     ].join('\n'));
     const p3 = await provision();
-    if (p3.exitCode !== 0) throw new Error(`provision rescope failed: ${p3.stderr || p3.stdout}`);
+    if (p3.exitCode !== 0) throw new Error(cliDiagnostic(`provision rescope failed`, p3));
 
     // 4b. An UNBOUND client, standing in for a webhook integration. Registered
     //     here because PGLite is single-process: once serve --http holds the
@@ -126,7 +124,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
       'auth', 'register-client', 'webhook-integration',
       '--grant-types', 'client_credentials', '--scopes', 'read write',
     ], hostHome);
-    if (wh.exitCode !== 0) throw new Error(`webhook client registration failed: ${wh.stderr || wh.stdout}`);
+    if (wh.exitCode !== 0) throw new Error(cliDiagnostic(`webhook client registration failed`, wh));
     creds['webhook-integration'] = {
       clientId: wh.stdout.match(/Client ID:\s+(gbrain_cl_\S+)/)?.[1] ?? '',
       secret: wh.stdout.match(/Client Secret:\s+(gbrain_cs_\S+)/)?.[1] ?? '',
@@ -134,14 +132,11 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
 
     // 5. Serve over HTTP MCP (holds the PGLite lock from here on).
     serverPort = 30000 + Math.floor(Math.random() * 30000);
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined) env[k] = v;
-    }
-    env.GBRAIN_HOME = hostHome;
-    delete env.DATABASE_URL;
+    const env = keylessBrainEnv(process.env, hostHome, {
+      DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
+    });
     serverProc = Bun.spawn({
-      cmd: ['bun', 'run', CLI, 'serve', '--http', '--port', String(serverPort)],
+      cmd: ['bun', '--no-env-file', 'run', CLI, 'serve', '--http', '--port', String(serverPort)],
       env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe',
     });
     const deadline = Date.now() + 30_000;
@@ -171,7 +166,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
         '--oauth-client-id', creds[slug].clientId,
         '--oauth-client-secret', creds[slug].secret,
       ], home);
-      if (tc.exitCode !== 0) throw new Error(`thin-client init (${slug}) failed: ${tc.stderr || tc.stdout}`);
+      if (tc.exitCode !== 0) throw new Error(cliDiagnostic(`thin-client init (${slug}) failed`, tc));
     }
   }, 300_000);
 
@@ -197,7 +192,7 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
       body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}`
         + `&client_secret=${encodeURIComponent(secret)}&scope=${encodeURIComponent('read write')}`,
     });
-    if (!res.ok) throw new Error(`token mint failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new Error(fixtureDiagnostic("token mint", `status=${res.status} ${await res.text()}`));
     return ((await res.json()) as { access_token: string }).access_token;
   }
 
@@ -230,43 +225,43 @@ describe('qm-harness provisioning + write fence (e2e, PGLite)', () => {
 
   test('alice writes inside her prefixes (personal + channel)', async () => {
     const own = await asAlice(['put', 'emp-alice-example/notes/hello', '--content', '# hello\nmine']);
-    expect(own.exitCode).toBe(0);
+    expect(own.exitCode, cliDiagnostic("qm CLI", own)).toBe(0);
     const chan = await asAlice(['put', 'chan-eng/notes/standup', '--content', '# standup\nshared']);
-    expect(chan.exitCode).toBe(0);
+    expect(chan.exitCode, cliDiagnostic("qm CLI", chan)).toBe(0);
   });
 
   test('roster churn took effect: alice can write chan-product/ after rescope', async () => {
     const joined = await asAlice(['put', 'chan-product/notes/joined', '--content', '# joined']);
-    expect(joined.exitCode).toBe(0);
+    expect(joined.exitCode, cliDiagnostic("qm CLI", joined)).toBe(0);
   });
 
   test("alice cannot write bob's namespace or an unbound prefix", async () => {
     const bobNs = await asAlice(['put', 'emp-bob-example/notes/nope', '--content', 'x']);
-    expect(bobNs.exitCode).not.toBe(0);
+    expect(bobNs.exitCode, cliDiagnostic("qm CLI", bobNs)).not.toBe(0);
     expect(bobNs.stdout + bobNs.stderr).toMatch(/bound_slug_prefixes/);
 
     const stray = await asAlice(['put', 'org-notes/anything', '--content', 'x']);
-    expect(stray.exitCode).not.toBe(0);
+    expect(stray.exitCode, cliDiagnostic("qm CLI", stray)).not.toBe(0);
     expect(stray.stdout + stray.stderr).toMatch(/bound_slug_prefixes/);
   });
 
   test('bob is fenced to HIS prefixes (not in eng)', async () => {
     const own = await asBob(['put', 'emp-bob-example/notes/hello', '--content', '# hi']);
-    expect(own.exitCode).toBe(0);
+    expect(own.exitCode, cliDiagnostic("qm CLI", own)).toBe(0);
     const eng = await asBob(['put', 'chan-eng/notes/nope', '--content', 'x']);
-    expect(eng.exitCode).not.toBe(0);
+    expect(eng.exitCode, cliDiagnostic("qm CLI", eng)).not.toBe(0);
     expect(eng.stdout + eng.stderr).toMatch(/bound_slug_prefixes/);
   });
 
   test('reads stay source-granular: bob CAN read chan-eng pages (documented tradeoff)', async () => {
     const read = await asBob(['get', 'chan-eng/notes/standup']);
-    expect(read.exitCode).toBe(0);
+    expect(read.exitCode, cliDiagnostic("qm CLI", read)).toBe(0);
     expect(read.stdout).toContain('standup');
   });
 
   test('the documented health check works on a read+write client (no admin scope)', async () => {
     const who = await asAlice(['whoami']);
-    expect(who.exitCode).toBe(0);
+    expect(who.exitCode, cliDiagnostic("qm CLI", who)).toBe(0);
     expect(who.stdout).toContain(creds['alice-example'].clientId);
   });
 

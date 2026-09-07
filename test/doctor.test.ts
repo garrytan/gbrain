@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { resetGateway } from '../src/core/ai/gateway.ts';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +9,10 @@ import * as path from 'node:path';
 import { withEnv } from './helpers/with-env.ts';
 import { logRerankFailure } from '../src/core/rerank-audit.ts';
 import { doctorSource, doctorFileSource } from './helpers/doctor-source.ts';
+
+// Health fixtures configure fake provider keys. Clear the gateway snapshot as
+// well as each fixture's process env so later tests cannot send real requests.
+afterEach(() => resetGateway());
 
 describe('doctor command', () => {
   test('doctor module exports runDoctor', async () => {

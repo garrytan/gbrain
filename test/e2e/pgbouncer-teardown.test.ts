@@ -30,10 +30,16 @@ import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import postgres from 'postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { keylessBrainEnv } from '../helpers/provider-env.ts';
+import { fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 
 const POOLED_URL = process.env.GBRAIN_PGBOUNCER_URL;
 const DIRECT_ADMIN_URL = process.env.GBRAIN_PGBOUNCER_DIRECT_URL;
 const SKIP = !POOLED_URL || !DIRECT_ADMIN_URL;
+if (process.env.GBRAIN_CI_REQUIRE_PGBOUNCER === '1' && SKIP) {
+  throw new Error('Required PgBouncer fixture is missing GBRAIN_PGBOUNCER_URL or GBRAIN_PGBOUNCER_DIRECT_URL');
+}
 const describePooled = SKIP ? describe.skip : describe;
 
 const REPO = resolve(import.meta.dir, '..', '..');
@@ -54,9 +60,14 @@ async function runCli(
   timeoutMs: number,
 ): Promise<{ exitCode: number; stdout: string; stderr: string; wallMs: number }> {
   const t0 = Date.now();
-  const proc = Bun.spawn(['bun', 'run', join(REPO, 'src', 'cli.ts'), ...args], {
+  const proc = Bun.spawn(['bun', '--no-env-file', 'run', join(REPO, 'src', 'cli.ts'), ...args], {
     cwd: REPO,
-    env: { ...process.env, ...env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+    // The suite's DATABASE_URL addresses the normal shard DB. The CLI must
+    // use this fixture's pooled config, with no environment URL override.
+    env: keylessBrainEnv(process.env, env.GBRAIN_HOME, {
+      ...env, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
+      GBRAIN_REMOTE_CLIENT_SECRET: undefined, GBRAIN_SKIP_STARTUP_HOOKS: '1',
+    }),
     stdout: 'pipe',
     stderr: 'pipe',
   });
@@ -79,6 +90,7 @@ describePooled('pgbouncer txn-mode teardown (#2084 / TD1)', () => {
   let home: string;
 
   beforeAll(async () => {
+    assertSafeE2eDatabaseUrl(DIRECT_ADMIN_URL!);
     // Dedicated database on the same server, created via the DIRECT url
     // (CREATE DATABASE cannot run through a transaction-mode pooler).
     const admin = postgres(DIRECT_ADMIN_URL!, { max: 1 });
@@ -122,8 +134,7 @@ describePooled('pgbouncer txn-mode teardown (#2084 / TD1)', () => {
     const res = await runCli(['get', SLUG], env, 90_000);
 
     if (res.exitCode !== 0 || /force-exiting/.test(res.stderr)) {
-      console.error('--- stdout ---\n' + res.stdout);
-      console.error('--- stderr ---\n' + res.stderr);
+      console.error(fixtureDiagnostic('PgBouncer CLI read', res.stderr || res.stdout));
     }
     expect(res.exitCode).toBe(0);
     // Output is complete — the #1959 truncation class.

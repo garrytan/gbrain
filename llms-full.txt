@@ -389,6 +389,9 @@ project resolves through `src/core/search/mode.ts`.
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
 | `relationalRetrieval`         | false          | **true**   | **true**       |
+| `relational_rerank_pin`       | 3              | 3          | 3              |
+| `metadata_boost_gate`         | lexical        | lexical    | lexical        |
+| `autocut` (rerank-cliff cut)  | off            | off        | off            |
 | `searchLimit` default         | 10             | 25         | 50             |
 
 **Cost anchors (downstream agent input cost — gbrain itself is rounding error).**
@@ -409,15 +412,16 @@ Mismatches (tokenmax+Haiku, conservative+Opus) waste capacity differently
 expensive one.
 
 tokenmax adds ~\$1.50 per 1K queries in Haiku expansion calls on top of
-the matrix (\$15/mo @ 10K). Cache hits cut all numbers ~50%. **The matrix
+the matrix (\$15/mo @ 10K). Semantic result caching is temporarily disabled; budget for fresh retrieval on every query. **The matrix
 has three verbatim homes: this section, the `gbrain init` picker copy
 (`src/commands/init-mode-picker.ts`), and `INSTALL_FOR_AGENTS.md` Step
 3.5** — update all three when refreshing.
 
 **Per-query math vs real-world spend.** The matrix above is what an
 isolated benchmark would measure. Real agent loops with disciplined
-Anthropic prompt caching see 50-80% discount on top (cache hits skip
-downstream entirely). The realistic-scale anchor in
+Anthropic prompt caching see 50-80% discount on top through lower
+cached-input charges. This is separate from GBrain's disabled semantic result
+cache. The realistic-scale anchor in
 `docs/eval/SEARCH_MODE_METHODOLOGY.md` walks the natural pairings at
 single-power-user volume (~860 turns/mo): tokenmax+Opus ~\$700/mo,
 balanced+Sonnet ~\$430/mo, conservative+Haiku ~\$170/mo. Setups WITHOUT
@@ -435,23 +439,14 @@ per `[CDX-5+6]` in `~/.claude/plans/lets-take-a-look-validated-parrot.md` — so
 `gbrain eval replay` and `gbrain eval longmemeval` test the same mode-affected
 behavior as the production `query` op.
 
-**Cache-key contamination hotfix `[CDX-4]`:** migration v56 added a
-`knobs_hash` column to `query_cache`. The lookup filter is now
-`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $` so a
-tokenmax write (expansion=on, limit=50) can't be served to a conservative
-read.
+**Effective cache availability:** semantic result lookup and writes are temporarily disabled in the shared wrapper, regardless of mode, config, or `use_cache`. Stored rows and maintenance commands remain. `cache.status`, cache statistics and the mode dashboard report disabled. The following cache-key notes describe retained storage machinery, not active response reuse.
 
-**v0.36.3.0 knobs_hash v=2 → v=3.** The hash now folds the active
-embedding column name + provider into the cache key, so a query routed
-through `embedding_voyage` (1024d Voyage) can't be served a cache row
-written against `embedding` (1536d OpenAI). Existing v=2 rows become
-unreachable on first re-query (one-time miss spike on upgrade);
-`mode.ts:KNOBS_HASH_VERSION` is the single source of truth.
-
-**v0.42.34.0 knobs_hash v=9 → v=10.** Folds the `relationalRetrieval` knob +
-depth into the cache key so a relational-on result set can't be served to a
-relational-off lookup (same contamination class as graph_signals). One-time
-miss spike on upgrade.
+**Cache key.** The `query_cache` lookup filters on `knobs_hash`
+(`WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $`) so a
+tokenmax write can't be served to a conservative read. `mode.ts:KNOBS_HASH_VERSION`
+is the single source of truth; every result-affecting knob folds into `knobsHash`
+(a version bump is a one-time cache-miss spike on upgrade); the version-by-version
+rationale lives in the comment chain at `test/search/knobs-hash-reranker.test.ts`.
 
 **Relational retrieval (v0.42.34.0).** `relationalRetrieval` (on for
 balanced/tokenmax) adds a fourth recall arm: a relational query ("who invested
@@ -459,7 +454,10 @@ in X", "what connects A and B") resolves its seed entity and walks the typed-edg
 graph (`src/core/search/relational-recall.ts` + `relational-intent.ts`,
 `engine.relationalFanout`), injecting edge-derived answers into RRF. Within-source,
 deterministic, mentions-excluded by default, pure no-op for non-relational queries.
-The `query` op's `relational` flag forces it on/off per call.
+The `query` op's `relational` flag forces it on/off per call. After the
+reranker, up to `relational_rerank_pin` (3 in every bundle) arm rows are re-pinned
+above the reranked text rows (`relational-rerank-pin.ts`);
+`gbrain config set search.relational_rerank_pin off` restores the pre-pin order.
 
 **Three CLI surfaces:**
 
@@ -2011,6 +2009,13 @@ Postgres-at-scale, Supabase, and thin-client setup paths live in [`docs/INSTALL.
 
 GBrain exposes nearly all of its 100+ operations as MCP tools (stdio and HTTP; a handful of local-only ops stay CLI-side) — or exactly the seven memory verbs with `--surface verbs`. The specific snippet depends on which client you use:
 
+**Upgrading an existing brain:** existing search chunks need rebuilding before
+remote chunk retrieval resumes. Semantic result caching is temporarily disabled;
+stored contradiction reports and code-inspection tools have local-only limits.
+Follow the [upgrade recovery guide](skills/migrations/v0.48.3.0.md) for rebuild
+commands, embedding costs, and the restrictions that remain after rebuilding.
+**Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
+
 - **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets — pick exactly one gbrain plugin). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir with a local-edit-respecting update lens. Or local one-liner: `claude mcp add gbrain -- gbrain serve` (zero server, zero tunnel). Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
 - **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); Codex reads the bearer from `$GBRAIN_REMOTE_TOKEN` at runtime, so the token never lands in Codex config.
 - **[Cursor / Windsurf / any stdio MCP client](docs/mcp/CLAUDE_CODE.md)** — same shape, add `{"command": "gbrain", "args": ["serve"]}` to your MCP config.
@@ -2172,7 +2177,7 @@ gbrain schema use my-pack           # activate
 
 **Say to your agent:** *"My schema isn't matching my notes — propose new types from my corpus"* — *"Add a page type for lab results to my brain's schema."* The schema-author skill runs the detect → suggest → review flow for you.
 
-The active pack threads through every read + write path: `parseMarkdown` infers page type from the pack's path prefixes; `whoknows` scopes expert routing to types declared `expert_routing: true`; `extract_facts` runs only on `extractable: true` types; the search cache folds the pack name + version into its key so cross-pack contamination is structurally impossible. Switch packs and the brain re-interprets itself; switch back and nothing's lost.
+The active pack threads through every read + write path: `parseMarkdown` infers page type from the pack's path prefixes; `whoknows` scopes expert routing to types declared `expert_routing: true`; `extract_facts` runs only on `extractable: true` types. The retained search-cache key includes the pack name + version, but semantic result reuse is temporarily disabled. Switch packs and the brain re-interprets itself; switch back and nothing's lost.
 
 Seven-tier resolution chain (per-call flag → env var → per-source DB key → brain-wide DB key → `gbrain.yml` → `~/.gbrain/config.json` → `gbrain-base` default). Full reference + authoring guide: [`docs/architecture/schema-packs.md`](docs/architecture/schema-packs.md).
 
@@ -2235,9 +2240,9 @@ The command is idempotent (re-running with the same language is a no-op for vect
 
 **Say to your agent — the phrasebook.** You never invoke a skill by name; you say what you want and your agent routes it. Every skill declares its trigger phrases in its frontmatter, and [`skills/RESOLVER.md`](skills/RESOLVER.md) is the full human-readable phrasebook — one table of "when you say this, this skill fires." A taste: *"Ingest this PDF"* (media-ingest) — *"What's happening today?"* (briefing) — *"Fill my brain"* (cold-start) — *"Brain health"* / *"check backlinks"* (maintain — either phrase routes there) — *"Is my brain set up right?"* (gbrain-advisor) — *"Did the restart break anything?"* (smoke-test) — *"Run this as a background task"* (minion-orchestrator). If you're ever unsure what to say, ask your agent: *"What can my brain do?"* and have it read the resolver back to you.
 
-**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. Measured 2026-09-02 at gbrain v0.48.2.0 on LongMemEval-S (cleaned Sept-2025 revision, 500 questions, 470 scored after the 30 abstention questions are dropped as the official scorer does), hybrid search mode `balanced` with reranker and autocut pinned off, k=5, single run: strict session-level `recall_all@5` of **93.19%** (438/470), meaning every gold session landed inside the top-5 distinct retrieved sessions, retrieval only, no reader model. The looser any-hit `recall_any@5` was 98.72% and is reported as a diagnostic, not a headline. Per-row receipts live in the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo. The same run also measured the default path: with the default reranker `voyage:rerank-2.5` on (what `balanced` and `tokenmax` run when `VOYAGE_API_KEY` is set), hybrid scores **95.32%** `recall_all@5` (448/470; any-hit 99.79%; paired against reranker-off hybrid it gains 18 questions and loses 8). One warning from the same run: `tokenmax`'s LLM multi-query expansion is harmful at k=5, 54.89% `recall_all@5` (258/470, paired +3 / -183 vs hybrid), so small-k recall is worse in that mode until variant weighting is fixed. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. `gbrain eval brainbench` runs the cross-harness memory conformance suite: know-to-ask, push precision/recall, write-back fidelity, and cross-session continuity, scored per harness seam (your OpenClaw's production pipeline plus Claude Code and Codex injection contracts) against a committed 141-fixture synthetic corpus — hermetic by default (in-memory PGLite, no keys, seconds), and CI gates every PR against master's committed baseline. Methodology in [`docs/eval/BRAINBENCH.md`](docs/eval/BRAINBENCH.md); search-mode methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). **Say to your agent:** *"Run a regression check on retrieval"* (your agent runs `gbrain eval brainbench`); *"Run the public LongMemEval benchmark"* (no skill backs this one; your agent runs `gbrain eval longmemeval <longmemeval_s_cleaned.json> --retrieval-only --top-k 5 --by-type --no-trajectory`; that in-repo command is a self-check at the default, reranker on when `VOYAGE_API_KEY` is set, and its `--by-type` summary is any-hit recall. The receipted 93.19% strict number comes from the gbrain-evals runner, `bash eval/runner/longmemeval-batch.sh --adapters hybrid --embedding-model openai:text-embedding-3-large --embedding-dims 1536`, which pins reranker and autocut off).
+**Eval framework.** `gbrain eval longmemeval` runs the public [LongMemEval](https://huggingface.co/datasets/xiaowu0162/longmemeval) benchmark against your hybrid retrieval. Measured 2026-09-06 at gbrain v0.48.4.0 by this command on LongMemEval-S (cleaned Sept-2025 revision, 500 questions, 470 scored after the 30 abstention questions are dropped as the official scorer does), k=5, single run: on the release default path (`balanced`: `voyage:rerank-2.5` on, autocut off) strict session-level `recall_all@5` of **95.53%** (449/470), meaning every gold session landed inside the top-5 distinct retrieved sessions, retrieval only, no reader model; with the reranker off, the like-for-like row against systems that run no reranker, **93.40%** (439/470). The looser any-hit `recall_any@5` was 99.79% / 98.72% and is reported as a diagnostic, not a headline. The reranker-off row reproduces the sibling [gbrain-evals](https://github.com/garrytan/gbrain-evals) runner's 2026-09-02 receipt (438/470; 469 of 470 rows agree per question), where the per-row receipts live. Paired against reranker-off hybrid the reranker gains 18 questions and loses 8; the default that shipped before v0.48.4.0 (reranker on with autocut) scored 379/470, because autocut kept the best session and dropped the rest on multi-part questions, which is why autocut is now off. One warning that the ranker wave re-measured rather than removed: `tokenmax`'s LLM multi-query expansion is harmful at k=5 — 255/470 `recall_all@5` (paired +3 / −187 vs hybrid) at the legacy weighting, 394/470 with the new `search.expansion_variant_budget` knob at its smallest pre-registered value, still 43 questions behind plain hybrid on the held-out decision set — so the bundles keep the legacy weighting, small-k recall stays worse in that mode, and conditional expansion is the filed next step. `gbrain eval export` + `gbrain eval replay` capture real queries and replay them against code changes (set `GBRAIN_CONTRIBUTOR_MODE=1`). `gbrain eval cross-modal` cross-checks an output against the task using three different-provider frontier models. `gbrain eval retrieval-quality` runs NamedThingBench, which hard-gates the named-thing retrieval families (title-substring, alias-synonym, generic-to-named, multi-chunk-dilution) so a regression in "find the page this query names" fails CI loudly. `gbrain eval brainbench` runs the cross-harness memory conformance suite: know-to-ask, push precision/recall, write-back fidelity, and cross-session continuity, scored per harness seam (your OpenClaw's production pipeline plus Claude Code and Codex injection contracts) against a committed 141-fixture synthetic corpus — hermetic by default (in-memory PGLite, no keys, seconds), and CI gates every PR against master's committed baseline. Methodology in [`docs/eval/BRAINBENCH.md`](docs/eval/BRAINBENCH.md); search-mode methodology in [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](docs/eval/SEARCH_MODE_METHODOLOGY.md). **Say to your agent:** *"Run a regression check on retrieval"* (your agent runs `gbrain eval brainbench`); *"Run the public LongMemEval benchmark like-for-like"* (no skill backs this one; your agent runs `gbrain eval longmemeval <longmemeval_s_cleaned.json> --retrieval-only --top-k 5 --by-type --no-trajectory --mode balanced --reranker off --autocut off`. That in-repo command is the reproduction path for the 93.40% row (and the 2026-09-02 receipt's 93.19%): its `--by-type` summary reports strict `recall_all@5` with any-hit as the diagnostic, joins on the dataset's raw session ids, and drops the 30 abstention questions as the official scorer does; `--reranker on --autocut off` runs the shipped default path instead — autocut is off in every mode since rule R2 — and `--reranker on --autocut on --capture-pool` reproduces the capture the autocut replay was scored from).
 
-**How it measures up.** One distinction decides every memory-benchmark comparison: strict `recall_all@5` counts a question only when every gold session lands in the top 5, while loose any-hit counts it when a single one does, and 300 of LongMemEval-S's 470 scored questions need two or more sessions. On the strict metric, on this dataset, gbrain scores 93.19% with the reranker off (v0.48.2.0, 2026-09-02, 470 scored) and 95.32% on the default path with `voyage:rerank-2.5` on (same run, same 470); the k=5 ceiling is 99.4% because 3 questions carry 6 gold sessions. The closest strict comparisons we could find: MemPalace publishes only any-hit (96.6% / 98.4%), but rescoring its committed per-question rankings against the official gold labels gives 85.7% for its raw vector setup and 90.0% with an LLM reranker in the loop (our recomputation, their data); ContextFit publishes an All@5 of 87.45% (411/470) whose rerank layer reads gold labels during the run, so we mark it loosely comparable. The 94 to 96% figures quoted for Mastra, Mem0, MemCog, Supermemory and others are LLM-judged answer accuracy, a different race that scores the reader and judge as much as the memory; gbrain has published no answer-accuracy run yet. Pure vector on the same corpus scored 93.8% (v0.48.0.0 receipt), so the hybrid layer is roughly neutral on this benchmark and earns its keep elsewhere. Full table with sources and our read of each: [gbrain-evals `docs/comparison-systems.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/comparison-systems.md).
+**How it measures up.** One distinction decides every memory-benchmark comparison: strict `recall_all@5` counts a question only when every gold session lands in the top 5, while loose any-hit counts it when a single one does, and 300 of LongMemEval-S's 470 scored questions need two or more sessions. On the strict metric, on this dataset, gbrain scores 93.40% with the reranker off (v0.48.4.0, 2026-09-06, 470 scored; 93.19% on the 2026-09-02 sibling receipt) and 95.53% on the release default path with `voyage:rerank-2.5` on (same run, same 470); the k=5 ceiling is 99.4% because 3 questions carry 6 gold sessions. The closest strict comparisons we could find: MemPalace publishes only any-hit (96.6% / 98.4%), but rescoring its committed per-question rankings against the official gold labels gives 85.7% for its raw vector setup and 90.0% with an LLM reranker in the loop (our recomputation, their data); ContextFit publishes an All@5 of 87.45% (411/470) whose rerank layer reads gold labels during the run, so we mark it loosely comparable. The 94 to 96% figures quoted for Mastra, Mem0, MemCog, Supermemory and others are LLM-judged answer accuracy, a different race that scores the reader and judge as much as the memory. gbrain's first judged number, published with v0.48.4.0: 86.6% (433/500; 95% CI 83.6–89.6) with the default `anthropic:claude-sonnet-4-6` reader over the full text of the retrieved sessions and a gpt-4o judge running the official prompts; 449 of the 470 non-abstention questions had every gold session retrieved and the reader converted 396 of them, so the gap to those vendor numbers is in the answering layer and the protocols differ, so no comparison is claimed in either direction. Pure vector on the same corpus scored 93.8% (v0.48.0.0 receipt), so the hybrid layer is roughly neutral on this benchmark and earns its keep elsewhere. Full table with sources and our read of each: [gbrain-evals `docs/comparison-systems.md`](https://github.com/garrytan/gbrain-evals/blob/main/docs/comparison-systems.md).
 
 **Brain consistency.** `gbrain eval suspected-contradictions` samples retrieval pairs, layered date pre-filter, query-conditioned LLM judge, persistent cache. Surfaces conflicts between takes + facts the agent has written. Wired into the daily dream cycle. **Say to your agent:** *"Did the dream cycle run — what contradictions did it surface?"* — *"Fact-check what we have on acme-example"* (claim-by-claim live-source verification) — or have your agent run `gbrain eval suspected-contradictions` directly.
 
@@ -5118,7 +5123,7 @@ Remote agents cannot reach local filesystem surface area.
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `admin` | Client management, token revocation, sweep; local-only restrictions still apply |
 
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
@@ -5177,11 +5182,15 @@ gbrain auth test \
 
 ## Operations
 
-GBrain's full operation catalog (100+ operations in `src/core/operations.ts`)
-is available remotely, with no timeout limits on a self-hosted server. The
-only exceptions are the operations flagged `localOnly: true` — `sync_brain`
-and the `file_*` ops among them — which are rejected over HTTP regardless of
-scope (see [Scopes and localOnly](#4-scopes-and-localonly) above).
+GBrain's operation catalog (100+ operations in `src/core/operations.ts`) is
+available subject to the selected surface, scope and operation-specific limits.
+Operations flagged `localOnly: true` are rejected over HTTP regardless of scope
+(see [Scopes and localOnly](#4-scopes-and-localonly) above). Code-inspection
+operations and stored contradiction reports also have temporary local-only
+restrictions, even when listed in the catalog. The [MCP surface runbook](../operations/mcp-surface-runbook.md)
+explains these limits and the separate chunk-rebuild requirement. Rebuild
+indexes from a local installation on the brain host; a thin client cannot
+rebuild the host's indexes.
 
 **Several brains behind one tool catalog?** Give each server an identity so a
 connected agent can tell them apart: `gbrain config set mcp.instructions

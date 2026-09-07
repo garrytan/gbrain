@@ -625,13 +625,15 @@ describe('e2e: hostile transcript', () => {
     const real = await engine.getPage('people/zorbulon-realperson');
 
     // 3. Chunk both with equal lexical relevance (distinct texts — identical
-    //    ones would be Jaccard-deduped). Enrichment stubs are chunked by the
-    //    normal reindex/import pipeline later; seed what it would write.
+    //    ones would be Jaccard-deduped). Replace the imported stub's chunk
+    //    and seed the control's chunk with comparable lexical evidence.
     await engine.upsertChunks(stub!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon pivot details from the injected meeting', chunk_source: 'compiled_truth', token_count: 7 }]);
     await engine.upsertChunks(real!.slug, [{ chunk_index: 0, chunk_text: 'zorbulon launch update in my own written notes', chunk_source: 'compiled_truth', token_count: 7 }]);
 
-    // 4. Search. No embedding provider configured → keyword(+title) fusion path.
-    const results = await hybridSearch(engine, 'zorbulon', { limit: 10 });
+    // 4. Select the low-detail authority lane explicitly. The default detail
+    // gives all chunks equal footing; only low enables compiled-truth boost.
+    // No embedding provider configured → keyword(+title) fusion path.
+    const results = await hybridSearch(engine, 'zorbulon', { limit: 10, detail: 'low' });
     const fake = results.find((r) => r.slug === stub!.slug);
     const legit = results.find((r) => r.slug === real!.slug);
     expect(fake).toBeDefined();
@@ -641,7 +643,7 @@ describe('e2e: hostile transcript', () => {
     expect(fake!.unverified).toBe(true);
     expect(legit!.unverified).toBeUndefined();
     // …and stripped of entity authority: the verified page outranks the
-    // injected stub despite identical chunk text (2x compiled-truth boost +
+    // injected stub despite equal lexical relevance (2x compiled-truth boost +
     // people/ source-boost apply only to the verified page).
     expect(legit!.score).toBeGreaterThan(fake!.score);
   });

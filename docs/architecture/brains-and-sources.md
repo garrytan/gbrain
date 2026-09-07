@@ -285,20 +285,16 @@ fail-closed and tested:
   slug-bound clients; every other non-read operation is refused (fail-closed:
   a write op added later is denied until it is fenced and allow-listed).
 
-One known soft edge: the backlink-count ranking boost counts referrers
-without source filtering, so the *existence* of out-of-grant referrers can
-nudge result ordering (a count-only signal — no slug or content crosses the
-boundary; direct edge reads are fully scoped). Scoping that counter is a
-filed follow-up.
+Backlink-count ranking applies the caller's read policy to the result page,
+each contributing referrer, and any independent edge-origin page before
+counting. Graph enrichment uses the same source and page-visibility policy.
 
-**Not an enforcement surface: page-level `visibility:` frontmatter.** A
-`visibility: local` (or any other value) key in a page's frontmatter is inert
-metadata — no schema column stores it, no query filters on it, and a remote
-caller with a source grant retrieves the page like any other. If a page must
-not be readable by remote callers, put it in a source those callers have no
-grant for; that is the supported boundary. (A read-side per-page/per-prefix
-ACL is deliberately not offered: it is a new authorization surface that
-belongs to the mounts/brains access-policy design, not a bolt-on filter.)
+**Page-level `visibility: private` is enforced for remote callers by default.**
+The exact frontmatter value `private` hides that concrete page row;
+`visibility: local`, absent visibility, and other values do not. Trusted local
+CLI callers retain access. Operator settings can opt out of private-page
+filtering, so source grants remain an independent boundary: keep content in an
+ungranted source when remote callers must have no access to that source.
 
 ## Further reading
 

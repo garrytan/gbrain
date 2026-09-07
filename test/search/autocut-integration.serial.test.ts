@@ -38,6 +38,10 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // Autocut is OFF in every bundle since the ranker wave's rule R2 receipt
+  // (LongMemEval strict recall 449 → 379 of 470 under the cut). This file tests
+  // the mechanism itself, so it turns the knob on through the config plane.
+  await engine.setConfig('search.autocut', 'true');
 
   // Seed 5 pages sharing a keyword so the candidate pool is 5 deep.
   const pages: Array<[string, PageInput, string]> = [
@@ -76,8 +80,8 @@ function rerankerWithScores(scores: number[]) {
     input.documents.map((_, i) => ({ index: i, relevanceScore: scores[i] ?? 0.01 }));
 }
 
-// balanced mode (the default) has autocut ON. We pass opts.reranker to stub
-// the cross-encoder; resolvedMode.autocut stays true (no search.mode config).
+// `search.autocut=true` is pinned in beforeAll (the bundle default is off). We
+// pass opts.reranker to stub the cross-encoder; resolvedMode.autocut is true.
 function rerankerOpts(scores: number[]): SearchOpts['reranker'] {
   return {
     enabled: true,

@@ -64,7 +64,8 @@ if [ "$DIFF" = "1" ]; then
       echo "[ci-local] --diff: diff is doc-only — skipping postgres + unit + E2E (Tier 2 fast-path)."
       echo "[ci-local] Running gitleaks on host as the only gate..."
       if ! command -v gitleaks >/dev/null 2>&1; then
-        echo "[ci-local] WARN: gitleaks not installed; skipping. brew install gitleaks." >&2
+        echo "[ci-local] ERROR: gitleaks not installed; the required secrets scan cannot run. Install gitleaks and retry." >&2
+        exit 1
       else
         gitleaks dir . --redact --no-banner
         gitleaks git . --redact --no-banner --log-opts="origin/master..HEAD"
@@ -193,6 +194,10 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
+echo "[runner] serial tests (DATABASE_URL unset)"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
+echo "[runner] slow tests (DATABASE_URL unset)"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:slow
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded, --diff selected)"
@@ -200,10 +205,13 @@ SELECTED=$(bun run scripts/select-e2e.ts)
 if [ -z "$SELECTED" ]; then
   echo "[runner] selector emitted nothing (doc-only diff); skipping E2E."
 else
+  printf "%s\n" "$SELECTED" > /tmp/e2e-selected.txt
   DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
   GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
   GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-  echo "$SELECTED" | xargs bash scripts/run-e2e.sh
+  GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
+  GBRAIN_TEST_DB=1 \
+  xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh
 fi'
   else
     RUN_PHASES_CMD='echo "[runner] guards + typecheck"
@@ -212,12 +220,18 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
+echo "[runner] serial tests (DATABASE_URL unset)"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
+echo "[runner] slow tests (DATABASE_URL unset)"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:slow
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] e2e (unsharded)"
 DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
 GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \
 GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
+GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
+GBRAIN_TEST_DB=1 \
 bash scripts/run-e2e.sh'
   fi
 else
@@ -240,6 +254,10 @@ bash scripts/check-progress-to-stdout.sh
 bash scripts/check-trailing-newline.sh
 bash scripts/check-wasm-embedded.sh
 bun run typecheck
+echo \"[runner] serial tests (DATABASE_URL unset)\"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:serial
+echo \"[runner] slow tests (DATABASE_URL unset)\"
+env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:slow
 echo \"[runner] Tier 3: PGLite snapshot fixture (idempotent; rebuilds on hash drift)\"
 # W0 fix-wave (Tier-1 #16): unconditional call — the build script self-
 # short-circuits on a fresh hash and rebuilds STALE snapshots (the old
@@ -273,12 +291,16 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
     GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
+    GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
+    GBRAIN_TEST_DB=1 \\
     xargs -a /tmp/e2e-selected.txt bash scripts/run-e2e.sh >> \$log 2>&1
   else
     SHARD=\${shard}/4 \\
     DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
     GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer \\
     GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \\
+    GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
+    GBRAIN_TEST_DB=1 \\
     bash scripts/run-e2e.sh >> \$log 2>&1
   fi
   e2e_exit=\$?
@@ -290,6 +312,9 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
 ' _ {}
 shard_xargs_exit=\$?
 set -e
+mkdir -p .context/ci-local-shards
+cp /tmp/shard-logs/shard-*.log .context/ci-local-shards/
+echo \"[runner] Complete shard logs saved to .context/ci-local-shards/\"
 echo \"\"
 echo \"=== SHARD LOGS (last 30 lines each + unit/e2e summaries) ===\"
 for s in 1 2 3 4; do
@@ -317,23 +342,31 @@ fi
 INNER_CMD=$(cat <<'EOF'
 set -euo pipefail
 echo "[runner] bun version: $(bun --version)"
-# The oven/bun image omits git; many unit tests use mkdtemp + git init for fixtures.
-if ! command -v git >/dev/null 2>&1; then
-  echo "[runner] Installing git (debian apt)..."
+# Test prerequisites may be missing even in a warm runner image: git backs
+# fixture repos, python3 backs security scans and argv recorders, and ps backs
+# live-process / PID-reuse lock checks. psql cleans up connections between E2E
+# files. None are application dependencies.
+if ! command -v git >/dev/null 2>&1 || \
+   ! command -v python3 >/dev/null 2>&1 || \
+   ! command -v ps >/dev/null 2>&1 || \
+   ! command -v psql >/dev/null 2>&1; then
+  echo "[runner] Installing test prerequisites (debian apt)..."
   apt-get update -qq >/dev/null
-  apt-get install -y -qq git ca-certificates >/dev/null
+  apt-get install -y -qq git ca-certificates python3 procps postgresql-client >/dev/null
 fi
 # Container runs as root (uid 0) against a host-uid bind-mount; mark repo +
 # any worktree gitdir as safe so `git status` etc. don't refuse.
 git config --global --add safe.directory '*' || true
-if [ ! -d /app/node_modules ] || [ -z "$(ls -A /app/node_modules 2>/dev/null)" ]; then
-  echo "[runner] First run (or --clean): bun install --frozen-lockfile"
-  bun install --frozen-lockfile
-fi
+# Revalidate even a warm dependency volume against this checkout's lockfile.
+echo "[runner] bun install --frozen-lockfile"
+bun install --frozen-lockfile
 __RUN_PHASES__
 EOF
 )
-INNER_CMD="${INNER_CMD/__RUN_PHASES__/$RUN_PHASES_CMD}"
+# Concatenate around the marker instead of using replacement expansion:
+# Bash 5.2 expands unquoted '&' in a replacement to the matched marker,
+# corrupting shell redirects such as 2>&1. These slices also work on Bash 3.2.
+INNER_CMD="${INNER_CMD%%__RUN_PHASES__*}${RUN_PHASES_CMD}${INNER_CMD#*__RUN_PHASES__}"
 
 # Conductor / git-worktree support: when `.git` is a file (not a directory),
 # it points at a host gitdir outside the bind-mount. Without remounting that

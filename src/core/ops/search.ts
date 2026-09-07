@@ -1,3 +1,4 @@
+import { readHolders } from './context.ts';
 /**
  * Search operation cluster (search + query) — pure move from operations.ts
  * (v0.46.x tranche 1). search_by_image stays in operations.ts (v0.36 Phase 2
@@ -220,7 +221,7 @@ const search: Operation = {
     const keywordOnly = (await ctx.engine.getConfig('search.mcp_keyword_only')) === 'true';
 
     if (keywordOnly) {
-      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, ...(types ? { types } : {}), ...scope });
+      const raw = await ctx.engine.searchKeyword(queryText, { limit, offset, excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope });
       const results = dedupResults(raw);
       // #3783 — every row here IS a keyword hit (direct FTS path); mark
       // before stamping so evidence still reads keyword_exact.
@@ -230,11 +231,11 @@ const search: Operation = {
       // #1699: the keyword-only opt-out must STILL surface the content_flag
       // agent-warning channel (hybridSearch stamps it; this branch bypasses
       // hybridSearch, so stamp explicitly). Fail-open inside the helper.
-      await stampContentFlags(ctx.engine, results);
+      await stampContentFlags(ctx.engine, results, { ...scope, excludePrivate });
       // #160: same for the unverified auto-extracted stub marker (no boost
       // to cancel on this path — keyword-only never applies the compiled-
       // truth boost — but the provenance marker must still surface).
-      await stampUnverifiedExtractions(ctx.engine, results);
+      await stampUnverifiedExtractions(ctx.engine, results, { ...scope, excludePrivate });
       bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
       maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
       ctx.emitResponseMeta?.('retrieval', buildRetrievalResponseMeta(queryText, results, null, { conceptHint: true }));
@@ -250,6 +251,8 @@ const search: Operation = {
       offset,
       expansion: false,
       excludePrivate,
+      requireSafeChunks: ctx.remote !== false,
+      takesHoldersAllowList: readHolders(ctx),
       ...(types ? { types } : {}),
       ...scope,
       ...(perCallMode ? { mode: perCallMode } : {}),
@@ -440,6 +443,8 @@ const query: Operation = {
         offset: (p.offset as number) || 0,
         embeddingColumn: 'embedding_image',
         excludePrivate,
+        requireSafeChunks: ctx.remote !== false,
+        takesHoldersAllowList: readHolders(ctx),
         ...(types ? { types } : {}),
         ...querySourceScope,
       });
@@ -467,8 +472,8 @@ const query: Operation = {
     // cross-source mode (matches SearchOpts.sourceId contract).
     let capturedMeta: HybridSearchMeta | null = null;
     // v0.32.x search-lite: route the query op through hybridSearchCached so
-    // semantic cache + token budget + intent weighting fire automatically.
-    // Plain hybridSearch remains the bare API for callers that opt out.
+    // token budget and intent weighting apply at the operation boundary.
+    // Semantic cache reuse is suspended in the wrapper.
     // (#1663: `let` — the CRAG gate below may swap in an escalated run.)
     let results = await hybridSearchCached(ctx.engine, queryText, {
       // #4356 — was a hard `|| 20`, independent of the mode-resolution
@@ -482,6 +487,8 @@ const query: Operation = {
       limit: (p.limit as number) || undefined,
       offset: (p.offset as number) || 0,
       excludePrivate,
+      requireSafeChunks: ctx.remote !== false,
+      takesHoldersAllowList: readHolders(ctx),
       expansion: expand,
       expandFn: expand ? expandQuery : undefined,
       // T4/D5 — per-call mode (local/trusted only; remote ignored).
@@ -513,9 +520,8 @@ const query: Operation = {
       // (master's #1182 cleanup of the duplicate sourceScopeOpts spread).
       embeddingColumn: embeddingColumnParam,
       // v0.41.33 — agent-explicit adaptive return-sizing. Omitted = off
-      // (config default applies). 2026-08 wave (E5b): adaptive-on calls now
-      // CACHE — the gate params + resolved intent class key the semantic
-      // cache via the KNOBS_HASH v=27 fold (the old skip-when-on is gone).
+      // (config default applies). The wrapper still applies adaptive sizing
+      // while semantic cache reuse is suspended.
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
       // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
       // reranked modes). `false` forces the full top-K.
@@ -564,6 +570,9 @@ const query: Operation = {
           const effectiveLimit = await resolveEffectiveLimit(ctx, p);
           let escalatedMeta: HybridSearchMeta | null = null;
           const escalated = await hybridSearchCached(ctx.engine, queryText, {
+            excludePrivate,
+            requireSafeChunks: ctx.remote !== false,
+            takesHoldersAllowList: readHolders(ctx),
             limit: Math.max(effectiveLimit, 50),
             offset: (p.offset as number) || 0,
             expansion: true,
@@ -794,13 +803,13 @@ const cache_stats: Operation = {
   handler: async (ctx) => {
     const { withRelationGuard } = await import('./contract.ts');
     return withRelationGuard(async () => {
-      const { SemanticQueryCache, loadCacheConfig } = await import('../search/query-cache.ts');
+      const { SemanticQueryCache, loadCacheConfig, semanticResultCacheAvailable } = await import('../search/query-cache.ts');
       const config = await loadCacheConfig(ctx.engine);
       const cache = new SemanticQueryCache(ctx.engine, config);
       const stats = await cache.stats();
       return {
         schema_version: 1,
-        enabled: config.enabled ?? true,
+        enabled: semanticResultCacheAvailable() && (config.enabled ?? true),
         similarity_threshold: config.similarityThreshold,
         ttl_seconds: config.ttlSeconds,
         ...stats,

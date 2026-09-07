@@ -236,7 +236,7 @@ describe('v0.41.2.1: discoverExtractablePages SQL contract', () => {
   test('executeRaw failure returns [] (fail-soft, transcript path proceeds)', async () => {
     // Inject a SQL error by passing a sourceId that breaks the query —
     // actually easier: temporarily replace executeRaw to throw.
-    const realExecute = engine.executeRaw.bind(engine);
+    const realExecute = engine.executeRaw;
     (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
       async () => { throw new Error('synthetic discovery failure'); };
     try {
@@ -636,16 +636,17 @@ describe('local extract-atoms config knobs — invalid-value fallbacks', () => {
    * resolvePageDiscoveryLimit's parse/clamp behavior without exporting it.
    */
   async function effectiveDiscoveryLimit(): Promise<number> {
-    const realExecute = engine.executeRaw.bind(engine);
+    const realExecute = engine.executeRaw;
     let limitParam: number | undefined;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = (async (
+    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = (async function (
+      this: PGLiteEngine,
       sql: string,
       params?: unknown[],
-    ) => {
+    ) {
       if (sql.includes('atoms_scan_hash') && sql.includes('LIMIT $4')) {
         limitParam = Number((params ?? [])[3]);
       }
-      return realExecute(sql as never, params as never);
+      return realExecute.call(this, sql as never, params as never);
     }) as typeof engine.executeRaw;
     try {
       await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: stubChat('[]') });

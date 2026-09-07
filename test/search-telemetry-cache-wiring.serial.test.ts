@@ -1,22 +1,8 @@
 /**
- * Regression wiring test for #2952 — cache classification reaches telemetry.
- *
- * Pre-fix, `recordSearchTelemetry` fired only from bare `hybridSearch`, whose
- * meta never carries a `cache` field, and a cache HIT returned from
- * `hybridSearchCached` before any record at all. Net effect on a live brain:
- * `search stats` reported `0 hit / 0 miss` forever while the `query_cache`
- * table grew, and hit searches vanished from count/results/tokens/rank-1.
- *
- * This file drives the REAL pipeline (PGLite brain, real SemanticQueryCache
- * store→lookup roundtrip, mocked `embedQuery` for a deterministic vector) and
- * pins the decision matrix:
- *
- *   - consulted + no row  → recorded once with cache_miss
- *   - consulted + row     → recorded once with cache_hit (plus results/rank-1)
- *   - consult skipped     → recorded once with neither counter
- *   - bare hybridSearch   → recorded once with neither counter (unchanged)
- *
- * Serial: mock.module + gateway/global-env mutation (isolation guard R2).
+ * Production-wrapper regression coverage with semantic response caching disabled.
+ * Fresh reads must retain filtering, metadata and telemetry guarantees; legacy
+ * cache implementation behavior is covered by the direct cache-class suites.
+ * Serial because embedding and gateway configuration are process-global.
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -86,16 +72,9 @@ async function readCounters(): Promise<Counters> {
 }
 
 beforeAll(async () => {
-  // Hermetic config home so the developer's real ~/.gbrain/config.json can't
-  // leak an embedding_model that flips isCacheSafe → 'disabled'.
   tmpHome = mkdtempSync(join(tmpdir(), 'gbrain-cache-telemetry-'));
   process.env.GBRAIN_HOME = tmpHome;
 
-  // Pin the gateway to a 1536d provider BEFORE initSchema so the
-  // query_cache.embedding column is sized for the mock vectors, and so
-  // isAvailable('embedding') lets the cache consult proceed. The fake key is
-  // never used — embedQuery is mocked above. (Pattern:
-  // test/query-cache-knobs-hash.serial.test.ts.)
   resetGateway();
   configureGateway({
     embedding_model: 'openai:text-embedding-3-large',
@@ -107,10 +86,6 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
 
-  // Keyword-findable fixtures so the inner search returns rows (a non-empty
-  // result set is what arms the cache writeback). searchKeyword joins
-  // content_chunks, so pages need explicit chunks — putPage alone leaves the
-  // chunk table empty (pattern: test/chunk-grain-fts.test.ts).
   await engine.putPage('alice-foo', {
     type: 'person',
     title: 'Alice Foo',
@@ -146,54 +121,42 @@ beforeEach(async () => {
 });
 
 describe('hybridSearchCached — telemetry carries the cache outcome', () => {
-  test('miss then hit: one record per search, classified, hit keeps results/rank-1 telemetry', async () => {
-    // Call 1 — cache consulted, empty → miss.
+  test('repeated fresh reads each record results and rank-1 without cache hit or miss counts', async () => {
     const first = await hybridSearchCached(engine, 'alice telemetry fixtures', { limit: 5 });
     expect(first.length).toBeGreaterThan(0);
     await awaitPendingSearchCacheWrites();
 
-    // Sanity: the writeback actually landed, so call 2 exercises a REAL hit
-    // (a broken writeback would otherwise fail the hit assertion ambiguously).
     const cacheRows = await engine.executeRaw<{ n: number }>(
       'SELECT COUNT(*)::int AS n FROM query_cache',
     );
-    expect(cacheRows[0].n).toBeGreaterThan(0);
+    expect(cacheRows[0].n).toBe(0);
 
-    const afterMiss = await readCounters();
-    expect(afterMiss.c).toBe(1);
-    expect(afterMiss.miss).toBe(1);
-    expect(afterMiss.hit).toBe(0);
-    expect(afterMiss.rank1).toBe(1);
-    expect(afterMiss.results).toBeGreaterThan(0);
+    const afterFirst = await readCounters();
+    expect(afterFirst.c).toBe(1);
+    expect(afterFirst.miss).toBe(0);
+    expect(afterFirst.hit).toBe(0);
+    expect(afterFirst.rank1).toBe(1);
+    expect(afterFirst.results).toBeGreaterThan(0);
 
-    // Call 2 — identical query + knobs, deterministic embedding → hit.
     let meta: import('../src/core/types.ts').HybridSearchMeta | undefined;
     const second = await hybridSearchCached(engine, 'alice telemetry fixtures', {
       limit: 5,
       onMeta: (m) => { meta = m; },
     });
-    expect(meta?.cache?.status).toBe('hit');
+    expect(meta?.cache?.status).toBe('disabled');
     expect(second.length).toBeGreaterThan(0);
 
-    const afterHit = await readCounters();
-    // Pre-fix both sides of this were wrong: hit stayed 0 forever AND the hit
-    // search was missing from count entirely (c would read 1, not 2).
-    expect(afterHit.c).toBe(2);
-    expect(afterHit.miss).toBe(1);
-    expect(afterHit.hit).toBe(1);
-    // The hit search contributes results/rank-1/tokens telemetry too.
-    expect(afterHit.rank1).toBe(2);
-    expect(afterHit.results).toBeGreaterThan(afterMiss.results);
-    // Token parity (codex): the hit serves the SAME result set the miss
-    // stored, so its token contribution must EQUAL the miss's — a hit/miss
-    // accounting asymmetry (e.g. hits counting tokens the miss convention
-    // skips) would break this exact-delta check.
-    expect(afterHit.tokens - afterMiss.tokens).toBe(afterMiss.tokens);
+    const afterSecond = await readCounters();
+    expect(afterSecond.c).toBe(2);
+    expect(afterSecond.miss).toBe(0);
+    expect(afterSecond.hit).toBe(0);
+    expect(afterSecond.rank1).toBe(2);
+    expect(afterSecond.results).toBeGreaterThan(afterFirst.results);
+    expect(afterSecond.tokens - afterFirst.tokens).toBe(afterFirst.tokens);
   });
 
-  test('lookup-embed failure: consult degrades to disabled — recorded once, neither counter', async () => {
+  test('embedding failure keeps keyword fallback and records once without cache counters', async () => {
     embedBehavior = async () => { throw new Error('embed provider down'); };
-    // The failed consult must not break the search: keyword fallback serves.
     const results = await hybridSearchCached(engine, 'bob cache wiring', { limit: 5 });
     expect(results.length).toBeGreaterThan(0);
 
@@ -212,7 +175,6 @@ describe('hybridSearchCached — telemetry carries the cache outcome', () => {
     expect(counters.c).toBe(1);
     expect(counters.hit).toBe(0);
     expect(counters.miss).toBe(0);
-    // Telemetry otherwise unchanged: the search still counts fully.
     expect(counters.rank1).toBe(1);
     expect(counters.results).toBeGreaterThan(0);
   });
@@ -226,8 +188,6 @@ describe('bare hybridSearch — direct callers unchanged', () => {
       onMeta: (m) => { meta = m; },
     });
     expect(results.length).toBeGreaterThan(0);
-    // The onMeta contract is untouched: no cache field is injected into the
-    // caller-visible meta (the fold happens on the recorded copy only).
     expect(meta?.cache).toBeUndefined();
 
     const counters = await readCounters();

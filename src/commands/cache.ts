@@ -13,7 +13,7 @@
 
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
-import { SemanticQueryCache, loadCacheConfig } from '../core/search/query-cache.ts';
+import { SemanticQueryCache, loadCacheConfig, semanticResultCacheAvailable } from '../core/search/query-cache.ts';
 
 function printHelp(): void {
   // eslint-disable-next-line no-console
@@ -60,7 +60,7 @@ export async function runCache(args: string[]): Promise<void> {
       // eslint-disable-next-line no-console
       console.log('--------------------------');
       // eslint-disable-next-line no-console
-      console.log(`enabled                : ${cacheCfg.enabled ?? true}`);
+      console.log(`enabled                : ${semanticResultCacheAvailable() && (cacheCfg.enabled ?? true)}`);
       // eslint-disable-next-line no-console
       console.log(`similarity_threshold   : ${cacheCfg.similarityThreshold ?? 0.92}`);
       // eslint-disable-next-line no-console

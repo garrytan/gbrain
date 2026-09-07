@@ -13,7 +13,12 @@ Two decisions shape every gbrain lookup, and this guide covers both:
 ## The three mode bundles
 
 A search mode is a named preset that sets every search-cost knob at once.
-The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`):
+The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`).
+
+Semantic result caching is temporarily disabled in every mode, regardless of
+configuration or per-call overrides. The cache settings below are retained
+configuration values; each request performs fresh retrieval. Stored cache rows
+and maintenance commands remain available.
 
 | Knob                          | `conservative` | `balanced` | `tokenmax`     |
 |-------------------------------|----------------|------------|----------------|
@@ -23,10 +28,14 @@ The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`):
 | `intentWeighting`             | true           | true       | true           |
 | `tokenBudget`                 | **4000**       | **12000**  | **off**        |
 | `expansion` (LLM multi-query) | false          | false      | **true**       |
+| `expansion_variant_budget`    | `null` (legacy) | `null` (legacy) | `null` (legacy) |
 | `relationalRetrieval`         | false          | **true**   | **true**       |
+| `relational_rerank_pin`       | 3              | 3          | 3              |
+| `keyword_arm_confidence_floor` | `null` (off)  | `null` (off) | `null` (off)  |
+| `metadata_boost_gate`         | `lexical`      | `lexical`  | `lexical`      |
 | `searchLimit` default         | 10             | 25         | 50             |
 | `reranker` (cross-encoder)    | off            | `voyage:rerank-2.5` | `voyage:rerank-2.5` |
-| `autocut` (rerank-cliff cut)  | off            | on (0.35)  | on (0.35)      |
+| `autocut` (rerank-cliff cut)  | off            | off        | off            |
 
 - **`conservative`** — smallest payloads. Pairs naturally with a cheap
   downstream model (Haiku-class) or a high query volume.
@@ -34,15 +43,70 @@ The bundles are frozen in `src/core/search/mode.ts` (`MODE_BUNDLES`):
 - **`tokenmax`** — no token budget, LLM query expansion on, 50 results.
   Pairs with an expensive downstream model you want fully fed.
 
-Three of the knobs deserve a sentence:
+Seven of the knobs deserve a sentence:
 
 - **`expansion`** rewrites your query into multiple variants via a cheap
   LLM call per search (adds roughly $1.50 per 1K queries) — better recall,
   small extra cost.
+- **`expansion_variant_budget`** (config key
+  `search.expansion_variant_budget`) is the total RRF weight the expansion
+  variants share at fusion time (`weight_i = b / n_voting_arms`; the original
+  query's list always keeps weight 1). `null` — the default in every bundle —
+  is the legacy equal-weight fusion, under which the LongMemEval receipt shows
+  expansion halving small-k strict recall (93.19% → 54.89% `recall_all@5`); a
+  number in (0, 4] caps the variants' total influence (`1.0` lets two agreeing
+  variants exactly tie the original's top vote; `0.5` subordinates them). A
+  no-op when `expansion` is off. Ranker-wave receipt (same recorded variants
+  replayed at every budget): strict `recall_all@5` climbs monotonically as
+  the budget shrinks — 255/470 legacy → 394/470 at 0.25 — but even 0.25
+  trails plain hybrid (439/470) by 43 questions on the held-out decision set,
+  so the bundles keep `null` and the knob is an operator lever; if you keep
+  expansion on, `0.25` recovers most of the loss. **Say to your agent:**
+  *"Cap how much query expansion can outvote my original query"* (no skill backs this; your agent
+  runs `gbrain config set search.expansion_variant_budget <b>`, and
+  `gbrain config set search.expansion_variant_budget legacy` restores the
+  default).
 - **`relationalRetrieval`** adds a graph-walk recall arm for relational
   questions ("who invested in X", "what connects A and B"); it's a pure
   no-op for non-relational queries. The `query` op's `relational` flag
   forces it on/off per call.
+- **`relational_rerank_pin`** (config key `search.relational_rerank_pin`;
+  3 in every bundle) keeps those graph-walk answers from being buried by the
+  cross-encoder reranker: the reranker scores page TEXT, and an edge-derived
+  answer's text need not mention the entity you asked about, so on the
+  relational benchmark the reranker alone dropped hit@1 from 21/39 to 3/39.
+  After the reranker runs, up to this many relational-arm rows are pinned back
+  above the reranked text rows in their fused order; `0`/`off` restores the
+  pre-pin ranking. A pure no-op for non-relational queries and whenever the
+  reranker is off or failed open. It trusts the graph — if your edges are
+  stale, an edge answer now sits at the top rather than at the end of page 1.
+  **Say to your agent:** *"Stop pinning graph answers above the reranked
+  results"* (no skill backs this; your agent runs
+  `gbrain config set search.relational_rerank_pin off`, and
+  `gbrain config set search.relational_rerank_pin 3` restores the default).
+- **`metadata_boost_gate`** (config key `search.metadata_boost_gate`;
+  `lexical` in every bundle) decides whether the post-fusion metadata boosts
+  (backlinks, salience, recency, graph adjacency, alias resolution) run when
+  the vector arm was the only voter. Those boosts reward well-connected hub
+  pages; on paraphrase-style concept questions where no keyword, title or
+  relational row fused, they promoted hubs over the page that actually
+  matched. `lexical` skips them in that case and keeps the vector order;
+  `always` restores the pre-wave pipeline. Supersession, exact-match and
+  reranking are untouched either way. Receipt: conceptual-recall nDCG@5 rose
+  from 53.0 to 57.8 on held-out concepts with the entity, brain and
+  LongMemEval benchmarks byte-identical.
+  **Say to your agent:** *"Always apply backlink and recency boosts, even on
+  vector-only matches"* (no skill backs this; your agent runs
+  `gbrain config set search.metadata_boost_gate always`, and
+  `gbrain config set search.metadata_boost_gate lexical` restores the default).
+- **`keyword_arm_confidence_floor`** (config key
+  `search.keyword_arm_confidence_floor`; off in every bundle) down-weights the
+  keyword and title arms in the fusion when the keyword arm's top-vs-second
+  margin ratio is below the floor (only when a vector arm also voted and the
+  query is not relational). It ships off: its pre-registered conceptual-recall test did
+  not move the held-out score, and most of that gap came from pages the
+  keyword arm never matched at all. Operators with a noisy keyword arm can set
+  a floor in `(0, 1]`; `off` restores the default.
 - **`keywordOrFallback`** (on in every mode; config key
   `search.keywordOrFallback`) relaxes the keyword and title arms from AND
   to OR when strict AND matching finds nothing, so a multi-word query still
@@ -62,11 +126,11 @@ Per-knob resolution (highest first):
 
 Mode resolution lives in bare `hybridSearch`, not just the cached wrapper,
 so eval replays test the same mode-affected behavior as the production
-`query` op. The query cache folds the active knobs into its key
-(`knobs_hash`), so switching modes never serves you a stale result set
-from a different configuration. Cache hits honor the same result-count
-resolution as misses (per-call `limit`, else the mode's `searchLimit`) —
-a cached page is sliced to what you asked for, never a fixed count.
+`query` op. Result counts follow the per-call `limit`, or the mode's
+`searchLimit` when no limit is supplied. The wrapper does not read or write
+stored semantic results while caching is disabled. `gbrain search modes`
+reports effective `cache_enabled: false`, and `cache stats` reports
+`enabled: false`, even when retained configuration enables the cache.
 
 ### Cost intuition
 
@@ -81,9 +145,10 @@ Rough anchors at 10K queries/month, full payload, no cache savings:
 | balanced (~10K tok) | \$100/mo | \$300/mo | \$500/mo |
 | tokenmax (~20K tok) | \$200/mo | \$600/mo | **\$1,000/mo** |
 
-Scales linearly with volume. Cache hits cut all numbers ~50%; disciplined
-prompt caching in the agent loop cuts further. Mismatched pairings waste
-capacity in both directions — a tokenmax payload overwhelms a cheap model,
+Scales linearly with volume. Budget for fresh retrieval on every query while
+semantic result caching is disabled; repeated searches may take longer and use
+more provider calls. Downstream prompt caching in the agent loop is independent.
+Mismatched pairings waste capacity in both directions — a tokenmax payload overwhelms a cheap model,
 a conservative payload starves an expensive one. The full methodology and
 realistic-scale walkthrough live in
 [`docs/eval/SEARCH_MODE_METHODOLOGY.md`](../eval/SEARCH_MODE_METHODOLOGY.md).

@@ -28,9 +28,11 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
-import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
+import { keylessBrainEnv } from '../helpers/provider-env.ts';
+import { cliDiagnostic, fixtureDiagnostic, toolDiagnostic } from '../helpers/fixture-diagnostics.ts';
 import { join } from 'path';
 import { VERB_NAMES } from '../../src/core/verbs.ts';
 import { operations } from '../../src/core/operations.ts';
@@ -59,17 +61,20 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
   // DATABASE_URL would put the spawned serve on Postgres) and any ambient
   // kill-switch value (server B sets its own explicitly).
   function brainEnv(home: string): Record<string, string | undefined> {
-    const env: Record<string, string | undefined> = { ...process.env, GBRAIN_HOME: home };
-    delete env.DATABASE_URL;
-    delete env.GBRAIN_DATABASE_URL;
-    delete env.GBRAIN_MCP_FORCE_SURFACE;
-    return env;
+    return keylessBrainEnv(process.env, home, {
+      DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined,
+      GBRAIN_MCP_FORCE_SURFACE: undefined, GBRAIN_REMOTE_CLIENT_SECRET: undefined,
+    });
   }
 
   function cli(env: Record<string, string | undefined>, args: string[]): string {
-    return execFileSync('bun', ['run', 'src/cli.ts', ...args], {
+    const result = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', ...args], {
       cwd: process.cwd(), env, encoding: 'utf8',
     });
+    if (result.status !== 0) throw new Error(cliDiagnostic(args[0], {
+      exitCode: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '',
+    }));
+    return result.stdout;
   }
 
   async function waitReady(base: string, stderrRef: { text: string }): Promise<boolean> {
@@ -80,7 +85,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
       } catch { /* not up yet */ }
       await new Promise((r) => setTimeout(r, 500));
     }
-    throw new Error(`serve --http did not become ready at ${base}:\n${stderrRef.text.slice(-800)}`);
+    throw new Error(fixtureDiagnostic("serve --http readiness", stderrRef.text));
   }
 
   beforeAll(async () => {
@@ -94,7 +99,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
     cli(envA, ['init', '--pglite', '--no-embedding', '--non-interactive']);
     const authA = cli(envA, ['auth', 'create', 'e2e-surface-bare']);
     bareTokenA = (authA.match(/gbrain_[a-f0-9]{64}/) ?? [''])[0];
-    if (!bareTokenA) throw new Error(`auth create did not yield a token:\n${authA}`);
+    if (!bareTokenA) throw new Error("auth create did not yield a token");
 
     const reg = cli(envA, [
       'auth', 'register-client', 'e2e-surface-full-preset',
@@ -103,37 +108,37 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
     ]);
     fullClientId = (reg.match(/Client ID:\s+(\S+)/) ?? ['', ''])[1];
     fullClientSecret = (reg.match(/Client Secret:\s+(\S+)/) ?? ['', ''])[1];
-    if (!fullClientId || !fullClientSecret) throw new Error(`register-client did not yield creds:\n${reg}`);
+    if (!fullClientId || !fullClientSecret) throw new Error("register-client did not yield credentials");
     // The "full preset": pin the client's row surface to 'full' — the widest
     // possible per-client request. The verbs ceiling must still win.
     const rescope = cli(envA, ['auth', 'rescope-client', fullClientId, '--surface', 'full']);
-    if (!/full/.test(rescope)) throw new Error(`rescope-client --surface full did not confirm:\n${rescope}`);
+    if (!/full/.test(rescope)) throw new Error(fixtureDiagnostic("rescope-client --surface full", rescope));
 
     // ── Brain B: bare legacy token only (kill-switch server).
     cli(envB, ['init', '--pglite', '--no-embedding', '--non-interactive']);
     const authB = cli(envB, ['auth', 'create', 'e2e-surface-force']);
     bareTokenB = (authB.match(/gbrain_[a-f0-9]{64}/) ?? [''])[0];
-    if (!bareTokenB) throw new Error(`auth create did not yield a token:\n${authB}`);
+    if (!bareTokenB) throw new Error("auth create did not yield a token");
 
     // ── Spawn both servers. B carries the kill switch set to FULL — the
     // widening attempt this suite proves impossible.
     const errA = { text: '' };
     const errB = { text: '' };
     serverA = spawn('bun', [
-      'run', 'src/cli.ts', 'serve', '--http', '--surface', 'verbs',
+      '--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--surface', 'verbs',
       '--bind', '127.0.0.1', '--port', String(PORT_A), '--public-url', BASE_A,
     ], { cwd: process.cwd(), env: envA, stdio: ['ignore', 'pipe', 'pipe'] });
-    serverA.stderr?.on('data', (d: Buffer) => { errA.text += d.toString(); });
+    serverA.stderr?.on('data', (d: Buffer) => { errA.text = (errA.text + d.toString()).slice(-4000); });
 
     serverB = spawn('bun', [
-      'run', 'src/cli.ts', 'serve', '--http', '--surface', 'verbs',
+      '--no-env-file', 'run', 'src/cli.ts', 'serve', '--http', '--surface', 'verbs',
       '--bind', '127.0.0.1', '--port', String(PORT_B), '--public-url', BASE_B,
     ], {
       cwd: process.cwd(),
       env: { ...envB, GBRAIN_MCP_FORCE_SURFACE: 'full' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    serverB.stderr?.on('data', (d: Buffer) => { errB.text += d.toString(); });
+    serverB.stderr?.on('data', (d: Buffer) => { errB.text = (errB.text + d.toString()).slice(-4000); });
 
     readyA = await waitReady(BASE_A, errA);
     readyB = await waitReady(BASE_B, errB);
@@ -144,7 +149,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `grant_type=client_credentials&client_id=${fullClientId}&client_secret=${fullClientSecret}&scope=${encodeURIComponent('read write')}`,
     });
-    if (!tokenRes.ok) throw new Error(`token mint failed: ${tokenRes.status} ${await tokenRes.text()}`);
+    if (!tokenRes.ok) throw new Error(fixtureDiagnostic("token mint", `status=${tokenRes.status} ${await tokenRes.text()}`, [fullClientSecret]));
     fullPresetToken = ((await tokenRes.json()) as { access_token: string }).access_token;
   }, 120_000);
 
@@ -163,7 +168,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
     const trimmed = text.trim();
     if (trimmed.startsWith('{')) return JSON.parse(trimmed);
     const dataLines = trimmed.split('\n').filter((l) => l.startsWith('data:'));
-    if (dataLines.length === 0) throw new Error('No JSON-RPC payload in /mcp response: ' + trimmed.slice(0, 300));
+    if (dataLines.length === 0) throw new Error(fixtureDiagnostic('No JSON-RPC payload', trimmed));
     return JSON.parse(dataLines[dataLines.length - 1].slice('data:'.length).trim());
   }
 
@@ -252,7 +257,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
       name: 'remember',
       arguments: { fact: factText, provenance: 'e2e: serve-http-surface-ceiling' },
     });
-    expect(rememberResult.isError).toBeFalsy();
+    expect(rememberResult.isError, toolDiagnostic("verbs roundtrip", rememberResult)).toBeFalsy();
     const remembered = JSON.parse(rememberResult.content[0].text);
     expect(remembered.protocol_version).toBe(1);
     expect(remembered.status).toBe('inserted');
@@ -262,7 +267,7 @@ describe('serve --http --surface verbs ceiling E2E (hermetic PGLite)', () => {
       name: 'recall',
       arguments: {},
     });
-    expect(recallResult.isError).toBeFalsy();
+    expect(recallResult.isError, toolDiagnostic("verbs roundtrip", recallResult)).toBeFalsy();
     const recalled = JSON.parse(recallResult.content[0].text);
     expect(recalled.protocol_version).toBe(1);
     expect(Array.isArray(recalled.facts)).toBe(true);
