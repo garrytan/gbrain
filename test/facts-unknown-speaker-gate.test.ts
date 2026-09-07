@@ -21,6 +21,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { isUnknownSpeakerLabel } from '../src/core/facts/extract.ts';
+import { isNullLikeEntity } from '../src/core/facts/write-single.ts';
 
 describe('isUnknownSpeakerLabel — POSITIVE (anonymous-speaker tokens → nulled)', () => {
   const anonymous = [
@@ -85,9 +86,16 @@ describe('isUnknownSpeakerLabel — NEGATIVE (real entities preserved; guard aga
 
 describe('gate semantics at the choke point (entity mapping)', () => {
   // Mirrors the exact expression in extractFactsFromTurn's candidate loop:
-  //   entity_slug: isUnknownSpeakerLabel(candidate.entity) ? null : (candidate.entity ?? null)
+  //   entity_slug: isUnknownSpeakerLabel(candidate.entity) || isNullLikeEntity(candidate.entity)
+  //     ? null : (candidate.entity ?? null)
   const mapEntity = (entity: string | null | undefined): string | null =>
-    isUnknownSpeakerLabel(entity) ? null : (entity ?? null);
+    isUnknownSpeakerLabel(entity) || isNullLikeEntity(entity) ? null : (entity ?? null);
+
+  test('(#4755) null-like placeholder strings → entity nulled; real names preserved', () => {
+    for (const tok of ['null', 'None', 'n/a', 'undefined']) expect(mapEntity(tok)).toBeNull();
+    expect(mapEntity('people/alice-example')).toBe('people/alice-example');
+    expect(mapEntity('Nullsoft')).toBe('Nullsoft');
+  });
 
   test('(a) first-person self-assertion from anonymous speaker → entity nulled', () => {
     // LLM echoed the speaker label as the entity for "Speaker A: I'm joining Acme".

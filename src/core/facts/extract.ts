@@ -30,6 +30,7 @@ import { resolveModel } from '../model-config.ts';
 import { normalizeModelId } from '../model-id.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
+import { isNullLikeEntity } from './write-single.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -623,7 +624,13 @@ export async function extractFactsFromTurnWithOutcome(
       // as the entity (self-attribution of a first-person claim from a speaker
       // we cannot identify), drop the attribution but KEEP the fact. Third-person
       // entities (e.g. "acme") never match this predicate and pass through.
-      entity_slug: isUnknownSpeakerLabel(candidate.entity) ? null : (candidate.entity ?? null),
+      // #4755: same for a null-like placeholder STRING ("null", "None", "n/a")
+      // where the prompt asked for JSON null — otherwise the resolver's
+      // fallback adopts the token as the slug and the facts land unreachable
+      // under entity_slug='null'. Same token set the `remember` verb applies.
+      entity_slug: isUnknownSpeakerLabel(candidate.entity) || isNullLikeEntity(candidate.entity)
+        ? null
+        : (candidate.entity ?? null),
       source: input.source,
       source_session: input.sessionId ?? null,
       confidence,
