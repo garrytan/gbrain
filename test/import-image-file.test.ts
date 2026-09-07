@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importImageFile, isImageFilePath, pLimit, SUPPORTED_IMAGE_EXTS } from '../src/core/import-file.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 
 let engine: PGLiteEngine;
 let tmpDir: string;
@@ -108,6 +109,7 @@ describe('importImageFile happy path (noEmbed)', () => {
     expect((chunks[0] as { chunk_source: string }).chunk_source).toBe('image_asset');
     // chunk_text falls back to filename when OCR is off (default).
     expect(chunks[0].chunk_text).toBe('photo.png');
+    expect(await engine.getChunks('originals/photos/photo.png', { requireSafeChunks: true })).toHaveLength(1);
   });
 
   test('idempotent on content_hash: re-import same bytes returns skipped', async () => {
@@ -118,6 +120,40 @@ describe('importImageFile happy path (noEmbed)', () => {
     expect(r1.status).toBe('imported');
     const r2 = await importImageFile(engine, target, 'photos/photo2.png', { noEmbed: true });
     expect(r2.status).toBe('skipped');
+  });
+
+  test('unchanged clean legacy images rebuild and seal instead of skipping on content hash', async () => {
+    const target = join(tmpDir, 'legacy.png');
+    writeFileSync(target, Buffer.from('synthetic-stable-image-bytes'));
+    const slug = 'photos/legacy.png';
+    await importImageFile(engine, target, slug, { noEmbed: true });
+    const page = (await engine.getPage(slug))!;
+    await engine.executeRaw('UPDATE pages SET chunker_version = 3 WHERE id = $1', [page.id]);
+    await engine.executeRaw('UPDATE content_chunks SET chunk_text = $1 WHERE page_id = $2', ['PRIVATE_OLD_IMAGE_FRAGMENT', page.id]);
+    expect(await engine.getChunks(slug, { requireSafeChunks: true })).toEqual([]);
+    expect(await importImageFile(engine, target, slug, { noEmbed: true })).toMatchObject({ status: 'imported' });
+    const [version] = await engine.executeRaw<{ chunker_version: number }>('SELECT chunker_version FROM pages WHERE id = $1', [page.id]);
+    expect(Number(version.chunker_version)).toBe(MARKDOWN_CHUNKER_VERSION);
+    const chunks = await engine.getChunks(slug, { requireSafeChunks: true });
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].chunk_text).toBe('legacy.png');
+    expect(JSON.stringify(chunks)).not.toContain('PRIVATE_OLD_IMAGE_FRAGMENT');
+  });
+
+  test('turning OCR off cannot certify unchanged pixels with known protected OCR content', async () => {
+    const target = join(tmpDir, 'protected.png');
+    writeFileSync(target, Buffer.from('synthetic-protected-image-bytes'));
+    const slug = 'photos/protected.png';
+    await importImageFile(engine, target, slug, { noEmbed: true });
+    const page = (await engine.getPage(slug))!;
+    await engine.putPage(slug, { ...page, compiled_truth: '<!--- gbrain:takes:begin -->\nPRIVATE_IMAGE_CANARY\n<!--- gbrain:takes:end -->' });
+    expect(await importImageFile(engine, target, slug, { noEmbed: true })).toMatchObject({ status: 'skipped', error: expect.stringContaining('Remove that content') });
+    expect(await engine.getChunks(slug, { requireSafeChunks: true })).toEqual([]);
+    expect((await engine.getPage(slug))!.compiled_truth).toContain('PRIVATE_IMAGE_CANARY');
+    writeFileSync(target, Buffer.from('changed-synthetic-image-bytes'));
+    expect(await importImageFile(engine, target, slug, { noEmbed: true })).toMatchObject({ status: 'skipped', error: expect.stringContaining('successful fresh OCR') });
+    expect(await engine.getChunks(slug, { requireSafeChunks: true })).toEqual([]);
+    expect((await engine.getPage(slug))!.compiled_truth).toContain('PRIVATE_IMAGE_CANARY');
   });
 
   test('routes page, chunks, and file metadata to the requested source (#2706)', async () => {

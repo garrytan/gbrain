@@ -1,3 +1,4 @@
+import { bodyWriteChunkVersion } from './search/safe-chunks.ts';
 /**
  * #1856 — write-through for manual timeline entries.
  *
@@ -406,7 +407,7 @@ export async function writeTimelineEntryThrough(
           spliceTimelineBlock(page.timeline ?? '', entry.date, rendered.block),
         );
         await engine.executeRaw(
-          `UPDATE pages SET timeline = $1, updated_at = now()
+          `UPDATE pages SET timeline = $1, chunker_version = ${bodyWriteChunkVersion('pages.compiled_truth', '$1')}, updated_at = now()
             WHERE slug = $2 AND source_id = $3 AND deleted_at IS NULL`,
           [newTimeline, slug, sourceId],
         );

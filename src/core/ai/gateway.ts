@@ -3404,6 +3404,12 @@ export interface ChatResult {
   };
   /** "provider:modelId" string of the model that actually answered. */
   model: string;
+  /**
+   * The model id the PROVIDER reported in its response (the API snapshot,
+   * e.g. `gpt-4o-2024-08-06`), when the SDK surfaced one. Eval receipts pin
+   * this alongside the requested id; absent when the provider reports none.
+   */
+  responseModel?: string;
   /** Recipe id for the answering provider. */
   providerId: string;
   /** Raw provider metadata (Anthropic-specific cache fields, OpenAI finish_reason, etc.) for downstream callers that need it. */
@@ -3418,6 +3424,12 @@ export interface ChatOpts {
   messages: ChatMessage[];
   tools?: ChatToolDef[];
   maxTokens?: number;
+  /**
+   * Sampling temperature, threaded verbatim to the AI SDK call. Left unset
+   * the provider's default applies; eval judges pin `0` (the official
+   * LongMemEval evaluate_qa.py setting) so verdicts are reproducible.
+   */
+  temperature?: number;
   abortSignal?: AbortSignal;
   /**
    * Per-call provider options keyed by recipe id, deep-merged LAST — after
@@ -3992,6 +4004,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       messages: toModelMessages(repairToolPairing(opts.messages)) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens: opts.maxTokens ?? defaultMaxOutputTokens(modelStr),
+      ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       // v0.42.20.0 — default a chat timeout (composes with the caller's signal,
       // shorter wins). Covers native-anthropic (the default provider + facts Haiku).
       abortSignal: withDefaultTimeout(opts.abortSignal, AI_CHAT_TIMEOUT_MS),
@@ -4064,12 +4077,14 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
       usage: { ...usageOut, cache_write_tokens: usageOut.cache_creation_tokens },
     });
 
+    const responseModelId = (result as any).response?.modelId;
     return {
       text: blocks.filter(b => b.type === 'text').map(b => (b as { type: 'text'; text: string }).text).join(''),
       blocks,
       stopReason: mapStopReason((result as any).finishReason, providerMetadata),
       usage: usageOut,
       model: `${recipe.id}:${modelId}`,
+      ...(typeof responseModelId === 'string' && responseModelId.length > 0 ? { responseModel: responseModelId } : {}),
       providerId: recipe.id,
       providerMetadata,
     };

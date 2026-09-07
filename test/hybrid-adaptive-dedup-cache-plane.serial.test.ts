@@ -1,20 +1,10 @@
 /**
- * 2026-08 fix wave (E5b) — cache-plane behavior flips in hybridSearchCached.
- *
- * Two changes moved in opposite directions and neither had an integration pin
- * (only the knobs-hash key-divergence was unit-pinned in search-mode.test.ts):
- *   1. adaptive-on calls now CACHE — the gate params + resolved intent class
- *      fold into knobsHash v=27, so the old blanket skip is gone. A regression
- *      that quietly re-adds the skip erases the wave's cost win; a regression
- *      that drops the hash fold is cross-config contamination.
- *   2. per-call dedupOpts now SKIPS the cache — it is result-affecting
- *      (maxPerPage/cosine overrides) but not part of the hash, so a
- *      maxPerPage:1 caller must never be served a stored default-cap row
- *      (same contamination class as #3985 types and #3442 dates).
- *
- * Serial: mock.module + gateway/global-env mutation (harness shape copied
- * from test/hybrid-types-cache-skip.serial.test.ts).
+ * Production-wrapper regression coverage with semantic response caching disabled.
+ * Fresh reads must retain filtering, metadata and telemetry guarantees; legacy
+ * cache implementation behavior is covered by the direct cache-class suites.
+ * Serial because embedding and gateway configuration are process-global.
  */
+
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, setDefaultTimeout, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -90,58 +80,51 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM query_cache');
 });
 
-describe('E5b — adaptive-on calls now cache (skip removed, hash-folded instead)', () => {
-  test('adaptive-on miss STORES a row; the identical adaptive-on lookup HITS it', async () => {
-    let missMeta: HybridSearchMeta | undefined;
+describe('adaptive return remains fresh during cache containment', () => {
+  test('adaptive-on calls return stable results without writing cache rows', async () => {
+    let firstMeta: HybridSearchMeta | undefined;
     const first = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       adaptiveReturn: true,
-      onMeta: (m) => { missMeta = m; },
+      onMeta: (m) => { firstMeta = m; },
     });
-    // Pre-wave this was 'disabled' (blanket adaptive skip). Now it runs the
-    // cache plane: miss + store.
-    expect(missMeta?.cache?.status).toBe('miss');
+    expect(firstMeta?.cache?.status).toBe('disabled');
     expect(first.length).toBeGreaterThan(0);
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    let hitMeta: HybridSearchMeta | undefined;
+    let repeatMeta: HybridSearchMeta | undefined;
     const second = await hybridSearchCached(engine, 'builder', {
       limit: 10,
       adaptiveReturn: true,
-      onMeta: (m) => { hitMeta = m; },
+      onMeta: (m) => { repeatMeta = m; },
     });
-    expect(hitMeta?.cache?.status).toBe('hit');
+    expect(repeatMeta?.cache?.status).toBe('disabled');
     expect(second.map((r) => r.slug).sort()).toEqual(first.map((r) => r.slug).sort());
   });
 
-  test('an adaptive-on row is NEVER served to an adaptive-off lookup (v=27 key divergence, end to end)', async () => {
+  test('switching adaptive return off leaves the cache empty', async () => {
     await hybridSearchCached(engine, 'builder', { limit: 10, adaptiveReturn: true });
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
     let offMeta: HybridSearchMeta | undefined;
     await hybridSearchCached(engine, 'builder', {
       limit: 10,
       onMeta: (m) => { offMeta = m; },
     });
-    // Same query, same embedding (cosine 1.0) — only knobsHash separates
-    // them. A 'hit' here means the ar=/ari= fold regressed out of the key.
-    expect(offMeta?.cache?.status).toBe('miss');
+    expect(offMeta?.cache?.status).toBe('disabled');
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(2);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
   });
 });
 
-describe('E5b adjunct — per-call dedupOpts skips the cache (not hash-folded)', () => {
-  test('a stored default-cap row is never served to a dedupOpts read (and the dedupOpts run stores nothing)', async () => {
-    // 1. Plain miss-run stores a row.
+describe('per-call dedup remains fresh during cache containment', () => {
+  test('default and dedupOpts reads both leave the cache empty', async () => {
     await hybridSearchCached(engine, 'builder', { limit: 10 });
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
 
-    // 2. Same query WITH per-call dedupOpts: identical embedding + knobs
-    //    would have HIT the stored row — must bypass instead.
     let dedupMeta: HybridSearchMeta | undefined;
     await hybridSearchCached(engine, 'builder', {
       limit: 10,
@@ -150,10 +133,7 @@ describe('E5b adjunct — per-call dedupOpts skips the cache (not hash-folded)',
     });
     expect(dedupMeta?.cache?.status).toBe('disabled');
 
-    // 3. The dedupOpts run must not have stored anything either — a
-    //    maxPerPage:1 result set served to a default-cap lookup is the
-    //    reverse contamination.
     await awaitPendingSearchCacheWrites();
-    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(1);
+    expect((await engine.executeRaw('SELECT id FROM query_cache')).length).toBe(0);
   });
 });

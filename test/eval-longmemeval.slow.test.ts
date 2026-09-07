@@ -359,30 +359,48 @@ describe('loadResumeSet (v0.35.1.0)', () => {
 // buildByTypeSummary (pure function — no PGLite, no LLM)
 // ---------------------------------------------------------------------------
 
-describe('buildByTypeSummary (pure function)', () => {
-  test('populated buckets produce sorted keys + rate math', async () => {
+describe('buildByTypeSummary (pure function, schema v2)', () => {
+  const ctx = {
+    k: 5,
+    excludedAbstention: 1,
+    goldMissingFromHaystack: 0,
+    slugCollisions: 0,
+    runConfig: { mode: 'balanced' },
+  };
+
+  test('populated buckets produce sorted keys + all/any rate math', async () => {
     const { buildByTypeSummary } = await import('../src/commands/eval-longmemeval.ts');
     const summary = buildByTypeSummary({
-      'multi-session': { hit: 10, total: 10 },
-      'single-session-user': { hit: 18, total: 19 },
-    });
+      'multi-session': { total: 10, all_hit: 8, any_hit: 10, legacy_rows: 0 },
+      'single-session-user': { total: 19, all_hit: 18, any_hit: 18, legacy_rows: 0 },
+    }, { ...ctx, distinctSessionsInTopK: [5, 5, 4] });
     expect(summary.kind).toBe('by_type_summary');
-    expect(summary.schema_version).toBe(1);
+    expect(summary.schema_version).toBe(2);
+    expect(summary.metric).toBe('recall_all@k');
+    expect(summary.k).toBe(5);
     // Sorted alphabetically.
     expect(Object.keys(summary.recall_by_type)).toEqual(['multi-session', 'single-session-user']);
-    expect(summary.recall_by_type['multi-session'].rate).toBeCloseTo(1.0, 5);
-    expect(summary.recall_by_type['single-session-user'].rate).toBeCloseTo(18 / 19, 5);
-    expect(summary.aggregate.hit).toBe(28);
+    expect(summary.recall_by_type['multi-session'].all_rate).toBeCloseTo(0.8, 5);
+    expect(summary.recall_by_type['multi-session'].any_rate).toBeCloseTo(1.0, 5);
+    expect(summary.recall_by_type['single-session-user'].all_rate).toBeCloseTo(18 / 19, 5);
+    expect(summary.aggregate.all_hit).toBe(26);
+    expect(summary.aggregate.any_hit).toBe(28);
     expect(summary.aggregate.total).toBe(29);
-    expect(summary.aggregate.rate).toBeCloseTo(28 / 29, 5);
+    expect(summary.aggregate.all_rate).toBeCloseTo(26 / 29, 5);
+    expect(summary.excluded_abstention).toBe(1);
+    expect(summary.mean_distinct_sessions).toBeCloseTo(14 / 3, 5);
+    expect(summary.run_config).toEqual({ mode: 'balanced' });
   });
 
-  test('empty bucket map produces rate:null aggregate, not NaN', async () => {
+  test('empty bucket map produces null rates, not NaN', async () => {
     const { buildByTypeSummary } = await import('../src/commands/eval-longmemeval.ts');
-    const summary = buildByTypeSummary({});
+    const summary = buildByTypeSummary({}, ctx);
     expect(summary.recall_by_type).toEqual({});
-    expect(summary.aggregate.hit).toBe(0);
+    expect(summary.aggregate.all_hit).toBe(0);
+    expect(summary.aggregate.any_hit).toBe(0);
     expect(summary.aggregate.total).toBe(0);
-    expect(summary.aggregate.rate).toBeNull();
+    expect(summary.aggregate.all_rate).toBeNull();
+    expect(summary.aggregate.any_rate).toBeNull();
+    expect(summary.mean_distinct_sessions).toBeUndefined();
   });
 });

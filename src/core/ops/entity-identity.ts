@@ -20,7 +20,7 @@
  */
 
 import type { Operation } from './contract.ts';
-import { sourceScopeOpts } from './context.ts';
+import { sourceScopeOpts, readPolicyOpts } from './context.ts';
 import {
   linkEntityIdentity,
   unlinkEntityIdentity,
@@ -120,6 +120,7 @@ const entity_identity_list: Operation = {
       entityId: p.entity_id as string | undefined,
       slug: p.slug as string | undefined,
       allowedSources: identityReadScope(ctx),
+      excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,
     });
     // Group for readability: one object per entity_id.
     const groups = new Map<string, typeof members>();

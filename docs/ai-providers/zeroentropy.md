@@ -186,17 +186,12 @@ ignore the field — no behavior change.
 
 ## Cache key versioning
 
-`KNOBS_HASH_VERSION` (`src/core/search/mode.ts`) folds reranker config into
-the `query_cache.knobs_hash` column, so a hash-version bump invalidates
-every cached row written under the previous version. During a rolling
-deploy that carries such a bump:
-
-- Expect a temporary cache hit-rate dip (~1 hour at default
-  `cache.ttl_seconds = 3600s`)
-- Hot queries may briefly double their cache row count (one row per
-  version)
-
-Both clear naturally; no operator action required.
+The retained `KNOBS_HASH_VERSION` machinery (`src/core/search/mode.ts`)
+includes reranker config in `query_cache.knobs_hash`, separating rows written
+under different settings. Semantic result-cache reads and writes are currently
+disabled, so repeated queries perform fresh retrieval and do not repopulate
+those rows. Changing the hash version, TTL or cache setting cannot restore
+result caching while it is disabled.
 
 ## Troubleshooting
 
@@ -207,4 +202,4 @@ Both clear naturally; no operator action required.
 | `reranker_health` says enabled but NOT running (`<KEY> not set`) | The resolved reranker's provider key is absent — search fails open in RRF order, one `no_key` audit row per process, nothing on stderr | `export VOYAGE_API_KEY=…` for the default (or `ZEROENTROPY_API_KEY` for an explicit ZE model), or `gbrain config set search.reranker.enabled false` |
 | `reranker_health` doctor warns about auth failures | Key present but rejected (HTTP 401/403) | Re-export a valid key; `gbrain models doctor` to verify |
 | `reranker_health` doctor warns about transient failures | Upstream flake or rate limit | Reranker fails open to RRF; check the provider's status page if persistent |
-| Cache hit rate dipped after upgrade | Expected during rolling deploy | Clears within `cache.ttl_seconds` (default 3600s) |
+| Cache reports disabled after upgrade | Semantic result caching is temporarily disabled | Budget for fresh retrieval; waiting for the TTL or changing cache settings does not restore it |

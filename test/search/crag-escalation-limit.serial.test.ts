@@ -15,7 +15,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, mock } from 'bun:test';
-import type { SearchResult } from '../../src/core/types.ts';
+import type { SearchResult, SearchOpts } from '../../src/core/types.ts';
 
 const HYBRID_PATH = '../../src/core/search/hybrid.ts';
 const actualHybrid = await import(HYBRID_PATH);
@@ -38,16 +38,16 @@ function row(i: number, rerankScore: number): SearchResult {
 
 // Call log: one entry per hybridSearchCached invocation with the opts we
 // need to pin (limit + autocut identify the escalated re-run).
-const calls: Array<{ limit: unknown; autocut: unknown }> = [];
+const calls: SearchOpts[] = [];
 
 mock.module(HYBRID_PATH, () => ({
   ...actualHybrid,
   hybridSearchCached: async (
     _engine: unknown,
     _query: string,
-    opts: { limit?: number; autocut?: boolean },
+    opts: SearchOpts,
   ): Promise<SearchResult[]> => {
-    calls.push({ limit: opts?.limit, autocut: opts?.autocut });
+    calls.push(opts);
     if (opts?.autocut === false) {
       // The escalated high-ceiling sweep: 30 rows, strong rank-1.
       return Array.from({ length: 30 }, (_, i) => row(100 + i, i === 0 ? 0.9 : 0.05));
@@ -75,6 +75,23 @@ afterAll(async () => {
 });
 
 describe('#4610 query op — adopted escalation is sliced to the caller limit', () => {
+  test('escalation retains default and empty holder grants with the page/source policy', async () => {
+    for (const holders of [undefined, []]) {
+      calls.length = 0;
+      const ctx: OperationContext = {
+        engine, remote: true, sourceId: 'default', takesHoldersAllowList: holders,
+        config: { engine: 'pglite' }, logger: { info() {}, warn() {}, error() {} }, dryRun: false,
+      };
+      await operationsByName.query.handler(ctx, { query: 'sprocket subsystem retries', expand: false });
+      expect(calls).toHaveLength(2);
+      for (const call of calls) {
+        expect(call.sourceId).toBe('default');
+        expect(call.excludePrivate).toBe(true);
+        expect(call.takesHoldersAllowList).toEqual(holders ?? ['world']);
+      }
+    }
+  });
+
   test('limit:10 caller gets exactly 10 rows from the adopted 30-row sweep', async () => {
     calls.length = 0;
     const meta: Record<string, unknown> = {};

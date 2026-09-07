@@ -19,7 +19,8 @@ import { ALL_SOURCES, isValidSourceId } from '../source-id.ts';
 import { isSearchMode } from '../search/mode.ts';
 import { stampEvidence } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
-import type { SearchResult, HybridSearchMeta } from '../types.ts';
+import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
 // --- Upload validators (Fix 1 / B5 / H5 / M4) ---
 
@@ -458,6 +459,24 @@ export function sourceScopeOpts(ctx: OperationContext): { sourceId?: string; sou
   }
   if (ctx.sourceId) return { sourceId: ctx.sourceId };
   return {};
+}
+
+/** Holder permissions are independent of the operator's page-visibility opt-out. */
+export function readHolders(ctx: OperationContext): string[] | undefined {
+  return ctx.remote === false ? ctx.takesHoldersAllowList : ctx.takesHoldersAllowList ?? ['world'];
+}
+
+/** Resolve policy once at the operation boundary; callers may supply a canonical per-call scope. */
+export async function readPolicyOpts(
+  ctx: OperationContext,
+  scope: PageReadScope = sourceScopeOpts(ctx),
+): Promise<PageReadPolicy> {
+  return {
+    ...scope,
+    excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+    requireSafeChunks: ctx.remote !== false,
+    takesHoldersAllowList: readHolders(ctx),
+  };
 }
 
 /** Map the operation-layer scope names onto runThink's public options. */

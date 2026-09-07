@@ -18,6 +18,8 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
+import { serializeMarkdown } from '../../src/core/markdown.ts';
 
 let engine: PGLiteEngine;
 let chunkEmbedDim = 0;
@@ -37,6 +39,21 @@ afterAll(async () => {
   await engine.disconnect();
 });
 
+async function importFixture(slug: string, sourceId: string, title: string, body: string, frontmatter: Record<string, unknown>, embeddingIndex?: number) {
+  const result = await importFromContent(engine, slug,
+    serializeMarkdown(frontmatter, body, '', { type: 'person', title, tags: [] }),
+    { sourceId, noEmbed: true, forceRechunk: true });
+  expect(result.status).toBe('imported');
+  if (embeddingIndex !== undefined) {
+    // The index is built by the real importer. Only its test vector is
+    // synthetic, preserving the existing deterministic source-ranking probe.
+    const embedding = Array.from({ length: chunkEmbedDim }, (_, i) => i === embeddingIndex ? 1 : 0);
+    await engine.executeRaw(`UPDATE content_chunks SET embedding = $1::vector
+      WHERE page_id IN (SELECT id FROM pages WHERE source_id = $2 AND slug = $3)`,
+    [`[${embedding}]`, sourceId, slug]);
+  }
+}
+
 beforeEach(async () => {
   await resetPgliteState(engine);
   // Two sources so we can prove the filter excludes cross-source rows.
@@ -46,60 +63,23 @@ beforeEach(async () => {
   );
   // Seed one person page in each source. Same slug intentionally —
   // proves the composite (source_id, slug) key is honored, not just slug.
-  // upsertChunks is needed because searchKeyword scans content_chunks, not
-  // pages.compiled_truth directly. Each page gets one chunk that mirrors
-  // its compiled_truth so search-by-keyword has something to find.
-  await engine.putPage('people/alice', {
-    type: 'person',
-    title: 'Alice Source-A',
-    compiled_truth: 'Alice works on widgets in source A. Important context here.',
-    timeline: '',
-    frontmatter: {
+  // Real imports build current safe chunks for the remote operation controls.
+  await importFixture('people/alice', 'default', 'Alice Source-A',
+    'Alice works on widgets in source A. Important context here.', {
       message_id: '<source-a@example.com>',
       thread_id: 'thread-source-a',
       subject: 'Source A exact subject',
-    },
-  }, { sourceId: 'default' });
-  await engine.upsertChunks('people/alice', [{
-    chunk_index: 0,
-    chunk_text: 'Alice works on widgets in source A. Important context here.',
-    chunk_source: 'compiled_truth',
-    token_count: 12,
-    embedding: Float32Array.from({ length: chunkEmbedDim }, (_, i) => i === 0 ? 1 : 0),
-  }], { sourceId: 'default' });
+    }, 0);
 
-  await engine.putPage('people/alice', {
-    type: 'person',
-    title: 'Alice Source-B',
-    compiled_truth: 'Alice works on gadgets in source B. Important context here.',
-    timeline: '',
-    frontmatter: {
+  await importFixture('people/alice', 'src-b', 'Alice Source-B',
+    'Alice works on gadgets in source B. Important context here.', {
       message_id: '<source-b@example.com>',
       thread_id: 'thread-source-b',
       subject: 'Source B exact subject',
-    },
-  }, { sourceId: 'src-b' });
-  await engine.upsertChunks('people/alice', [{
-    chunk_index: 0,
-    chunk_text: 'Alice works on gadgets in source B. Important context here.',
-    chunk_source: 'compiled_truth',
-    token_count: 12,
-    embedding: Float32Array.from({ length: chunkEmbedDim }, (_, i) => i === 1 ? 1 : 0),
-  }], { sourceId: 'src-b' });
+    }, 1);
 
-  await engine.putPage('people/bob', {
-    type: 'person',
-    title: 'Bob Source-B Only',
-    compiled_truth: 'Bob lives only in source B. Important context here.',
-    timeline: '',
-    frontmatter: {},
-  }, { sourceId: 'src-b' });
-  await engine.upsertChunks('people/bob', [{
-    chunk_index: 0,
-    chunk_text: 'Bob lives only in source B. Important context here.',
-    chunk_source: 'compiled_truth',
-    token_count: 11,
-  }], { sourceId: 'src-b' });
+  await importFixture('people/bob', 'src-b', 'Bob Source-B Only',
+    'Bob lives only in source B. Important context here.', {});
 });
 
 describe('v0.34.1 source-isolation regression (#861)', () => {

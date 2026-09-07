@@ -7,7 +7,7 @@ type: convention
 # Convention: Search Modes (v0.32.3)
 
 > **Convention:** every brain has one active search mode. The mode bundles the
-> search-lite knobs from PR #897 (semantic cache, token budget, intent
+> search-lite knobs (semantic result-cache settings, token budget, intent
 > weighting, LLM expansion, result limit) into a single config key:
 > `search.mode = conservative | balanced | tokenmax`.
 
@@ -17,7 +17,7 @@ Any agent doing search-adjacent work in a gbrain brain consults this convention:
 
 - `brain-ops` / `query` / `signal-detector` skills: respect the active mode at
   search time. Per-call `SearchOpts` overrides win when set; mode is the default.
-- Skills that recommend tuning ("the cache hit rate is high — raise threshold?"):
+- Skills that recommend tuning ("which search mode fits this brain?"):
   route operators to `gbrain search tune` rather than rolling their own logic.
 - New skills that add per-call retrieval overrides: name them explicitly so
   the resolved-knob attribution dashboard (`gbrain search modes`) reads cleanly.
@@ -40,9 +40,12 @@ The canonical knob table (with cost anchors) lives in
 | `relationalRetrieval`         | false          | **true**   | **true**       |
 | `searchLimit` default         | 10             | 25         | 50             |
 
-**Cache, intent weighting, and similarity threshold are constant across modes**
-— they're free wins (no API cost). Modes scale the three cost levers:
-`tokenBudget`, `expansion`, `searchLimit`.
+**Effective semantic result caching is disabled in every mode.** The table
+retains the stored bundle values, but result lookup and writes are bypassed
+regardless of config or `use_cache`. Cache statistics and the mode dashboard
+report disabled; repeated queries perform fresh retrieval. Intent weighting
+and the retained cache knobs remain constant across modes. Modes scale
+`tokenBudget`, `expansion`, and `searchLimit`.
 
 ## Resolution chain (matches v0.31.12 model-tier shape)
 
@@ -70,15 +73,15 @@ and prints a paste-ready revert command.
 
 ## Cache contamination guard
 
-Migration v56 added `query_cache.knobs_hash`. A tokenmax write
-(expansion=on, limit=50) is keyed by a different hash than a conservative
-read (no expansion, limit=10), so cross-mode contamination is structurally
-impossible. The cache lookup filter is:
+The retained `query_cache.knobs_hash` machinery separates mode settings:
+tokenmax (expansion=on, limit=50) has a different hash from conservative
+(no expansion, limit=10). Its stored lookup filter is:
 
     WHERE source_id = $ AND knobs_hash = $ AND embedding similarity < $
 
-Legacy NULL-knobs_hash rows from pre-v0.32.3 are silently excluded
-(treated as misses, re-populated with the right hash on first hit).
+Legacy NULL-knobs_hash rows remain excluded. No semantic result rows are read
+or repopulated while caching is disabled; changing the stored knobs cannot
+restore result reuse.
 
 ## Trigger phrases
 

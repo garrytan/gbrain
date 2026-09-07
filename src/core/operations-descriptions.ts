@@ -19,8 +19,10 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const GET_RECENT_SALIENCE_DESCRIPTION =
-  "Returns pages recently touched and ranked by emotional + activity salience " +
-  "(deterministic 0..1 emotional_weight + take density + recency decay). " +
+  "Returns readable pages recently touched and ranked by activity salience and recency. " +
+  "Unrestricted local reads include deterministic 0..1 emotional_weight, take density, and recency decay. " +
+  "Holder-restricted reads count only permitted active takes, use zero emotional_weight, " +
+  "and select recent pages by updated_at; unrestricted local reads retain take-driven touches. " +
   "Use this when the user asks what's been going on, what's notable, what's hot, " +
   "anything crazy happening, or for any open-ended 'current state' question " +
   "about themselves or their work. Do NOT run a semantic search for these — " +
@@ -100,13 +102,15 @@ export const SEARCH_DESCRIPTION =
 // ──────────────────────────────────────────────────────────────────────────────
 
 export const FIND_CONTRADICTIONS_DESCRIPTION =
-  "v0.32.6 — return suspected-contradiction findings from the most recent " +
+  "Stored contradiction reports are temporarily available only to trusted local callers without a source filter. " +
+  "Remote or source-scoped callers receive {contradictions: [], note} with an availability note. " +
+  "For eligible local callers, return suspected-contradiction findings from the most recent " +
   "`gbrain eval suspected-contradictions` probe run, optionally filtered by slug " +
   "and/or severity. Use this when the user asks 'what's inconsistent in my " +
   "brain', 'show me contradictions about Acme', 'high-severity issues only', or " +
   "wants to act on the probe's findings without re-running it. Returns " +
   "{contradictions: [{a, b, severity, axis, confidence, resolution_command}]}. " +
-  "Reads the cached run row — does NOT trigger a new probe; users run " +
+  "An eligible read loads the stored run without triggering a new probe; users run " +
   "`gbrain eval suspected-contradictions` for that.";
 
 export const FIND_TRAJECTORY_DESCRIPTION =

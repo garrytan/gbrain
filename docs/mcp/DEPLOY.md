@@ -224,7 +224,7 @@ Remote agents cannot reach local filesystem surface area.
 |-------|---------------|
 | `read` | `search`, `query`, `get_page`, `list_pages`, graph traversal |
 | `write` | `put_page`, `delete_page`, `add_link`, `add_timeline_entry` |
-| `admin` | Client management, token revocation, sweep, local-only ops |
+| `admin` | Client management, token revocation, sweep; local-only restrictions still apply |
 
 Write ops can additionally be fenced per client with `--bound-slug-prefixes`
 (see [Register OAuth clients](#2-register-oauth-clients) above).
@@ -283,11 +283,15 @@ gbrain auth test \
 
 ## Operations
 
-GBrain's full operation catalog (100+ operations in `src/core/operations.ts`)
-is available remotely, with no timeout limits on a self-hosted server. The
-only exceptions are the operations flagged `localOnly: true` — `sync_brain`
-and the `file_*` ops among them — which are rejected over HTTP regardless of
-scope (see [Scopes and localOnly](#4-scopes-and-localonly) above).
+GBrain's operation catalog (100+ operations in `src/core/operations.ts`) is
+available subject to the selected surface, scope and operation-specific limits.
+Operations flagged `localOnly: true` are rejected over HTTP regardless of scope
+(see [Scopes and localOnly](#4-scopes-and-localonly) above). Code-inspection
+operations and stored contradiction reports also have temporary local-only
+restrictions, even when listed in the catalog. The [MCP surface runbook](../operations/mcp-surface-runbook.md)
+explains these limits and the separate chunk-rebuild requirement. Rebuild
+indexes from a local installation on the brain host; a thin client cannot
+rebuild the host's indexes.
 
 **Several brains behind one tool catalog?** Give each server an identity so a
 connected agent can tell them apart: `gbrain config set mcp.instructions
