@@ -234,6 +234,14 @@ describe('v0.41 T5: runPhaseExtractAtoms via stubbed chat', () => {
 });
 
 describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
+  /** Persist injected atoms as pages: provenance edges need both endpoints
+   *  (the batch JOIN drops absent slugs, and an all-dropped batch is a warn). */
+  async function persistAtoms(atoms: Array<{ slug: string; title: string; body: string }>): Promise<void> {
+    for (const a of atoms) {
+      await engine.putPage(a.slug, { type: 'atom', title: a.title, compiled_truth: a.body, timeline: '' });
+    }
+  }
+
   test('no-op when no atoms have concept refs', async () => {
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: [] });
     expect(result.status).toBe('skipped');
@@ -267,6 +275,7 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       });
     }
 
+    await persistAtoms(atoms);
     const chat = stubChat('AI agents are software factories.');
     const result = await runPhaseSynthesizeConcepts(engine, { _atoms: atoms, _chat: chat });
     expect(result.status).toBe('ok');
@@ -411,6 +420,7 @@ describe('v0.41 T6: runPhaseSynthesizeConcepts via stubbed chat', () => {
       body: `Empty body ${i}`,
       concept_refs: ['empty-theme'],
     }));
+    await persistAtoms(atoms);
     const result = await runPhaseSynthesizeConcepts(engine, {
       _atoms: atoms,
       _chat: stubChat(''),
@@ -800,6 +810,23 @@ describe('#4589: synthesize_concepts persists concept<->atom provenance edges', 
     ).toHaveLength(0);
     expect((await engine.getLinks(stray.slug, { sourceId: 'default' })).length).toBe(0);
     expect(await provenanceCount()).toBe(6);
+  });
+
+  test('every member atom outside the cycle source → zero edges is warn, not a silent ok (wave review)', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name) VALUES ('repo-a', 'Repo A') ON CONFLICT (id) DO NOTHING`,
+    );
+    await seedMembers(); // atoms live in 'default' …
+    const result = await runPhaseSynthesizeConcepts(engine, {
+      _atoms: memberAtoms,
+      sourceId: 'repo-a', // … but the phase writes to repo-a, so the batch JOIN drops every edge.
+    });
+    expect(await provenanceCount()).toBe(0);
+    expect(result.status).toBe('warn');
+    const failures = result.details?.failures as Array<{ concept: string; error: string }>;
+    expect(failures.some((f) => f.concept === CONCEPT && /0 of 6/.test(f.error))).toBe(true);
+    // The page write stands (best-effort edges, mirrors the thrown case below).
+    expect(await engine.getPage(CONCEPT_SLUG, { sourceId: 'repo-a' })).not.toBeNull();
   });
 
   test('a failed edge write is reported as warn, not swallowed; the concept page still lands', async () => {

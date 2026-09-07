@@ -380,7 +380,18 @@ export async function runPhaseSynthesizeConcepts(
         { from_slug: atomSlug, to_slug: conceptSlug, link_type: 'synthesizes', link_source: 'concept-provenance', context: 'concept synthesized from this atom', from_source_id: src, to_source_id: src },
       ]);
       try {
-        await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
+        const inserted = await engine.addLinksBatch(provenanceLinks, { auditSite: 'cycle.synthesize_concepts.provenance' }); // gbrain-allow-direct-insert: concept-provenance edges derived from the synthesis itself (no markdown body to reconcile from)
+        // Zero rows back with edges requested means every member atom fell
+        // out of the batch JOIN (not in this source) — unless a prior run
+        // already banked them (ON CONFLICT DO NOTHING also returns 0). A
+        // silent 'ok' here is a graph orphan with a clean receipt.
+        if (inserted === 0 && provenanceLinks.length > 0) {
+          const banked = (await engine.getLinks(conceptSlug, { sourceId: src }))
+            .some((l) => l.link_source === 'concept-provenance');
+          if (!banked) {
+            failures.push({ concept: group.conceptSlug, error: `provenance links: 0 of ${provenanceLinks.length} edges landed (member atoms not in source '${src}'?)` });
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         failures.push({ concept: group.conceptSlug, error: `provenance links failed: ${msg}` });
