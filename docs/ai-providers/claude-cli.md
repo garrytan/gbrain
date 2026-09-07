@@ -13,7 +13,11 @@ resolves to the `native-anthropic` implementation (SDK + `ANTHROPIC_API_KEY`),
 `claude-cli:claude-sonnet-5` resolves to `ClaudeCliLanguageModel` (subprocess,
 CLI-managed auth).
 
-**Chat-only — no embedding.** `gateway.embed()` throws immediately for
+**Chat + query expansion — no embedding.** Query expansion runs through the
+same `claude --print` subprocess as chat, on the schemaless text path (the CLI
+cannot carry a JSON schema, so the fenced JSON it answers with is parsed back),
+so a brain whose utility tier points at `claude-cli:` keeps the multi-query
+recall arm. `gateway.embed()` throws immediately for
 `claude-cli` models (`claude-cli has no embedding model. Use openai or google
 for embeddings.`). Claude has no first-party embedding model regardless of
 transport; pair this recipe with `openai`, `google`, or `voyage` for

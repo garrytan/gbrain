@@ -78,7 +78,7 @@ function userMessage(text: string): LanguageModelV2CallOptions['prompt'][number]
 }
 
 describe('claude-cli recipe registration', () => {
-  test('getRecipe returns chat-only Recipe with the documented models', async () => {
+  test('getRecipe returns chat + expansion Recipe with the documented models', async () => {
     const { getRecipe } = await import('../src/core/ai/recipes/index.ts');
     const recipe = getRecipe('claude-cli');
     expect(recipe).toBeDefined();
@@ -94,7 +94,17 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-4-8');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-5');
     expect(recipe!.touchpoints.embedding).toBeUndefined();
-    expect(recipe!.touchpoints.expansion).toBeUndefined();
+    // Expansion IS declared. Without it `isAvailable('expansion')` is false
+    // for every claude-cli model, so expandQuery() returns [query] before any
+    // model call and query expansion vanishes with no error — while `gbrain
+    // models doctor` still shows the touchpoint green (its probe calls chat()
+    // with an explicit model override and never consults the recipe).
+    expect(recipe!.touchpoints.expansion).toBeDefined();
+    expect(recipe!.touchpoints.expansion!.models).toContain('claude-haiku-4-5-20251001');
+    expect(recipe!.touchpoints.expansion!.models).toContain('claude-sonnet-5');
+    // Subprocess cold start needs the same headroom the chat touchpoint takes;
+    // the probe's flat 5000ms default would false-fail on every run.
+    expect(recipe!.touchpoints.expansion!.default_timeout_ms).toBe(30_000);
   });
 
   test('recipe aliases map short names to canonical model ids', async () => {
