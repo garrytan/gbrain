@@ -42,6 +42,24 @@ mock.module('../src/core/config.ts', () => ({
   isThinClient: () => false,
 }));
 
+// #4652: pin the ambient tier. The stub engine has no getConfig, so the real
+// tier-5 lookup would throw and a swallow-into-legacy-unscoped path would
+// look identical to the bug. Explicit ids still hit the real resolver so the
+// unknown-source exit-1 contract below stays real.
+const realResolver = await import('../src/core/source-resolver.ts');
+// Bind the real function BEFORE mocking: the namespace binding is re-pointed
+// at the mock, so calling through `realResolver.` later would recurse.
+const realResolveSourceWithTier = realResolver.resolveSourceWithTier;
+mock.module('../src/core/source-resolver.ts', () => ({
+  ...realResolver,
+  resolveSourceWithTier: async (engine: unknown, explicit: string | null | undefined) =>
+    explicit
+      ? realResolveSourceWithTier(engine as never, explicit)
+      : { source_id: 'default', tier: 'seed_default' as const },
+  localFederatedSourceIds: async (_engine: unknown, _id: string, tier: string) =>
+    tier === 'seed_default' ? ['default', 'team-wiki'] : undefined,
+}));
+
 const { runThinkCli } = await import('../src/commands/think.ts');
 
 /** Stub engine: assertSourceExists's query resolves only 'workspace'. */
@@ -109,10 +127,29 @@ describe('#4508 think --source CLI surface', () => {
     expect(captured.opts[0].calibrationHolder).toBe('holder-example');
   });
 
-  test('omitting --source keeps the default scope (no sourceId key)', async () => {
+  // #4652: without --source, think used to hand runThink no scope at all, so
+  // the gather spanned every source (including `--no-federated` ones) while
+  // `gbrain search` on the same brain honored the resolved default + its
+  // federated set. The CLI now resolves the same scope search does.
+  test('omitting --source resolves the default source and its federated set (#4652)', async () => {
     const r = await runCli(['plain', 'question']);
     expect(r.code).toBe(0);
+    expect(captured.opts[0].sourceId).toBe('default');
+    expect(captured.opts[0].allowedSources).toEqual(['default', 'team-wiki']);
+  });
+
+  test('explicit --source stays scalar (no federated widening)', async () => {
+    const r = await runCli(['plain', 'question', '--source', 'workspace']);
+    expect(r.code).toBe(0);
+    expect(captured.opts[0].sourceId).toBe('workspace');
+    expect(captured.opts[0].allowedSources).toBeUndefined();
+  });
+
+  test('--source __all__ spans the brain instead of scoping to the literal sentinel', async () => {
+    const r = await runCli(['plain', 'question', '--source', '__all__']);
+    expect(r.code).toBe(0);
     expect(captured.opts[0].sourceId).toBeUndefined();
+    expect(captured.opts[0].allowedSources).toBeUndefined();
   });
 
   test('think --help documents --source', async () => {
