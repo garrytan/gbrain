@@ -1275,8 +1275,11 @@ const list_pages: Operation = {
     // #3242 / #4400: federatedSearchScope so unqualified listing spans
     // federated sources (same visibility set as search / get_page); an
     // explicit per-call source_id (including '__all__') wins, same contract
-    // as search/query's sourceIdParam.
-    const sourceIdParam = typeof p.source_id === 'string' ? p.source_id : undefined;
+    // as search/query's sourceIdParam. parseSourceIdParam (same as get_page)
+    // rejects whitespace/malformed/non-string ids loudly instead of letting
+    // them silently return [] or, for the CLI's `--source-id ""`, widen to
+    // every source.
+    const sourceIdParam = parseSourceIdParam(p.source_id, 'list_pages', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
     // #4352 remediation: untrusted listing never enumerates
     // `visibility: private` pages (slugs + titles are the leak surface here).
