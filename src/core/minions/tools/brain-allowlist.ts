@@ -27,6 +27,7 @@ import type { GBrainConfig } from '../../config.ts';
 import { operations } from '../../operations.ts';
 import type { Operation, OperationContext } from '../../operations.ts';
 import { paramDefToSchema } from '../../../mcp/tool-defs.ts';
+import { validateParams } from '../../../mcp/validate-params.ts';
 import { validateSourceId } from '../../utils.ts';
 import type { ToolCtx, ToolDef } from '../types.ts';
 
@@ -305,6 +306,11 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           deferEmbeds: opts.deferEmbeds,
         });
         const params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
+        // Same validator the MCP dispatchers run: a missing required param
+        // (or wrong type / unknown enum) is named back to the model instead
+        // of crashing inside the handler on e.g. `query.trim`.
+        const validationError = validateParams(op, params);
+        if (validationError) throw new Error(`${toolName}: ${validationError}`);
         return op.handler(opCtx, params);
       },
     };
