@@ -14,6 +14,7 @@
  * isThinClient → true; mcp-client.ts callRemoteTool → recorded).
  */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { withEnv } from './helpers/with-env.ts';
 
 type Call = { name: string; params: Record<string, unknown> };
 const calls: Call[] = [];
@@ -102,5 +103,25 @@ describe('graph-query --source on a thin-client install', () => {
     expect(r.err).toHaveLength(0);
     expect(calls).toHaveLength(1);
     expect(calls[0].params).toEqual({ slug: 'people/alice-example', depth: 2, link_type: 'attended', direction: 'in' });
+  });
+
+  // Wave review: a valueless --source used to skip the thin-client refusal
+  // (the parser dropped the flag), and an ambient GBRAIN_SOURCE scope was
+  // dropped with no word — the user believed the walk was scoped.
+  test('a valueless --source is refused before the wire, on the thin client too', async () => {
+    const r = await run(['people/alice-example', '--depth', '1', '--source']);
+    expect(r.code).toBe(1);
+    expect(r.err.join('\n')).toContain('`--source` requires a value');
+    expect(calls).toHaveLength(0);
+  });
+
+  test('an ambient GBRAIN_SOURCE scope prints the cannot-forward note (walk still runs)', async () => {
+    const r = await withEnv({ GBRAIN_SOURCE: 'team-wiki' }, () => run(['people/alice-example', '--depth', '1']));
+    expect(r.code).toBe(0);
+    const stderr = r.err.join('\n');
+    expect(stderr).toContain("ambient source scope 'team-wiki' is not forwarded");
+    expect(stderr).toContain('scopes the walk to your grant');
+    expect(calls).toHaveLength(1);
+    expect(Object.keys(calls[0].params).sort()).toEqual(['depth', 'direction', 'link_type', 'slug']);
   });
 });

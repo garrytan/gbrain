@@ -62,6 +62,29 @@ function captureBoth(fn: () => Promise<void>): Promise<{ out: string[]; err: str
   })();
 }
 
+/** captureBoth + a process.exit sentinel, for the refusal paths. */
+async function runWithExit(argv: string[]): Promise<{ code: number; out: string[]; err: string[] }> {
+  const savedExit = process.exit;
+  class ExitSentinel extends Error { constructor(public readonly code: number) { super(`exit ${code}`); } }
+  (process as unknown as { exit: (code?: number) => never }).exit = ((code?: number) => {
+    throw new ExitSentinel(code ?? 0);
+  }) as never;
+  let code = 0;
+  try {
+    const { out, err } = await captureBoth(async () => {
+      try {
+        await runGraphQuery(engine, argv);
+      } catch (e) {
+        if (e instanceof ExitSentinel) { code = e.code; return; }
+        throw e;
+      }
+    });
+    return { code, out, err };
+  } finally {
+    (process as unknown as { exit: typeof savedExit }).exit = savedExit;
+  }
+}
+
 describe('graph-query command', () => {
   beforeEach(async () => {
     await truncateAll();
@@ -210,6 +233,32 @@ describe('graph-query foreign-edge footer (#1153)', () => {
 
   test('an unknown --source is rejected loudly', async () => {
     await expect(runGraphQuery(engine, ['people/alice', '--source', 'nope-source'])).rejects.toThrow(/nope-source/);
+  });
+
+  // Wave review: the footer counts foreign edges of the ROOT AS RESOLVED
+  // (source_id, slug), not of every same-slug page in the brain — alice is
+  // not in other-src, so a walk scoped there hid nothing.
+  test('--source <id> footer is relative to the resolved source (no phantom hidden edges)', async () => {
+    const { err } = await captureBoth(async () => {
+      await runGraphQuery(engine, ['people/alice', '--depth', '1', '--source', 'other-src']);
+    });
+    expect(err.join('\n')).not.toMatch(/foreign-source pages hidden/);
+  });
+
+  test('--source <id> with --include-foreign is refused (exit 1), not silently widened', async () => {
+    const r = await runWithExit(['people/alice', '--depth', '1', '--source', 'other-src', '--include-foreign']);
+    expect(r.code).toBe(1);
+    expect(r.err.join('\n')).toMatch(/--include-foreign/);
+    expect(r.out).toHaveLength(0);
+  });
+
+  test('a valueless --source (last arg) or --source= is refused, never read as ambient scope', async () => {
+    for (const argv of [['people/alice', '--depth', '1', '--source'], ['people/alice', '--source=', '--depth', '1']]) {
+      const r = await runWithExit(argv);
+      expect(r.code).toBe(1);
+      expect(r.err.join('\n')).toContain('`--source` requires a value');
+      expect(r.out).toHaveLength(0);
+    }
   });
 
   test('--include-foreign suppresses the footer', async () => {
