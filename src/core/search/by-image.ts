@@ -73,6 +73,9 @@ export async function searchByImage(
     offset: 0,
     sourceId: opts.sourceId,
     sourceIds: opts.sourceIds,
+    excludePrivate: opts.excludePrivate,
+    requireSafeChunks: opts.requireSafeChunks,
+    takesHoldersAllowList: opts.takesHoldersAllowList,
     // Both branches use the same source-scope threading.
   };
 

@@ -3,7 +3,7 @@
 //
 // Fail-closed diff-based E2E test selector. Reads the working-tree diff vs
 // origin/master plus untracked files, classifies the change set as
-// EMPTY / DOC_ONLY / SRC, and emits the relevant E2E test files on stdout.
+// EMPTY / DOC_ONLY / SRC, and emits one relevant E2E test path per stdout line.
 //
 // CONTRACT (fail-closed):
 //   - When in doubt, run all E2E. The map narrows from "all"; it never widens
@@ -21,7 +21,7 @@
 //      SRC (at least one path is outside doc allowlist):
 //        a. Any escape-hatch path matched -> emit ALL
 //        b. Else union map matches; include directly-modified test/e2e/*.test.ts
-//        c. If still empty -> FAIL-CLOSED -> emit ALL
+//        c. Any non-doc path without coverage -> FAIL-CLOSED -> emit ALL
 //
 // On git command failure: print error to stderr and exit 2 so callers see the
 // failure (xargs -r will run nothing AND the human sees the error).
@@ -174,15 +174,19 @@ export function selectTests(inputs: SelectInputs): string[] {
       result.add(f);
       continue;
     }
+    let covered = false;
     for (const [glob, tests] of Object.entries(map)) {
       if (matchGlob(glob, f)) {
+        if (tests.length > 0) covered = true;
         for (const t of tests) result.add(t);
       }
     }
+    // A covered sibling must not hide an unknown change's blast radius.
+    // Check coverage per changed path, not just whether the union is nonempty.
+    if (!covered) return allSorted;
   }
 
-  // 3c. Fail-closed: if no map entry matched any src/ path AND no test files
-  // were directly modified, run everything.
+  // Defensive fallback for an empty map/selection.
   if (result.size === 0) return allSorted;
 
   // Sort for determinism (helps tests + readability).
@@ -243,6 +247,6 @@ if (import.meta.main) {
     map: E2E_TEST_MAP,
   });
 
-  process.stdout.write(tests.join(" "));
+  process.stdout.write(tests.join("\n"));
   if (tests.length > 0) process.stdout.write("\n");
 }

@@ -22,6 +22,8 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importFromContent } from '../src/core/import-file.ts';
+import { serializeMarkdown } from '../src/core/markdown.ts';
 import {
   federatedSearchScope,
   sourceScopeOpts,
@@ -72,16 +74,10 @@ beforeAll(async () => {
     ['privsrc/topic', 'privsrc', 'privsrc'],
   ];
   for (const [slug, sourceId, where] of pages) {
-    await engine.putPage(
-      slug,
-      { type: 'note', title: `Topic in ${where}`, compiled_truth: `the zebra telescope in ${where}`, frontmatter: {} },
-      { sourceId },
-    );
-    await engine.upsertChunks(
-      slug,
-      [{ chunk_index: 0, chunk_text: `the zebra telescope in ${where}`, chunk_source: 'compiled_truth' }],
-      { sourceId },
-    );
+    const result = await importFromContent(engine, slug,
+      serializeMarkdown({}, `the zebra telescope in ${where}`, '', { type: 'note', title: `Topic in ${where}`, tags: [] }),
+      { sourceId, noEmbed: true, forceRechunk: true });
+    expect(result.status).toBe('imported');
   }
   // Keyword-only search path: no embedding provider needed in tests.
   await engine.setConfig('search.mcp_keyword_only', 'true');

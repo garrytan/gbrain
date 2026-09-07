@@ -9,6 +9,7 @@
  */
 
 import type { Operation } from './contract.ts';
+import { OperationError } from './contract.ts';
 import { routeCodeIntelScope } from './context.ts';
 import {
   CODE_CALLERS_DESCRIPTION,
@@ -260,8 +261,24 @@ const code_traversal_cache_clear: Operation = {
   cliHints: { name: 'code_traversal_cache_clear', hidden: true },
 };
 
-export const codeIntelOperations: Operation[] = [
+const codeReadOperations: Operation[] = [
   code_callers, code_callees, code_def, code_refs,
   code_blast, code_flow,
+];
+
+// Raw code fragments and cached traversals do not yet support the complete
+// remote read policy. Suspend this optional surface before touching storage.
+export const codeIntelOperations: Operation[] = [
+  ...codeReadOperations.map((op): Operation => ({
+    ...op,
+    description: `${op.description} Temporarily available only to trusted local CLI callers; agent-facing code reads are suspended.`,
+    handler: async (ctx, params) => {
+      if (ctx.remote !== false) {
+        throw new OperationError('permission_denied',
+          `${op.name} is temporarily unavailable to agent callers. Use the trusted local CLI for code reads.`);
+      }
+      return op.handler(ctx, params);
+    },
+  })),
   code_traversal_cache_clear,
 ];

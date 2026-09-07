@@ -1,3 +1,6 @@
+import type { PageReadScope } from './types.ts';
+import type { PageReadPolicy } from './types.ts';
+import { readRelationalFanout, readAliases, readBacklinkCounts, readAdjacencyBoosts, readContentFlags, readExtractionStates, readEffectiveDates, readSalienceScores } from './search/read-enrichment.ts';
 import postgres from 'postgres';
 import type {
   BrainEngine,
@@ -55,7 +58,7 @@ import {
   EmbeddingColumnNotRegisteredError,
 } from './search/embedding-column.ts';
 import { getFtsLanguage, applyFtsLanguagePolicy } from './fts-language.ts';
-import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, bodyWriteChunkVersion, chunkWriteInvalidation, requiresSafeChunks, safeChunksFilter } from './search/safe-chunks.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow, StalePageRow, ChunklessPageRow,
@@ -85,7 +88,7 @@ import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery } from './search/sql-ranking.ts';
-import { privatePagesFilterFragment } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment } from './search/private-visibility.ts';
 import { unverifiedExtractionFragment } from './extraction-review.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP } from './engine-constants.ts';
@@ -139,6 +142,8 @@ export function getPostgresSchema(
 // follow-up that will reintroduce a typed retry mechanism.
 
 export class PostgresEngine implements BrainEngine {
+  /** Transaction clones keep chunk invalidation and replacement atomic. */
+  private _chunkWritesInTransaction = false;
   readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
   /** Saved config for reconnection. */
@@ -541,6 +546,7 @@ export class PostgresEngine implements BrainEngine {
       return await (conn.begin(async (tx) => {
         // Create a scoped engine with tx as its connection, no shared state mutation
         const txEngine = Object.create(this) as PostgresEngine;
+        Object.defineProperty(txEngine, '_chunkWritesInTransaction', { value: true });
         Object.defineProperty(txEngine, 'sql', { get: () => tx });
         Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
         return fn(txEngine);
@@ -662,7 +668,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // Pages CRUD
-  async getPage(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeDeleted?: boolean }): Promise<Page | null> {
+  async getPage(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeDeleted?: boolean; excludePrivate?: boolean }): Promise<Page | null> {
     const includeDeleted = opts?.includeDeleted === true;
     const sourceId = opts?.sourceId;
     const sourceIds = opts?.sourceIds;
@@ -683,6 +689,7 @@ export class PostgresEngine implements BrainEngine {
             ? tx`AND source_id = ${sourceId}`
             : tx``;
       const deletedCondition = includeDeleted ? tx`` : tx`AND deleted_at IS NULL`;
+      const privacy = opts?.excludePrivate ? tx.unsafe(`AND ${privatePagesFilterFragment('pages')}`) : tx``;
       // #3931: anchor on sourceIds[0] (caller's own resolved source, see
       // localFederatedSourceIds) instead of a hardcoded 'default'.
       const anchorSourceId = sourceIds && sourceIds.length > 0 ? sourceIds[0] : 'default';
@@ -692,7 +699,7 @@ export class PostgresEngine implements BrainEngine {
                source_kind, source_uri, ingested_via, ingested_at,
                contextual_retrieval_mode
         FROM pages
-        WHERE slug = ${slug} ${sourceCondition} ${deletedCondition}
+        WHERE slug = ${slug} ${sourceCondition} ${deletedCondition} ${privacy}
         ORDER BY (source_id = ${anchorSourceId}) DESC, source_id ASC
         LIMIT 1
       `;
@@ -773,7 +780,8 @@ export class PostgresEngine implements BrainEngine {
     const effectiveDateSource = page.effective_date_source ?? null;
     const importFilename = page.import_filename ?? null;
     // v0.32.7 CJK wave: chunker_version + source_path columns.
-    const chunkerVersion = page.chunker_version ?? null;
+    // Only an import transaction may seal a fully sanitized chunk replacement.
+    const chunkerVersion = Math.min(page.chunker_version ?? 0, SAFE_FENCE_CHUNKER_VERSION - 1);
     const sourcePath = page.source_path ?? null;
     // v0.39.3.0 provenance write-through (WARN-8 + CV12). Server stamps
     // `ingested_at = now()` ONLY when any provenance is being written —
@@ -786,7 +794,7 @@ export class PostgresEngine implements BrainEngine {
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? new Date() : null;
     const rows = await sql`
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at)
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, COALESCE(${chunkerVersion}::smallint, ${MARKDOWN_CHUNKER_VERSION}), ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt})
       ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -800,7 +808,7 @@ export class PostgresEngine implements BrainEngine {
         effective_date        = COALESCE(EXCLUDED.effective_date,        pages.effective_date),
         effective_date_source = COALESCE(EXCLUDED.effective_date_source, pages.effective_date_source),
         import_filename       = COALESCE(EXCLUDED.import_filename,       pages.import_filename),
-        chunker_version       = COALESCE(EXCLUDED.chunker_version,       pages.chunker_version),
+        chunker_version       = ${sql.unsafe(bodyWriteChunkVersion('EXCLUDED.compiled_truth', 'EXCLUDED.timeline'))},
         source_path           = COALESCE(EXCLUDED.source_path,           pages.source_path),
         source_kind           = COALESCE(EXCLUDED.source_kind,           pages.source_kind),
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
@@ -964,6 +972,7 @@ export class PostgresEngine implements BrainEngine {
       SET compiled_truth = ${compiledTruth},
           timeline = ${timeline},
           content_hash = ${contentHash},
+          chunker_version = ${sql.unsafe(bodyWriteChunkVersion('$1', '$2'), [compiledTruth, timeline])},
           updated_at = now()
       WHERE source_id = ${sourceId}
         AND slug = ${slug}
@@ -1361,7 +1370,7 @@ export class PostgresEngine implements BrainEngine {
     }, { alwaysTransaction: typeof opts.seed === 'number' });
   }
 
-  async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<string[]> {
+  async resolveSlugs(partial: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<string[]> {
     const sql = this.sql;
 
     // v0.41.13 #1436: source scope via postgres.js tagged-template
@@ -1369,8 +1378,9 @@ export class PostgresEngine implements BrainEngine {
     // for back-compat with internal callers. The `deleted_at IS NULL`
     // filter excludes soft-deleted rows (v0.26.5) from fuzzy candidates
     // — they're not legitimate match targets for a remote `get_page`.
-    const sources = opts?.sourceIds ?? null;
+    const sources = opts?.sourceIds?.length ? opts.sourceIds : null;
     const scalar = opts?.sourceId ?? null;
+    const privacy = opts?.excludePrivate ? sql.unsafe(` AND ${privatePagesFilterFragment('pages')}`) : sql``;
     const scopeFragment = sources
       ? sql` AND source_id = ANY(${sources}::text[])`
       : scalar
@@ -1378,14 +1388,14 @@ export class PostgresEngine implements BrainEngine {
         : sql``;
 
     // Try exact match first
-    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}`;
+    const exact = await sql`SELECT slug FROM pages WHERE slug = ${partial} AND deleted_at IS NULL${scopeFragment}${privacy}`;
     if (exact.length > 0) return [exact[0].slug];
 
     // Fuzzy match via pg_trgm
     const fuzzy = await sql`
       SELECT slug, similarity(title, ${partial}) AS sim
       FROM pages
-      WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}
+      WHERE deleted_at IS NULL AND (title % ${partial} OR slug ILIKE ${'%' + partial + '%'})${scopeFragment}${privacy}
       ORDER BY sim DESC
       LIMIT 5
     `;
@@ -1508,7 +1518,7 @@ export class PostgresEngine implements BrainEngine {
     // archived sources. Joined `sources s` lets the predicate compile to a
     // column lookup. NOT bypassed by detail=high — soft-delete is a contract,
     // not a temporal preference.
-    const visibilityClause = buildVisibilityClause('p', 's', { excludePrivate: opts?.excludePrivate === true });
+    const visibilityClause = buildVisibilityClause('p', 's', opts);
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
@@ -1621,10 +1631,11 @@ export class PostgresEngine implements BrainEngine {
     const sourceFactorCase = buildSourceFactorCase('p.slug', boostMap, opts?.detail);
     const hardExcludePrefixes = resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes);
     const hardExcludeClause = buildHardExcludeClause('p.slug', hardExcludePrefixes);
-    const visibilityClause = buildVisibilityClause('p', 's', { excludePrivate: opts?.excludePrivate === true });
+    const visibilityClause = buildVisibilityClause('p', 's', opts);
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
+    const titleVector = requiresSafeChunks(opts) ? `to_tsvector('${ftsLang}', COALESCE(p.title, ''))` : 'p.search_vector';
 
     const params: unknown[] = [boundWebsearchQuery(query)];
     let typeClause = '';
@@ -1686,7 +1697,7 @@ export class PostgresEngine implements BrainEngine {
         COALESCE(rep.chunk_index, 0) as chunk_index,
         COALESCE(rep.chunk_text, '') as chunk_text,
         COALESCE(rep.chunk_source, 'compiled_truth') as chunk_source,
-        ts_rank_cd(p.search_vector, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
+        ts_rank_cd(${titleVector}, websearch_to_tsquery('${ftsLang}', $1)) * ${sourceFactorCase} AS score,
         false AS stale
       FROM pages p
       JOIN sources s ON s.id = p.source_id
@@ -1699,7 +1710,7 @@ export class PostgresEngine implements BrainEngine {
         ORDER BY (cc.chunk_source = 'compiled_truth') DESC, cc.chunk_index ASC
         LIMIT 1
       ) rep ON true
-      WHERE p.search_vector @@ websearch_to_tsquery('${ftsLang}', $1)
+      WHERE ${titleVector} @@ websearch_to_tsquery('${ftsLang}', $1)
         ${typeClause}
         ${typesClause}
         ${excludeSlugsClause}
@@ -1837,7 +1848,7 @@ export class PostgresEngine implements BrainEngine {
     const offsetParam = `$${params.length}`;
 
     // v0.26.5: visibility filter for searchKeywordChunks (anchor primitive).
-    const visibilityClause = buildVisibilityClause('p', 's', { excludePrivate: opts?.excludePrivate === true });
+    const visibilityClause = buildVisibilityClause('p', 's', opts);
     // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
     // — safe to interpolate into raw SQL.
     const ftsLang = getFtsLanguage();
@@ -2019,7 +2030,7 @@ export class PostgresEngine implements BrainEngine {
     // sees the same row count it always did. Pulling the predicate to the
     // outer SELECT would force the HNSW scan to over-fetch and post-filter,
     // wasting candidate slots on hidden rows.
-    const visibilityClause = buildVisibilityClause('p', 's', { excludePrivate: opts?.excludePrivate === true });
+    const visibilityClause = buildVisibilityClause('p', 's', opts);
 
     // v0.36 Phase 3: 'embedding_multimodal' is the unified column populated
     // by `gbrain reindex --multimodal`. Carries BOTH text and image content
@@ -2243,22 +2254,33 @@ export class PostgresEngine implements BrainEngine {
 
   // Chunks
   async upsertChunks(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn } & BatchOpts): Promise<void> {
-    return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal, () => this._upsertChunksOnce(slug, chunks, opts), chunks.length);
+    if (this._chunkWritesInTransaction) return this._upsertChunksOnce(slug, chunks, opts);
+    return this.batchRetry(opts?.auditSite ?? 'upsertChunks', opts?.signal,
+      () => this.transaction(tx => (tx as PostgresEngine)._upsertChunksOnce(slug, chunks, opts)), chunks.length);
   }
 
   private async _upsertChunksOnce(slug: string, chunks: ChunkInput[], opts?: { sourceId?: string; embeddingColumn?: ResolvedColumn }): Promise<void> {
     // Normalize the same way putPage does — pages.slug is stored lowercased,
     // so a raw mixed-case slug here would miss the row it just wrote (#430).
     slug = validateSlug(slug);
+    // Compare and persist the same canonical body bytes. JSONB rejects raw
+    // NUL/lone surrogates before the INSERT can sanitize them; identity fields
+    // remain untouched so malformed identifiers still reject the transaction.
+    chunks = chunks.map(chunk => ({ ...chunk, chunk_text: sanitizeText(chunk.chunk_text) }));
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
 
     // Source-scope the page-id lookup. Without this filter, multi-source
     // brains where the slug exists in 2+ sources return >1 row and the
     // chunk replacement targets the wrong page (or fans out across pages).
-    const pages = await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}`;
+    const pages = await sql`SELECT id FROM pages WHERE slug = ${slug} AND source_id = ${sourceId} FOR UPDATE`;
     if (pages.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);
     const pageId = pages[0].id;
+
+    // A fragment write cannot certify the full-body fence boundary. Import seals
+    // only after its complete replacement succeeds in the same transaction.
+    const invalidation = chunkWriteInvalidation(pageId, chunks);
+    await sql.unsafe(invalidation.sql, invalidation.params as never[]);
 
     // Remove chunks that no longer exist (chunk_index beyond new count)
     const newIndices = chunks.map(c => c.chunk_index);
@@ -2380,11 +2402,9 @@ export class PostgresEngine implements BrainEngine {
         `$${paramIdx++}, ${embeddingImagePh})`,
       );
 
-      // NUL/lone-surrogate cleanup ONCE into a local shared by BOTH binds:
-      // the md5() embedded_text_hash input and the stored chunk_text must see
-      // the same bytes, or the hash diverges from the sanitized stored text
-      // (and the raw NUL would still abort the INSERT via the md5 param).
-      const sanitizedChunkText = sanitizeText(chunk.chunk_text);
+      // Already normalized before the seal snapshot. Both storage and the
+      // embedded_text_hash input must use those same canonical bytes.
+      const sanitizedChunkText = chunk.chunk_text;
       // Param push order MUST match placeholder allocation order.
       if (embeddingStr) params.push(embeddingStr);
       if (embeddingImageStr) params.push(embeddingImageStr);
@@ -2481,7 +2501,7 @@ export class PostgresEngine implements BrainEngine {
     );
   }
 
-  async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean }): Promise<Chunk[]> {
+  async getChunks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean }): Promise<Chunk[]> {
     const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const scalarSourceId = opts?.sourceId ?? 'default';
     // S2: embedding_is_null reports the registry-ACTIVE column's truth —
@@ -2513,6 +2533,8 @@ export class PostgresEngine implements BrainEngine {
         FROM content_chunks cc
         JOIN pages p ON p.id = cc.page_id
         WHERE p.slug = ${slug} AND ${scope}
+          ${opts?.excludePrivate ? tx.unsafe(`AND ${privatePagesFilterFragment('p')}`) : tx``}
+          ${requiresSafeChunks(opts) ? tx.unsafe(`AND ${safeChunksFilter('p')}`) : tx``}
         ORDER BY cc.chunk_index
       `;
       return rows.map((r: Record<string, unknown>) => rowToChunk(r, includeEmbedding));
@@ -3138,7 +3160,8 @@ export class PostgresEngine implements BrainEngine {
     }
   }
 
-  async getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+  async getLinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<Link[]> {
+    const privacy = opts?.excludePrivate ? `AND ${privatePagesFilterFragment('f')} AND ${privatePagesFilterFragment('t')} AND ${privateLinkOriginFilterFragment('l')}` : '';
     // Two layers of defense (see getPage for the full pattern):
     //   1. RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING)
     //   2. App-layer source filter (#2200 federated)
@@ -3161,7 +3184,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
           WHERE f.slug = ${slug} AND f.source_id = ANY(${ids}::text[]) AND t.source_id = ANY(${ids}::text[])
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
         `;
         return rows as unknown as Link[];
       }
@@ -3184,7 +3207,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id
           WHERE f.slug = ${slug} AND f.source_id = ${opts.sourceId}
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
         `;
         return rows as unknown as Link[];
       }
@@ -3199,13 +3222,14 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages t ON t.id = l.to_page_id
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE f.slug = ${slug}
-          AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
       `;
       return rows as unknown as Link[];
     });
   }
 
-  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<Link[]> {
+  async getBacklinks(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<Link[]> {
+    const privacy = opts?.excludePrivate ? `AND ${privatePagesFilterFragment('f')} AND ${privatePagesFilterFragment('t')} AND ${privateLinkOriginFilterFragment('l')}` : '';
     // Two layers of defense (see getPage for the full pattern):
     //   1. RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING)
     //   2. App-layer source filter (#2200 federated)
@@ -3226,7 +3250,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id AND o.source_id = ANY(${ids}::text[])
           WHERE t.slug = ${slug} AND t.source_id = ANY(${ids}::text[]) AND f.source_id = ANY(${ids}::text[])
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
         `;
         return rows as unknown as Link[];
       }
@@ -3244,7 +3268,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages t ON t.id = l.to_page_id
           LEFT JOIN pages o ON o.id = l.origin_page_id
           WHERE t.slug = ${slug} AND t.source_id = ${opts.sourceId}
-            AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+            AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
         `;
         return rows as unknown as Link[];
       }
@@ -3259,7 +3283,7 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages t ON t.id = l.to_page_id
         LEFT JOIN pages o ON o.id = l.origin_page_id
         WHERE t.slug = ${slug}
-          AND f.deleted_at IS NULL AND t.deleted_at IS NULL
+          AND f.deleted_at IS NULL AND t.deleted_at IS NULL ${tx.unsafe(privacy)}
       `;
       return rows as unknown as Link[];
     });
@@ -3348,6 +3372,8 @@ export class PostgresEngine implements BrainEngine {
     opts?: import('./engine.ts').TraverseGraphOpts,
   ): Promise<GraphNode[]> {
     const sql = this.sql;
+    const privacy = (page: string, link?: string) => opts?.excludePrivate
+      ? sql.unsafe(`AND ${privatePagesFilterFragment(page)}${link ? ` AND ${privateLinkOriginFilterFragment(link)}` : ''}`) : sql``;
     // v0.34.1 (#861 — P0 leak seal): scope visited nodes to the caller's
     // source(s). Without this, the walk follows edges into pages from
     // foreign sources, leaking topology + page metadata. The filter
@@ -3386,7 +3412,7 @@ export class PostgresEngine implements BrainEngine {
              JOIN pages p2 ON p2.id = l.to_page_id
              WHERE g.depth < ${depth}
                AND NOT (p2.id = ANY(g.visited))
-               AND p2.deleted_at IS NULL
+               AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
                ${stepScope}
              ORDER BY p2.slug ASC, p2.id ASC
              LIMIT ${cap})`
@@ -3396,13 +3422,13 @@ export class PostgresEngine implements BrainEngine {
             JOIN pages p2 ON p2.id = l.to_page_id
             WHERE g.depth < ${depth}
               AND NOT (p2.id = ANY(g.visited))
-              AND p2.deleted_at IS NULL
+              AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
               ${stepScope}`;
     // Cycle prevention: visited array tracks page IDs already in the path.
     const rows = await sql`
       WITH RECURSIVE graph AS (
         SELECT p.id, p.slug, p.title, p.type, 0 as depth, ARRAY[p.id] as visited
-        FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${seedScope}
+        FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
 
         UNION ALL
 
@@ -3420,7 +3446,7 @@ export class PostgresEngine implements BrainEngine {
           (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${aggScope}),
+           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${aggScope}),
           '[]'::jsonb
         ) as links
       FROM graph g
@@ -3444,16 +3470,18 @@ export class PostgresEngine implements BrainEngine {
 
   async traversePaths(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
   ): Promise<GraphPath[]> {
     return (await this.traversePathsDetailed(slug, opts)).paths;
   }
 
   async traversePathsDetailed(
     slug: string,
-    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[] },
+    opts?: { depth?: number; linkType?: string; direction?: 'in' | 'out' | 'both'; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
   ): Promise<{ paths: GraphPath[]; truncated: boolean }> {
     const sql = this.sql;
+    const privacy = (page: string, link?: string) => opts?.excludePrivate
+      ? sql.unsafe(`AND ${privatePagesFilterFragment(page)}${link ? ` AND ${privateLinkOriginFilterFragment(link)}` : ''}`) : sql``;
     const depth = opts?.depth ?? 5;
     const direction = opts?.direction ?? 'out';
     const linkType = opts?.linkType ?? null;
@@ -3494,7 +3522,7 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${seedScope}
+          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -3502,7 +3530,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages p2 ON p2.id = l.to_page_id
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL
+            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
         )
@@ -3512,7 +3540,7 @@ export class PostgresEngine implements BrainEngine {
         JOIN links l ON l.from_page_id = w.id
         JOIN pages p2 ON p2.id = l.to_page_id
         WHERE w.depth < ${depth}
-          AND p2.deleted_at IS NULL
+          AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
         ORDER BY depth, from_slug, to_slug
@@ -3522,7 +3550,7 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, p.slug, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${seedScope}
+          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
           UNION ALL
           SELECT p2.id, p2.slug, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -3530,7 +3558,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages p2 ON p2.id = l.from_page_id
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL
+            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
         )
@@ -3540,7 +3568,7 @@ export class PostgresEngine implements BrainEngine {
         JOIN links l ON l.to_page_id = w.id
         JOIN pages p2 ON p2.id = l.from_page_id
         WHERE w.depth < ${depth}
-          AND p2.deleted_at IS NULL
+          AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${stepScope}
         ORDER BY depth, from_slug, to_slug
@@ -3550,7 +3578,7 @@ export class PostgresEngine implements BrainEngine {
       rows = await sql`
         WITH RECURSIVE walk AS (
           SELECT p.id, 0::int as depth, ARRAY[p.id] as visited
-          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${seedScope}
+          FROM pages p WHERE p.slug = ${slug} AND p.deleted_at IS NULL ${privacy('p')} ${seedScope}
           UNION ALL
           SELECT p2.id, w.depth + 1, w.visited || p2.id
           FROM walk w
@@ -3558,7 +3586,7 @@ export class PostgresEngine implements BrainEngine {
           JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END
           WHERE w.depth < ${depth}
             AND NOT (p2.id = ANY(w.visited))
-            AND p2.deleted_at IS NULL
+            AND p2.deleted_at IS NULL ${privacy('p2', 'l')}
             AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
             ${stepScope}
         )
@@ -3569,8 +3597,8 @@ export class PostgresEngine implements BrainEngine {
         JOIN pages pf ON pf.id = l.from_page_id
         JOIN pages pt ON pt.id = l.to_page_id
         WHERE w.depth < ${depth}
-          AND pf.deleted_at IS NULL
-          AND pt.deleted_at IS NULL
+          AND pf.deleted_at IS NULL ${privacy('pf', 'l')}
+          AND pt.deleted_at IS NULL ${privacy('pt')}
           AND (${!linkTypeMatches} OR l.link_type = ${linkType ?? ''})
           ${pfScope}
           ${ptScope}
@@ -3605,212 +3633,23 @@ export class PostgresEngine implements BrainEngine {
     seeds: string[],
     opts?: import('./types.ts').RelationalFanoutOpts,
   ): Promise<import('./types.ts').RelationalFanoutRow[]> {
-    if (!seeds || seeds.length === 0) return [];
-    const sql = this.sql;
-    const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
-    const direction = opts?.direction ?? 'both';
-    const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
-    const types = opts?.linkTypes && opts.linkTypes.length > 0 ? opts.linkTypes : null;
-
-    // Scope is applied to SEED selection only. Within-source traversal is
-    // enforced separately by `p2.source_id = w.seed_source` in the recursive
-    // step, so a walk can never cross a source boundary even when several
-    // sources are in scope.
-    const useSourceIds = opts?.sourceIds && opts.sourceIds.length > 0;
-    const seedScope = useSourceIds
-      ? sql`AND p.source_id = ANY(${opts!.sourceIds!}::text[])`
-      : opts?.sourceId
-        ? sql`AND p.source_id = ${opts.sourceId}`
-        : sql``;
-    const typeFilter = types ? sql`AND l.link_type = ANY(${types}::text[])` : sql``;
-    const mentionsFilter = opts?.includeMentions
-      ? sql``
-      : sql`AND l.link_source IS DISTINCT FROM 'mentions'`;
-
-    // Recursive step join differs by direction; everything else is shared.
-    const recurStep =
-      direction === 'out'
-        ? sql`JOIN links l ON l.from_page_id = w.id JOIN pages p2 ON p2.id = l.to_page_id`
-        : direction === 'in'
-          ? sql`JOIN links l ON l.to_page_id = w.id JOIN pages p2 ON p2.id = l.from_page_id`
-          : sql`JOIN links l ON (l.from_page_id = w.id OR l.to_page_id = w.id)
-                JOIN pages p2 ON p2.id = CASE WHEN l.from_page_id = w.id THEN l.to_page_id ELSE l.from_page_id END`;
-
-    const rows = await sql`
-      WITH RECURSIVE walk AS (
-        SELECT p.id, p.slug, p.source_id, 0::int AS depth,
-               ARRAY[p.id] AS visited, ARRAY[p.slug] AS path,
-               p.source_id AS seed_source, NULL::text AS last_link_type
-        FROM pages p
-        WHERE p.slug = ANY(${seeds}::text[]) ${seedScope} AND p.deleted_at IS NULL
-        UNION ALL
-        SELECT p2.id, p2.slug, p2.source_id, w.depth + 1,
-               w.visited || p2.id, w.path || p2.slug,
-               w.seed_source, l.link_type
-        FROM walk w
-        ${recurStep}
-        WHERE w.depth < ${depth}
-          AND NOT (p2.id = ANY(w.visited))
-          AND p2.source_id = w.seed_source
-          AND p2.deleted_at IS NULL
-          ${mentionsFilter}
-          ${typeFilter}
-      )
-      SELECT n.source_id, n.slug,
-             MIN(n.depth) AS hop,
-             COUNT(DISTINCT n.last_link_type) AS edge_count,
-             array_agg(DISTINCT n.last_link_type)
-               FILTER (WHERE n.last_link_type IS NOT NULL) AS via_link_types,
-             -- Final path tie-break (lexicographic) makes the pick deterministic
-             -- when a node is reachable at the same depth from multiple seeds;
-             -- without it the winner is plan/heap-order dependent and the two
-             -- engines (or two runs) can disagree. Relational retrieval is
-             -- documented deterministic; keep in lockstep with pglite-engine.ts.
-             (array_agg(array_to_string(n.path, chr(9))
-               ORDER BY n.depth ASC, array_length(n.path, 1) ASC,
-                        array_to_string(n.path, chr(9)) ASC))[1] AS path_str,
-             (SELECT cc.id FROM content_chunks cc
-               WHERE cc.page_id = n.id ORDER BY cc.chunk_index ASC LIMIT 1) AS canonical_chunk_id
-      FROM walk n
-      WHERE n.depth > 0
-      GROUP BY n.source_id, n.slug, n.id
-      ORDER BY hop ASC, edge_count DESC, n.source_id ASC, n.slug ASC
-      LIMIT ${limit}
-    `;
-
-    return (rows as Record<string, unknown>[]).map(r => ({
-      source_id: r.source_id as string,
-      slug: r.slug as string,
-      hop: Number(r.hop),
-      edge_count: Number(r.edge_count),
-      via_link_types: Array.isArray(r.via_link_types) ? (r.via_link_types as string[]) : [],
-      path: r.path_str ? String(r.path_str).split('\t') : [],
-      canonical_chunk_id: r.canonical_chunk_id == null ? null : Number(r.canonical_chunk_id),
-    }));
+    return readRelationalFanout(this.executeRaw.bind(this), seeds, opts);
   }
 
-  async getBacklinkCounts(pageIds: number[]): Promise<Map<number, number>> {
-    const result = new Map<number, number>();
-    if (pageIds.length === 0) return result;
-    for (const id of pageIds) result.set(id, 0);
-
-    // v0.41.18.0 D12: filter mentions OUT of backlink-count for search
-    // ranking. `link_source='mentions'` rows are auto-linked body-text
-    // mentions from `gbrain extract links --by-mention`; they're
-    // graph-completeness signal, NOT human-intent signal. Counting them
-    // toward backlinks would shift search ranking globally on first
-    // --by-mention run, boosting popular-mention pages over intentional-
-    // backlink pages. `IS DISTINCT FROM` is NULL-safe so legacy rows with
-    // NULL link_source still count (NULL != 'mentions' → row included).
-    // #4380: keyed by p.id, not slug — grouping by bare slug summed every
-    // namesake's backlinks across sources, boosting zero-backlink pages.
-    const sql = this.sql;
-    const rows = await sql`
-      SELECT p.id as page_id, COUNT(l.id)::int as cnt
-      FROM pages p
-      LEFT JOIN links l ON l.to_page_id = p.id
-        AND l.link_source IS DISTINCT FROM 'mentions'
-      WHERE p.id = ANY(${pageIds}::int[])
-      GROUP BY p.id
-    `;
-    for (const r of rows as unknown as { page_id: number; cnt: number }[]) {
-      result.set(Number(r.page_id), Number(r.cnt));
-    }
-    return result;
+  async getBacklinkCounts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, number>> {
+    return readBacklinkCounts(this.executeRaw.bind(this), pageIds, opts);
   }
 
-  async getAdjacencyBoosts(pageIds: number[]): Promise<Map<number, import('./types.ts').AdjacencyRow>> {
-    const result = new Map<number, import('./types.ts').AdjacencyRow>();
-    if (pageIds.length === 0) return result;
-
-    const sql = this.sql;
-    // SQL contract: see BrainEngine.getAdjacencyBoosts JSDoc. Both ANY
-    // filters restrict the scan to the input set's induced subgraph,
-    // which keeps cross-source leakage impossible by construction.
-    // cross_source_hits uses COALESCE so NULL source_id rows behave as
-    // 'default' and don't silently disappear from the count.
-    //
-    // Defense-in-depth (codex outside-voice review): deleted_at IS NULL
-    // on both join sides so a soft-deleted page in the input set
-    // (theoretically possible if a future caller bypasses hybridSearch's
-    // visibility filter) can't contribute to hits or cross_source_hits.
-    // Matches the v0.35.5.0 findOrphanPages fix pattern.
-    const rows = await sql`
-      WITH targets AS (
-        SELECT id, COALESCE(source_id, 'default') AS source_id
-        FROM pages
-        WHERE id = ANY(${pageIds}::int[])
-          AND deleted_at IS NULL
-      )
-      SELECT
-        l.to_page_id AS to_page_id,
-        COUNT(DISTINCT l.from_page_id)::int AS hits,
-        COUNT(DISTINCT
-          CASE WHEN COALESCE(p.source_id, 'default') <> t.source_id
-               THEN COALESCE(p.source_id, 'default') END
-        )::int AS cross_source_hits
-      FROM links l
-      JOIN pages   p ON p.id = l.from_page_id AND p.deleted_at IS NULL
-      JOIN targets t ON t.id = l.to_page_id
-      WHERE l.from_page_id = ANY(${pageIds}::int[])
-        AND l.to_page_id   = ANY(${pageIds}::int[])
-      GROUP BY l.to_page_id
-      HAVING COUNT(DISTINCT l.from_page_id) >= 1
-    `;
-    for (const r of rows as unknown as { to_page_id: number; hits: number; cross_source_hits: number }[]) {
-      result.set(Number(r.to_page_id), {
-        hits: Number(r.hits),
-        cross_source_hits: Number(r.cross_source_hits),
-      });
-    }
-    return result;
+  async getAdjacencyBoosts(pageIds: number[], opts?: PageReadScope): Promise<Map<number, import('./types.ts').AdjacencyRow>> {
+    return readAdjacencyBoosts(this.executeRaw.bind(this), pageIds, opts);
   }
 
-  async getContentFlagsByPageIds(
-    pageIds: number[],
-  ): Promise<Map<number, { reason: string; detail: string }>> {
-    const result = new Map<number, { reason: string; detail: string }>();
-    if (pageIds.length === 0) return result;
-    const sql = this.sql;
-    const rows = await sql`
-      SELECT id,
-             frontmatter -> 'content_flag' ->> 'reason' AS reason,
-             frontmatter -> 'content_flag' ->> 'detail' AS detail
-      FROM pages
-      WHERE id = ANY(${pageIds}::int[])
-        AND frontmatter ? 'content_flag'
-    `;
-    for (const r of rows as unknown as { id: number; reason: string | null; detail: string | null }[]) {
-      if (!r.reason) continue;
-      result.set(Number(r.id), { reason: r.reason, detail: r.detail ?? '' });
-    }
-    return result;
+  async getContentFlagsByPageIds(pageIds: number[], opts?: PageReadScope): Promise<Map<number, { reason: string; detail: string }>> {
+    return readContentFlags(this.executeRaw.bind(this), pageIds, opts);
   }
 
-  async getUnverifiedExtractionPageIds(
-    pageIds: number[],
-  ): Promise<Map<number, { unverified: boolean; status: string }>> {
-    const result = new Map<number, { unverified: boolean; status: string }>();
-    if (pageIds.length === 0) return result;
-    const sql = this.sql;
-    // Quarantine predicate is the shared unverifiedExtractionFragment (issue
-    // #160) so this query and the SQL-side source-boost guard can never
-    // drift. #4220 widened the projection: any page with a frontmatter
-    // `status` value is returned (draft/superseded/restricted/... surface on
-    // SearchResult.status); the fragment match stays the quarantine flag.
-    const rows = await sql.unsafe(
-      `SELECT id,
-              (COALESCE(frontmatter, '{}'::jsonb) ->> 'status') AS status,
-              (${unverifiedExtractionFragment('pages')}) AS unverified
-       FROM pages
-       WHERE id = ANY($1::int[])
-         AND (COALESCE(frontmatter, '{}'::jsonb) ->> 'status') IS NOT NULL`,
-      [pageIds] as never,
-    );
-    for (const r of rows as unknown as { id: number; status: string; unverified: boolean }[]) {
-      result.set(Number(r.id), { unverified: r.unverified === true, status: r.status });
-    }
-    return result;
+  async getUnverifiedExtractionPageIds(pageIds: number[], opts?: PageReadScope): Promise<Map<number, { unverified: boolean; status: string }>> {
+    return readExtractionStates(this.executeRaw.bind(this), pageIds, opts);
   }
 
   async getPageTimestamps(slugs: string[]): Promise<Map<string, Date>> {
@@ -3823,59 +3662,18 @@ export class PostgresEngine implements BrainEngine {
     return new Map(rows.map(r => [r.slug as string, new Date(r.ts as string)]));
   }
 
-  async getEffectiveDates(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, Date>> {
-    if (refs.length === 0) return new Map();
-    const sql = this.sql;
-    const slugs = refs.map(r => r.slug);
-    const sourceIds = refs.map(r => r.source_id);
-    // Composite-keyed: a page is unique by (source_id, slug). unnest the
-    // two arrays in lockstep so multi-source brains don't fan out across
-    // sources (codex pass-1 finding #3).
-    const rows = await sql`
-      SELECT p.slug, p.source_id, COALESCE(p.effective_date, p.updated_at, p.created_at) AS ts
-        FROM pages p
-        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
-          ON p.slug = u.slug AND p.source_id = u.source_id
-    `;
-    const out = new Map<string, Date>();
-    for (const raw of rows as unknown as Array<Record<string, unknown>>) {
-      const r = raw as { slug: string; source_id: string; ts: string | Date };
-      const key = `${r.source_id}::${r.slug}`;
-      out.set(key, r.ts instanceof Date ? r.ts : new Date(r.ts));
-    }
-    return out;
+  async getEffectiveDates(refs: Array<{slug: string; source_id: string}>, opts?: PageReadScope): Promise<Map<string, Date>> {
+    return readEffectiveDates(this.executeRaw.bind(this), refs, opts);
   }
 
-  async getSalienceScores(refs: Array<{slug: string; source_id: string}>): Promise<Map<string, number>> {
-    if (refs.length === 0) return new Map();
-    const sql = this.sql;
-    const slugs = refs.map(r => r.slug);
-    const sourceIds = refs.map(r => r.source_id);
-    // Salience = emotional_weight × 5 + ln(1 + take_count). Pure mattering
-    // signal — NO time component (per D9: salience and recency are
-    // orthogonal axes). Composite-keyed for multi-source isolation.
-    const rows = await sql`
-      SELECT p.slug, p.source_id,
-             (COALESCE(p.emotional_weight, 0) * 5
-              + ln(1 + COUNT(DISTINCT t.id))) AS score
-        FROM pages p
-        JOIN unnest(${slugs}::text[], ${sourceIds}::text[]) AS u(slug, source_id)
-          ON p.slug = u.slug AND p.source_id = u.source_id
-        LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE
-       GROUP BY p.id
-    `;
-    const out = new Map<string, number>();
-    for (const raw of rows as unknown as Array<Record<string, unknown>>) {
-      const r = raw as { slug: string; source_id: string; score: number | string };
-      const key = `${r.source_id}::${r.slug}`;
-      out.set(key, Number(r.score));
-    }
-    return out;
+  async getSalienceScores(refs: Array<{slug: string; source_id: string}>, opts?: PageReadPolicy): Promise<Map<string, number>> {
+    return readSalienceScores(this.executeRaw.bind(this), refs, opts);
   }
 
   async findOrphanPages(opts?: {
     sourceId?: string;
     sourceIds?: string[];
+    excludePrivate?: boolean;
     mode?: 'inbound' | 'islanded';
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean }>> {
     const sql = this.sql;
@@ -3907,7 +3705,7 @@ export class PostgresEngine implements BrainEngine {
             FROM links l
             JOIN pages tgt ON tgt.id = l.to_page_id
             WHERE l.from_page_id = p.id
-              AND tgt.deleted_at IS NULL
+              AND tgt.deleted_at IS NULL ${opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('tgt')} AND ${privateLinkOriginFilterFragment('l')}`) : sql``}
           )`
         : sql``;
     const rows = await sql`
@@ -3918,14 +3716,14 @@ export class PostgresEngine implements BrainEngine {
         p.type,
         (NOT ${sql.unsafe(QUARANTINE_FILTER_FRAGMENT)}) AS quarantined
       FROM pages p
-      WHERE p.deleted_at IS NULL
+      WHERE p.deleted_at IS NULL ${opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`) : sql``}
         ${sourceFilter}
         AND NOT EXISTS (
           SELECT 1
           FROM links l
           JOIN pages src ON src.id = l.from_page_id
           WHERE l.to_page_id = p.id
-            AND src.deleted_at IS NULL
+            AND src.deleted_at IS NULL ${opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('src')} AND ${privateLinkOriginFilterFragment('l')}`) : sql``}
         )
         ${outboundFilter}
       ORDER BY p.slug
@@ -4069,6 +3867,8 @@ export class PostgresEngine implements BrainEngine {
     const rows = await sql`
       SELECT te.* FROM timeline_entries te JOIN pages p ON p.id = te.page_id
       WHERE p.slug = ${slug} ${sourceCond} ${afterCond} ${beforeCond}
+        ${opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}
+          AND ${privateTimelineEventFilterFragment('te')}`) : sql``}
       ORDER BY te.date DESC LIMIT ${limit}`;
     return rows as unknown as TimelineEntry[];
   }
@@ -4079,12 +3879,15 @@ export class PostgresEngine implements BrainEngine {
   // doctor); order by COALESCE(event effective_date, date) for intra-day
   // sequence. Source scope: federated sourceIds[] > scalar sourceId > unscoped.
   // ep=true: the ep LEFT JOIN carries the same scope so out-of-scope event fields null out (#2200 origin-join shape).
-  private chronicleSourceCond(opts?: { sourceId?: string; sourceIds?: string[] }, ep = false) {
+  private chronicleSourceCond(opts?: PageReadScope, ep = false) {
     const sql = this.sql;
+    const privacy = opts?.excludePrivate && !ep
+      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privateTimelineEventFilterFragment('te')}`)
+      : sql``;
     if (opts?.sourceIds && opts.sourceIds.length > 0)
-      return ep ? sql`AND ep.source_id = ANY(${opts.sourceIds}::text[])` : sql`AND p.source_id = ANY(${opts.sourceIds}::text[])`;
-    if (opts?.sourceId) return ep ? sql`AND ep.source_id = ${opts.sourceId}` : sql`AND p.source_id = ${opts.sourceId}`;
-    return sql``;
+      return ep ? sql`AND ep.source_id = ANY(${opts.sourceIds}::text[])` : sql`AND p.source_id = ANY(${opts.sourceIds}::text[]) ${privacy}`;
+    if (opts?.sourceId) return ep ? sql`AND ep.source_id = ${opts.sourceId}` : sql`AND p.source_id = ${opts.sourceId} ${privacy}`;
+    return privacy;
   }
 
   async getTimelineForDate(date: string, opts?: ChronicleTimelineOpts): Promise<ChronicleTimelineRow[]> {
@@ -4132,7 +3935,7 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as ChronicleTimelineRow[];
   }
 
-  async getOnThisDay(opts?: { date?: string; limit?: number; sourceId?: string; sourceIds?: string[] }): Promise<ChronicleTimelineRow[]> {
+  async getOnThisDay(opts?: PageReadScope & { date?: string; limit?: number }): Promise<ChronicleTimelineRow[]> {
     const sql = this.sql;
     const limit = opts?.limit ?? 50;
     const target = opts?.date ? sql`${opts.date}::date` : sql`current_date`;
@@ -4155,7 +3958,7 @@ export class PostgresEngine implements BrainEngine {
     return rows as unknown as ChronicleTimelineRow[];
   }
 
-  async getLastSeen(entitySlug: string, opts?: { asof?: string; sourceId?: string; sourceIds?: string[] }): Promise<LastSeenResult> {
+  async getLastSeen(entitySlug: string, opts?: PageReadScope & { asof?: string }): Promise<LastSeenResult> {
     const sql = this.sql;
     // "Seen" = the entity's own page has a timeline row, OR an event's `who`
     // array references the entity (exact slug or wikilink-substring match).
@@ -4369,35 +4172,36 @@ export class PostgresEngine implements BrainEngine {
   async getRawData(
     slug: string,
     source?: string,
-    opts?: { sourceId?: string; sourceIds?: string[] },
+    opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean },
   ): Promise<RawData[]> {
     const sql = this.sql;
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`) : sql``;
     const sourceIds = opts?.sourceIds && opts.sourceIds.length > 0 ? opts.sourceIds : undefined;
     const sourceId = sourceIds ? undefined : opts?.sourceId;
     let rows;
     if (source && sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ANY(${sourceIds}::text[])`;
     } else if (sourceIds) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug} AND p.source_id = ANY(${sourceIds}::text[])`;
     } else if (source && sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug} AND rd.source = ${source} AND p.source_id = ${sourceId}`;
     } else if (source) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug} AND rd.source = ${source}`;
     } else if (sourceId) {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug} AND p.source_id = ${sourceId}`;
     } else {
       rows = await sql`SELECT rd.source, rd.data, rd.fetched_at FROM raw_data rd
-        JOIN pages p ON p.id = rd.page_id
+        JOIN pages p ON p.id = rd.page_id ${privacy}
         WHERE p.slug = ${slug}`;
     }
     return rows as unknown as RawData[];
@@ -4837,13 +4641,16 @@ export class PostgresEngine implements BrainEngine {
     return rows[0] as unknown as PageVersion;
   }
 
-  async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[] }): Promise<PageVersion[]> {
+  async getVersions(slug: string, opts?: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<PageVersion[]> {
     const sql = this.sql;
+    const privacy = opts?.excludePrivate
+      ? sql.unsafe(`AND ${privatePagesFilterFragment('p')} AND ${privatePagesFilterFragment('pv')}`) : sql``;
     if (opts?.sourceIds && opts.sourceIds.length > 0) {
       const rows = await sql`
         SELECT pv.* FROM page_versions pv
         JOIN pages p ON p.id = pv.page_id
         WHERE p.slug = ${slug} AND p.source_id = ANY(${opts.sourceIds}::text[])
+          ${privacy}
         ORDER BY pv.snapshot_at DESC
       `;
       return rows as unknown as PageVersion[];
@@ -4853,6 +4660,7 @@ export class PostgresEngine implements BrainEngine {
         SELECT pv.* FROM page_versions pv
         JOIN pages p ON p.id = pv.page_id
         WHERE p.slug = ${slug} AND p.source_id = ${opts.sourceId}
+          ${privacy}
         ORDER BY pv.snapshot_at DESC
       `;
       return rows as unknown as PageVersion[];
@@ -4861,6 +4669,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT pv.* FROM page_versions pv
       JOIN pages p ON p.id = pv.page_id
       WHERE p.slug = ${slug}
+        ${privacy}
       ORDER BY pv.snapshot_at DESC
     `;
     return rows as unknown as PageVersion[];
@@ -4880,6 +4689,7 @@ export class PostgresEngine implements BrainEngine {
         UPDATE pages SET
           compiled_truth = pv.compiled_truth,
           frontmatter = pv.frontmatter,
+          chunker_version = ${sql.unsafe(bodyWriteChunkVersion('pv.compiled_truth', 'pages.timeline'))},
           updated_at = now()
         FROM page_versions pv
         WHERE pages.slug = ${slug} AND pages.source_id = ${opts.sourceId}
@@ -4891,6 +4701,7 @@ export class PostgresEngine implements BrainEngine {
       UPDATE pages SET
         compiled_truth = pv.compiled_truth,
         frontmatter = pv.frontmatter,
+          chunker_version = ${sql.unsafe(bodyWriteChunkVersion('pv.compiled_truth', 'pages.timeline'))},
         updated_at = now()
       FROM page_versions pv
       WHERE pages.slug = ${slug} AND pv.id = ${versionId} AND pv.page_id = pages.id
@@ -5235,23 +5046,26 @@ export class PostgresEngine implements BrainEngine {
   async resolveSlugWithAlias(
     slug: string,
     sourceOrSources: string | readonly string[],
+    opts?: { excludePrivate?: boolean },
   ): Promise<string> {
-    return (await this.resolveSlugWithAliasDetailed(slug, sourceOrSources))?.canonical_slug ?? slug;
+    return (await this.resolveSlugWithAliasDetailed(slug, sourceOrSources, opts))?.canonical_slug ?? slug;
   }
 
   async resolveSlugWithAliasDetailed(
     slug: string,
     sourceOrSources: string | readonly string[],
+    opts?: { excludePrivate?: boolean },
   ): Promise<{ canonical_slug: string; source_id: string } | null> {
     const sql = this.sql;
     const sources = Array.isArray(sourceOrSources) ? sourceOrSources : [sourceOrSources];
     if (sources.length === 0) return null;
+    const privacy = opts?.excludePrivate ? sql.unsafe(`AND EXISTS (SELECT 1 FROM pages p WHERE p.slug = slug_aliases.canonical_slug AND p.source_id = slug_aliases.source_id AND p.deleted_at IS NULL AND ${privatePagesFilterFragment('p')})`) : sql``;
     try {
       const rows = await sql`
         SELECT canonical_slug, source_id
         FROM slug_aliases
         WHERE alias_slug = ${slug}
-          AND source_id = ANY(${sources}::text[])
+          AND source_id = ANY(${sources}::text[]) ${privacy}
         ORDER BY array_position(${sources}::text[], source_id), id
       `;
       if (rows.length === 0) return null;
@@ -5272,37 +5086,9 @@ export class PostgresEngine implements BrainEngine {
 
   async resolveAliases(
     aliasNorms: string[],
-    opts?: { sourceId?: string; sourceIds?: string[] },
+    opts?: PageReadScope,
   ): Promise<Map<string, Array<{ slug: string; source_id: string }>>> {
-    const out = new Map<string, Array<{ slug: string; source_id: string }>>();
-    if (!aliasNorms || aliasNorms.length === 0) return out;
-    const sql = this.sql;
-    const sources =
-      opts?.sourceIds && opts.sourceIds.length > 0
-        ? opts.sourceIds
-        : opts?.sourceId
-          ? [opts.sourceId]
-          : null;
-    const rows = sources
-      ? await sql`
-          SELECT alias_norm, slug, source_id
-          FROM page_aliases
-          WHERE alias_norm = ANY(${aliasNorms}::text[])
-            AND source_id = ANY(${sources}::text[])
-          ORDER BY alias_norm, source_id, slug`
-      : await sql`
-          SELECT alias_norm, slug, source_id
-          FROM page_aliases
-          WHERE alias_norm = ANY(${aliasNorms}::text[])
-          ORDER BY alias_norm, source_id, slug`;
-    for (const r of rows) {
-      const a = r.alias_norm as string;
-      const list = out.get(a) ?? [];
-      const ref = { slug: r.slug as string, source_id: r.source_id as string };
-      if (!list.some(x => x.slug === ref.slug && x.source_id === ref.source_id)) list.push(ref);
-      out.set(a, list);
-    }
-    return out;
+    return readAliases(this.executeRaw.bind(this), aliasNorms, opts);
   }
 
   async setPageAliases(slug: string, sourceId: string, aliasNorms: string[]): Promise<void> {

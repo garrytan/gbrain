@@ -7,7 +7,8 @@
 
 import { OperationError, type Operation, type OperationContext } from './contract.ts';
 import {
-  sourceScopeOpts,
+  readPolicyOpts,
+  readHolders,
   thinkSourceScopeOpts,
   enforceClientSlugFence,
   validatePageSlug,
@@ -21,6 +22,7 @@ import {
   TakesWriteError,
 } from '../takes-write.ts';
 import { embedQuery } from '../embedding.ts';
+import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 
 // --- v0.28: Takes ---
 
@@ -41,7 +43,7 @@ const takes_list: Operation = {
   handler: async (ctx, p) => {
     return ctx.engine.listTakes({
       // #2200-class: honor federated/source scope (via the take's page.source_id).
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
       page_slug: p.page_slug as string | undefined,
       holder: p.holder as string | undefined,
       kind: p.kind as never,
@@ -52,7 +54,7 @@ const takes_list: Operation = {
       offset: p.offset as number | undefined,
       // Per-token allow-list — server-side filter for MCP-bound calls.
       // Local CLI callers leave takesHoldersAllowList unset and see all holders.
-      takesHoldersAllowList: ctx.takesHoldersAllowList,
+      takesHoldersAllowList: readHolders(ctx),
     });
   },
   cliHints: { name: 'takes-list' },
@@ -68,9 +70,9 @@ const takes_search: Operation = {
   },
   handler: async (ctx, p) => {
     return ctx.engine.searchTakes(p.query as string, {
-      ...sourceScopeOpts(ctx),
+      ...await readPolicyOpts(ctx),
       limit: p.limit as number | undefined,
-      takesHoldersAllowList: ctx.takesHoldersAllowList,
+      takesHoldersAllowList: readHolders(ctx),
     });
   },
   cliHints: { name: 'takes-search', positional: ['query'] },
@@ -97,13 +99,13 @@ const takes_scorecard: Operation = {
   handler: async (ctx, p) => {
     const card = await ctx.engine.getScorecard(
       {
-        ...sourceScopeOpts(ctx),
+        ...await readPolicyOpts(ctx),
         holder: p.holder as string | undefined,
         domainPrefix: p.domain_prefix as string | undefined,
         since: p.since as string | undefined,
         until: p.until as string | undefined,
       },
-      ctx.takesHoldersAllowList,
+      readHolders(ctx),
     );
     // [OV8/EV5] Resolver-provenance visibility: remote resolutions are
     // server-stamped resolved_by='mcp:<client>' (takes_resolve below), and
@@ -134,11 +136,11 @@ const takes_calibration: Operation = {
     // a breaking change; the scorecard is the segregation surface.)
     return ctx.engine.getCalibrationCurve(
       {
-        ...sourceScopeOpts(ctx),
+        ...await readPolicyOpts(ctx),
         holder: p.holder as string | undefined,
         bucketSize: p.bucket_size as number | undefined,
       },
-      ctx.takesHoldersAllowList,
+      readHolders(ctx),
     );
   },
   cliHints: { name: 'takes-calibration' },
@@ -151,8 +153,9 @@ const takes_calibration: Operation = {
  * signal, not a scorecard dimension).
  */
 async function countMcpResolved(ctx: OperationContext): Promise<number> {
-  const scope = sourceScopeOpts(ctx);
+  const scope = await readPolicyOpts(ctx);
   const where: string[] = [`t.resolved_at IS NOT NULL`, `t.resolved_by LIKE 'mcp:%'`];
+  if (scope.excludePrivate) where.push(privatePagesFilterFragment('p'));
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {
     params.push(scope.sourceIds);
@@ -161,8 +164,9 @@ async function countMcpResolved(ctx: OperationContext): Promise<number> {
     params.push(scope.sourceId);
     where.push(`p.source_id = $${params.length}`);
   }
-  if (ctx.takesHoldersAllowList) {
-    params.push(ctx.takesHoldersAllowList);
+  const holders = readHolders(ctx);
+  if (holders !== undefined) {
+    params.push(holders);
     where.push(`t.holder = ANY($${params.length}::text[])`);
   }
   try {
@@ -222,8 +226,9 @@ const think: Operation = {
       modelExplicit: !!p.model,
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
-      takesHoldersAllowList: ctx.takesHoldersAllowList,
+      takesHoldersAllowList: readHolders(ctx),
       ...thinkScope,
+      excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,
       remote: ctx.remote !== false, // fail-closed: anything not strictly false is untrusted (CLAUDE.md invariant)
     });
 

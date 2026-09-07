@@ -109,6 +109,9 @@ describe('operator-env-preload (#4023)', () => {
     const probed = [
       'GBRAIN_MODEL_DISCOVERY',
       'GBRAIN_PGLITE_SNAPSHOT',
+      'GBRAIN_PGBOUNCER_URL',
+      'GBRAIN_PGBOUNCER_DIRECT_URL',
+      'GBRAIN_CI_REQUIRE_PGBOUNCER',
       'GBRAIN_COMPILED_BIN',
       'GBRAIN_TEST_SENTINEL',
       'GBRAIN_CI_PG_PORT',
@@ -120,6 +123,9 @@ describe('operator-env-preload (#4023)', () => {
       // preload's own default of 'off' when the var is absent.
       GBRAIN_MODEL_DISCOVERY: '1',
       GBRAIN_PGLITE_SNAPSHOT: 'probe-snapshot.tar',
+      GBRAIN_PGBOUNCER_URL: 'postgresql://pooler.example/gbrain_test',
+      GBRAIN_PGBOUNCER_DIRECT_URL: 'postgresql://direct.example/gbrain_test',
+      GBRAIN_CI_REQUIRE_PGBOUNCER: '1',
       GBRAIN_COMPILED_BIN: '/probe/bin/gbrain',
       GBRAIN_TEST_SENTINEL: 'kept',
       GBRAIN_CI_PG_PORT: '5434',

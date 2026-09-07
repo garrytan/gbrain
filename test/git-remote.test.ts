@@ -20,7 +20,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { gitStderrLeads } from './helpers/git-stderr-probe.ts';
 
 // ---------------------------------------------------------------------------
-// Fake-git harness: write a shell script that records its argv to a log file,
+// Fake-git harness: write a Bun script that records its argv to a log file,
 // then prepend its dir to PATH for the test. Lets us assert exact argv shape
 // without invoking real git.
 // ---------------------------------------------------------------------------
@@ -35,17 +35,20 @@ function writeFakeGit(): void {
   writeFileSync(FAKE_GIT_MODE, 'ok');
   // Per-invocation argv goes into argv.log (one JSON array per line).
   writeFileSync(FAKE_GIT_LOG, '');
-  const script = `#!/usr/bin/env bash
-# Fake git for git-remote.test.ts
-{ printf '['; for arg in "$@"; do printf '%s,' "$(printf '%s' "$arg" | jq -Rs .)"; done; printf 'null]\\n'; } >> "${FAKE_GIT_LOG}"
-mode=$(cat "${FAKE_GIT_MODE}" 2>/dev/null || echo ok)
-case "$mode" in
-  fail) exit 1 ;;
-  url-drift) echo "https://github.com/different/url" ;;
-  url-match) echo "https://github.com/expected/url" ;;
-  *) ;;
-esac
-exit 0
+  const recorder = join(FAKE_GIT_DIR, 'record-argv.ts');
+  writeFileSync(recorder, `
+import { appendFileSync, readFileSync } from 'node:fs';
+appendFileSync(${JSON.stringify(FAKE_GIT_LOG)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+const mode = readFileSync(${JSON.stringify(FAKE_GIT_MODE)}, 'utf8');
+if (mode === 'fail') process.exit(1);
+if (mode === 'url-drift') console.log('https://github.com/different/url');
+if (mode === 'url-match') console.log('https://github.com/expected/url');
+`);
+  // Use the already-required Bun executable: optional host tools such as jq
+  // must not decide whether argv security assertions can run in CI.
+  const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+  const script = `#!/bin/sh
+exec ${shellQuote(process.execPath)} --no-env-file ${shellQuote(recorder)} "$@"
 `;
   const path = join(FAKE_GIT_DIR, 'git');
   writeFileSync(path, script);
@@ -57,10 +60,7 @@ function readArgvLog(): string[][] {
   return raw
     .split('\n')
     .filter(Boolean)
-    .map(line => {
-      const arr = JSON.parse(line) as (string | null)[];
-      return arr.filter((x): x is string => x !== null);
-    });
+    .map(line => JSON.parse(line) as string[]);
 }
 
 function clearArgvLog(): void {
@@ -79,6 +79,12 @@ beforeEach(() => {
 });
 
 const fakePath = (): string => `${FAKE_GIT_DIR}:${process.env.PATH ?? ''}`;
+
+test('fake git records exact argument boundaries without external JSON tools', () => {
+  const args = ['', 'with spaces', 'quote"and\'slash\\', 'first\nsecond', '$(literal-command); &'];
+  execFileSync(join(FAKE_GIT_DIR, 'git'), args);
+  expect(readArgvLog()).toEqual([args]);
+});
 
 // ---------------------------------------------------------------------------
 // GIT_SSRF_FLAGS — pinned shape (snapshot test). If a future flag is added,

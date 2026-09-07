@@ -8,20 +8,37 @@
 // caller's `mode` param must never escalate cost/result-count).
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { importImageFile } from '../src/core/import-file.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { operations as OPERATIONS } from '../src/core/operations.ts';
 
 let engine: PGLiteEngine;
+let fixtureDir: string;
+let imagePath: string;
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  fixtureDir = mkdtempSync(join(tmpdir(), 'gbrain-image-mode-limit-'));
+  imagePath = join(fixtureDir, 'clean.png');
+  // A clean 1x1 PNG exercises the real image import without external assets.
+  writeFileSync(imagePath, Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aV9kAAAAASUVORK5CYII=',
+    'base64',
+  ));
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  try {
+    await engine.disconnect();
+  } finally {
+    if (fixtureDir) rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });
 
 beforeEach(async () => {
@@ -39,23 +56,17 @@ function fakeImage1024(seed: number): Float32Array {
 }
 
 async function seedImagePages(count: number): Promise<void> {
+  let imageIndex = 0;
+  mock.module('../src/core/ai/gateway.ts', () => ({
+    // Small seed spread so every page is a plausible near-neighbor —
+    // the point of these tests is counting how many come back, not
+    // ranking correctness (covered by query-image-flag.serial.test.ts).
+    embedMultimodal: async () => [fakeImage1024(imageIndex++ * 0.01)],
+  }));
   for (let i = 0; i < count; i++) {
-    const slug = `photos/img-${i}`;
-    await engine.putPage(slug, {
-      type: 'image', page_kind: 'image', title: slug, compiled_truth: '', timeline: '',
-    });
-    await engine.upsertChunks(slug, [
-      {
-        chunk_index: 0,
-        chunk_text: slug,
-        chunk_source: 'image_asset',
-        // Small seed spread so every page is a plausible near-neighbor —
-        // the point of these tests is counting how many come back, not
-        // ranking correctness (covered by query-image-flag.serial.test.ts).
-        embedding_image: fakeImage1024(i * 0.01),
-        modality: 'image',
-      },
-    ]);
+    // Remote queries require the completed index produced by image import.
+    const result = await importImageFile(engine, imagePath, `photos/img-${i}.png`);
+    expect(result.status).toBe('imported');
   }
 }
 
