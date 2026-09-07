@@ -39,6 +39,29 @@ describe('dotenvValuesForKey', () => {
     }
   });
 
+  test('collects assignments from per-NODE_ENV .local variants (#4895)', () => {
+    // Bun auto-loads `.env.${NODE_ENV}.local` too (development is the default
+    // NODE_ENV), so a DATABASE_URL parked there must be recognised as
+    // file-origin. A name outside Bun's set stays ignored — the list is a
+    // bounded superset, not "anything named .env.*".
+    const dir = tmpProject({
+      '.env.development.local': 'DATABASE_URL=postgres://dev.example.test/app\n',
+      '.env.production.local': 'DATABASE_URL=postgres://prod.example.test/app\n',
+      '.env.test.local': 'DATABASE_URL=postgres://test.example.test/app\n',
+      '.env.staging': 'DATABASE_URL=postgres://staging.example.test/app\n',
+    });
+    try {
+      const values = dotenvValuesForKey('DATABASE_URL', dir);
+      expect(values.has('postgres://dev.example.test/app')).toBe(true);
+      expect(values.has('postgres://prod.example.test/app')).toBe(true);
+      expect(values.has('postgres://test.example.test/app')).toBe(true);
+      expect(values.has('postgres://staging.example.test/app')).toBe(false);
+      expect(values.size).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('handles export prefix, double quotes, comments, and unrelated keys', () => {
     const dir = tmpProject({
       '.env': [
@@ -74,6 +97,20 @@ describe('effectiveEnvDatabaseUrl (#427 guard)', () => {
 
   test('ignores DATABASE_URL whose value matches a cwd .env assignment', async () => {
     const dir = tmpProject({ '.env': `DATABASE_URL=${HIJACK_URL}\n` });
+    try {
+      await withEnv(
+        { GBRAIN_DATABASE_URL: undefined, DATABASE_URL: HIJACK_URL },
+        () => {
+          expect(effectiveEnvDatabaseUrl(dir)).toBeUndefined();
+        },
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores DATABASE_URL whose value matches a cwd .env.development.local assignment (#4895)', async () => {
+    const dir = tmpProject({ '.env.development.local': `DATABASE_URL=${HIJACK_URL}\n` });
     try {
       await withEnv(
         { GBRAIN_DATABASE_URL: undefined, DATABASE_URL: HIJACK_URL },

@@ -655,7 +655,12 @@ export function loadConfigFileOnly(): GBrainConfig | null {
  * The file list is a superset of Bun's auto-load set across NODE_ENV values
  * so the guard doesn't depend on replicating Bun's exact selection logic.
  */
-const CWD_DOTENV_FILES = ['.env', '.env.local', '.env.development', '.env.production', '.env.test'];
+const CWD_DOTENV_FILES = [
+  '.env', '.env.local',
+  '.env.development', '.env.development.local',
+  '.env.production', '.env.production.local',
+  '.env.test', '.env.test.local',
+];
 
 /**
  * All values assigned to `key` across the .env files in `dir`. Collecting
