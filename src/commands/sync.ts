@@ -1346,6 +1346,28 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       typeof cfgRows[0]?.config === 'string'
         ? (JSON.parse(cfgRows[0].config as string) as Record<string, unknown>)
         : ((cfgRows[0]?.config ?? {}) as Record<string, unknown>);
+    // #4899: EVERY caller that is not the `--all` fan-out passes no strategy —
+    // the autopilot freshness lane (commands/autopilot.ts -> jobs.ts), the dream
+    // cycle (core/cycle.ts), the MCP `sync` op (core/operations.ts) and the
+    // single-source CLI path below. `isSyncable` then falls back to 'markdown'
+    // (core/sync.ts), which drops every code file in the range. Two consequences:
+    // the run imports nothing yet still advances the anchor (`Update sync state
+    // even with no syncable changes`), freezing the index at HEAD forever; and
+    // every MODIFIED code file reaches the un-syncable delete loop, whose only
+    // exemptions are 'metafile' (#1433) and 'pruned-dir' (#2404), so its page is
+    // soft-deleted.
+    //
+    // Resolve the source's own strategy when the caller states none. An explicit
+    // --strategy still wins, so the `--all` fan-out and the CLI flag are unchanged.
+    if (opts.strategy === undefined && typeof cfg.strategy === 'string') {
+      const persisted = cfg.strategy;
+      if (persisted === 'markdown' || persisted === 'code' || persisted === 'auto') {
+        // Assign the PROPERTY, never `opts = {...opts}`: this block runs inside
+        // `if (opts.sourceId)`, and replacing the object discards that narrowing,
+        // so three downstream call sites stop compiling.
+        opts.strategy = persisted;
+      }
+    }
     const remoteUrl = typeof cfg.remote_url === 'string' ? cfg.remote_url : null;
     if (remoteUrl) {
       const ownSrc = {
@@ -2877,9 +2899,10 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       //   2. Locate the stale row POSITIVELY by `source_path = from`, never
       //      by the oldSlug guess — after a collision, a path-derived
       //      fallback slug could name an unrelated (e.g. manually curated)
-      //      row. No source_path match → nothing is deleted (this also means
-      //      code-strategy imports, which don't populate source_path, fall
-      //      back safely to leaving the old row rather than guessing).
+      //      row. No source_path match → nothing is deleted (code pages
+      //      imported before `importCodeFile` wrote `source_path` (#4900)
+      //      still carry NULL until their next import and fall back safely
+      //      to leaving the old row rather than guessing).
       //
       // A failed delete records a `<rename:…>` SENTINEL (not an ordinary
       // path failure): the gate hard-blocks the bookmark, and — unlike a
