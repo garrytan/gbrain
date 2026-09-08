@@ -18,6 +18,12 @@
  * pages it processed, and (b) the existing link extraction is unchanged. Plus
  * --no-extract: the changed page stays unstamped AND no links are created.
  *
+ * The last two tests pin the slug-is-not-a-path contract of the sync hooks: a
+ * page whose filename does not round-trip through slugification (`Widget
+ * Co.md` → `companies/widget-co`) must still be read from its REAL path, and a
+ * slug with no file behind it must be reported as unprocessed so the caller
+ * leaves it stale instead of stamping it fresh.
+ *
  * Marked .serial.test.ts — spawns git subprocesses + shares one PGLite engine.
  */
 
@@ -113,5 +119,48 @@ describe('#1696 — inline sync extract stamps links_extracted_at', () => {
 
     expect(await engine.getLinks('companies/acme')).toHaveLength(0);
     expect(await stampOf('companies/acme')).toBeNull();
+  }, 60_000);
+
+  test('a filename that does not round-trip through slugification still extracts', async () => {
+    const { performSync } = await import('../src/commands/sync.ts');
+    // `Widget Co.md` slugs to `widget-co`: the space becomes a hyphen and the
+    // capitals drop. Rebuilding the disk path from the slug looks for
+    // `companies/widget-co.md`, which does not exist on ANY filesystem — so
+    // the page used to be skipped without a word and stamped anyway.
+    writeFileSync(join(repoPath, 'companies/Widget Co.md'), [
+      '---', 'type: company', 'title: Widget Co', '---', '',
+      '[Alice](../people/alice.md) is the CEO of Widget Co.',
+    ].join('\n'));
+    git('git add -A && git commit -m "add widget co"');
+    const result = await performSync(engine, { repoPath, noPull: true, noEmbed: true });
+    expect(['synced', 'first_sync']).toContain(result.status);
+
+    // The page imported under its slugified slug either way.
+    const pages = await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE slug = 'companies/widget-co' AND source_id = 'default'`,
+    );
+    expect(pages).toHaveLength(1);
+
+    // The edge is what the reconstructed path lost.
+    const links = await engine.getLinks('companies/widget-co');
+    expect(links.some(l => l.to_slug === 'people/alice')).toBe(true);
+    expect(await stampOf('companies/widget-co')).not.toBeNull();
+  }, 60_000);
+
+  test('a slug with no file behind it is reported unprocessed, so it is never stamped', async () => {
+    const { extractLinksForSlugs, extractTimelineForSlugs, slugsSafeToStamp } =
+      await import('../src/commands/extract.ts');
+
+    const links = await extractLinksForSlugs(
+      engine, repoPath, ['companies/acme', 'companies/ghost'],
+    );
+    const timeline = await extractTimelineForSlugs(
+      engine, repoPath, ['companies/acme', 'companies/ghost'],
+    );
+
+    // companies/acme.md is on disk from the fixture; companies/ghost.md is not.
+    expect(links.processed).toEqual(['companies/acme']);
+    expect(timeline.processed).toEqual(['companies/acme']);
+    expect(slugsSafeToStamp(links, timeline)).toEqual(['companies/acme']);
   }, 60_000);
 });

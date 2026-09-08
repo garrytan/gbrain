@@ -306,4 +306,40 @@ describe('runExtractCore — quiet vs jsonMode on the incremental path', () => {
     }
     expect(out.lines.some((l) => l.startsWith('Incremental extract: created'))).toBe(true);
   });
+
+  test('a filename that does not round-trip through slugification is still read', async () => {
+    // `Widget Co.md` slugs to `companies/widget-co` — the space becomes a
+    // hyphen and the capitals drop. Rebuilding the disk path from the slug
+    // looks for `companies/widget-co.md`, which is not there, so the page was
+    // treated as deleted and skipped without a word.
+    await engine.putPage('companies/widget-co', {
+      type: 'company', title: 'Widget Co',
+      compiled_truth: 'Widget Co knows [[companies/acme]].',
+      timeline: '', frontmatter: {}, content_hash: 'h',
+    });
+    writeFileSync(join(tempDir, 'companies/Widget Co.md'), 'Widget Co knows [[companies/acme]].');
+    await seedPage('companies/acme', '# acme');
+
+    const result = await runExtractCore(engine as unknown as BrainEngine, {
+      mode: 'all', dir: tempDir, slugs: ['companies/widget-co'],
+    });
+    expect(result.pages_processed).toBe(1);
+    const links = await engine.getLinks('companies/widget-co');
+    expect(links.some(l => l.to_slug === 'companies/acme')).toBe(true);
+  });
+
+  test('when two filenames slug the same, the file named exactly the slug wins', async () => {
+    const { buildSlugPathIndex } = await import('../src/commands/extract.ts');
+    // `Acme!.md` and `acme.md` both slug to `companies/acme` (the `!` is not a
+    // legal slug char). The walker does not sort, so a plain last-one-wins map
+    // would resolve the slug differently depending on directory-read order —
+    // and thus differently across filesystems. The exact-slug spelling is what
+    // the old reconstructed path found, so it stays the winner either way.
+    const files = [
+      { relPath: 'companies/acme.md' },
+      { relPath: 'companies/Acme!.md' },
+    ];
+    expect(buildSlugPathIndex(files).get('companies/acme')).toBe('companies/acme.md');
+    expect(buildSlugPathIndex([...files].reverse()).get('companies/acme')).toBe('companies/acme.md');
+  });
 });

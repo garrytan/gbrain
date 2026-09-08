@@ -3828,13 +3828,13 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
   }
   if (!opts.noExtract && totalChanges <= 100 && pagesAffected.length > 0) {
     try {
-      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted } = await import('./extract.ts');
+      const { extractLinksForSlugs, extractTimelineForSlugs, stampExtracted, slugsSafeToStamp } = await import('./extract.ts');
       // #774: pages' source_path is git-root-relative, so extract resolves
       // files from gitContextRoot (== repoPath realpath when unscoped).
-      const linksCreated = await extractLinksForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
-      const timelineCreated = await extractTimelineForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
-      if (linksCreated > 0 || timelineCreated > 0) {
-        slog(`  Extracted: ${linksCreated} links, ${timelineCreated} timeline entries`);
+      const linksResult = await extractLinksForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
+      const timelineResult = await extractTimelineForSlugs(engine, gitContextRoot, pagesAffected, extractOpts);
+      if (linksResult.created > 0 || timelineResult.created > 0) {
+        slog(`  Extracted: ${linksResult.created} links, ${timelineResult.created} timeline entries`);
       }
       // v0.42.7 (#1696, CDX-6): stamp the links_extracted_at watermark for the
       // pages we just extracted, AFTER the import set their updated_at, so
@@ -3842,9 +3842,12 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Source-correct via opts.sourceId. Stamp at the CALL SITE (not inside
       // extractLinksForSlugs) so we use the per-source sourceId the sync owns.
       // Best-effort: a stamp miss just means extract --stale re-sweeps later.
+      // Only the slugs both hooks actually read — a page the extractor
+      // skipped must stay stale so the sweep still owes it.
       await stampExtracted(
         engine,
-        pagesAffected.map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
+        slugsSafeToStamp(linksResult, timelineResult)
+          .map((slug) => ({ slug, source_id: opts.sourceId ?? 'default' })),
       );
     } catch { /* extraction is best-effort */ }
   }
