@@ -101,7 +101,10 @@ describe('synthesize_concepts task-model routing', () => {
 
     await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
     const second: Array<string | undefined> = [];
-    await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms(), _chat: capturingChat(second) });
+    // A fresh concept: an already-synthesized group with the same atom count
+    // is skipped (no chat call), which would leave `second` empty.
+    const secondAtoms = t2Atoms().map((a) => ({ ...a, concept_refs: ['concepts/y'] }));
+    await runPhaseSynthesizeConcepts(engine, { _atoms: secondAtoms, _chat: capturingChat(second) });
 
     expect(new Set(first)).toEqual(new Set(['anthropic:claude-haiku-4-5']));
     expect(new Set(second)).toEqual(new Set(['anthropic:claude-sonnet-4-6']));

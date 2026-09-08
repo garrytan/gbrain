@@ -99,6 +99,9 @@ describe('synthesize_concepts wires the cap into the narrative call', () => {
     // An explicit non-thinking model (not "unset"): resolveModel's unset path
     // falls through to GBRAIN_MODEL and a key-aware tier default, so the 500
     // pin would otherwise depend on which provider keys the runner has.
+    // local: skip-fresh would skip concepts/x (same atom count, narrative already
+    // banked by the run above), so reset between the two runs.
+    await resetPgliteState(engine);
     await engine.setConfig('models.dream.synthesize', 'anthropic:claude-sonnet-4-6');
     const plain: Array<number | undefined> = [];
     await runPhaseSynthesizeConcepts(engine, { _atoms: t2Atoms(), _chat: capturingChat(plain) });

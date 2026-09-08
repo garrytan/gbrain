@@ -223,10 +223,43 @@ export async function runPhaseSynthesizeConcepts(
     b.atomTitles.length - a.atomTitles.length ||
     a.conceptSlug.localeCompare(b.conceptSlug));
 
+  // Concept pages that already carry an LLM narrative for the SAME atom
+  // count are skipped, so the bounded budget rotates to groups that never
+  // got one instead of regenerating the same top slice every run. A group
+  // whose atom count moved re-synthesizes as before.
+  const freshLlm = new Map<string, number>();
+  try {
+    const rows = await engine.executeRaw<{ slug: string; frontmatter: Record<string, unknown> | string | null }>(
+      `SELECT slug, frontmatter
+         FROM pages
+        WHERE type = 'concept'
+          AND deleted_at IS NULL
+          AND source_id = $1
+          AND (frontmatter->>'synthesis_mode') = 'llm'`,
+      [opts.sourceId ?? 'default'],
+    );
+    for (const r of rows) {
+      const fm = typeof r.frontmatter === 'string' ? JSON.parse(r.frontmatter) : (r.frontmatter ?? {});
+      const n = Number(fm.mention_count);
+      if (Number.isFinite(n)) freshLlm.set(r.slug, n);
+    }
+  } catch {
+    // No pages table / query failed — no skip, every group synthesizes.
+  }
+
   // 4. Per group: synthesize narrative (LLM for T1/T2, deterministic for T3+)
   let conceptsWritten = 0;
+  let skippedFresh = 0;
   let estimatedSpendUsd = 0;
-  const budgetCap = DEFAULT_BUDGET_USD;
+  // Budget cap: config override (a local model priced through the fallback
+  // table exhausts the default in ~165 calls), else the built-in default.
+  // Same shape as cycle.extract_atoms.budget_usd.
+  let budgetCap = DEFAULT_BUDGET_USD;
+  const configuredBudget = await engine.getConfig('cycle.synthesize_concepts.budget_usd');
+  if (configuredBudget) {
+    const n = Number(configuredBudget);
+    if (Number.isFinite(n) && n > 0) budgetCap = n;
+  }
   const failures: Array<{ concept: string; error: string }> = [];
   // #4589 provenance-link problems. Kept OUT of `failures`: that list means
   // "the LLM call failed → template fallback" downstream (summary wording,
@@ -277,9 +310,14 @@ export async function runPhaseSynthesizeConcepts(
   const synthMaxOutputTokens = resolveSynthMaxOutputTokens(synthModel);
   for (const group of atomGroups) {
     tierCounts[group.tier]++;
+    const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
     let narrative: string;
     let synthesisMode: ConceptSynthesisMode;
     if (group.tier === 'T1' || group.tier === 'T2') {
+      if (freshLlm.get(`concepts/${title}`) === group.atomTitles.length) {
+        skippedFresh++;
+        continue;
+      }
       if (estimatedSpendUsd >= budgetCap) {
         narrative = deterministicNarrative(group);
         synthesisMode = 'budget_fallback';
@@ -355,7 +393,6 @@ export async function runPhaseSynthesizeConcepts(
     synthesisModeCounts[synthesisMode]++;
 
     if (!opts.dryRun) {
-      const title = group.conceptSlug.split('/').pop() ?? group.conceptSlug;
       // #2163: serialize to markdown and import via the canonical pipeline so
       // the page is chunked (+ embedded when a provider is configured) —
       // mirrors put_page's isAvailable('embedding') → noEmbed gate.
@@ -440,7 +477,8 @@ export async function runPhaseSynthesizeConcepts(
           `Synthesized ${conceptsWritten} concepts ` +
           `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3}) ` +
           `(llm=${synthesisModeCounts.llm} deterministic=${synthesisModeCounts.deterministic_tier} ` +
-          `budget_fallback=${synthesisModeCounts.budget_fallback} error_fallback=${synthesisModeCounts.error_fallback}) ` +
+          `budget_fallback=${synthesisModeCounts.budget_fallback} error_fallback=${synthesisModeCounts.error_fallback} ` +
+          `skipped_fresh=${skippedFresh}) ` +
           `from ${atomGroups.length} groups across ${atoms.length} atoms.`,
       });
     } catch (err) {
@@ -464,10 +502,12 @@ export async function runPhaseSynthesizeConcepts(
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
       `(T1=${tierCounts.T1} T2=${tierCounts.T2} T3=${tierCounts.T3})` +
+      (skippedFresh > 0 ? ` (${skippedFresh} already synthesized, skipped)` : '') +
       (failures.length > 0 ? ` (${failures.length} LLM-failed → template fallback)` : '') +
       (linkWarnings.length > 0 ? ` (${linkWarnings.length} provenance-link warning(s))` : ''),
     details: {
       concepts_written: conceptsWritten,
+      skipped_fresh: skippedFresh,
       tier_counts: tierCounts,
       synthesis_mode_counts: synthesisModeCounts,
       groups_found: atomGroups.length,
