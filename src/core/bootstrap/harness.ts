@@ -716,6 +716,22 @@ async function cleanupStalePriorTargets(
   }
 }
 
+/** A live `gbrain serve` holds this PGLite brain: the two documented escape hatches. */
+function liveServeRefusal(): BootstrapError {
+  return new BootstrapError(
+    'LIVE_SERVE',
+    'a live `gbrain serve` holds this PGLite brain, so the harness cannot mint a token — either ' +
+      'pre-mint one while the serve is stopped (`gbrain auth create bootstrap-harness --scopes read,write`) ' +
+      'and re-run with --token <value>, or stop the serve, re-run this command, and restart it. ' +
+      '(Postgres brains mint fine while the serve runs.)',
+  );
+}
+
+/** The engine could not open because a live serve holds the PGLite brain (vs any other failure). */
+function isLiveServeFailure(msg: string, d: Pick<Required<HarnessDeps>, 'pgliteLiveServe'>): boolean {
+  return /already open through `gbrain serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe();
+}
+
 export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): Promise<number> {
   const d = resolveDeps(rawDeps);
   // stdout-for-data discipline: under --json, stdout carries ONLY the final
@@ -920,6 +936,9 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   // (or a `__all__` env) is the federated floor, not a scalar grant (same
   // guard as dream.ts).
   let bound: HookSourceBinding;
+  // Live PGLite serve + --token, no --source: the hooks carry NO source pin
+  // (a claim-free request resolves through the serve's own binding).
+  let unpinnedHooks = false;
   try {
     bound = await d.resolveHookSource(flags.source ?? null);
   } catch (e) {
@@ -934,6 +953,23 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       // documented path here); the explicit id is the operator's word.
       d.logError(`WARNING: could not verify --source '${flags.source}' against the brain (${msg}); binding to it unverified.`);
       bound = { source_id: flags.source, grant: [flags.source] };
+    } else if (isLiveServeFailure(msg, d)) {
+      // A live PGLite serve holds the brain. Without a token the mint below
+      // would refuse anyway — refuse HERE with the same two escape hatches, so
+      // the operator never sees a source-resolution error for a lock problem.
+      if (flags.token === undefined) throw liveServeRefusal();
+      // --token lane (the documented PGLite path): nothing is minted, so the
+      // grant is the operator's own token. Leave the hooks UNPINNED — a hook
+      // request that names no source resolves through the live serve's own
+      // binding, which is exactly the source the serve resolves (#4897). Say
+      // so, and name the override.
+      d.logError(
+        'WARNING: a live `gbrain serve` holds this PGLite brain, so the harness could not read which source it ' +
+          "serves; wiring the hooks unpinned (they resolve through the live serve). If `gbrain sources list` " +
+          "shows a default other than 'default', re-run with --source <id>.",
+      );
+      bound = { source_id: 'default', grant: ['default'] };
+      unpinnedHooks = true;
     } else {
       // Silently binding 'default' here is the #4897 bug reopened: the serve
       // may resolve a different source and every hook turn would mismatch.
@@ -946,7 +982,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
   }
   const implicitSource =
     flags.source || bound.source_id === 'default' || bound.source_id === ALL_SOURCES ? null : bound.source_id;
-  const hookSource = flags.source ?? implicitSource ?? 'default';
+  const hookSource: string | null = unpinnedHooks ? null : (flags.source ?? implicitSource ?? 'default');
   if (implicitSource) {
     d.log(`binding hooks + token to source '${implicitSource}' (the serve's resolved default; pass --source to override).`);
   }
@@ -1044,7 +1080,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     url,
     ...(health.engine ? { engine: health.engine } : {}),
     ...(health.version ? { serve_version: health.version } : {}),
-    source_id: hookSource,
+    source_id: hookSource ?? 'default',
     token: {
       name: flags.tokenName,
       minted: flags.token === undefined,
@@ -1079,15 +1115,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (/already open through `gbrain serve`|LiveServeLockError/i.test(msg) || d.pgliteLiveServe()) {
-        throw new BootstrapError(
-          'LIVE_SERVE',
-          'a live `gbrain serve` holds this PGLite brain, so the harness cannot mint a token — either ' +
-            'pre-mint one while the serve is stopped (`gbrain auth create bootstrap-harness --scopes read,write`) ' +
-            'and re-run with --token <value>, or stop the serve, re-run this command, and restart it. ' +
-            '(Postgres brains mint fine while the serve runs.)',
-        );
-      }
+      if (isLiveServeFailure(msg, d)) throw liveServeRefusal();
       throw e;
     }
     token = minted.token;
@@ -1239,7 +1267,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
       } else {
         const settingsPath = t.scope === 'user' ? d.userSettingsPath : t.path!;
         const env: ClaudeHookEnv = {
-          GBRAIN_SOURCE: hookSource,
+          ...(hookSource !== null ? { GBRAIN_SOURCE: hookSource } : {}),
           GBRAIN_HOOK_LANE: 'harness',
         };
         const bin = flags.gbrainBin ?? d.gbrainBin;

@@ -77,7 +77,11 @@ regression test proven red before the fix.
 - **`gbrain bootstrap harness --source <id>` is validated**, and an implicit
   source resolves through the same ladder `gbrain serve` uses (environment,
   dotfile, working directory, brain default), so hooks stop binding to a
-  source the serve never resolved.
+  source the serve never resolved. Under a live PGLite serve the harness
+  cannot read that ladder: without a token it refuses with the two escape
+  hatches (pre-mint a token, or stop the serve), and the `--token` lane wires
+  the hooks unpinned with a warning, since an unpinned hook resolves through
+  the live serve's own binding.
 - **Smaller contract changes.** `gbrain import --json` gains additive
   `failures`, `unchanged` and `malformed_skipped` keys (#4803, contributed by
   @afshaker); `code_blast` and `code_flow` gain additive `status` and

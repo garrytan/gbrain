@@ -614,6 +614,42 @@ describe('outside-voice hardening (X-batch)', () => {
     expect(f.err.join('\n')).toContain("could not verify --source 'wiki'");
   });
 
+  // CI e2e (bootstrap-harness-lifecycle): under a LIVE PGLite serve the
+  // documented --token lane must keep working without --source, and the
+  // no-token case must surface the mint's two escape hatches, not a
+  // source-resolution error for what is a lock problem.
+  test('live PGLite serve + no token + no --source: the LIVE_SERVE refusal with both escape hatches, before any mint', async () => {
+    const f = makeFake({
+      pgliteLive: true,
+      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+    });
+    await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.toThrow(/pre-mint.*--token|stop the serve/);
+    await expect(applyHarness(flags(['--harness', 'codex']), f.deps)).rejects.not.toThrow(/pass --source/);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(readHarnessReceiptState(f.home)).toEqual({ state: 'absent' });
+  });
+
+  test('live PGLite serve + --token + no --source: wires unpinned with a warning (the documented PGLite lane)', async () => {
+    const f = makeFake({
+      pgliteLive: true,
+      hookSourceError: new Error("GBrain's local database is already open through `gbrain serve` (MCP, PID 4242)."),
+    });
+    expect(await applyHarness(flags(['--harness', 'claude-code', '--token', TOKEN_A]), f.deps)).toBe(0);
+    expect(f.mintCalls).toHaveLength(0);
+    expect(f.err.join('\n')).toMatch(/could not read which source it serves/);
+    expect(f.err.join('\n')).toMatch(/--source <id>/);
+    const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
+    const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
+    expect(cmd).not.toContain('GBRAIN_SOURCE=');
+    expect((readHarnessReceiptState(f.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('default');
+  });
+
+  test('--token with a NON-live-serve lookup failure still refuses with "pass --source" (fail-closed stays for real errors)', async () => {
+    const f = makeFake({ hookSourceError: new Error('connection refused: postgres is down') });
+    await expect(applyHarness(flags(['--harness', 'codex', '--token', TOKEN_A]), f.deps)).rejects.toThrow(/pass --source/);
+    expect(f.mintCalls).toHaveLength(0);
+  });
+
   test('implicit non-default source: the token grant is its federated read set, not a scalar (wave review)', async () => {
     const f = makeFake({ implicitSource: 'workspace', implicitGrant: ['default', 'workspace'] });
     expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
