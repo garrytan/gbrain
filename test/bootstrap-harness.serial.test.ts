@@ -641,7 +641,17 @@ describe('outside-voice hardening (X-batch)', () => {
     const hooks = readJson(f.userSettings).hooks as Record<string, unknown[]>;
     const cmd = ((hooks.SessionStart[0] as { hooks: Array<{ command: string }> }).hooks[0]).command;
     expect(cmd).not.toContain('GBRAIN_SOURCE=');
-    expect((readHarnessReceiptState(f.home) as { receipt: { source_id: string } }).receipt.source_id).toBe('default');
+    const receipt = (readHarnessReceiptState(f.home) as { receipt: { source_id: string; source_pinned?: boolean } }).receipt;
+    expect(receipt.source_id).toBe('default');
+    expect(receipt.source_pinned).toBe(false);
+  });
+
+  test('a pinned install records no source_pinned flag (absent = pinned to source_id)', async () => {
+    const f = makeFake({ implicitSource: 'workspace', implicitGrant: ['default', 'workspace'] });
+    expect(await applyHarness(flags(['--harness', 'claude-code']), f.deps)).toBe(0);
+    const receipt = (readHarnessReceiptState(f.home) as { receipt: { source_id: string; source_pinned?: boolean } }).receipt;
+    expect(receipt.source_id).toBe('workspace');
+    expect(receipt.source_pinned).toBeUndefined();
   });
 
   test('--token with a NON-live-serve lookup failure still refuses with "pass --source" (fail-closed stays for real errors)', async () => {

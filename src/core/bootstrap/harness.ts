@@ -1081,6 +1081,7 @@ export async function applyHarness(flags: HarnessFlags, rawDeps: HarnessDeps): P
     ...(health.engine ? { engine: health.engine } : {}),
     ...(health.version ? { serve_version: health.version } : {}),
     source_id: hookSource ?? 'default',
+    ...(unpinnedHooks ? { source_pinned: false as const } : {}),
     token: {
       name: flags.tokenName,
       minted: flags.token === undefined,

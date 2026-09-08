@@ -264,6 +264,10 @@ export interface HarnessReceipt {
   /** Serve version at apply time — --status re-checks for skew [F7]. */
   serve_version?: string;
   source_id: string;
+  /** False when the hooks carry NO `GBRAIN_SOURCE` pin (a live PGLite serve hid
+   * which source it resolves, the --token lane proceeded unpinned and `source_id`
+   * records the federated floor `default`). Absent = pinned to `source_id`. */
+  source_pinned?: false;
   token: {
     name: string;
     /** Row id — the only safe revocation key. */
