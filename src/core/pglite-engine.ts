@@ -2066,6 +2066,12 @@ export class PGLiteEngine implements BrainEngine {
       params.push(escaped);
       where.push(`p.slug LIKE $${params.length} ESCAPE '\\'`);
     }
+    // Exact match on one frontmatter field. Key AND value are both bound —
+    // the key is data here, never interpolated into SQL.
+    if (filters?.frontmatterEq) {
+      params.push(filters.frontmatterEq.key, filters.frontmatterEq.value);
+      where.push(`p.frontmatter->>$${params.length - 1} = $${params.length}`);
+    }
     // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. Array form wins (federated subsumes scalar).
     if (filters?.sourceIds && filters.sourceIds.length > 0) {

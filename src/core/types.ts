@@ -358,6 +358,20 @@ export interface PageFilters {
    * pre-v0.34 unscoped behavior is preserved for local CLI callers.
    */
   sourceIds?: string[];
+  /**
+   * Exact-match filter on one frontmatter field: `frontmatter->>key = value`.
+   *
+   * Everything a source puts in frontmatter beyond the promoted columns
+   * (type/title/tags/slug) lives in the `frontmatter` JSONB and was reachable
+   * only by already knowing the slug — a chat-export source's `channel_id`,
+   * say, could not answer "list every note from this channel". The GIN index
+   * on `pages.frontmatter` already exists; this exposes it.
+   *
+   * Key and value are both bound as parameters, never interpolated. Values
+   * compare as text, matching `->>` semantics: a field YAML coerced to a date
+   * reads back as its ISO string, not as written.
+   */
+  frontmatterEq?: { key: string; value: string };
   /** Inclusive bounds on semantic page time. NULL effective dates do not match. */
   effective_after?: string;
   effective_before?: string;

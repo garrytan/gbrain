@@ -1571,6 +1571,33 @@ describeBoth('Engine parity — ambient recall keyset + session cursor (v0.45.7)
     expect(pg).not.toContain('ks/tie-04');
   });
 
+  test('listPages frontmatterEq parity: same rows, key bound not spliced', async () => {
+    // The `->>` operator takes the key as a bound parameter on both engines
+    // (postgres.js tagged template vs a positional $n). Parity here is what
+    // says the two spellings mean the same thing.
+    const fm = { key: 'channel_id', value: 'C0EXAMPLE1' };
+    for (const eng of [pgEngine, pgliteEngine]) {
+      await eng.putPage('fm/a', { type: 'note', title: 'fm a', compiled_truth: 'a', timeline: '', frontmatter: { channel_id: 'C0EXAMPLE1' } });
+      await eng.putPage('fm/b', { type: 'note', title: 'fm b', compiled_truth: 'b', timeline: '', frontmatter: { channel_id: 'C0EXAMPLE2' } });
+      await eng.putPage('fm/c', { type: 'note', title: 'fm c', compiled_truth: 'c', timeline: '', frontmatter: {} });
+    }
+    const pg = (await pgEngine.listPages({ frontmatterEq: fm, slugPrefix: 'fm/', sourceId: 'default' })).map(p => p.slug);
+    const pglite = (await pgliteEngine.listPages({ frontmatterEq: fm, slugPrefix: 'fm/', sourceId: 'default' })).map(p => p.slug);
+    expect(pg).toEqual(['fm/a']);
+    expect(pglite).toEqual(pg);
+
+    // A filter degrading to "no filter" is the failure that looks like success.
+    const missPg = await pgEngine.listPages({ frontmatterEq: { key: 'channel_id', value: 'C0NOBODY' }, slugPrefix: 'fm/', sourceId: 'default' });
+    const missPglite = await pgliteEngine.listPages({ frontmatterEq: { key: 'channel_id', value: 'C0NOBODY' }, slugPrefix: 'fm/', sourceId: 'default' });
+    expect(missPg).toEqual([]);
+    expect(missPglite).toEqual([]);
+
+    const injPg = await pgEngine.listPages({ frontmatterEq: { key: "x' OR '1'='1", value: 'y' }, slugPrefix: 'fm/', sourceId: 'default' });
+    const injPglite = await pgliteEngine.listPages({ frontmatterEq: { key: "x' OR '1'='1", value: 'y' }, slugPrefix: 'fm/', sourceId: 'default' });
+    expect(injPg).toEqual([]);
+    expect(injPglite).toEqual([]);
+  });
+
   test('session_context_state round trip: jsonb arrays stay arrays + keep-if-absent', async () => {
     const sess = 'parity-sess-1';
     const entities = ['people/alice-example', 'companies/acme-example'];
