@@ -1244,6 +1244,40 @@ const list_pages: Operation = {
       type: 'string',
       description: 'ISO date (YYYY-MM-DD) or full timestamp. Returns pages with updated_at > value.',
     },
+    // Surfaces PageFilters.updatedAfterKeyset, which both engines already
+    // implement. `updated_after` alone is `updated_at > ts`, and a bulk sync
+    // stamps many pages with one updated_at — a cursor that advances to that
+    // timestamp after a full page skips every tied page forever. With the last
+    // row's slug as well, the walk resumes INSIDE the tie bucket. Pair with
+    // the row's `updated_at_iso` (column microseconds): a millisecond-rounded
+    // JS Date re-selects every row in the last row's millisecond.
+    updated_after_slug: {
+      type: 'string',
+      description: "Keyset resume: the slug of the last row you processed, paired with updated_after = that row's updated_at_iso. Continues through pages sharing one updated_at instead of skipping them. Forces sort=updated_asc.",
+    },
+    // Surfaces PageFilters.slugPrefix, which both engines already implement as
+    // an indexed `slug LIKE prefix || '%'` range scan on (source_id, slug).
+    // Slugs mirror the source tree, so this is the folder filter, and page
+    // types can be coarser than folders (one `meeting-note` type can cover
+    // both a meetings/ and a chat-export/ folder, so `type` alone cannot
+    // separate them). Convenience filter, NOT access control: it narrows
+    // within the caller's existing source scope, enforced separately below.
+    slug_prefix: {
+      type: 'string',
+      description: 'Filter to pages whose slug starts with this prefix, e.g. "notes/meetings/". Slugs mirror the source folder tree, so this scopes a listing to one folder.',
+    },
+    // Exact match on any frontmatter field. BOTH params are required
+    // together; either alone is ignored rather than guessed at. Everything
+    // outside the promoted columns lives in frontmatter JSONB and was
+    // otherwise only readable once you already knew the slug.
+    frontmatter_key: {
+      type: 'string',
+      description: 'Frontmatter field to filter on, e.g. "channel_id". Requires frontmatter_value.',
+    },
+    frontmatter_value: {
+      type: 'string',
+      description: 'Exact value the field must equal (compared as text). Requires frontmatter_key.',
+    },
     sort: {
       type: 'string',
       enum: [...LIST_PAGES_SORT_VALUES],
@@ -1323,14 +1357,37 @@ const list_pages: Operation = {
     // list and never learns rows were dropped, and with the default
     // updated_desc sort the dropped rows are always the OLDEST, i.e. exactly
     // the pages such consumers exist to find.
+    // The keyset cursor supersedes the bare updated_after and only means
+     // anything on the total order updated_asc gives, so it forces that sort.
+    const updatedAfter = typeof p.updated_after === 'string' ? p.updated_after : undefined;
+    const keysetSlug = typeof p.updated_after_slug === 'string' ? p.updated_after_slug : undefined;
+    // A non-empty timestamp is required: `''::timestamptz` is a cast error,
+    // and a keyset with nothing to resume from is not a cursor. An empty
+    // SLUG is fine — that is the start of the timestamp bucket.
+    const keyset = updatedAfter !== undefined && updatedAfter.length > 0 && keysetSlug !== undefined
+      ? { updatedAt: updatedAfter, slug: keysetSlug }
+      : undefined;
+    // Both frontmatter params or neither: half a filter would either be
+    // silently dropped (the caller thinks it filtered) or guessed at.
+    const fmKey = typeof p.frontmatter_key === 'string' && p.frontmatter_key.length > 0
+      ? p.frontmatter_key
+      : undefined;
+    const fmValue = typeof p.frontmatter_value === 'string' ? p.frontmatter_value : undefined;
     const rows = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: limit + 1,
       offset,
       includeDeleted: (p.include_deleted as boolean) === true,
-      updated_after: typeof p.updated_after === 'string' ? p.updated_after : undefined,
-      sort,
+      updated_after: keyset ? undefined : updatedAfter,
+      updatedAfterKeyset: keyset,
+      slugPrefix: typeof p.slug_prefix === 'string' && p.slug_prefix.length > 0
+        ? p.slug_prefix
+        : undefined,
+      frontmatterEq: fmKey !== undefined && fmValue !== undefined
+        ? { key: fmKey, value: fmValue }
+        : undefined,
+      sort: keyset ? 'updated_asc' : sort,
       excludePrivate,
       ...scope,
     });
