@@ -23,7 +23,7 @@ regression test proven red before the fix.
   fallback will be soft-deleted (72 hours recoverable) on the next sync when
   they are modified; switch the source to `auto` if you want both kinds.
   Code pages imported before this release pick up their file path on the
-  next change, `sync --force`, or `gbrain reindex-code --force`. (#4903,
+  next change or on `gbrain reindex-code --force`. (#4903,
   contributed by @Jey2311; fixes #4899, #4900)
 - **Migration v146** adds a small table that remembers which transcripts
   returned nothing from atom extraction. The first run after upgrading
@@ -93,7 +93,8 @@ regression test proven red before the fix.
   @Walliiee); a persistently rate-limited Gmail request now waits out the
   limit for up to two minutes instead of six seconds (#4894, contributed by
   @johnerik); concept synthesis on a thinking-by-default model requests
-  8,000 output tokens instead of 500 (#4889, contributed by @awilhite); the
+  the gateway's shared thinking-model cap (32,000 output tokens) instead of
+  500 (#4889, contributed by @awilhite); the
   cwd `.env` guard now also ignores a project `DATABASE_URL` in
   `.env.development.local`, `.env.production.local` and `.env.test.local`
   (#4895); atom extraction may now legitimately return zero atoms for a
@@ -361,7 +362,8 @@ regression test proven red before the fix.
   @arisgysel-design; fixes #4911)
 - The local CI lane's timeout multiplier reaches the CLI-spawning unit tests
   (#4659), and the open-loops reopen test no longer depends on the database
-  clock advancing between statements (#4928).
+  clock advancing between statements (#4928, contributed by
+  @arisgysel-design).
 
 ### Review hardening
 
@@ -12506,8 +12508,8 @@ built-in registry covering the most common chat-export shapes on Earth, plus an
 opt-in LLM fallback for the long tail. The dream cycle picks the right parser
 per page automatically — no config, no waiting for the next release.
 
-The same wave introduces a new `progressive-batch` primitive (Wintermute-inspired
-ramp-up: trial 10 → 100 → 500 → full with verification at each stage) so future
+The same wave introduces a new `progressive-batch` primitive (the ramp-up Garry's
+OpenClaw uses: trial 10 → 100 → 500 → full with verification at each stage) so future
 batch operations get the discipline for free instead of each reinventing it.
 
 ### How to use it
@@ -14696,7 +14698,7 @@ No action required — this is a docs-only release. The wave commitments below l
 Five items duplicate older entries lower in TODOS.md (`.sql` indexing, Magika, doc_comment, CJK items) — duplication noted inline. The new top section is the canonical wave-commitment register; historical entries stay as detail.
 ## [0.40.7.0] - 2026-05-23
 
-**Your agents can now author your brain's schema pack themselves — no more shell-out, no more hand-editing YAML.** If you've ever opened `gbrain` and noticed thousands of pages stuck as untyped "notes" under `meetings/` or `research/`, this release closes that loop. Tell Wintermute (or any agent connected via MCP) "my brain has 4000 untyped meetings pages — add a `meeting` type and backfill them," and it does the whole thing safely: locks the pack file so two agents can't race, validates the change won't create dangling references, writes atomically so a crash never leaves the pack half-written, audits the mutation with the agent's identity, then updates every matching page in 1000-row batches that never wedge concurrent writers. The cathedral that was bundled but unreachable in v0.39 is now reachable from the outside.
+**Your agents can now author your brain's schema pack themselves — no more shell-out, no more hand-editing YAML.** If you've ever opened `gbrain` and noticed thousands of pages stuck as untyped "notes" under `meetings/` or `research/`, this release closes that loop. Tell your OpenClaw (or any agent connected via MCP) "my brain has 4000 untyped meetings pages — add a `meeting` type and backfill them," and it does the whole thing safely: locks the pack file so two agents can't race, validates the change won't create dangling references, writes atomically so a crash never leaves the pack half-written, audits the mutation with the agent's identity, then updates every matching page in 1000-row batches that never wedge concurrent writers. The cathedral that was bundled but unreachable in v0.39 is now reachable from the outside.
 
 This release rebuilds the design from a closed community PR ([#1321](https://github.com/garrytan/gbrain/pull/1321)) by `@garrytan-agents` into a production-grade `gbrain schema` cathedral. The four mutation verbs that PR proposed (`add-type`, `remove-type`, `stats`, `sync`) all ship — hardened with atomic+locked+audited writes, pack-aware fallback semantics that fail loud instead of silently re-introducing types you removed, and a batched MCP op (`schema_apply_mutations`) that lets a remote agent compose multi-step refactors as one atomic transaction. The lint surface grew from 2 rules to 11. The graph visualization renders link verbs. And the agent on-ramp story — RESOLVER routing, a `schema-author` skill with explicit boundary callouts to `brain-taxonomist` and `eiirp`, a `conventions/schema-evolution.md` decision tree for "when to add a type vs alias vs prefix" — means agents will actually FIND this surface instead of inventing their own ad-hoc YAML edits.
 
@@ -14721,8 +14723,8 @@ gbrain schema sync --apply     # backfills page.type on matching pages
 gbrain whoknows "machine learning"   # researcher-typed pages now route through expert routing
 
 # 4. If you run `gbrain serve --http` for remote MCP, register a client
-#    with admin scope so Wintermute or any other agent can author packs remotely:
-gbrain auth register-client wintermute --scopes admin
+#    with admin scope so your OpenClaw or any other agent can author packs remotely:
+gbrain auth register-client my-openclaw --scopes admin
 ```
 
 If any step fails or numbers look wrong, please file an issue with the output of `gbrain doctor` and `tail -20 ~/.gbrain/audit/schema-mutations-*.jsonl` so we can debug the mutation chain.
@@ -14750,7 +14752,7 @@ If any step fails or numbers look wrong, please file an issue with the output of
 - `schema_graph` (read) — JSON `{nodes, edges}` derived from link types and frontmatter_links.
 - `schema_explain_type` (read) — resolved settings for one declared type.
 - `schema_review_orphans` (read) — drilldown into untyped pages.
-- `schema_apply_mutations` (admin scope, NOT localOnly) — **batched** atomic mutation op. One call applies a list of mutations (`add_type`, `add_link_type`, `set_extractable`, etc.) inside a single `withPackLock` scope. Remote agents like Wintermute can compose multi-step refactors as one transaction. Audit log records `actor: mcp:<clientId8>` per mutation.
+- `schema_apply_mutations` (admin scope, NOT localOnly) — **batched** atomic mutation op. One call applies a list of mutations (`add_type`, `add_link_type`, `set_extractable`, etc.) inside a single `withPackLock` scope. Remote agents like your OpenClaw can compose multi-step refactors as one transaction. Audit log records `actor: mcp:<clientId8>` per mutation.
 - `reload_schema_pack` (admin) — flush cache + extends-chain cascade.
 
 **Lint rules grew from 2 to 11:**
