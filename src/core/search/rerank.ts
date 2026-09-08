@@ -30,6 +30,7 @@ import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 import { estimateTokens } from '../chunkers/token-estimate.ts';
 import { truncateUtf8 } from '../text-safe.ts';
+import { withSpan } from '../tracing.ts';
 import { warnOncePerProcess } from '../utils.ts';
 
 /** #4648: the two audited success-shaped pass-through causes. */
@@ -139,6 +140,41 @@ export async function applyReranker(
   // No documents to rerank when topNIn=0 — pass through (defensive; mode
   // bundles never set 0 in practice).
   if (opts.topNIn <= 0) return results;
+  // Tracing wrapper — records the reorder (rank deltas) and whether the
+  // reranker actually fired or failed open to RRF order. The nested
+  // gateway.rerank span carries the provider call itself.
+  return withSpan('search.rerank', {
+    kind: 'RERANKER',
+    input: query,
+    attributes: {
+      'rerank.top_n_in': opts.topNIn,
+      'rerank.top_n_out': opts.topNOut ?? -1,
+      'rerank.candidates': results.length,
+      ...(opts.model ? { 'rerank.model': opts.model } : {}),
+    },
+  }, async (span) => {
+    const out = await applyRerankerImpl(query, results, opts);
+    const scored = out.filter(r => typeof r.rerank_score === 'number');
+    span.setAttributes({
+      // Fail-open path returns the input untouched — no rerank_score stamps.
+      'rerank.applied': scored.length > 0,
+      'rerank.scored_count': scored.length,
+      'rerank.output_count': out.length,
+    });
+    span.setOutput(out.slice(0, 15).map(r => ({
+      slug: r.slug,
+      rerank_score: r.rerank_score,
+      rank_delta: r.reranker_delta,
+    })));
+    return out;
+  });
+}
+
+async function applyRerankerImpl(
+  query: string,
+  results: SearchResult[],
+  opts: RerankerOpts,
+): Promise<SearchResult[]> {
 
   const head = results.slice(0, opts.topNIn);
   const tail = results.slice(opts.topNIn);

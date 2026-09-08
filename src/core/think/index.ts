@@ -30,6 +30,7 @@ import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult }
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
+import { withSpan } from '../tracing.ts';
 import { parseTemporalWindow } from './temporal-window.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 
@@ -477,6 +478,38 @@ async function persistCitations(
  * to print, persist as synthesis page, or surface as MCP response.
  */
 export async function runThink(
+  engine: BrainEngine,
+  opts: RunThinkOpts,
+): Promise<ThinkResult> {
+  // Tracing wrapper — AGENT span for the whole GATHER → SYNTHESIZE pipeline.
+  // Children nest automatically: think.gather (with hybrid_search inside),
+  // and the gateway.chat LLM span for synthesis.
+  return withSpan('think', {
+    kind: 'AGENT',
+    input: opts.question,
+    attributes: {
+      ...(opts.anchor ? { 'think.anchor': opts.anchor } : {}),
+      'think.remote': opts.remote ?? false,
+      ...(opts.model ? { 'think.model_requested': opts.model } : {}),
+    },
+  }, async (span) => {
+    const result = await runThinkImpl(engine, opts);
+    span.setAttributes({
+      'think.model_used': result.modelUsed,
+      'think.pages_gathered': result.pagesGathered,
+      'think.takes_gathered': result.takesGathered,
+      'think.graph_hits': result.graphHits,
+      'think.citations': result.citations.length,
+      'think.gaps': result.gaps.length,
+      'think.synthesis_ok': result.synthesisOk ?? true,
+      ...(result.warnings.length > 0 ? { 'think.warnings': result.warnings.join('; ') } : {}),
+    });
+    span.setOutput(result.answer);
+    return result;
+  });
+}
+
+async function runThinkImpl(
   engine: BrainEngine,
   opts: RunThinkOpts,
 ): Promise<ThinkResult> {

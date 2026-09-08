@@ -51,6 +51,7 @@ import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { assertValidSourceId } from './source-id.ts';
+import { withCallLabel } from './call-label.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -1006,9 +1007,18 @@ function makeErrorFromException(e: unknown, fallbackClass = 'InternalError'): Ph
   };
 }
 
-async function timePhase<T>(fn: () => Promise<T>): Promise<{ result: T; duration_ms: number }> {
+/**
+ * Time a phase AND stamp it as the ambient caller label, so every gateway
+ * LLM/embedding span the phase creates reports `gbrain.caller=dream.<phase>`.
+ * Without this the traces show which MODEL burned tokens but not which phase
+ * — the dimension an operator actually groups by.
+ *
+ * `phase` is required (not optional) on purpose: a new phase added without a
+ * label is a compile error rather than a silently unattributed span.
+ */
+async function timePhase<T>(phase: CyclePhase, fn: () => Promise<T>): Promise<{ result: T; duration_ms: number }> {
   const start = performance.now();
-  const result = await fn();
+  const result = await withCallLabel(`dream.${phase}`, fn);
   return { result, duration_ms: Math.round(performance.now() - start) };
 }
 
@@ -2115,7 +2125,9 @@ export async function runCycle(
   // stop the WAIT while the phase unwinds cooperatively; extract_atoms and
   // synthesize_concepts still can't carry one (W6). Steal-free cycles behave
   // byte-identically to timePhase.
-  const racedTimePhase = <T,>(fn: () => Promise<T>) => raceStolen(timePhase(fn));
+  // timePhase requires an explicit phase label (ambient caller label for
+  // gateway spans), so the raced wrapper threads it through too.
+  const racedTimePhase = <T,>(phase: CyclePhase, fn: () => Promise<T>) => raceStolen(timePhase(phase, fn));
 
   // #1972: reap dead-holder sync/cycle locks at cycle start — before the sync
   // phase needs them — so a crashed sync's stranded lock self-heals THIS tick
@@ -2163,7 +2175,7 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('lint'));
       } else {
         progress.start('cycle.lint');
-        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine, cycleSignal));
+        const { result, duration_ms } = await timePhase('lint', () => runPhaseLint(brainDir, dryRun, engine, cycleSignal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2178,7 +2190,7 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('backlinks'));
       } else {
         progress.start('cycle.backlinks');
-        const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(brainDir, dryRun));
+        const { result, duration_ms } = await timePhase('backlinks', () => runPhaseBacklinks(brainDir, dryRun));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2218,7 +2230,7 @@ export async function runCycle(
         // sync checkpoints its progress, holds its own per-source lock (the
         // successor's sync phase skips with lock-busy), and its stall
         // watchdog bounds the dangling import. Signal threading lands in W6.
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
+        const { result, duration_ms } = await racedTimePhase('sync', () => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
@@ -2243,7 +2255,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.synthesize');
         const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesize(engine, {
+        const { result, duration_ms } = await racedTimePhase('synthesize', () => runPhaseSynthesize(engine, {
           brainDir,
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
@@ -2299,7 +2311,7 @@ export async function runCycle(
         // If sync didn't run (phases exclude it) or failed, syncPagesAffected
         // is undefined → extract falls back to full walk (safe default).
         progress.start('cycle.extract');
-        const { result, duration_ms } = await timePhase(() => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId));
+        const { result, duration_ms } = await timePhase('extract', () => runPhaseExtract(engine, brainDir, dryRun, syncPagesAffected, cycleSignal, cycleSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2347,7 +2359,7 @@ export async function runCycle(
         // the skipped-sync full reconcile).
         const syncRanButFailed = syncAttempted && syncPagesAffected === undefined;
         const xfSlugs = syncRanButFailed ? [] : syncPagesAffected;
-        const { result, duration_ms } = await timePhase(() =>
+        const { result, duration_ms } = await timePhase('extract_facts', () =>
           runPhaseExtractFacts(engine, brainDir, xfSourceId, dryRun, xfSlugs, cycleSignal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
@@ -2405,7 +2417,7 @@ export async function runCycle(
                 ...(synthesizeWrittenSlugs ?? []),
               ]
             : undefined;
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseExtractAtoms(engine, {
+        const { result, duration_ms } = await racedTimePhase('extract_atoms', () => runPhaseExtractAtoms(engine, {
           brainDir: brainDir ?? undefined,
           sourceId: xaSourceId,
           dryRun,
@@ -2440,7 +2452,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.resolve_symbol_edges');
-        const { result, duration_ms } = await timePhase(() => runPhaseResolveSymbolEdges(engine, dryRun));
+        const { result, duration_ms } = await timePhase('resolve_symbol_edges', () => runPhaseResolveSymbolEdges(engine, dryRun));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2467,7 +2479,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.patterns');
         const { runPhasePatterns } = await import('./cycle/patterns.ts');
-        const { result, duration_ms } = await racedTimePhase(() => runPhasePatterns(engine, {
+        const { result, duration_ms } = await racedTimePhase('patterns', () => runPhasePatterns(engine, {
           brainDir,
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
@@ -2523,7 +2535,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.synthesize_concepts');
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesizeConcepts(engine, {
+        const { result, duration_ms } = await racedTimePhase('synthesize_concepts', () => runPhaseSynthesizeConcepts(engine, {
           brainDir: brainDir ?? undefined,
           // #4416: thread the cycle's resolved source into the phase's page/
           // receipt/rollup writes; the engine's `?? 'default'` fallback
@@ -2570,7 +2582,7 @@ export async function runCycle(
                 ...(synthesizeWrittenSlugs ?? []),
               ]))
             : undefined;
-        const { result, duration_ms } = await timePhase(() =>
+        const { result, duration_ms } = await timePhase('recompute_emotional_weight', () =>
           runPhaseRecomputeEmotionalWeight(engine, {
             dryRun,
             affectedSlugs: incremental,
@@ -2600,7 +2612,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.consolidate');
         const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseConsolidate(engine, {
+        const { result, duration_ms } = await racedTimePhase('consolidate', () => runPhaseConsolidate(engine, {
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
           // the cycle lock (pre-fix these sites passed the raw — in production
@@ -2652,7 +2664,7 @@ export async function runCycle(
           // #4102: `once` bypasses the cycle.propose_takes.enabled off switch
           // for `gbrain dream --phase propose_takes --once` (same semantics as
           // conversation_facts_backfill / enrich_thin above).
-          const { result, duration_ms } = await timePhase(() => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.onceForPhase === 'propose_takes' }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase('propose_takes', () => runPhaseProposeTakes(calibrationCtx, { repoPath: brainDir ?? undefined, deadlineAtMs: opts.deadlineAtMs ?? null, once: opts.onceForPhase === 'propose_takes' }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2663,7 +2675,7 @@ export async function runCycle(
           checkAborted(cycleSignal);
           progress.start('cycle.grade_takes');
           const { runPhaseGradeTakes } = await import('./cycle/grade-takes.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseGradeTakes(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase('grade_takes', () => runPhaseGradeTakes(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2674,7 +2686,7 @@ export async function runCycle(
           checkAborted(cycleSignal);
           progress.start('cycle.calibration_profile');
           const { runPhaseCalibrationProfile } = await import('./cycle/calibration-profile.ts');
-          const { result, duration_ms } = await timePhase(() => runPhaseCalibrationProfile(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
+          const { result, duration_ms } = await timePhase('calibration_profile', () => runPhaseCalibrationProfile(calibrationCtx, { deadlineAtMs: opts.deadlineAtMs ?? null }) as Promise<PhaseResult>);
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
@@ -2713,7 +2725,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.drift');
         const { runPhaseDrift } = await import('./cycle/drift.ts');
-        const { result, duration_ms } = await timePhase(async (): Promise<PhaseResult> => {
+        const { result, duration_ms } = await timePhase('drift', async (): Promise<PhaseResult> => {
           const r = await runPhaseDrift(engine, {
             dryRun,
             brainDir: brainDir ?? undefined,
@@ -2758,7 +2770,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.conversation_facts_backfill');
         const { runPhaseConversationFactsBackfill } = await import('./cycle/conversation-facts-backfill.ts');
-        const { result, duration_ms } = await timePhase(() =>
+        const { result, duration_ms } = await timePhase('conversation_facts_backfill', () =>
           runPhaseConversationFactsBackfill(engine, {
             dryRun,
             signal: cycleSignal,
@@ -2790,7 +2802,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.enrich_thin');
         const { runPhaseEnrichThin } = await import('./cycle/enrich-thin.ts');
-        const { result, duration_ms } = await timePhase(() =>
+        const { result, duration_ms } = await timePhase('enrich_thin', () =>
           runPhaseEnrichThin(engine, {
             dryRun,
             signal: cycleSignal,
@@ -2822,7 +2834,7 @@ export async function runCycle(
       } else {
         progress.start('cycle.skillopt');
         const { runPhaseSkillopt } = await import('./skillopt/cycle-phase.ts');
-        const { result, duration_ms } = await timePhase(() =>
+        const { result, duration_ms } = await timePhase('skillopt', () =>
           runPhaseSkillopt({
             engine,
             dryRun,
@@ -2850,7 +2862,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.embed');
-        const { result, duration_ms } = await timePhase(() => runPhaseEmbed(engine, dryRun, cycleSignal));
+        const { result, duration_ms } = await timePhase('embed', () => runPhaseEmbed(engine, dryRun, cycleSignal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2871,7 +2883,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.orphans');
-        const { result, duration_ms } = await timePhase(() => runPhaseOrphans(engine, orphansSourceId));
+        const { result, duration_ms } = await timePhase('orphans', () => runPhaseOrphans(engine, orphansSourceId));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
@@ -2899,7 +2911,7 @@ export async function runCycle(
         progress.start('cycle.schema_suggest');
         try {
           const { runSchemaSuggestPhase } = await import('./cycle/schema-suggest.ts');
-          const { result, duration_ms } = await timePhase(async () => {
+          const { result, duration_ms } = await timePhase('schema-suggest', async () => {
             const r = await runSchemaSuggestPhase(engine, { sourceId: cycleSourceId, dryRun: !!opts.dryRun });
             return {
               phase: 'schema-suggest' as const,
@@ -2941,7 +2953,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.purge');
-        const { result, duration_ms } = await timePhase(() => runPhasePurge(engine, dryRun));
+        const { result, duration_ms } = await timePhase('purge', () => runPhasePurge(engine, dryRun));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

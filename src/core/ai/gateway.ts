@@ -23,6 +23,7 @@
 
 import { embed as aiEmbed, embedMany, generateObject, generateText, jsonSchema } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { withSpan, truncateForTrace } from '../tracing.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { listRecipes } from './recipes/index.ts';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -58,6 +59,7 @@ import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
+import { getCurrentCallLabel } from '../call-label.ts';
 import { AIConfigError, AITransientError, normalizeAIError } from './errors.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
@@ -1912,9 +1914,81 @@ export interface EmbedOpts {
   dimensions?: number;
 }
 
+/** Tracing wrapper — EMBEDDING span (counts + model; texts omitted except single-text query embeds). */
 export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32Array[]> {
   if (!texts || texts.length === 0) return [];
+  let modelAttr: string | undefined = opts?.embeddingModel;
+  if (!modelAttr) {
+    try { modelAttr = getEmbeddingModel(); } catch { /* unconfigured — impl throws the real error */ }
+  }
+  return withSpan('gateway.embed', {
+    kind: 'EMBEDDING',
+    attributes: {
+      'embedding.model_name': modelAttr,
+      'embedding.text_count': texts.length,
+      'embedding.total_chars': texts.reduce((s, t) => s + (t?.length ?? 0), 0),
+      ...callerAttributes(),
+    },
+  }, async (span) => {
+    // Single-text embeds are query embeds — the text is the search query and
+    // is cheap to attach. Batch document embeds skip content (huge payloads).
+    if (texts.length === 1) {
+      span.setAttribute('embedding.embeddings.0.embedding.text', truncateForTrace(texts[0] ?? '', 2_000));
+    }
+    const usage: EmbedUsageSink = { tokens: 0, fromProvider: false };
+    const out = await embedImpl(texts, opts, usage);
+    span.setAttribute('embedding.dimensions', out[0]?.length ?? 0);
+    // Embeddings are a real token-spend line, not a free side effect —
+    // surface the count so a dashboard can total them alongside chat.
+    // `token_count_source` keeps an estimate from masquerading as a
+    // measurement: providers that report no usage stay visibly estimated.
+    if (usage.fromProvider) {
+      span.setAttributes({
+        'llm.token_count.prompt': usage.tokens,
+        'llm.token_count.total': usage.tokens,
+        'embedding.token_count_source': 'provider',
+      });
+    } else {
+      span.setAttribute('embedding.token_count_source', 'estimated');
+    }
+    return out;
+  });
+}
 
+/**
+ * Where the embed path banks its token count. `tokens` accumulates across
+ * every sub-batch (including the recursive token-limit halving); `fromProvider`
+ * flips true the first time a provider actually reports usage.
+ *
+ * Internal — deliberately NOT a field on the public `EmbedOpts`, since it is
+ * an out-parameter of the implementation, not a caller knob.
+ */
+interface EmbedUsageSink {
+  tokens: number;
+  fromProvider: boolean;
+}
+
+/**
+ * Read a provider-reported embedding token count out of the AI SDK result.
+ *
+ * Whether usage survives the transport depends on the provider: the
+ * openai-compatible recipes go through fetch shims that normalize
+ * `usage.total_tokens` → `usage.prompt_tokens` (see the ZeroEntropy and Voyage
+ * shims above), while others report nothing at all. Rather than assume a
+ * shape, detect it — a finite positive count is a real measurement, anything
+ * else leaves the caller on its character-based estimate.
+ */
+export function providerEmbedTokens(result: unknown): number {
+  const usage = (result as { usage?: { tokens?: unknown } } | null | undefined)?.usage;
+  const tokens = Number(usage?.tokens);
+  return Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
+}
+
+async function embedImpl(
+  texts: string[],
+  opts?: EmbedOpts,
+  usageSink?: EmbedUsageSink,
+): Promise<Float32Array[]> {
   const cfg = requireConfig();
   // v0.36 (D10): caller may override the model. Used by the dynamic-embedding-
   // column path so hybridSearch can embed via the column's provider, not the
@@ -1992,10 +2066,11 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
     : tokenBatches;
 
   const allEmbeddings: Float32Array[] = [];
+  const sink: EmbedUsageSink = usageSink ?? { tokens: 0, fromProvider: false };
   let _embedThrew = false;
   try {
     for (const batch of batches) {
-      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts);
+      const result = await embedSubBatch(batch, model, providerOpts, expected, recipe, modelId, opts, sink);
       allEmbeddings.push(...result);
     }
     return allEmbeddings;
@@ -2004,14 +2079,21 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
     throw err;
   } finally {
     if (tracker) {
-      // Embed token usage is not surfaced by the AI SDK shape we use; charge
-      // based on the truncated input character count using the recipe's
-      // chars-per-token. On failure, A3 amended says charge the pessimistic
-      // estimate too — embed has no output side, so the input estimate IS
-      // the worst case.
+      // Prefer the provider's own token count when it survived the transport.
+      // Fall back to the truncated input character count over the recipe's
+      // chars-per-token — the historical behavior, and still the only option
+      // for providers that report no usage at all.
+      //
+      // A partial failure is the reason the estimate also floors the actual:
+      // if the run threw halfway, the sink only holds the sub-batches that
+      // completed, which would under-charge. A3 amended says charge the
+      // pessimistic ceiling on failure — embed has no output side, so the
+      // full-input estimate IS the worst case.
       const charsPerToken = recipe.touchpoints?.embedding?.chars_per_token ?? DEFAULT_CHARS_PER_TOKEN;
       const totalChars = truncated.reduce((s, t) => s + t.length, 0);
-      const inputTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
+      const estimatedTokens = Math.ceil(totalChars / Math.max(charsPerToken, 1));
+      const measured = sink.fromProvider && !_embedThrew;
+      const inputTokens = measured ? sink.tokens : estimatedTokens;
       try {
         tracker.record({
           modelId: `${recipe.id}:${modelId}`,
@@ -2160,6 +2242,7 @@ async function embedSubBatch(
   recipe: Recipe,
   modelId: string,
   opts?: EmbedOpts,
+  usageSink?: EmbedUsageSink,
 ): Promise<Float32Array[]> {
   try {
     const callTransport = () => _embedTransport({
@@ -2200,6 +2283,13 @@ async function embedSubBatch(
     }
 
     recordSubBatchSuccess(recipe);
+    if (usageSink) {
+      const reported = providerEmbedTokens(result);
+      if (reported > 0) {
+        usageSink.tokens += reported;
+        usageSink.fromProvider = true;
+      }
+    }
     return result.embeddings.map((e: number[]) => new Float32Array(e));
   } catch (err) {
     // On token-limit error, tighten the recipe's effective safety factor
@@ -2208,8 +2298,8 @@ async function embedSubBatch(
     if (isTokenLimitError(err) && texts.length > MIN_SUB_BATCH) {
       shrinkOnMiss(recipe);
       const mid = Math.ceil(texts.length / 2);
-      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId, opts);
-      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts);
+      const left = await embedSubBatch(texts.slice(0, mid), model, providerOpts, expectedDims, recipe, modelId, opts, usageSink);
+      const right = await embedSubBatch(texts.slice(mid), model, providerOpts, expectedDims, recipe, modelId, opts, usageSink);
       return [...left, ...right];
     }
     throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`);
@@ -2837,13 +2927,105 @@ function recordSpendOnTracker(
 }
 
 /**
+ * Where a non-`chat` LLM path banks the token usage it observed, so the span
+ * wrapper can stamp it without the implementation reaching for the span.
+ *
+ * `fromProvider` exists because absent usage and zero usage are different
+ * facts: an unreported count must stay unreported rather than be published as
+ * a measured zero, which a cost dashboard would total as free.
+ *
+ * `modelId` carries the RESOLVED `recipe:model` back out — the span is opened
+ * before resolution, so its initial `llm.model_name` may be a config alias.
+ */
+interface LlmUsageSink {
+  inputTokens: number;
+  outputTokens: number;
+  fromProvider: boolean;
+  modelId?: string;
+}
+
+/**
+ * Read token usage out of an AI SDK result.
+ *
+ * Returns null when neither field is a usable number, which is what keeps an
+ * unreported count from being published as a measured zero. The `promptTokens`
+ * / `completionTokens` spellings are the pre-v5 SDK field names, accepted for
+ * parity with the chat path rather than because the installed SDK emits them.
+ */
+export function providerLlmTokens(
+  result: unknown,
+): { inputTokens: number; outputTokens: number } | null {
+  const usage = (result as { usage?: Record<string, unknown> } | null | undefined)?.usage;
+  if (!usage) return null;
+  // Strictly `number`, no coercion: `Number(null)` is 0, and a provider that
+  // sends `inputTokens: null` would otherwise be recorded as having measured
+  // zero tokens — the exact dressed-up-estimate this function exists to avoid.
+  const num = (...keys: string[]): number | null => {
+    for (const k of keys) {
+      const v = usage[k];
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
+    }
+    return null;
+  };
+  const inputTokens = num('inputTokens', 'promptTokens');
+  const outputTokens = num('outputTokens', 'completionTokens');
+  if (inputTokens === null && outputTokens === null) return null;
+  return { inputTokens: inputTokens ?? 0, outputTokens: outputTokens ?? 0 };
+}
+
+/** Accumulate one SDK call's usage into the sink. No-op when the provider reported none. */
+function bankLlmUsage(sink: LlmUsageSink | undefined, result: unknown): void {
+  if (!sink) return;
+  const usage = providerLlmTokens(result);
+  if (!usage) return;
+  sink.inputTokens += usage.inputTokens;
+  sink.outputTokens += usage.outputTokens;
+  sink.fromProvider = true;
+}
+
+/**
  * Expand a search query into up to 4 related queries.
  * Returns the original query PLUS expansions. On failure, returns just the original.
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
  */
+/** Tracing wrapper — query-expansion LLM span (input query → expanded variants). */
 export async function expand(query: string): Promise<string[]> {
   if (!query || !query.trim()) return [query];
   if (!isAvailable('expansion')) return [query];
+  let modelAttr: string | undefined;
+  try { modelAttr = getExpansionModel(); } catch { /* unconfigured */ }
+  return withSpan('gateway.expand', {
+    kind: 'LLM',
+    input: query,
+    attributes: { 'llm.model_name': modelAttr, ...callerAttributes() },
+  }, async (span) => {
+    // Expansion is a real LLM call on the query hot path (search mode
+    // `tokenmax`), and it used to export a span with a model name and no token
+    // count — so its spend was structurally invisible while every chat call
+    // was priced. The sink collects usage from whichever sub-path ran
+    // (structured-output or the text fallback, possibly both) and the stamp
+    // happens HERE, once: attribute writes inside the branches would drift
+    // apart as the fallback ladder grows.
+    const usage: LlmUsageSink = { inputTokens: 0, outputTokens: 0, fromProvider: false };
+    const out = await expandImpl(query, usage);
+    span.setAttribute('expansion.variant_count', out.length);
+    // Prefer the resolved `recipe:model` over the config alias the span opened
+    // with — a cost dashboard keys on the model id, so the two LLM paths have
+    // to spell the same model the same way or group-by splits in half.
+    if (usage.modelId) span.setAttribute('llm.model_name', usage.modelId);
+    if (usage.fromProvider) {
+      span.setAttributes({
+        'llm.token_count.prompt': usage.inputTokens,
+        'llm.token_count.completion': usage.outputTokens,
+        'llm.token_count.total': usage.inputTokens + usage.outputTokens,
+      });
+    }
+    span.setOutput(out);
+    return out;
+  });
+}
+
+async function expandImpl(query: string, usageSink?: LlmUsageSink): Promise<string[]> {
 
   // Guardrail seam: classify the query before the expansion model call.
   await classifyGatewayGuardrail({
@@ -2895,6 +3077,7 @@ export async function expand(query: string): Promise<string[]> {
   try {
     const { model, recipe, modelId } = await resolveExpansionProvider(getExpansionModel());
     const modelLabel = `${recipe.id}:${modelId}`;
+    if (usageSink) usageSink.modelId = modelLabel;
 
     let expansions: string[];
 
@@ -2902,6 +3085,9 @@ export async function expand(query: string): Promise<string[]> {
     // support is unknown: the AI SDK can't send a json_schema response_format
     // there, so generateObject would warn and silently degrade. generateText + a
     // tolerant parse recovers the queries instead. Fresh abortSignal per call.
+    //
+    // Routed through the shared `_generateTextTransport` seam (same one chat
+    // uses) so this path is drivable in tests without a live provider.
     const viaText = async (): Promise<string[]> => {
       let textResult: Awaited<ReturnType<GenerateTextFn>>;
       try {
@@ -2915,6 +3101,8 @@ export async function expand(query: string): Promise<string[]> {
         throw err; // outer catch degrades to [query]
       }
       recordExpansionUsage(modelLabel, textResult.usage);
+      // Same call, second sink: the span stamps token counts from it.
+      bankLlmUsage(usageSink, textResult);
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
@@ -2971,6 +3159,7 @@ export async function expand(query: string): Promise<string[]> {
         throw err; // outer catch degrades to [query]
       }
       recordExpansionUsage(modelLabel, result.usage);
+      bankLlmUsage(usageSink, result);
       expansions = result.object?.queries ?? [];
     } else if (recipeSupportsStructuredOutputs(recipe) && !_structuredOutputRejectedRecipes.has(recipe.id)) {
       // openai-compatible backend that honors strict json_schema: request the
@@ -2990,6 +3179,7 @@ export async function expand(query: string): Promise<string[]> {
           prompt: expansionPrompt,
         });
         recordExpansionUsage(modelLabel, result.usage);
+        bankLlmUsage(usageSink, result);
         expansions = result.object?.queries ?? [];
       } catch (err) {
         // The rejected structured attempt billed real tokens — record it
@@ -3129,6 +3319,47 @@ export function withBudgetTracker<T>(tracker: BudgetTracker, fn: () => Promise<T
 
 export function getCurrentBudgetTracker(): BudgetTracker | null {
   return __budgetStore.getStore() ?? null;
+}
+
+/**
+ * Caller attribution for gateway spans: WHICH part of gbrain is spending
+ * these tokens. Resolved at span-creation time so no call site has to thread
+ * a label through its signature.
+ *
+ * Precedence: an explicit `withCallLabel` region (set by the dream cycle's
+ * phase runner and any other orchestrator that wants attribution) beats the
+ * active BudgetTracker's phase label. The tracker fallback exists because
+ * several LLM paths (brainstorm, skillopt, eval-contradictions, embed
+ * backfill) already carry a good label there and shouldn't need a second wrap.
+ *
+ * Returns an empty object when neither is present, so the attribute is absent
+ * rather than stamped with a placeholder — an unlabeled span is honest, a
+ * span labeled 'unknown' pollutes group-by in Phoenix.
+ *
+ * Declared as a `function` (not `const`) so the span sites earlier in this
+ * module can call it regardless of source order.
+ *
+ * Exported for tests — the precedence rule is the whole contract, and the
+ * span sites that consume it are hard to assert against directly.
+ */
+export function __callerAttributesForTests(): Record<string, string> {
+  return callerAttributes();
+}
+
+function callerAttributes(): Record<string, string> {
+  const callLabel = getCurrentCallLabel();
+  const budgetLabel = __budgetStore.getStore()?.label;
+  const caller = callLabel ?? budgetLabel;
+  if (!caller) return {};
+  const out: Record<string, string> = { 'gbrain.caller': caller };
+  // The two labels are different granularities, not duplicates: the call
+  // label is the phase ('dream.extract_atoms'), the budget label often names
+  // the unit of work inside it ('extract-atoms:confluence'). Keeping the
+  // phase as the low-cardinality group-by key and the budget label alongside
+  // means drilling into one phase's per-source spend doesn't need a second
+  // instrumentation pass. Emitted only when it adds information.
+  if (budgetLabel && budgetLabel !== caller) out['gbrain.budget_label'] = budgetLabel;
+  return out;
 }
 
 /** Internal helper: estimate input tokens from messages + system. Heuristic only
@@ -3829,7 +4060,55 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
   }, {} as Record<string, any>);
 }
 
+/**
+ * Tracing wrapper — one LLM span per chat call (each toolLoop round gets its
+ * own span). OpenInference `llm.input_messages.*` / `llm.output_messages.*`
+ * attributes render as a chat transcript in Phoenix. No-op when tracing is
+ * off; see src/core/tracing.ts.
+ */
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  let modelAttr: string | undefined = opts.model;
+  if (!modelAttr) {
+    try { modelAttr = getChatModel(); } catch { /* unconfigured gateway — impl throws the real error */ }
+  }
+  return withSpan('gateway.chat', {
+    kind: 'LLM',
+    attributes: {
+      'llm.model_name': modelAttr,
+      'llm.invocation_parameters': JSON.stringify({ max_tokens: opts.maxTokens ?? 4096 }),
+      ...callerAttributes(),
+    },
+  }, async (span) => {
+    let idx = 0;
+    if (opts.system) {
+      span.setAttribute(`llm.input_messages.${idx}.message.role`, 'system');
+      span.setAttribute(`llm.input_messages.${idx}.message.content`, truncateForTrace(opts.system));
+      idx++;
+    }
+    // Cap the transcript on long tool loops; the LAST messages matter most.
+    const tail = opts.messages.slice(-30);
+    for (const m of tail) {
+      span.setAttribute(`llm.input_messages.${idx}.message.role`, m.role);
+      span.setAttribute(`llm.input_messages.${idx}.message.content`, truncateForTrace(chatContentToGuardrailText(m.content)));
+      idx++;
+    }
+    const result = await chatImpl(opts);
+    span.setAttributes({
+      'llm.model_name': result.model,
+      'llm.provider': result.providerId,
+      'llm.token_count.prompt': result.usage.input_tokens,
+      'llm.token_count.completion': result.usage.output_tokens,
+      'llm.token_count.total': result.usage.input_tokens + result.usage.output_tokens,
+      'llm.stop_reason': result.stopReason,
+    });
+    span.setAttribute('llm.output_messages.0.message.role', 'assistant');
+    span.setAttribute('llm.output_messages.0.message.content', truncateForTrace(result.text));
+    span.setOutput(result.text);
+    return result;
+  });
+}
+
+async function chatImpl(opts: ChatOpts): Promise<ChatResult> {
   const tracker = __budgetStore.getStore() ?? null;
   const modelStrEarly = opts.model ?? getChatModel();
 
@@ -4587,6 +4866,7 @@ const DEFAULT_RERANK_TIMEOUT_MS = 5000;
  * model maps to a known request/response wire shape, so an unknown id could
  * mis-parse a response rather than fail cleanly.
  */
+/** Tracing wrapper — RERANKER span (model, doc counts, top score). */
 export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (!input.query) {
     throw new RerankError('rerank: query is required', 'unknown');
@@ -4594,6 +4874,29 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
   if (!input.documents || input.documents.length === 0) {
     return [];
   }
+  let modelAttr: string | undefined = input.model;
+  if (!modelAttr) {
+    try { modelAttr = getRerankerModel() ?? DEFAULT_RERANKER_MODEL; } catch { /* unconfigured */ }
+  }
+  return withSpan('gateway.rerank', {
+    kind: 'RERANKER',
+    input: input.query,
+    attributes: {
+      'reranker.model_name': modelAttr,
+      'reranker.input_documents.count': input.documents.length,
+      ...(input.topN !== undefined ? { 'reranker.top_n': input.topN } : {}),
+      ...callerAttributes(),
+    },
+  }, async (span) => {
+    const out = await rerankImpl(input);
+    span.setAttribute('reranker.output_documents.count', out.length);
+    if (out[0]) span.setAttribute('reranker.top_score', out[0].relevanceScore);
+    span.setOutput(out.slice(0, 30));
+    return out;
+  });
+}
+
+async function rerankImpl(input: RerankInput): Promise<RerankResult[]> {
 
   const modelStr =
     input.model ??

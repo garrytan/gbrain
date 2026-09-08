@@ -149,6 +149,7 @@ detail on demand.)
 | search modes / cost knobs | `docs/guides/search-modes.md` |
 | engine detection / Postgres adoption / DB-access repair / degraded serve (`engine status`, `db-repair`, `init --prefer-postgres`, `GBRAIN_DB_ACCESS`) | `docs/ENGINES.md` ("Engine detection and access repair" + "Local Postgres") |
 | embedding spend gates / cost gate / `spend.posture` / off switches | `docs/operations/spend-controls.md` |
+| opt-in LLM/RAG tracing (Phoenix / Langfuse / OTLP), per-phase caller attribution | `docs/operations/tracing.md` |
 | the monthly backup-coverage check (`gbrain backup`, render channels, nag budget) | `docs/operations/backup-check.md` + the `backup/*` entries in `KEY_FILES.md` |
 | push-based context (volunteer/watch/reflex window) | `docs/guides/push-context.md` |
 | checkpoint compaction / compiled context files (`gbrain compile-context`) | `docs/guides/checkpoint-compaction.md` + `docs/guides/ambient-recall.md` |

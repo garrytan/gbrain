@@ -11,6 +11,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { loadConfig } from '../core/config.ts';
+import { withSpan } from '../core/tracing.ts';
 import { classifyPgAccessError, formatDbAccessMarker, type PgAccessDiagnosis } from '../core/pg-access-classify.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
@@ -647,6 +648,19 @@ export async function dispatchToolCall(
 
   const ctx = buildOperationContext(engine, safeParams, opts);
 
+  // Root trace span per tool call — shared by BOTH transports (stdio + HTTP),
+  // mirroring why this dispatch module exists at all. Note the span carries
+  // the FULL params (unlike the redacted mcp_request_log summary) — tracing
+  // is opt-in and documented as full-content in src/core/tracing.ts.
+  return withSpan(`mcp.${name}`, {
+    kind: 'TOOL',
+    input: safeParams,
+    attributes: {
+      'tool.name': name,
+      'gbrain.remote': opts.remote ?? true,
+      'gbrain.source_id': opts.sourceId ?? 'default',
+    },
+  }, async (span) => {
   // WP2/D3: response-meta side channel. Handlers publish namespaced
   // out-of-band metadata (retrieval degradation, strict-mode warnings) here;
   // the success path below merges the collected keys into ToolResult._meta.
@@ -670,6 +684,7 @@ export async function dispatchToolCall(
     // a silent hole. See CLIENT_FENCED_WRITE_OPS in operations.ts.
     enforceBoundClientOpAllowList(ctx.auth, op);
     const result = await op.handler(ctx, safeParams);
+    span.setOutput(result);
     // [E4] verb success metrics: budget drops + entity hit/miss when present.
     {
       const r = result as { dropped_count?: number; found?: boolean; status?: string } | null;
@@ -730,6 +745,10 @@ export async function dispatchToolCall(
     return out;
   } catch (e: unknown) {
     logVerb(false);
+    // Errors are serialized into a ToolResult (never rethrown), so mark the
+    // span manually — withSpan's catch path only sees real throws.
+    span.setAttribute('tool.is_error', true);
+    span.setAttribute('tool.error', e instanceof Error ? e.message : String(e));
     if (e instanceof OperationError) {
       return { content: [{ type: 'text', text: JSON.stringify(e.toJSON(), null, 2) }], isError: true };
     }
@@ -788,4 +807,5 @@ export async function dispatchToolCall(
       isError: true,
     };
   }
+  });
 }
